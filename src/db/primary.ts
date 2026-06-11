@@ -1,19 +1,30 @@
 import { Database } from "bun:sqlite";
+import { type Result, ok, err } from "neverthrow";
 import { env } from "../lib/env.ts";
-import { ensureDir, runMigrations } from "./util.ts";
-import { migrations } from "./primary_migrations.ts";
+import { ensureDir } from "./util.ts";
+import { migrations, runMigrations } from "./primary_migrations.ts";
+import type { DbError } from "./errors.ts";
 
 let _db: Database | null = null;
 
-export function db(): Database {
-    if (_db) return _db;
-    ensureDir(env.dbPath);
-    _db = new Database(env.dbPath);
-    _db.run("PRAGMA journal_mode = WAL");
-    _db.run("PRAGMA synchronous = NORMAL");
-    _db.run("PRAGMA busy_timeout = 5000");
-    _db.run("PRAGMA cache_size = -64000");
-    _db.run("PRAGMA foreign_keys = ON");
-    runMigrations(_db, migrations);
-    return _db;
+export function db(): Result<Database, DbError> {
+    if (_db) return ok(_db);
+
+    let conn: Database;
+    try {
+        ensureDir(env.dbPath);
+        conn = new Database(env.dbPath);
+        conn.run("PRAGMA journal_mode = WAL");
+        conn.run("PRAGMA synchronous = NORMAL");
+        conn.run("PRAGMA busy_timeout = 5000");
+        conn.run("PRAGMA cache_size = -64000");
+        conn.run("PRAGMA foreign_keys = ON");
+    } catch (cause) {
+        return err({ type: "connection_failed", cause });
+    }
+
+    return runMigrations(conn, migrations).map(() => {
+        _db = conn;
+        return conn;
+    });
 }

@@ -1,14 +1,4 @@
-# primary-storage Specification
-
-## Purpose
-TBD - created by archiving change raw-sqlite-db-layer. Update Purpose after archive.
-## Requirements
-### Requirement: Initial schema migration
-The primary database's first migration (version 1) SHALL create the sessions, messages, and parts tables with the same schema as the current `store.ts`, including indexes and foreign key constraints.
-
-#### Scenario: Fresh database gets full schema
-- **WHEN** the primary database is opened for the first time
-- **THEN** the `sessions`, `messages`, and `parts` tables are created with proper columns, foreign keys (`ON DELETE CASCADE`), and indexes (`idx_messages_session`, `idx_parts_message`, `idx_parts_session`)
+## MODIFIED Requirements
 
 ### Requirement: Session queries
 The system SHALL provide the following session read operations, each returning `Result<T, DbError>` with `{ type: "query_failed", op, cause }` on failure:
@@ -103,11 +93,3 @@ Both SHALL use `{ type: "mutation_failed", op, cause }` on failure.
 #### Scenario: Update existing part
 - **WHEN** `updatePart(part)` is called with a modified part object
 - **THEN** `ok(undefined)` is returned and the part's `data` column is updated
-
-### Requirement: ID generation utility
-The system SHALL provide a `newId()` function that generates ULID identifiers, exported from the shared utility module.
-
-#### Scenario: Generate unique ID
-- **WHEN** `newId()` is called
-- **THEN** a valid ULID string is returned
-

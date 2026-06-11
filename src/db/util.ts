@@ -1,5 +1,24 @@
 import { Database } from "bun:sqlite";
 import { ulid } from "ulid";
+import { type Result, ok, err } from "neverthrow";
+import type { DbError } from "./errors.ts";
+import { db } from "./primary.ts";
+
+export function tryQuery<T>(op: string, fn: (conn: Database) => T): Result<T, DbError> {
+    try {
+        return db().andThen((conn) => ok(fn(conn)));
+    } catch (cause) {
+        return err({ type: "query_failed", op, cause });
+    }
+}
+
+export function tryMutation<T>(op: string, fn: (conn: Database) => T): Result<T, DbError> {
+    try {
+        return db().andThen((conn) => ok(fn(conn)));
+    } catch (cause) {
+        return err({ type: "mutation_failed", op, cause });
+    }
+}
 
 export interface Migration {
     version: number;
@@ -16,25 +35,5 @@ export function ensureDir(path: string) {
         Bun.spawnSync(["mkdir", "-p", dir]);
     } catch {
         // best effort
-    }
-}
-
-export function runMigrations(db: Database, migrations: Migration[]) {
-    db.run(`
-        CREATE TABLE IF NOT EXISTS _migrations (
-            version INTEGER PRIMARY KEY,
-            applied_at INTEGER NOT NULL
-        )
-    `);
-
-    const applied = db.prepare("SELECT MAX(version) as v FROM _migrations").get() as { v: number | null };
-    const currentVersion = applied.v ?? 0;
-
-    for (const m of migrations) {
-        if (m.version <= currentVersion) continue;
-        db.transaction(() => {
-            db.run(m.up);
-            db.prepare("INSERT INTO _migrations (version, applied_at) VALUES (?, ?)").run(m.version, Date.now());
-        })();
     }
 }

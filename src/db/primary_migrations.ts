@@ -1,3 +1,6 @@
+import { Database } from "bun:sqlite";
+import { Result, ok, err } from "neverthrow";
+import type { DbError } from "./errors.ts";
 import type { Migration } from "./util.ts";
 
 export const migrations: Migration[] = [
@@ -27,3 +30,29 @@ export const migrations: Migration[] = [
         `,
     },
 ];
+
+export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {
+    try {
+        db.run(`
+            CREATE TABLE IF NOT EXISTS _migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at INTEGER NOT NULL
+            )
+        `);
+
+        const applied = db.query("SELECT MAX(version) as v FROM _migrations").get() as { v: number | null };
+        const currentVersion = applied.v ?? 0;
+
+        for (const m of migrations) {
+            if (m.version <= currentVersion) continue;
+            db.transaction(() => {
+                db.run(m.up);
+                db.query("INSERT INTO _migrations (version, applied_at) VALUES (?, ?)").run(m.version, Date.now());
+            })();
+        }
+
+        return ok(undefined);
+    } catch (cause) {
+        return err({ type: "migration_failed", cause });
+    }
+}

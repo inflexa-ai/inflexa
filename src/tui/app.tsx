@@ -23,7 +23,7 @@ interface AppProps {
 }
 
 export function App(props: AppProps) {
-    const dims = useTerminalDimensions();
+    const _dims = useTerminalDimensions();
 
     const [messages, setMessages] = createStore<UIMessage[]>([]);
     const [status, setStatus] = createSignal<"idle" | "busy" | "error">("idle");
@@ -35,13 +35,20 @@ export function App(props: AppProps) {
     let abortController: AbortController | null = null;
 
     onMount(() => {
-        const existing = getSessionMessages(props.sessionId);
-        const uiMsgs: UIMessage[] = existing.map((m) => ({
-            id: m.info.id,
-            role: m.info.role,
-            parts: m.parts,
-        }));
-        setMessages(uiMsgs);
+        getSessionMessages(props.sessionId).match(
+            (existing) => {
+                const uiMsgs: UIMessage[] = existing.map((m) => ({
+                    id: m.info.id,
+                    role: m.info.role,
+                    parts: m.parts,
+                }));
+                setMessages(uiMsgs);
+            },
+            (error) => {
+                setErrorMsg(`Failed to load messages: ${error.type}`);
+                setStatus("error");
+            },
+        );
     });
 
     const unsub = bus.subscribe((event: BusEvent) => {
@@ -145,11 +152,19 @@ export function App(props: AppProps) {
         }
 
         abortController = new AbortController();
-        await chat({
-            sessionId: props.sessionId,
-            userText: text,
-            abort: abortController.signal,
-        });
+        (
+            await chat({
+                sessionId: props.sessionId,
+                userText: text,
+                abort: abortController.signal,
+            })
+        ).match(
+            () => {},
+            (error) => {
+                setErrorMsg(`Chat error: ${error.type}`);
+                setStatus("error");
+            },
+        );
     }
 
     return (
@@ -218,7 +233,7 @@ export function App(props: AppProps) {
                     backgroundColor="#1a1b26"
                     focusedBackgroundColor="#24283b"
                     keyBindings={keyBindings}
-                    onSubmit={handleSubmit}
+                    onSubmit={() => void handleSubmit()}
                 />
             </box>
         </box>
