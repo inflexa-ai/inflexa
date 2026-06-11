@@ -1,0 +1,1 @@
+preload = ["@opentui/solid/preload", "@opentui/solid/runtime-plugin-support"]
