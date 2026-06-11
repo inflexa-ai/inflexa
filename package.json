@@ -18,9 +18,13 @@
         "ulid": "^2.3.0"
     },
     "devDependencies": {
+        "@eslint/js": "^10.0.1",
         "@types/bun": "latest",
+        "eslint": "^10.4.1",
+        "globals": "^17.6.0",
         "prettier": "^3.8.1",
         "prettier-plugin-tailwindcss": "^0.7.2",
-        "typescript": "^5.7.0"
+        "typescript": "^5.7.0",
+        "typescript-eslint": "^8.61.0"
     }
 }
