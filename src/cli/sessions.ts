@@ -1,7 +1,7 @@
-import * as store from "../db/store.ts";
+import * as query from "../db/primary_query.ts";
 
 export async function listSessions() {
-    const sessions = store.listSessions();
+    const sessions = query.listSessions();
 
     if (sessions.length === 0) {
         console.log("No sessions found.");

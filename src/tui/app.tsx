@@ -5,7 +5,7 @@ import type { TextareaRenderable, KeyBinding } from "@opentui/core";
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid";
 
 import { bus } from "../bus.ts";
-import * as store from "../db/store.ts";
+import { getSessionMessages } from "../db/primary_query.ts";
 import { chat } from "../chat/echo.ts";
 import type { BusEvent, Part, TextPart } from "../types.ts";
 
@@ -35,7 +35,7 @@ export function App(props: AppProps) {
     let abortController: AbortController | null = null;
 
     onMount(() => {
-        const existing = store.getSessionMessages(props.sessionId);
+        const existing = getSessionMessages(props.sessionId);
         const uiMsgs: UIMessage[] = existing.map((m) => ({
             id: m.info.id,
             role: m.info.role,

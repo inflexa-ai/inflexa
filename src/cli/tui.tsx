@@ -1,7 +1,8 @@
 import { render } from "@opentui/solid";
 import { ConsolePosition } from "@opentui/core";
 
-import * as store from "../db/store.ts";
+import { getSession } from "../db/primary_query.ts";
+import { createSession } from "../db/primary_mutation.ts";
 import { App } from "../tui/app.tsx";
 
 interface TuiOptions {
@@ -11,9 +12,9 @@ interface TuiOptions {
 export async function launchTui(opts: TuiOptions) {
     const workingDir = process.cwd();
 
-    let session = opts.session ? store.getSession(opts.session) : null;
+    let session = opts.session ? getSession(opts.session) : null;
     if (!session) {
-        session = store.createSession(`Session in ${workingDir.split("/").pop()}`);
+        session = createSession(`Session in ${workingDir.split("/").pop()}`);
     }
 
     render(() => <App sessionId={session!.id} workingDir={workingDir} />, {

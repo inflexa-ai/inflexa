@@ -1,6 +1,6 @@
 import { bus } from "../bus.ts";
-import * as store from "../db/store.ts";
-import type { Message, TextPart } from "../types.ts";
+import { createMessage, createPart, updatePart } from "../db/primary_mutation.ts";
+import type { TextPart } from "../types.ts";
 
 export interface ChatOptions {
     sessionId: string;
@@ -13,38 +13,18 @@ export async function chat(opts: ChatOptions): Promise<void> {
 
     bus.publish({ type: "session.status", sessionId, status: "busy" });
 
-    const userMsg: Message = {
-        id: store.newId(),
-        sessionId,
-        role: "user",
-        createdAt: Date.now(),
-    };
-    store.createMessage(userMsg);
-
-    const userPart: TextPart = {
-        id: store.newId(),
-        sessionId,
-        messageId: userMsg.id,
-        type: "text",
-        text: userText,
-        createdAt: Date.now(),
-    };
-    store.upsertPart(userPart);
+    const userMsg = createMessage(sessionId, "user");
+    const userPart = createPart(sessionId, userMsg.id, userText);
     bus.publish({ type: "message.created", message: userMsg });
     bus.publish({ type: "part.updated", part: userPart });
 
-    const assistantMsg: Message = {
-        id: store.newId(),
-        sessionId,
-        role: "assistant",
-        createdAt: Date.now(),
-    };
-    store.createMessage(assistantMsg);
+    const assistantMsg = createMessage(sessionId, "assistant");
     bus.publish({ type: "message.created", message: assistantMsg });
+
+    const assistantPart = createPart(sessionId, assistantMsg.id, "");
 
     const responseText = `You said: ${userText}`;
     const words = responseText.split(/(\s+)/);
-    const partId = store.newId();
 
     let accumulated = "";
     for (const word of words) {
@@ -54,21 +34,14 @@ export async function chat(opts: ChatOptions): Promise<void> {
             type: "part.delta",
             sessionId,
             messageId: assistantMsg.id,
-            partId,
+            partId: assistantPart.id,
             delta: word,
         });
         await new Promise((r) => setTimeout(r, 30));
     }
 
-    const assistantPart: TextPart = {
-        id: partId,
-        sessionId,
-        messageId: assistantMsg.id,
-        type: "text",
-        text: accumulated,
-        createdAt: Date.now(),
-    };
-    store.upsertPart(assistantPart);
+    (assistantPart as TextPart).text = accumulated;
+    updatePart(assistantPart);
     bus.publish({ type: "part.updated", part: assistantPart });
     bus.publish({ type: "session.status", sessionId, status: "idle" });
 }
