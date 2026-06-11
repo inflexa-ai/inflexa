@@ -7,6 +7,7 @@
         "dev": "bun run src/index.ts",
         "format": "prettier --write src/",
         "format:file": "prettier --write",
+        "lint": "eslint .",
         "start": "bun run src/index.ts",
         "typecheck": "tsc --noEmit"
     },
@@ -21,6 +22,7 @@
         "@eslint/js": "^10.0.1",
         "@types/bun": "latest",
         "eslint": "^10.4.1",
+        "eslint-plugin-solid": "^0.14.5",
         "globals": "^17.6.0",
         "prettier": "^3.8.1",
         "prettier-plugin-tailwindcss": "^0.7.2",
