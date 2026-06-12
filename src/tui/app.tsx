@@ -2,9 +2,10 @@ import { createSignal, For, Show, onCleanup, onMount } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { SyntaxStyle } from "@opentui/core";
 import type { TextareaRenderable, KeyBinding } from "@opentui/core";
-import { useKeyboard, useTerminalDimensions } from "@opentui/solid";
+import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid";
 
 import { Bus } from "../lib/bus.ts";
+import { shutdown } from "../lib/shutdown.ts";
 import { getSessionMessages } from "../db/primary_query.ts";
 import { chat } from "../chat/echo.ts";
 import type { BusEvent, Part, TextPart } from "../types.ts";
@@ -24,6 +25,7 @@ interface AppProps {
 
 export function App(props: AppProps) {
     const _dims = useTerminalDimensions();
+    const renderer = useRenderer();
 
     const [messages, setMessages] = createStore<UIMessage[]>([]);
     const [status, setStatus] = createSignal<"idle" | "busy" | "error">("idle");
@@ -149,7 +151,8 @@ export function App(props: AppProps) {
         setErrorMsg(null);
 
         if (text === "/quit" || text === "/exit") {
-            process.exit(0);
+            renderer.destroy();
+            await shutdown(0);
         }
 
         abortController = new AbortController();
@@ -171,7 +174,7 @@ export function App(props: AppProps) {
     return (
         <box flexDirection="column" width="100%" height="100%">
             {/* Header */}
-            <box height={1} width="100%" backgroundColor="#1a1b26" paddingLeft={1} paddingRight={1}>
+            <box height={1} width="100%" flexDirection="row" backgroundColor="#1a1b26" paddingLeft={1} paddingRight={1}>
                 <text fg="#7aa2f7" attributes={1}>
                     inf
                 </text>

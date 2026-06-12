@@ -75,4 +75,18 @@ export default defineConfig([
             "neverthrow/must-use-result": "error",
         },
     },
+    {
+        files: ["src/**/*.{ts,tsx}"],
+        ignores: ["src/lib/env.ts"],
+        rules: {
+            "no-restricted-properties": [
+                "error",
+                {
+                    object: "process",
+                    property: "env",
+                    message: "Read environment variables through the frozen `env` object in src/lib/env.ts.",
+                },
+            ],
+        },
+    },
 ]);

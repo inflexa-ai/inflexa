@@ -16,5 +16,10 @@ cli.command("sessions", "List saved sessions").action(async () => {
     await listSessions();
 });
 
+cli.command("config", "View and change settings").action(async () => {
+    const { launchConfig } = await import("./config.tsx");
+    await launchConfig();
+});
+
 cli.version(pkg.version);
 cli.help();
