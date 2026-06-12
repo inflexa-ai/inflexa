@@ -30,6 +30,8 @@ export type BusEvent =
     | { type: "part.delta"; sessionId: string; messageId: string; partId: string; delta: string }
     | { type: "session.error"; sessionId: string; error: string };
 
+export type StampedEvent = BusEvent & { __infId: string };
+
 export interface StoredMessage {
     info: Message;
     parts: Part[];

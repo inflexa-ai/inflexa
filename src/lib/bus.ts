@@ -1,13 +1,9 @@
 import { EventEmitter } from "events";
 import { randomUUIDv7 } from "bun";
-
-export type BusEvent =
-    | { type: "session.status"; sessionId: string; status: "idle" | "busy" | "error" }
-    | { type: "message.created"; message: string }
-    | { type: "session.error"; sessionId: string; error: string };
+import type { BusEvent, StampedEvent } from "../types.ts";
 
 class BusEmitter extends EventEmitter<{
-    inf: [BusEvent];
+    inf: [StampedEvent];
 }> {
     override emit<E extends string | symbol>(
         eventName: keyof EventEmitter.EventEmitterEventMap | "inf" | E,
@@ -17,7 +13,8 @@ class BusEmitter extends EventEmitter<{
         if (eventName === "inf" && args && args[0] && typeof args[0] === "object") {
             args[0].__infId = args[0].__infId ?? randomUUIDv7();
         }
-        return super.emit(eventName, ...args);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- args is BusEvent on input but StampedEvent after __infId mutation
+        return super.emit(eventName, ...(args as any));
     }
 }
 

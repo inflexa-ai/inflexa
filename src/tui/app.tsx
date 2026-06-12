@@ -4,7 +4,7 @@ import { SyntaxStyle } from "@opentui/core";
 import type { TextareaRenderable, KeyBinding } from "@opentui/core";
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid";
 
-import { bus } from "../bus.ts";
+import { Bus } from "../lib/bus.ts";
 import { getSessionMessages } from "../db/primary_query.ts";
 import { chat } from "../chat/echo.ts";
 import type { BusEvent, Part, TextPart } from "../types.ts";
@@ -51,7 +51,7 @@ export function App(props: AppProps) {
         );
     });
 
-    const unsub = bus.subscribe((event: BusEvent) => {
+    const handler = (event: BusEvent) => {
         switch (event.type) {
             case "session.status":
                 if (event.sessionId === props.sessionId) {
@@ -125,9 +125,10 @@ export function App(props: AppProps) {
                 }
                 break;
         }
-    });
+    };
+    Bus.on("inf", handler);
 
-    onCleanup(() => unsub());
+    onCleanup(() => Bus.off("inf", handler));
 
     useKeyboard((key) => {
         if (key.name === "c" && key.ctrl && status() === "busy") {

@@ -1,5 +1,5 @@
 import { type Result, ok, err } from "neverthrow";
-import { bus } from "../bus.ts";
+import { Bus } from "../lib/bus.ts";
 import { createMessage, createPart, updatePart } from "../db/primary_mutation.ts";
 import type { DbError } from "../db/errors.ts";
 import type { TextPart } from "../types.ts";
@@ -13,18 +13,18 @@ export interface ChatOptions {
 export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
     const { sessionId, userText, abort } = opts;
 
-    bus.publish({ type: "session.status", sessionId, status: "busy" });
+    Bus.emit("inf", { type: "session.status", sessionId, status: "busy" });
 
     const setup = createMessage(sessionId, "user")
         .andThen((userMsg) =>
             createPart(sessionId, userMsg.id, userText).map((userPart) => {
-                bus.publish({ type: "message.created", message: userMsg });
-                bus.publish({ type: "part.updated", part: userPart });
+                Bus.emit("inf", { type: "message.created", message: userMsg });
+                Bus.emit("inf", { type: "part.updated", part: userPart });
             }),
         )
         .andThen(() => createMessage(sessionId, "assistant"))
         .andThen((assistantMsg) => {
-            bus.publish({ type: "message.created", message: assistantMsg });
+            Bus.emit("inf", { type: "message.created", message: assistantMsg });
             return createPart(sessionId, assistantMsg.id, "").map((assistantPart) => ({ assistantMsg, assistantPart }));
         })
         .match(
@@ -33,7 +33,7 @@ export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
         );
 
     if (!setup.ok) {
-        bus.publish({ type: "session.status", sessionId, status: "error" });
+        Bus.emit("inf", { type: "session.status", sessionId, status: "error" });
         return err(setup.error);
     }
 
@@ -46,7 +46,7 @@ export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
     for (const word of words) {
         if (abort?.aborted) break;
         accumulated += word;
-        bus.publish({
+        Bus.emit("inf", {
             type: "part.delta",
             sessionId,
             messageId: assistantMsg.id,
@@ -59,12 +59,12 @@ export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
     (assistantPart as TextPart).text = accumulated;
     return updatePart(assistantPart).match(
         () => {
-            bus.publish({ type: "part.updated", part: assistantPart });
-            bus.publish({ type: "session.status", sessionId, status: "idle" });
+            Bus.emit("inf", { type: "part.updated", part: assistantPart });
+            Bus.emit("inf", { type: "session.status", sessionId, status: "idle" });
             return ok<void, DbError>(undefined);
         },
         (error) => {
-            bus.publish({ type: "session.status", sessionId, status: "error" });
+            Bus.emit("inf", { type: "session.status", sessionId, status: "error" });
             return err<void, DbError>(error);
         },
     );
