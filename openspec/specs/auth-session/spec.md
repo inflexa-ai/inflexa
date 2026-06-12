@@ -1,0 +1,151 @@
+### Requirement: Auth0 configuration
+
+Auth0 settings (`INF_AUTH0_DOMAIN`, `INF_AUTH0_CLIENT_ID`, `INF_AUTH0_AUDIENCE`) SHALL be read exclusively through the `bakedEnv` object in `src/lib/env.ts`, using literal `process.env.<NAME>` member access so that release builds (`bun run build`) can inline them as compile-time constants; dev runs fall back to the runtime environment through the same expressions. They are internal configuration: they SHALL NOT appear in `envDoc`/`--help`, and a compiled binary SHALL NOT be influenced by their runtime values. No client secret SHALL exist anywhere (public client). Auth operations that need this config SHALL fail with a typed error naming every missing variable; commands that do not use Auth0 SHALL be unaffected by their absence.
+
+#### Scenario: Missing configuration (dev build)
+
+- **WHEN** an auth operation runs in dev and `INF_AUTH0_DOMAIN` and `INF_AUTH0_AUDIENCE` are unset
+- **THEN** it returns a config error listing exactly `INF_AUTH0_DOMAIN` and `INF_AUTH0_AUDIENCE`
+
+#### Scenario: Baked values cannot be overridden
+
+- **WHEN** a release binary built with baked Auth0 values runs with different `INF_AUTH0_*` values in its environment
+- **THEN** the baked values are used and the runtime environment is ignored
+
+#### Scenario: Release build refuses incomplete configuration
+
+- **WHEN** `bun run build` runs with any baked variable unset
+- **THEN** the build fails before compiling, naming the missing variable(s)
+
+#### Scenario: Newly baked variable is picked up automatically
+
+- **WHEN** a new `process.env.<NAME>` dot access is added to `bakedEnv` and `bun run build` runs without `<NAME>` set
+- **THEN** the build fails naming `<NAME>`, with no change to the build script (the baked set is derived from the `bakedEnv` source)
+
+#### Scenario: Other commands unaffected
+
+- **WHEN** `inf sessions` runs with no `INF_AUTH0_*` variables set
+- **THEN** it works exactly as before
+
+### Requirement: Device authorization initiation
+
+The session layer SHALL request a device code via `POST https://{INF_AUTH0_DOMAIN}/oauth/device/code` (form-encoded) with `client_id`, `audience`, and scope `openid profile email offline_access`.
+
+#### Scenario: Successful initiation
+
+- **WHEN** the request succeeds
+- **THEN** the parsed response provides `device_code`, `user_code`, `verification_uri_complete`, `expires_in`, and `interval` for the polling phase
+
+#### Scenario: Initiation rejected
+
+- **WHEN** Auth0 responds with a non-200 status (e.g. device grant not enabled on the application)
+- **THEN** a typed error is returned carrying Auth0's `error_description` verbatim
+
+### Requirement: Token polling
+
+The session layer SHALL poll `POST https://{INF_AUTH0_DOMAIN}/oauth/token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code` every `interval` seconds until a token arrives or `expires_in` elapses. Outcomes SHALL be classified by the `error` field of the JSON response body, never by HTTP status (Auth0 deviates from RFC 8628 statuses).
+
+#### Scenario: Authorization pending
+
+- **WHEN** a poll returns `error: "authorization_pending"`
+- **THEN** polling continues at the current interval
+
+#### Scenario: Slow down
+
+- **WHEN** a poll returns `error: "slow_down"`
+- **THEN** the polling interval increases by 5 seconds before the next attempt
+
+#### Scenario: User approves
+
+- **WHEN** a poll returns a token response with no `error`
+- **THEN** polling stops and the response's `access_token`, `refresh_token`, `id_token`, and `expires_in` are returned
+
+#### Scenario: Device code expires
+
+- **WHEN** a poll returns `error: "expired_token"` or the `expires_in` deadline passes
+- **THEN** a typed expiry error is returned
+
+#### Scenario: User denies
+
+- **WHEN** a poll returns `error: "access_denied"`
+- **THEN** a typed denial error is returned
+
+### Requirement: Token persistence
+
+Tokens SHALL be persisted as JSON (`accessToken`, `refreshToken`, `idToken`, `expiresAt` as ISO-8601 computed from `expires_in`) at the auth path exposed by `env.ts` (`{configDir}/inf/auth.json`), created with `0600` permissions, written atomically (write temp file, then rename) so a crash mid-write cannot corrupt or strand stale credentials.
+
+#### Scenario: First save
+
+- **WHEN** tokens are saved and the parent directory does not exist
+- **THEN** the directory is created and `auth.json` exists afterward with mode `0600`
+
+#### Scenario: Load without prior login
+
+- **WHEN** tokens are loaded and `auth.json` does not exist
+- **THEN** a typed `not_authenticated` error is returned (not a thrown exception)
+
+### Requirement: Transparent access token refresh
+
+`getValidAccessToken()` SHALL be the sole public read path for the access token. It SHALL return the stored token when it has more than 60 seconds of validity left; otherwise it SHALL exchange the refresh token via `POST /oauth/token` with `grant_type=refresh_token` and persist the full response — including the newly rotated refresh token — before returning the new access token.
+
+#### Scenario: Token still valid
+
+- **WHEN** the stored access token expires more than 60 seconds from now
+- **THEN** it is returned with no network request
+
+#### Scenario: Token expired, refresh succeeds
+
+- **WHEN** the stored access token is within 60 seconds of expiry and the refresh request succeeds
+- **THEN** the new access token is returned and `auth.json` now contains the new access token, new expiry, and the rotated refresh token from the response
+
+#### Scenario: Refresh fails
+
+- **WHEN** the refresh request is rejected (revoked, expired by inactivity, or reuse-detected)
+- **THEN** a typed `refresh_failed` error is returned whose message tells the user to run `inf login`
+
+#### Scenario: Never logged in
+
+- **WHEN** `getValidAccessToken()` is called with no stored tokens
+- **THEN** a typed `not_authenticated` error is returned
+
+### Requirement: Refresh token revocation
+
+The session layer SHALL expose revocation via `POST https://{INF_AUTH0_DOMAIN}/oauth/revoke` (form-encoded `client_id` + `token` = the stored refresh token), returning a `Result` so callers decide whether failure is fatal.
+
+#### Scenario: Successful revocation
+
+- **WHEN** revocation is requested with a stored refresh token and Auth0 returns 200
+- **THEN** an ok result is returned and the entire grant family is invalid server-side
+
+#### Scenario: Revocation fails
+
+- **WHEN** the revoke request fails (network down, token already revoked)
+- **THEN** an error result is returned without throwing, leaving the caller free to continue
+
+### Requirement: Schema-validated JSON boundaries
+
+Every JSON payload entering the auth layer from outside the process SHALL be validated against a zod schema before any field is used: Auth0 wire responses (device-code, token, error bodies), the stored `auth.json`, and decoded ID-token claims. TypeScript types for these shapes SHALL be derived from their schemas (`z.infer`), and validation failure SHALL map to the operation's typed error — never an exception or a blindly cast object.
+
+#### Scenario: Malformed Auth0 response
+
+- **WHEN** an Auth0 endpoint returns JSON that does not match the expected wire schema
+- **THEN** the operation returns its typed failure carrying the raw payload for diagnosis
+
+#### Scenario: Malformed stored token file
+
+- **WHEN** `auth.json` exists but fails schema validation (e.g. a field has the wrong type)
+- **THEN** loading returns a `token_read_failed` error stating the file is malformed
+
+#### Scenario: Unknown ID-token claims are ignored
+
+- **WHEN** a stored ID token carries claims beyond `sub`/`email`/`name`
+- **THEN** decoding succeeds and the extra claims are stripped
+
+### Requirement: Result-typed errors
+
+All fallible auth-session operations SHALL return neverthrow `Result`/`ResultAsync` values with a discriminated `AuthError` union (no thrown exceptions across the module boundary), consistent with the existing `result-types` capability.
+
+#### Scenario: Error consumed by a command
+
+- **WHEN** a command invokes any auth-session operation that fails
+- **THEN** it receives a typed error variant it can `.match()` on to print a friendly message

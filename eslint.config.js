@@ -57,6 +57,16 @@ export default defineConfig([
     },
     tseslint.configs.recommended,
     {
+        // Type-aware rules need parserOptions.project, which only src/ has
+        // (scripts/ is outside tsconfig's include). Standalone bun scripts
+        // keep the rest of the linting.
+        files: ["scripts/**/*.ts"],
+        rules: {
+            "@typescript-eslint/no-floating-promises": "off",
+            "@typescript-eslint/no-misused-promises": "off",
+        },
+    },
+    {
         files: ["**/*.{ts,tsx}"],
         ...solid,
     },

@@ -22,6 +22,21 @@ cli.command("config", "View and change settings").action(async () => {
     await launchConfig();
 });
 
+cli.command("login", "Log in via the Auth0 device flow").action(async () => {
+    const { login } = await import("./login.ts");
+    await login();
+});
+
+cli.command("logout", "Log out and revoke the stored session").action(async () => {
+    const { logout } = await import("./logout.ts");
+    await logout();
+});
+
+cli.command("whoami", "Show the logged-in user and session status").action(async () => {
+    const { whoami } = await import("./whoami.ts");
+    whoami();
+});
+
 cli.version(pkg.version);
 cli.help((sections) => {
     const pathRows: string[][] = [];
