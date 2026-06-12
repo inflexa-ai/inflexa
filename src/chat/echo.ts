@@ -4,11 +4,11 @@ import { createMessage, createPart, updatePart } from "../db/primary_mutation.ts
 import type { DbError } from "../db/errors.ts";
 import type { TextPart } from "../types.ts";
 
-export interface ChatOptions {
+export type ChatOptions = {
     sessionId: string;
     userText: string;
     abort?: AbortSignal;
-}
+};
 
 export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
     const { sessionId, userText, abort } = opts;

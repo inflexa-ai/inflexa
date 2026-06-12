@@ -4,12 +4,13 @@ import { createSignal, For, Show } from "solid-js";
 import { readConfig, writeConfig, type Config } from "../lib/config.ts";
 import { env } from "../lib/env.ts";
 import { shutdown } from "../lib/shutdown.ts";
+import { theme } from "../tui/theme.ts";
 
-interface Setting {
+type Setting = {
     key: keyof Config;
     label: string;
     description: string;
-}
+};
 
 const settings: Setting[] = [
     {
@@ -21,15 +22,15 @@ const settings: Setting[] = [
     },
 ];
 
-interface Notice {
+type Notice = {
     kind: "info" | "warn" | "error";
     text: string;
-}
+};
 
 const noticeColors: Record<Notice["kind"], string> = {
-    info: "#9ece6a",
-    warn: "#e0af68",
-    error: "#f7768e",
+    info: theme.success,
+    warn: theme.warn,
+    error: theme.error,
 };
 
 export function ConfigApp() {
@@ -94,27 +95,27 @@ export function ConfigApp() {
 
     return (
         <box flexDirection="column" width="100%" height="100%">
-            <box height={1} width="100%" flexDirection="row" backgroundColor="#1a1b26" paddingLeft={1} paddingRight={1}>
-                <text fg="#7aa2f7" attributes={1}>
+            <box height={1} width="100%" flexDirection="row" backgroundColor={theme.bg} paddingLeft={1} paddingRight={1}>
+                <text fg={theme.accent} attributes={1}>
                     inf config
                 </text>
-                <text fg="#565f89"> | Space/Enter: toggle | s: save | q/Esc: exit</text>
+                <text fg={theme.muted}> | Space/Enter: toggle | s: save | q/Esc: exit</text>
                 <Show when={dirty()}>
-                    <text fg="#e0af68"> | unsaved changes</text>
+                    <text fg={theme.warn}> | unsaved changes</text>
                 </Show>
             </box>
 
             <For each={settings}>
                 {(setting, index) => (
                     <box flexDirection="column" paddingLeft={2} paddingTop={1}>
-                        <text fg={index() === selected() ? "#7dcfff" : "#c0caf5"} attributes={1}>
+                        <text fg={index() === selected() ? theme.selected : theme.fg} attributes={1}>
                             [{draft()[setting.key] ? "x" : " "}] {setting.label}
                             {draft()[setting.key] !== saved()[setting.key] ? " *" : ""}
                         </text>
                         <box paddingLeft={4} flexDirection="column">
-                            <text fg="#565f89">{setting.description}</text>
+                            <text fg={theme.muted}>{setting.description}</text>
                             <Show when={setting.key === "telemetry"}>
-                                <text fg="#565f89">Endpoint: {env.otelEndpoint ?? "not set (OTEL_EXPORTER_OTLP_ENDPOINT)"}</text>
+                                <text fg={theme.muted}>Endpoint: {env.otelEndpoint ?? "not set (OTEL_EXPORTER_OTLP_ENDPOINT)"}</text>
                             </Show>
                         </box>
                     </box>
@@ -128,7 +129,7 @@ export function ConfigApp() {
             </Show>
 
             <box paddingLeft={2} paddingTop={1}>
-                <text fg="#565f89">File: {env.configPath}</text>
+                <text fg={theme.muted}>File: {env.configPath}</text>
             </box>
         </box>
     );

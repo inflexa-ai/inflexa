@@ -4,9 +4,9 @@ import { Result } from "neverthrow";
 
 import { env } from "./env.ts";
 
-export interface Config {
+export type Config = {
     telemetry: boolean;
-}
+};
 
 export type ConfigError = { type: "config_write_failed"; cause: unknown };
 

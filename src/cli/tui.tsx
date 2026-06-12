@@ -6,9 +6,9 @@ import { createSession } from "../db/primary_mutation.ts";
 import { App } from "../tui/app.tsx";
 import type { Session } from "../types.ts";
 
-interface TuiOptions {
+type TuiOptions = {
     session?: string;
-}
+};
 
 export async function launchTui(opts: TuiOptions) {
     const workingDir = process.cwd();

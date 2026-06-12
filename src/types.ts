@@ -1,25 +1,25 @@
-export interface Session {
+export type Session = {
     id: string;
     title: string;
     createdAt: number;
     updatedAt: number;
-}
+};
 
-export interface Message {
+export type Message = {
     id: string;
     sessionId: string;
     role: "user" | "assistant";
     createdAt: number;
-}
+};
 
-export interface TextPart {
+export type TextPart = {
     id: string;
     sessionId: string;
     messageId: string;
     type: "text";
     text: string;
     createdAt: number;
-}
+};
 
 export type Part = TextPart;
 
@@ -32,7 +32,7 @@ export type BusEvent =
 
 export type StampedEvent = BusEvent & { __infId: string };
 
-export interface StoredMessage {
+export type StoredMessage = {
     info: Message;
     parts: Part[];
-}
+};

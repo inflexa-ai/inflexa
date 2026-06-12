@@ -20,10 +20,10 @@ export function tryMutation<T>(op: string, fn: (conn: Database) => T): Result<T,
     }
 }
 
-export interface Migration {
+export type Migration = {
     version: number;
     up: string;
-}
+};
 
 export function newId(): string {
     return ulid();
