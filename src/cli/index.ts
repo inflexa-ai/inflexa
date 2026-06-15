@@ -37,6 +37,16 @@ cli.command("whoami", "Show the logged-in user and session status").action(async
     whoami();
 });
 
+cli.command("setup", "Install, authenticate, and start CLIProxyAPI (Docker)")
+    .option("--provider <name>", "Authenticate a provider non-interactively: gemini|openai|claude|qwen|iflow")
+    .option("--no-auth", "Skip the provider authentication step")
+    .option("--no-start", "Set up only; don't start the proxy container")
+    .option("--force", "Re-pull the proxy image even if it is already cached")
+    .action(async (options: { provider?: string; auth: boolean; start: boolean; force: boolean }) => {
+        const { setup } = await import("./setup.ts");
+        await setup(options);
+    });
+
 cli.version(pkg.version);
 cli.help((sections) => {
     const pathRows: string[][] = [];

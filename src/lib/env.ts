@@ -21,6 +21,11 @@ function configDir(): string {
 export const env = Object.freeze({
     dbPath: join(dataDir(), "inf", "agent.db"),
     logDir: join(dataDir(), "inf", "logs"),
+    // CLIProxyAPI runs in Docker (see src/cli/setup.ts). The config and the
+    // provider-credential dir are state we own, so they live under our data dir
+    // and are bind-mounted into the container.
+    cliproxyConfigPath: join(dataDir(), "inf", "cliproxy", "config.yaml"),
+    cliproxyAuthDir: join(dataDir(), "inf", "cliproxy", "auth"),
     configPath: join(configDir(), "inf", "config.json"),
     authPath: join(configDir(), "inf", "auth.json"),
     logLevel: process.env[logLevelVar],
@@ -48,6 +53,8 @@ export type EnvDocEntry = { kind: "path"; label: string; description: string; ba
 export const envDoc: Readonly<Record<keyof typeof env, EnvDocEntry>> = Object.freeze({
     dbPath: { kind: "path", label: "database", description: "saved sessions (SQLite)", baseVar: dataVar },
     logDir: { kind: "path", label: "logs", description: "log files, rotated daily, 7-day retention", baseVar: dataVar },
+    cliproxyConfigPath: { kind: "path", label: "proxy config", description: "CLIProxyAPI config, mounted into the proxy container", baseVar: dataVar },
+    cliproxyAuthDir: { kind: "path", label: "proxy auth", description: "CLIProxyAPI provider credentials, created by `inf setup`", baseVar: dataVar },
     configPath: { kind: "path", label: "config", description: "settings (telemetry consent)", baseVar: configVar },
     authPath: { kind: "path", label: "auth", description: "Auth0 session tokens, created by `inf login`", baseVar: configVar },
     logLevel: { kind: "var", name: logLevelVar, description: "log verbosity: trace|debug|info|warn|error|fatal (default: info)" },

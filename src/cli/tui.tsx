@@ -3,6 +3,7 @@ import { ConsolePosition } from "@opentui/core";
 
 import { getSession } from "../db/primary_query.ts";
 import { createSession } from "../db/primary_mutation.ts";
+import { ensureProxyReady, ProxyError } from "./setup.ts";
 import { App } from "../tui/app.tsx";
 import type { Session } from "../types.ts";
 
@@ -11,6 +12,20 @@ type TuiOptions = {
 };
 
 export async function launchTui(opts: TuiOptions) {
+    // The TUI can only operate against a running, authenticated CLIProxyAPI.
+    // Make it ready (auto-start the container, sign in if needed) before the
+    // renderer takes over the terminal — the auth flow needs normal stdio.
+    try {
+        await ensureProxyReady();
+    } catch (error) {
+        if (error instanceof ProxyError) {
+            console.error(`\n  ${error.message}\n`);
+        } else {
+            console.error("\n  Could not start CLIProxyAPI:", error, "\n");
+        }
+        process.exit(1);
+    }
+
     const workingDir = process.cwd();
 
     let session: Session | null = null;
