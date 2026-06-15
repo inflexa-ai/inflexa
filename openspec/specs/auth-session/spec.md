@@ -43,7 +43,7 @@ The session layer SHALL request a device code via `POST https://{INF_AUTH0_DOMAI
 
 ### Requirement: Token polling
 
-The session layer SHALL poll `POST https://{INF_AUTH0_DOMAIN}/oauth/token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code` every `interval` seconds until a token arrives or `expires_in` elapses. Outcomes SHALL be classified by the `error` field of the JSON response body, never by HTTP status (Auth0 deviates from RFC 8628 statuses).
+The session layer SHALL poll `POST https://{INF_AUTH0_DOMAIN}/oauth/token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code` every `interval` seconds until a token arrives or `expires_in` elapses. Outcomes SHALL be classified by the `error` field of the JSON response body, never by HTTP status (Auth0 deviates from RFC 8628 statuses). A single transient failure (network error, request timeout, or unparseable body) SHALL NOT abort the flow: such failures SHALL be retried on subsequent intervals up to a small budget of *consecutive* failures, reset by any valid response, with the `expires_in` deadline still bounding the overall wait.
 
 #### Scenario: Authorization pending
 
@@ -54,6 +54,11 @@ The session layer SHALL poll `POST https://{INF_AUTH0_DOMAIN}/oauth/token` with 
 
 - **WHEN** a poll returns `error: "slow_down"`
 - **THEN** the polling interval increases by 5 seconds before the next attempt
+
+#### Scenario: Transient failure mid-poll
+
+- **WHEN** a poll attempt cannot reach Auth0 (network error or request timeout) or returns an unparseable body, but fewer than the consecutive-failure budget have occurred in a row
+- **THEN** polling retries on the next interval instead of aborting; only once the budget is exhausted (or `expires_in` passes) is a typed poll-failure error returned
 
 #### Scenario: User approves
 
@@ -86,7 +91,7 @@ Tokens SHALL be persisted as JSON (`accessToken`, `refreshToken`, `idToken`, `ex
 
 ### Requirement: Transparent access token refresh
 
-`getValidAccessToken()` SHALL be the sole public read path for the access token. It SHALL return the stored token when it has more than 60 seconds of validity left; otherwise it SHALL exchange the refresh token via `POST /oauth/token` with `grant_type=refresh_token` and persist the full response — including the newly rotated refresh token — before returning the new access token.
+`getValidAccessToken()` SHALL be the sole public read path for the access token. It SHALL return the stored token when it has more than 60 seconds of validity left; otherwise it SHALL exchange the refresh token via `POST /oauth/token` with `grant_type=refresh_token` and persist the full response — including the newly rotated refresh token — before returning the new access token. Because refresh tokens rotate, refreshes SHALL be serialized across concurrent processes by a cross-process advisory lock, and a process that waited on the lock SHALL re-read the stored token and reuse it when it is now valid rather than presenting its own already-rotated refresh token (which would trip Auth0 reuse-detection and revoke the grant family). A crashed lock holder SHALL NOT wedge refreshes permanently: a sufficiently old lock SHALL be reclaimed.
 
 #### Scenario: Token still valid
 
@@ -107,6 +112,16 @@ Tokens SHALL be persisted as JSON (`accessToken`, `refreshToken`, `idToken`, `ex
 
 - **WHEN** `getValidAccessToken()` is called with no stored tokens
 - **THEN** a typed `not_authenticated` error is returned
+
+#### Scenario: Concurrent refresh across processes
+
+- **WHEN** two inf processes both find the stored access token within 60 seconds of expiry at the same time
+- **THEN** one acquires the refresh lock and rotates the token while the other waits, and the waiter then re-reads the freshly persisted token and returns it without a second refresh request — so the rotated refresh token is never replayed and the grant family is not revoked
+
+#### Scenario: Crashed lock holder
+
+- **WHEN** a refresh lock file is left behind by a process that died mid-refresh
+- **THEN** a later refresh reclaims the stale lock once it is older than the holder's bounded lifetime, rather than waiting forever or failing
 
 ### Requirement: Refresh token revocation
 

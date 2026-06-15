@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { err, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
@@ -13,6 +13,25 @@ const AUTH_SCOPE = "openid profile email offline_access";
 // Remaining validity below which the access token is refreshed: covers clock
 // skew and the latency between this check and the server seeing the request.
 const EXPIRY_BUFFER_MS = 60_000;
+
+// A login the user may already be approving in the browser shouldn't die on one
+// network blip. Tolerate this many *consecutive* failed polls (a thrown request
+// or an unparsable body) before giving up; any valid response resets the
+// count, and the device-code deadline still bounds the overall wait.
+const MAX_CONSECUTIVE_POLL_FAILURES = 5;
+
+// Concurrent-refresh guard. Rotating refresh tokens make a concurrent refresh
+// dangerous: two processes presenting the same refresh token trip Auth0's
+// reuse-detection, which revokes the entire grant family and silently logs the
+// user out. A cross-process advisory lock serializes renewals. A healthy holder
+// is bounded by the 15s request timeout, so a lock older than this belongs to a
+// crashed process and may be reclaimed.
+const LOCK_STALE_MS = 30_000;
+// How long a waiting process spins for the lock before erroring — above the max
+// healthy hold time so it never abandons a live refresh, yet below the staleness
+// threshold so a crashed holder's lock is always reclaimed first.
+const LOCK_WAIT_MS = 20_000;
+const LOCK_POLL_MS = 150;
 
 export type Auth0Config = {
     domain: string;
@@ -114,7 +133,7 @@ export function loadAuth(): Result<StoredAuth, AuthError> {
         return err({ type: "token_read_failed", cause });
     }
 
-    const parsed = parseWith(storedAuthSchema, raw);
+    const parsed = JSON.parseWith(raw, storedAuthSchema);
     if (parsed === null) return err({ type: "token_read_failed", cause: "auth.json is malformed" });
     return ok(parsed);
 }
@@ -157,11 +176,11 @@ export async function requestDeviceCode(config: Auth0Config): Promise<Result<Dev
     }
 
     if (!response.ok) {
-        const failure = parseWith(tokenWireSchema, raw);
+        const failure = JSON.parseWith(raw, tokenWireSchema);
         return err({ type: "device_code_request_failed", detail: failure?.error_description ?? `HTTP ${response.status}: ${raw}` });
     }
 
-    const wire = parseWith(deviceCodeWireSchema, raw);
+    const wire = JSON.parseWith(raw, deviceCodeWireSchema);
     if (wire === null) {
         return err({ type: "device_code_request_failed", detail: `unexpected response: ${raw}` });
     }
@@ -179,9 +198,10 @@ export async function pollForToken(config: Auth0Config, device: DeviceCodeRespon
     // Floor at 1s so a zero/absent server interval cannot busy-loop.
     let intervalSeconds = Math.max(device.interval, 1);
     const deadline = Date.now() + device.expiresIn * 1000;
+    let consecutiveFailures = 0;
 
     while (Date.now() < deadline) {
-        await sleep(intervalSeconds * 1000);
+        await Promise.sleep(intervalSeconds * 1000);
 
         let raw: string;
         try {
@@ -192,12 +212,26 @@ export async function pollForToken(config: Auth0Config, device: DeviceCodeRespon
             });
             raw = await response.text();
         } catch (cause) {
-            // TODO(robustness): a transient network blip mid-poll aborts the whole login; retry a few times before giving up.
-            return err({ type: "token_poll_failed", detail: String(cause) });
+            // A transient blip (or the 15s request timeout) shouldn't abort a
+            // login the user may already have approved — retry within budget.
+            // The loop sleeps `interval` before the next attempt, so retries are
+            // already paced.
+            if (++consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+                return err({ type: "token_poll_failed", detail: String(cause) });
+            }
+            continue;
         }
 
-        const wire = parseWith(tokenWireSchema, raw);
-        if (wire === null) return err({ type: "token_poll_failed", detail: `unexpected response: ${raw}` });
+        const wire = JSON.parseWith(raw, tokenWireSchema);
+        if (wire === null) {
+            // An unparsable body is the same class of transient failure (e.g. a
+            // proxy's HTML error page mid-outage) — count it, don't bail.
+            if (++consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+                return err({ type: "token_poll_failed", detail: `unexpected response: ${raw}` });
+            }
+            continue;
+        }
+        consecutiveFailures = 0;
 
         // Outcomes are classified by the body's `error` field, never the HTTP
         // status — Auth0 deviates from RFC 8628 (403 for pending, 429 for slow_down).
@@ -235,7 +269,7 @@ export async function refreshAccessToken(config: Auth0Config, current: StoredAut
         return err({ type: "refresh_failed", detail: String(cause) });
     }
 
-    const wire = parseWith(tokenWireSchema, raw);
+    const wire = JSON.parseWith(raw, tokenWireSchema);
     if (wire === null) return err({ type: "refresh_failed", detail: `unexpected response: ${raw}` });
     if (!response.ok || wire.error) {
         return err({ type: "refresh_failed", detail: wire.error_description ?? wire.error ?? `HTTP ${response.status}` });
@@ -250,15 +284,33 @@ export async function refreshAccessToken(config: Auth0Config, current: StoredAut
 
 export async function getValidAccessToken(): Promise<Result<string, AuthError>> {
     return loadAuth().asyncAndThen((auth) => {
-        if (new Date(auth.expiresAt).getTime() - Date.now() > EXPIRY_BUFFER_MS) {
-            return okAsync<string, AuthError>(auth.accessToken);
-        }
-
-        // TODO(robustness): two inf processes refreshing concurrently can trip
-        // rotation reuse-detection and revoke the whole grant family; file
-        // locking would serialize renewals.
-        return resolveAuth0Config().asyncAndThen((config) => new ResultAsync(refreshAccessToken(config, auth)).map((next) => next.accessToken));
+        if (!isExpiring(auth)) return okAsync<string, AuthError>(auth.accessToken);
+        return resolveAuth0Config().asyncAndThen((config) => new ResultAsync(refreshUnderLock(config)));
     });
+}
+
+// Serializes the refresh across processes. Rotating refresh tokens make a
+// concurrent refresh dangerous: a second process replaying the same refresh
+// token trips Auth0's reuse-detection, which revokes the whole grant family and
+// silently logs the user out. A cross-process advisory lock pins one refresher
+// at a time; the re-read under the lock — not the lock alone — is what prevents
+// the revocation, since a process that waited must use the token the winner just
+// wrote rather than replay its own now-stale one.
+async function refreshUnderLock(config: Auth0Config): Promise<Result<string, AuthError>> {
+    const lock = await acquireRefreshLock();
+    if (lock.isErr()) return err(lock.error);
+    const token = lock.value;
+    try {
+        // `return await` so the lock is held until the refresh resolves, not
+        // released the moment the promise is created.
+        return await loadAuth().asyncAndThen((fresh) =>
+            isExpiring(fresh)
+                ? new ResultAsync(refreshAccessToken(config, fresh)).map((next) => next.accessToken)
+                : okAsync<string, AuthError>(fresh.accessToken),
+        );
+    } finally {
+        releaseRefreshLock(token);
+    }
 }
 
 export async function revokeRefreshToken(config: Auth0Config, refreshToken: string): Promise<Result<void, AuthError>> {
@@ -276,6 +328,79 @@ export async function revokeRefreshToken(config: Auth0Config, refreshToken: stri
         return err({ type: "revoke_failed", detail: `HTTP ${response.status}: ${await response.text()}` });
     }
     return ok(undefined);
+}
+
+// True when the access token has at most the safety buffer of validity left and
+// therefore warrants a refresh.
+function isExpiring(auth: StoredAuth): boolean {
+    return new Date(auth.expiresAt).getTime() - Date.now() <= EXPIRY_BUFFER_MS;
+}
+
+function refreshLockPath(): string {
+    return env.authPath + ".lock";
+}
+
+// Acquires an exclusive advisory lock by atomically creating the lock file
+// (`wx` = O_EXCL). On contention, a lock older than LOCK_STALE_MS belongs to a
+// crashed holder and is reclaimed; otherwise we spin until it frees up or the
+// wait budget elapses. getValidAccessToken only locks after a successful
+// loadAuth, so the parent directory is guaranteed to exist. Returns a token
+// identifying this acquisition (written into the file) so release can confirm
+// we still own the lock before deleting it.
+async function acquireRefreshLock(): Promise<Result<string, AuthError>> {
+    const path = refreshLockPath();
+    // pid + high-resolution timestamp: unique per acquisition, so a process that
+    // reclaimed our lock as stale writes a different token and we won't delete it.
+    const token = `${process.pid} ${new Date().toISOString()}`;
+    const giveUpAt = Date.now() + LOCK_WAIT_MS;
+    for (;;) {
+        try {
+            writeFileSync(path, token + "\n", { flag: "wx", mode: 0o600 });
+            return ok(token);
+        } catch (cause) {
+            if ((cause as NodeJS.ErrnoException).code !== "EEXIST") {
+                return err({ type: "token_write_failed", cause });
+            }
+        }
+
+        if (lockAgeMs(path) > LOCK_STALE_MS) {
+            // Reclaim a crashed holder's lock, then loop to re-create our own.
+            rmSync(path, { force: true });
+            continue;
+        }
+
+        if (Date.now() >= giveUpAt) {
+            return err({ type: "refresh_failed", detail: "timed out waiting for another inf process to finish renewing the session" });
+        }
+        await Promise.sleep(LOCK_POLL_MS);
+    }
+}
+
+// Age of the lock from its mtime; Infinity if it has vanished (holder just
+// released it), so the caller retries creation immediately.
+function lockAgeMs(path: string): number {
+    try {
+        return Date.now() - statSync(path).mtimeMs;
+    } catch {
+        return Infinity;
+    }
+}
+
+// Releases the lock only if we still hold it. A healthy holder's window (≤15s
+// request timeout) is well under LOCK_STALE_MS, so this practically always
+// matches; but if our refresh somehow overran and another process reclaimed the
+// lock as stale, its token differs and we must not delete the lock it now owns.
+function releaseRefreshLock(token: string): void {
+    let current: string;
+    try {
+        current = readFileSync(refreshLockPath(), "utf8");
+    } catch {
+        return; // already gone — nothing to release
+    }
+    // Compare ignoring the trailing newline we wrote with the token.
+    if (current.trim() === token) {
+        rmSync(refreshLockPath(), { force: true });
+    }
 }
 
 // Builds the persisted shape from a successful token response. `previous`
@@ -307,23 +432,5 @@ async function postForm(url: string, fields: Record<string, string>): Promise<Re
         body: new URLSearchParams(fields),
         // A hung request should fail the command, not freeze it forever.
         signal: AbortSignal.timeout(15_000),
-    });
-}
-
-// Parses raw JSON and validates it against the schema; null on either failure
-// so callers can surface the raw payload in their own typed errors.
-function parseWith<T>(schema: z.ZodType<T>, raw: string): T | null {
-    try {
-        const parsed: unknown = JSON.parse(raw); // unknown: external input, validated by the schema below
-        const result = schema.safeParse(parsed);
-        return result.success ? result.data : null;
-    } catch {
-        return null;
-    }
-}
-
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-        setTimeout(resolve, ms);
     });
 }

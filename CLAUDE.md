@@ -65,7 +65,17 @@ Format: `// TODO(<tag>): <reason>`. Never use a bare `// TODO`.
 - `src/lib/` — shared infrastructure: `env.ts` (sole `process.env` reader), `config.ts` (user config file), `bus.ts` (event bus), `log.ts` (pino), `otel.ts`, `shutdown.ts`
 - `src/db/` — SQLite layer: `primary.ts` (connection), `primary_migrations.ts`, `primary_query.ts`, `primary_mutation.ts`, `errors.ts`, `util.ts`
 - `src/chat/` — chat backends (`echo.ts` is the placeholder)
+- `src/extensions/` — global runtime extensions (see below)
 - `src/types.ts` — cross-cutting domain types (`Session`, `Message`, `Part`, `BusEvent`)
+
+## Global extensions
+
+`src/extensions/*.ext.ts` augment built-in globals with small, broadly-useful methods (`Promise.sleep`, `JSON.parseWith`) so call sites don't each redeclare a one-line helper. Each file:
+
+- Declares the method on the relevant global interface via `declare global { interface PromiseConstructor { … } }` (use `PromiseConstructor`/`JSON`/etc. for statics, the instance interface for prototype methods), assigns the implementation, and ends with `export {}` to stay a module.
+- Is registered by adding one side-effect import to `src/extensions/index.ts` — the central loader, imported once from `src/index.ts` before `cli.parse()`. That loader is side-effect-only (not a re-export barrel, so it doesn't violate the no-barrel rule). Anything depending on an extension must run after the entry point loads it (all CLI commands do, since they lazy-import after startup).
+
+Reach for an extension only when a helper is genuinely cross-cutting; keep single-caller helpers in their owning file per the Coding rules.
 
 ## Solid + opentui (TUI)
 

@@ -1,3 +1,6 @@
+// Side-effect import: installs the global runtime extensions before any command runs.
+import "./extensions/index.ts";
+
 import { cli } from "./cli/index.ts";
 import { initBusLogging } from "./lib/bus.ts";
 import { readConfig } from "./lib/config.ts";
