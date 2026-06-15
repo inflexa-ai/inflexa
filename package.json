@@ -14,6 +14,7 @@
         "typecheck": "tsc --noEmit"
     },
     "dependencies": {
+        "@ai-sdk/openai-compatible": "^2.0.50",
         "@opentelemetry/api": "^1.9.1",
         "@opentelemetry/api-logs": "^0.219.0",
         "@opentelemetry/exporter-logs-otlp-http": "^0.219.0",
@@ -22,6 +23,7 @@
         "@opentelemetry/semantic-conventions": "^1.41.1",
         "@opentui/core": "0.4.0",
         "@opentui/solid": "^0.4.0",
+        "ai": "^6.0.205",
         "cac": "^7.0.0",
         "neverthrow": "^8.2.0",
         "pino": "^10.3.1",

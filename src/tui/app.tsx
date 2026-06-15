@@ -7,7 +7,7 @@ import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { Bus } from "../lib/bus.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { getSessionMessages } from "../db/primary_query.ts";
-import { chat } from "../chat/echo.ts";
+import { chat } from "../chat/agent.ts";
 import { theme } from "./theme.ts";
 import type { BusEvent, Part, TextPart } from "../types.ts";
 

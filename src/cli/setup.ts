@@ -46,8 +46,15 @@ export async function setup(options: SetupOptions): Promise<void> {
         await pullImage(options.force);
 
         if (options.auth) {
-            const authed = await authenticate(provider);
-            if (!authed) console.log("  No provider authenticated yet — re-run `inf setup` to sign in.");
+            // Credentials persist in the mounted auth dir, so re-running setup
+            // shouldn't force a re-login. Skip the prompt when already signed in;
+            // an explicit --provider still triggers a fresh login to add/switch.
+            if (provider === undefined && (await isAuthenticated())) {
+                console.log("  Already authenticated — skipping login (use `--provider <name>` to add or switch).");
+            } else {
+                const authed = await authenticate(provider);
+                if (!authed) console.log("  No provider authenticated yet — re-run `inf setup` to sign in.");
+            }
         }
 
         if (options.start) await startProxy();
@@ -74,7 +81,7 @@ function resolveProvider(options: SetupOptions): Provider | undefined {
 function printNextSteps(options: SetupOptions): void {
     console.log("\n  Done.");
     if (!options.start) console.log("  The proxy starts automatically the next time you run `inf`.");
-    console.log(`  The TUI talks to the proxy at ${PROXY_URL}.`);
+    console.log(`  The TUI talks to the proxy at ${env.cliproxyBaseUrl}.`);
     console.log();
 }
 
@@ -82,8 +89,6 @@ function printNextSteps(options: SetupOptions): void {
 
 const IMAGE = "eceasy/cli-proxy-api:latest";
 const CONTAINER_NAME = "inf-cliproxy";
-const PROXY_PORT = 8317;
-const PROXY_URL = `http://localhost:${PROXY_PORT}`;
 
 // The image runs `./CLIProxyAPI` from WORKDIR /CLIProxyAPI (see upstream
 // Dockerfile); these are the in-container paths the binary reads.
@@ -194,14 +199,25 @@ async function removeContainer(): Promise<void> {
 // the current image and mount flags every time setup runs.
 async function recreateContainer(): Promise<void> {
     await removeContainer();
-    const args = ["run", "-d", "--name", CONTAINER_NAME, "--restart", "unless-stopped", "-p", `${PROXY_PORT}:${PROXY_PORT}`, ...volumeArgs(), IMAGE];
+    const args = [
+        "run",
+        "-d",
+        "--name",
+        CONTAINER_NAME,
+        "--restart",
+        "unless-stopped",
+        "-p",
+        `${env.cliproxyPort}:${env.cliproxyPort}`,
+        ...volumeArgs(),
+        IMAGE,
+    ];
     const { code, stderr } = await dockerCapture(args);
     if (code !== 0) throw new ProxyError(`Failed to start the proxy container.${stderr ? `\n  ${stderr.trim()}` : ""}`);
 }
 
 async function startProxy(): Promise<void> {
     await recreateContainer();
-    console.log(`\n  CLIProxyAPI is running on ${PROXY_URL}`);
+    console.log(`\n  CLIProxyAPI is running on ${env.cliproxyBaseUrl}`);
 }
 
 // Bring the container up without forcing a recreate: reuse a running one, start
@@ -235,7 +251,7 @@ async function writeProxyConfig(): Promise<{ created: boolean; apiKey?: string }
 // it is OS-safe regardless of the host.
 function proxyConfig(apiKey: string): string {
     return `host: ""
-port: ${PROXY_PORT}
+port: ${env.cliproxyPort}
 auth-dir: "${CONTAINER_AUTH_DIR}"
 api-keys:
   - "${apiKey}"

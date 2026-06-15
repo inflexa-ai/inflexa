@@ -18,6 +18,13 @@ function configDir(): string {
     return process.platform === "win32" ? join(homedir(), "AppData", "Roaming") : join(homedir(), ".config");
 }
 
+// CLIProxyAPI listens on this fixed port inside the Docker container we manage
+// (src/cli/setup.ts publishes it) and the chat backend connects to it. We own
+// the container, so the endpoint is intentionally NOT user-overridable — it is
+// not read from process.env. If we ever let users choose the port, derive the
+// URLs from it right here.
+const cliproxyPort = 8317;
+
 export const env = Object.freeze({
     dbPath: join(dataDir(), "inf", "agent.db"),
     logDir: join(dataDir(), "inf", "logs"),
@@ -30,6 +37,11 @@ export const env = Object.freeze({
     authPath: join(configDir(), "inf", "auth.json"),
     logLevel: process.env[logLevelVar],
     otelEndpoint: process.env[otelEndpointVar],
+    // CLIProxyAPI networking — internal constants, deliberately excluded from
+    // envDoc/--help (see the Exclude on envDoc below).
+    cliproxyPort,
+    cliproxyBaseUrl: `http://localhost:${cliproxyPort}`, // human-facing, no /v1
+    cliproxyApiUrl: `http://localhost:${cliproxyPort}/v1`, // chat backend endpoint
 });
 
 // Internal configuration baked into release binaries: `bun run build` inlines
@@ -50,7 +62,7 @@ export const bakedEnv = Object.freeze({
 export type EnvDocEntry = { kind: "path"; label: string; description: string; baseVar: string } | { kind: "var"; name: string; description: string };
 
 // Rendered into the Paths/Environment sections of --help (src/cli/index.ts).
-export const envDoc: Readonly<Record<keyof typeof env, EnvDocEntry>> = Object.freeze({
+export const envDoc: Readonly<Record<Exclude<keyof typeof env, "cliproxyPort" | "cliproxyBaseUrl" | "cliproxyApiUrl">, EnvDocEntry>> = Object.freeze({
     dbPath: { kind: "path", label: "database", description: "saved sessions (SQLite)", baseVar: dataVar },
     logDir: { kind: "path", label: "logs", description: "log files, rotated daily, 7-day retention", baseVar: dataVar },
     cliproxyConfigPath: { kind: "path", label: "proxy config", description: "CLIProxyAPI config, mounted into the proxy container", baseVar: dataVar },

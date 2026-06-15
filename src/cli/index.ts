@@ -53,7 +53,7 @@ cli.help((sections) => {
     const varRows: string[][] = [];
     const baseVarLabels = new Map<string, string[]>();
 
-    for (const [key, doc] of Object.entries(envDoc) as [keyof typeof env, EnvDocEntry][]) {
+    for (const [key, doc] of Object.entries(envDoc) as [keyof typeof envDoc, EnvDocEntry][]) {
         if (doc.kind === "path") {
             pathRows.push([doc.label, env[key] ?? "", doc.description]);
             baseVarLabels.set(doc.baseVar, [...(baseVarLabels.get(doc.baseVar) ?? []), doc.label]);
