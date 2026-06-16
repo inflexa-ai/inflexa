@@ -1,6 +1,5 @@
 import { createSignal, For, Show, onCleanup, onMount } from "solid-js";
 import { createStore, produce } from "solid-js/store";
-import { SyntaxStyle } from "@opentui/core";
 import type { TextareaRenderable, KeyBinding } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid";
 
@@ -8,10 +7,8 @@ import { Bus } from "../lib/bus.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { getSessionMessages } from "../db/primary_query.ts";
 import { chat } from "../chat/agent.ts";
-import { theme } from "./theme.ts";
+import { syntaxStyle, theme } from "./theme.ts";
 import type { BusEvent, Part, TextPart } from "../types.ts";
-
-const syntaxStyle = SyntaxStyle.create();
 
 type UIMessage = {
     id: string;
@@ -175,28 +172,28 @@ export function App(props: AppProps) {
     return (
         <box flexDirection="column" width="100%" height="100%">
             {/* Header */}
-            <box height={1} width="100%" flexDirection="row" backgroundColor={theme.bg} paddingLeft={1} paddingRight={1}>
-                <text fg={theme.accent} attributes={1}>
+            <box height={1} width="100%" flexDirection="row" backgroundColor={theme().bgPanel} paddingLeft={1} paddingRight={1}>
+                <text fg={theme().accent} attributes={1}>
                     inf
                 </text>
-                <text fg={theme.muted}> | {props.workingDir.split("/").pop()} | </text>
-                <text fg={status() === "busy" ? theme.warn : status() === "error" ? theme.error : theme.success}>
+                <text fg={theme().muted}> | {props.workingDir.split("/").pop()} | </text>
+                <text fg={status() === "busy" ? theme().warn : status() === "error" ? theme().error : theme().success}>
                     {status() === "busy" ? "thinking..." : status() === "error" ? "error" : "ready"}
                 </text>
-                <text fg={theme.muted}> | Ctrl+C: abort | /quit: exit</text>
+                <text fg={theme().muted}> | Ctrl+C: abort | /quit: exit</text>
             </box>
 
             {/* Chat area */}
             <scrollbox flexGrow={1} width="100%" stickyScroll stickyStart="bottom" paddingLeft={1} paddingRight={1} paddingTop={1}>
                 <Show when={messages.length === 0}>
                     <box paddingTop={1} paddingBottom={1}>
-                        <text fg={theme.muted}>Welcome to inf. Type a message to begin.</text>
+                        <text fg={theme().muted}>Welcome to inf. Type a message to begin.</text>
                     </box>
                 </Show>
                 <For each={messages}>
                     {(msg) => (
                         <box width="100%" flexDirection="column" paddingBottom={1}>
-                            <text fg={msg.role === "user" ? theme.user : theme.assistant} attributes={1}>
+                            <text fg={msg.role === "user" ? theme().user : theme().assistant} attributes={1}>
                                 {msg.role === "user" ? "> You" : "< Assistant"}
                             </text>
                             <For each={msg.parts}>
@@ -206,7 +203,7 @@ export function App(props: AppProps) {
                                     const content = () => (isStreaming() ? streamText() : p.text);
                                     return (
                                         <Show when={content()}>
-                                            <markdown content={content()} syntaxStyle={syntaxStyle} streaming={isStreaming()} paddingLeft={2} />
+                                            <markdown content={content()} syntaxStyle={syntaxStyle()} streaming={isStreaming()} paddingLeft={2} />
                                         </Show>
                                     );
                                 }}
@@ -218,13 +215,13 @@ export function App(props: AppProps) {
 
             {/* Error banner */}
             <Show when={errorMsg()}>
-                <box height={1} width="100%" backgroundColor={theme.error} paddingLeft={1}>
-                    <text fg={theme.bg}>{errorMsg()}</text>
+                <box height={1} width="100%" backgroundColor={theme().error} paddingLeft={1}>
+                    <text fg={theme().bg}>{errorMsg()}</text>
                 </box>
             </Show>
 
             {/* Input area */}
-            <box width="100%" minHeight={3} maxHeight={8} borderColor={theme.border} border paddingLeft={1} paddingRight={1}>
+            <box width="100%" minHeight={3} maxHeight={8} borderColor={theme().borderActive} border paddingLeft={1} paddingRight={1}>
                 <textarea
                     ref={(r: TextareaRenderable) => {
                         textareaRef = r;
@@ -233,10 +230,10 @@ export function App(props: AppProps) {
                     focused
                     width="100%"
                     placeholder="Type a message... (Enter to send, Meta+Enter for newline)"
-                    placeholderColor={theme.muted}
-                    textColor={theme.fg}
-                    backgroundColor={theme.bg}
-                    focusedBackgroundColor={theme.bgFocused}
+                    placeholderColor={theme().muted}
+                    textColor={theme().fg}
+                    backgroundColor={theme().bg}
+                    focusedBackgroundColor={theme().bgFocused}
                     keyBindings={keyBindings}
                     onSubmit={() => void handleSubmit()}
                 />

@@ -4,7 +4,9 @@ import { ConsolePosition } from "@opentui/core";
 import { getSession } from "../db/primary_query.ts";
 import { createSession } from "../db/primary_mutation.ts";
 import { ensureProxyReady, ProxyError } from "./setup.ts";
+import { readConfig } from "../lib/config.ts";
 import { App } from "../tui/app.tsx";
+import { setTheme } from "../tui/theme.ts";
 import type { Session } from "../types.ts";
 
 type TuiOptions = {
@@ -49,6 +51,9 @@ export async function launchTui(opts: TuiOptions) {
             },
         );
     }
+
+    // Seed the active theme from persisted config before the renderer reads it.
+    setTheme(readConfig().theme);
 
     void render(() => <App sessionId={session!.id} workingDir={workingDir} />, {
         exitOnCtrlC: false,

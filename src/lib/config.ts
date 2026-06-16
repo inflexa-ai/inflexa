@@ -3,10 +3,12 @@ import { dirname } from "node:path";
 import { Result } from "neverthrow";
 import { z } from "zod";
 
+import { DEFAULT_THEME_ID, themeIds } from "../tui/theme_ids.ts";
 import { env } from "./env.ts";
 
 const configSchema = z.object({
     telemetry: z.boolean(),
+    theme: z.enum(themeIds).catch(DEFAULT_THEME_ID).default(DEFAULT_THEME_ID),
 });
 export type Config = z.infer<typeof configSchema>;
 
@@ -20,7 +22,7 @@ export function readConfig(): Config {
     } catch {
         // Missing or unreadable config fails closed: consent not granted.
     }
-    return { telemetry: false };
+    return { telemetry: false, theme: DEFAULT_THEME_ID };
 }
 
 export function writeConfig(config: Config): Result<void, ConfigError> {
