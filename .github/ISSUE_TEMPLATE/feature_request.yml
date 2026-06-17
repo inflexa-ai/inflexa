@@ -1,0 +1,49 @@
+name: ✨ Feature request
+description: Suggest a new capability or an improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For anything beyond a small change — new analytical capabilities, or changes to the sandbox or provenance model — please open a [Discussion](../../discussions) or design proposal first so we can align before code is written. See [`GOVERNANCE.md`](https://github.com/inflexa-ai/inf-cli/blob/main/GOVERNANCE.md).
+  - type: checkboxes
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing [issues](../../issues) and [Discussions](../../discussions) and didn't find a duplicate.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to do, and what gets in the way today? Focus on the need, not a specific solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like Inflexa to do?
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of Inflexa does this touch?
+      options:
+        - Analysis workflow / method
+        - Agent / orchestration
+        - Docker sandbox
+        - Provenance / lineage
+        - CLI / TUI experience
+        - Documentation
+        - Other / not sure
+    validations:
+      required: true

@@ -1,0 +1,97 @@
+name: 🐞 Bug report
+description: Report a defect. Install and first-run failures are especially valuable.
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Inflexa runs across platforms and Docker versions, so **the platform details below matter** — they are often what makes a report reproducible.
+
+        ⚠️ Do not paste private data, datasets, or secrets (API keys, tokens) into logs. Redact before posting.
+
+        For security vulnerabilities, **stop** and follow [`SECURITY.md`](https://github.com/inflexa-ai/inf-cli/blob/main/SECURITY.md) instead — do not file them here.
+  - type: checkboxes
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing [issues](../../issues) and [Discussions](../../discussions) and didn't find a duplicate.
+          required: true
+        - label: This is not a security vulnerability (those go through SECURITY.md).
+          required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and its impact.
+      placeholder: Running `inf ...` produced ... but I expected ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact commands you ran, in order. A minimal reproduction helps enormously.
+      placeholder: |
+        1. inf ...
+        2. ...
+        3. see error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Inflexa version
+      description: Output of `inf --version` (or the commit SHA if you built from source).
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
+        - Windows / WSL
+        - Other (note in description)
+    validations:
+      required: true
+  - type: input
+    id: arch
+    attributes:
+      label: CPU architecture
+      placeholder: arm64 / x64
+    validations:
+      required: true
+  - type: input
+    id: docker
+    attributes:
+      label: Docker version
+      description: Output of `docker --version`. Write "n/a" if the bug is unrelated to sandbox execution.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install Inflexa?
+      options:
+        - Prebuilt binary
+        - Built from source (bun run build)
+        - Ran from source (bun run dev)
+        - Other (note in description)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or output
+      description: Paste any error output. This is automatically formatted as code — secrets and private data removed.
+      render: shell
+    validations:
+      required: false

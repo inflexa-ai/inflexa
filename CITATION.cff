@@ -1,0 +1,69 @@
+# Citation File Format 1.2.0  —  https://citation-file-format.github.io/
+# GitHub renders a "Cite this repository" button from this file and exports BibTeX/APA.
+
+cff-version: 1.2.0
+message: "If you use Inflexa in your research, please cite it as below."
+title: "Inflexa"
+abstract: >-
+    Inflexa is a local-first, open-source CLI agent for reproducible biological
+    data analysis. It lets scientists analyze omics and biological datasets from
+    the terminal using natural language, runs locally, executes analyses in a
+    reproducible Docker sandbox, and records full provenance and lineage in SQLite.
+type: software
+authors:
+    # Citation order matters — listed in the order they will be credited.
+    - given-names: "Radu Andrei"
+      family-names: Tanasa
+      affiliation: "Inflexa, Inc."
+      orcid: "https://orcid.org/0009-0007-2817-4589"
+    - given-names: Robert
+      family-names: Krajla
+      affiliation: "Inflexa, Inc."
+      orcid: "https://orcid.org/0009-0009-7758-0684"
+    - given-names: Stefan
+      family-names: Buciu
+      affiliation: "Inflexa, Inc."
+      orcid: "https://orcid.org/0009-0005-8000-0055"
+    - name: "Inflexa, Inc."
+
+version: 0.1.0
+date-released: "2026-07-07"
+url: "https://inflexa.ai"
+repository-code: "https://github.com/inflexa-ai/inf-cli"
+
+license: Apache-2.0
+
+keywords:
+    - bioinformatics
+    - reproducibility
+    - provenance
+    - data lineage
+    - transcriptomics
+    - single-cell
+    - RNA-seq
+    - pathway analysis
+    - omics
+    - AI agent
+    - command-line tool
+
+# --- Add AFTER your first Zenodo release mints a DOI (use the CONCEPT DOI, which
+#     always resolves to the latest version). Uncomment and fill in. ---
+# doi: "10.5281/zenodo.XXXXXXX"
+# identifiers:
+#   - type: doi
+#     value: "10.5281/zenodo.XXXXXXX"
+#     description: "Concept DOI — always resolves to the latest Inflexa release."
+
+# --- Add LATER, once a preprint or JOSS paper exists, so citations point to the
+#     paper instead of (or in addition to) the software. Uncomment and fill in. ---
+# preferred-citation:
+#   type: article
+#   title: "Inflexa: a local-first, auditable AI agent for reproducible biological data analysis"
+#   authors:
+#     - given-names: "Radu Andrei"
+#       family-names: Tanasa
+#       affiliation: "Inflexa, Inc."
+#       orcid: "https://orcid.org/0009-0007-2817-4589"
+#   year: 2026
+#   journal: "Journal of Open Source Software"   # or bioRxiv / arXiv for the preprint
+#   doi: "10.xxxxx/xxxxx"
