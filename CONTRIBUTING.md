@@ -43,10 +43,6 @@ bun run build
 
 # sanity-check your environment - checks Docker, architecture, disk, runtime
 bun run dev doctor
-
-# run the zero-data demo end to end
-bun run dev demo rnaseq
-bun run dev lineage
 ```
 
 If `doctor` or `demo` fails on a clean setup, that's itself a high-value bug report. Please open an issue with your OS, architecture, Docker version, and the full output.
