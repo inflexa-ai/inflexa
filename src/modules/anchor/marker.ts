@@ -1,6 +1,5 @@
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
 import type { AnchorMarker, AnchorId } from "../../types/anchor.ts";
 
 /** The on-disk marker for a folder: <dir>/.inf/id (write-once identity file). */
@@ -20,16 +19,6 @@ export function canonicalPath(p: string): string {
     } catch {
         return resolve(p);
     }
-}
-
-/**
- * Mint a fresh anchor id. This is a globally-unique opaque token written to disk
- * that must survive moves/renames, so it is crypto.randomUUID() — deliberately NOT
- * newId()/ULID, which is reserved for sortable DB row ids. The caller normally
- * supplies the id; this default exists only for convenience.
- */
-export function newAnchorUuid(): AnchorId {
-    return randomUUID();
 }
 
 /**

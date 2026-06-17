@@ -1,5 +1,6 @@
+import { randomUUIDv7 } from "bun";
 import type { Result } from "neverthrow";
-import { newId, tryMutation } from "./util.ts";
+import { tryMutation } from "./util.ts";
 import type { DbError } from "./errors.ts";
 import type { Session, Message, Part, TextPart } from "../types/session.ts";
 import type { Anchor } from "../types/anchor.ts";
@@ -7,7 +8,7 @@ import type { Anchor } from "../types/anchor.ts";
 /** Creates and persists a new session, defaulting the title when omitted. */
 export function createSession(title?: string): Result<Session, DbError> {
     const session: Session = {
-        id: newId(),
+        id: randomUUIDv7(),
         title: title ?? "New session",
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -29,7 +30,7 @@ export function updateSession(session: Session): Result<void, DbError> {
 /** Creates and persists an empty message turn for `role` in the session. */
 export function createMessage(sessionId: string, role: "user" | "assistant"): Result<Message, DbError> {
     const msg: Message = {
-        id: newId(),
+        id: randomUUIDv7(),
         sessionId,
         role,
         createdAt: Date.now(),
@@ -44,7 +45,7 @@ export function createMessage(sessionId: string, role: "user" | "assistant"): Re
 /** Creates and persists a text part under a message — the unit the assistant streams into. */
 export function createPart(sessionId: string, messageId: string, text: string): Result<TextPart, DbError> {
     const part: TextPart = {
-        id: newId(),
+        id: randomUUIDv7(),
         sessionId,
         messageId,
         type: "text",
@@ -70,9 +71,9 @@ export function updatePart(part: Part): Result<void, DbError> {
 }
 
 /**
- * Inserts a fully-formed anchor row. The caller supplies it — rather than this
- * generating an id like the session helpers — because an anchor's id is the marker
- * UUID minted in the anchor module (a `crypto.randomUUID`, not a ULID).
+ * Inserts a fully-formed anchor row. The caller supplies the id — rather than this
+ * minting one like the session helpers — because an anchor's id is its write-once
+ * marker id, which may already exist on disk and must be preserved, not regenerated.
  */
 export function insertAnchor(anchor: Anchor): Result<Anchor, DbError> {
     return tryMutation("insertAnchor", (conn) => {
@@ -99,5 +100,12 @@ export function updateAnchorCachedPath(id: string, cachedPath: string): Result<v
 export function touchAnchor(id: string): Result<void, DbError> {
     return tryMutation("touchAnchor", (conn) => {
         conn.query("UPDATE anchors SET last_seen = ? WHERE id = ?").run(Date.now(), id);
+    });
+}
+
+/** Drops an anchor row by its id. A no-op when no such row exists. */
+export function deleteAnchor(id: string): Result<void, DbError> {
+    return tryMutation("deleteAnchor", (conn) => {
+        conn.query("DELETE FROM anchors WHERE id = ?").run(id);
     });
 }

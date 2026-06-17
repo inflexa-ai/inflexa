@@ -1,5 +1,4 @@
 import { Database } from "bun:sqlite";
-import { ulid } from "ulid";
 import { type Result, ok, err } from "neverthrow";
 import type { DbError } from "./errors.ts";
 import { db } from "./primary.ts";
@@ -24,10 +23,6 @@ export type Migration = {
     version: number;
     up: string;
 };
-
-export function newId(): string {
-    return ulid();
-}
 
 export function ensureDir(path: string) {
     const dir = path.slice(0, path.lastIndexOf("/"));
