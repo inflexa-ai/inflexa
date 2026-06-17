@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import { randomUUIDv7 } from "bun";
-import type { BusEvent, StampedEvent } from "../types.ts";
+import type { BusEvent, StampedEvent } from "../types/events.ts";
 import { getLogger } from "./log.ts";
 
 class BusEmitter extends EventEmitter<{

@@ -3,11 +3,11 @@ import { ConsolePosition } from "@opentui/core";
 
 import { getSession } from "../db/primary_query.ts";
 import { createSession } from "../db/primary_mutation.ts";
-import { ensureProxyReady, ProxyError } from "./setup.ts";
+import { ensureProxyReady, ProxyError } from "../modules/proxy/setup.ts";
 import { readConfig } from "../lib/config.ts";
-import { App } from "../tui/app.tsx";
-import { setTheme } from "../tui/theme.ts";
-import type { Session } from "../types.ts";
+import { App } from "./app.tsx";
+import { setTheme } from "./theme.ts";
+import type { Session } from "../types/session.ts";
 
 type TuiOptions = {
     session?: string;

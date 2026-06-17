@@ -1,4 +1,4 @@
-import { type Auth0Config, describeAuthError, pollForToken, requestDeviceCode, resolveAuth0Config, saveAuth } from "../lib/auth.ts";
+import { type Auth0Config, describeAuthError, pollForToken, requestDeviceCode, resolveAuth0Config, saveAuth } from "./auth.ts";
 
 export async function login(): Promise<void> {
     const config = resolveAuth0Config().match(

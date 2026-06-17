@@ -23,15 +23,6 @@ export type TextPart = {
 
 export type Part = TextPart;
 
-export type BusEvent =
-    | { type: "session.status"; sessionId: string; status: "idle" | "busy" | "error" }
-    | { type: "message.created"; message: Message }
-    | { type: "part.updated"; part: Part }
-    | { type: "part.delta"; sessionId: string; messageId: string; partId: string; delta: string }
-    | { type: "session.error"; sessionId: string; error: string };
-
-export type StampedEvent = BusEvent & { __infId: string };
-
 export type StoredMessage = {
     info: Message;
     parts: Part[];

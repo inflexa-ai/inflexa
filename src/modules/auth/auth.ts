@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { err, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
 
-import { bakedEnv, env } from "./env.ts";
+import { bakedEnv, env } from "../../lib/env.ts";
 
 // offline_access is required: inf-cli's sliding session (log in once, renew on
 // use) depends on rotating refresh tokens. This deliberately diverges from

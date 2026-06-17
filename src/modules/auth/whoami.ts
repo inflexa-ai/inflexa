@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 
 import { z } from "zod";
 
-import { describeAuthError, loadAuth, type StoredAuth } from "../lib/auth.ts";
+import { describeAuthError, loadAuth, type StoredAuth } from "./auth.ts";
 
 // Unknown claims are stripped by the schema; only the displayed ones matter.
 const idTokenClaimsSchema = z.object({

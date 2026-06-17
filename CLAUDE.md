@@ -49,7 +49,17 @@ Format: `// TODO(<tag>): <reason>`. Never use a bare `// TODO`.
 - Prefer `type` over `interface`, `const` over `let`, `function` over arrow functions.
 - Always type function parameters and return values (except JSX returns).
 - Comment every `any`/`unknown` usage.
-- **Use domain types, never raw `string` for known value sets.** Cross-cutting domain types live in `src/types.ts`; everything else co-locates with its owning code.
+- **Use domain types, never raw `string` for known value sets.** Shared domain types — persisted entity shapes (`session.ts`, `anchor.ts`, …) and the event contract (`events.ts`) — live in `src/types/`, grouped by domain. Everything else (command options, error unions, wire schemas) co-locates with its owning code. See [Project structure](#project-structure) for why the entity shapes are shared rather than module-local.
+- **Document types and their properties with JSDoc (`/** … */`) blocks, never trailing `//` line comments** — JSDoc is the only form the LSP surfaces on hover and completion. Place the block on the line above the type or property it describes.
+
+  ```ts
+  /** Invisible folder-identity record. Keyed by the marker id, not its path. */
+  export type Anchor = {
+      /** false when the folder was not writable (no on-disk marker) */
+      markerWritten: boolean;
+      // NOT: markerWritten: boolean; // false when the folder was not writable
+  };
+  ```
 
 ## Naming conventions
 
@@ -59,14 +69,23 @@ Format: `// TODO(<tag>): <reason>`. Never use a bare `// TODO`.
 
 ## Project structure
 
+Code is grouped **by feature (vertical slice)**, not by technical layer: a feature owns its logic, its CLI command action(s), and its logic-local types under `src/modules/<domain>/`. Shared infrastructure with no single owner stays in the layer directories.
+
 - `src/index.ts` — entry point: telemetry/log wiring, shutdown hooks, then `cli.parse()`
-- `src/cli/` — cac command registry (`index.ts`) plus one file per command (`tui.tsx`, `config.tsx`, `sessions.ts`). Commands lazy-import their implementation.
-- `src/tui/` — Solid/opentui components (`app.tsx`) and the color palette (`theme.ts`)
-- `src/lib/` — shared infrastructure: `env.ts` (sole `process.env` reader), `config.ts` (user config file), `bus.ts` (event bus), `log.ts` (pino), `otel.ts`, `shutdown.ts`
-- `src/db/` — SQLite layer: `primary.ts` (connection), `primary_migrations.ts`, `primary_query.ts`, `primary_mutation.ts`, `errors.ts`, `util.ts`
-- `src/chat/` — chat backends (`echo.ts` is the placeholder)
+- `src/cli/` — the cac command **registry** (`index.ts`) + help formatting, nothing else. Each command lazy-imports its action: text commands from their module (e.g. `import("../modules/auth/login.ts")`), TUI screens from `tui/` (e.g. `import("../tui/launch.tsx")`).
+- `src/modules/<domain>/` — feature slices (see [Modules](#modules)): **headless** domain logic + the text command actions that drive them. Interactive views are NOT here (see `tui/`). Today: `auth/` (Auth0 device flow + `login`/`logout`/`whoami`), `proxy/` (CLIProxyAPI lifecycle + `setup`), `session/` (chat backend + `sessions` command), `anchor/` (folder-identity markers + lazy path reconciliation).
+- `src/db/` — shared SQLite layer: `primary.ts` (connection), `primary_migrations.ts`, `primary_query.ts`, `primary_mutation.ts`, `errors.ts`, `util.ts`. Queries/mutations stay here (verb-split, beside the migrations); a module imports the functions it needs.
+- `src/tui/` — the **presentation layer / app shell**: the entry app plus shared, app-level, or reusable Solid/opentui code. Today: `app.tsx` (the root chat screen, launched by every command that opens a chat), `launch.tsx` (`launchTui`), `config.tsx` (settings — an app-level screen), `theme.ts`/`theme_ids.ts`. Presentation sits *above* the logic modules: it may import module logic (view → logic); modules must never import `tui/`. **Where a view lives** mirrors Lumen's `components/` vs `modules/<m>/components/` split — shared / app-shell / app-level screens go here; a view owned by exactly one feature co-locates in that module. `config.tsx` is an app-level exception that lives here — not a license to put every view in `tui/`. Kept flat while the surface is small; add `tui/<domain>/` (or module-side view folders) when a screen outgrows one file or shared widgets emerge.
+- `src/lib/` — non-domain infrastructure: `env.ts` (sole `process.env` reader), `config.ts` (user config file), `bus.ts` (event bus), `log.ts` (pino), `otel.ts`, `shutdown.ts`, `themes.ts`.
 - `src/extensions/` — global runtime extensions (see below)
-- `src/types.ts` — cross-cutting domain types (`Session`, `Message`, `Part`, `BusEvent`)
+- `src/types/` — shared domain model, grouped by domain: persisted entity shapes (`session.ts`, `anchor.ts`, …) and the event contract (`events.ts`). These are shared, not module-local, because the `db/` layer references every entity shape and `lib/bus.ts` references the events — homing them in a module would invert the infra→feature dependency.
+
+## Modules
+
+A module under `src/modules/<domain>/` groups everything about one domain: its logic, its CLI command action(s), and its logic-local types. There is **no mandated file layout** — add files as the domain needs them, not preemptively (named exports only, no barrels, per [Naming conventions](#naming-conventions)).
+
+- **Public surface.** Whatever other layers import is the module's API; import it directly from the owning file (e.g. `ensureProxyReady` from `modules/proxy/setup.ts`). No barrel/index re-exports.
+- **Dependency direction.** Modules import shared infra (`lib/`, `db/`, `src/types/`, `extensions/`) and **other modules, acyclically** (e.g. `session` → `proxy`; a future `analysis` → `anchor`). They must **not** import `tui/` — presentation depends on logic, never the reverse. Infrastructure (`lib/`, `db/`) must **never** import a module. If two modules need the same code, lift it to a shared layer.
 
 ## Global extensions
 
@@ -83,7 +102,7 @@ The TUI is Solid (`solid-js`) rendered to the terminal via `@opentui/solid`. Sol
 
 ### Launch and exit
 
-- Each TUI command has a `launch*` function in `src/cli/*.tsx` that resolves its data (session lookup/creation) first, then calls `void render(...)` with `exitOnCtrlC: false`, `targetFps: 30`, `screenMode: "alternate-screen"`.
+- Each TUI screen lives in `src/tui/` as its component plus a `launch*` function — co-located in one file (like `config.tsx`), or split into a `launch.tsx` beside a large component (like the chat `app.tsx`). `launch*` resolves its data (session lookup/creation) first, then calls `void render(...)` with `exitOnCtrlC: false`, `targetFps: 30`, `screenMode: "alternate-screen"`.
 - **Always `renderer.destroy()` before `shutdown(0)`.** `destroy()` restores the terminal (mouse tracking, alternate screen, cooked mode) — `process.exit()` alone skips OpenTUI's cleanup and leaves the shell broken.
 - `exitOnCtrlC` is false, so every TUI app must handle its own quit keys via `useKeyboard`.
 

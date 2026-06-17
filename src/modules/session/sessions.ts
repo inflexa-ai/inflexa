@@ -1,4 +1,4 @@
-import * as query from "../db/primary_query.ts";
+import * as query from "../../db/primary_query.ts";
 
 export async function listSessions() {
     query.listSessions().match(

@@ -3,12 +3,12 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { type Result, ok, err } from "neverthrow";
 import { z } from "zod";
 
-import { Bus } from "../lib/bus.ts";
-import { env } from "../lib/env.ts";
-import { createMessage, createPart, updatePart } from "../db/primary_mutation.ts";
-import { getSessionMessages } from "../db/primary_query.ts";
-import type { DbError } from "../db/errors.ts";
-import type { StoredMessage, TextPart } from "../types.ts";
+import { Bus } from "../../lib/bus.ts";
+import { env } from "../../lib/env.ts";
+import { createMessage, createPart, updatePart } from "../../db/primary_mutation.ts";
+import { getSessionMessages } from "../../db/primary_query.ts";
+import type { DbError } from "../../db/errors.ts";
+import type { StoredMessage, TextPart } from "../../types/session.ts";
 
 // The chat backend talks to the model through CLIProxyAPI (provisioned by
 // `inf setup`). The proxy exposes an OpenAI-compatible endpoint that routes to
