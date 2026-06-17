@@ -6,7 +6,8 @@ import { z } from "zod";
 import { Bus } from "../../lib/bus.ts";
 import { env } from "../../lib/env.ts";
 import { createMessage, createPart, updatePart } from "../../db/primary_mutation.ts";
-import { getSessionMessages } from "../../db/primary_query.ts";
+import { listSessionMessages } from "../../db/primary_query.ts";
+import { withTransaction } from "../../db/util.ts";
 import type { DbError } from "../../db/errors.ts";
 import type { StoredMessage, TextPart } from "../../types/session.ts";
 
@@ -43,18 +44,19 @@ export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
 
     Bus.emit("inf", { type: "session.status", sessionId, status: "busy" });
 
-    // Persist the user turn first so the history we build below includes it.
-    const userTurn = createMessage(sessionId, "user")
-        .andThen((userMsg) =>
-            createPart(sessionId, userMsg.id, userText).map((userPart) => {
-                Bus.emit("inf", { type: "message.created", message: userMsg });
-                Bus.emit("inf", { type: "part.updated", part: userPart });
-            }),
-        )
-        .match(
-            () => ({ ok: true as const }),
-            (error) => ({ ok: false as const, error }),
-        );
+    // Persist the user turn first so the history we build below includes it. The message and
+    // its part commit together — a failure mid-way must not leave a message with no content.
+    // Events fire only after the commit, so the UI never sees a turn that was rolled back.
+    const userTurn = withTransaction("chat:userTurn", () =>
+        createMessage(sessionId, "user").andThen((userMsg) => createPart(sessionId, userMsg.id, userText).map((userPart) => ({ userMsg, userPart }))),
+    ).match(
+        ({ userMsg, userPart }) => {
+            Bus.emit("inf", { type: "message.created", message: userMsg });
+            Bus.emit("inf", { type: "part.updated", part: userPart });
+            return { ok: true as const };
+        },
+        (error) => ({ ok: false as const, error }),
+    );
     if (!userTurn.ok) {
         Bus.emit("inf", { type: "session.status", sessionId, status: "error" });
         return err(userTurn.error);
@@ -62,7 +64,7 @@ export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
 
     // Build the model history from the persisted conversation (the assistant
     // turn isn't created yet, so it isn't included).
-    const history = getSessionMessages(sessionId).match(
+    const history = listSessionMessages(sessionId).match(
         (value) => ({ ok: true as const, value }),
         (error) => ({ ok: false as const, error }),
     );
@@ -72,16 +74,19 @@ export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
     }
     const modelMessages = toModelMessages(history.value);
 
-    // Create the assistant message + an empty part to stream into.
-    const assistantTurn = createMessage(sessionId, "assistant")
-        .andThen((assistantMsg) => {
-            Bus.emit("inf", { type: "message.created", message: assistantMsg });
-            return createPart(sessionId, assistantMsg.id, "").map((assistantPart) => ({ assistantMsg, assistantPart }));
-        })
-        .match(
-            (val) => ({ ok: true as const, ...val }),
-            (error) => ({ ok: false as const, error }),
-        );
+    // Create the assistant message + an empty part to stream into — atomically, so a partial
+    // turn can't survive a failure. The created event fires only once both rows are committed.
+    const assistantTurn = withTransaction("chat:assistantTurn", () =>
+        createMessage(sessionId, "assistant").andThen((assistantMsg) =>
+            createPart(sessionId, assistantMsg.id, "").map((assistantPart) => ({ assistantMsg, assistantPart })),
+        ),
+    ).match(
+        (val) => {
+            Bus.emit("inf", { type: "message.created", message: val.assistantMsg });
+            return { ok: true as const, ...val };
+        },
+        (error) => ({ ok: false as const, error }),
+    );
     if (!assistantTurn.ok) {
         Bus.emit("inf", { type: "session.status", sessionId, status: "error" });
         return err(assistantTurn.error);

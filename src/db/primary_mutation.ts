@@ -19,11 +19,11 @@ export function createSession(title?: string): Result<Session, DbError> {
     });
 }
 
-/** Persists `session`, stamping a fresh `updatedAt` (mutates the argument). */
-export function updateSession(session: Session): Result<void, DbError> {
+/** Persists `session`, stamping a fresh `updatedAt` (mutates the argument). Returns rows changed — `0` when no such session exists. */
+export function updateSession(session: Session): Result<number, DbError> {
     session.updatedAt = Date.now();
     return tryMutation("updateSession", (conn) => {
-        conn.query("UPDATE sessions SET data = ? WHERE id = ?").run(JSON.stringify(session), session.id);
+        return conn.query("UPDATE sessions SET data = ? WHERE id = ?").run(JSON.stringify(session), session.id).changes;
     });
 }
 
@@ -63,10 +63,10 @@ export function createPart(sessionId: string, messageId: string, text: string): 
     });
 }
 
-/** Persists a part's current text — called once the stream into it completes. */
-export function updatePart(part: Part): Result<void, DbError> {
+/** Persists a part's current text — called once the stream into it completes. Returns rows changed — `0` when no such part exists. */
+export function updatePart(part: Part): Result<number, DbError> {
     return tryMutation("updatePart", (conn) => {
-        conn.query("UPDATE parts SET data = ? WHERE id = ?").run(JSON.stringify(part), part.id);
+        return conn.query("UPDATE parts SET data = ? WHERE id = ?").run(JSON.stringify(part), part.id).changes;
     });
 }
 
@@ -89,23 +89,23 @@ export function insertAnchor(anchor: Anchor): Result<Anchor, DbError> {
     });
 }
 
-/** Re-points an anchor at `cachedPath`. A real data edit, so it bumps `updatedAt`; the `lastSeen` heartbeat stays separate. */
-export function updateAnchorCachedPath(id: string, cachedPath: string): Result<void, DbError> {
+/** Re-points an anchor at `cachedPath`. A real data edit, so it bumps `updatedAt`; the `lastSeen` heartbeat stays separate. Returns rows changed — `0` when no such anchor exists. */
+export function updateAnchorCachedPath(id: string, cachedPath: string): Result<number, DbError> {
     return tryMutation("updateAnchorCachedPath", (conn) => {
-        conn.query("UPDATE anchors SET cached_path = ?, updated_at = ? WHERE id = ?").run(cachedPath, Date.now(), id);
+        return conn.query("UPDATE anchors SET cached_path = ?, updated_at = ? WHERE id = ?").run(cachedPath, Date.now(), id).changes;
     });
 }
 
-/** Records a sighting heartbeat (`lastSeen`) only — deliberately does NOT touch `updatedAt`, the data-edit timestamp. */
-export function touchAnchor(id: string): Result<void, DbError> {
+/** Records a sighting heartbeat (`lastSeen`) only — deliberately does NOT touch `updatedAt`, the data-edit timestamp. Returns rows changed — `0` when no such anchor exists. */
+export function touchAnchor(id: string): Result<number, DbError> {
     return tryMutation("touchAnchor", (conn) => {
-        conn.query("UPDATE anchors SET last_seen = ? WHERE id = ?").run(Date.now(), id);
+        return conn.query("UPDATE anchors SET last_seen = ? WHERE id = ?").run(Date.now(), id).changes;
     });
 }
 
-/** Drops an anchor row by its id. A no-op when no such row exists. */
-export function deleteAnchor(id: string): Result<void, DbError> {
+/** Drops an anchor row by its id. Returns rows changed — `0` when no such row exists. */
+export function deleteAnchor(id: string): Result<number, DbError> {
     return tryMutation("deleteAnchor", (conn) => {
-        conn.query("DELETE FROM anchors WHERE id = ?").run(id);
+        return conn.query("DELETE FROM anchors WHERE id = ?").run(id).changes;
     });
 }

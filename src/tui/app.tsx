@@ -5,7 +5,7 @@ import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 
 import { Bus } from "../lib/bus.ts";
 import { shutdown } from "../lib/shutdown.ts";
-import { getSessionMessages } from "../db/primary_query.ts";
+import { listSessionMessages } from "../db/primary_query.ts";
 import { chat } from "../modules/session/chat.ts";
 import { syntaxStyle, theme } from "./theme.ts";
 import type { BusEvent } from "../types/events.ts";
@@ -36,7 +36,7 @@ export function App(props: AppProps) {
     let abortController: AbortController | null = null;
 
     onMount(() => {
-        getSessionMessages(props.sessionId).match(
+        listSessionMessages(props.sessionId).match(
             (existing) => {
                 const uiMsgs: UIMessage[] = existing.map((m) => ({
                     id: m.info.id,
