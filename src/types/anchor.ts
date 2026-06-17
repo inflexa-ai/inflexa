@@ -1,6 +1,7 @@
 /**
- * Opaque anchor identity: a `crypto.randomUUID()` written into the folder marker
- * (`.inf/id`), deliberately NOT a ULID row id — it must survive moves and renames.
+ * The folder's stable identity — a `randomUUIDv7()` written write-once into the marker
+ * (`.inf/id`). It keys the anchor across moves and renames; the row's stored path is
+ * only a cache, reconciled back to this id.
  */
 export type AnchorId = string;
 

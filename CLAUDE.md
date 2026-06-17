@@ -33,6 +33,10 @@ bun run format       # Format all of src/
 - Explain `WHY` in comments, not `HOW`.
 - **Don't extract single-caller helpers or sub-components into separate files.** Keep them in the same file as their caller. A new file is justified only when multiple callers exist — that's when a real reusable pattern emerges.
 
+### Identifiers
+
+**Mint ids inline with `randomUUIDv7()` (`import { randomUUIDv7 } from "bun"`).** It is the single id scheme for everything — DB row ids, the write-once anchor marker, event ids. It is time-sortable (the role `ulid` used to fill), in-runtime (zero-dependency), and the only v7 source available: Node's `crypto` mints v4 only. **Never wrap id generation in a helper** like `newId()`/`newFooUuid()` — a function whose whole body is `return randomUUIDv7()` is pointless ceremony; write `randomUUIDv7()` at the call site. Don't reach for `ulid` or `crypto.randomUUID()`.
+
 ### TODO conventions
 
 Format: `// TODO(<tag>): <reason>`. Never use a bare `// TODO`.

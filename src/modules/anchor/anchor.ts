@@ -1,3 +1,4 @@
+import { randomUUIDv7 } from "bun";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { ok, err, type Result } from "neverthrow";
@@ -5,7 +6,7 @@ import type { Anchor, AnchorMarker } from "../../types/anchor.ts";
 import type { DbError } from "../../db/errors.ts";
 import { getAnchor, listAnchors } from "../../db/primary_query.ts";
 import { insertAnchor, touchAnchor, updateAnchorCachedPath } from "../../db/primary_mutation.ts";
-import { canonicalPath, findMarkerUpwards, isDirWritable, newAnchorUuid, readMarker, writeMarker } from "./marker.ts";
+import { canonicalPath, findMarkerUpwards, isDirWritable, readMarker, writeMarker } from "./marker.ts";
 
 /**
  * `id` is the marker UUID (from the on-disk marker or freshly minted), stored as the
@@ -48,7 +49,7 @@ export function getOrCreateAnchorForCwd(dir: string): Result<Anchor, DbError> {
 
     // No marker: mint a UUID. Only write a marker when the dir is writable; otherwise
     // the anchor degrades to path-only (markerWritten: false), per the spec.
-    const uuid = newAnchorUuid();
+    const uuid = randomUUIDv7();
     const writable = isDirWritable(abs);
     if (writable) {
         try {
