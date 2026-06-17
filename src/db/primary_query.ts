@@ -2,6 +2,8 @@ import { type Result } from "neverthrow";
 import type { DbError } from "./errors.ts";
 import type { Session, Part, StoredMessage } from "../types/session.ts";
 import type { Anchor } from "../types/anchor.ts";
+import type { Project } from "../types/project.ts";
+import { asStr256 } from "../lib/types.ts";
 import { tryQuery } from "./util.ts";
 
 /** Loads a session by id; `null` when there is no such row. */
@@ -83,5 +85,48 @@ export function listAnchors(): Result<Anchor[], DbError> {
     return tryQuery("listAnchors", (conn) => {
         const rows = conn.query(`SELECT ${ANCHOR_COLS} FROM anchors`).all() as AnchorRow[];
         return rows.map(anchorFromRow);
+    });
+}
+
+// --- Data model: projects ---
+
+/** A row of the columnar `projects` table — one typed column per field. */
+type ProjectRow = {
+    id: string;
+    name: string;
+    description: string | null;
+    tags: string;
+    created_at: number;
+    updated_at: number;
+};
+
+function projectFromRow(r: ProjectRow): Project {
+    return {
+        id: r.id,
+        // Trusted source: the name was validated through `str256` before it was ever stored.
+        name: asStr256(r.name),
+        description: r.description,
+        // tags are stored comma-joined; they hold no commas (comma-split on input), so the round-trip is lossless.
+        tags: r.tags ? r.tags.split(",").filter(Boolean) : [],
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+    };
+}
+
+const PROJECT_COLS = "id, name, description, tags, created_at, updated_at";
+
+/** Every project, newest first. */
+export function listProjects(): Result<Project[], DbError> {
+    return tryQuery("listProjects", (conn) => {
+        const rows = conn.query(`SELECT ${PROJECT_COLS} FROM projects ORDER BY created_at DESC`).all() as ProjectRow[];
+        return rows.map(projectFromRow);
+    });
+}
+
+/** How many analyses are grouped under a project. `0` when the project has none (or does not exist). */
+export function countAnalysesByProject(projectId: string): Result<number, DbError> {
+    return tryQuery("countAnalysesByProject", (conn) => {
+        const row = conn.query("SELECT COUNT(*) AS n FROM analyses WHERE project_id = ?").get(projectId) as { n: number };
+        return row.n;
     });
 }

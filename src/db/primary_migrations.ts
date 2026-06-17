@@ -35,6 +35,27 @@ export const migrations: Migration[] = [
             CREATE INDEX idx_messages_session ON messages(session_id);
             CREATE INDEX idx_parts_message ON parts(message_id);
             CREATE INDEX idx_parts_session ON parts(session_id);
+            CREATE TABLE projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                tags TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE analyses (
+                id TEXT PRIMARY KEY,
+                project_id TEXT REFERENCES projects(id),
+                anchor_id TEXT NOT NULL REFERENCES anchors(id),
+                name TEXT NOT NULL,
+                slug TEXT NOT NULL,
+                output_directory TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                -- Outputs live at …/analyses/<slug>/, so a slug must be unique within its anchor.
+                UNIQUE (anchor_id, slug)
+            );
+            CREATE INDEX idx_analyses_project ON analyses(project_id);
         `,
     },
 ];

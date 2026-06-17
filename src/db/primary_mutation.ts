@@ -4,6 +4,8 @@ import { tryMutation } from "./util.ts";
 import type { DbError } from "./errors.ts";
 import type { Session, Message, Part, TextPart } from "../types/session.ts";
 import type { Anchor } from "../types/anchor.ts";
+import type { Project } from "../types/project.ts";
+import type { Str256 } from "../lib/types.ts";
 
 /** Creates and persists a new session, defaulting the title when omitted. */
 export function createSession(title?: string): Result<Session, DbError> {
@@ -16,6 +18,34 @@ export function createSession(title?: string): Result<Session, DbError> {
     return tryMutation("createSession", (conn) => {
         conn.query("INSERT INTO sessions (id, data) VALUES (?, ?)").run(session.id, JSON.stringify(session));
         return session;
+    });
+}
+
+/**
+ * Mints and persists a new project. A duplicate `name` trips the `UNIQUE` constraint and
+ * surfaces as `constraint_violation` (`unique`) for the caller to translate.
+ */
+export function createProject(input: { name: Str256; description: string | null; tags: string[] }): Result<Project, DbError> {
+    const now = Date.now();
+    const project: Project = {
+        id: randomUUIDv7(),
+        name: input.name,
+        description: input.description,
+        tags: input.tags,
+        createdAt: now,
+        updatedAt: now,
+    };
+    return tryMutation("createProject", (conn) => {
+        conn.query("INSERT INTO projects (id, name, description, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(
+            project.id,
+            project.name,
+            project.description,
+            // tags hold no commas (comma-split on input), so a comma-join round-trips losslessly.
+            project.tags.join(","),
+            project.createdAt,
+            project.updatedAt,
+        );
+        return project;
     });
 }
 

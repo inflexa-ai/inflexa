@@ -1,9 +1,11 @@
+import type { ID } from "@/lib/types";
+
 /**
  * The folder's stable identity — a `randomUUIDv7()` written write-once into the marker
  * (`.inf/id`). It keys the anchor across moves and renames; the row's stored path is
  * only a cache, reconciled back to this id.
  */
-export type AnchorId = string;
+export type AnchorId = ID;
 
 /** Invisible folder-identity record. Keyed by the marker id, not its path. */
 export type Anchor = {
