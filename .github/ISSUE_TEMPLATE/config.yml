@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/inflexa-ai/inf-cli/security/advisories/new
+    about: Do NOT open a public issue for security problems. Report privately via GitHub — see SECURITY.md for the full policy and scope.
+  - name: 💬 Questions, ideas, and proposals
+    url: https://github.com/inflexa-ai/inf-cli/discussions
+    about: Ask a question, share an idea, or discuss a large change before opening it. Per GOVERNANCE.md, substantial changes start as a public discussion.
