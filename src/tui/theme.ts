@@ -1,13 +1,12 @@
 import { createSignal } from "solid-js";
 import { SyntaxStyle } from "@opentui/core";
 
-import { DEFAULT_THEME_ID, type ThemeId } from "./theme_ids.ts";
-import { themes, type ThemeColors } from "../lib/themes.ts";
+import { DEFAULT_THEME_ID, themes, type ThemeColors, type ThemeId } from "../lib/themes.ts";
 
-// Reactive accessor layer for themes. The palette data and type shapes live in
-// the dependency-light `src/lib/themes.ts`; theme IDs in the solid-js-free
-// `theme_ids.ts` (so `config.ts` can validate the persisted theme without
-// loading this reactive layer). All TUI colors come from the ACTIVE theme —
+// Reactive accessor layer for themes. The id list, palette data, and type shapes
+// live in the dependency-light, solid-js-free `src/lib/themes.ts` (so `config.ts`
+// can validate the persisted theme without loading this reactive layer); this file
+// adds the active-theme signal on top. All TUI colors come from the ACTIVE theme —
 // never inline hex in components, and read colors via `theme().<token>` inside a
 // tracking scope so switching repaints reactively. `setTheme(id)` is the only
 // mutator; the active theme is seeded from persisted config at TUI launch.
