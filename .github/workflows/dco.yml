@@ -1,0 +1,64 @@
+name: DCO
+
+# Enforces the Developer Certificate of Origin: every commit in a PR must carry
+# a `Signed-off-by:` trailer matching its author (see CONTRIBUTING.md).
+#
+# The allowlist is applied per commit by author, not by the PR actor: bots such
+# as Dependabot cannot add a sign-off trailer, so their own commits are exempt
+# while human commits in the same PR are still checked. Because the job always
+# runs (never skipped via `if:`), it reports a real success/failure and so works
+# correctly as a required status check.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dco:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the PR's whole commit range is reachable.
+          fetch-depth: 0
+
+      - name: Verify Signed-off-by on every commit
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Commit authors exempt from the sign-off requirement. Add more bots
+          # here as needed. Quoted patterns keep the brackets in "[bot]" literal
+          # rather than treating them as a glob character class.
+          is_allowlisted() {
+            case "$1" in
+              "dependabot[bot]") return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          status=0
+          for sha in $(git rev-list "$BASE..$HEAD"); do
+            # Merge commits introduce no authored change of their own; skip them.
+            if [ "$(git rev-list --parents -n 1 "$sha" | wc -w)" -gt 2 ]; then
+              continue
+            fi
+            name=$(git show -s --format='%an' "$sha")
+            email=$(git show -s --format='%ae' "$sha")
+            if is_allowlisted "$name"; then
+              echo "skip  $sha (allowlisted author: $name)"
+              continue
+            fi
+            trailer="Signed-off-by: ${name} <${email}>"
+            if git show -s --format='%B' "$sha" | grep -qiF "$trailer"; then
+              echo "ok    $sha"
+            else
+              echo "::error::commit $sha is missing a sign-off matching its author ($trailer)"
+              status=1
+            fi
+          done
+          exit "$status"
