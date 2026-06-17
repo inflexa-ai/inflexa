@@ -1,4 +1,5 @@
 import { str256 } from "../../lib/types.ts";
+import { dieOn, fail } from "../../lib/cli.ts";
 import { createProject } from "../../db/primary_mutation.ts";
 import { listProjects, countAnalysesByProject } from "../../db/primary_query.ts";
 
@@ -6,10 +7,7 @@ import { listProjects, countAnalysesByProject } from "../../db/primary_query.ts"
 export function projectNew(name: string, opts: { description?: string; tags?: string }): void {
     const validName = str256(name).match(
         (s) => s,
-        (e) => {
-            console.error(`Invalid project name: ${e === "empty" ? "must not be blank" : "must be at most 256 characters"}.`);
-            process.exit(1);
-        },
+        (e) => fail(`Invalid project name: ${e === "empty" ? "must not be blank" : "must be at most 256 characters"}.`),
     );
 
     // Tags arrive as a single comma-separated flag value; split, trim, and drop blanks.
@@ -24,38 +22,30 @@ export function projectNew(name: string, opts: { description?: string; tags?: st
         (project) => console.log(`Created project "${project.name}" (${project.id})`),
         (error) => {
             if (error.type === "constraint_violation" && error.constraint === "unique") {
-                console.error(`A project named "${name}" already exists.`);
-            } else {
-                console.error(`Failed to create project: ${error.type}`, error.cause);
+                fail(`A project named "${name}" already exists.`);
             }
-            process.exit(1);
+            fail(`Failed to create project: ${error.type}`, error.cause);
         },
     );
 }
 
 /** `inf project ls` — list projects, each with its analysis count. */
 export function projectLs(): void {
-    listProjects().match(
-        (projects) => {
-            if (projects.length === 0) {
-                console.log("No projects.");
-                return;
-            }
+    listProjects().match((projects) => {
+        if (projects.length === 0) {
+            console.log("No projects.");
+            return;
+        }
 
-            console.log(`\n  Projects (${projects.length}):\n`);
-            for (const p of projects) {
-                const count = countAnalysesByProject(p.id).match(
-                    (n) => n,
-                    () => 0,
-                );
-                const tags = p.tags.length ? ` [${p.tags.join(", ")}]` : "";
-                console.log(`  ${p.id}  ${p.name}${tags}  (${count} analyses)`);
-            }
-            console.log();
-        },
-        (error) => {
-            console.error(`Failed to list projects: ${error.type}`, error.cause);
-            process.exit(1);
-        },
-    );
+        console.log(`\n  Projects (${projects.length}):\n`);
+        for (const p of projects) {
+            const count = countAnalysesByProject(p.id).match(
+                (n) => n,
+                () => 0,
+            );
+            const tags = p.tags.length ? ` [${p.tags.join(", ")}]` : "";
+            console.log(`  ${p.id}  ${p.name}${tags}  (${count} analyses)`);
+        }
+        console.log();
+    }, dieOn("Failed to list projects"));
 }

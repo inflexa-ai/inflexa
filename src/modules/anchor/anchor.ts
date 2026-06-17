@@ -1,7 +1,7 @@
 import { randomUUIDv7 } from "bun";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { ok, err, type Result } from "neverthrow";
+import { ok, err, Result } from "neverthrow";
 import type { Anchor, AnchorMarker } from "../../types/anchor.ts";
 import type { DbError } from "../../db/errors.ts";
 import { getAnchor, listAnchors } from "../../db/primary_query.ts";
@@ -20,6 +20,11 @@ function makeAnchor(id: string, dir: string, markerWritten: boolean): Anchor {
 /**
  * Ensure `dir` is a tracked anchor and return its row. The single entry point used at
  * analysis creation and context resolution.
+ *
+ * WRITES TO DISK: in a writable dir with no marker, this mints an anchor and writes a
+ * `.inf/id` marker. Call it only from a deliberate user action (e.g. analysis creation),
+ * never from a passive/background flow like TUI launch — that would litter markers in every
+ * folder the app opens (no-litter policy). For startup reconciliation use {@link recoverAnchors}.
  */
 export function getOrCreateAnchorForCwd(dir: string): Result<Anchor, DbError> {
     const abs = canonicalPath(dir);
@@ -33,15 +38,15 @@ export function getOrCreateAnchorForCwd(dir: string): Result<Anchor, DbError> {
     }
 
     if (marker) {
-        const uuid = marker.anchorUuid;
-        return getAnchor(uuid).andThen((existing): Result<Anchor, DbError> => {
+        const anchorId = marker.anchorId;
+        return getAnchor(anchorId).andThen((existing): Result<Anchor, DbError> => {
             // Marker on disk but no DB row (DB reset, or folder authored on another
             // machine): re-establish the row keyed on the existing UUID to keep identity.
-            if (!existing) return insertAnchor(makeAnchor(uuid, abs, true));
+            if (!existing) return insertAnchor(makeAnchor(anchorId, abs, true));
             // Self-heal a drifted cached path.
             if (existing.cachedPath !== abs) {
                 const healed: Anchor = { ...existing, cachedPath: abs };
-                return updateAnchorCachedPath(uuid, abs).map(() => healed);
+                return updateAnchorCachedPath(anchorId, abs).map(() => healed);
             }
             return ok(existing);
         });
@@ -49,25 +54,25 @@ export function getOrCreateAnchorForCwd(dir: string): Result<Anchor, DbError> {
 
     // No marker: mint a UUID. Only write a marker when the dir is writable; otherwise
     // the anchor degrades to path-only (markerWritten: false), per the spec.
-    const uuid = randomUUIDv7();
+    const anchorId = randomUUIDv7();
     const writable = isDirWritable(abs);
     if (writable) {
         try {
-            writeMarker(abs, uuid);
+            writeMarker(abs, anchorId);
         } catch (cause) {
             return err({ type: "mutation_failed", op: "getOrCreateAnchorForCwd:writeMarker", cause });
         }
     }
-    return insertAnchor(makeAnchor(uuid, abs, writable));
+    return insertAnchor(makeAnchor(anchorId, abs, writable));
 }
 
 /**
  * True if `dir` holds a valid marker whose UUID matches. Corrupt or absent markers are
  * treated as non-matching here: resolution must not abort on an unrelated corrupt marker.
  */
-function markerMatches(dir: string, uuid: string): boolean {
+function markerMatches(dir: string, anchorId: string): boolean {
     try {
-        return readMarker(dir)?.anchorUuid === uuid;
+        return readMarker(dir)?.anchorId === anchorId;
     } catch {
         return false;
     }
@@ -77,10 +82,10 @@ function markerMatches(dir: string, uuid: string): boolean {
  * Walk up from startDir for the nearest marker matching uuid; corruption-safe (a corrupt
  * marker on the walk falls through to the bounded search rather than aborting resolution).
  */
-function findMatchingMarkerUpwards(startDir: string, uuid: string): string | null {
+function findMatchingMarkerUpwards(startDir: string, anchorId: string): string | null {
     try {
         const found = findMarkerUpwards(startDir);
-        return found && found.marker.anchorUuid === uuid ? found.dir : null;
+        return found && found.marker.anchorId === anchorId ? found.dir : null;
     } catch {
         return null;
     }
@@ -97,31 +102,31 @@ function ancestorsOf(dir: string): string[] {
     }
 }
 
-function selfHeal(anchor: Anchor, uuid: string, dir: string): Result<{ anchor: Anchor; path: string | null }, DbError> {
+function selfHeal(anchor: Anchor, anchorId: string, dir: string): Result<{ anchor: Anchor; path: string | null }, DbError> {
     const canonical = canonicalPath(dir);
     const healed: Anchor = { ...anchor, cachedPath: canonical };
-    return updateAnchorCachedPath(uuid, canonical).map(() => ({ anchor: healed, path: canonical }));
+    return updateAnchorCachedPath(anchorId, canonical).map(() => ({ anchor: healed, path: canonical }));
 }
 
 /**
  * Resolve a UUID to its current path, reconciling the cached path lazily. See the spec
  * (Folder identity & moves): cached-path check → cwd/ancestor self-heal → bounded search.
  */
-export function resolveAnchor(uuid: string, opts?: { searchRoots?: string[] }): Result<{ anchor: Anchor; path: string | null }, DbError> {
-    return getAnchor(uuid).andThen((anchor): Result<{ anchor: Anchor; path: string | null }, DbError> => {
-        if (!anchor) return err({ type: "query_failed", op: "resolveAnchor", cause: new Error(`unknown anchor ${uuid}`) });
+export function resolveAnchor(anchorId: string, opts?: { searchRoots?: string[] }): Result<{ anchor: Anchor; path: string | null }, DbError> {
+    return getAnchor(anchorId).andThen((anchor): Result<{ anchor: Anchor; path: string | null }, DbError> => {
+        if (!anchor) return err({ type: "query_failed", op: "resolveAnchor", cause: new Error(`unknown anchor ${anchorId}`) });
 
         // Step 1: the cached path still holds our marker — cheapest, highest-hit case.
-        if (markerMatches(anchor.cachedPath, uuid)) {
-            return touchAnchor(uuid).map(() => ({ anchor, path: anchor.cachedPath }));
+        if (markerMatches(anchor.cachedPath, anchorId)) {
+            return touchAnchor(anchorId).map(() => ({ anchor, path: anchor.cachedPath }));
         }
 
         const roots = (opts?.searchRoots ?? [process.cwd()]).map((r) => canonicalPath(r));
 
         // Step 2: cwd or an ancestor holds our marker (we cd'd into the moved folder).
         for (const root of roots) {
-            const hit = findMatchingMarkerUpwards(root, uuid);
-            if (hit) return selfHeal(anchor, uuid, hit);
+            const hit = findMatchingMarkerUpwards(root, anchorId);
+            if (hit) return selfHeal(anchor, anchorId, hit);
         }
 
         // Step 3: bounded search over roots (+ ancestors) and known anchor cached paths.
@@ -130,9 +135,9 @@ export function resolveAnchor(uuid: string, opts?: { searchRoots?: string[] }): 
             for (const root of roots) for (const d of ancestorsOf(root)) candidates.add(d);
             for (const a of anchors) candidates.add(resolve(a.cachedPath));
 
-            const matches = [...candidates].filter((d) => markerMatches(d, uuid));
+            const matches = [...candidates].filter((d) => markerMatches(d, anchorId));
             const unique = matches.length === 1 ? matches[0] : null;
-            if (unique) return selfHeal(anchor, uuid, unique);
+            if (unique) return selfHeal(anchor, anchorId, unique);
             // Zero or multiple hits: do not guess — caller surfaces "run `inf relocate`".
             return ok({ anchor, path: null });
         });
@@ -145,10 +150,28 @@ export function resolveAnchor(uuid: string, opts?: { searchRoots?: string[] }): 
  */
 export function classifyMarkerSighting(dir: string, marker: AnchorMarker): Result<"copy" | "move" | "ok", DbError> {
     const abs = canonicalPath(dir);
-    return getAnchor(marker.anchorUuid).map((anchor): "copy" | "move" | "ok" => {
+    return getAnchor(marker.anchorId).map((anchor): "copy" | "move" | "ok" => {
         if (!anchor) return "ok"; // no existing identity to conflict with
         const cached = canonicalPath(anchor.cachedPath);
         if (cached === abs) return "ok";
         return existsSync(cached) ? "copy" : "move";
     });
+}
+
+/**
+ * Reconcile every known anchor against the filesystem — the automatic counterpart to the
+ * manual `repair`/`relocate`/`prune` backstop, meant to run at startup. An anchor still at
+ * its cached path is a cheap no-op (a heartbeat touch); one whose folder moved under
+ * `searchRoots` self-heals in place; one that cannot be located is left untouched for the
+ * operator to `relocate` or `prune`. Recovery only — it never mints or writes a marker.
+ * Returns how many anchors resolved to a live path (`recovered`) versus could not
+ * (`unresolved`), so the caller can log a one-line summary.
+ */
+export function recoverAnchors(searchRoots: string[] = [process.cwd()]): Result<{ recovered: number; unresolved: number }, DbError> {
+    return listAnchors().andThen((anchors) =>
+        Result.combine(anchors.map((a) => resolveAnchor(a.id, { searchRoots }).map((r) => r.path))).map((paths) => {
+            const unresolved = paths.filter((p) => p === null).length;
+            return { recovered: paths.length - unresolved, unresolved };
+        }),
+    );
 }

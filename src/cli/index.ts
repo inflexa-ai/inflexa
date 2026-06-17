@@ -100,6 +100,31 @@ project
         projectLs();
     });
 
+// Anchor move-backstop: the manual fallback for folder moves that the automatic
+// reconciliation in `resolveAnchor` cannot settle on its own. All addressed by path.
+cli.command("repair [path]")
+    .description("Reconcile the anchor marker at <path> (default: current directory)")
+    .action(async (path: string | undefined) => {
+        const { runRepair } = await import("../modules/anchor/backstop.ts");
+        runRepair(path);
+    });
+
+cli.command("relocate [fromPath] [toPath]")
+    .description("Re-point a moved anchor — one path pair, or all anchors under a prefix with --from/--to")
+    .option("--from <prefix>", "Path prefix to rewrite from (bulk mode)")
+    .option("--to <prefix>", "Path prefix to rewrite to (bulk mode)")
+    .action(async (fromPath: string | undefined, toPath: string | undefined, options: { from?: string; to?: string }) => {
+        const { runRelocate } = await import("../modules/anchor/backstop.ts");
+        await runRelocate({ fromPath, toPath, from: options.from, to: options.to });
+    });
+
+cli.command("prune")
+    .description("Drop anchors whose folders are confirmed gone and unrecoverable")
+    .action(async () => {
+        const { runPrune } = await import("../modules/anchor/backstop.ts");
+        await runPrune();
+    });
+
 // Auth verbs grouped under one parent, à la `gh auth login|logout|status`.
 const auth = cli.command("auth").description("Manage authentication (Auth0 device flow)");
 

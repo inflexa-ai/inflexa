@@ -130,3 +130,11 @@ export function countAnalysesByProject(projectId: string): Result<number, DbErro
         return row.n;
     });
 }
+
+/** How many analyses are homed at an anchor. `0` when it has none (or does not exist) — used by `prune` to show what a dead anchor would take with it. */
+export function countAnalysesByAnchor(anchorId: string): Result<number, DbError> {
+    return tryQuery("countAnalysesByAnchor", (conn) => {
+        const row = conn.query("SELECT COUNT(*) AS n FROM analyses WHERE anchor_id = ?").get(anchorId) as { n: number };
+        return row.n;
+    });
+}
