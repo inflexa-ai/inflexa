@@ -1,0 +1,52 @@
+name: 🧬 Biology example proposal
+description: Propose a public-data analysis example for the examples/ directory.
+labels: ["biology-example"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Examples are one of the most persuasive things in the project, and a great first contribution. **Use public data, not toy data.** The bar is: a stranger can clone the repo, run your example, and get the same artifacts. See "Adding an example" in [`CONTRIBUTING.md`](https://github.com/inflexa-ai/inf-cli/blob/main/CONTRIBUTING.md).
+  - type: textarea
+    id: question
+    attributes:
+      label: Biological question
+      description: What question does this example answer?
+    validations:
+      required: true
+  - type: textarea
+    id: dataset
+    attributes:
+      label: Dataset source
+      description: Accession(s) / URL(s) and how the data is obtained. Must be public.
+      placeholder: e.g. GEO GSE123456, or an SRA/ENA accession, with the download command.
+    validations:
+      required: true
+  - type: textarea
+    id: commands
+    attributes:
+      label: Command(s) to run
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: outputs
+    attributes:
+      label: Expected outputs
+      description: The figures, tables, report, and the lineage / provenance export the example produces.
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Expected runtime and hardware
+      placeholder: e.g. ~15 min on 8 cores / 16 GB RAM
+    validations:
+      required: true
+  - type: checkboxes
+    attributes:
+      label: Reproducibility
+      options:
+        - label: The data is public and the example includes reproduction instructions.
+          required: true
+        - label: Tool/library versions are pinned.
+          required: true
