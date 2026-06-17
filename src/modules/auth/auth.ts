@@ -5,31 +5,41 @@ import { z } from "zod";
 
 import { bakedEnv, env } from "../../lib/env.ts";
 
-// offline_access is required: inf-cli's sliding session (log in once, renew on
-// use) depends on rotating refresh tokens. This deliberately diverges from
-// nxctl, which forbids the scope because it is a high-privilege admin tool.
+/**
+ * offline_access is required: inf-cli's sliding session (log in once, renew on
+ * use) depends on rotating refresh tokens. This deliberately diverges from
+ * nxctl, which forbids the scope because it is a high-privilege admin tool.
+ */
 const AUTH_SCOPE = "openid profile email offline_access";
 
-// Remaining validity below which the access token is refreshed: covers clock
-// skew and the latency between this check and the server seeing the request.
+/**
+ * Remaining validity below which the access token is refreshed: covers clock
+ * skew and the latency between this check and the server seeing the request.
+ */
 const EXPIRY_BUFFER_MS = 60_000;
 
-// A login the user may already be approving in the browser shouldn't die on one
-// network blip. Tolerate this many *consecutive* failed polls (a thrown request
-// or an unparsable body) before giving up; any valid response resets the
-// count, and the device-code deadline still bounds the overall wait.
+/**
+ * A login the user may already be approving in the browser shouldn't die on one
+ * network blip. Tolerate this many *consecutive* failed polls (a thrown request
+ * or an unparsable body) before giving up; any valid response resets the
+ * count, and the device-code deadline still bounds the overall wait.
+ */
 const MAX_CONSECUTIVE_POLL_FAILURES = 5;
 
-// Concurrent-refresh guard. Rotating refresh tokens make a concurrent refresh
-// dangerous: two processes presenting the same refresh token trip Auth0's
-// reuse-detection, which revokes the entire grant family and silently logs the
-// user out. A cross-process advisory lock serializes renewals. A healthy holder
-// is bounded by the 15s request timeout, so a lock older than this belongs to a
-// crashed process and may be reclaimed.
+/**
+ * Concurrent-refresh guard. Rotating refresh tokens make a concurrent refresh
+ * dangerous: two processes presenting the same refresh token trip Auth0's
+ * reuse-detection, which revokes the entire grant family and silently logs the
+ * user out. A cross-process advisory lock serializes renewals. A healthy holder
+ * is bounded by the 15s request timeout, so a lock older than this belongs to a
+ * crashed process and may be reclaimed.
+ */
 const LOCK_STALE_MS = 30_000;
-// How long a waiting process spins for the lock before erroring — above the max
-// healthy hold time so it never abandons a live refresh, yet below the staleness
-// threshold so a crashed holder's lock is always reclaimed first.
+/**
+ * How long a waiting process spins for the lock before erroring — above the max
+ * healthy hold time so it never abandons a live refresh, yet below the staleness
+ * threshold so a crashed holder's lock is always reclaimed first.
+ */
 const LOCK_WAIT_MS = 20_000;
 const LOCK_POLL_MS = 150;
 
@@ -39,8 +49,10 @@ export type Auth0Config = {
     audience: string;
 };
 
-// Persisted shape of auth.json. expiresAt is an ISO-8601 instant computed from
-// the token response's relative expires_in at save time.
+/**
+ * Persisted shape of auth.json. expiresAt is an ISO-8601 instant computed from
+ * the token response's relative expires_in at save time.
+ */
 const storedAuthSchema = z.object({
     accessToken: z.string(),
     refreshToken: z.string(),
@@ -69,8 +81,10 @@ export type AuthError =
     | { type: "token_read_failed"; cause: unknown }
     | { type: "token_write_failed"; cause: unknown };
 
-// Auth0 wire shapes — snake_case comes from the OAuth 2.0 protocol. External
-// input, so each response is schema-validated before any field is trusted.
+/**
+ * Auth0 wire shapes — snake_case comes from the OAuth 2.0 protocol. External
+ * input, so each response is schema-validated before any field is trusted.
+ */
 const deviceCodeWireSchema = z.object({
     device_code: z.string(),
     user_code: z.string(),
@@ -289,13 +303,15 @@ export async function getValidAccessToken(): Promise<Result<string, AuthError>> 
     });
 }
 
-// Serializes the refresh across processes. Rotating refresh tokens make a
-// concurrent refresh dangerous: a second process replaying the same refresh
-// token trips Auth0's reuse-detection, which revokes the whole grant family and
-// silently logs the user out. A cross-process advisory lock pins one refresher
-// at a time; the re-read under the lock — not the lock alone — is what prevents
-// the revocation, since a process that waited must use the token the winner just
-// wrote rather than replay its own now-stale one.
+/**
+ * Serializes the refresh across processes. Rotating refresh tokens make a
+ * concurrent refresh dangerous: a second process replaying the same refresh
+ * token trips Auth0's reuse-detection, which revokes the whole grant family and
+ * silently logs the user out. A cross-process advisory lock pins one refresher
+ * at a time; the re-read under the lock — not the lock alone — is what prevents
+ * the revocation, since a process that waited must use the token the winner just
+ * wrote rather than replay its own now-stale one.
+ */
 async function refreshUnderLock(config: Auth0Config): Promise<Result<string, AuthError>> {
     const lock = await acquireRefreshLock();
     if (lock.isErr()) return err(lock.error);
@@ -330,8 +346,10 @@ export async function revokeRefreshToken(config: Auth0Config, refreshToken: stri
     return ok(undefined);
 }
 
-// True when the access token has at most the safety buffer of validity left and
-// therefore warrants a refresh.
+/**
+ * True when the access token has at most the safety buffer of validity left and
+ * therefore warrants a refresh.
+ */
 function isExpiring(auth: StoredAuth): boolean {
     return new Date(auth.expiresAt).getTime() - Date.now() <= EXPIRY_BUFFER_MS;
 }
@@ -340,13 +358,15 @@ function refreshLockPath(): string {
     return env.authPath + ".lock";
 }
 
-// Acquires an exclusive advisory lock by atomically creating the lock file
-// (`wx` = O_EXCL). On contention, a lock older than LOCK_STALE_MS belongs to a
-// crashed holder and is reclaimed; otherwise we spin until it frees up or the
-// wait budget elapses. getValidAccessToken only locks after a successful
-// loadAuth, so the parent directory is guaranteed to exist. Returns a token
-// identifying this acquisition (written into the file) so release can confirm
-// we still own the lock before deleting it.
+/**
+ * Acquires an exclusive advisory lock by atomically creating the lock file
+ * (`wx` = O_EXCL). On contention, a lock older than LOCK_STALE_MS belongs to a
+ * crashed holder and is reclaimed; otherwise we spin until it frees up or the
+ * wait budget elapses. getValidAccessToken only locks after a successful
+ * loadAuth, so the parent directory is guaranteed to exist. Returns a token
+ * identifying this acquisition (written into the file) so release can confirm
+ * we still own the lock before deleting it.
+ */
 async function acquireRefreshLock(): Promise<Result<string, AuthError>> {
     const path = refreshLockPath();
     // pid + high-resolution timestamp: unique per acquisition, so a process that
@@ -376,8 +396,10 @@ async function acquireRefreshLock(): Promise<Result<string, AuthError>> {
     }
 }
 
-// Age of the lock from its mtime; Infinity if it has vanished (holder just
-// released it), so the caller retries creation immediately.
+/**
+ * Age of the lock from its mtime; Infinity if it has vanished (holder just
+ * released it), so the caller retries creation immediately.
+ */
 function lockAgeMs(path: string): number {
     try {
         return Date.now() - statSync(path).mtimeMs;
@@ -386,10 +408,12 @@ function lockAgeMs(path: string): number {
     }
 }
 
-// Releases the lock only if we still hold it. A healthy holder's window (≤15s
-// request timeout) is well under LOCK_STALE_MS, so this practically always
-// matches; but if our refresh somehow overran and another process reclaimed the
-// lock as stale, its token differs and we must not delete the lock it now owns.
+/**
+ * Releases the lock only if we still hold it. A healthy holder's window (≤15s
+ * request timeout) is well under LOCK_STALE_MS, so this practically always
+ * matches; but if our refresh somehow overran and another process reclaimed the
+ * lock as stale, its token differs and we must not delete the lock it now owns.
+ */
 function releaseRefreshLock(token: string): void {
     let current: string;
     try {
@@ -403,10 +427,12 @@ function releaseRefreshLock(token: string): void {
     }
 }
 
-// Builds the persisted shape from a successful token response. `previous`
-// fills fields a refresh response may legally omit (rotated refresh token,
-// id_token); on first login it is null and everything must be present.
-// Returns a detail string error so callers can wrap it in the right variant.
+/**
+ * Builds the persisted shape from a successful token response. `previous`
+ * fills fields a refresh response may legally omit (rotated refresh token,
+ * id_token); on first login it is null and everything must be present.
+ * Returns a detail string error so callers can wrap it in the right variant.
+ */
 function tokenWireToStoredAuth(wire: TokenWire, previous: StoredAuth | null): Result<StoredAuth, string> {
     const refreshToken = wire.refresh_token ?? previous?.refreshToken;
     const idToken = wire.id_token ?? previous?.idToken;

@@ -43,8 +43,10 @@ export async function login(): Promise<void> {
     );
 }
 
-// Best-effort sugar — the URL is always printed, so headless/SSH sessions
-// just open it manually.
+/**
+ * Best-effort sugar — the URL is always printed, so headless/SSH sessions
+ * just open it manually.
+ */
 function openBrowser(url: string): void {
     const cmd = process.platform === "darwin" ? ["open", url] : process.platform === "win32" ? ["cmd", "/c", "start", "", url] : ["xdg-open", url];
     try {

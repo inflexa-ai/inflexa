@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { describeAuthError, loadAuth, type StoredAuth } from "./auth.ts";
 
-// Unknown claims are stripped by the schema; only the displayed ones matter.
+/** Unknown claims are stripped by the schema; only the displayed ones matter. */
 const idTokenClaimsSchema = z.object({
     sub: z.string().optional(),
     email: z.string().optional(),
@@ -37,9 +37,11 @@ function printIdentity(auth: StoredAuth): void {
     console.log();
 }
 
-// Local decode only: the token came straight from Auth0 over TLS at login, so
-// whoami trusts it without signature verification (that is the API server's
-// job) and without any network round-trip.
+/**
+ * Local decode only: the token came straight from Auth0 over TLS at login, so
+ * whoami trusts it without signature verification (that is the API server's
+ * job) and without any network round-trip.
+ */
 function decodeIdTokenClaims(idToken: string): IdTokenClaims | null {
     const payload = idToken.split(".")[1];
     if (!payload) return null;

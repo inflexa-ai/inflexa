@@ -2,10 +2,12 @@ import type { ZodType } from "zod";
 
 declare global {
     interface JSON {
-        // Parses raw JSON and validates it against a zod schema; null on either a
-        // parse error or a schema mismatch, so callers can surface the raw
-        // payload in their own typed errors. Mirrors JSON.parse's text-first arg
-        // order, with the schema in place of a reviver.
+        /**
+         * Parses raw JSON and validates it against a zod schema; null on either a
+         * parse error or a schema mismatch, so callers can surface the raw
+         * payload in their own typed errors. Mirrors JSON.parse's text-first arg
+         * order, with the schema in place of a reviver.
+         */
         parseWith<T>(raw: string, schema: ZodType<T>): T | null;
     }
 }

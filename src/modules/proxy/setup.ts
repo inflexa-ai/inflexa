@@ -22,7 +22,7 @@ import { env } from "../../lib/env.ts";
 // --- command ---------------------------------------------------------------
 
 type SetupOptions = {
-    // cac fills these in from the flags registered in src/cli/index.ts.
+    /** cac fills these in from the flags registered in src/cli/index.ts. */
     provider?: string;
     auth: boolean;
     start: boolean;
@@ -90,8 +90,10 @@ function printNextSteps(options: SetupOptions): void {
 const IMAGE = "eceasy/cli-proxy-api:latest";
 const CONTAINER_NAME = "inf-cliproxy";
 
-// The image runs `./CLIProxyAPI` from WORKDIR /CLIProxyAPI (see upstream
-// Dockerfile); these are the in-container paths the binary reads.
+/**
+ * The image runs `./CLIProxyAPI` from WORKDIR /CLIProxyAPI (see upstream
+ * Dockerfile); these are the in-container paths the binary reads.
+ */
 const CONTAINER_BINARY = "./CLIProxyAPI";
 const CONTAINER_CONFIG_PATH = "/CLIProxyAPI/config.yaml";
 const CONTAINER_AUTH_DIR = "/root/.cli-proxy-api";
@@ -112,9 +114,11 @@ const PROVIDER_LABEL: Record<Provider, string> = {
     qwen: "Qwen",
     iflow: "iFlow",
 };
-// OAuth-callback flows need their port published so the browser redirect to
-// localhost reaches the one-shot login container. Qwen uses a device flow and
-// needs no inbound port.
+/**
+ * OAuth-callback flows need their port published so the browser redirect to
+ * localhost reaches the one-shot login container. Qwen uses a device flow and
+ * needs no inbound port.
+ */
 const PROVIDER_CALLBACK_PORT: Record<Provider, number | null> = {
     gemini: 8085,
     openai: 1455,
@@ -124,8 +128,10 @@ const PROVIDER_CALLBACK_PORT: Record<Provider, number | null> = {
 };
 const PROVIDERS = Object.keys(PROVIDER_LOGIN_FLAG) as Provider[];
 
-// Expected, user-actionable failures. Callers print `.message` and exit rather
-// than dumping a stack.
+/**
+ * Expected, user-actionable failures. Callers print `.message` and exit rather
+ * than dumping a stack.
+ */
 export class ProxyError extends Error {}
 
 function isProvider(value: string): value is Provider {
@@ -143,7 +149,7 @@ async function dockerCapture(args: string[]): Promise<DockerResult> {
     return { code, stdout, stderr };
 }
 
-// Inherit stdio so the user sees pull progress / interacts with the login flow.
+/** Inherit stdio so the user sees pull progress / interacts with the login flow. */
 async function dockerInherit(args: string[]): Promise<number> {
     const proc = Bun.spawn({ cmd: ["docker", ...args], stdin: "inherit", stdout: "inherit", stderr: "inherit" });
     return proc.exited;
@@ -172,8 +178,10 @@ async function pullImage(force: boolean): Promise<void> {
     if ((await dockerInherit(["pull", IMAGE])) !== 0) throw new ProxyError(`Failed to pull ${IMAGE}.`);
 }
 
-// Resolve our container's id, or null if it doesn't exist. `^name$` makes the
-// name filter exact rather than a substring match.
+/**
+ * Resolve our container's id, or null if it doesn't exist. `^name$` makes the
+ * name filter exact rather than a substring match.
+ */
 async function containerId(includeStopped: boolean): Promise<string | null> {
     const args = ["ps", ...(includeStopped ? ["-a"] : []), "-q", "-f", `name=^${CONTAINER_NAME}$`];
     const { code, stdout } = await dockerCapture(args);
@@ -195,8 +203,10 @@ async function removeContainer(): Promise<void> {
     await dockerCapture(["rm", "-f", CONTAINER_NAME]);
 }
 
-// (Re)create the long-running proxy container. Recreating (vs reusing) applies
-// the current image and mount flags every time setup runs.
+/**
+ * (Re)create the long-running proxy container. Recreating (vs reusing) applies
+ * the current image and mount flags every time setup runs.
+ */
 async function recreateContainer(): Promise<void> {
     await removeContainer();
     const args = [
@@ -220,8 +230,10 @@ async function startProxy(): Promise<void> {
     console.log(`\n  CLIProxyAPI is running on ${env.cliproxyBaseUrl}`);
 }
 
-// Bring the container up without forcing a recreate: reuse a running one, start
-// a stopped one, or create it if absent. Used on the TUI hot path.
+/**
+ * Bring the container up without forcing a recreate: reuse a running one, start
+ * a stopped one, or create it if absent. Used on the TUI hot path.
+ */
 async function ensureContainerRunning(): Promise<void> {
     if (await isProxyRunning()) return;
     if ((await containerId(true)) !== null) {
@@ -247,8 +259,10 @@ async function writeProxyConfig(): Promise<{ created: boolean; apiKey?: string }
     return { created: true, apiKey };
 }
 
-// auth-dir is the in-container Linux path (mounted from env.cliproxyAuthDir), so
-// it is OS-safe regardless of the host.
+/**
+ * auth-dir is the in-container Linux path (mounted from env.cliproxyAuthDir), so
+ * it is OS-safe regardless of the host.
+ */
 function proxyConfig(apiKey: string): string {
     return `host: ""
 port: ${env.cliproxyPort}
@@ -259,8 +273,10 @@ debug: false
 `;
 }
 
-// Client-facing key for calling the proxy — distinct from the provider
-// credentials the login flows write under auth-dir.
+/**
+ * Client-facing key for calling the proxy — distinct from the provider
+ * credentials the login flows write under auth-dir.
+ */
 function generateApiKey(): string {
     const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     const rand = new Uint8Array(45);
@@ -272,8 +288,10 @@ function generateApiKey(): string {
 
 // --- authentication --------------------------------------------------------
 
-// Authenticated == the proxy has written at least one credential file into the
-// mounted auth dir.
+/**
+ * Authenticated == the proxy has written at least one credential file into the
+ * mounted auth dir.
+ */
 async function isAuthenticated(): Promise<boolean> {
     return readdir(env.cliproxyAuthDir).then(
         (entries) => entries.some((name) => !name.startsWith(".")),
@@ -281,10 +299,12 @@ async function isAuthenticated(): Promise<boolean> {
     );
 }
 
-// Run the proxy's OAuth flow in a throwaway container that shares our auth-dir
-// mount, so credentials persist on the host. stdio is inherited so the user
-// interacts directly; `--no-browser` prints the URL instead of trying (and
-// failing) to launch a browser from inside the container.
+/**
+ * Run the proxy's OAuth flow in a throwaway container that shares our auth-dir
+ * mount, so credentials persist on the host. stdio is inherited so the user
+ * interacts directly; `--no-browser` prints the URL instead of trying (and
+ * failing) to launch a browser from inside the container.
+ */
 async function runProviderLogin(provider: Provider): Promise<void> {
     const port = PROVIDER_CALLBACK_PORT[provider];
     const tty = process.stdin.isTTY ? ["-t"] : [];
@@ -296,8 +316,10 @@ async function runProviderLogin(provider: Provider): Promise<void> {
     if (code !== 0) console.log(`  ${PROVIDER_LABEL[provider]} login exited with code ${code}; you can retry with \`inf setup\`.`);
 }
 
-// Returns the provider to authenticate, or null to skip. A non-interactive
-// terminal can't drive the prompt, so it skips rather than hanging.
+/**
+ * Returns the provider to authenticate, or null to skip. A non-interactive
+ * terminal can't drive the prompt, so it skips rather than hanging.
+ */
 async function chooseProvider(preselected: Provider | undefined): Promise<Provider | null> {
     if (preselected) return preselected;
     if (!process.stdin.isTTY) return null;
@@ -318,8 +340,10 @@ async function chooseProvider(preselected: Provider | undefined): Promise<Provid
     return chosen;
 }
 
-// Prompt (unless preselected) and run the login. Returns whether the proxy is
-// authenticated afterwards.
+/**
+ * Prompt (unless preselected) and run the login. Returns whether the proxy is
+ * authenticated afterwards.
+ */
 async function authenticate(preselected: Provider | undefined): Promise<boolean> {
     const chosen = await chooseProvider(preselected);
     if (chosen) await runProviderLogin(chosen);
@@ -328,10 +352,12 @@ async function authenticate(preselected: Provider | undefined): Promise<boolean>
 
 // --- shared entry used by the TUI ------------------------------------------
 
-// Make the proxy ready to serve the TUI: Docker up, image present, config
-// written, authenticated, container running. Throws ProxyError with actionable
-// guidance when it can't proceed (e.g. Docker down, or auth needed in a
-// non-interactive shell).
+/**
+ * Make the proxy ready to serve the TUI: Docker up, image present, config
+ * written, authenticated, container running. Throws ProxyError with actionable
+ * guidance when it can't proceed (e.g. Docker down, or auth needed in a
+ * non-interactive shell).
+ */
 export async function ensureProxyReady(): Promise<void> {
     await ensureDocker();
     await writeProxyConfig();

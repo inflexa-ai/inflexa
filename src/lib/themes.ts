@@ -5,15 +5,17 @@
 // enum) without dragging the reactive layer (and solid-js) onto every command path:
 // `src/index.ts` reads config at startup for every command (`inf login`, `whoami`, …).
 
-// Ordered id list — single source of truth for the picker order, the `ThemeId` union,
-// and the config zod enum.
+/**
+ * Ordered id list — single source of truth for the picker order, the `ThemeId` union,
+ * and the config zod enum.
+ */
 export const themeIds = ["tokyo-night", "catppuccin-mocha", "gruvbox-dark", "nord", "rose-pine"] as const;
 
 export type ThemeId = (typeof themeIds)[number];
 
 export const DEFAULT_THEME_ID: ThemeId = "tokyo-night";
 
-// Flat color tokens, read by components via `theme().<token>`.
+/** Flat color tokens, read by components via `theme().<token>`. */
 export type ThemeColors = {
     bg: string;
     bgPanel: string;
@@ -33,8 +35,10 @@ export type ThemeColors = {
     error: string;
 };
 
-// Per-scope styling for fenced code blocks, applied via SyntaxStyle.fromStyles.
-// Keys are the tree-sitter capture scopes the markdown highlighter emits.
+/**
+ * Per-scope styling for fenced code blocks, applied via SyntaxStyle.fromStyles.
+ * Keys are the tree-sitter capture scopes the markdown highlighter emits.
+ */
 type SyntaxEntry = { fg: string; bold?: boolean; italic?: boolean };
 
 export type ThemeSyntax = {

@@ -7,7 +7,7 @@ import { shutdown } from "../lib/shutdown.ts";
 import { setTheme, theme } from "./theme.ts";
 import { themes, themeIds, type ThemeId } from "../lib/themes.ts";
 
-// Config keys whose value is a boolean — the toggleable settings.
+/** Config keys whose value is a boolean — the toggleable settings. */
 type BooleanSettingKey = { [K in keyof Config]: Config[K] extends boolean ? K : never }[keyof Config];
 
 type Setting = {
@@ -26,8 +26,10 @@ const settings: Setting[] = [
     },
 ];
 
-// Navigable rows: the boolean toggles first, then one row per theme. `selected`
-// indexes into this flat list so up/down moves across both sections.
+/**
+ * Navigable rows: the boolean toggles first, then one row per theme. `selected`
+ * indexes into this flat list so up/down moves across both sections.
+ */
 type Row = { kind: "toggle"; settingIndex: number } | { kind: "theme"; id: ThemeId };
 const rows: Row[] = [...settings.map((_, i): Row => ({ kind: "toggle", settingIndex: i })), ...themeIds.map((id): Row => ({ kind: "theme", id }))];
 

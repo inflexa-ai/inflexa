@@ -7,15 +7,19 @@ import { getAnchor, listAnchors } from "../../db/primary_query.ts";
 import { insertAnchor, touchAnchor, updateAnchorCachedPath } from "../../db/primary_mutation.ts";
 import { canonicalPath, findMarkerUpwards, isDirWritable, newAnchorUuid, readMarker, writeMarker } from "./marker.ts";
 
-// `id` is the marker UUID (from the on-disk marker or freshly minted), stored as the
-// anchor row's primary key.
+/**
+ * `id` is the marker UUID (from the on-disk marker or freshly minted), stored as the
+ * anchor row's primary key.
+ */
 function makeAnchor(id: string, dir: string, markerWritten: boolean): Anchor {
     const now = Date.now();
     return { id, cachedPath: canonicalPath(dir), markerWritten, createdAt: now, updatedAt: now, lastSeen: now };
 }
 
-// Ensure `dir` is a tracked anchor and return its row. The single entry point used at
-// analysis creation and context resolution.
+/**
+ * Ensure `dir` is a tracked anchor and return its row. The single entry point used at
+ * analysis creation and context resolution.
+ */
 export function getOrCreateAnchorForCwd(dir: string): Result<Anchor, DbError> {
     const abs = canonicalPath(dir);
 
@@ -56,8 +60,10 @@ export function getOrCreateAnchorForCwd(dir: string): Result<Anchor, DbError> {
     return insertAnchor(makeAnchor(uuid, abs, writable));
 }
 
-// True if `dir` holds a valid marker whose UUID matches. Corrupt or absent markers are
-// treated as non-matching here: resolution must not abort on an unrelated corrupt marker.
+/**
+ * True if `dir` holds a valid marker whose UUID matches. Corrupt or absent markers are
+ * treated as non-matching here: resolution must not abort on an unrelated corrupt marker.
+ */
 function markerMatches(dir: string, uuid: string): boolean {
     try {
         return readMarker(dir)?.anchorUuid === uuid;
@@ -66,8 +72,10 @@ function markerMatches(dir: string, uuid: string): boolean {
     }
 }
 
-// Walk up from startDir for the nearest marker matching uuid; corruption-safe (a corrupt
-// marker on the walk falls through to the bounded search rather than aborting resolution).
+/**
+ * Walk up from startDir for the nearest marker matching uuid; corruption-safe (a corrupt
+ * marker on the walk falls through to the bounded search rather than aborting resolution).
+ */
 function findMatchingMarkerUpwards(startDir: string, uuid: string): string | null {
     try {
         const found = findMarkerUpwards(startDir);
@@ -94,8 +102,10 @@ function selfHeal(anchor: Anchor, uuid: string, dir: string): Result<{ anchor: A
     return updateAnchorCachedPath(uuid, canonical).map(() => ({ anchor: healed, path: canonical }));
 }
 
-// Resolve a UUID to its current path, reconciling the cached path lazily. See the spec
-// (Folder identity & moves): cached-path check → cwd/ancestor self-heal → bounded search.
+/**
+ * Resolve a UUID to its current path, reconciling the cached path lazily. See the spec
+ * (Folder identity & moves): cached-path check → cwd/ancestor self-heal → bounded search.
+ */
 export function resolveAnchor(uuid: string, opts?: { searchRoots?: string[] }): Result<{ anchor: Anchor; path: string | null }, DbError> {
     return getAnchor(uuid).andThen((anchor): Result<{ anchor: Anchor; path: string | null }, DbError> => {
         if (!anchor) return err({ type: "query_failed", op: "resolveAnchor", cause: new Error(`unknown anchor ${uuid}`) });
@@ -128,8 +138,10 @@ export function resolveAnchor(uuid: string, opts?: { searchRoots?: string[] }): 
     });
 }
 
-// Classify a marker sighting at `dir` against the UUID's known location. Only classifies;
-// callers own the UX and never auto-merge a copy.
+/**
+ * Classify a marker sighting at `dir` against the UUID's known location. Only classifies;
+ * callers own the UX and never auto-merge a copy.
+ */
 export function classifyMarkerSighting(dir: string, marker: AnchorMarker): Result<"copy" | "move" | "ok", DbError> {
     const abs = canonicalPath(dir);
     return getAnchor(marker.anchorUuid).map((anchor): "copy" | "move" | "ok" => {

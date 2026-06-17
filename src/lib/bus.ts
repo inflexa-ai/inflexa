@@ -23,8 +23,10 @@ export const Bus = new BusEmitter();
 
 let subscribed = false;
 
-// Content fields (message text, part text, deltas) are deliberately reduced
-// to lengths — these records double as exportable telemetry events.
+/**
+ * Content fields (message text, part text, deltas) are deliberately reduced
+ * to lengths — these records double as exportable telemetry events.
+ */
 function eventFields(event: StampedEvent): Record<string, unknown> {
     switch (event.type) {
         case "session.status":
@@ -55,8 +57,10 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
     }
 }
 
-// Explicit init (not an import side effect) so importing Bus alone
-// never starts the tap.
+/**
+ * Explicit init (not an import side effect) so importing Bus alone
+ * never starts the tap.
+ */
 export function initBusLogging(): void {
     if (subscribed) return;
     subscribed = true;

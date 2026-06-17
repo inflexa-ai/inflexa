@@ -4,6 +4,7 @@ import type { DbError } from "./errors.ts";
 import type { Session, Message, Part, TextPart } from "../types/session.ts";
 import type { Anchor } from "../types/anchor.ts";
 
+/** Creates and persists a new session, defaulting the title when omitted. */
 export function createSession(title?: string): Result<Session, DbError> {
     const session: Session = {
         id: newId(),
@@ -17,6 +18,7 @@ export function createSession(title?: string): Result<Session, DbError> {
     });
 }
 
+/** Persists `session`, stamping a fresh `updatedAt` (mutates the argument). */
 export function updateSession(session: Session): Result<void, DbError> {
     session.updatedAt = Date.now();
     return tryMutation("updateSession", (conn) => {
@@ -24,6 +26,7 @@ export function updateSession(session: Session): Result<void, DbError> {
     });
 }
 
+/** Creates and persists an empty message turn for `role` in the session. */
 export function createMessage(sessionId: string, role: "user" | "assistant"): Result<Message, DbError> {
     const msg: Message = {
         id: newId(),
@@ -38,6 +41,7 @@ export function createMessage(sessionId: string, role: "user" | "assistant"): Re
     });
 }
 
+/** Creates and persists a text part under a message — the unit the assistant streams into. */
 export function createPart(sessionId: string, messageId: string, text: string): Result<TextPart, DbError> {
     const part: TextPart = {
         id: newId(),
@@ -58,36 +62,40 @@ export function createPart(sessionId: string, messageId: string, text: string): 
     });
 }
 
+/** Persists a part's current text — called once the stream into it completes. */
 export function updatePart(part: Part): Result<void, DbError> {
     return tryMutation("updatePart", (conn) => {
         conn.query("UPDATE parts SET data = ? WHERE id = ?").run(JSON.stringify(part), part.id);
     });
 }
 
-// Anchors. The caller supplies the row: an anchor's id is the marker UUID minted in
-// the anchor module (crypto.randomUUID), not a ULID, so insert takes a full Anchor.
+/**
+ * Inserts a fully-formed anchor row. The caller supplies it — rather than this
+ * generating an id like the session helpers — because an anchor's id is the marker
+ * UUID minted in the anchor module (a `crypto.randomUUID`, not a ULID).
+ */
 export function insertAnchor(anchor: Anchor): Result<Anchor, DbError> {
     return tryMutation("insertAnchor", (conn) => {
-        conn.query("INSERT INTO anchors (id, cached_path, marker_written, created_at, updated_at, last_seen) VALUES (?, ?, ?, ?, ?, ?)").run(
+        conn.query("INSERT INTO anchors (id, created_at, updated_at, cached_path, marker_written, last_seen) VALUES (?, ?, ?, ?, ?, ?)").run(
             anchor.id,
-            anchor.cachedPath,
-            anchor.markerWritten ? 1 : 0,
             anchor.createdAt,
             anchor.updatedAt,
+            anchor.cachedPath,
+            anchor.markerWritten ? 1 : 0,
             anchor.lastSeen,
         );
         return anchor;
     });
 }
 
-// cachedPath is a real data edit, so it bumps updated_at. lastSeen stays a separate heartbeat.
+/** Re-points an anchor at `cachedPath`. A real data edit, so it bumps `updatedAt`; the `lastSeen` heartbeat stays separate. */
 export function updateAnchorCachedPath(id: string, cachedPath: string): Result<void, DbError> {
     return tryMutation("updateAnchorCachedPath", (conn) => {
         conn.query("UPDATE anchors SET cached_path = ?, updated_at = ? WHERE id = ?").run(cachedPath, Date.now(), id);
     });
 }
 
-// A sighting heartbeat only — deliberately does NOT touch updated_at (the data-edit timestamp).
+/** Records a sighting heartbeat (`lastSeen`) only — deliberately does NOT touch `updatedAt`, the data-edit timestamp. */
 export function touchAnchor(id: string): Result<void, DbError> {
     return tryMutation("touchAnchor", (conn) => {
         conn.query("UPDATE anchors SET last_seen = ? WHERE id = ?").run(Date.now(), id);

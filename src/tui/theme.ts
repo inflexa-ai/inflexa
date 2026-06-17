@@ -13,26 +13,30 @@ import { DEFAULT_THEME_ID, themes, type ThemeColors, type ThemeId } from "../lib
 
 const [activeThemeId, setActiveThemeId] = createSignal<ThemeId>(DEFAULT_THEME_ID);
 
-// Active theme id — read inside a tracking scope for reactivity.
+/** Active theme id — read inside a tracking scope for reactivity. */
 export const themeId = activeThemeId;
 
 export function setTheme(id: ThemeId): void {
     setActiveThemeId(id);
 }
 
-// Active theme's flat color tokens. Read as `theme().<token>` in JSX so a
-// switch repaints; reading once outside a tracking scope freezes the value.
+/**
+ * Active theme's flat color tokens. Read as `theme().<token>` in JSX so a
+ * switch repaints; reading once outside a tracking scope freezes the value.
+ */
 export function theme(): ThemeColors {
     return themes[activeThemeId()].colors;
 }
 
-// Active theme's markdown highlight style. Built lazily and cached per theme:
-// the built-in palettes are immutable, so each theme's native SyntaxStyle is
-// constructed at most once (total ≤ #themes) and never freed during the process
-// — no disposal/use-after-free concern. Reading the active-id signal keeps it
-// reactive (so `<markdown>` recolors on switch); being a plain function keeps it
-// lazy, so processes that render no markdown (e.g. `inf config`, which previews
-// themes live) never build a style.
+/**
+ * Active theme's markdown highlight style. Built lazily and cached per theme:
+ * the built-in palettes are immutable, so each theme's native SyntaxStyle is
+ * constructed at most once (total ≤ #themes) and never freed during the process
+ * — no disposal/use-after-free concern. Reading the active-id signal keeps it
+ * reactive (so `<markdown>` recolors on switch); being a plain function keeps it
+ * lazy, so processes that render no markdown (e.g. `inf config`, which previews
+ * themes live) never build a style.
+ */
 const syntaxStyleCache = new Map<ThemeId, SyntaxStyle>();
 export function syntaxStyle(): SyntaxStyle {
     const id = activeThemeId();

@@ -50,7 +50,7 @@ Format: `// TODO(<tag>): <reason>`. Never use a bare `// TODO`.
 - Always type function parameters and return values (except JSX returns).
 - Comment every `any`/`unknown` usage.
 - **Use domain types, never raw `string` for known value sets.** Shared domain types — persisted entity shapes (`session.ts`, `anchor.ts`, …) and the event contract (`events.ts`) — live in `src/types/`, grouped by domain. Everything else (command options, error unions, wire schemas) co-locates with its owning code. See [Project structure](#project-structure) for why the entity shapes are shared rather than module-local.
-- **Document types and their properties with JSDoc (`/** … */`) blocks, never trailing `//` line comments** — JSDoc is the only form the LSP surfaces on hover and completion. Place the block on the line above the type or property it describes.
+- **Document every exported declaration — types, their properties, and functions — with JSDoc (`/** … */`) blocks, never `//` line comments** — JSDoc is the only form the LSP surfaces on hover and completion, so a `//` above a function is invisible at the call site where you read it. Reserve `//` for inline implementation notes (the WHY) inside a body. Place the block on the line above what it describes.
 
   ```ts
   /** Invisible folder-identity record. Keyed by the marker id, not its path. */
@@ -59,6 +59,11 @@ Format: `// TODO(<tag>): <reason>`. Never use a bare `// TODO`.
       markerWritten: boolean;
       // NOT: markerWritten: boolean; // false when the folder was not writable
   };
+
+  /** Records a sighting heartbeat only — does NOT touch `updatedAt` (the data-edit stamp). */
+  export function touchAnchor(id: string): Result<void, DbError> {
+      /* … */
+  }
   ```
 
 ## Naming conventions
