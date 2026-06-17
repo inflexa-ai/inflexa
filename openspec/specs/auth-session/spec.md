@@ -106,7 +106,7 @@ Tokens SHALL be persisted as JSON (`accessToken`, `refreshToken`, `idToken`, `ex
 #### Scenario: Refresh fails
 
 - **WHEN** the refresh request is rejected (revoked, expired by inactivity, or reuse-detected)
-- **THEN** a typed `refresh_failed` error is returned whose message tells the user to run `inf login`
+- **THEN** a typed `refresh_failed` error is returned whose message tells the user to run `inf auth login`
 
 #### Scenario: Never logged in
 

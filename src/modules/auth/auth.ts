@@ -108,17 +108,17 @@ export function describeAuthError(error: AuthError): string {
         case "missing_config":
             return `This build has no Auth0 configuration (missing: ${error.missingVars.join(", ")}). Release binaries are built with these baked in; for development, set them in your environment or .env.`;
         case "not_authenticated":
-            return "Not logged in — run `inf login`.";
+            return "Not logged in — run `inf auth login`.";
         case "device_code_request_failed":
             return `Could not start the login flow: ${error.detail}`;
         case "token_poll_failed":
             return `Login failed: ${error.detail}`;
         case "authorization_expired":
-            return "The login code expired before it was confirmed — run `inf login` again.";
+            return "The login code expired before it was confirmed — run `inf auth login` again.";
         case "authorization_denied":
             return "Authorization was denied in the browser.";
         case "refresh_failed":
-            return `Could not renew the session (${error.detail}) — run \`inf login\`.`;
+            return `Could not renew the session (${error.detail}) — run \`inf auth login\`.`;
         case "revoke_failed":
             return `Could not revoke the session at Auth0: ${error.detail}`;
         case "token_read_failed":
