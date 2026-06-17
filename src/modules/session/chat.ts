@@ -23,10 +23,12 @@ const SYSTEM_PROMPT = "You are inf, a concise and helpful coding assistant opera
 
 const modelsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
 
-// Resolved once per process from the proxy's model list (which reflects the
-// authenticated provider). The user primarily uses Anthropic, so prefer a
-// Claude model when present, then other known families, then whatever is first
-// — this keeps the default adapting to whatever `inf setup` signed into.
+/**
+ * Resolved once per process from the proxy's model list (which reflects the
+ * authenticated provider). The user primarily uses Anthropic, so prefer a
+ * Claude model when present, then other known families, then whatever is first
+ * — this keeps the default adapting to whatever `inf setup` signed into.
+ */
 const MODEL_PREFERENCE = ["claude", "gpt", "gemini", "qwen"];
 let cachedModelId: string | null = null;
 
@@ -143,7 +145,7 @@ function toModelMessages(stored: StoredMessage[]): ModelMessage[] {
     return messages;
 }
 
-// The proxy requires the client API key we generated into its config at setup.
+/** The proxy requires the client API key we generated into its config at setup. */
 async function readApiKey(): Promise<string> {
     const text = await Bun.file(env.cliproxyConfigPath)
         .text()

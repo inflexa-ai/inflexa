@@ -8,9 +8,11 @@ const MAX_LOG_AGE_DAYS = 7;
 const MAX_LOG_BYTES = 20 * 1024 * 1024;
 const LOG_FILE_PATTERN = /^inf-(\d{4}-\d{2}-\d{2})(?:\.\d+)?\.log$/;
 
-// Rotation runs once, at startup — the CLI is short-lived, so every
-// invocation sweeps retention. A session crossing midnight or 20MB
-// keeps its file until the next run.
+/**
+ * Rotation runs once, at startup — the CLI is short-lived, so every
+ * invocation sweeps retention. A session crossing midnight or 20MB
+ * keeps its file until the next run.
+ */
 function rotatedLogFile(): string {
     try {
         const cutoff = Date.now() - MAX_LOG_AGE_DAYS * 24 * 60 * 60 * 1000;
@@ -51,9 +53,11 @@ const fileDestination = pino.destination({ dest: rotatedLogFile(), mkdir: true, 
 
 const streams = pino.multistream([{ level, stream: fileDestination }]);
 
-// The TUI owns stdout/stderr (alternate-screen mode) — the file is the only
-// terminal-safe destination. Redaction lives here, on the root, so every
-// stream (file and any telemetry export added later) sees identical records.
+/**
+ * The TUI owns stdout/stderr (alternate-screen mode) — the file is the only
+ * terminal-safe destination. Redaction lives here, on the root, so every
+ * stream (file and any telemetry export added later) sees identical records.
+ */
 const root = pino(
     {
         level,
@@ -80,7 +84,7 @@ export function flushLogs(): Promise<void> {
     });
 }
 
-// For process.on("exit"), where only synchronous work runs.
+/** For process.on("exit"), where only synchronous work runs. */
 export function flushLogsSync(): void {
     try {
         fileDestination.flushSync();

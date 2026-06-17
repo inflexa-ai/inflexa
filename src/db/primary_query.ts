@@ -4,6 +4,7 @@ import type { Session, Part, StoredMessage } from "../types/session.ts";
 import type { Anchor } from "../types/anchor.ts";
 import { tryQuery } from "./util.ts";
 
+/** Loads a session by id; `null` when there is no such row. */
 export function getSession(id: string): Result<Session | null, DbError> {
     return tryQuery("getSession", (conn) => {
         const row = conn.query("SELECT data FROM sessions WHERE id = ?").get(id) as { data: string } | null;
@@ -11,6 +12,7 @@ export function getSession(id: string): Result<Session | null, DbError> {
     });
 }
 
+/** All sessions, newest first. */
 export function listSessions(): Result<Session[], DbError> {
     return tryQuery("listSessions", (conn) => {
         const rows = conn.query("SELECT data FROM sessions ORDER BY id DESC").all() as { data: string }[];
@@ -18,6 +20,7 @@ export function listSessions(): Result<Session[], DbError> {
     });
 }
 
+/** A session's messages, oldest first, each with its parts assembled in order. */
 export function getSessionMessages(sessionId: string): Result<StoredMessage[], DbError> {
     return tryQuery("getSessionMessages", (conn) => {
         const msgRows = conn.query("SELECT id, data FROM messages WHERE session_id = ? ORDER BY id ASC").all(sessionId) as {
@@ -44,30 +47,30 @@ export function getSessionMessages(sessionId: string): Result<StoredMessage[], D
     });
 }
 
-// Anchors are a columnar table (one typed column per field, not a JSON blob) so a
-// folder's identity and cached path can be filtered and joined directly in SQL.
+/** A row of the columnar `anchors` table — one typed column per field (not a JSON blob), so identity and path stay filterable and joinable in SQL. */
 type AnchorRow = {
     id: string;
-    cached_path: string;
-    marker_written: number;
     created_at: number;
     updated_at: number;
+    cached_path: string;
+    marker_written: number;
     last_seen: number;
 };
 
 function anchorFromRow(r: AnchorRow): Anchor {
     return {
         id: r.id,
-        cachedPath: r.cached_path,
-        markerWritten: r.marker_written === 1,
         createdAt: r.created_at,
         updatedAt: r.updated_at,
+        cachedPath: r.cached_path,
+        markerWritten: r.marker_written === 1,
         lastSeen: r.last_seen,
     };
 }
 
-const ANCHOR_COLS = "id, cached_path, marker_written, created_at, updated_at, last_seen";
+const ANCHOR_COLS = "id, created_at, updated_at, cached_path, marker_written, last_seen";
 
+/** Loads an anchor by its id (the marker UUID); `null` when there is no such row. */
 export function getAnchor(id: string): Result<Anchor | null, DbError> {
     return tryQuery("getAnchor", (conn) => {
         const row = conn.query(`SELECT ${ANCHOR_COLS} FROM anchors WHERE id = ?`).get(id) as AnchorRow | null;
@@ -75,6 +78,7 @@ export function getAnchor(id: string): Result<Anchor | null, DbError> {
     });
 }
 
+/** Every anchor row — the candidate set for the bounded path search during anchor reconciliation. */
 export function listAnchors(): Result<Anchor[], DbError> {
     return tryQuery("listAnchors", (conn) => {
         const rows = conn.query(`SELECT ${ANCHOR_COLS} FROM anchors`).all() as AnchorRow[];
