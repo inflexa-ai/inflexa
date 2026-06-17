@@ -25,5 +25,5 @@ export type Anchor = {
 /** Contents of the write-once on-disk marker `<anchor>/.inf/id`. */
 export type AnchorMarker = {
     schemaVersion: 1;
-    anchorUuid: AnchorId;
+    anchorId: AnchorId;
 };

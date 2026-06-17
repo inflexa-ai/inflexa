@@ -1,5 +1,6 @@
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { z } from "zod";
 import type { AnchorMarker, AnchorId } from "../../types/anchor.ts";
 
 /** The on-disk marker for a folder: <dir>/.inf/id (write-once identity file). */
@@ -22,8 +23,18 @@ export function canonicalPath(p: string): string {
 }
 
 /**
+ * Shape of a valid on-disk marker. Kept beside the marker I/O (its only reader) and pinned
+ * to the {@link AnchorMarker} domain type with `satisfies`, so the schema and the type
+ * cannot drift apart.
+ */
+const anchorMarkerSchema = z.object({
+    schemaVersion: z.literal(1),
+    anchorId: z.string(),
+}) satisfies z.ZodType<AnchorMarker>;
+
+/**
  * Reads & validates <dir>/.inf/id. Returns null when the file is absent (the normal
- * "not an anchor yet" case). Throws on malformed JSON or an unexpected schemaVersion:
+ * "not an anchor yet" case). Throws on malformed JSON or a marker that fails the schema:
  * corruption is surfaced so the caller can repair it, never silently re-minted (which
  * would orphan the existing identity and duplicate its analyses).
  */
@@ -32,12 +43,12 @@ export function readMarker(dir: string): AnchorMarker | null {
     if (!existsSync(path)) return null;
 
     const raw = readFileSync(path, "utf8");
-    // Let a JSON parse error throw — a present-but-unreadable marker is corruption.
-    const parsed = JSON.parse(raw) as Partial<AnchorMarker>;
-    if (parsed.schemaVersion !== 1 || typeof parsed.anchorUuid !== "string") {
-        throw new Error(`corrupt anchor marker at ${path}: ${raw}`);
-    }
-    return { schemaVersion: 1, anchorUuid: parsed.anchorUuid };
+    // A present-but-invalid marker is corruption, not absence. JSON.parseWith returns null
+    // for both a parse error and a schema mismatch, so the existsSync gate above is what
+    // separates "no marker" (null, fine) from "broken marker" (throw, never silently re-minted).
+    const marker = JSON.parseWith(raw, anchorMarkerSchema);
+    if (!marker) throw new Error(`corrupt anchor marker at ${path}: ${raw}`);
+    return marker;
 }
 
 /**
@@ -46,11 +57,11 @@ export function readMarker(dir: string): AnchorMarker | null {
  * rewritten — the marker records no mutable state). A corrupt existing marker throws
  * rather than being clobbered. Only an absent marker is created.
  */
-export function writeMarker(dir: string, anchorUuid: AnchorId): AnchorMarker {
+export function writeMarker(dir: string, anchorId: AnchorId): AnchorMarker {
     const existing = readMarker(dir); // throws if corrupt — do not overwrite corruption
     if (existing) return existing;
 
-    const marker: AnchorMarker = { schemaVersion: 1, anchorUuid };
+    const marker: AnchorMarker = { schemaVersion: 1, anchorId: anchorId };
     mkdirSync(join(dir, ".inf"), { recursive: true });
     writeFileSync(markerPath(dir), `${JSON.stringify(marker, null, 2)}\n`, "utf8");
     return marker;
