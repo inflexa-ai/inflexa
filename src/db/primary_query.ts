@@ -21,8 +21,8 @@ export function listSessions(): Result<Session[], DbError> {
 }
 
 /** A session's messages, oldest first, each with its parts assembled in order. */
-export function getSessionMessages(sessionId: string): Result<StoredMessage[], DbError> {
-    return tryQuery("getSessionMessages", (conn) => {
+export function listSessionMessages(sessionId: string): Result<StoredMessage[], DbError> {
+    return tryQuery("listSessionMessages", (conn) => {
         const msgRows = conn.query("SELECT id, data FROM messages WHERE session_id = ? ORDER BY id ASC").all(sessionId) as {
             id: string;
             data: string;
