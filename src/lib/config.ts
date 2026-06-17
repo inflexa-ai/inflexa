@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { Result } from "neverthrow";
 import { z } from "zod";
 
-import { DEFAULT_THEME_ID, themeIds } from "../tui/theme_ids.ts";
+import { DEFAULT_THEME_ID, themeIds } from "./themes.ts";
 import { env } from "./env.ts";
 
 const configSchema = z.object({

@@ -1,8 +1,17 @@
-import { type ThemeId } from "../tui/theme_ids.ts";
+// Theme registry: the id list, the type shapes, and the palette data. Kept
+// dependency-light (no solid-js, no renderer), separate from the reactive accessor
+// layer in `src/tui/theme.ts`, which imports this. The ids live here too — and stay
+// solid-js-free — so `src/lib/config.ts` can validate the persisted theme (its zod
+// enum) without dragging the reactive layer (and solid-js) onto every command path:
+// `src/index.ts` reads config at startup for every command (`inf login`, `whoami`, …).
 
-// Built-in theme definitions: the type shapes and the palette data. Kept here,
-// dependency-light (no solid-js, no renderer), separate from the reactive
-// accessor layer in `src/tui/theme.ts`, which imports this registry.
+// Ordered id list — single source of truth for the picker order, the `ThemeId` union,
+// and the config zod enum.
+export const themeIds = ["tokyo-night", "catppuccin-mocha", "gruvbox-dark", "nord", "rose-pine"] as const;
+
+export type ThemeId = (typeof themeIds)[number];
+
+export const DEFAULT_THEME_ID: ThemeId = "tokyo-night";
 
 // Flat color tokens, read by components via `theme().<token>`.
 export type ThemeColors = {
