@@ -1,0 +1,31 @@
+version: 2
+updates:
+  # JavaScript dependencies. The "npm" ecosystem covers Bun projects —
+  # Dependabot reads package.json and bun.lock.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    # The repo uses Conventional Commits; "build(deps)" is the right type for
+    # dependency bumps and keeps release-note generation tidy.
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    # Cut PR noise: batch routine minor/patch bumps, but keep major bumps as
+    # individual PRs since they are likely to need real review.
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions used in workflows (when any are added).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build"
+      include: "scope"
