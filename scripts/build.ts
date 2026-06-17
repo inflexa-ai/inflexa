@@ -6,6 +6,8 @@
 // Solid JSX transform (@opentui/solid) is a bundler plugin, and plugins are
 // only available through the JS API.
 import { $ } from "bun";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { createSolidTransformPlugin, resetSolidTransformPluginState } from "@opentui/solid/bun-plugin";
 
@@ -127,4 +129,145 @@ for (const target of targets) {
     } else {
         console.log(`built dist/${name} (cross-compiled, not smoke-tested)`);
     }
+}
+
+// Compiling the deps into the binary makes us their redistributor, so the
+// license/NOTICE text of every bundled package must ship alongside the
+// executables. Generated fresh each build because the resolved tree drifts;
+// it is never hand-maintained.
+const thirdParty = collectThirdPartyLicenses(process.cwd());
+await Bun.write("dist/THIRD-PARTY-NOTICES.txt", renderThirdPartyNotices(thirdParty));
+console.log(`wrote dist/THIRD-PARTY-NOTICES.txt (${thirdParty.length} packages)`);
+
+type ThirdPartyPackage = {
+    name: string;
+    version: string;
+    license: string;
+    homepage: string | null;
+    licenseText: string | null;
+    noticeText: string | null;
+};
+
+// Walk the *production* dependency graph (dependencies + optionalDependencies,
+// never devDependencies — those are not in the binary) and collect each
+// package's bundled license and NOTICE text. The set is a conservative
+// superset of what the bundler actually embeds: over-attribution is harmless,
+// under-attribution is the legal risk.
+function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
+    const seenDirs = new Set<string>();
+    const collected = new Map<string, ThirdPartyPackage>();
+    const queue: Array<{ name: string; fromDir: string }> = [];
+
+    function enqueue(deps: Record<string, string> | undefined, fromDir: string): void {
+        if (!deps) return;
+        for (const name of Object.keys(deps)) queue.push({ name, fromDir });
+    }
+
+    // Mirror Node's package resolution by hand: a package's exports map can
+    // block importing its package.json, so we read off disk and walk up the
+    // node_modules chain to honor both nesting and hoisting.
+    function findPackageDir(name: string, fromDir: string): string | null {
+        let dir = fromDir;
+        for (;;) {
+            const candidate = join(dir, "node_modules", name);
+            if (existsSync(join(candidate, "package.json"))) return candidate;
+            const parent = dirname(dir);
+            if (parent === dir) return null;
+            dir = parent;
+        }
+    }
+
+    function readMatchingText(pkgDir: string, matcher: RegExp): string | null {
+        let entries: string[];
+        try {
+            entries = readdirSync(pkgDir);
+        } catch {
+            return null;
+        }
+        // Concatenate all matches so dual-licensed packages (LICENSE-MIT +
+        // LICENSE-APACHE) keep both texts.
+        const texts = entries
+            .filter((entry) => matcher.test(entry))
+            .sort()
+            .map((entry) => {
+                try {
+                    return readFileSync(join(pkgDir, entry), "utf8").trim();
+                } catch {
+                    return "";
+                }
+            })
+            .filter((text) => text.length > 0);
+        return texts.length > 0 ? texts.join("\n\n") : null;
+    }
+
+    const rootPkg = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8")) as {
+        dependencies?: Record<string, string>;
+        optionalDependencies?: Record<string, string>;
+    };
+    enqueue(rootPkg.dependencies, rootDir);
+    enqueue(rootPkg.optionalDependencies, rootDir);
+
+    while (queue.length > 0) {
+        const item = queue.shift();
+        if (!item) continue;
+        const pkgDir = findPackageDir(item.name, item.fromDir);
+        if (!pkgDir || seenDirs.has(pkgDir)) continue;
+        seenDirs.add(pkgDir);
+
+        const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")) as {
+            name?: string;
+            version?: string;
+            // legacy packages express license as a {type} object or an array;
+            // we only surface a string id and otherwise rely on the file text.
+            license?: unknown;
+            homepage?: string;
+            dependencies?: Record<string, string>;
+            optionalDependencies?: Record<string, string>;
+        };
+        const pkgName = pkg.name ?? item.name;
+        const version = pkg.version ?? "0.0.0";
+        const key = `${pkgName}@${version}`;
+        if (!collected.has(key)) {
+            collected.set(key, {
+                name: pkgName,
+                version,
+                license: typeof pkg.license === "string" ? pkg.license : "SEE LICENSE FILE",
+                homepage: typeof pkg.homepage === "string" ? pkg.homepage : null,
+                licenseText: readMatchingText(pkgDir, /^(licen[cs]e|copying)/i),
+                noticeText: readMatchingText(pkgDir, /^notice/i),
+            });
+        }
+
+        // Resolve transitive deps from this package's own dir so a nested
+        // copy wins over a hoisted one.
+        enqueue(pkg.dependencies, pkgDir);
+        enqueue(pkg.optionalDependencies, pkgDir);
+    }
+
+    return [...collected.values()].sort((a, b) => (a.name === b.name ? a.version.localeCompare(b.version) : a.name.localeCompare(b.name)));
+}
+
+function renderThirdPartyNotices(packages: ThirdPartyPackage[]): string {
+    const divider = "=".repeat(78);
+    const header = [
+        "Inflexa — Third-Party Software Notices",
+        "",
+        "The Inflexa binary is compiled together with the open-source packages listed",
+        "below. Each is distributed under its own license, reproduced here as those",
+        "licenses require. This file is generated at build time from the resolved",
+        "dependency tree — do not edit it by hand.",
+        "",
+        `Packages: ${packages.length}`,
+    ].join("\n");
+
+    const sections = packages.map(function (pkg): string {
+        const lines = [divider, `${pkg.name}@${pkg.version}`, `License: ${pkg.license}`];
+        if (pkg.homepage) lines.push(`Homepage: ${pkg.homepage}`);
+        lines.push("");
+        lines.push(pkg.licenseText ?? `(No license file bundled; declared license: ${pkg.license}.)`);
+        if (pkg.noticeText) lines.push("", "--- NOTICE ---", "", pkg.noticeText);
+        return lines.join("\n");
+    });
+
+    return [header, ...sections, divider, ""].join("\n\n");
 }
