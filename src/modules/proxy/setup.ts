@@ -22,7 +22,7 @@ import { env } from "../../lib/env.ts";
 // --- command ---------------------------------------------------------------
 
 type SetupOptions = {
-    /** cac fills these in from the flags registered in src/cli/index.ts. */
+    /** Commander fills these in from the flags registered in src/cli/index.ts. */
     provider?: string;
     auth: boolean;
     start: boolean;

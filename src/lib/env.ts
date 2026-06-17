@@ -76,7 +76,7 @@ export const envDoc: Readonly<Record<Exclude<keyof typeof env, "cliproxyPort" | 
     cliproxyConfigPath: { kind: "path", label: "proxy config", description: "CLIProxyAPI config, mounted into the proxy container", baseVar: dataVar },
     cliproxyAuthDir: { kind: "path", label: "proxy auth", description: "CLIProxyAPI provider credentials, created by `inf setup`", baseVar: dataVar },
     configPath: { kind: "path", label: "config", description: "settings (telemetry consent)", baseVar: configVar },
-    authPath: { kind: "path", label: "auth", description: "Auth0 session tokens, created by `inf login`", baseVar: configVar },
+    authPath: { kind: "path", label: "auth", description: "Auth0 session tokens, created by `inf auth login`", baseVar: configVar },
     logLevel: { kind: "var", name: logLevelVar, description: "log verbosity: trace|debug|info|warn|error|fatal (default: info)" },
     otelEndpoint: { kind: "var", name: otelEndpointVar, description: "OTLP endpoint for log export; requires telemetry enabled via `inf config`" },
 });

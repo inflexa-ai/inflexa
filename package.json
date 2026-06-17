@@ -24,7 +24,7 @@
         "@opentui/core": "0.4.0",
         "@opentui/solid": "^0.4.0",
         "ai": "^6.0.205",
-        "cac": "^7.0.0",
+        "commander": "^15",
         "neverthrow": "^8.2.0",
         "pino": "^10.3.1",
         "solid-js": "^1.9.0",
