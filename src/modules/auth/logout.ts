@@ -1,4 +1,4 @@
-import { deleteAuth, describeAuthError, loadAuth, resolveAuth0Config, revokeRefreshToken, type StoredAuth } from "../lib/auth.ts";
+import { deleteAuth, describeAuthError, loadAuth, resolveAuth0Config, revokeRefreshToken, type StoredAuth } from "./auth.ts";
 
 export async function logout(): Promise<void> {
     const loaded = loadAuth().match(

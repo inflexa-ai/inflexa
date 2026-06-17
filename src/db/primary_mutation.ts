@@ -1,7 +1,8 @@
 import type { Result } from "neverthrow";
 import { newId, tryMutation } from "./util.ts";
 import type { DbError } from "./errors.ts";
-import type { Session, Message, Part, TextPart } from "../types.ts";
+import type { Session, Message, Part, TextPart } from "../types/session.ts";
+import type { Anchor } from "../types/anchor.ts";
 
 export function createSession(title?: string): Result<Session, DbError> {
     const session: Session = {
@@ -60,5 +61,35 @@ export function createPart(sessionId: string, messageId: string, text: string): 
 export function updatePart(part: Part): Result<void, DbError> {
     return tryMutation("updatePart", (conn) => {
         conn.query("UPDATE parts SET data = ? WHERE id = ?").run(JSON.stringify(part), part.id);
+    });
+}
+
+// Anchors. The caller supplies the row: an anchor's id is the marker UUID minted in
+// the anchor module (crypto.randomUUID), not a ULID, so insert takes a full Anchor.
+export function insertAnchor(anchor: Anchor): Result<Anchor, DbError> {
+    return tryMutation("insertAnchor", (conn) => {
+        conn.query("INSERT INTO anchors (id, cached_path, marker_written, created_at, updated_at, last_seen) VALUES (?, ?, ?, ?, ?, ?)").run(
+            anchor.id,
+            anchor.cachedPath,
+            anchor.markerWritten ? 1 : 0,
+            anchor.createdAt,
+            anchor.updatedAt,
+            anchor.lastSeen,
+        );
+        return anchor;
+    });
+}
+
+// cachedPath is a real data edit, so it bumps updated_at. lastSeen stays a separate heartbeat.
+export function updateAnchorCachedPath(id: string, cachedPath: string): Result<void, DbError> {
+    return tryMutation("updateAnchorCachedPath", (conn) => {
+        conn.query("UPDATE anchors SET cached_path = ?, updated_at = ? WHERE id = ?").run(cachedPath, Date.now(), id);
+    });
+}
+
+// A sighting heartbeat only — deliberately does NOT touch updated_at (the data-edit timestamp).
+export function touchAnchor(id: string): Result<void, DbError> {
+    return tryMutation("touchAnchor", (conn) => {
+        conn.query("UPDATE anchors SET last_seen = ? WHERE id = ?").run(Date.now(), id);
     });
 }

@@ -4,9 +4,9 @@ import { createSignal, For, Show } from "solid-js";
 import { readConfig, writeConfig, type Config } from "../lib/config.ts";
 import { env } from "../lib/env.ts";
 import { shutdown } from "../lib/shutdown.ts";
-import { setTheme, theme } from "../tui/theme.ts";
+import { setTheme, theme } from "./theme.ts";
 import { themes } from "../lib/themes.ts";
-import { themeIds, type ThemeId } from "../tui/theme_ids.ts";
+import { themeIds, type ThemeId } from "./theme_ids.ts";
 
 // Config keys whose value is a boolean — the toggleable settings.
 type BooleanSettingKey = { [K in keyof Config]: Config[K] extends boolean ? K : never }[keyof Config];

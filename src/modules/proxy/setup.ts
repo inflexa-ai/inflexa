@@ -2,7 +2,7 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline/promises";
 
-import { env } from "../lib/env.ts";
+import { env } from "../../lib/env.ts";
 
 // `inf setup` provisions CLIProxyAPI (https://help.router-for.me) as a Docker
 // container, authenticates a provider, and starts it. We run it in Docker — the

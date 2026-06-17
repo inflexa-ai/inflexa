@@ -8,32 +8,32 @@ export const cli = cac(pkg.name);
 cli.command("[session]", "Launch the TUI (default)")
     .option("--session <id>", "Resume a specific session by ID")
     .action(async (session: string | undefined) => {
-        const { launchTui } = await import("./tui.tsx");
+        const { launchTui } = await import("../tui/launch.tsx");
         await launchTui({ session });
     });
 
 cli.command("sessions", "List saved sessions").action(async () => {
-    const { listSessions } = await import("./sessions.ts");
+    const { listSessions } = await import("../modules/session/sessions.ts");
     await listSessions();
 });
 
 cli.command("config", "View and change settings").action(async () => {
-    const { launchConfig } = await import("./config.tsx");
+    const { launchConfig } = await import("../tui/config.tsx");
     await launchConfig();
 });
 
 cli.command("login", "Log in via the Auth0 device flow").action(async () => {
-    const { login } = await import("./login.ts");
+    const { login } = await import("../modules/auth/login.ts");
     await login();
 });
 
 cli.command("logout", "Log out and revoke the stored session").action(async () => {
-    const { logout } = await import("./logout.ts");
+    const { logout } = await import("../modules/auth/logout.ts");
     await logout();
 });
 
 cli.command("whoami", "Show the logged-in user and session status").action(async () => {
-    const { whoami } = await import("./whoami.ts");
+    const { whoami } = await import("../modules/auth/whoami.ts");
     whoami();
 });
 
@@ -43,7 +43,7 @@ cli.command("setup", "Install, authenticate, and start CLIProxyAPI (Docker)")
     .option("--no-start", "Set up only; don't start the proxy container")
     .option("--force", "Re-pull the proxy image even if it is already cached")
     .action(async (options: { provider?: string; auth: boolean; start: boolean; force: boolean }) => {
-        const { setup } = await import("./setup.ts");
+        const { setup } = await import("../modules/proxy/setup.ts");
         await setup(options);
     });
 

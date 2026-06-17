@@ -7,6 +7,14 @@ export const migrations: Migration[] = [
     {
         version: 1,
         up: `
+            CREATE TABLE anchors (
+                id TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                cached_path TEXT NOT NULL,
+                marker_written INTEGER NOT NULL,
+                last_seen INTEGER NOT NULL
+            );
             CREATE TABLE sessions (
                 id TEXT PRIMARY KEY,
                 data TEXT NOT NULL
