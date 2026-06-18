@@ -5,6 +5,9 @@ import type { Migration } from "./util.ts";
 
 export const migrations: Migration[] = [
     {
+        // Single forward-only baseline. Tables are declared parent-before-child so every FK is a
+        // backward reference. Columns follow the house order: the identity triple
+        // (id, created_at, updated_at) first and colocated, then core data, then foreign keys last.
         version: 1,
         up: `
             CREATE TABLE anchors (
@@ -15,47 +18,64 @@ export const migrations: Migration[] = [
                 marker_written INTEGER NOT NULL,
                 last_seen INTEGER NOT NULL
             );
-            CREATE TABLE sessions (
-                id TEXT PRIMARY KEY,
-                data TEXT NOT NULL
-            );
-            CREATE TABLE messages (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                data TEXT NOT NULL,
-                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-            );
-            CREATE TABLE parts (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                message_id TEXT NOT NULL,
-                data TEXT NOT NULL,
-                FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
-            );
-            CREATE INDEX idx_messages_session ON messages(session_id);
-            CREATE INDEX idx_parts_message ON parts(message_id);
-            CREATE INDEX idx_parts_session ON parts(session_id);
             CREATE TABLE projects (
                 id TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
                 name TEXT NOT NULL UNIQUE,
                 description TEXT,
-                tags TEXT NOT NULL DEFAULT '',
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                tags TEXT NOT NULL DEFAULT ''
             );
             CREATE TABLE analyses (
                 id TEXT PRIMARY KEY,
-                project_id TEXT REFERENCES projects(id),
-                anchor_id TEXT NOT NULL REFERENCES anchors(id),
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 slug TEXT NOT NULL,
                 output_directory TEXT,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
+                anchor_id TEXT NOT NULL REFERENCES anchors(id),
+                project_id TEXT REFERENCES projects(id),
                 -- Outputs live at …/analyses/<slug>/, so a slug must be unique within its anchor.
                 UNIQUE (anchor_id, slug)
             );
             CREATE INDEX idx_analyses_project ON analyses(project_id);
+            CREATE INDEX idx_analyses_anchor ON analyses(anchor_id);
+            -- Inputs are stored as references, never copies: the local filesystem is authoritative.
+            -- Each row's path is relative-to-anchor when anchor_id is set (so it rides the anchor's
+            -- UUID across moves/renames) and absolute otherwise. The analysis FK cascades — dropping
+            -- an analysis takes its input refs with it. No identity triple: a ref is not an entity.
+            CREATE TABLE analysis_inputs (
+                path TEXT NOT NULL,
+                is_dir INTEGER NOT NULL DEFAULT 0,
+                analysis_id TEXT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
+                anchor_id TEXT REFERENCES anchors(id)
+            );
+            CREATE INDEX idx_analysis_inputs_analysis ON analysis_inputs(analysis_id);
+            -- Chat tables: the row is the opaque JSON \`data\` blob; the only columns are the id and
+            -- the FK indexes. A session links to its analysis (one analysis, many sessions) via the
+            -- analysis_id column, not the blob.
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                analysis_id TEXT REFERENCES analyses(id)
+            );
+            CREATE INDEX idx_sessions_analysis ON sessions(analysis_id);
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+            CREATE INDEX idx_messages_session ON messages(session_id);
+            CREATE TABLE parts (
+                id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+            );
+            CREATE INDEX idx_parts_message ON parts(message_id);
+            CREATE INDEX idx_parts_session ON parts(session_id);
         `,
     },
 ];

@@ -34,3 +34,24 @@ export type Analysis = {
     /** Optional grouping; `null` when the analysis belongs to no project. */
     projectId: ProjectId | null;
 };
+
+/**
+ * A single input reference — a path the analysis reads, stored as a reference, never a
+ * copy (the local filesystem is authoritative). An analysis is free to span any number of
+ * folders: its home `anchor` is only the default root, never a fence around the inputs.
+ */
+export type AnalysisInput = {
+    /** Relative-to-`anchorId` when an anchor is set; an absolute path otherwise. */
+    path: string;
+    /** Distinguishes a directory reference (read its subtree) from a single-file reference. */
+    isDir: boolean;
+    /** The owning analysis. */
+    analysisId: AnalysisId;
+    /**
+     * The input's **source** anchor (distinct from the analysis's *home* anchor). Set when
+     * the input lives under a folder the CLI already tracks: the ref then rides that anchor's
+     * UUID and survives the folder moving/being renamed. `null` for a raw absolute-path input
+     * that belongs to no tracked anchor.
+     */
+    anchorId: AnchorId | null;
+};

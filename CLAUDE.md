@@ -48,6 +48,38 @@ Format: `// TODO(<tag>): <reason>`. Never use a bare `// TODO`.
 | `slop` | Works but should be extracted / cleaned up | Duplicated logic across two modules |
 | `robustness` | Missing hardening for stress conditions | No retry/backoff on a flaky external call |
 
+### Resolving an id-or-name reference
+
+When a command resolves a user-supplied reference that may be **either an id or a human name/slug** (`inf resume <x>`, `--analysis <x>`, …):
+
+- **Type the parameter `IdOrName`** (from `lib/types.ts`), never a bare `string` — the alias makes "resolve this by id OR name" legible at the call site.
+- **Resolve it in a SINGLE query, id-first** — never fetch-by-id then fall back to fetch-by-name, and never load all rows to `.find`/`.filter` in JS. Put the priority in SQL:
+
+  ```sql
+  -- one match (LIMIT 1):
+  WHERE id = $ref OR name = $ref ORDER BY (id = $ref) DESC LIMIT 1
+  -- candidate set, when the caller must detect name collisions (ambiguity):
+  WHERE id = $ref OR slug = $ref OR name = $ref ORDER BY (id = $ref) DESC, created_at DESC
+  ```
+
+  `(id = $ref)` sorts the exact-id hit first (ids are unique, so it is THE match); the named `$ref` param binds once. The caller takes `[0]`; "more than one row, none by id" means an ambiguous name/slug. The resolver lives in `db/primary_query.ts` (e.g. `findAnalysesByRef`/`findProjectByRef`).
+
+- **Wrap the resolver in a module `findX`/`matchX` only when the wrapper adds logic.** `matchAnalysis` earns its place — it reshapes the candidate set into `{ analysis, others }` to surface name collisions. When the resolver already returns the single answer (because the lookup column is `UNIQUE`, like `projects.name`), call it directly: a `findProject` whose whole body is `return findProjectByRef(ref)` is pointless ceremony — delete it and let callers import `findProjectByRef`. Same for a one-line write wrapper like `setProject` over `updateAnalysisProject`.
+
+This generalizes: **prefer one query over a read-then-decide round-trip whenever SQL can express the decision** — e.g. a targeted `UPDATE … SET col = ? WHERE id = ?` (rows-changed signals not-found) over read-the-row-then-rewrite-every-column.
+
+### Column & field ordering
+
+Order columns, type fields, and the parameters/bound-args of functions that carry them in three groups, **always in this order**:
+
+1. **Identity** — `id`, `created_at`, `updated_at`, colocated at the top. These three are the row's full identity; keep them together even though the timestamps are rarely read beside `id`. A table/type without timestamps has just `id`; a non-entity (e.g. the `analysis_inputs` reference rows) has no identity group at all.
+2. **Core data** — the fields the row is actually about (`name`, `slug`, `path`, `is_dir`, `data`, …).
+3. **Foreign keys** — every `*_id`/`*Id` reference, last (`anchor_id`, `project_id`, `session_id`, …).
+
+This governs `CREATE TABLE` columns, the `COLS` constant + row type + `fromRow` in `db/`, `INSERT`/`UPDATE` column lists **and their bound params**, the persisted entity types in `src/types/`, and the parameter lists of functions that pass these fields through. An `UPDATE … SET` omits `id` (it's the `WHERE`) but still leads with `updated_at`, then core, then FKs. Declare tables parent-before-child so every FK is a backward reference.
+
+JSON-blob tables (`sessions`/`messages`/`parts`) follow it at the **column** level — `id, data, <fk>` — but the blob's interior shape is application data, not columns, so it keeps its own narrative order.
+
 ## TypeScript
 
 - Prefer `type` over `interface`, `const` over `let`, `function` over arrow functions.

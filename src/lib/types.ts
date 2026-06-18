@@ -12,6 +12,15 @@ import { type Result, ok, err } from "neverthrow";
 export type ID = string;
 
 /**
+ * A user-supplied reference to an entity by either its {@link ID} or its human name/slug —
+ * what a command receives from `inf resume <x>`, `--analysis <x>`, etc. A named alias (not a
+ * bare `string`) so a parameter's intent is legible: "resolve this by id OR name". Resolution
+ * is always a SINGLE id-priority query, never fetch-by-id-then-by-name — see CLAUDE.md →
+ * "Resolving an id-or-name reference".
+ */
+export type IdOrName = string;
+
+/**
  * A trimmed, non-empty string of at most 256 Unicode code points. The brand is the proof
  * that {@link str256} validated it, so a value typed `Str256` is known to satisfy the
  * length bound — construct one only via {@link str256} (validating) or {@link asStr256}

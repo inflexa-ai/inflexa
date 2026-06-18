@@ -4,7 +4,7 @@ import { Result } from "neverthrow";
 import type { AnchorMarker } from "../../types/anchor.ts";
 import { confirm, dieOn, fail } from "../../lib/cli.ts";
 import { countAnalysesByAnchor, getAnchor, listAnchors } from "../../db/primary_query.ts";
-import { deleteAnchor, updateAnchorCachedPath } from "../../db/primary_mutation.ts";
+import { deleteAnalysesForAnchor, deleteAnchor, relocateRawInputPrefix, updateAnchorCachedPath } from "../../db/primary_mutation.ts";
 import { canonicalPath, readMarker } from "./marker.ts";
 import { resolveAnchor } from "./anchor.ts";
 
@@ -123,12 +123,14 @@ async function relocatePrefix(fromPrefix: string, toPrefix: string): Promise<voi
         return;
     }
 
-    // TODO(extend): once analyses (and analysis_inputs) land, also rewrite raw absolute
-    // input paths under this prefix — anchor-relative inputs already ride their anchor.
-    Result.combine(affected.map((a) => updateAnchorCachedPath(a.id, toP + a.cachedPath.slice(fromP.length)))).match(
-        () => console.log(`Rewrote ${affected.length} anchor path(s).`),
-        (error) => fail(`Failed to relocate prefix: ${error.type}`, error.cause),
-    );
+    // Anchor-relative inputs already ride their anchor's reconciled location; only raw
+    // absolute input paths under this prefix need a direct rewrite.
+    Result.combine(affected.map((a) => updateAnchorCachedPath(a.id, toP + a.cachedPath.slice(fromP.length))))
+        .andThen(() => relocateRawInputPrefix(fromP, toP))
+        .match(
+            (rawCount) => console.log(`Rewrote ${affected.length} anchor path(s) and ${rawCount} raw input path(s).`),
+            (error) => fail(`Failed to relocate prefix: ${error.type}`, error.cause),
+        );
 }
 
 /**
@@ -162,14 +164,14 @@ export async function runPrune(): Promise<void> {
         );
         console.log(`  ${a.id}  ${a.cachedPath}  (${count} analyses)`);
     }
-    if (!(await confirm("Delete these anchors?"))) {
+    if (!(await confirm("Delete these anchors and their analyses?"))) {
         console.log("Cancelled.");
         return;
     }
 
-    // TODO(extend): once analyses exist, delete each anchor's analyses (and their inputs)
-    // before the anchor — the analyses→anchors FK has no ON DELETE CASCADE.
-    Result.combine(dead.map((a) => deleteAnchor(a.id))).match(
+    // The analyses→anchors FK has no ON DELETE CASCADE, so delete each dead anchor's analyses
+    // (their input refs cascade via the analysis FK) before dropping the anchor itself.
+    Result.combine(dead.map((a) => deleteAnalysesForAnchor(a.id).andThen(() => deleteAnchor(a.id)))).match(
         () => console.log(`Pruned ${dead.length} anchor(s).`),
         (error) => fail(`Failed to prune: ${error.type}`, error.cause),
     );

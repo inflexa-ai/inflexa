@@ -7,11 +7,13 @@
         "build": "bun scripts/build.ts",
         "build:all": "bun scripts/build.ts --all",
         "dev": "bun run src/index.ts",
+        "dev:install": "bun scripts/dev_install.ts",
         "format": "prettier --write src/",
         "format:file": "prettier --write",
         "lint": "eslint .",
         "start": "bun run src/index.ts",
-        "typecheck": "tsc --noEmit"
+        "typecheck": "tsc --noEmit",
+        "wipe": "bun scripts/wipe.ts"
     },
     "dependencies": {
         "@ai-sdk/openai-compatible": "^2.0.50",
