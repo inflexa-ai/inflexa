@@ -127,9 +127,11 @@ export function App(props: AppProps) {
                 break;
         }
     };
-    Bus.on("inf", handler);
 
-    onCleanup(() => Bus.off("inf", handler));
+    onMount(() => {
+        Bus.on("inf", handler);
+        onCleanup(() => Bus.off("inf", handler));
+    });
 
     useKeyboard((key) => {
         if (key.name === "c" && key.ctrl && status() === "busy") {
