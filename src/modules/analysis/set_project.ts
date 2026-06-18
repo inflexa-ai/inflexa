@@ -13,20 +13,16 @@ export function runSetProject(analysisRef: IdOrName, projectRef: IdOrName | null
     if (!analysis) fail(`No analysis found matching "${analysisRef}".`);
     const label = analysis.name;
 
-    // TODO(slop): This is not ok, we first unlink the analysis from it's current project, and then re-link it?
-    // But if we fail to find the project, that analysis will now be orphaned.
-    if (!projectRef) {
-        updateAnalysisProject(analysis.id, null).match(
-            () => console.log(`Cleared the project of "${label}".`),
-            (error) => fail(`Failed to clear project: ${error.type}`, error.cause),
-        );
-        return;
-    }
+    // Resolve the target project BEFORE touching the analysis's link, so a failed lookup
+    // exits (via fail()) without ever clearing project_id — the analysis is never left
+    // orphaned on the way to a project that turns out not to exist. A null projectRef is
+    // the explicit "clear" request.
+    const project = projectRef ? findProjectByRef(projectRef).match((p) => p, dieOn("Failed to resolve project")) : null;
+    if (projectRef && !project) fail(`No project found matching "${projectRef}".`);
 
-    const project = findProjectByRef(projectRef).match((p) => p, dieOn("Failed to resolve project"));
-    if (!project) fail(`No project found matching "${projectRef}".`);
-    updateAnalysisProject(analysis.id, project.id).match(
-        () => console.log(`Set the project of "${label}" to "${project.name}".`),
-        (error) => fail(`Failed to set project: ${error.type}`, error.cause),
+    // One atomic write: set to the resolved project, or clear when none was given.
+    updateAnalysisProject(analysis.id, project?.id ?? null).match(
+        () => console.log(project ? `Set the project of "${label}" to "${project.name}".` : `Cleared the project of "${label}".`),
+        (error) => fail(`Failed to ${project ? "set" : "clear"} project: ${error.type}`, error.cause),
     );
 }
