@@ -31,6 +31,13 @@ export const env = Object.freeze({
     dbPath: join(dataDir(), "inf", "agent.db"),
     logDir: join(dataDir(), "inf", "logs"),
     /**
+     * Fallback output root, used only when an analysis's anchor folder is not writable
+     * (a read-only mount, a directory owned by another user). The default lives beside
+     * the data at `<anchor>/.inf/analyses/<slug>/`; this guarantees every analysis always
+     * has somewhere to write. See src/modules/analysis/output.ts.
+     */
+    outputFallbackDir: join(dataDir(), "inf", "analyses"),
+    /**
      * CLIProxyAPI runs in Docker (see src/cli/setup.ts). The config and the
      * provider-credential dir are state we own, so they live under our data dir
      * and are bind-mounted into the container.
@@ -73,6 +80,7 @@ export type EnvDocEntry = { kind: "path"; label: string; description: string; ba
 export const envDoc: Readonly<Record<Exclude<keyof typeof env, "cliproxyPort" | "cliproxyBaseUrl" | "cliproxyApiUrl">, EnvDocEntry>> = Object.freeze({
     dbPath: { kind: "path", label: "database", description: "saved sessions (SQLite)", baseVar: dataVar },
     logDir: { kind: "path", label: "logs", description: "log files, rotated daily, 7-day retention", baseVar: dataVar },
+    outputFallbackDir: { kind: "path", label: "outputs", description: "analysis outputs when the anchor folder isn't writable", baseVar: dataVar },
     cliproxyConfigPath: { kind: "path", label: "proxy config", description: "CLIProxyAPI config, mounted into the proxy container", baseVar: dataVar },
     cliproxyAuthDir: { kind: "path", label: "proxy auth", description: "CLIProxyAPI provider credentials, created by `inf setup`", baseVar: dataVar },
     configPath: { kind: "path", label: "config", description: "settings (telemetry consent)", baseVar: configVar },
@@ -80,3 +88,32 @@ export const envDoc: Readonly<Record<Exclude<keyof typeof env, "cliproxyPort" | 
     logLevel: { kind: "var", name: logLevelVar, description: "log verbosity: trace|debug|info|warn|error|fatal (default: info)" },
     otelEndpoint: { kind: "var", name: otelEndpointVar, description: "OTLP endpoint for log export; requires telemetry enabled via `inf config`" },
 });
+
+// Dev-tooling paths for `bun run dev:install` (scripts/dev_install.ts): where the `inflexa`
+// executable is placed on PATH, and where `wipe`'s `repo` target removes it. Homed here so the
+// OS path logic lives beside the app's other path derivations, but deliberately OUT of
+// `env`/`envDoc` — the compiled binary's users never install it, so it is not a runtime path.
+
+/**
+ * The directory `dev:install` puts `inflexa` in, defaulting to a no-sudo, user-writable dir:
+ * - macOS/Linux: `~/.local/bin` — the XDG/freedesktop convention for user executables. We avoid
+ *   `/usr/local/bin` because it is root-owned on Apple Silicon (Homebrew moved to `/opt/homebrew`),
+ *   so a plain install there fails with EACCES.
+ * - Windows: `%LOCALAPPDATA%\Microsoft\WindowsApps` — user-writable and on PATH by default.
+ *
+ * `INF_INSTALL_DIR` overrides it (e.g. `/usr/local/bin` with sudo, or a Homebrew prefix).
+ */
+export function installDir(): string {
+    const override = process.env.INF_INSTALL_DIR;
+    if (override) return override;
+    if (process.platform === "win32") {
+        const localAppData = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
+        return join(localAppData, "Microsoft", "WindowsApps");
+    }
+    return join(homedir(), ".local", "bin");
+}
+
+/** Absolute path of the dev-installed `inflexa` executable (`.exe` on Windows). See {@link installDir}. */
+export function installedBinPath(): string {
+    return join(installDir(), process.platform === "win32" ? "inflexa.exe" : "inflexa");
+}

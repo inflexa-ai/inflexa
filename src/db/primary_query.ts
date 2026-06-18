@@ -3,7 +3,8 @@ import type { DbError } from "./errors.ts";
 import type { Session, Part, StoredMessage } from "../types/session.ts";
 import type { Anchor } from "../types/anchor.ts";
 import type { Project } from "../types/project.ts";
-import { asStr256 } from "../lib/types.ts";
+import type { Analysis, AnalysisInput } from "../types/analysis.ts";
+import { asStr256, type IdOrName } from "../lib/types.ts";
 import { tryQuery } from "./util.ts";
 
 /** Loads a session by id; `null` when there is no such row. */
@@ -46,6 +47,14 @@ export function listSessionMessages(sessionId: string): Result<StoredMessage[], 
             info: JSON.parse(r.data),
             parts: partsByMsg.get(r.id) ?? [],
         }));
+    });
+}
+
+/** A session's chat belongs to one analysis; this lists every session under `analysisId`. The link lives in the `analysis_id` column (queried/joined), not the Session JSON. */
+export function listSessionsByAnalysis(analysisId: string): Result<Session[], DbError> {
+    return tryQuery("listSessionsByAnalysis", (conn) => {
+        const rows = conn.query("SELECT data FROM sessions WHERE analysis_id = ?").all(analysisId) as { data: string }[];
+        return rows.map((r) => JSON.parse(r.data) as Session);
     });
 }
 
@@ -93,33 +102,47 @@ export function listAnchors(): Result<Anchor[], DbError> {
 /** A row of the columnar `projects` table — one typed column per field. */
 type ProjectRow = {
     id: string;
+    created_at: number;
+    updated_at: number;
     name: string;
     description: string | null;
     tags: string;
-    created_at: number;
-    updated_at: number;
 };
 
 function projectFromRow(r: ProjectRow): Project {
     return {
         id: r.id,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
         // Trusted source: the name was validated through `str256` before it was ever stored.
         name: asStr256(r.name),
         description: r.description,
         // tags are stored comma-joined; they hold no commas (comma-split on input), so the round-trip is lossless.
         tags: r.tags ? r.tags.split(",").filter(Boolean) : [],
-        createdAt: r.created_at,
-        updatedAt: r.updated_at,
     };
 }
 
-const PROJECT_COLS = "id, name, description, tags, created_at, updated_at";
+const PROJECT_COLS = "id, created_at, updated_at, name, description, tags";
 
 /** Every project, newest first. */
 export function listProjects(): Result<Project[], DbError> {
     return tryQuery("listProjects", (conn) => {
         const rows = conn.query(`SELECT ${PROJECT_COLS} FROM projects ORDER BY created_at DESC`).all() as ProjectRow[];
         return rows.map(projectFromRow);
+    });
+}
+
+/**
+ * Resolve an id-or-name reference to a single project in ONE query: an exact `id` hit wins
+ * over a `name` hit (both columns are unique). `null` when nothing matches. See CLAUDE.md →
+ * "Resolving an id-or-name reference".
+ */
+export function findProjectByRef(ref: IdOrName): Result<Project | null, DbError> {
+    return tryQuery("findProjectByRef", (conn) => {
+        const row = conn
+            .query(`SELECT ${PROJECT_COLS} FROM projects WHERE id = $ref OR name = $ref ORDER BY (id = $ref) DESC LIMIT 1`)
+            .get({ $ref: ref }) as ProjectRow | null;
+        return row ? projectFromRow(row) : null;
     });
 }
 
@@ -136,5 +159,93 @@ export function countAnalysesByAnchor(anchorId: string): Result<number, DbError>
     return tryQuery("countAnalysesByAnchor", (conn) => {
         const row = conn.query("SELECT COUNT(*) AS n FROM analyses WHERE anchor_id = ?").get(anchorId) as { n: number };
         return row.n;
+    });
+}
+
+// --- Data model: analyses ---
+
+/** A row of the columnar `analyses` table — one typed column per field so it can be filtered, ordered, and joined directly in SQL. */
+type AnalysisRow = {
+    id: string;
+    created_at: number;
+    updated_at: number;
+    name: string;
+    slug: string;
+    output_directory: string | null;
+    anchor_id: string;
+    project_id: string | null;
+};
+
+function analysisFromRow(r: AnalysisRow): Analysis {
+    return {
+        id: r.id,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        // Trusted source: the name was validated through `str256` before it was ever stored.
+        name: asStr256(r.name),
+        slug: r.slug,
+        outputDirectory: r.output_directory,
+        anchorId: r.anchor_id,
+        projectId: r.project_id,
+    };
+}
+
+const ANALYSIS_COLS = "id, created_at, updated_at, name, slug, output_directory, anchor_id, project_id";
+
+/**
+ * Resolve an id-or-name reference to its candidate analyses in ONE query: an exact `id` hit
+ * sorts first (ids are unique, so it is THE match), then `slug`/`name` hits most-recent-first.
+ * Empty when nothing matches. The caller takes `[0]` as the resolved analysis and reads "more
+ * than one row, none by id" as a name/slug collision (ambiguity). See CLAUDE.md → "Resolving
+ * an id-or-name reference".
+ */
+export function findAnalysesByRef(ref: IdOrName): Result<Analysis[], DbError> {
+    return tryQuery("findAnalysesByRef", (conn) => {
+        const rows = conn
+            .query(`SELECT ${ANALYSIS_COLS} FROM analyses WHERE id = $ref OR slug = $ref OR name = $ref ORDER BY (id = $ref) DESC, created_at DESC`)
+            .all({ $ref: ref }) as AnalysisRow[];
+        return rows.map(analysisFromRow);
+    });
+}
+
+/** Every analysis, newest first. */
+export function listAnalyses(): Result<Analysis[], DbError> {
+    return tryQuery("listAnalyses", (conn) => {
+        const rows = conn.query(`SELECT ${ANALYSIS_COLS} FROM analyses ORDER BY created_at DESC`).all() as AnalysisRow[];
+        return rows.map(analysisFromRow);
+    });
+}
+
+/** Analyses homed at an anchor, newest first. The home is unique-slug scoped, so this is also the slug-collision candidate set at creation. */
+export function listAnalysesByAnchor(anchorId: string): Result<Analysis[], DbError> {
+    return tryQuery("listAnalysesByAnchor", (conn) => {
+        const rows = conn.query(`SELECT ${ANALYSIS_COLS} FROM analyses WHERE anchor_id = ? ORDER BY created_at DESC`).all(anchorId) as AnalysisRow[];
+        return rows.map(analysisFromRow);
+    });
+}
+
+/** Analyses grouped under a project, newest first. */
+export function listAnalysesByProject(projectId: string): Result<Analysis[], DbError> {
+    return tryQuery("listAnalysesByProject", (conn) => {
+        const rows = conn.query(`SELECT ${ANALYSIS_COLS} FROM analyses WHERE project_id = ? ORDER BY created_at DESC`).all(projectId) as AnalysisRow[];
+        return rows.map(analysisFromRow);
+    });
+}
+
+/** An analysis's input refs. `path` is relative-to-anchor when `anchorId` is set, absolute otherwise. */
+export function listAnalysisInputs(analysisId: string): Result<AnalysisInput[], DbError> {
+    return tryQuery("listAnalysisInputs", (conn) => {
+        const rows = conn.query("SELECT path, is_dir, analysis_id, anchor_id FROM analysis_inputs WHERE analysis_id = ?").all(analysisId) as {
+            path: string;
+            is_dir: number;
+            analysis_id: string;
+            anchor_id: string | null;
+        }[];
+        return rows.map((r) => ({
+            path: r.path,
+            isDir: r.is_dir === 1,
+            analysisId: r.analysis_id,
+            anchorId: r.anchor_id,
+        }));
     });
 }

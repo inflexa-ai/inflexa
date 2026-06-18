@@ -51,16 +51,15 @@ cli.name(pkg.name).description("Launch the interactive TUI (default), or run one
 // telemetry cleanly. Set before the subcommands so they inherit the behavior.
 cli.exitOverride();
 
-// Default command: `inf` opens the TUI, `inf <id>` resumes that session. Commander
-// runs this action whenever the first token is not a registered subcommand, so a
-// bare positional (`inf <unknown>`) flows here as the session id rather than
-// erroring — preserving the old cac default-command behavior. The `--session` flag
-// is an equivalent alternate spelling; the positional wins when both are given.
-cli.argument("[session]", "Resume a specific session by ID")
-    .option("--session <id>", "Resume a specific session by ID")
-    .action(async (session: string | undefined, options: { session?: string }) => {
-        const { launchTui } = await import("../tui/launch.tsx");
-        await launchTui({ session: session ?? options.session });
+// Default command: bare `inf` resolves the analysis context for the current directory
+// (cwd's anchor → its analyses) and opens/pick/starts a chat, per the data model's central
+// "cd to the data, run inf, chat" flow. `--analysis`/`--project` override cwd resolution.
+// Commander runs this action when no registered subcommand matches.
+cli.option("--analysis <id|name>", "Operate on a specific analysis")
+    .option("--project <name>", "Scope to a project")
+    .action(async (options: { analysis?: string; project?: string }) => {
+        const { launchDefault } = await import("../tui/launch.tsx");
+        await launchDefault({ analysis: options.analysis, project: options.project });
     });
 
 cli.command("sessions")
@@ -75,6 +74,58 @@ cli.command("config")
     .action(async () => {
         const { launchConfig } = await import("../tui/config.tsx");
         await launchConfig();
+    });
+
+// Analysis lifecycle: the primary entity. `new`/`resume` open a chat (TUI layer); `ls`/
+// `status`/`open` are read-only text commands (module layer).
+cli.command("new [name] [paths...]")
+    .description("Create an analysis anchored at the current directory and open its chat")
+    .option("--project <name>", "Group the analysis under a project")
+    .option("--output <path>", "Write outputs here instead of the derived default")
+    .action(async (name: string | undefined, paths: string[] | undefined, options: { project?: string; output?: string }) => {
+        const { launchNew } = await import("../tui/launch.tsx");
+        await launchNew({ name, paths: paths ?? [], project: options.project, output: options.output });
+    });
+
+cli.command("ls")
+    .description("List recent analyses")
+    .option("--project <name>", "Only analyses in this project")
+    .action(async (options: { project?: string }) => {
+        const { runLs } = await import("../modules/analysis/ls.ts");
+        runLs({ project: options.project });
+    });
+
+cli.command("resume <idOrName>")
+    .description("Reopen an analysis's chat by id or name")
+    .action(async (idOrName: string) => {
+        const { launchResume } = await import("../tui/launch.tsx");
+        await launchResume(idOrName);
+    });
+
+cli.command("open <idOrName>")
+    .description("Open an analysis's output directory in the file browser")
+    .action(async (idOrName: string) => {
+        const { runOpen } = await import("../modules/analysis/open.ts");
+        runOpen(idOrName);
+    });
+
+cli.command("status")
+    .description("Print what `inf` resolves to right now (loud context)")
+    .option("--analysis <id|name>", "Resolve a specific analysis")
+    .option("--project <name>", "Scope to a project")
+    .action(async (options: { analysis?: string; project?: string }) => {
+        const { runStatus } = await import("../modules/analysis/status.ts");
+        runStatus({ analysis: options.analysis, project: options.project });
+    });
+
+const analysisCmd = cli.command("analysis").description("Manage analyses (grouping)");
+
+analysisCmd
+    .command("set-project <analysis> [project]")
+    .description("Attach, move, or clear an analysis's project grouping (omit project to clear)")
+    .action(async (analysisRef: string, projectRef: string | undefined) => {
+        const { runSetProject } = await import("../modules/analysis/set_project.ts");
+        runSetProject(analysisRef, projectRef ?? null);
     });
 
 // Real git-style nested subcommands — the reason for moving off cac, which could
