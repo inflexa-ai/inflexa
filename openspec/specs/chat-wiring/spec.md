@@ -1,0 +1,58 @@
+# chat-wiring Specification
+
+## Purpose
+Association of chat sessions with an analysis (the `sessions.analysis_id` link) and the analysis-aware chat launcher that resolves/creates a session and opens the TUI rooted at the analysis's resolved anchor path.
+## Requirements
+### Requirement: Sessions are created with an analysis link
+
+The system SHALL provide `createSession(opts: { title?: string; analysisId: string })` returning `Result<Session, DbError>` that mints `id = randomUUIDv7()` inline and persists `analysisId` into the `sessions.analysis_id` column (not the JSON `data`), leaving the `Session` type unchanged. The `title` SHALL default when omitted.
+
+#### Scenario: New session carries its analysis id
+
+- **WHEN** `createSession({ title, analysisId })` succeeds
+- **THEN** the `sessions` row's `analysis_id` column equals `analysisId`
+- **AND** `listSessionsByAnalysis(analysisId)` returns that session
+
+#### Scenario: Session JSON is unchanged
+
+- **WHEN** a session is created with an analysis link
+- **THEN** the `Session` JSON contains only the existing fields (id, title, createdAt, updatedAt) and the analysis link lives in the column
+
+### Requirement: Analysis-aware chat launcher
+
+The system SHALL provide `launchChat({ analysis, resumeSessionId? })` in `src/tui/launch.tsx` (the presentation/app-shell layer, which may import module logic) that ensures the proxy is ready, resolves the session, seeds the theme, and renders the TUI with `workingDir` set to the analysis's resolved anchor path. Session resolution order SHALL be: the given `resumeSessionId`; else the analysis's most-recent session; else a newly created session linked to the analysis. Before rendering, it SHALL run passive `recoverAnchors([workingDir])` to heal a moved anchor — recovery only, never creation (no-litter policy).
+
+#### Scenario: Resume an explicit session
+
+- **WHEN** `launchChat({ analysis, resumeSessionId })` is given a session id
+- **THEN** that session is loaded and rendered
+
+#### Scenario: Resume the most-recent session
+
+- **WHEN** `launchChat({ analysis })` is called and the analysis has prior sessions
+- **THEN** the most-recently-updated session is reused
+
+#### Scenario: Create a session when none exist
+
+- **WHEN** `launchChat({ analysis })` is called and the analysis has no sessions
+- **THEN** a new session is created linked to the analysis, titled from the analysis name
+
+#### Scenario: Working directory is the anchor path
+
+- **WHEN** the TUI is rendered
+- **THEN** `workingDir` is the analysis's resolved anchor path (not raw `process.cwd()`)
+
+#### Scenario: Passive launch never litters
+
+- **WHEN** `launchChat` runs in a folder whose anchor moved
+- **THEN** the anchor is recovered (re-pointed) but no marker or anchors row is created by the launch
+
+### Requirement: Shared launch preamble
+
+The proxy-ready check (`ensureProxyReadyOrExit`), theme seed, and render options (`renderApp`) SHALL be factored so every launcher (`launchChat`, `launchDefault`, `launchNew`, `launchResume`) shares them and stays in sync; the `App` component's props SHALL remain `sessionId` + `workingDir`. The interactive prompts (clack, via `lib/cli`) run in the normal-stdio phase before `render()` takes over the terminal.
+
+#### Scenario: Launchers use the same preamble
+
+- **WHEN** any launcher opens the TUI
+- **THEN** the same proxy-ready handling, theme seeding, and render options are used
+
