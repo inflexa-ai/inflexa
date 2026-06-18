@@ -127,7 +127,9 @@ export function ConfigApp() {
     });
 
     return (
-        <box flexDirection="column" width="100%" height="100%">
+        // Paint the screen with the theme background; otherwise the terminal's own
+        // background shows through and light themes render dark text on a black screen.
+        <box flexDirection="column" width="100%" height="100%" backgroundColor={theme().bg}>
             <box height={1} width="100%" flexDirection="row" backgroundColor={theme().bgPanel} paddingLeft={1} paddingRight={1}>
                 <text fg={theme().accent} attributes={1}>
                     inf config
