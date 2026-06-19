@@ -16,8 +16,8 @@ import { env } from "../../lib/env.ts";
 // they are always Linux regardless of the host OS.
 //
 // The proxy lifecycle lives here, with its owning command, rather than in lib/
-// (which is reserved for cross-cutting infrastructure). The only piece the TUI
-// reuses is ensureProxyReady().
+// (which is reserved for cross-cutting infrastructure). The pieces the TUI reuse
+// are ensureProxyReady() and its exit-on-error variant ensureProxyReadyOrExit().
 
 // --- command ---------------------------------------------------------------
 
@@ -374,4 +374,23 @@ export async function ensureProxyReady(): Promise<void> {
     }
 
     await ensureContainerRunning();
+}
+
+/**
+ * The exit-on-error variant of {@link ensureProxyReady} for the TUI launch path: print
+ * actionable guidance and exit non-zero rather than throwing, since the renderer is about to
+ * take over the terminal. The auth flow inside needs normal stdio, so callers must invoke this
+ * BEFORE render().
+ */
+export async function ensureProxyReadyOrExit(): Promise<void> {
+    try {
+        await ensureProxyReady();
+    } catch (error) {
+        if (error instanceof ProxyError) {
+            console.error(`\n  ${error.message}\n`);
+        } else {
+            console.error("\n  Could not start CLIProxyAPI:", error, "\n");
+        }
+        process.exit(1);
+    }
 }
