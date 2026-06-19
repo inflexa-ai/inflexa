@@ -1,13 +1,20 @@
-### Requirement: BusEvent type lives in src/types.ts
-The canonical `BusEvent` union type SHALL be defined in `src/types.ts`. The bus module (`src/lib/bus.ts`) SHALL import it from there. The bus module MUST NOT define its own `BusEvent` type.
+# event-bus Specification
+
+## Purpose
+The in-process event bus (`Bus`) and its `BusEvent` contract — a single typed channel modules publish to and subscribe from without circular imports.
+
+## Requirements
+
+### Requirement: BusEvent type lives in src/types/events.ts
+The canonical `BusEvent` union type SHALL be defined in the shared domain-model directory `src/types/`, in its event-contract module `src/types/events.ts`. The bus module (`src/lib/bus.ts`) SHALL import it from there. The bus module MUST NOT define its own `BusEvent` type.
 
 #### Scenario: Bus imports BusEvent from types
 - **WHEN** `src/lib/bus.ts` references the `BusEvent` type
-- **THEN** it SHALL import it from `../types.ts`
+- **THEN** it SHALL import it from `../types/events.ts`
 
 #### Scenario: No circular imports when adding a new event domain
-- **WHEN** a new module (e.g., `src/tools/executor.ts`) needs to both emit events via `Bus` and contribute a new variant to `BusEvent`
-- **THEN** it can import `Bus` from `../lib/bus.ts` and add its event variant to `src/types.ts` without creating a circular dependency
+- **WHEN** a new module (e.g., `src/modules/tools/executor.ts`) needs to both emit events via `Bus` and contribute a new variant to `BusEvent`
+- **THEN** it can import `Bus` from `../../lib/bus.ts` and add its event variant to `src/types/events.ts` without creating a circular dependency
 
 ### Requirement: Callers publish via Bus.emit
 Callers SHALL publish events using `Bus.emit("inf", event)` where `event` conforms to `BusEvent`.

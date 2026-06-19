@@ -1,22 +1,4 @@
-# chat-wiring Specification
-
-## Purpose
-Association of chat sessions with an analysis (the `sessions.analysis_id` link) and the analysis-aware chat launcher that resolves/creates a session and opens the TUI rooted at the analysis's resolved anchor path.
-## Requirements
-### Requirement: Sessions are created with an analysis link
-
-The system SHALL provide `createSession(opts: { title?: string; analysisId: string })` returning `Result<Session, DbError>` that mints `id = randomUUIDv7()` inline and persists `analysisId` into the `sessions.analysis_id` column (not the JSON `data`), leaving the `Session` type unchanged. The `title` SHALL default when omitted.
-
-#### Scenario: New session carries its analysis id
-
-- **WHEN** `createSession({ title, analysisId })` succeeds
-- **THEN** the `sessions` row's `analysis_id` column equals `analysisId`
-- **AND** `listSessionsByAnalysis(analysisId)` returns that session
-
-#### Scenario: Session JSON is unchanged
-
-- **WHEN** a session is created with an analysis link
-- **THEN** the `Session` JSON contains only the existing fields (id, title, createdAt, updatedAt) and the analysis link lives in the column
+## MODIFIED Requirements
 
 ### Requirement: Analysis-aware chat launcher
 
@@ -66,6 +48,8 @@ The proxy-ready check (`ensureProxyReadyOrExit`), theme seed, and render options
 - **WHEN** `App` mounts with its `sessionId` prop
 - **THEN** it holds the current session in a reactive signal seeded from that prop, so a later in-place switch can replace it
 
+## ADDED Requirements
+
 ### Requirement: In-place chat switching
 
 The `App` component SHALL expose an `openSession(sessionId, workingDir, analysis)` capability that swaps the open chat without a process restart: it SHALL update the reactive current session, working directory, and analysis, reload that session's messages, reset streaming and error state, and abort any in-flight chat request. The bus event handler SHALL filter incoming events by the current reactive session id (not a fixed prop value), so events apply to the chat that is now open.
@@ -84,4 +68,3 @@ The `App` component SHALL expose an `openSession(sessionId, workingDir, analysis
 
 - **WHEN** bus events arrive after a switch
 - **THEN** only events for the now-current session are applied
-

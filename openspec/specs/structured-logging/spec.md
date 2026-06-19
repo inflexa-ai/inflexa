@@ -1,3 +1,10 @@
+# structured-logging Specification
+
+## Purpose
+File-only structured NDJSON logging via a single Pino root logger — module-scoped child loggers, env-driven level, PII redaction, bus-event logging, daily rotation/retention, and flush-on-exit.
+
+## Requirements
+
 ### Requirement: File-only structured logging
 The system SHALL write all runtime logs as structured NDJSON via a single Pino root logger to a log file under the data directory (`<data>/inf/logs/`), creating the directory if missing. The logger SHALL NOT write to stdout or stderr, and SHALL NOT use worker-thread transports (`pino.transport`).
 
