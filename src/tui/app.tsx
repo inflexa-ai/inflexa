@@ -8,10 +8,10 @@ import { Bus } from "../lib/bus.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { listSessionMessages } from "../db/primary_query.ts";
 import { chat } from "../modules/session/chat.ts";
-import { syntaxStyle, theme } from "./theme.ts";
+import { syntaxStyle, theme, noticeColor, type Notice } from "./theme.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette } from "./command_palette.tsx";
-import type { CommandContext, Notice } from "./commands.tsx";
+import type { CommandContext } from "./commands.tsx";
 import type { Analysis } from "../types/analysis.ts";
 import type { BusEvent } from "../types/events.ts";
 import type { Part, TextPart } from "../types/session.ts";
@@ -38,10 +38,16 @@ export function App(props: AppProps) {
     const [streamPartId, setStreamPartId] = createSignal<string | null>(null);
     const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
 
-    // The open chat is reactive (not a static prop) so the command palette can swap it in place.
+    // The open chat is locally-owned, mutable state the command palette swaps in place (via the
+    // setters below). It is SEEDED ONCE from props: `App` is mounted a single time with fixed
+    // props (see `launch.tsx`), so reading them at body level is a deliberate one-time seed, not a
+    // dependency to track — hence the scoped disable. (Use a `createEffect` instead only if a prop
+    // should keep a signal in sync; that is not the case here.)
+    /* eslint-disable solid/reactivity -- seed-once: App mounts once with fixed props; these are locally mutated */
     const [currentSessionId, setCurrentSessionId] = createSignal(props.sessionId);
     const [currentWorkingDir, setCurrentWorkingDir] = createSignal(props.workingDir);
     const [currentAnalysis, setCurrentAnalysis] = createSignal<Analysis>(props.analysis);
+    /* eslint-enable solid/reactivity */
 
     // Dialog host: a stack of render thunks; only the top one is mounted (see the render below).
     const [dialogs, setDialogs] = createStore<Array<() => JSX.Element>>([]);
@@ -316,12 +322,7 @@ export function App(props: AppProps) {
 
             {/* Transient command feedback */}
             <Show when={notice()}>
-                <box
-                    height={1}
-                    width="100%"
-                    backgroundColor={notice()!.kind === "error" ? theme().error : notice()!.kind === "warn" ? theme().warn : theme().info}
-                    paddingLeft={1}
-                >
+                <box height={1} width="100%" backgroundColor={noticeColor(notice()!.kind)} paddingLeft={1}>
                     <text fg={theme().bg}>{notice()!.text}</text>
                 </box>
             </Show>

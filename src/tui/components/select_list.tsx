@@ -4,13 +4,14 @@ import type { JSX } from "solid-js";
 import type { InputRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useKeyboard } from "@opentui/solid";
 
-import { theme } from "./theme.ts";
+import { theme } from "../theme.ts";
+import { DialogPanel } from "./dialog_panel.tsx";
 
 // The reusable searchable list: a single fuzzy-filtered, keyboard-navigable, grouped picker
 // shared by the command palette and every dialog picker (themes, analyses, sessions). It is
 // generic over the chosen value `T` and knows nothing about commands — callers map their data
-// to `SelectItem<T>` and handle `onSelect`. Extracted to its own file because it now has
-// callers in more than one module (the palette and the command pickers).
+// to `SelectItem<T>` and handle `onSelect`. Lives in `components/` because it now has callers
+// in more than one file (the palette and the command pickers).
 
 /** A selectable row in {@link SelectList}. */
 export type SelectItem<T> = {
@@ -139,18 +140,7 @@ export function SelectList<T>(props: {
     });
 
     return (
-        <box
-            width="70%"
-            height="60%"
-            flexDirection="column"
-            backgroundColor={theme().bgPanel}
-            border
-            borderColor={theme().borderActive}
-            title={props.title}
-            titleColor={theme().accent}
-            paddingLeft={1}
-            paddingRight={1}
-        >
+        <DialogPanel title={props.title} width="70%" height="60%" footer="↑/↓ move · Enter select · Esc cancel">
             <input
                 ref={(r: InputRenderable) => {
                     inputRef = r;
@@ -205,7 +195,6 @@ export function SelectList<T>(props: {
             <Show when={ranked()[cursor()]?.description}>
                 <text fg={theme().muted}>{ranked()[cursor()]!.description}</text>
             </Show>
-            <text fg={theme().muted}>↑/↓ move · Enter select · Esc cancel</text>
-        </box>
+        </DialogPanel>
     );
 }

@@ -4,7 +4,7 @@ import { createSignal, For, Show } from "solid-js";
 import { readConfig, writeConfig, type Config } from "../lib/config.ts";
 import { env } from "../lib/env.ts";
 import { shutdown } from "../lib/shutdown.ts";
-import { setTheme, theme } from "./theme.ts";
+import { setTheme, theme, noticeColor, type Notice } from "./theme.ts";
 import { themes, themeIds, type ThemeId } from "../lib/themes.ts";
 
 /** Config keys whose value is a boolean — the toggleable settings. */
@@ -33,11 +33,6 @@ const settings: Setting[] = [
 type Row = { kind: "toggle"; settingIndex: number } | { kind: "theme"; id: ThemeId };
 const rows: Row[] = [...settings.map((_, i): Row => ({ kind: "toggle", settingIndex: i })), ...themeIds.map((id): Row => ({ kind: "theme", id }))];
 
-type Notice = {
-    kind: "info" | "warn" | "error";
-    text: string;
-};
-
 export function ConfigApp(props: { onClose?: () => void }) {
     const renderer = useRenderer();
     // Read config once: saved and draft both start from it, and the cursor starts
@@ -51,13 +46,6 @@ export function ConfigApp(props: { onClose?: () => void }) {
     const [quitArmed, setQuitArmed] = createSignal(false);
 
     const dirty = () => settings.some((s) => draft()[s.key] !== saved()[s.key]) || draft().theme !== saved().theme;
-
-    // Notice colors must be read reactively (not precomputed at module load)
-    // so they recolor when the theme changes.
-    function noticeColor(kind: Notice["kind"]): string {
-        const t = theme();
-        return kind === "warn" ? t.warn : kind === "error" ? t.error : t.info;
-    }
 
     // Move the highlight; landing on a theme row previews it live and makes it
     // the draft selection (preview and selection are unified for themes).

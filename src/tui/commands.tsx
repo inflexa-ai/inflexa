@@ -1,9 +1,10 @@
 import type { JSX } from "solid-js";
 
-import { PromptDialog, ResultsDialog } from "./command_palette.tsx";
-import { SelectList } from "./select_list.tsx";
+import { PromptDialog } from "./components/prompt_dialog.tsx";
+import { ResultsDialog } from "./components/results_dialog.tsx";
+import { SelectList } from "./components/select_list.tsx";
 import { ConfigApp } from "./config.tsx";
-import { setTheme } from "./theme.ts";
+import { setTheme, type Notice } from "./theme.ts";
 import { themes, themeIds, type ThemeId } from "../lib/themes.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
 import { str256 } from "../lib/types.ts";
@@ -16,13 +17,17 @@ import { listSessionsByAnalysis } from "../db/primary_query.ts";
 import type { Analysis } from "../types/analysis.ts";
 import type { Session } from "../types/session.ts";
 
+/* eslint-disable solid/reactivity --
+   Every dialog here reads the stable `props.ctx` (built once in `App.buildCtx`) either inside an
+   opentui event handler (`onSelect`/`onSubmit`, which eslint-plugin-solid does not recognize as
+   handlers) or once at a freshly-mounted dialog's body. `ctx` never changes and each dialog is
+   re-created on open, so there is no reactive dependency to lose — the warnings are false
+   positives for this whole file. */
+
 // The command registry: the SINGLE source of truth for the palette. Adding a command is one
 // entry in `commands`. Each command's `run` acts only through `CommandContext` (built in
 // `App`), never stdout — the alt-screen owns the terminal. Command-specific dialogs are
-// co-located here as single-caller helpers; the reusable shells live in `command_palette.tsx`.
-
-/** A transient status-line notice surfaced via {@link CommandContext.notify}. */
-export type Notice = { kind: "info" | "warn" | "error"; text: string };
+// co-located here as single-caller helpers; the reusable dialog shells live in `components/`.
 
 /** The categories a command groups under in the palette. A domain type, never a raw string. */
 export type CommandCategory = "Analysis" | "Session" | "Project" | "View" | "App";

@@ -28,6 +28,25 @@ export function theme(): ThemeColors {
     return themes[activeThemeId()].colors;
 }
 
+/** A transient status-line notice surfaced in the TUI (the stdout-free feedback channel). */
+export type Notice = {
+    /** Severity, which selects the notice color. */
+    kind: "info" | "warn" | "error";
+    /** The message shown to the user. */
+    text: string;
+};
+
+/**
+ * The active theme's color for a notice kind. Reads the theme reactively so it recolors on
+ * switch. Layout-agnostic — callers decide foreground vs background (the chat banner inverts it
+ * as a bar; the config screen uses it as text color). Lives here because it is a theme accessor:
+ * a notice kind maps onto the palette's matching semantic role.
+ */
+export function noticeColor(kind: Notice["kind"]): string {
+    const t = theme();
+    return kind === "warn" ? t.warn : kind === "error" ? t.error : t.info;
+}
+
 /**
  * Active theme's markdown highlight style. Built lazily and cached per theme:
  * the built-in palettes are immutable, so each theme's native SyntaxStyle is
