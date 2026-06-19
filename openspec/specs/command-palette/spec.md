@@ -95,7 +95,7 @@ The chat TUI SHALL open the command palette on **Ctrl+K**, calling `key.preventD
 
 ### Requirement: Inline fuzzy ranking without new dependencies
 
-Palette filtering SHALL use a small inline subsequence scorer that ranks `title` matches above `category` matches; an empty query SHALL list all enabled commands grouped by category. The feature SHALL add no new dependencies — neither a fuzzy-search library nor `@opentui/keymap`.
+Palette filtering SHALL use a small subsequence scorer — the shared `subsequenceScore` in `src/lib/fuzzy.ts` — that ranks `title` matches above `category` matches; an empty query SHALL list all enabled commands grouped by category. The feature SHALL add no new dependencies — neither a fuzzy-search library nor `@opentui/keymap`.
 
 #### Scenario: Subsequence match ranks by title
 
@@ -106,11 +106,6 @@ Palette filtering SHALL use a small inline subsequence scorer that ranks `title`
 
 - **WHEN** the query is empty
 - **THEN** every enabled command is shown, grouped by category
-
-#### Scenario: No new dependencies
-
-- **WHEN** the change is built
-- **THEN** `package.json` dependencies are unchanged
 
 ### Requirement: Phase-1 commands run in-app over shared cores
 

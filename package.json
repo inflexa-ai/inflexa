@@ -12,6 +12,7 @@
         "format:file": "prettier --write",
         "lint": "eslint .",
         "start": "bun run src/index.ts",
+        "test": "bun test",
         "typecheck": "tsc --noEmit",
         "wipe": "bun scripts/wipe.ts"
     },

@@ -4,6 +4,7 @@ import type { JSX } from "solid-js";
 import type { InputRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useKeyboard } from "@opentui/solid";
 
+import { rankBy } from "../../lib/fuzzy.ts";
 import { theme } from "../theme.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
 
@@ -27,51 +28,12 @@ export type SelectItem<T> = {
     category?: string;
 };
 
-// Score a subsequence match of `query` against `target`: -1 for no match, else higher is
-// better. Consecutive hits and an early first hit are rewarded so "op" ranks "Open…" above a
-// scattered match. Case-insensitive; an empty query is a neutral 0 (everything matches).
-function subsequenceScore(query: string, target: string): number {
-    if (query === "") return 0;
-    const q = query.toLowerCase();
-    const t = target.toLowerCase();
-    let qi = 0;
-    let score = 0;
-    let streak = 0;
-    let last = -2;
-    for (let ti = 0; ti < t.length && qi < q.length; ti++) {
-        if (t[ti] === q[qi]) {
-            streak = ti === last + 1 ? streak + 1 : 1;
-            score += streak + (ti === 0 ? 5 : 0);
-            last = ti;
-            qi++;
-        }
-    }
-    return qi === q.length ? score : -1;
-}
-
-// Rank items by a fuzzy match, weighting a title hit 2x over a category-only hit. An empty
-// query preserves the caller's order (so category grouping stays contiguous).
-function rankItems<T>(items: SelectItem<T>[], query: string): SelectItem<T>[] {
-    const q = query.trim();
-    if (q === "") return items;
-    const scored: Array<{ item: SelectItem<T>; score: number; i: number }> = [];
-    items.forEach((item, i) => {
-        const titleScore = subsequenceScore(q, item.title);
-        const catScore = subsequenceScore(q, item.category ?? "");
-        let score = -1;
-        if (titleScore >= 0) score = titleScore * 2 + (catScore >= 0 ? catScore : 0);
-        else if (catScore >= 0) score = catScore;
-        if (score >= 0) scored.push({ item, score, i });
-    });
-    scored.sort((a, b) => b.score - a.score || a.i - b.i);
-    return scored.map((s) => s.item);
-}
-
 /**
  * A searchable, keyboard-navigable list — the shared engine behind the command palette and
- * every picker. Filters with the inline fuzzy scorer, groups by category when unfiltered,
- * and keeps the highlighted row scrolled into view. It owns its keyboard; because only the
- * top dialog is mounted (see `App`'s dialog host), it is always the active handler.
+ * every picker. Filters with the shared `rankBy` fuzzy ranker (weighting a title hit 2× over a
+ * category-only hit), groups by category when unfiltered, and keeps the highlighted row scrolled
+ * into view. It owns its keyboard; because only the top dialog is mounted (see `App`'s dialog
+ * host), it is always the active handler.
  */
 export function SelectList<T>(props: {
     title: string;
@@ -89,20 +51,25 @@ export function SelectList<T>(props: {
     let inputRef: InputRenderable | null = null;
     let scrollRef: ScrollBoxRenderable | null = null;
 
-    const ranked = createMemo(() => rankItems(props.items, query()));
+    const ranked = createMemo(() =>
+        rankBy(props.items, query(), [
+            { get: (item) => item.title, weight: 2 },
+            { get: (item) => item.category ?? "", weight: 1 },
+        ]),
+    );
     const isGrouped = (): boolean => props.grouped === true && query().trim() === "";
 
     type Row = { kind: "header"; label: string } | { kind: "item"; item: SelectItem<T>; idx: number };
     const rows = createMemo<Row[]>(() => {
         const out: Row[] = [];
         let lastCat: string | undefined;
-        ranked().forEach((item, i) => {
+        for (const [i, item] of ranked().entries()) {
             if (isGrouped() && item.category && item.category !== lastCat) {
                 out.push({ kind: "header", label: item.category });
                 lastCat = item.category;
             }
             out.push({ kind: "item", item, idx: i });
-        });
+        }
         return out;
     });
 

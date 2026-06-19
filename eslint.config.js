@@ -53,6 +53,13 @@ export default defineConfig([
             ],
             "@typescript-eslint/no-floating-promises": "error",
             "@typescript-eslint/no-misused-promises": "error",
+            "no-restricted-syntax": [
+                "error",
+                {
+                    selector: "CallExpression[callee.property.name='forEach']",
+                    message: "`.forEach` is banned — use a `for` / `for...of` loop instead.",
+                },
+            ],
         },
     },
     tseslint.configs.recommended,

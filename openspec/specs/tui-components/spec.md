@@ -38,7 +38,7 @@ The system SHALL provide a `DialogPanel` component in `src/tui/components/` that
 
 ### Requirement: Relocated dialog widgets compose DialogPanel without behavior change
 
-`SelectList` (with `SelectItem` and its private fuzzy scorer), `PromptDialog`, and `ResultsDialog` SHALL live in `src/tui/components/`, each in its own file, and SHALL render their body through `DialogPanel`. Their observable behavior — filtering/ranking, navigation keys, submit/cancel/close keys, focus-on-mount, empty-state messages, and footer hint text — SHALL be unchanged from before the move. `SelectList` SHALL keep its highlighted-row description line inside its own body (above the footer).
+`SelectList` (with `SelectItem`; its fuzzy ranking is delegated to the shared `rankBy` in `src/lib/fuzzy.ts`, called with a title-2×/category-1 weighted field list — no scorer or ranker is defined in the component), `PromptDialog`, and `ResultsDialog` SHALL live in `src/tui/components/`, each in its own file, and SHALL render their body through `DialogPanel`. Their observable behavior — filtering/ranking, navigation keys, submit/cancel/close keys, focus-on-mount, empty-state messages, and footer hint text — SHALL be unchanged from before the move. `SelectList` SHALL keep its highlighted-row description line inside its own body (above the footer).
 
 #### Scenario: SelectList behavior preserved
 
