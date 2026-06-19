@@ -325,7 +325,7 @@ async function chooseProvider(preselected: Provider | undefined): Promise<Provid
     if (!process.stdin.isTTY) return null;
 
     console.log("\n  Authenticate a provider (opens a browser):");
-    PROVIDERS.forEach((p, i) => console.log(`    ${i + 1}) ${PROVIDER_LABEL[p]}`));
+    for (const [i, p] of PROVIDERS.entries()) console.log(`    ${i + 1}) ${PROVIDER_LABEL[p]}`);
 
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const answer = (await rl.question(`\n  Select 1-${PROVIDERS.length}, or Enter to skip: `)).trim();
