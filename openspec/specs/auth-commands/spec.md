@@ -1,3 +1,10 @@
+# auth-commands Specification
+
+## Purpose
+The `inf auth` command group — `login`, `logout`, and `whoami` subcommands that drive the device-authorization flow, revoke-and-delete logout, and local identity inspection, each a thin CLI adapter over the auth-session core.
+
+## Requirements
+
 ### Requirement: Auth command registration
 
 The CLI SHALL group authentication under a parent `auth` command, exposing `login`, `logout`, and `whoami` as its subcommands (`inf auth login`, `inf auth logout`, `inf auth whoami`), registered in `src/cli/index.ts`, each lazy-importing its implementation from its own file (`src/modules/auth/login.ts`, `src/modules/auth/logout.ts`, `src/modules/auth/whoami.ts`), matching the existing command pattern. The auth token path SHALL appear in `inf --help` via `envDoc`; the `INF_AUTH0_*` values SHALL NOT (they are internal, baked into release binaries).

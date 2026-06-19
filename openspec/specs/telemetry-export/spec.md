@@ -1,3 +1,10 @@
+# telemetry-export Specification
+
+## Purpose
+Opt-in, consent-gated OpenTelemetry log export — config-stored consent and the `inf config` settings form, endpoint-gated OTel init, a redaction-respecting Pino→OTel bridge, fail-open behavior, and flush-on-shutdown.
+
+## Requirements
+
 ### Requirement: Opt-in consent stored in user config
 Telemetry SHALL be disabled by default. Consent SHALL be persisted as `{ "telemetry": boolean }` in a JSON config file under the user config directory (`XDG_CONFIG_HOME`/`~/.config` on Unix, `APPDATA` on Windows, path `inf/config.json`). A missing or unreadable config file SHALL be treated as consent not granted.
 

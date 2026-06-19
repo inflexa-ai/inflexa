@@ -1,3 +1,10 @@
+# auth-session Specification
+
+## Purpose
+The headless Auth0 device-authorization session layer — config baking, device-code initiation, token polling, atomic token persistence, transparent refresh with cross-process locking, revocation, and schema-validated, Result-typed boundaries.
+
+## Requirements
+
 ### Requirement: Auth0 configuration
 
 Auth0 settings (`INF_AUTH0_DOMAIN`, `INF_AUTH0_CLIENT_ID`, `INF_AUTH0_AUDIENCE`) SHALL be read exclusively through the `bakedEnv` object in `src/lib/env.ts`, using literal `process.env.<NAME>` member access so that release builds (`bun run build`) can inline them as compile-time constants; dev runs fall back to the runtime environment through the same expressions. They are internal configuration: they SHALL NOT appear in `envDoc`/`--help`, and a compiled binary SHALL NOT be influenced by their runtime values. No client secret SHALL exist anywhere (public client). Auth operations that need this config SHALL fail with a typed error naming every missing variable; commands that do not use Auth0 SHALL be unaffected by their absence.

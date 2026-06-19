@@ -38,7 +38,7 @@ type Notice = {
     text: string;
 };
 
-export function ConfigApp() {
+export function ConfigApp(props: { onClose?: () => void }) {
     const renderer = useRenderer();
     // Read config once: saved and draft both start from it, and the cursor starts
     // on the active theme's row so up/down move relative to the marked selection
@@ -100,7 +100,13 @@ export function ConfigApp() {
     function exit() {
         // Revert any unsaved live theme preview to the persisted selection.
         setTheme(saved().theme);
-        // destroy() restores the terminal (mouse tracking, alternate
+        // Embedded as a dialog: hand control back to the host (which owns the dialog stack)
+        // instead of tearing down the shared renderer — destroying it would kill the whole TUI.
+        if (props.onClose) {
+            props.onClose();
+            return;
+        }
+        // Standalone: destroy() restores the terminal (mouse tracking, alternate
         // screen, cooked mode) — process.exit() alone skips OpenTUI's
         // beforeExit cleanup and leaves the shell broken.
         renderer.destroy();

@@ -41,9 +41,9 @@ async function ensureProxyReadyOrExit(): Promise<void> {
 
 // Shared render: seed the active theme from persisted config before the renderer reads it,
 // then hand the terminal to OpenTUI with the options every launcher shares.
-function renderApp(sessionId: string, workingDir: string): void {
+function renderApp(sessionId: string, workingDir: string, analysis: Analysis): void {
     setTheme(readConfig().theme);
-    void render(() => <App sessionId={sessionId} workingDir={workingDir} />, {
+    void render(() => <App sessionId={sessionId} workingDir={workingDir} analysis={analysis} />, {
         exitOnCtrlC: false,
         targetFps: 30,
         screenMode: "alternate-screen",
@@ -94,7 +94,7 @@ export async function launchChat(opts: { analysis: Analysis; resumeSessionId?: s
         session = mostRecent ?? createSession({ title: `Chat — ${analysis.name}`, analysisId: analysis.id }).match((s) => s, dieOn("Failed to create session"));
     }
 
-    renderApp(session.id, workingDir);
+    renderApp(session.id, workingDir, analysis);
 }
 
 // Prompt for a valid analysis name, validating live and re-asking until one is given.
