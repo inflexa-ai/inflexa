@@ -66,4 +66,5 @@ export const KEYMAP = {
     save: { chord: { key: "s" }, label: "s" },
     exit: { chord: { key: "escape" }, label: "esc" },
     moveSelection: { chord: { key: "up" }, label: "↑/↓" },
+    changeOption: { chord: { key: "left" }, label: "←/→" },
 } satisfies Record<string, Binding>;

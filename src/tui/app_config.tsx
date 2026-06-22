@@ -7,8 +7,8 @@ import { shutdown } from "../lib/shutdown.ts";
 import { setTheme, theme, noticeColor, type Notice } from "./theme.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { KEYMAP } from "./keymap.ts";
-import { themes, themeIds, type ThemeId } from "../lib/themes.ts";
-import { runtimes, runtimeIds, type ContainerRuntimeId } from "../lib/container.ts";
+import { themes, themeIds } from "../lib/themes.ts";
+import { runtimes, runtimeIds } from "../lib/container.ts";
 
 /** Config keys whose value is a boolean — the toggleable settings. */
 type BooleanSettingKey = { [K in keyof Config]: Config[K] extends boolean ? K : never }[keyof Config];
@@ -30,54 +30,72 @@ const settings: Setting[] = [
 ];
 
 /**
- * Navigable rows: the boolean toggles first, then one row per theme. `selected`
- * indexes into this flat list so up/down moves across both sections.
+ * Two-level navigation model. Up/down move between SECTIONS (each boolean toggle is
+ * its own section, then the theme radio group, then the runtime radio group);
+ * left/right change the focused section's value. A radio section needs no separate
+ * cursor — its highlighted option is always the active draft value, which left/right
+ * moves (preview and selection are unified) — so a Section carries only its kind.
  */
-type Row = { kind: "toggle"; settingIndex: number } | { kind: "theme"; id: ThemeId } | { kind: "runtime"; id: ContainerRuntimeId };
-const rows: Row[] = [
-    ...settings.map((_, i): Row => ({ kind: "toggle", settingIndex: i })),
-    ...themeIds.map((id): Row => ({ kind: "theme", id })),
-    ...runtimeIds.map((id): Row => ({ kind: "runtime", id })),
-];
+type Section = { kind: "toggle"; settingIndex: number } | { kind: "theme" } | { kind: "runtime" };
+const sections: Section[] = [...settings.map((_, i): Section => ({ kind: "toggle", settingIndex: i })), { kind: "theme" }, { kind: "runtime" }];
+/** Section indices of the two radio groups (the toggles occupy `0 … settings.length-1`). */
+const THEME_SECTION = settings.length;
+const RUNTIME_SECTION = settings.length + 1;
 
 export function ConfigApp(props: { onClose?: () => void }) {
     const renderer = useRenderer();
-    // Read config once: saved and draft both start from it, and the cursor starts
-    // on the active theme's row so up/down move relative to the marked selection
-    // (not the telemetry row at index 0).
+    // Read config once; saved and draft both start from it. Focus starts on the first
+    // section (the telemetry toggle) — the top of the form — so every section, including
+    // the toggles, is reachable by walking down from a fixed, predictable origin.
     const initial = readConfig();
     const [saved, setSaved] = createSignal(initial);
     const [draft, setDraft] = createSignal(initial);
-    const [selected, setSelected] = createSignal(settings.length + themeIds.indexOf(initial.theme));
+    const [section, setSection] = createSignal(0);
     const [notice, setNotice] = createSignal<Notice | null>(null);
     const [quitArmed, setQuitArmed] = createSignal(false);
 
     const dirty = () => settings.some((s) => draft()[s.key] !== saved()[s.key]) || draft().theme !== saved().theme || draft().runtime !== saved().runtime;
 
-    // Move the highlight; landing on a theme row previews it live and makes it
-    // the draft selection (preview and selection are unified for themes).
-    function selectRow(index: number) {
-        setSelected(index);
-        const row = rows[index]!;
-        if (row.kind === "theme") {
-            setTheme(row.id);
-            setDraft({ ...draft(), theme: row.id });
-            setNotice(null);
-            setQuitArmed(false);
-        } else if (row.kind === "runtime") {
-            // No live preview (a runtime has no visual effect); landing selects it,
-            // matching the theme rows' unified preview/selection.
-            setDraft({ ...draft(), runtime: row.id });
-            setNotice(null);
-            setQuitArmed(false);
+    // Left/right change the focused section's value. Radios step through their option
+    // list (clamped, with live theme preview); the toggle is a two-state control on the
+    // same axis — left → off, right → on (idempotent, unlike a flip). Any value change
+    // clears a stale notice and disarms the quit confirmation.
+    function step(delta: -1 | 1): void {
+        const s = sections[section()]!;
+        switch (s.kind) {
+            case "toggle": {
+                const { key } = settings[s.settingIndex]!;
+                setDraft({ ...draft(), [key]: delta === 1 });
+                break;
+            }
+            case "theme": {
+                const id = themeIds[Math.min(themeIds.length - 1, Math.max(0, themeIds.indexOf(draft().theme) + delta))]!;
+                setTheme(id);
+                setDraft({ ...draft(), theme: id });
+                break;
+            }
+            case "runtime": {
+                const id = runtimeIds[Math.min(runtimeIds.length - 1, Math.max(0, runtimeIds.indexOf(draft().runtime) + delta))]!;
+                setDraft({ ...draft(), runtime: id });
+                break;
+            }
+            default: {
+                // Exhaustiveness: a new Section kind must add a case above, or this breaks the build.
+                const _exhaustive: never = s;
+                void _exhaustive;
+            }
         }
+        setNotice(null);
+        setQuitArmed(false);
     }
 
-    function toggle() {
-        const row = rows[selected()]!;
-        if (row.kind !== "toggle") return;
-        const setting = settings[row.settingIndex]!;
-        setDraft({ ...draft(), [setting.key]: !draft()[setting.key] });
+    // Space/enter flip the focused toggle; a no-op on radio sections (whose value is
+    // already applied live by step). Mirrors a checkbox's familiar space-to-toggle.
+    function toggleFocused(): void {
+        const s = sections[section()]!;
+        if (s.kind !== "toggle") return;
+        const { key } = settings[s.settingIndex]!;
+        setDraft({ ...draft(), [key]: !draft()[key] });
         setNotice(null);
         setQuitArmed(false);
     }
@@ -125,11 +143,17 @@ export function ConfigApp(props: { onClose?: () => void }) {
         } else if (key.name === "s") {
             save();
         } else if (key.name === "space" || key.name === "return") {
-            toggle();
+            toggleFocused();
         } else if (key.name === "up") {
-            selectRow(Math.max(0, selected() - 1));
+            // Pure navigation between sections — no draft change, so it leaves any notice /
+            // quit-arm state intact (only value edits clear those).
+            setSection(Math.max(0, section() - 1));
         } else if (key.name === "down") {
-            selectRow(Math.min(rows.length - 1, selected() + 1));
+            setSection(Math.min(sections.length - 1, section() + 1));
+        } else if (key.name === "left") {
+            step(-1);
+        } else if (key.name === "right") {
+            step(1);
         }
     });
 
@@ -140,13 +164,18 @@ export function ConfigApp(props: { onClose?: () => void }) {
             <StatusBar
                 title="inf config"
                 state={dirty() ? { text: "unsaved changes", tone: "warn" } : undefined}
-                hints={[`${KEYMAP.moveSelection.label} move`, `${KEYMAP.save.label} save`, `${KEYMAP.exit.label} exit`]}
+                hints={[
+                    `${KEYMAP.moveSelection.label} section`,
+                    `${KEYMAP.changeOption.label} change`,
+                    `${KEYMAP.save.label} save`,
+                    `${KEYMAP.exit.label} exit`,
+                ]}
             />
 
             <For each={settings}>
                 {(setting, index) => (
                     <box flexDirection="column" paddingLeft={2} paddingTop={1}>
-                        <text fg={index() === selected() ? theme().selected : theme().fg} attributes={1}>
+                        <text fg={index() === section() ? theme().selected : theme().fg} attributes={1}>
                             [{draft()[setting.key] ? "x" : " "}] {setting.label}
                             {draft()[setting.key] !== saved()[setting.key] ? " *" : ""}
                         </text>
@@ -161,15 +190,16 @@ export function ConfigApp(props: { onClose?: () => void }) {
             </For>
 
             <box flexDirection="column" paddingLeft={2} paddingTop={1}>
-                <text fg={theme().muted}>theme</text>
+                <text fg={section() === THEME_SECTION ? theme().accent : theme().muted}>theme</text>
                 <For each={themeIds}>
-                    {(id, j) => {
-                        const rowIndex = () => settings.length + j();
-                        const isSelected = () => selected() === rowIndex();
+                    {(id) => {
+                        // No separate cursor: the highlighted row is always the active draft theme
+                        // (left/right move it). Bright `selected` when this section is focused, the
+                        // dimmer `accent` when it isn't, plain `fg` for the rest.
                         const isActive = () => draft().theme === id;
                         return (
                             <box paddingLeft={2}>
-                                <text fg={isSelected() ? theme().selected : isActive() ? theme().accent : theme().fg}>
+                                <text fg={isActive() && section() === THEME_SECTION ? theme().selected : isActive() ? theme().accent : theme().fg}>
                                     {isActive() ? "(●)" : "( )"} {themes[id].name}
                                     {isActive() && saved().theme !== id ? " *" : ""}
                                 </text>
@@ -180,15 +210,13 @@ export function ConfigApp(props: { onClose?: () => void }) {
             </box>
 
             <box flexDirection="column" paddingLeft={2} paddingTop={1}>
-                <text fg={theme().muted}>container runtime</text>
+                <text fg={section() === RUNTIME_SECTION ? theme().accent : theme().muted}>container runtime</text>
                 <For each={runtimeIds}>
-                    {(id, j) => {
-                        const rowIndex = () => settings.length + themeIds.length + j();
-                        const isSelected = () => selected() === rowIndex();
+                    {(id) => {
                         const isActive = () => draft().runtime === id;
                         return (
                             <box paddingLeft={2}>
-                                <text fg={isSelected() ? theme().selected : isActive() ? theme().accent : theme().fg}>
+                                <text fg={isActive() && section() === RUNTIME_SECTION ? theme().selected : isActive() ? theme().accent : theme().fg}>
                                     {isActive() ? "(●)" : "( )"} {runtimes[id].label}
                                     {isActive() && saved().runtime !== id ? " *" : ""}
                                 </text>
