@@ -1,16 +1,22 @@
 import { createSignal, createEffect, For, Show, onCleanup, onMount } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, produce } from "solid-js/store";
-import type { TextareaRenderable, KeyBinding } from "@opentui/core";
+import type { TextareaRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid";
 
 import { Bus } from "../lib/bus.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { listSessionMessages } from "../db/primary_query.ts";
 import { chat } from "../modules/session/chat.ts";
-import { syntaxStyle, theme, noticeColor, type Notice } from "./theme.ts";
+import { theme, noticeColor, type Notice } from "./theme.ts";
+import { chatStatus, setChatStatus } from "./hooks/status.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette } from "./command_palette.tsx";
+import { KEYMAP, matchChord } from "./keymap.ts";
+import { StatusBar } from "./layout/status_bar.tsx";
+import { MessageBlock } from "./layout/message_block.tsx";
+import { InputBar } from "./layout/input_bar.tsx";
+import { Sidebar } from "./layout/sidebar.tsx";
 import type { CommandContext } from "./commands.tsx";
 import type { Analysis } from "../types/analysis.ts";
 import type { BusEvent } from "../types/events.ts";
@@ -33,7 +39,6 @@ export function App(props: AppProps) {
     const renderer = useRenderer();
 
     const [messages, setMessages] = createStore<UIMessage[]>([]);
-    const [status, setStatus] = createSignal<"idle" | "busy" | "error">("idle");
     const [streamText, setStreamText] = createSignal("");
     const [streamPartId, setStreamPartId] = createSignal<string | null>(null);
     const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
@@ -48,6 +53,8 @@ export function App(props: AppProps) {
     const [currentWorkingDir, setCurrentWorkingDir] = createSignal(props.workingDir);
     const [currentAnalysis, setCurrentAnalysis] = createSignal<Analysis>(props.analysis);
     /* eslint-enable solid/reactivity */
+
+    const [sidebarOpen, setSidebarOpen] = createSignal(true);
 
     // Dialog host: a stack of render thunks; only the top one is mounted (see the render below).
     const [dialogs, setDialogs] = createStore<Array<() => JSX.Element>>([]);
@@ -73,7 +80,7 @@ export function App(props: AppProps) {
             },
             (error) => {
                 setErrorMsg(`Failed to load messages: ${error.type}`);
-                setStatus("error");
+                setChatStatus("error");
             },
         );
     }
@@ -84,7 +91,7 @@ export function App(props: AppProps) {
         switch (event.type) {
             case "session.status":
                 if (event.sessionId === currentSessionId()) {
-                    setStatus(event.status);
+                    setChatStatus(event.status);
                     if (event.status === "idle" && streamPartId()) {
                         const pid = streamPartId()!;
                         const text = streamText();
@@ -150,7 +157,7 @@ export function App(props: AppProps) {
             case "session.error":
                 if (event.sessionId === currentSessionId()) {
                     setErrorMsg(event.error);
-                    setStatus("error");
+                    setChatStatus("error");
                 }
                 break;
         }
@@ -163,27 +170,26 @@ export function App(props: AppProps) {
 
     useKeyboard((key) => {
         // The streaming abort stays active even with a dialog open, so a response can be cancelled.
-        if (key.name === "c" && key.ctrl && status() === "busy") {
+        if (matchChord(KEYMAP.abort.chord, key) && chatStatus() === "busy") {
             abortController?.abort();
             return;
         }
         // useKeyboard is a global, focus-agnostic bus: while a dialog is open it owns the
         // keyboard, so the chat's background handlers early-return.
         if (dialogOpen()) return;
-        if (key.name === "k" && key.ctrl) {
+        if (matchChord(KEYMAP.openPalette.chord, key)) {
             // preventDefault so the focused textarea does not also consume the keystroke.
             key.preventDefault();
             openDialog(() => <CommandPalette ctx={buildCtx()} commands={commands} />);
+        } else if (matchChord(KEYMAP.toggleSidebar.chord, key)) {
+            // preventDefault so the focused textarea does not also consume the keystroke.
+            key.preventDefault();
+            setSidebarOpen((open) => !open);
         }
     });
 
-    const keyBindings: KeyBinding[] = [
-        { name: "return", action: "submit" },
-        { name: "return", meta: true, action: "newline" },
-    ];
-
     async function handleSubmit() {
-        if (status() === "busy") return;
+        if (chatStatus() === "busy") return;
         const text = textareaRef?.editBuffer.getText().trim();
         if (!text) return;
         textareaRef!.setText("");
@@ -205,7 +211,7 @@ export function App(props: AppProps) {
             () => {},
             (error) => {
                 setErrorMsg(`Chat error: ${error.type}`);
-                setStatus("error");
+                setChatStatus("error");
             },
         );
     }
@@ -239,7 +245,7 @@ export function App(props: AppProps) {
         setStreamPartId(null);
         setStreamText("");
         setErrorMsg(null);
-        setStatus("idle");
+        setChatStatus("idle");
         setMessages([]);
         loadMessages(sessionId);
     }
@@ -260,90 +266,69 @@ export function App(props: AppProps) {
         };
     }
 
+    const statusState = (): { text: string; tone: "success" | "warn" | "error" } =>
+        chatStatus() === "busy"
+            ? { text: "◐ thinking…", tone: "warn" }
+            : chatStatus() === "error"
+              ? { text: "✗ error", tone: "error" }
+              : { text: "● ready", tone: "success" };
+
     return (
         // Paint the screen with the theme background — without it the terminal's own
         // background shows through, which is invisible for dark themes (terminal black
         // ≈ theme bg) but breaks light themes (dark fg text on a black screen).
         <box flexDirection="column" width="100%" height="100%" backgroundColor={theme().bg}>
             {/* Header */}
-            <box height={1} width="100%" flexDirection="row" backgroundColor={theme().bgPanel} paddingLeft={1} paddingRight={1}>
-                <text fg={theme().accent} attributes={1}>
-                    inf
-                </text>
-                <text fg={theme().muted}> | {currentWorkingDir().split("/").pop()} | </text>
-                <text fg={status() === "busy" ? theme().warn : status() === "error" ? theme().error : theme().success}>
-                    {status() === "busy" ? "thinking..." : status() === "error" ? "error" : "ready"}
-                </text>
-                <text fg={theme().muted}> | Ctrl+K: commands | Ctrl+C: abort | /quit: exit</text>
-            </box>
+            <StatusBar
+                title="inf"
+                subtitle={currentAnalysis().name}
+                state={statusState()}
+                hints={[KEYMAP.openPalette.label, KEYMAP.toggleSidebar.label, KEYMAP.abort.label]}
+            />
 
-            {/* Chat area */}
-            <scrollbox flexGrow={1} width="100%" stickyScroll stickyStart="bottom" paddingLeft={1} paddingRight={1} paddingTop={1}>
-                <Show when={messages.length === 0}>
-                    <box paddingTop={1} paddingBottom={1}>
-                        <text fg={theme().muted}>Welcome to inf. Type a message to begin.</text>
-                    </box>
-                </Show>
-                <For each={messages}>
-                    {(msg) => (
-                        <box width="100%" flexDirection="column" paddingBottom={1}>
-                            <text fg={msg.role === "user" ? theme().user : theme().assistant} attributes={1}>
-                                {msg.role === "user" ? "> You" : "< Assistant"}
-                            </text>
-                            <For each={msg.parts}>
-                                {(part) => {
-                                    const p = part as TextPart;
-                                    const isStreaming = () => streamPartId() === p.id;
-                                    const content = () => (isStreaming() ? streamText() : p.text);
-                                    return (
-                                        <Show when={content()}>
-                                            <markdown
-                                                content={content()}
-                                                fg={theme().fg}
-                                                syntaxStyle={syntaxStyle()}
-                                                streaming={isStreaming()}
-                                                paddingLeft={2}
-                                            />
-                                        </Show>
-                                    );
-                                }}
-                            </For>
+            {/* Main row: the chat column beside the full-height sidebar. Showing the sidebar
+                shrinks the chat column (stream + input together) — the opencode layout. */}
+            <box flexDirection="row" flexGrow={1} minHeight={0} width="100%">
+                <box flexDirection="column" flexGrow={1} minHeight={0}>
+                    <scrollbox flexGrow={1} stickyScroll stickyStart="bottom" paddingLeft={1} paddingRight={1} paddingTop={1}>
+                        <Show when={messages.length === 0}>
+                            <box paddingTop={1} paddingBottom={1}>
+                                <text fg={theme().muted}>Welcome to inf. Type a message to begin.</text>
+                            </box>
+                        </Show>
+                        <For each={messages}>
+                            {(msg) => <MessageBlock role={msg.role} parts={msg.parts} streamPartId={streamPartId} streamText={streamText} />}
+                        </For>
+                    </scrollbox>
+
+                    {/* Error banner */}
+                    <Show when={errorMsg()}>
+                        <box height={1} width="100%" backgroundColor={theme().error} paddingLeft={1}>
+                            <text fg={theme().bg}>{errorMsg()}</text>
                         </box>
-                    )}
-                </For>
-            </scrollbox>
+                    </Show>
 
-            {/* Error banner */}
-            <Show when={errorMsg()}>
-                <box height={1} width="100%" backgroundColor={theme().error} paddingLeft={1}>
-                    <text fg={theme().bg}>{errorMsg()}</text>
+                    {/* Transient command feedback */}
+                    <Show when={notice()}>
+                        <box height={1} width="100%" backgroundColor={noticeColor(notice()!.kind)} paddingLeft={1}>
+                            <text fg={theme().bg}>{notice()!.text}</text>
+                        </box>
+                    </Show>
+
+                    {/* Input area */}
+                    <InputBar
+                        onTextareaRef={(r: TextareaRenderable) => {
+                            textareaRef = r;
+                            queueMicrotask(() => r.focus());
+                        }}
+                        onSubmit={() => void handleSubmit()}
+                    />
                 </box>
-            </Show>
 
-            {/* Transient command feedback */}
-            <Show when={notice()}>
-                <box height={1} width="100%" backgroundColor={noticeColor(notice()!.kind)} paddingLeft={1}>
-                    <text fg={theme().bg}>{notice()!.text}</text>
-                </box>
-            </Show>
-
-            {/* Input area */}
-            <box width="100%" minHeight={3} maxHeight={8} borderColor={theme().borderActive} border paddingLeft={1} paddingRight={1}>
-                <textarea
-                    ref={(r: TextareaRenderable) => {
-                        textareaRef = r;
-                        queueMicrotask(() => r.focus());
-                    }}
-                    focused
-                    width="100%"
-                    placeholder="Type a message... (Enter to send, Meta+Enter for newline)"
-                    placeholderColor={theme().muted}
-                    textColor={theme().fg}
-                    backgroundColor={theme().bg}
-                    focusedBackgroundColor={theme().bgFocused}
-                    keyBindings={keyBindings}
-                    onSubmit={() => void handleSubmit()}
-                />
+                {/* Full-height sidebar: spans both the stream and the input; ctrl+b toggles it. */}
+                <Show when={sidebarOpen()}>
+                    <Sidebar analysis={currentAnalysis} sessionId={currentSessionId} messageCount={() => messages.length} />
+                </Show>
             </box>
 
             {/* Dialog host: the top modal floats above the chat as a full-screen absolute

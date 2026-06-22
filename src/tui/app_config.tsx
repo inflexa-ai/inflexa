@@ -5,6 +5,8 @@ import { readConfig, writeConfig, type Config } from "../lib/config.ts";
 import { env } from "../lib/env.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { setTheme, theme, noticeColor, type Notice } from "./theme.ts";
+import { StatusBar } from "./layout/status_bar.tsx";
+import { KEYMAP } from "./keymap.ts";
 import { themes, themeIds, type ThemeId } from "../lib/themes.ts";
 import { runtimes, runtimeIds, type ContainerRuntimeId } from "../lib/container.ts";
 
@@ -135,15 +137,11 @@ export function ConfigApp(props: { onClose?: () => void }) {
         // Paint the screen with the theme background; otherwise the terminal's own
         // background shows through and light themes render dark text on a black screen.
         <box flexDirection="column" width="100%" height="100%" backgroundColor={theme().bg}>
-            <box height={1} width="100%" flexDirection="row" backgroundColor={theme().bgPanel} paddingLeft={1} paddingRight={1}>
-                <text fg={theme().accent} attributes={1}>
-                    inf config
-                </text>
-                <text fg={theme().muted}> | ↑/↓: move | Space/Enter: toggle | s: save | q/Esc: exit</text>
-                <Show when={dirty()}>
-                    <text fg={theme().warn}> | unsaved changes</text>
-                </Show>
-            </box>
+            <StatusBar
+                title="inf config"
+                state={dirty() ? { text: "unsaved changes", tone: "warn" } : undefined}
+                hints={[`${KEYMAP.moveSelection.label} move`, `${KEYMAP.save.label} save`, `${KEYMAP.exit.label} exit`]}
+            />
 
             <For each={settings}>
                 {(setting, index) => (

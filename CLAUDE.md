@@ -30,8 +30,39 @@ bun run format       # Format all of src/
 
 ## Coding
 
-- Explain `WHY` in comments, not `HOW`.
 - **Don't extract single-caller helpers or sub-components into separate files.** Keep them in the same file as their caller. A new file is justified only when multiple callers exist — that's when a real reusable pattern emerges.
+
+## Code Comments
+
+Comment the why, not the what.
+
+- Do NOT write comments that restate what the code already says. If a comment paraphrases the line below it, delete it. TypeScript's types and good names already document the "what"; lean on them.
+- DO write comments that capture intent and reasoning: why the code works this way, what problem it solves, and what would otherwise be non-obvious to a future reader.
+- Prefer making the "what" self-evident through the type system (descriptive types, unions, branded types, `readonly`, exhaustive `switch`) so prose doesn't have to carry it.
+
+Document the decisions you made.
+
+- Record which alternative approaches were considered and discarded, and why.
+- Record which downsides or trade-offs were explicitly accepted, and why (e.g., why you reached for `any`/`as`, why you disabled a lint rule, why you chose a library).
+- Every `// eslint-disable`, `@ts-expect-error`, `@ts-ignore`, or type assertion (`as X`, `!`) should carry a comment explaining why it is safe and necessary — these are the TS equivalent of escape hatches and must never be silent.
+
+Document what is NOT there.
+
+- Flag shortcuts and unhandled cases explicitly rather than leaving them silent. Use `throw new Error("not implemented")` (or a `// TODO:` with an issue link) instead of a stub that returns a fake value.
+- In exhaustive `switch`/discriminated-union handling, use a `never`-typed default branch so the compiler flags any case you forgot — this documents "everything is handled" and breaks the build when it stops being true.
+- Note future optimization opportunities and the deliberate absence of an implementation (e.g., why a method is intentionally not provided, why a type guard is omitted).
+
+Treat comments as first-class, and write them early.
+
+- Comments are among the most important code you write; treat them with the same care as the logic.
+- Consider writing the comment/contract before the implementation — sketch the intended behavior, inputs, and invariants in prose (or a JSDoc block) first, then fill in the code beneath it.
+
+Comment the surprising, the unsafe, and the load-bearing.
+
+- Clearly comment anything a reader would find unexpected: reliance on external or global state, mutation of shared objects, ordering or timing requirements (async sequencing, microtask vs. macrotask), subtle invariants, or a non-obvious algorithm choice.
+- The TypeScript analogue of "unsafe" is anywhere you defeat the type checker: `as`/`as unknown as`, non-null assertions (`!`), `any`, `@ts-expect-error`, type predicates (`x is T`), and unchecked casts of external data (JSON, API responses). Each such site needs a comment stating exactly which invariant the surrounding code upholds to make it sound (e.g., "validated by the zod schema above", "guaranteed non-null because we just `.set()` it").
+
+**Comments are not changelogs.** Never write change-history phrasing like "Bumped from X to Y", "Refactored to W", "Now does Z", "Renamed from V", "Extracted from U", "Previously did A". Git tracks history; comments describe the static rationale as a fresh reader will encounter it tomorrow. If a value is unusual, justify the value — not the diff.
 
 ### Identifiers
 
@@ -113,11 +144,12 @@ JSON-blob tables (`sessions`/`messages`/`parts`) follow it at the **column** lev
 Code is grouped **by feature (vertical slice)**, not by technical layer: a feature owns its logic, its CLI command action(s), and its logic-local types under `src/modules/<domain>/`. Shared infrastructure with no single owner stays in the layer directories.
 
 - `src/index.ts` — entry point: telemetry/log wiring, shutdown hooks, then `cli.parse()`
-- `src/cli/` — the cac command **registry** (`index.ts`) + help formatting, nothing else. Each command lazy-imports its action: text commands from their module (e.g. `import("../modules/auth/login.ts")`), TUI screens from `tui/` (e.g. `import("../tui/launch.tsx")`).
+- `src/cli/` — the cac command **registry** (`index.ts`) + help formatting, nothing else. Each command lazy-imports its action: text commands from their module (e.g. `import("../modules/auth/login.ts")`), TUI screens from `tui/` (e.g. `import("../tui/app.launch.tsx")`).
 - `src/modules/<domain>/` — feature slices (see [Modules](#modules)): **headless** domain logic + the text command actions that drive them. Interactive views are NOT here (see `tui/`). Today: `auth/` (Auth0 device flow + `login`/`logout`/`whoami`), `proxy/` (CLIProxyAPI lifecycle + `setup`), `session/` (chat backend + `sessions` command), `anchor/` (folder-identity markers + lazy path reconciliation).
 - `src/db/` — shared SQLite layer: `primary.ts` (connection), `primary_migrations.ts`, `primary_query.ts`, `primary_mutation.ts`, `errors.ts`, `util.ts`. Queries/mutations stay here (verb-split, beside the migrations); a module imports the functions it needs.
-- `src/tui/` — the **presentation layer / app shell**: the entry app plus shared, app-level, or reusable Solid/opentui code. Today: `app.tsx` (the root chat screen, launched by every command that opens a chat), `launch.tsx` (`launchTui`), `command_palette.tsx` / `commands.tsx` (the palette adapter + command registry), `config.tsx` (settings — an app-level screen), `theme.ts` (the reactive accessor — the id list + palette data live in `lib/themes.ts`; also home to the shared `Notice` type + `noticeColor` mapping, since a notice kind maps onto a palette role), and `components/` (shared, domain-agnostic widgets — see below). Presentation sits *above* the logic modules: it may import module logic (view → logic); modules must never import `tui/`. **Where a view lives** mirrors Lumen's `components/` vs `modules/<m>/components/` split — shared / app-shell / app-level screens go here; a view owned by exactly one feature co-locates in that module. `config.tsx` is an app-level exception that lives here — not a license to put every view in `tui/`. Add `tui/<domain>/` (or module-side view folders) when a screen outgrows one file.
+- `src/tui/` — the **presentation layer / app shell**: the entry app plus shared, app-level, or reusable Solid/opentui code. Today: `app.tsx` (the root chat screen, launched by every command that opens a chat), `app.launch.tsx` (`launchTui`), `command_palette.tsx` / `commands.tsx` (the palette adapter + command registry), `app_config.tsx` (settings — an app-level screen), `theme.ts` (the reactive accessor — the id list + palette data live in `lib/themes.ts`; also home to the shared `Notice` type + `noticeColor` mapping, since a notice kind maps onto a palette role), and `components/` (shared, domain-agnostic widgets — see below). Presentation sits *above* the logic modules: it may import module logic (view → logic); modules must never import `tui/`. **Where a view lives** mirrors Lumen's `components/` vs `modules/<m>/components/` split — shared / app-shell / app-level screens go here; a view owned by exactly one feature co-locates in that module. `app_config.tsx` is an app-level exception that lives here — not a license to put every view in `tui/`. Add `tui/<domain>/` (or module-side view folders) when a screen outgrows one file.
   - `src/tui/components/` — shared TUI widgets. A widget belongs here **iff** it (a) imports only `theme` + opentui/solid (no `modules/`, `db/`, or other domain imports) and (b) has ≥2 callers; one component per file, no barrels. A feature-coupled adapter (e.g. `CommandPalette`, which maps `Command` objects) stays in the `tui/` app-shell, not here. Today: `dialog_panel.tsx` (the bordered-panel + accent-title + optional muted-footer chrome shell that every dialog composes), `select_list.tsx` (`SelectList` — the fuzzy-filtered grouped picker), `prompt_dialog.tsx` (`PromptDialog`), `results_dialog.tsx` (`ResultsDialog`).
+  - `src/tui/layout/` — the chat app-shell **composition kit**: a full-width status bar atop a main row of (stream + input) beside a toggleable, full-height **sidebar**. Files: `status_bar.tsx`, `message_block.tsx`, `input_bar.tsx`, `sidebar.tsx`, and `markers.ts` (the shared gutter marker set). Distinguished from `components/` by **role** (shell composition vs reusable widget), it is a deliberate, scoped exception to the single-caller rule — a kit part MAY be single-caller and MAY import domain types/queries, and stays here even when generic + multi-caller (e.g. `StatusBar`, shared by `app.tsx` + `app_config.tsx`). The sibling `keymap.ts` is the single source of keybind chords + hint labels. **Keybind hint labels are ALWAYS lowercase** (`ctrl+k`, `ctrl+b`, `esc`); navigation chords use **Ctrl, never Alt** (terminals deliver Alt/Option unreliably — macOS composes Option into a character) and never Cmd (terminals don't forward it). Chat status lives in the reactive `src/tui/hooks/status.ts` store (the `theme.ts` pattern) — the app only renders it.
 - `src/lib/` — non-domain infrastructure: `env.ts` (sole `process.env` reader), `config.ts` (user config file), `bus.ts` (event bus), `log.ts` (pino), `otel.ts`, `shutdown.ts`, `themes.ts`.
 - `src/extensions/` — global runtime extensions (see below)
 - `src/types/` — shared domain model, grouped by domain: persisted entity shapes (`session.ts`, `anchor.ts`, …) and the event contract (`events.ts`). These are shared, not module-local, because the `db/` layer references every entity shape and `lib/bus.ts` references the events — homing them in a module would invert the infra→feature dependency.
@@ -144,7 +176,7 @@ The TUI is Solid (`solid-js`) rendered to the terminal via `@opentui/solid`. Sol
 
 ### Launch and exit
 
-- Each TUI screen lives in `src/tui/` as its component plus a `launch*` function — co-located in one file (like `config.tsx`), or split into a `launch.tsx` beside a large component (like the chat `app.tsx`). `launch*` resolves its data (session lookup/creation) first, then calls `void render(...)` with `exitOnCtrlC: false`, `targetFps: 30`, `screenMode: "alternate-screen"`.
+- Each TUI screen lives in `src/tui/` as its component plus a `launch*` function — co-located in one file (like `app_config.tsx`), or split into a `app.launch.tsx` beside a large component (like the chat `app.tsx`). `launch*` resolves its data (session lookup/creation) first, then calls `void render(...)` with `exitOnCtrlC: false`, `targetFps: 30`, `screenMode: "alternate-screen"`.
 - **Always `renderer.destroy()` before `shutdown(0)`.** `destroy()` restores the terminal (mouse tracking, alternate screen, cooked mode) — `process.exit()` alone skips OpenTUI's cleanup and leaves the shell broken.
 - `exitOnCtrlC` is false, so every TUI app must handle its own quit keys via `useKeyboard`.
 
