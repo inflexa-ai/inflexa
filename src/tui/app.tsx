@@ -11,6 +11,7 @@ import { listSessionMessages } from "../db/primary_query.ts";
 import { chat } from "../modules/session/chat.ts";
 import { theme, noticeColor, type Notice } from "./theme.ts";
 import { chatStatus, setChatStatus } from "./hooks/status.ts";
+import { currentNotice } from "./hooks/notice.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette } from "./command_palette.tsx";
 import { KEYMAP, matchChord } from "./keymap.ts";
@@ -36,7 +37,7 @@ type AppProps = {
 };
 
 export function App(props: AppProps) {
-    const _dims = useTerminalDimensions();
+    const dims = useTerminalDimensions();
     const renderer = useRenderer();
 
     const [messages, setMessages] = createStore<UIMessage[]>([]);
@@ -61,10 +62,6 @@ export function App(props: AppProps) {
     const [dialogs, setDialogs] = createStore<Array<() => JSX.Element>>([]);
     const dialogOpen = (): boolean => dialogs.length > 0;
     const dialogTop = (): (() => JSX.Element) | null => (dialogs.length > 0 ? dialogs[dialogs.length - 1]! : null);
-
-    // Transient status-line feedback from commands (the stdout-free channel).
-    const [notice, setNotice] = createSignal<Notice | null>(null);
-    let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 
     let textareaRef: TextareaRenderable | null = null;
     let abortController: AbortController | null = null;
@@ -231,12 +228,6 @@ export function App(props: AppProps) {
         if (!dialogOpen()) queueMicrotask(() => textareaRef?.focus());
     });
 
-    function notify(n: Notice): void {
-        if (noticeTimer) clearTimeout(noticeTimer);
-        setNotice(n);
-        noticeTimer = setTimeout(() => setNotice(null), 4000);
-    }
-
     // Swap the open chat in place — resume a different analysis/session without a process restart.
     function openSession(sessionId: string, workingDir: string, analysis: Analysis): void {
         abortController?.abort(); // stop any in-flight stream before loading the new session
@@ -259,7 +250,6 @@ export function App(props: AppProps) {
             openDialog,
             closeDialog,
             openSession,
-            notify,
             quit: async () => {
                 renderer.destroy();
                 await shutdown(0);
@@ -309,13 +299,6 @@ export function App(props: AppProps) {
                         </box>
                     </Show>
 
-                    {/* Transient command feedback */}
-                    <Show when={notice()}>
-                        <box height={1} width="100%" backgroundColor={noticeColor(notice()!.kind)} paddingLeft={1}>
-                            <text fg={theme().bg}>{notice()!.text}</text>
-                        </box>
-                    </Show>
-
                     {/* Input area */}
                     <InputBar
                         onTextareaRef={(r: TextareaRenderable) => {
@@ -331,6 +314,31 @@ export function App(props: AppProps) {
                     <Sidebar analysis={currentAnalysis} sessionId={currentSessionId} messageCount={() => messages.length} />
                 </Show>
             </box>
+
+            {/* Transient toast: a floating top-right overlay (OpenCode-style), single slot,
+                auto-dismissed by the notice store. zIndex above the dialog host so a notice
+                raised by a background event still surfaces over an open modal. top={2} clears
+                the height-1 status bar with a one-row gap. */}
+            <Show when={currentNotice()} keyed>
+                {(n: Notice) => (
+                    <box
+                        position="absolute"
+                        top={2}
+                        right={2}
+                        zIndex={200}
+                        maxWidth={Math.min(60, dims().width - 6)}
+                        backgroundColor={theme().bgPanel}
+                        border
+                        borderColor={noticeColor(n.kind)}
+                        paddingLeft={1}
+                        paddingRight={1}
+                    >
+                        <text fg={noticeColor(n.kind)}>
+                            {n.kind === "error" ? GLYPHS.cross : n.kind === "warn" ? GLYPHS.warning : GLYPHS.circle} {n.text}
+                        </text>
+                    </box>
+                )}
+            </Show>
 
             {/* Dialog host: the top modal floats above the chat as a full-screen absolute
                 overlay. It is a direct child of the full-screen root box (NOT a Portal — a

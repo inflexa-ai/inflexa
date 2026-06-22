@@ -4,7 +4,8 @@ import { PromptDialog } from "./components/prompt_dialog.tsx";
 import { ResultsDialog } from "./components/results_dialog.tsx";
 import { SelectList } from "./components/select_list.tsx";
 import { ConfigApp } from "./app_config.tsx";
-import { setTheme, type Notice } from "./theme.ts";
+import { setTheme } from "./theme.ts";
+import { notify } from "./hooks/notice.ts";
 import { KEYMAP } from "./keymap.ts";
 import { themes, themeIds, type ThemeId } from "../lib/themes.ts";
 import { GLYPHS } from "../lib/glyphs.ts";
@@ -51,8 +52,6 @@ export type CommandContext = {
     closeDialog: () => void;
     /** Swap the open chat in place — resume a different analysis/session without a restart. */
     openSession: (sessionId: string, workingDir: string, analysis: Analysis) => void;
-    /** Surface a transient status-line notice (the stdout-free feedback channel). */
-    notify: (notice: Notice) => void;
     /** Quit the app cleanly (restore the terminal, then exit). */
     quit: () => Promise<void>;
 };
@@ -98,7 +97,7 @@ function openAnalysis(ctx: CommandContext, a: Analysis): void {
             () => null,
         );
     if (!session) {
-        ctx.notify({ kind: "error", text: "Failed to open a session" });
+        notify({ kind: "error", text: "Failed to open a session" });
         return;
     }
     ctx.openSession(session.id, workingDirFor(a), a);
@@ -117,8 +116,8 @@ function ThemePicker(props: { ctx: CommandContext }): JSX.Element {
             onSelect={(id: ThemeId) => {
                 setTheme(id); // live recolor of the running render root
                 writeConfig({ ...readConfig(), theme: id }).match(
-                    () => props.ctx.notify({ kind: "info", text: `Theme: ${themes[id].name}` }),
-                    (e) => props.ctx.notify({ kind: "error", text: `Failed to save theme: ${e.type}` }),
+                    () => notify({ kind: "info", text: `Theme: ${themes[id].name}` }),
+                    (e) => notify({ kind: "error", text: `Failed to save theme: ${e.type}` }),
                 );
                 props.ctx.closeDialog();
             }}
@@ -137,14 +136,14 @@ function NewProjectDialog(props: { ctx: CommandContext }): JSX.Element {
                 str256(raw).match(
                     (name) =>
                         createProject({ name, description: null, tags: [] }).match(
-                            (p) => props.ctx.notify({ kind: "info", text: `Created project "${p.name}"` }),
+                            (p) => notify({ kind: "info", text: `Created project "${p.name}"` }),
                             (e) =>
-                                props.ctx.notify({
+                                notify({
                                     kind: "error",
                                     text: e.type === "constraint_violation" ? `A project named "${raw.trim()}" already exists.` : `Failed: ${e.type}`,
                                 }),
                         ),
-                    (err) => props.ctx.notify({ kind: "warn", text: err === "empty" ? "A name is required." : "Keep the name to 256 characters or fewer." }),
+                    (err) => notify({ kind: "warn", text: err === "empty" ? "A name is required." : "Keep the name to 256 characters or fewer." }),
                 );
             }}
         />
@@ -165,11 +164,11 @@ function NewAnalysisDialog(props: { ctx: CommandContext }): JSX.Element {
                         createAnalysis({ cwd: props.ctx.workingDir, name }).match(
                             (a) => {
                                 openAnalysis(props.ctx, a);
-                                props.ctx.notify({ kind: "info", text: `Created analysis "${a.name}"` });
+                                notify({ kind: "info", text: `Created analysis "${a.name}"` });
                             },
-                            (e) => props.ctx.notify({ kind: "error", text: `Failed: ${e.type}` }),
+                            (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
                         ),
-                    (err) => props.ctx.notify({ kind: "warn", text: err === "empty" ? "A name is required." : "Keep the name to 256 characters or fewer." }),
+                    (err) => notify({ kind: "warn", text: err === "empty" ? "A name is required." : "Keep the name to 256 characters or fewer." }),
                 );
             }}
         />
@@ -278,8 +277,8 @@ export const commands: Command[] = [
             const a = ctx.analysis;
             if (!a) return;
             openOutputDir(a).match(
-                (d) => ctx.notify({ kind: "info", text: `Opened ${d}` }),
-                (e) => ctx.notify({ kind: "error", text: `Failed to open: ${e.type}` }),
+                (d) => notify({ kind: "info", text: `Opened ${d}` }),
+                (e) => notify({ kind: "error", text: `Failed to open: ${e.type}` }),
             );
         },
     },
