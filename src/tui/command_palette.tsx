@@ -1,6 +1,7 @@
 import { createMemo } from "solid-js";
 import type { JSX } from "solid-js";
 
+import { GLYPHS } from "../lib/glyphs.ts";
 import { SelectList, type SelectItem } from "./components/select_list.tsx";
 import type { Command, CommandContext } from "./commands.tsx";
 
@@ -26,7 +27,7 @@ export function CommandPalette(props: { ctx: CommandContext; commands: Command[]
     return (
         <SelectList
             title="Commands"
-            placeholder="Search commands…"
+            placeholder={`Search commands${GLYPHS.ellipsis}`}
             items={items()}
             emptyText="No matching commands"
             grouped

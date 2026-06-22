@@ -5,6 +5,7 @@ import type { TextareaRenderable } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid";
 
 import { Bus } from "../lib/bus.ts";
+import { GLYPHS } from "../lib/glyphs.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { listSessionMessages } from "../db/primary_query.ts";
 import { chat } from "../modules/session/chat.ts";
@@ -268,10 +269,10 @@ export function App(props: AppProps) {
 
     const statusState = (): { text: string; tone: "success" | "warn" | "error" } =>
         chatStatus() === "busy"
-            ? { text: "◐ thinking…", tone: "warn" }
+            ? { text: `${GLYPHS.circleHalf} thinking${GLYPHS.ellipsis}`, tone: "warn" }
             : chatStatus() === "error"
-              ? { text: "✗ error", tone: "error" }
-              : { text: "● ready", tone: "success" };
+              ? { text: `${GLYPHS.cross} error`, tone: "error" }
+              : { text: `${GLYPHS.circle} ready`, tone: "success" };
 
     return (
         // Paint the screen with the theme background — without it the terminal's own

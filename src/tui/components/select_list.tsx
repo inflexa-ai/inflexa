@@ -5,6 +5,7 @@ import type { InputRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useKeyboard } from "@opentui/solid";
 
 import { rankBy } from "../../lib/fuzzy.ts";
+import { GLYPHS } from "../../lib/glyphs.ts";
 import { theme } from "../theme.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
 
@@ -107,14 +108,19 @@ export function SelectList<T>(props: {
     });
 
     return (
-        <DialogPanel title={props.title} width="70%" height="60%" footer="↑/↓ move · Enter select · Esc cancel">
+        <DialogPanel
+            title={props.title}
+            width="70%"
+            height="60%"
+            footer={`${GLYPHS.arrowUp}/${GLYPHS.arrowDown} move ${GLYPHS.middot} Enter select ${GLYPHS.middot} Esc cancel`}
+        >
             <input
                 ref={(r: InputRenderable) => {
                     inputRef = r;
                 }}
                 focused
                 width="100%"
-                placeholder={props.placeholder ?? "Type to filter…"}
+                placeholder={props.placeholder ?? `Type to filter${GLYPHS.ellipsis}`}
                 placeholderColor={theme().muted}
                 textColor={theme().fg}
                 backgroundColor={theme().bg}
@@ -147,7 +153,7 @@ export function SelectList<T>(props: {
                                     backgroundColor={row.idx === cursor() ? theme().bgFocused : undefined}
                                 >
                                     <text fg={row.idx === cursor() ? theme().selected : theme().fg}>
-                                        {row.idx === cursor() ? "› " : "  "}
+                                        {row.idx === cursor() ? `${GLYPHS.chevronRight} ` : "  "}
                                         {row.item.title}
                                     </text>
                                     <Show when={row.item.hint}>

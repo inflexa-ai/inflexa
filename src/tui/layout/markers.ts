@@ -1,3 +1,4 @@
+import { GLYPHS } from "../../lib/glyphs.ts";
 import type { ThemeColors } from "../../lib/themes.ts";
 
 /** A gutter block kind — the marker that prefixes each stream block in the fixed gutter column. */
@@ -18,12 +19,14 @@ export type GutterMarker = {
  * the not-yet-built "key moment" block types (thinking / tool / run / file edit / ok / error).
  */
 export const MARKERS: Record<MarkerKind, GutterMarker> = {
+    // `you`/`assistant` keep plain ASCII chevrons — they read as conversational prompts, not icons,
+    // and ASCII has no cross-font drift risk, so they stay literals rather than entering `GLYPHS`.
     you: { glyph: ">", role: "user" },
     assistant: { glyph: "<", role: "assistant" },
-    thinking: { glyph: "◆", role: "warn" },
-    tool: { glyph: "▸", role: "muted" },
-    run: { glyph: "●", role: "warn" },
-    fileEdit: { glyph: "✎", role: "success" },
-    ok: { glyph: "✓", role: "success" },
-    error: { glyph: "✗", role: "error" },
+    thinking: { glyph: GLYPHS.diamond, role: "warn" },
+    tool: { glyph: GLYPHS.triangleRight, role: "muted" },
+    run: { glyph: GLYPHS.circle, role: "warn" },
+    fileEdit: { glyph: GLYPHS.pencil, role: "success" },
+    ok: { glyph: GLYPHS.check, role: "success" },
+    error: { glyph: GLYPHS.cross, role: "error" },
 };
