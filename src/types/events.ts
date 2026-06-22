@@ -1,9 +1,9 @@
 import type { Message, Part } from "./session.ts";
 
 /**
- * The cross-process event contract: the chat backend emits these and the TUI
- * consumes them through the bus. Carries session-domain shapes, so it lives in
- * the shared type layer rather than inside the session module.
+ * The cross-process event contract: the intelligence module's chat engine emits
+ * these and the TUI consumes them through the bus. Carries session-domain shapes,
+ * so it lives in the shared type layer rather than inside the intelligence module.
  */
 export type BusEvent =
     | { type: "session.status"; sessionId: string; status: "idle" | "busy" | "error" }

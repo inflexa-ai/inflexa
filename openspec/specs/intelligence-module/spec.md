@@ -1,0 +1,49 @@
+# intelligence-module Specification
+
+## Purpose
+TBD - created by archiving change intelligence-module. Update Purpose after archive.
+## Requirements
+### Requirement: AI interaction is owned by the intelligence module
+
+The headless AI-interaction slice SHALL live at `src/modules/intelligence/`. It SHALL provide the model-streaming chat engine as `chat(opts: ChatOptions): Promise<Result<void, DbError>>` from `src/modules/intelligence/chat.ts`, and the `inf sessions` list command as `listSessions()` from `src/modules/intelligence/sessions.ts`. No `src/modules/session/` directory SHALL remain after the change. The move SHALL preserve behavior: `chat()` persists the user turn, streams the assistant response from the proxy, emits bus events, and persists the final text exactly as before; `listSessions()` prints saved sessions exactly as before.
+
+#### Scenario: Chat engine resolves at the intelligence path
+
+- **WHEN** a caller imports `chat` from `src/modules/intelligence/chat.ts`
+- **THEN** the import resolves and `chat()` is callable
+- **AND** no module exists at `src/modules/session/`
+
+#### Scenario: Sessions command resolves at the intelligence path
+
+- **WHEN** the `sessions` CLI command action runs
+- **THEN** it loads `listSessions` from `src/modules/intelligence/sessions.ts` and lists saved sessions unchanged
+
+#### Scenario: Behavior is preserved by the move
+
+- **WHEN** a user sends a chat message after the rename
+- **THEN** the user turn and streamed assistant turn are persisted and rendered exactly as before the move
+
+### Requirement: The intelligence module is headless
+
+The `src/modules/intelligence/` module SHALL contain no `.tsx` files and SHALL NOT import from `src/tui/` — presentation depends on the module, never the reverse. It MAY import shared infrastructure (`src/lib/`, `src/db/`, `src/types/`) and other modules acyclically (e.g. `src/modules/proxy/`). The session/message/part queries and mutations SHALL remain in `src/db/`, and the persisted shapes (`Session`, `Message`, `Part`) and the `BusEvent` contract SHALL remain in `src/types/` — none of these move into the module.
+
+#### Scenario: No presentation import from the module
+
+- **WHEN** the files under `src/modules/intelligence/` are inspected
+- **THEN** none import from `src/tui/` and none is a `.tsx` file
+
+#### Scenario: Shared layers are untouched
+
+- **WHEN** the change is applied
+- **THEN** `src/db/primary_query.ts`, `src/db/primary_mutation.ts`, `src/types/session.ts`, and `src/types/events.ts` are unchanged in location and content
+
+### Requirement: Presentation and CLI import the engine from intelligence
+
+The chat UI and the CLI registry SHALL reference the engine at its new home. `src/tui/app.tsx` SHALL import `chat` from `../modules/intelligence/chat.ts`, and `src/cli/index.ts` SHALL lazy-import `listSessions` from `../modules/intelligence/sessions.ts`. No importer SHALL reference the old `modules/session/` path.
+
+#### Scenario: Importers point at the new path
+
+- **WHEN** the project is type-checked after the change
+- **THEN** `src/tui/app.tsx` and `src/cli/index.ts` resolve their imports from `src/modules/intelligence/`
+- **AND** a search for `modules/session/` across `src/` returns no matches
+

@@ -36,9 +36,9 @@ export type Workspace = {
 };
 
 /**
- * What {@link createWorkspace} needs from the host (`app.tsx`): the scope seed, the capabilities
- * that close over host-local state, and a hook to run after a swap so the host can reset its own
- * hot state (messages, stream, status) — none of which belong in the shared scope.
+ * What {@link createWorkspace} needs from the host (`app.tsx`): the scope seed and the capabilities
+ * that close over host-local state. The chat hot state (messages, stream, status) is reset
+ * reactively by the `Chat` component watching `sessionId`, so the host passes no reset hook here.
  */
 export type WorkspaceInit = {
     analysis: Analysis | null;
@@ -47,8 +47,6 @@ export type WorkspaceInit = {
     openDialog: (render: () => JSX.Element) => void;
     closeDialog: () => void;
     quit: () => Promise<void>;
-    /** Run after `openSession` has swapped the scope, with the new session id. */
-    onOpenSession: (sessionId: string) => void;
 };
 
 /**
@@ -57,8 +55,9 @@ export type WorkspaceInit = {
  * for the sidebar/status bar to repaint on an in-place swap the value must be a reactive primitive.
  * Accessors are deliberately avoided, so a `createStore` (which gives plain-property reactive reads)
  * is the mechanism. `openSession` is the SOLE writer of the scope: it sets the four data fields
- * (project re-resolved from the new analysis), then calls the host's `onOpenSession` for its resets.
- * The capability fields are never written through the store.
+ * (project re-resolved from the new analysis). The chat hot state is reset reactively by the `Chat`
+ * component watching `sessionId`, not by a host callback here. The capability fields are never
+ * written through the store.
  */
 export function createWorkspace(init: WorkspaceInit): Workspace {
     const [store, setStore] = createStore<Workspace>({
@@ -73,7 +72,6 @@ export function createWorkspace(init: WorkspaceInit): Workspace {
         // `setStore` from the destructuring above — created now, only invoked after the store exists.
         openSession(sessionId, workingDir, analysis) {
             setStore({ analysis, sessionId, workingDir, project: projectForAnalysis(analysis) });
-            init.onOpenSession(sessionId);
         },
     });
     return store;
