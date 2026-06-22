@@ -11,7 +11,7 @@ import { withTransaction } from "../../db/util.ts";
 import type { DbError } from "../../db/errors.ts";
 import type { StoredMessage, TextPart } from "../../types/session.ts";
 
-// The chat backend talks to the model through CLIProxyAPI (provisioned by
+// The intelligence module's model-interaction engine talks to the model through CLIProxyAPI (provisioned by
 // `inf setup`). The proxy exposes an OpenAI-compatible endpoint that routes to
 // whichever provider was authenticated, so the AI SDK's openai-compatible
 // provider gives us one code path for Gemini/OpenAI/Claude/Qwen/iFlow — the
@@ -164,12 +164,11 @@ async function resolveModelId(apiKey: string): Promise<string> {
     if (cachedModelId) return cachedModelId;
     const res = await fetch(`${env.cliproxyApiUrl}/models`, { headers: { Authorization: `Bearer ${apiKey}` } });
     if (!res.ok) throw new Error(`the proxy returned ${res.status} listing models`);
-    const json: unknown = await res.json(); // unknown: proxy response, validated below.
-    const parsed = modelsSchema.safeParse(json);
-    if (!parsed.success || parsed.data.data.length === 0) {
+    const models = await res.jsonWith(modelsSchema);
+    if (!models || models.data.length === 0) {
         throw new Error("the proxy reported no models — is a provider authenticated? run `inf setup`");
     }
-    cachedModelId = pickDefaultModel(parsed.data.data.map((m) => m.id));
+    cachedModelId = pickDefaultModel(models.data.map((m) => m.id));
     return cachedModelId;
 }
 

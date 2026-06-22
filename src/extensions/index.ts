@@ -5,3 +5,4 @@
 import "./date.ext.ts";
 import "./json.ext.ts";
 import "./promise.ext.ts";
+import "./response.ext.ts";

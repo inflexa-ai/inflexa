@@ -1,36 +1,26 @@
-import { createSignal, createEffect, For, Show, onCleanup, onMount } from "solid-js";
+import { createSignal, createEffect, Show, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import type { TextareaRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 
-import { Bus } from "../lib/bus.ts";
 import { GLYPHS } from "../lib/glyphs.ts";
 import { zIndex } from "../lib/z_index.ts";
 import { shutdown } from "../lib/shutdown.ts";
-import { listSessionMessages } from "../db/primary_query.ts";
-import { chat } from "../modules/session/chat.ts";
 import { theme, noticeColor, type Notice } from "./theme.ts";
-import { chatStatus, setChatStatus } from "./hooks/status.ts";
+import { chatStatus } from "./hooks/status.ts";
+import * as conversation from "./hooks/conversation.ts";
 import { currentNotice } from "./hooks/notice.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { useKeymapRoot, useBindings, pushMode, MODE_BASE, MODE_MODAL, resolveKeybind, keybindLabel, leaderSeq } from "./keymap.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
-import { MessageBlock } from "./layout/message_block.tsx";
+import { Chat } from "./components/chat.tsx";
 import { InputBar } from "./layout/input_bar.tsx";
 import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
 import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
 import type { Analysis } from "../types/analysis.ts";
-import type { BusEvent } from "../types/events.ts";
-import type { Part, TextPart } from "../types/session.ts";
-
-type UIMessage = {
-    id: string;
-    role: "user" | "assistant";
-    parts: Part[];
-};
 
 type AppProps = {
     sessionId: string;
@@ -42,11 +32,6 @@ export function App(props: AppProps) {
     const dims = useTerminalDimensions();
     const renderer = useRenderer();
 
-    const [messages, setMessages] = createStore<UIMessage[]>([]);
-    const [streamText, setStreamText] = createSignal("");
-    const [streamPartId, setStreamPartId] = createSignal<string | null>(null);
-    const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
-
     const [sidebarOpen, setSidebarOpen] = createSignal(true);
 
     // Dialog host: a stack of render thunks; only the top one is mounted (see the render below).
@@ -55,24 +40,6 @@ export function App(props: AppProps) {
     const dialogTop = (): (() => JSX.Element) | null => (dialogs.length > 0 ? dialogs[dialogs.length - 1]! : null);
 
     let textareaRef: TextareaRenderable | null = null;
-    let abortController: AbortController | null = null;
-
-    function loadMessages(sessionId: string): void {
-        listSessionMessages(sessionId).match(
-            (existing) => {
-                const uiMsgs: UIMessage[] = existing.map((m) => ({
-                    id: m.info.id,
-                    role: m.info.role,
-                    parts: m.parts,
-                }));
-                setMessages(uiMsgs);
-            },
-            (error) => {
-                setErrorMsg(`Failed to load messages: ${error.type}`);
-                setChatStatus("error");
-            },
-        );
-    }
 
     // In-app capabilities that close over App's local state, handed to the workspace store below.
     function openDialog(render: () => JSX.Element): void {
@@ -89,9 +56,11 @@ export function App(props: AppProps) {
     }
 
     // The workspace context store. Its reactivity and the `openSession` write path live in
-    // contexts/workspace.ts; App supplies the capabilities (which close over its local state) and a
-    // hot-state reset hook. Seeded once from props — App mounts a single time with fixed props — so
-    // the body-level reads are a deliberate one-time seed, hence the scoped disable.
+    // contexts/workspace.ts; App supplies the capabilities (which close over its local state). The
+    // chat hot-state reset on an in-place swap is driven reactively by the `Chat` component (an
+    // effect on `workspace.sessionId`), so App no longer passes an imperative reset hook. Seeded
+    // once from props — App mounts a single time with fixed props — so the body-level reads are a
+    // deliberate one-time seed, hence the scoped disable.
     /* eslint-disable solid/reactivity -- seed-once: App mounts once with fixed props; the store is seeded from them and thereafter written only via openSession */
     const workspace = createWorkspace({
         analysis: props.analysis,
@@ -100,100 +69,8 @@ export function App(props: AppProps) {
         openDialog,
         closeDialog,
         quit,
-        onOpenSession: (sessionId) => {
-            abortController?.abort(); // stop any in-flight stream before loading the new session
-            setStreamPartId(null);
-            setStreamText("");
-            setErrorMsg(null);
-            setChatStatus("idle");
-            setMessages([]);
-            loadMessages(sessionId);
-        },
     });
     /* eslint-enable solid/reactivity */
-
-    onMount(() => loadMessages(workspace.sessionId));
-
-    const handler = (event: BusEvent) => {
-        switch (event.type) {
-            case "session.status":
-                if (event.sessionId === workspace.sessionId) {
-                    setChatStatus(event.status);
-                    if (event.status === "idle" && streamPartId()) {
-                        const pid = streamPartId()!;
-                        const text = streamText();
-                        setMessages(
-                            produce((msgs) => {
-                                for (const msg of msgs) {
-                                    const idx = msg.parts.findIndex((p) => p.id === pid);
-                                    if (idx !== -1) {
-                                        (msg.parts[idx] as TextPart).text = text;
-                                        break;
-                                    }
-                                }
-                            }),
-                        );
-                        setStreamPartId(null);
-                        setStreamText("");
-                    }
-                }
-                break;
-
-            case "message.created":
-                if (event.message.sessionId === workspace.sessionId) {
-                    setMessages(
-                        produce((msgs) => {
-                            msgs.push({
-                                id: event.message.id,
-                                role: event.message.role,
-                                parts: [],
-                            });
-                        }),
-                    );
-                }
-                break;
-
-            case "part.updated": {
-                const part = event.part;
-                if (part.sessionId !== workspace.sessionId) break;
-                setMessages(
-                    produce((msgs) => {
-                        const msg = msgs.find((m) => m.id === part.messageId);
-                        if (!msg) return;
-                        const idx = msg.parts.findIndex((p) => p.id === part.id);
-                        if (idx === -1) {
-                            msg.parts.push(part);
-                        } else {
-                            msg.parts[idx] = part;
-                        }
-                    }),
-                );
-                break;
-            }
-
-            case "part.delta":
-                if (event.sessionId !== workspace.sessionId) break;
-                if (streamPartId() !== event.partId) {
-                    setStreamPartId(event.partId);
-                    setStreamText(event.delta);
-                } else {
-                    setStreamText((prev) => prev + event.delta);
-                }
-                break;
-
-            case "session.error":
-                if (event.sessionId === workspace.sessionId) {
-                    setErrorMsg(event.error);
-                    setChatStatus("error");
-                }
-                break;
-        }
-    };
-
-    onMount(() => {
-        Bus.on("inf", handler);
-        onCleanup(() => Bus.off("inf", handler));
-    });
 
     // The single root keyboard handler that drives the keymap engine. Every binding below is a
     // declarative layer; the dispatcher picks the winner — no hand-branched if/else here.
@@ -205,7 +82,7 @@ export function App(props: AppProps) {
     useBindings(() => ({
         enabled: chatStatus() === "busy",
         priority: 100,
-        bindings: [{ chord: resolveKeybind("app.abort"), run: () => abortController?.abort() }],
+        bindings: [{ chord: resolveKeybind("app.abort"), run: () => conversation.abort() }],
     }));
 
     function runCommandById(id: string): void {
@@ -259,27 +136,15 @@ export function App(props: AppProps) {
         const text = textareaRef?.editBuffer.getText().trim();
         if (!text) return;
         textareaRef!.setText("");
-        setErrorMsg(null);
 
         if (text === "/quit" || text === "/exit") {
             renderer.destroy();
             await shutdown(0);
         }
 
-        abortController = new AbortController();
-        (
-            await chat({
-                sessionId: workspace.sessionId,
-                userText: text,
-                abort: abortController.signal,
-            })
-        ).match(
-            () => {},
-            (error) => {
-                setErrorMsg(`Chat error: ${error.type}`);
-                setChatStatus("error");
-            },
-        );
+        // The conversation store owns the request lifecycle (the AbortController + the chat() call);
+        // its bus events drive the stream, so App only hands off the user text.
+        await conversation.send({ sessionId: workspace.sessionId, userText: text });
     }
 
     // Restore focus to the chat input whenever the last dialog closes (a dialog's input grabs
@@ -310,23 +175,8 @@ export function App(props: AppProps) {
                 shrinks the chat column (stream + input together) — the opencode layout. */}
                 <box flexDirection="row" flexGrow={1} minHeight={0} width="100%">
                     <box flexDirection="column" flexGrow={1} minHeight={0}>
-                        <scrollbox flexGrow={1} stickyScroll stickyStart="bottom" paddingLeft={1} paddingRight={1} paddingTop={1}>
-                            <Show when={messages.length === 0}>
-                                <box paddingTop={1} paddingBottom={1}>
-                                    <text fg={theme().muted}>Welcome to inf. Type a message to begin.</text>
-                                </box>
-                            </Show>
-                            <For each={messages}>
-                                {(msg) => <MessageBlock role={msg.role} parts={msg.parts} streamPartId={streamPartId} streamText={streamText} />}
-                            </For>
-                        </scrollbox>
-
-                        {/* Error banner */}
-                        <Show when={errorMsg()}>
-                            <box height={1} width="100%" backgroundColor={theme().error} paddingLeft={1}>
-                                <text fg={theme().bg}>{errorMsg()}</text>
-                            </box>
-                        </Show>
+                        {/* The live conversation: stream + error banner, all state in hooks/conversation.ts */}
+                        <Chat />
 
                         {/* Input area */}
                         <InputBar
@@ -340,7 +190,7 @@ export function App(props: AppProps) {
 
                     {/* Full-height sidebar: spans both the stream and the input; ctrl+b toggles it. */}
                     <Show when={sidebarOpen()}>
-                        <Sidebar messageCount={() => messages.length} />
+                        <Sidebar messageCount={conversation.messageCount} />
                     </Show>
                 </box>
 

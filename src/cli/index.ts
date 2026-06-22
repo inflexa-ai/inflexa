@@ -65,7 +65,7 @@ cli.option("--analysis <id|name>", "Operate on a specific analysis")
 cli.command("sessions")
     .description("List saved sessions")
     .action(async () => {
-        const { listSessions } = await import("../modules/session/sessions.ts");
+        const { listSessions } = await import("../modules/intelligence/sessions.ts");
         await listSessions();
     });
 
