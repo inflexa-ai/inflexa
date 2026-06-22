@@ -21,7 +21,7 @@ import { MessageBlock } from "./layout/message_block.tsx";
 import { InputBar } from "./layout/input_bar.tsx";
 import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
-import type { CommandContext } from "./commands.tsx";
+import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
 import type { Analysis } from "../types/analysis.ts";
 import type { BusEvent } from "../types/events.ts";
 import type { Part, TextPart } from "../types/session.ts";
@@ -46,17 +46,6 @@ export function App(props: AppProps) {
     const [streamText, setStreamText] = createSignal("");
     const [streamPartId, setStreamPartId] = createSignal<string | null>(null);
     const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
-
-    // The open chat is locally-owned, mutable state the command palette swaps in place (via the
-    // setters below). It is SEEDED ONCE from props: `App` is mounted a single time with fixed
-    // props (see `launch.tsx`), so reading them at body level is a deliberate one-time seed, not a
-    // dependency to track — hence the scoped disable. (Use a `createEffect` instead only if a prop
-    // should keep a signal in sync; that is not the case here.)
-    /* eslint-disable solid/reactivity -- seed-once: App mounts once with fixed props; these are locally mutated */
-    const [currentSessionId, setCurrentSessionId] = createSignal(props.sessionId);
-    const [currentWorkingDir, setCurrentWorkingDir] = createSignal(props.workingDir);
-    const [currentAnalysis, setCurrentAnalysis] = createSignal<Analysis>(props.analysis);
-    /* eslint-enable solid/reactivity */
 
     const [sidebarOpen, setSidebarOpen] = createSignal(true);
 
@@ -85,12 +74,50 @@ export function App(props: AppProps) {
         );
     }
 
-    onMount(() => loadMessages(currentSessionId()));
+    // In-app capabilities that close over App's local state, handed to the workspace store below.
+    function openDialog(render: () => JSX.Element): void {
+        setDialogs(produce((d) => d.push(render)));
+    }
+    function closeDialog(): void {
+        setDialogs(produce((d) => d.pop()));
+    }
+    // Quit cleanly: destroy() restores the terminal (mouse tracking, alternate screen, cooked mode)
+    // before exit — process.exit() alone skips OpenTUI's cleanup and leaves the shell broken.
+    async function quit(): Promise<void> {
+        renderer.destroy();
+        await shutdown(0);
+    }
+
+    // The workspace context store. Its reactivity and the `openSession` write path live in
+    // contexts/workspace.ts; App supplies the capabilities (which close over its local state) and a
+    // hot-state reset hook. Seeded once from props — App mounts a single time with fixed props — so
+    // the body-level reads are a deliberate one-time seed, hence the scoped disable.
+    /* eslint-disable solid/reactivity -- seed-once: App mounts once with fixed props; the store is seeded from them and thereafter written only via openSession */
+    const workspace = createWorkspace({
+        analysis: props.analysis,
+        sessionId: props.sessionId,
+        workingDir: props.workingDir,
+        openDialog,
+        closeDialog,
+        quit,
+        onOpenSession: (sessionId) => {
+            abortController?.abort(); // stop any in-flight stream before loading the new session
+            setStreamPartId(null);
+            setStreamText("");
+            setErrorMsg(null);
+            setChatStatus("idle");
+            setMessages([]);
+            loadMessages(sessionId);
+        },
+    });
+    /* eslint-enable solid/reactivity */
+
+    onMount(() => loadMessages(workspace.sessionId));
 
     const handler = (event: BusEvent) => {
         switch (event.type) {
             case "session.status":
-                if (event.sessionId === currentSessionId()) {
+                if (event.sessionId === workspace.sessionId) {
                     setChatStatus(event.status);
                     if (event.status === "idle" && streamPartId()) {
                         const pid = streamPartId()!;
@@ -113,7 +140,7 @@ export function App(props: AppProps) {
                 break;
 
             case "message.created":
-                if (event.message.sessionId === currentSessionId()) {
+                if (event.message.sessionId === workspace.sessionId) {
                     setMessages(
                         produce((msgs) => {
                             msgs.push({
@@ -128,7 +155,7 @@ export function App(props: AppProps) {
 
             case "part.updated": {
                 const part = event.part;
-                if (part.sessionId !== currentSessionId()) break;
+                if (part.sessionId !== workspace.sessionId) break;
                 setMessages(
                     produce((msgs) => {
                         const msg = msgs.find((m) => m.id === part.messageId);
@@ -145,7 +172,7 @@ export function App(props: AppProps) {
             }
 
             case "part.delta":
-                if (event.sessionId !== currentSessionId()) break;
+                if (event.sessionId !== workspace.sessionId) break;
                 if (streamPartId() !== event.partId) {
                     setStreamPartId(event.partId);
                     setStreamText(event.delta);
@@ -155,7 +182,7 @@ export function App(props: AppProps) {
                 break;
 
             case "session.error":
-                if (event.sessionId === currentSessionId()) {
+                if (event.sessionId === workspace.sessionId) {
                     setErrorMsg(event.error);
                     setChatStatus("error");
                 }
@@ -183,7 +210,7 @@ export function App(props: AppProps) {
 
     function runCommandById(id: string): void {
         const cmd = commands.find((c) => c.id === id);
-        if (cmd) void runCommand(cmd, buildCtx());
+        if (cmd) void runCommand(cmd, workspace);
     }
 
     // Base chat keys, live only in base mode: opening a dialog pushes MODE_MODAL (effect below),
@@ -193,11 +220,11 @@ export function App(props: AppProps) {
     useBindings(() => ({
         mode: MODE_BASE,
         bindings: [
-            { chord: resolveKeybind("app.command-palette"), run: () => openDialog(() => <CommandPalette ctx={buildCtx()} commands={commands} />) },
+            { chord: resolveKeybind("app.command-palette"), run: () => openDialog(() => <CommandPalette commands={commands} />) },
             { chord: resolveKeybind("app.toggle-sidebar"), run: () => setSidebarOpen((open) => !open) },
             {
                 chord: leaderSeq("k"),
-                run: () => openDialog(() => <CommandPalette ctx={buildCtx()} commands={commands} />),
+                run: () => openDialog(() => <CommandPalette commands={commands} />),
                 desc: "Command palette",
                 group: "App",
             },
@@ -206,7 +233,7 @@ export function App(props: AppProps) {
             { chord: leaderSeq("n"), run: () => runCommandById("analysis.new"), desc: "New analysis", group: "Analysis" },
             { chord: leaderSeq("s"), run: () => runCommandById("session.switch"), desc: "Switch session", group: "Session" },
             { chord: leaderSeq("t"), run: () => runCommandById("view.theme"), desc: "Change theme", group: "View" },
-            { chord: leaderSeq("q"), run: () => void buildCtx().quit(), desc: "Quit", group: "App" },
+            { chord: leaderSeq("q"), run: () => void quit(), desc: "Quit", group: "App" },
         ],
     }));
 
@@ -242,7 +269,7 @@ export function App(props: AppProps) {
         abortController = new AbortController();
         (
             await chat({
-                sessionId: currentSessionId(),
+                sessionId: workspace.sessionId,
                 userText: text,
                 abort: abortController.signal,
             })
@@ -255,48 +282,11 @@ export function App(props: AppProps) {
         );
     }
 
-    function openDialog(render: () => JSX.Element): void {
-        setDialogs(produce((d) => d.push(render)));
-    }
-
-    function closeDialog(): void {
-        setDialogs(produce((d) => d.pop()));
-    }
-
     // Restore focus to the chat input whenever the last dialog closes (a dialog's input grabs
     // the single focus slot; nothing returns it automatically).
     createEffect(() => {
         if (!dialogOpen()) queueMicrotask(() => textareaRef?.focus());
     });
-
-    // Swap the open chat in place — resume a different analysis/session without a process restart.
-    function openSession(sessionId: string, workingDir: string, analysis: Analysis): void {
-        abortController?.abort(); // stop any in-flight stream before loading the new session
-        setCurrentSessionId(sessionId);
-        setCurrentWorkingDir(workingDir);
-        setCurrentAnalysis(analysis);
-        setStreamPartId(null);
-        setStreamText("");
-        setErrorMsg(null);
-        setChatStatus("idle");
-        setMessages([]);
-        loadMessages(sessionId);
-    }
-
-    function buildCtx(): CommandContext {
-        return {
-            sessionId: currentSessionId(),
-            workingDir: currentWorkingDir(),
-            analysis: currentAnalysis(),
-            openDialog,
-            closeDialog,
-            openSession,
-            quit: async () => {
-                renderer.destroy();
-                await shutdown(0);
-            },
-        };
-    }
 
     const statusState = (): { text: string; tone: "success" | "warn" | "error" } =>
         chatStatus() === "busy"
@@ -306,98 +296,97 @@ export function App(props: AppProps) {
               : { text: `${GLYPHS.circle} ready`, tone: "success" };
 
     return (
-        // Paint the screen with the theme background — without it the terminal's own
-        // background shows through, which is invisible for dark themes (terminal black
-        // ≈ theme bg) but breaks light themes (dark fg text on a black screen).
-        <box flexDirection="column" width="100%" height="100%" backgroundColor={theme().bg}>
-            {/* Header */}
-            <StatusBar
-                title="inf"
-                subtitle={currentAnalysis().name}
-                state={statusState()}
-                hints={[keybindLabel("app.command-palette"), keybindLabel("app.toggle-sidebar"), keybindLabel("app.abort")]}
-            />
+        <WorkspaceContext.Provider value={workspace}>
+            <box flexDirection="column" width="100%" height="100%" backgroundColor={theme().bg}>
+                {/* Header */}
+                <StatusBar
+                    title="inf"
+                    subtitle={workspace.analysis?.name}
+                    state={statusState()}
+                    hints={[keybindLabel("app.command-palette"), keybindLabel("app.toggle-sidebar"), keybindLabel("app.abort")]}
+                />
 
-            {/* Main row: the chat column beside the full-height sidebar. Showing the sidebar
+                {/* Main row: the chat column beside the full-height sidebar. Showing the sidebar
                 shrinks the chat column (stream + input together) — the opencode layout. */}
-            <box flexDirection="row" flexGrow={1} minHeight={0} width="100%">
-                <box flexDirection="column" flexGrow={1} minHeight={0}>
-                    <scrollbox flexGrow={1} stickyScroll stickyStart="bottom" paddingLeft={1} paddingRight={1} paddingTop={1}>
-                        <Show when={messages.length === 0}>
-                            <box paddingTop={1} paddingBottom={1}>
-                                <text fg={theme().muted}>Welcome to inf. Type a message to begin.</text>
+                <box flexDirection="row" flexGrow={1} minHeight={0} width="100%">
+                    <box flexDirection="column" flexGrow={1} minHeight={0}>
+                        <scrollbox flexGrow={1} stickyScroll stickyStart="bottom" paddingLeft={1} paddingRight={1} paddingTop={1}>
+                            <Show when={messages.length === 0}>
+                                <box paddingTop={1} paddingBottom={1}>
+                                    <text fg={theme().muted}>Welcome to inf. Type a message to begin.</text>
+                                </box>
+                            </Show>
+                            <For each={messages}>
+                                {(msg) => <MessageBlock role={msg.role} parts={msg.parts} streamPartId={streamPartId} streamText={streamText} />}
+                            </For>
+                        </scrollbox>
+
+                        {/* Error banner */}
+                        <Show when={errorMsg()}>
+                            <box height={1} width="100%" backgroundColor={theme().error} paddingLeft={1}>
+                                <text fg={theme().bg}>{errorMsg()}</text>
                             </box>
                         </Show>
-                        <For each={messages}>
-                            {(msg) => <MessageBlock role={msg.role} parts={msg.parts} streamPartId={streamPartId} streamText={streamText} />}
-                        </For>
-                    </scrollbox>
 
-                    {/* Error banner */}
-                    <Show when={errorMsg()}>
-                        <box height={1} width="100%" backgroundColor={theme().error} paddingLeft={1}>
-                            <text fg={theme().bg}>{errorMsg()}</text>
-                        </box>
+                        {/* Input area */}
+                        <InputBar
+                            onTextareaRef={(r: TextareaRenderable) => {
+                                textareaRef = r;
+                                queueMicrotask(() => r.focus());
+                            }}
+                            onSubmit={() => void handleSubmit()}
+                        />
+                    </box>
+
+                    {/* Full-height sidebar: spans both the stream and the input; ctrl+b toggles it. */}
+                    <Show when={sidebarOpen()}>
+                        <Sidebar messageCount={() => messages.length} />
                     </Show>
-
-                    {/* Input area */}
-                    <InputBar
-                        onTextareaRef={(r: TextareaRenderable) => {
-                            textareaRef = r;
-                            queueMicrotask(() => r.focus());
-                        }}
-                        onSubmit={() => void handleSubmit()}
-                    />
                 </box>
 
-                {/* Full-height sidebar: spans both the stream and the input; ctrl+b toggles it. */}
-                <Show when={sidebarOpen()}>
-                    <Sidebar analysis={currentAnalysis} sessionId={currentSessionId} messageCount={() => messages.length} />
-                </Show>
-            </box>
-
-            {/* which-key: while a leader sequence is pending, lists the reachable next keys.
+                {/* which-key: while a leader sequence is pending, lists the reachable next keys.
                 Base-mode only, so it never overlaps a modal (a dialog suppresses base bindings). */}
-            <WhichKey />
+                <WhichKey />
 
-            {/* Transient toast: a floating top-right overlay (OpenCode-style), single slot,
+                {/* Transient toast: a floating top-right overlay (OpenCode-style), single slot,
                 auto-dismissed by the notice store. zIndex above the dialog host so a notice
                 raised by a background event still surfaces over an open modal. top={2} clears
                 the height-1 status bar with a one-row gap. */}
-            <Show when={currentNotice()} keyed>
-                {(n: Notice) => (
-                    <box
-                        position="absolute"
-                        top={2}
-                        right={2}
-                        zIndex={zIndex.toast}
-                        maxWidth={Math.min(60, dims().width - 6)}
-                        backgroundColor={theme().bgPanel}
-                        border
-                        borderColor={noticeColor(n.kind)}
-                        paddingLeft={1}
-                        paddingRight={1}
-                    >
-                        <text fg={noticeColor(n.kind)}>
-                            {n.kind === "error" ? GLYPHS.cross : n.kind === "warn" ? GLYPHS.warning : GLYPHS.circle} {n.text}
-                        </text>
-                    </box>
-                )}
-            </Show>
+                <Show when={currentNotice()} keyed>
+                    {(n: Notice) => (
+                        <box
+                            position="absolute"
+                            top={2}
+                            right={2}
+                            zIndex={zIndex.toast}
+                            maxWidth={Math.min(60, dims().width - 6)}
+                            backgroundColor={theme().bgPanel}
+                            border
+                            borderColor={noticeColor(n.kind)}
+                            paddingLeft={1}
+                            paddingRight={1}
+                        >
+                            <text fg={noticeColor(n.kind)}>
+                                {n.kind === "error" ? GLYPHS.cross : n.kind === "warn" ? GLYPHS.warning : GLYPHS.circle} {n.text}
+                            </text>
+                        </box>
+                    )}
+                </Show>
 
-            {/* Dialog host: the top modal floats above the chat as a full-screen absolute
+                {/* Dialog host: the top modal floats above the chat as a full-screen absolute
                 overlay. It is a direct child of the full-screen root box (NOT a Portal — a
                 Portal's wrapper box has no size, so absolute insets would collapse it to the
                 bottom). zIndex lifts it above the chat siblings; the scrim dims them; the
                 in-flow child is centered. Only the top dialog is mounted. */}
-            <Show when={dialogTop()} keyed>
-                {(render: () => JSX.Element) => (
-                    <box position="absolute" top={0} left={0} right={0} bottom={0} zIndex={zIndex.modal} alignItems="center" justifyContent="center">
-                        <box position="absolute" top={0} left={0} right={0} bottom={0} backgroundColor={theme().bg} opacity={0.92} />
-                        {render()}
-                    </box>
-                )}
-            </Show>
-        </box>
+                <Show when={dialogTop()} keyed>
+                    {(render: () => JSX.Element) => (
+                        <box position="absolute" top={0} left={0} right={0} bottom={0} zIndex={zIndex.modal} alignItems="center" justifyContent="center">
+                            <box position="absolute" top={0} left={0} right={0} bottom={0} backgroundColor={theme().bg} opacity={0.92} />
+                            {render()}
+                        </box>
+                    )}
+                </Show>
+            </box>
+        </WorkspaceContext.Provider>
     );
 }

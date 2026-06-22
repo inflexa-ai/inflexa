@@ -7,6 +7,7 @@ import { ConfigApp } from "./app_config.tsx";
 import { setTheme } from "./theme.ts";
 import { notify } from "./hooks/notice.ts";
 import { keybindLabel } from "./keymap.ts";
+import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
 import { themes, themeIds, type ThemeId } from "../lib/themes.ts";
 import { GLYPHS } from "../lib/glyphs.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
@@ -20,16 +21,9 @@ import { listSessionsByAnalysis } from "../db/primary_query.ts";
 import type { Analysis } from "../types/analysis.ts";
 import type { Session } from "../types/session.ts";
 
-/* eslint-disable solid/reactivity --
-   Every dialog here reads the stable `props.ctx` (built once in `App.buildCtx`) either inside an
-   opentui event handler (`onSelect`/`onSubmit`, which eslint-plugin-solid does not recognize as
-   handlers) or once at a freshly-mounted dialog's body. `ctx` never changes and each dialog is
-   re-created on open, so there is no reactive dependency to lose — the warnings are false
-   positives for this whole file. */
-
 // The command registry: the SINGLE source of truth for the palette. Adding a command is one
-// entry in `commands`. Each command's `run` acts only through `CommandContext` (built in
-// `App`), never stdout — the alt-screen owns the terminal. Command-specific dialogs are
+// entry in `commands`. Each command's `run` acts only through the `Workspace` (the context store
+// built in `App`), never stdout — the alt-screen owns the terminal. Command-specific dialogs are
 // co-located here as single-caller helpers; the reusable dialog shells live in `components/`.
 
 /** The categories a command groups under in the palette. A domain type, never a raw string. */
@@ -37,24 +31,6 @@ export type CommandCategory = "Analysis" | "Session" | "Project" | "View" | "App
 
 /** A stable, dotted command id (e.g. `analysis.new`), decoupled from the display `title`. */
 export type CommandId = string;
-
-/** What a command may do inside the live TUI. No stdout — that is the CLI's world. */
-export type CommandContext = {
-    /** The currently-open chat session. */
-    sessionId: string;
-    /** The open chat's resolved working directory. */
-    workingDir: string;
-    /** The open chat's analysis, or `null` when the chat is not analysis-scoped. */
-    analysis: Analysis | null;
-    /** Push a modal (picker / prompt / results) onto the dialog stack. */
-    openDialog: (render: () => JSX.Element) => void;
-    /** Pop the top modal. */
-    closeDialog: () => void;
-    /** Swap the open chat in place — resume a different analysis/session without a restart. */
-    openSession: (sessionId: string, workingDir: string, analysis: Analysis) => void;
-    /** Quit the app cleanly (restore the terminal, then exit). */
-    quit: () => Promise<void>;
-};
 
 /** A palette command: metadata plus an action that runs inside the live TUI. */
 export type Command = {
@@ -69,9 +45,9 @@ export type Command = {
     /** Display-only shortcut hint (not a binding — v1 has no keybind engine). */
     keybind?: string;
     /** Contextual availability; a command whose predicate returns false is hidden. */
-    enabled?: (ctx: CommandContext) => boolean;
+    enabled?: (ws: Workspace) => boolean;
     /** The action, run with the in-app capability surface. */
-    run: (ctx: CommandContext) => void | Promise<void>;
+    run: (ws: Workspace) => void | Promise<void>;
 };
 
 // Resolve an analysis's live working directory from its anchor (falling back to cwd).
@@ -83,7 +59,7 @@ function workingDirFor(a: Analysis): string {
 }
 
 // Open an analysis's chat in place: reuse its most-recent session or create one, then swap.
-function openAnalysis(ctx: CommandContext, a: Analysis): void {
+function openAnalysis(ws: Workspace, a: Analysis): void {
     const sessions = listSessionsByAnalysis(a.id).match(
         (ss) => ss,
         () => [],
@@ -100,10 +76,11 @@ function openAnalysis(ctx: CommandContext, a: Analysis): void {
         notify({ kind: "error", text: "Failed to open a session" });
         return;
     }
-    ctx.openSession(session.id, workingDirFor(a), a);
+    ws.openSession(session.id, workingDirFor(a), a);
 }
 
-function ThemePicker(props: { ctx: CommandContext }): JSX.Element {
+function ThemePicker(): JSX.Element {
+    const ws = useWorkspace();
     const current = readConfig().theme;
     const items = themeIds.map((id) => ({ value: id, title: themes[id].name, hint: id === current ? "current" : undefined }));
     return (
@@ -112,27 +89,28 @@ function ThemePicker(props: { ctx: CommandContext }): JSX.Element {
             placeholder={`Search themes${GLYPHS.ellipsis}`}
             items={items}
             emptyText="No themes"
-            onCancel={() => props.ctx.closeDialog()}
+            onCancel={() => ws.closeDialog()}
             onSelect={(id: ThemeId) => {
                 setTheme(id); // live recolor of the running render root
                 writeConfig({ ...readConfig(), theme: id }).match(
                     () => notify({ kind: "info", text: `Theme: ${themes[id].name}` }),
                     (e) => notify({ kind: "error", text: `Failed to save theme: ${e.type}` }),
                 );
-                props.ctx.closeDialog();
+                ws.closeDialog();
             }}
         />
     );
 }
 
-function NewProjectDialog(props: { ctx: CommandContext }): JSX.Element {
+function NewProjectDialog(): JSX.Element {
+    const ws = useWorkspace();
     return (
         <PromptDialog
             title="New project"
             placeholder="Project name"
-            onCancel={() => props.ctx.closeDialog()}
+            onCancel={() => ws.closeDialog()}
             onSubmit={(raw) => {
-                props.ctx.closeDialog();
+                ws.closeDialog();
                 str256(raw).match(
                     (name) =>
                         createProject({ name, description: null, tags: [] }).match(
@@ -150,20 +128,21 @@ function NewProjectDialog(props: { ctx: CommandContext }): JSX.Element {
     );
 }
 
-function NewAnalysisDialog(props: { ctx: CommandContext }): JSX.Element {
+function NewAnalysisDialog(): JSX.Element {
+    const ws = useWorkspace();
     return (
         <PromptDialog
             title="New analysis"
             placeholder="Analysis name"
-            onCancel={() => props.ctx.closeDialog()}
+            onCancel={() => ws.closeDialog()}
             onSubmit={(raw) => {
-                props.ctx.closeDialog();
+                ws.closeDialog();
                 str256(raw).match(
                     (name) =>
                         // A deliberate action, so minting the anchor marker here is allowed (no-litter policy).
-                        createAnalysis({ cwd: props.ctx.workingDir, name }).match(
+                        createAnalysis({ cwd: ws.workingDir, name }).match(
                             (a) => {
-                                openAnalysis(props.ctx, a);
+                                openAnalysis(ws, a);
                                 notify({ kind: "info", text: `Created analysis "${a.name}"` });
                             },
                             (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
@@ -175,7 +154,8 @@ function NewAnalysisDialog(props: { ctx: CommandContext }): JSX.Element {
     );
 }
 
-function SwitchAnalysisDialog(props: { ctx: CommandContext }): JSX.Element {
+function SwitchAnalysisDialog(): JSX.Element {
+    const ws = useWorkspace();
     const analyses = listRecentAnalyses().match(
         (as) => as,
         () => [],
@@ -187,17 +167,18 @@ function SwitchAnalysisDialog(props: { ctx: CommandContext }): JSX.Element {
             placeholder={`Search analyses${GLYPHS.ellipsis}`}
             items={items}
             emptyText="No analyses yet"
-            onCancel={() => props.ctx.closeDialog()}
+            onCancel={() => ws.closeDialog()}
             onSelect={(a: Analysis) => {
-                props.ctx.closeDialog();
-                openAnalysis(props.ctx, a);
+                ws.closeDialog();
+                openAnalysis(ws, a);
             }}
         />
     );
 }
 
-function SwitchSessionDialog(props: { ctx: CommandContext }): JSX.Element {
-    const a = props.ctx.analysis;
+function SwitchSessionDialog(): JSX.Element {
+    const ws = useWorkspace();
+    const a = ws.analysis;
     const sessions = a
         ? listSessionsByAnalysis(a.id).match(
               (ss) => ss,
@@ -212,35 +193,38 @@ function SwitchSessionDialog(props: { ctx: CommandContext }): JSX.Element {
             placeholder={`Search sessions${GLYPHS.ellipsis}`}
             items={items}
             emptyText="No sessions for this analysis"
-            onCancel={() => props.ctx.closeDialog()}
+            onCancel={() => ws.closeDialog()}
             onSelect={(s: Session) => {
-                props.ctx.closeDialog();
+                ws.closeDialog();
                 // `a` is non-null: this command is enabled only when an analysis is open.
-                props.ctx.openSession(s.id, props.ctx.workingDir, a!);
+                ws.openSession(s.id, ws.workingDir, a!);
             }}
         />
     );
 }
 
-function AnalysesListDialog(props: { ctx: CommandContext }): JSX.Element {
+function AnalysesListDialog(): JSX.Element {
+    const ws = useWorkspace();
     const lines = listRecentAnalyses().match(
         (as) => as.map((a) => `${a.name}  —  ${a.slug}`),
         (e) => [`Failed to list analyses: ${e.type}`],
     );
-    return <ResultsDialog title="Analyses" lines={lines} emptyText="No analyses yet" onClose={() => props.ctx.closeDialog()} />;
+    return <ResultsDialog title="Analyses" lines={lines} emptyText="No analyses yet" onClose={() => ws.closeDialog()} />;
 }
 
-function StatusDialog(props: { ctx: CommandContext }): JSX.Element {
-    const line = resolveContext(props.ctx.workingDir, {}).match(
+function StatusDialog(): JSX.Element {
+    const ws = useWorkspace();
+    const line = resolveContext(ws.workingDir, {}).match(
         (c) => describeContext(c),
         (e) => `Failed to resolve context: ${e.type}`,
     );
-    return <ResultsDialog title="Status" lines={[line]} emptyText="No context" onClose={() => props.ctx.closeDialog()} />;
+    return <ResultsDialog title="Status" lines={[line]} emptyText="No context" onClose={() => ws.closeDialog()} />;
 }
 
-function SettingsDialog(props: { ctx: CommandContext }): JSX.Element {
+function SettingsDialog(): JSX.Element {
+    const ws = useWorkspace();
     // Embedded mode: ConfigApp hands control back via onClose instead of tearing down the renderer.
-    return <ConfigApp onClose={() => props.ctx.closeDialog()} />;
+    return <ConfigApp onClose={() => ws.closeDialog()} />;
 }
 
 /** The single source of truth. Add a command = add an entry here. Ordered by category so the
@@ -251,21 +235,21 @@ export const commands: Command[] = [
         title: "Switch analysis",
         description: "Open a different analysis's chat in place",
         category: "Analysis",
-        run: (ctx) => ctx.openDialog(() => <SwitchAnalysisDialog ctx={ctx} />),
+        run: (ctx) => ctx.openDialog(() => <SwitchAnalysisDialog />),
     },
     {
         id: "analysis.new",
         title: "New analysis",
         description: "Create an analysis here and open it",
         category: "Analysis",
-        run: (ctx) => ctx.openDialog(() => <NewAnalysisDialog ctx={ctx} />),
+        run: (ctx) => ctx.openDialog(() => <NewAnalysisDialog />),
     },
     {
         id: "analysis.list",
         title: "List analyses",
         description: "Show recent analyses",
         category: "Analysis",
-        run: (ctx) => ctx.openDialog(() => <AnalysesListDialog ctx={ctx} />),
+        run: (ctx) => ctx.openDialog(() => <AnalysesListDialog />),
     },
     {
         id: "analysis.open-output",
@@ -288,35 +272,35 @@ export const commands: Command[] = [
         description: "Switch to another session in this analysis",
         category: "Session",
         enabled: (ctx) => ctx.analysis !== null,
-        run: (ctx) => ctx.openDialog(() => <SwitchSessionDialog ctx={ctx} />),
+        run: (ctx) => ctx.openDialog(() => <SwitchSessionDialog />),
     },
     {
         id: "project.new",
         title: "New project",
         description: "Create a project grouping",
         category: "Project",
-        run: (ctx) => ctx.openDialog(() => <NewProjectDialog ctx={ctx} />),
+        run: (ctx) => ctx.openDialog(() => <NewProjectDialog />),
     },
     {
         id: "view.status",
         title: "Show status",
         description: "What inf resolves to here",
         category: "View",
-        run: (ctx) => ctx.openDialog(() => <StatusDialog ctx={ctx} />),
+        run: (ctx) => ctx.openDialog(() => <StatusDialog />),
     },
     {
         id: "view.theme",
         title: "Change theme",
         description: "Pick a color theme",
         category: "View",
-        run: (ctx) => ctx.openDialog(() => <ThemePicker ctx={ctx} />),
+        run: (ctx) => ctx.openDialog(() => <ThemePicker />),
     },
     {
         id: "view.settings",
         title: "Settings",
         description: "Open settings",
         category: "View",
-        run: (ctx) => ctx.openDialog(() => <SettingsDialog ctx={ctx} />),
+        run: (ctx) => ctx.openDialog(() => <SettingsDialog />),
     },
     {
         id: "app.quit",
