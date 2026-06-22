@@ -3,6 +3,7 @@ import type { JSX } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { useKeyboard } from "@opentui/solid";
 
+import { GLYPHS } from "../../lib/glyphs.ts";
 import { theme } from "../theme.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
 
@@ -14,7 +15,7 @@ export function ResultsDialog(props: { title: string; lines: string[]; emptyText
         if (key.name === "escape" || key.name === "q" || key.name === "return") props.onClose();
     });
     return (
-        <DialogPanel title={props.title} width="70%" height="60%" footer="↑/↓ scroll · Esc/q close">
+        <DialogPanel title={props.title} width="70%" height="60%" footer={`${GLYPHS.arrowUp}/${GLYPHS.arrowDown} scroll ${GLYPHS.middot} Esc/q close`}>
             <scrollbox
                 ref={(r: ScrollBoxRenderable) => {
                     scrollRef = r;

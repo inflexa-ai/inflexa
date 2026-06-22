@@ -3,6 +3,7 @@ import { createSignal, For, Show } from "solid-js";
 
 import { readConfig, writeConfig, type Config } from "../lib/config.ts";
 import { env } from "../lib/env.ts";
+import { GLYPHS } from "../lib/glyphs.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { setTheme, theme, noticeColor, type Notice } from "./theme.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
@@ -200,7 +201,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
                         return (
                             <box paddingLeft={2}>
                                 <text fg={isActive() && section() === THEME_SECTION ? theme().selected : isActive() ? theme().accent : theme().fg}>
-                                    {isActive() ? "(●)" : "( )"} {themes[id].name}
+                                    {isActive() ? `(${GLYPHS.circle})` : "( )"} {themes[id].name}
                                     {isActive() && saved().theme !== id ? " *" : ""}
                                 </text>
                             </box>
@@ -217,7 +218,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
                         return (
                             <box paddingLeft={2}>
                                 <text fg={isActive() && section() === RUNTIME_SECTION ? theme().selected : isActive() ? theme().accent : theme().fg}>
-                                    {isActive() ? "(●)" : "( )"} {runtimes[id].label}
+                                    {isActive() ? `(${GLYPHS.circle})` : "( )"} {runtimes[id].label}
                                     {isActive() && saved().runtime !== id ? " *" : ""}
                                 </text>
                             </box>

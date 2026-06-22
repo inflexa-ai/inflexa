@@ -8,6 +8,8 @@
 // Alt chord may never reach the app. Cmd/⌘ is never used either (terminals don't forward it).
 // This is the one source of every keybind hint string shown anywhere in the TUI.
 
+import { GLYPHS } from "../lib/glyphs.ts";
+
 /** A platform-neutral key chord, matched structurally against opentui's parsed key. */
 export type Chord = {
     /** opentui key `name` (lowercase), e.g. `"k"`, `"b"`, `"c"`, `"return"`. */
@@ -65,6 +67,6 @@ export const KEYMAP = {
     // Config-screen keys: their labels render here, but `config.tsx` matches the keys itself.
     save: { chord: { key: "s" }, label: "s" },
     exit: { chord: { key: "escape" }, label: "esc" },
-    moveSelection: { chord: { key: "up" }, label: "↑/↓" },
-    changeOption: { chord: { key: "left" }, label: "←/→" },
+    moveSelection: { chord: { key: "up" }, label: `${GLYPHS.arrowUp}/${GLYPHS.arrowDown}` },
+    changeOption: { chord: { key: "left" }, label: `${GLYPHS.arrowLeft}/${GLYPHS.arrowRight}` },
 } satisfies Record<string, Binding>;

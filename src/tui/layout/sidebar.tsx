@@ -2,6 +2,7 @@ import { createMemo, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 
 import { theme } from "../theme.ts";
+import { GLYPHS } from "../../lib/glyphs.ts";
 import { getSession, getAnchor, listAnalysisInputs, findProjectByRef } from "../../db/primary_query.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { Session } from "../../types/session.ts";
@@ -32,7 +33,7 @@ function relativeAge(createdAt: number): string {
 
 // Short session handle, per the wireframe ("S·2f9a").
 function shortId(id: string): string {
-    return `S·${id.replace(/-/g, "").slice(0, 4)}`;
+    return `S${GLYPHS.middot}${id.replace(/-/g, "").slice(0, 4)}`;
 }
 
 function Section(props: { label: string; children: JSX.Element }) {
@@ -97,7 +98,7 @@ export function Sidebar(props: SidebarProps) {
                 <Show when={session()} keyed>
                     {(s: Session) => (
                         <text fg={theme().muted}>
-                            {relativeAge(s.createdAt)} · {props.messageCount()} msgs
+                            {relativeAge(s.createdAt)} {GLYPHS.middot} {props.messageCount()} msgs
                         </text>
                     )}
                 </Show>
@@ -105,7 +106,9 @@ export function Sidebar(props: SidebarProps) {
 
             {/* No token/cost accounting exists yet — explicit placeholder, never fabricated. */}
             <Section label="CONTEXT">
-                <text fg={theme().muted}>— tokens · — · —</text>
+                <text fg={theme().muted}>
+                    {GLYPHS.emDash} tokens {GLYPHS.middot} {GLYPHS.emDash} {GLYPHS.middot} {GLYPHS.emDash}
+                </text>
             </Section>
 
             <Section label="ANALYSIS">
@@ -113,13 +116,13 @@ export function Sidebar(props: SidebarProps) {
                 <Show when={anchor()} keyed>
                     {(a: Anchor) => (
                         <text fg={theme().muted}>
-                            {a.markerWritten ? "✓" : "⚠"} {a.cachedPath}
+                            {a.markerWritten ? GLYPHS.check : GLYPHS.warning} {a.cachedPath}
                         </text>
                     )}
                 </Show>
                 <text fg={theme().muted}>
                     {inputCount()} input{inputCount() === 1 ? "" : "s"}
-                    {project() ? ` · proj: ${project()!.name}` : ""}
+                    {project() ? ` ${GLYPHS.middot} proj: ${project()!.name}` : ""}
                 </text>
             </Section>
 

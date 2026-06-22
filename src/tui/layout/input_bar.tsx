@@ -1,5 +1,6 @@
 import type { TextareaRenderable, KeyBinding } from "@opentui/core";
 
+import { GLYPHS } from "../../lib/glyphs.ts";
 import { theme } from "../theme.ts";
 
 /** Props for {@link InputBar}. */
@@ -31,7 +32,7 @@ export function InputBar(props: InputBarProps) {
                     ref={(r: TextareaRenderable) => props.onTextareaRef(r)}
                     focused
                     width="100%"
-                    placeholder="Type a message…"
+                    placeholder={`Type a message${GLYPHS.ellipsis}`}
                     placeholderColor={theme().muted}
                     textColor={theme().fg}
                     backgroundColor={theme().bg}

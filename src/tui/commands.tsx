@@ -7,6 +7,7 @@ import { ConfigApp } from "./app_config.tsx";
 import { setTheme, type Notice } from "./theme.ts";
 import { KEYMAP } from "./keymap.ts";
 import { themes, themeIds, type ThemeId } from "../lib/themes.ts";
+import { GLYPHS } from "../lib/glyphs.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
 import { str256 } from "../lib/types.ts";
 import { createAnalysis, listRecentAnalyses } from "../modules/analysis/analysis.ts";
@@ -109,7 +110,7 @@ function ThemePicker(props: { ctx: CommandContext }): JSX.Element {
     return (
         <SelectList
             title="Change theme"
-            placeholder="Search themes…"
+            placeholder={`Search themes${GLYPHS.ellipsis}`}
             items={items}
             emptyText="No themes"
             onCancel={() => props.ctx.closeDialog()}
@@ -184,7 +185,7 @@ function SwitchAnalysisDialog(props: { ctx: CommandContext }): JSX.Element {
     return (
         <SelectList
             title="Switch analysis"
-            placeholder="Search analyses…"
+            placeholder={`Search analyses${GLYPHS.ellipsis}`}
             items={items}
             emptyText="No analyses yet"
             onCancel={() => props.ctx.closeDialog()}
@@ -209,7 +210,7 @@ function SwitchSessionDialog(props: { ctx: CommandContext }): JSX.Element {
     return (
         <SelectList
             title="Switch session"
-            placeholder="Search sessions…"
+            placeholder={`Search sessions${GLYPHS.ellipsis}`}
             items={items}
             emptyText="No sessions for this analysis"
             onCancel={() => props.ctx.closeDialog()}

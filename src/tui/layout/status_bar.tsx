@@ -1,5 +1,6 @@
 import { Show } from "solid-js";
 
+import { GLYPHS } from "../../lib/glyphs.ts";
 import { theme } from "../theme.ts";
 
 /** Which themed color the status bar's middle region uses. */
@@ -41,7 +42,7 @@ export function StatusBar(props: StatusBarProps) {
             </Show>
             {/* Spacer pushes the affordance hints to the right edge. */}
             <box flexGrow={1} />
-            <text fg={theme().muted}>{props.hints.join("  ·  ")}</text>
+            <text fg={theme().muted}>{props.hints.join(`  ${GLYPHS.middot}  `)}</text>
         </box>
     );
 }

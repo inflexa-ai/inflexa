@@ -3,6 +3,7 @@ import type { JSX } from "solid-js";
 import type { InputRenderable } from "@opentui/core";
 import { useKeyboard } from "@opentui/solid";
 
+import { GLYPHS } from "../../lib/glyphs.ts";
 import { theme } from "../theme.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
 
@@ -20,7 +21,7 @@ export function PromptDialog(props: {
         if (key.name === "escape") props.onCancel();
     });
     return (
-        <DialogPanel title={props.title} width="60%" padY footer="Enter submit · Esc cancel">
+        <DialogPanel title={props.title} width="60%" padY footer={`Enter submit ${GLYPHS.middot} Esc cancel`}>
             <input
                 ref={(r: InputRenderable) => {
                     inputRef = r;
