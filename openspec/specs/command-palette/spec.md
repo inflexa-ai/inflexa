@@ -76,7 +76,7 @@ The system SHALL route every command invocation through one verb `runCommand(cmd
 
 ### Requirement: Command palette invocation and navigation
 
-The chat TUI SHALL open the command palette on **Ctrl+K**, calling `key.preventDefault()` so the textarea does not also consume the key. The palette SHALL render a focused single-line search `<input>`, a grouped, scrollable result list (`<scrollbox>`) with the highlighted row scrolled into view, and a per-row keybind hint when a command declares one. Navigation SHALL be Up/Down (and Ctrl+P / Ctrl+N); Enter SHALL dispatch the highlighted command through `runCommand` and close the palette; Esc SHALL close it without acting.
+The chat TUI SHALL open the command palette on **Ctrl+K**, calling `key.preventDefault()` so the textarea does not also consume the key. The palette SHALL render a focused single-line search `<input>`, a grouped, scrollable result list (`<scrollbox>`) with the highlighted row scrolled into view, and a per-row keybind hint when a command declares one. The invocation hint and the per-row keybind hints SHALL be rendered through the central keymap (`src/tui/keymap.ts`) as platform-neutral, lowercase labels (e.g. `ctrl+k`, `ctrl+c`); the bound chord (Ctrl+K) SHALL be unchanged. Navigation SHALL be Up/Down (and Ctrl+P / Ctrl+N); Enter SHALL dispatch the highlighted command through `runCommand` and close the palette; Esc SHALL close it without acting.
 
 #### Scenario: Open with Ctrl+K
 
@@ -92,6 +92,11 @@ The chat TUI SHALL open the command palette on **Ctrl+K**, calling `key.preventD
 
 - **WHEN** Esc is pressed in the palette
 - **THEN** the palette closes and no command runs
+
+#### Scenario: Keybind hints come from the keymap
+
+- **WHEN** a command declares a keybind hint and the palette renders its row
+- **THEN** the hint shows the platform-neutral lowercase label (e.g. `ctrl+c`) resolved from the central keymap
 
 ### Requirement: Inline fuzzy ranking without new dependencies
 

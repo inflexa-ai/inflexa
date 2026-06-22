@@ -5,7 +5,7 @@ The core user-facing commands — the context-resolving default, `new`, `ls`, `r
 ## Requirements
 ### Requirement: Default command resolves and acts on context
 
-The system SHALL register a default `inf [--analysis <x>] [--project <p>]` command (commander root action) that runs `resolveContext(process.cwd(), flags)`, prints `describeContext(ctx)` first (loud context), then acts by kind: `analysis` → open chat; `anchor` with one analysis → open it, with several → a picker including "start a new one", with none → confirm starting one; `pick` → a picker over the candidates; `empty` → confirm starting a new analysis at cwd; `copy` → surface the copy and direct the user to the move backstop (clone/fork resolution is deferred — see move-backstop). The action lives in `src/tui/launch.tsx` as `launchDefault` (it opens a chat).
+The system SHALL register a default `inf [--analysis <x>] [--project <p>]` command (commander root action) that runs `resolveContext(process.cwd(), flags)`, prints `describeContext(ctx)` first (loud context), then acts by kind: `analysis` → open chat; `anchor` with one analysis → open it, with several → a picker including "start a new one", with none → confirm starting one; `pick` → a picker over the candidates; `empty` → confirm starting a new analysis at cwd; `copy` → surface the copy and direct the user to the move backstop (clone/fork resolution is deferred — see move-backstop). The action lives in `src/tui/app.launch.tsx` as `launchDefault` (it opens a chat).
 
 #### Scenario: Empty directory offers to start one
 
@@ -30,7 +30,7 @@ The system SHALL register a default `inf [--analysis <x>] [--project <p>]` comma
 
 ### Requirement: inf new creates and opens an analysis
 
-The system SHALL register `inf new [name] [paths...] [--project <p>] [--output <path>]` that resolves `--project` by id or name, validates/prompts the name as a `Str256`, calls `createAnalysis` with cwd, name, input paths, project, and output override, prints the resolved output directory, then opens chat. The action lives in `src/tui/launch.tsx` as `launchNew`.
+The system SHALL register `inf new [name] [paths...] [--project <p>] [--output <path>]` that resolves `--project` by id or name, validates/prompts the name as a `Str256`, calls `createAnalysis` with cwd, name, input paths, project, and output override, prints the resolved output directory, then opens chat. The action lives in `src/tui/app.launch.tsx` as `launchNew`.
 
 #### Scenario: Create with name and inputs
 
@@ -58,7 +58,7 @@ The system SHALL register `inf ls [--project <p>]` (`runLs` in `src/modules/anal
 
 ### Requirement: inf resume reopens chat
 
-The system SHALL register `inf resume <id|name>` that resolves the analysis via `matchAnalysis`, errors with a non-zero exit when none matches, lists candidates and exits when a name is ambiguous, otherwise opens its chat. The action lives in `src/tui/launch.tsx` as `launchResume`.
+The system SHALL register `inf resume <id|name>` that resolves the analysis via `matchAnalysis`, errors with a non-zero exit when none matches, lists candidates and exits when a name is ambiguous, otherwise opens its chat. The action lives in `src/tui/app.launch.tsx` as `launchResume`.
 
 #### Scenario: Resume by id or name
 
@@ -95,7 +95,7 @@ The system SHALL register `inf status [--analysis <x>] [--project <p>]` (`runSta
 
 ### Requirement: Commander registry with lazy-imported actions
 
-The commands SHALL be registered on the commander root in `src/cli/index.ts`, each lazy-importing its action (text commands from their module, chat-opening commands from `src/tui/launch.tsx`). Interactive confirms and pickers SHALL use the shared clack-based prompts in `src/lib/cli.ts` (`confirm`, `select`, `promptText`), declining gracefully on a non-interactive stdin — no bespoke `readline` picker.
+The commands SHALL be registered on the commander root in `src/cli/index.ts`, each lazy-importing its action (text commands from their module, chat-opening commands from `src/tui/app.launch.tsx`). Interactive confirms and pickers SHALL use the shared clack-based prompts in `src/lib/cli.ts` (`confirm`, `select`, `promptText`), declining gracefully on a non-interactive stdin — no bespoke `readline` picker.
 
 #### Scenario: Actions are lazy-imported
 

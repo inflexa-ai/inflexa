@@ -3,8 +3,9 @@ import type { JSX } from "solid-js";
 import { PromptDialog } from "./components/prompt_dialog.tsx";
 import { ResultsDialog } from "./components/results_dialog.tsx";
 import { SelectList } from "./components/select_list.tsx";
-import { ConfigApp } from "./config.tsx";
+import { ConfigApp } from "./app_config.tsx";
 import { setTheme, type Notice } from "./theme.ts";
+import { KEYMAP } from "./keymap.ts";
 import { themes, themeIds, type ThemeId } from "../lib/themes.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
 import { str256 } from "../lib/types.ts";
@@ -322,7 +323,7 @@ export const commands: Command[] = [
         title: "Quit",
         description: "Exit inf",
         category: "App",
-        keybind: "Ctrl+C",
+        keybind: KEYMAP.abort.label,
         run: (ctx) => {
             void ctx.quit();
         },

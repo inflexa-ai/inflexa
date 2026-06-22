@@ -58,7 +58,7 @@ cli.exitOverride();
 cli.option("--analysis <id|name>", "Operate on a specific analysis")
     .option("--project <name>", "Scope to a project")
     .action(async (options: { analysis?: string; project?: string }) => {
-        const { launchDefault } = await import("../tui/launch.tsx");
+        const { launchDefault } = await import("../tui/app.launch.tsx");
         await launchDefault({ analysis: options.analysis, project: options.project });
     });
 
@@ -72,7 +72,7 @@ cli.command("sessions")
 cli.command("config")
     .description("View and change settings")
     .action(async () => {
-        const { launchConfig } = await import("../tui/config.tsx");
+        const { launchConfig } = await import("../tui/app_config.tsx");
         await launchConfig();
     });
 
@@ -83,7 +83,7 @@ cli.command("new [name] [paths...]")
     .option("--project <name>", "Group the analysis under a project")
     .option("--output <path>", "Write outputs here instead of the derived default")
     .action(async (name: string | undefined, paths: string[] | undefined, options: { project?: string; output?: string }) => {
-        const { launchNew } = await import("../tui/launch.tsx");
+        const { launchNew } = await import("../tui/app.launch.tsx");
         await launchNew({ name, paths: paths ?? [], project: options.project, output: options.output });
     });
 
@@ -98,7 +98,7 @@ cli.command("ls")
 cli.command("resume <idOrName>")
     .description("Reopen an analysis's chat by id or name")
     .action(async (idOrName: string) => {
-        const { launchResume } = await import("../tui/launch.tsx");
+        const { launchResume } = await import("../tui/app.launch.tsx");
         await launchResume(idOrName);
     });
 

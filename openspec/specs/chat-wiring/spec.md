@@ -20,7 +20,7 @@ The system SHALL provide `createSession(opts: { title?: string; analysisId: stri
 
 ### Requirement: Analysis-aware chat launcher
 
-The system SHALL provide `launchChat({ analysis, resumeSessionId? })` in `src/tui/launch.tsx` (the presentation/app-shell layer, which may import module logic) that ensures the proxy is ready, resolves the session, seeds the theme, and renders the TUI with `workingDir` set to the analysis's resolved anchor path. Session resolution order SHALL be: the given `resumeSessionId`; else the analysis's most-recent session; else a newly created session linked to the analysis. Before rendering, it SHALL run passive `recoverAnchors([workingDir])` to heal a moved anchor — recovery only, never creation (no-litter policy). The launcher SHALL pass the active `analysis` to `App` so in-app commands can read the current analysis through `CommandContext`.
+The system SHALL provide `launchChat({ analysis, resumeSessionId? })` in `src/tui/app.launch.tsx` (the presentation/app-shell layer, which may import module logic) that ensures the proxy is ready, resolves the session, seeds the theme, and renders the TUI with `workingDir` set to the analysis's resolved anchor path. Session resolution order SHALL be: the given `resumeSessionId`; else the analysis's most-recent session; else a newly created session linked to the analysis. Before rendering, it SHALL run passive `recoverAnchors([workingDir])` to heal a moved anchor — recovery only, never creation (no-litter policy). The launcher SHALL pass the active `analysis` to `App` so in-app commands can read the current analysis through `CommandContext`.
 
 #### Scenario: Resume an explicit session
 
