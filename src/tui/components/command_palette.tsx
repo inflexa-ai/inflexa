@@ -1,9 +1,9 @@
 import { createMemo } from "solid-js";
 import type { JSX } from "solid-js";
 
-import { GLYPHS } from "../lib/glyphs.ts";
-import { SelectList, type SelectItem } from "./components/select_list.tsx";
-import type { Command, CommandContext } from "./commands.tsx";
+import { GLYPHS } from "../../lib/glyphs.ts";
+import { SelectList, type SelectItem } from "./select_list.tsx";
+import type { Command, CommandContext } from "../commands.tsx";
 
 // The palette UI layer: the single dispatch verb and the command palette itself. The searchable
 // list engine and the generic dialog shells (`PromptDialog`, `ResultsDialog`) are reusable
