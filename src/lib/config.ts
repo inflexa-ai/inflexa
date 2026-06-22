@@ -4,11 +4,13 @@ import { Result } from "neverthrow";
 import { z } from "zod";
 
 import { DEFAULT_THEME_ID, themeIds } from "./themes.ts";
+import { runtimeIds, runtimes, type ContainerRuntime } from "./container.ts";
 import { env } from "./env.ts";
 
 const configSchema = z.object({
     telemetry: z.boolean(),
     theme: z.enum(themeIds).catch(DEFAULT_THEME_ID).default(DEFAULT_THEME_ID),
+    runtime: z.enum(runtimeIds).catch("docker").default("docker"),
 });
 export type Config = z.infer<typeof configSchema>;
 
@@ -22,7 +24,16 @@ export function readConfig(): Config {
     } catch {
         // Missing or unreadable config fails closed: consent not granted.
     }
-    return { telemetry: false, theme: DEFAULT_THEME_ID };
+    return { telemetry: false, theme: DEFAULT_THEME_ID, runtime: "docker" };
+}
+
+/**
+ * Resolve the configured container runtime to its descriptor. Lives here (not in
+ * lib/container.ts) so the descriptor registry stays config-free and importable
+ * by this module's zod enum without an import cycle.
+ */
+export function activeRuntime(): ContainerRuntime {
+    return runtimes[readConfig().runtime];
 }
 
 export function writeConfig(config: Config): Result<void, ConfigError> {

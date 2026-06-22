@@ -19,9 +19,9 @@ function configDir(): string {
 }
 
 /**
- * CLIProxyAPI listens on this fixed port inside the Docker container we manage
- * (src/cli/setup.ts publishes it) and the chat backend connects to it. We own
- * the container, so the endpoint is intentionally NOT user-overridable — it is
+ * CLIProxyAPI listens on this fixed port inside the container we manage
+ * (src/modules/proxy/setup.ts publishes it) and the chat backend connects to it.
+ * We own the container, so the endpoint is intentionally NOT user-overridable — it is
  * not read from process.env. If we ever let users choose the port, derive the
  * URLs from it right here.
  */
@@ -38,9 +38,10 @@ export const env = Object.freeze({
      */
     outputFallbackDir: join(dataDir(), "inf", "analyses"),
     /**
-     * CLIProxyAPI runs in Docker (see src/cli/setup.ts). The config and the
-     * provider-credential dir are state we own, so they live under our data dir
-     * and are bind-mounted into the container.
+     * CLIProxyAPI runs in a container (Docker or Podman, see
+     * src/modules/proxy/setup.ts). The config and the provider-credential dir are
+     * state we own, so they live under our data dir and are bind-mounted into the
+     * container.
      */
     cliproxyConfigPath: join(dataDir(), "inf", "cliproxy", "config.yaml"),
     cliproxyAuthDir: join(dataDir(), "inf", "cliproxy", "auth"),

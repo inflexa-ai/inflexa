@@ -6,6 +6,7 @@ import { env } from "../lib/env.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { setTheme, theme, noticeColor, type Notice } from "./theme.ts";
 import { themes, themeIds, type ThemeId } from "../lib/themes.ts";
+import { runtimes, runtimeIds, type ContainerRuntimeId } from "../lib/container.ts";
 
 /** Config keys whose value is a boolean — the toggleable settings. */
 type BooleanSettingKey = { [K in keyof Config]: Config[K] extends boolean ? K : never }[keyof Config];
@@ -30,8 +31,12 @@ const settings: Setting[] = [
  * Navigable rows: the boolean toggles first, then one row per theme. `selected`
  * indexes into this flat list so up/down moves across both sections.
  */
-type Row = { kind: "toggle"; settingIndex: number } | { kind: "theme"; id: ThemeId };
-const rows: Row[] = [...settings.map((_, i): Row => ({ kind: "toggle", settingIndex: i })), ...themeIds.map((id): Row => ({ kind: "theme", id }))];
+type Row = { kind: "toggle"; settingIndex: number } | { kind: "theme"; id: ThemeId } | { kind: "runtime"; id: ContainerRuntimeId };
+const rows: Row[] = [
+    ...settings.map((_, i): Row => ({ kind: "toggle", settingIndex: i })),
+    ...themeIds.map((id): Row => ({ kind: "theme", id })),
+    ...runtimeIds.map((id): Row => ({ kind: "runtime", id })),
+];
 
 export function ConfigApp(props: { onClose?: () => void }) {
     const renderer = useRenderer();
@@ -45,7 +50,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
     const [notice, setNotice] = createSignal<Notice | null>(null);
     const [quitArmed, setQuitArmed] = createSignal(false);
 
-    const dirty = () => settings.some((s) => draft()[s.key] !== saved()[s.key]) || draft().theme !== saved().theme;
+    const dirty = () => settings.some((s) => draft()[s.key] !== saved()[s.key]) || draft().theme !== saved().theme || draft().runtime !== saved().runtime;
 
     // Move the highlight; landing on a theme row previews it live and makes it
     // the draft selection (preview and selection are unified for themes).
@@ -55,6 +60,12 @@ export function ConfigApp(props: { onClose?: () => void }) {
         if (row.kind === "theme") {
             setTheme(row.id);
             setDraft({ ...draft(), theme: row.id });
+            setNotice(null);
+            setQuitArmed(false);
+        } else if (row.kind === "runtime") {
+            // No live preview (a runtime has no visual effect); landing selects it,
+            // matching the theme rows' unified preview/selection.
+            setDraft({ ...draft(), runtime: row.id });
             setNotice(null);
             setQuitArmed(false);
         }
@@ -163,6 +174,25 @@ export function ConfigApp(props: { onClose?: () => void }) {
                                 <text fg={isSelected() ? theme().selected : isActive() ? theme().accent : theme().fg}>
                                     {isActive() ? "(●)" : "( )"} {themes[id].name}
                                     {isActive() && saved().theme !== id ? " *" : ""}
+                                </text>
+                            </box>
+                        );
+                    }}
+                </For>
+            </box>
+
+            <box flexDirection="column" paddingLeft={2} paddingTop={1}>
+                <text fg={theme().muted}>container runtime</text>
+                <For each={runtimeIds}>
+                    {(id, j) => {
+                        const rowIndex = () => settings.length + themeIds.length + j();
+                        const isSelected = () => selected() === rowIndex();
+                        const isActive = () => draft().runtime === id;
+                        return (
+                            <box paddingLeft={2}>
+                                <text fg={isSelected() ? theme().selected : isActive() ? theme().accent : theme().fg}>
+                                    {isActive() ? "(●)" : "( )"} {runtimes[id].label}
+                                    {isActive() && saved().runtime !== id ? " *" : ""}
                                 </text>
                             </box>
                         );
