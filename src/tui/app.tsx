@@ -14,12 +14,13 @@ import { theme, noticeColor, type Notice } from "./theme.ts";
 import { chatStatus, setChatStatus } from "./hooks/status.ts";
 import { currentNotice } from "./hooks/notice.ts";
 import { commands } from "./commands.tsx";
-import { CommandPalette } from "./command_palette.tsx";
-import { useKeymapRoot, useBindings, pushMode, MODE_BASE, MODE_MODAL, resolveKeybind, keybindLabel } from "./keymap.ts";
+import { CommandPalette, runCommand } from "./components/command_palette.tsx";
+import { useKeymapRoot, useBindings, pushMode, MODE_BASE, MODE_MODAL, resolveKeybind, keybindLabel, leaderSeq } from "./keymap.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { MessageBlock } from "./layout/message_block.tsx";
 import { InputBar } from "./layout/input_bar.tsx";
 import { Sidebar } from "./layout/sidebar.tsx";
+import { WhichKey } from "./layout/which_key.tsx";
 import type { CommandContext } from "./commands.tsx";
 import type { Analysis } from "../types/analysis.ts";
 import type { BusEvent } from "../types/events.ts";
@@ -180,14 +181,41 @@ export function App(props: AppProps) {
         bindings: [{ chord: resolveKeybind("app.abort"), run: () => abortController?.abort() }],
     }));
 
+    function runCommandById(id: string): void {
+        const cmd = commands.find((c) => c.id === id);
+        if (cmd) void runCommand(cmd, buildCtx());
+    }
+
     // Base chat keys, live only in base mode: opening a dialog pushes MODE_MODAL (effect below),
     // which suspends this whole layer at once — the declarative replacement for `if (dialogOpen)`.
+    // Each app key has a direct chord AND a `<leader>` sequence (the leader, ctrl+x by default,
+    // begins a chord the which-key panel documents live). desc/group feed that panel.
     useBindings(() => ({
         mode: MODE_BASE,
         bindings: [
             { chord: resolveKeybind("app.command-palette"), run: () => openDialog(() => <CommandPalette ctx={buildCtx()} commands={commands} />) },
             { chord: resolveKeybind("app.toggle-sidebar"), run: () => setSidebarOpen((open) => !open) },
+            {
+                chord: leaderSeq("k"),
+                run: () => openDialog(() => <CommandPalette ctx={buildCtx()} commands={commands} />),
+                desc: "Command palette",
+                group: "App",
+            },
+            { chord: leaderSeq("b"), run: () => setSidebarOpen((open) => !open), desc: "Toggle sidebar", group: "App" },
+            { chord: leaderSeq("a"), run: () => runCommandById("analysis.switch"), desc: "Switch analysis", group: "Analysis" },
+            { chord: leaderSeq("n"), run: () => runCommandById("analysis.new"), desc: "New analysis", group: "Analysis" },
+            { chord: leaderSeq("s"), run: () => runCommandById("session.switch"), desc: "Switch session", group: "Session" },
+            { chord: leaderSeq("t"), run: () => runCommandById("view.theme"), desc: "Change theme", group: "View" },
+            { chord: leaderSeq("q"), run: () => void buildCtx().quit(), desc: "Quit", group: "App" },
         ],
+    }));
+
+    // A focus-`target` layer: clear-input (ctrl+u) is live only while the chat textarea is focused —
+    // the fine-grained complement to `mode`, so it never fires when a dialog input owns focus.
+    useBindings(() => ({
+        mode: MODE_BASE,
+        target: textareaRef,
+        bindings: [{ chord: resolveKeybind("app.clear-input"), run: () => textareaRef?.setText(""), desc: "Clear input", group: "Input" }],
     }));
 
     // Push MODE_MODAL while any dialog is open and pop it when the stack empties (or App unmounts).
@@ -327,6 +355,10 @@ export function App(props: AppProps) {
                     <Sidebar analysis={currentAnalysis} sessionId={currentSessionId} messageCount={() => messages.length} />
                 </Show>
             </box>
+
+            {/* which-key: while a leader sequence is pending, lists the reachable next keys.
+                Base-mode only, so it never overlaps a modal (a dialog suppresses base bindings). */}
+            <WhichKey />
 
             {/* Transient toast: a floating top-right overlay (OpenCode-style), single slot,
                 auto-dismissed by the notice store. zIndex above the dialog host so a notice

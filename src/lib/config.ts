@@ -15,6 +15,8 @@ const configSchema = z.object({
     // (e.g. "ctrl+p"). Resolved over defaults by the TUI keymap engine; unknown ids and
     // unparseable values are ignored, so a stray entry never breaks config load.
     keybinds: z.record(z.string(), z.string()).optional(),
+    // How long (ms) a half-typed leader sequence stays pending before it is abandoned.
+    leaderTimeout: z.number().int().positive().catch(2000).default(2000),
 });
 export type Config = z.infer<typeof configSchema>;
 
@@ -28,7 +30,7 @@ export function readConfig(): Config {
     } catch {
         // Missing or unreadable config fails closed: consent not granted.
     }
-    return { telemetry: false, theme: DEFAULT_THEME_ID, runtime: "docker" };
+    return { telemetry: false, theme: DEFAULT_THEME_ID, runtime: "docker", leaderTimeout: 2000 };
 }
 
 /**
