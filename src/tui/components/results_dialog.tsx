@@ -1,21 +1,31 @@
 import { For, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
-import { useKeyboard } from "@opentui/solid";
 
 import { GLYPHS } from "../../lib/glyphs.ts";
 import { theme } from "../theme.ts";
+import { useBindings, KEYS, chordLabel } from "../keymap.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
 
 /** A read-only, scrollable list of lines with an empty-state message. Esc/q/Enter close. */
 export function ResultsDialog(props: { title: string; lines: string[]; emptyText: string; onClose: () => void }): JSX.Element {
     let scrollRef: ScrollBoxRenderable | null = null;
     onMount(() => queueMicrotask(() => scrollRef?.focus()));
-    useKeyboard((key) => {
-        if (key.name === "escape" || key.name === "q" || key.name === "return") props.onClose();
-    });
+    // up/down are deliberately unbound: leaving them unhandled lets the focused scrollbox scroll.
+    useBindings(() => ({
+        bindings: [
+            { chord: KEYS.escape, run: () => props.onClose() },
+            { chord: KEYS.q, run: () => props.onClose() },
+            { chord: KEYS.enter, run: () => props.onClose() },
+        ],
+    }));
     return (
-        <DialogPanel title={props.title} width="70%" height="60%" footer={`${GLYPHS.arrowUp}/${GLYPHS.arrowDown} scroll ${GLYPHS.middot} Esc/q close`}>
+        <DialogPanel
+            title={props.title}
+            width="70%"
+            height="60%"
+            footer={`${chordLabel(KEYS.up)}/${chordLabel(KEYS.down)} scroll ${GLYPHS.middot} ${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}
+        >
             <scrollbox
                 ref={(r: ScrollBoxRenderable) => {
                     scrollRef = r;

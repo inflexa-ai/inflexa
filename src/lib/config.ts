@@ -11,6 +11,10 @@ const configSchema = z.object({
     telemetry: z.boolean(),
     theme: z.enum(themeIds).catch(DEFAULT_THEME_ID).default(DEFAULT_THEME_ID),
     runtime: z.enum(runtimeIds).catch("docker").default("docker"),
+    // Optional keybinding overrides: command id (e.g. "app.command-palette") → key string
+    // (e.g. "ctrl+p"). Resolved over defaults by the TUI keymap engine; unknown ids and
+    // unparseable values are ignored, so a stray entry never breaks config load.
+    keybinds: z.record(z.string(), z.string()).optional(),
 });
 export type Config = z.infer<typeof configSchema>;
 

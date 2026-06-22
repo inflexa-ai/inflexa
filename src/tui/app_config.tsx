@@ -1,4 +1,4 @@
-import { render, useKeyboard, useRenderer } from "@opentui/solid";
+import { render, useRenderer } from "@opentui/solid";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 
@@ -8,12 +8,14 @@ import { GLYPHS } from "../lib/glyphs.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { setTheme, theme, noticeColor, type Notice } from "./theme.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
-import { KEYMAP } from "./keymap.ts";
+import { useKeymapRoot, useBindings, KEYS, chordLabel } from "./keymap.ts";
 import { themes, themeIds } from "../lib/themes.ts";
 import { runtimes, runtimeIds } from "../lib/container.ts";
 
+// `-?` strips optionality in the mapping: without it, an optional Config field (e.g. `keybinds`)
+// makes its mapped value `never | undefined`, leaking `undefined` into the indexed union.
 /** Config keys whose value is a boolean — the toggleable settings. */
-type BooleanSettingKey = { [K in keyof Config]: Config[K] extends boolean ? K : never }[keyof Config];
+type BooleanSettingKey = { [K in keyof Config]-?: Config[K] extends boolean ? K : never }[keyof Config];
 
 type Setting = {
     key: BooleanSettingKey;
@@ -144,30 +146,39 @@ export function ConfigApp(props: { onClose?: () => void }) {
         void shutdown(0);
     }
 
-    useKeyboard((key) => {
-        if (key.name === "q" || key.name === "escape" || (key.name === "c" && key.ctrl)) {
-            if (dirty() && !quitArmed()) {
-                setQuitArmed(true);
-                setNotice({ kind: "warn", text: "Unsaved changes — press s to save, or q/Esc again to discard." });
-                return;
-            }
-            exit();
-        } else if (key.name === "s") {
-            save();
-        } else if (key.name === "space" || key.name === "return") {
-            toggleFocused();
-        } else if (key.name === "up") {
-            // Pure navigation between sections — no draft change, so it leaves any notice /
-            // quit-arm state intact (only value edits clear those).
-            setSection(Math.max(0, section() - 1));
-        } else if (key.name === "down") {
-            setSection(Math.min(sections.length - 1, section() + 1));
-        } else if (key.name === "left") {
-            step(-1);
-        } else if (key.name === "right") {
-            step(1);
+    // First q/Esc/ctrl+c with unsaved changes arms a confirm; the second discards and exits.
+    function requestExit(): void {
+        if (dirty() && !quitArmed()) {
+            setQuitArmed(true);
+            setNotice({ kind: "warn", text: "Unsaved changes — press s to save, or q/Esc again to discard." });
+            return;
         }
-    });
+        exit();
+    }
+
+    // Standalone (`inf config`): this screen owns the renderer, so install the root keymap handler
+    // here. Embedded as a dialog: the host `App` already installed it — a second root would
+    // double-dispatch every key — so we only register our bindings layer below.
+    // eslint-disable-next-line solid/reactivity -- seed-once: props.onClose is fixed at mount (embedded vs standalone never changes), so this one-time read correctly decides which mode installs the root
+    if (!props.onClose) useKeymapRoot();
+
+    // No `mode`, so this layer is live in base mode (standalone) and in modal mode (embedded). The
+    // ctrl+c here quits this screen — distinct from the chat's remappable `app.abort`.
+    useBindings(() => ({
+        bindings: [
+            { chord: KEYS.q, run: requestExit },
+            { chord: KEYS.escape, run: requestExit },
+            { chord: { key: "c", ctrl: true }, run: requestExit },
+            { chord: { key: "s" }, run: save },
+            { chord: KEYS.space, run: toggleFocused },
+            { chord: KEYS.enter, run: toggleFocused },
+            // Section nav leaves notice/quit-arm state intact (only value edits clear those).
+            { chord: KEYS.up, run: () => setSection(Math.max(0, section() - 1)) },
+            { chord: KEYS.down, run: () => setSection(Math.min(sections.length - 1, section() + 1)) },
+            { chord: KEYS.left, run: () => step(-1) },
+            { chord: KEYS.right, run: () => step(1) },
+        ],
+    }));
 
     return (
         // Paint the screen with the theme background; otherwise the terminal's own
@@ -177,10 +188,10 @@ export function ConfigApp(props: { onClose?: () => void }) {
                 title="inf config"
                 state={dirty() ? { text: "unsaved changes", tone: "warn" } : undefined}
                 hints={[
-                    `${KEYMAP.moveSelection.label} section`,
-                    `${KEYMAP.changeOption.label} change`,
-                    `${KEYMAP.save.label} save`,
-                    `${KEYMAP.exit.label} exit`,
+                    `${chordLabel(KEYS.up)}/${chordLabel(KEYS.down)} section`,
+                    `${chordLabel(KEYS.left)}/${chordLabel(KEYS.right)} change`,
+                    `s save`,
+                    `${chordLabel(KEYS.escape)} exit`,
                 ]}
             />
 

@@ -2,6 +2,7 @@ import type { TextareaRenderable, KeyBinding } from "@opentui/core";
 
 import { GLYPHS } from "../../lib/glyphs.ts";
 import { theme } from "../theme.ts";
+import { SUBMIT_CHORD, NEWLINE_CHORD } from "../keymap.ts";
 
 /** Props for {@link InputBar}. */
 export type InputBarProps = {
@@ -11,10 +12,13 @@ export type InputBarProps = {
     onSubmit: () => void;
 };
 
-// Enter submits; Option/Alt+Enter inserts a newline (opentui delivers Option as Meta).
+// Enter submits; Option/Alt+Enter inserts a newline (opentui delivers Option as Meta). These stay
+// at the textarea/renderable level (not the global keymap engine) because they are cursor-aware
+// editing actions the engine can't see; the chords are still sourced from the keymap so the
+// submit/newline keys have a single definition.
 const keyBindings: KeyBinding[] = [
-    { name: "return", action: "submit" },
-    { name: "return", meta: true, action: "newline" },
+    { name: SUBMIT_CHORD.key, action: "submit" },
+    { name: NEWLINE_CHORD.key, meta: NEWLINE_CHORD.alt, action: "newline" },
 ];
 
 /**

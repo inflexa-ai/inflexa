@@ -1,10 +1,10 @@
 import { onMount } from "solid-js";
 import type { JSX } from "solid-js";
 import type { InputRenderable } from "@opentui/core";
-import { useKeyboard } from "@opentui/solid";
 
 import { GLYPHS } from "../../lib/glyphs.ts";
 import { theme } from "../theme.ts";
+import { useBindings, KEYS, chordLabel } from "../keymap.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
 
 /** A single-line text prompt. Enter submits the raw value; Esc cancels. */
@@ -17,11 +17,12 @@ export function PromptDialog(props: {
 }): JSX.Element {
     let inputRef: InputRenderable | null = null;
     onMount(() => queueMicrotask(() => inputRef?.focus()));
-    useKeyboard((key) => {
-        if (key.name === "escape") props.onCancel();
-    });
+    // Enter is the input's own onSubmit (left unbound here so it falls through to the focused input).
+    useBindings(() => ({
+        bindings: [{ chord: KEYS.escape, run: () => props.onCancel() }],
+    }));
     return (
-        <DialogPanel title={props.title} width="60%" padY footer={`Enter submit ${GLYPHS.middot} Esc cancel`}>
+        <DialogPanel title={props.title} width="60%" padY footer={`${chordLabel(KEYS.enter)} submit ${GLYPHS.middot} ${chordLabel(KEYS.escape)} cancel`}>
             <input
                 ref={(r: InputRenderable) => {
                     inputRef = r;

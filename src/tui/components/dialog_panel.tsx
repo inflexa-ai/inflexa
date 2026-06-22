@@ -10,8 +10,8 @@ type Dimension = number | "auto" | `${number}%`;
  * The shared chrome for every modal dialog: a bordered panel painted with the panel
  * background, an accent-colored title, and an optional muted footer-hint line rendered as
  * the last row. Pure presentation — it owns NO keyboard or focus, because list navigation,
- * input submit, and scroll differ per widget, so each composing dialog keeps its own
- * `useKeyboard` and focus-on-mount. Callers supply only the body via `children` plus the
+ * input submit, and scroll differ per widget, so each composing dialog declares its own keymap
+ * layer (`useBindings`) and focus-on-mount. Callers supply only the body via `children` plus the
  * panel size and footer text.
  */
 export function DialogPanel(props: {

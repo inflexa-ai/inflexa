@@ -2,11 +2,11 @@ import { randomUUIDv7 } from "bun";
 import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type { InputRenderable, ScrollBoxRenderable } from "@opentui/core";
-import { useKeyboard } from "@opentui/solid";
 
 import { rankBy } from "../../lib/fuzzy.ts";
 import { GLYPHS } from "../../lib/glyphs.ts";
 import { theme } from "../theme.ts";
+import { useBindings, KEYS, chordLabel } from "../keymap.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
 
 // The reusable searchable list: a single fuzzy-filtered, keyboard-navigable, grouped picker
@@ -88,31 +88,36 @@ export function SelectList<T>(props: {
     // The renderable isn't ready synchronously; grab focus on the next microtask.
     onMount(() => queueMicrotask(() => inputRef?.focus()));
 
-    useKeyboard((key) => {
-        if (key.name === "escape") {
-            props.onCancel();
-            return;
-        }
-        if (key.name === "up" || (key.ctrl && key.name === "p")) {
-            setCursor((i) => Math.max(0, i - 1));
-            return;
-        }
-        if (key.name === "down" || (key.ctrl && key.name === "n")) {
-            setCursor((i) => Math.min(ranked().length - 1, i + 1));
-            return;
-        }
-        if (key.name === "return") {
-            const item = ranked()[cursor()];
-            if (item) props.onSelect(item.value);
-        }
-    });
+    function up(): void {
+        setCursor((i) => Math.max(0, i - 1));
+    }
+    function down(): void {
+        setCursor((i) => Math.min(ranked().length - 1, i + 1));
+    }
+    function select(): void {
+        const item = ranked()[cursor()];
+        if (item) props.onSelect(item.value);
+    }
+
+    // No `mode`, so this layer stays live while the host's MODE_BASE keys are suspended. The two
+    // emacs-style alternates (ctrl+p/ctrl+n) bind to the same actions as the arrows.
+    useBindings(() => ({
+        bindings: [
+            { chord: KEYS.escape, run: () => props.onCancel() },
+            { chord: KEYS.up, run: up },
+            { chord: KEYS.prevAlt, run: up },
+            { chord: KEYS.down, run: down },
+            { chord: KEYS.nextAlt, run: down },
+            { chord: KEYS.enter, run: select },
+        ],
+    }));
 
     return (
         <DialogPanel
             title={props.title}
             width="70%"
             height="60%"
-            footer={`${GLYPHS.arrowUp}/${GLYPHS.arrowDown} move ${GLYPHS.middot} Enter select ${GLYPHS.middot} Esc cancel`}
+            footer={`${chordLabel(KEYS.up)}/${chordLabel(KEYS.down)} move ${GLYPHS.middot} ${chordLabel(KEYS.enter)} select ${GLYPHS.middot} ${chordLabel(KEYS.escape)} cancel`}
         >
             <input
                 ref={(r: InputRenderable) => {
