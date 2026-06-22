@@ -1,5 +1,6 @@
 import { render, useKeyboard, useRenderer } from "@opentui/solid";
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
+import type { ScrollBoxRenderable } from "@opentui/core";
 
 import { readConfig, writeConfig, type Config } from "../lib/config.ts";
 import { env } from "../lib/env.ts";
@@ -54,6 +55,16 @@ export function ConfigApp(props: { onClose?: () => void }) {
     const [section, setSection] = createSignal(0);
     const [notice, setNotice] = createSignal<Notice | null>(null);
     const [quitArmed, setQuitArmed] = createSignal(false);
+
+    // The form is taller than a short terminal can show. Without a scroll container the
+    // flex column shrinks every section's height to fit, painting rows on top of each
+    // other (the overlapping theme list). The scrollbox lets sections keep their natural
+    // height and clips overflow; this effect keeps the focused section in view as the
+    // user walks down with up/down (which drive section nav, not the scrollbox directly).
+    let scrollRef: ScrollBoxRenderable | null = null;
+    createEffect(() => {
+        scrollRef?.scrollChildIntoView(`section-${section()}`);
+    });
 
     const dirty = () => settings.some((s) => draft()[s.key] !== saved()[s.key]) || draft().theme !== saved().theme || draft().runtime !== saved().runtime;
 
@@ -173,59 +184,68 @@ export function ConfigApp(props: { onClose?: () => void }) {
                 ]}
             />
 
-            <For each={settings}>
-                {(setting, index) => (
-                    <box flexDirection="column" paddingLeft={2} paddingTop={1}>
-                        <text fg={index() === section() ? theme().selected : theme().fg} attributes={1}>
-                            [{draft()[setting.key] ? "x" : " "}] {setting.label}
-                            {draft()[setting.key] !== saved()[setting.key] ? " *" : ""}
-                        </text>
-                        <box paddingLeft={4} flexDirection="column">
-                            <text fg={theme().muted}>{setting.description}</text>
-                            <Show when={setting.key === "telemetry"}>
-                                <text fg={theme().muted}>Endpoint: {env.otelEndpoint ?? "not set (OTEL_EXPORTER_OTLP_ENDPOINT)"}</text>
-                            </Show>
+            <scrollbox
+                ref={(r: ScrollBoxRenderable) => {
+                    scrollRef = r;
+                }}
+                flexGrow={1}
+                minHeight={0}
+                width="100%"
+            >
+                <For each={settings}>
+                    {(setting, index) => (
+                        <box id={`section-${index()}`} flexDirection="column" paddingLeft={2} paddingTop={1}>
+                            <text fg={index() === section() ? theme().selected : theme().fg} attributes={1}>
+                                [{draft()[setting.key] ? "x" : " "}] {setting.label}
+                                {draft()[setting.key] !== saved()[setting.key] ? " *" : ""}
+                            </text>
+                            <box paddingLeft={4} flexDirection="column">
+                                <text fg={theme().muted}>{setting.description}</text>
+                                <Show when={setting.key === "telemetry"}>
+                                    <text fg={theme().muted}>Endpoint: {env.otelEndpoint ?? "not set (OTEL_EXPORTER_OTLP_ENDPOINT)"}</text>
+                                </Show>
+                            </box>
                         </box>
-                    </box>
-                )}
-            </For>
-
-            <box flexDirection="column" paddingLeft={2} paddingTop={1}>
-                <text fg={section() === THEME_SECTION ? theme().accent : theme().muted}>theme</text>
-                <For each={themeIds}>
-                    {(id) => {
-                        // No separate cursor: the highlighted row is always the active draft theme
-                        // (left/right move it). Bright `selected` when this section is focused, the
-                        // dimmer `accent` when it isn't, plain `fg` for the rest.
-                        const isActive = () => draft().theme === id;
-                        return (
-                            <box paddingLeft={2}>
-                                <text fg={isActive() && section() === THEME_SECTION ? theme().selected : isActive() ? theme().accent : theme().fg}>
-                                    {isActive() ? `(${GLYPHS.circle})` : "( )"} {themes[id].name}
-                                    {isActive() && saved().theme !== id ? " *" : ""}
-                                </text>
-                            </box>
-                        );
-                    }}
+                    )}
                 </For>
-            </box>
 
-            <box flexDirection="column" paddingLeft={2} paddingTop={1}>
-                <text fg={section() === RUNTIME_SECTION ? theme().accent : theme().muted}>container runtime</text>
-                <For each={runtimeIds}>
-                    {(id) => {
-                        const isActive = () => draft().runtime === id;
-                        return (
-                            <box paddingLeft={2}>
-                                <text fg={isActive() && section() === RUNTIME_SECTION ? theme().selected : isActive() ? theme().accent : theme().fg}>
-                                    {isActive() ? `(${GLYPHS.circle})` : "( )"} {runtimes[id].label}
-                                    {isActive() && saved().runtime !== id ? " *" : ""}
-                                </text>
-                            </box>
-                        );
-                    }}
-                </For>
-            </box>
+                <box id={`section-${THEME_SECTION}`} flexDirection="column" paddingLeft={2} paddingTop={1}>
+                    <text fg={section() === THEME_SECTION ? theme().accent : theme().muted}>theme</text>
+                    <For each={themeIds}>
+                        {(id) => {
+                            // No separate cursor: the highlighted row is always the active draft theme
+                            // (left/right move it). Bright `selected` when this section is focused, the
+                            // dimmer `accent` when it isn't, plain `fg` for the rest.
+                            const isActive = () => draft().theme === id;
+                            return (
+                                <box paddingLeft={2}>
+                                    <text fg={isActive() && section() === THEME_SECTION ? theme().selected : isActive() ? theme().accent : theme().fg}>
+                                        {isActive() ? `(${GLYPHS.circle})` : "( )"} {themes[id].name}
+                                        {isActive() && saved().theme !== id ? " *" : ""}
+                                    </text>
+                                </box>
+                            );
+                        }}
+                    </For>
+                </box>
+
+                <box id={`section-${RUNTIME_SECTION}`} flexDirection="column" paddingLeft={2} paddingTop={1}>
+                    <text fg={section() === RUNTIME_SECTION ? theme().accent : theme().muted}>container runtime</text>
+                    <For each={runtimeIds}>
+                        {(id) => {
+                            const isActive = () => draft().runtime === id;
+                            return (
+                                <box paddingLeft={2}>
+                                    <text fg={isActive() && section() === RUNTIME_SECTION ? theme().selected : isActive() ? theme().accent : theme().fg}>
+                                        {isActive() ? `(${GLYPHS.circle})` : "( )"} {runtimes[id].label}
+                                        {isActive() && saved().runtime !== id ? " *" : ""}
+                                    </text>
+                                </box>
+                            );
+                        }}
+                    </For>
+                </box>
+            </scrollbox>
 
             <Show when={notice()}>
                 <box paddingLeft={2} paddingTop={1}>
