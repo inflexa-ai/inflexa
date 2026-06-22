@@ -6,7 +6,7 @@ import { SelectList } from "./components/select_list.tsx";
 import { ConfigApp } from "./app_config.tsx";
 import { setTheme } from "./theme.ts";
 import { notify } from "./hooks/notice.ts";
-import { KEYMAP } from "./keymap.ts";
+import { keybindLabel } from "./keymap.ts";
 import { themes, themeIds, type ThemeId } from "../lib/themes.ts";
 import { GLYPHS } from "../lib/glyphs.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
@@ -323,7 +323,8 @@ export const commands: Command[] = [
         title: "Quit",
         description: "Exit inf",
         category: "App",
-        keybind: KEYMAP.abort.label,
+        // Display-only: ctrl+c (the abort chord) doubles as the exit affordance shown in the palette.
+        keybind: keybindLabel("app.abort"),
         run: (ctx) => {
             void ctx.quit();
         },

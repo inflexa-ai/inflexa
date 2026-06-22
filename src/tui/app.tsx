@@ -2,7 +2,7 @@ import { createSignal, createEffect, For, Show, onCleanup, onMount } from "solid
 import type { JSX } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import type { TextareaRenderable } from "@opentui/core";
-import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid";
+import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 
 import { Bus } from "../lib/bus.ts";
 import { GLYPHS } from "../lib/glyphs.ts";
@@ -15,7 +15,7 @@ import { chatStatus, setChatStatus } from "./hooks/status.ts";
 import { currentNotice } from "./hooks/notice.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette } from "./command_palette.tsx";
-import { KEYMAP, matchChord } from "./keymap.ts";
+import { useKeymapRoot, useBindings, pushMode, MODE_BASE, MODE_MODAL, resolveKeybind, keybindLabel } from "./keymap.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { MessageBlock } from "./layout/message_block.tsx";
 import { InputBar } from "./layout/input_bar.tsx";
@@ -167,24 +167,36 @@ export function App(props: AppProps) {
         onCleanup(() => Bus.off("inf", handler));
     });
 
-    useKeyboard((key) => {
-        // The streaming abort stays active even with a dialog open, so a response can be cancelled.
-        if (matchChord(KEYMAP.abort.chord, key) && chatStatus() === "busy") {
-            abortController?.abort();
-            return;
-        }
-        // useKeyboard is a global, focus-agnostic bus: while a dialog is open it owns the
-        // keyboard, so the chat's background handlers early-return.
-        if (dialogOpen()) return;
-        if (matchChord(KEYMAP.openPalette.chord, key)) {
-            // preventDefault so the focused textarea does not also consume the keystroke.
-            key.preventDefault();
-            openDialog(() => <CommandPalette ctx={buildCtx()} commands={commands} />);
-        } else if (matchChord(KEYMAP.toggleSidebar.chord, key)) {
-            // preventDefault so the focused textarea does not also consume the keystroke.
-            key.preventDefault();
-            setSidebarOpen((open) => !open);
-        }
+    // The single root keyboard handler that drives the keymap engine. Every binding below is a
+    // declarative layer; the dispatcher picks the winner — no hand-branched if/else here.
+    useKeymapRoot();
+
+    // Streaming abort stays active even with a dialog open (no `mode`), so a response can always
+    // be cancelled; high priority so it wins over any modal binding that shares ctrl+c. The thunk
+    // is re-invoked by the dispatcher per keystroke, so the chatStatus() read is always fresh.
+    useBindings(() => ({
+        enabled: chatStatus() === "busy",
+        priority: 100,
+        bindings: [{ chord: resolveKeybind("app.abort"), run: () => abortController?.abort() }],
+    }));
+
+    // Base chat keys, live only in base mode: opening a dialog pushes MODE_MODAL (effect below),
+    // which suspends this whole layer at once — the declarative replacement for `if (dialogOpen)`.
+    useBindings(() => ({
+        mode: MODE_BASE,
+        bindings: [
+            { chord: resolveKeybind("app.command-palette"), run: () => openDialog(() => <CommandPalette ctx={buildCtx()} commands={commands} />) },
+            { chord: resolveKeybind("app.toggle-sidebar"), run: () => setSidebarOpen((open) => !open) },
+        ],
+    }));
+
+    // Push MODE_MODAL while any dialog is open and pop it when the stack empties (or App unmounts).
+    // Re-runs on each length change: a nested open pops the prior push then adds one, so exactly
+    // one modal entry is ever on the stack.
+    createEffect(() => {
+        if (dialogs.length === 0) return;
+        const pop = pushMode(MODE_MODAL);
+        onCleanup(pop);
     });
 
     async function handleSubmit() {
@@ -275,7 +287,7 @@ export function App(props: AppProps) {
                 title="inf"
                 subtitle={currentAnalysis().name}
                 state={statusState()}
-                hints={[KEYMAP.openPalette.label, KEYMAP.toggleSidebar.label, KEYMAP.abort.label]}
+                hints={[keybindLabel("app.command-palette"), keybindLabel("app.toggle-sidebar"), keybindLabel("app.abort")]}
             />
 
             {/* Main row: the chat column beside the full-height sidebar. Showing the sidebar
