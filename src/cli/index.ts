@@ -201,7 +201,7 @@ auth.command("whoami")
     });
 
 cli.command("setup")
-    .description("Install, authenticate, and start CLIProxyAPI (Docker)")
+    .description("Install, authenticate, and start CLIProxyAPI (Docker or Podman)")
     .option("--provider <name>", "Authenticate a provider non-interactively: gemini|openai|claude|qwen|iflow")
     .option("--no-auth", "Skip the provider authentication step")
     .option("--no-start", "Set up only; don't start the proxy container")

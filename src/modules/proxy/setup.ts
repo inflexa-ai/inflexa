@@ -2,13 +2,16 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline/promises";
 
+import { activeRuntime } from "../../lib/config.ts";
+import { capture, ensureReady, inherit, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 
-// `inf setup` provisions CLIProxyAPI (https://help.router-for.me) as a Docker
-// container, authenticates a provider, and starts it. We run it in Docker — the
-// project ships an official image, so this drops the per-OS binary download
-// entirely and keeps one runtime across macOS, Linux, and Windows (Docker is a
-// hard requirement for the CLI regardless).
+// `inf setup` provisions CLIProxyAPI (https://help.router-for.me) as a container,
+// authenticates a provider, and starts it. We run it in a container — the project
+// ships an official image, so this drops the per-OS binary download entirely and
+// keeps one runtime across macOS, Linux, and Windows. The backing system (Docker
+// or Podman) is a config key; every container call goes through the
+// lib/container.ts wrapper rather than a hard-coded binary.
 //
 // State we own — the config and the provider-credential directory — lives under
 // our data dir (env.cliproxyConfigPath / env.cliproxyAuthDir) and is bind-
@@ -32,8 +35,9 @@ type SetupOptions = {
 export async function setup(options: SetupOptions): Promise<void> {
     try {
         const provider = resolveProvider(options);
+        const rt = activeRuntime();
 
-        await ensureDocker();
+        await ensureReady(rt);
 
         const { created, apiKey } = await writeProxyConfig();
         if (created) {
@@ -43,7 +47,7 @@ export async function setup(options: SetupOptions): Promise<void> {
             console.log(`\n  Keeping existing config at ${env.cliproxyConfigPath}`);
         }
 
-        await pullImage(options.force);
+        await pullImage(rt, options.force);
 
         if (options.auth) {
             // Credentials persist in the mounted auth dir, so re-running setup
@@ -52,16 +56,16 @@ export async function setup(options: SetupOptions): Promise<void> {
             if (provider === undefined && (await isAuthenticated())) {
                 console.log("  Already authenticated — skipping login (use `--provider <name>` to add or switch).");
             } else {
-                const authed = await authenticate(provider);
+                const authed = await authenticate(rt, provider);
                 if (!authed) console.log("  No provider authenticated yet — re-run `inf setup` to sign in.");
             }
         }
 
-        if (options.start) await startProxy();
+        if (options.start) await startProxy(rt);
 
         printNextSteps(options);
     } catch (error) {
-        if (error instanceof ProxyError) {
+        if (error instanceof ProxyError || error instanceof ContainerRuntimeError) {
             console.error(`\n  ${error.message}\n`);
         } else {
             console.error("\n  Setup failed unexpectedly:", error, "\n");
@@ -138,95 +142,75 @@ function isProvider(value: string): value is Provider {
     return (PROVIDERS as string[]).includes(value);
 }
 
-// --- docker plumbing -------------------------------------------------------
+// --- container plumbing ----------------------------------------------------
+//
+// All commands go through the lib/container.ts wrapper (capture/inherit), which
+// spawns the runtime resolved from config. Only the binary and the bind-mount
+// flags differ between Docker and Podman; the subcommands below are identical.
 
-type DockerResult = { code: number; stdout: string; stderr: string };
-
-async function dockerCapture(args: string[]): Promise<DockerResult> {
-    const proc = Bun.spawn({ cmd: ["docker", ...args], stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-    const code = await proc.exited;
-    return { code, stdout, stderr };
+async function imageExists(rt: ContainerRuntime): Promise<boolean> {
+    return (await capture(rt, ["image", "inspect", IMAGE])).code === 0;
 }
 
-/** Inherit stdio so the user sees pull progress / interacts with the login flow. */
-async function dockerInherit(args: string[]): Promise<number> {
-    const proc = Bun.spawn({ cmd: ["docker", ...args], stdin: "inherit", stdout: "inherit", stderr: "inherit" });
-    return proc.exited;
-}
-
-async function ensureDocker(): Promise<void> {
-    if (!Bun.which("docker")) {
-        throw new ProxyError("Docker is required but was not found.\n  Install Docker Desktop (https://docs.docker.com/get-docker/) and re-run `inf setup`.");
-    }
-    // `docker info` exits non-zero when the daemon is unreachable.
-    const { code } = await dockerCapture(["info"]);
-    if (code !== 0) {
-        throw new ProxyError(
-            "Docker is installed but the daemon isn't running.\n  Start Docker (Docker Desktop, or `sudo systemctl start docker`) and re-run.",
-        );
-    }
-}
-
-async function imageExists(): Promise<boolean> {
-    return (await dockerCapture(["image", "inspect", IMAGE])).code === 0;
-}
-
-async function pullImage(force: boolean): Promise<void> {
-    if (!force && (await imageExists())) return;
+async function pullImage(rt: ContainerRuntime, force: boolean): Promise<void> {
+    if (!force && (await imageExists(rt))) return;
     console.log(`  Pulling ${IMAGE}…`);
-    if ((await dockerInherit(["pull", IMAGE])) !== 0) throw new ProxyError(`Failed to pull ${IMAGE}.`);
+    if ((await inherit(rt, ["pull", IMAGE])) !== 0) throw new ProxyError(`Failed to pull ${IMAGE}.`);
 }
 
 /**
  * Resolve our container's id, or null if it doesn't exist. `^name$` makes the
  * name filter exact rather than a substring match.
  */
-async function containerId(includeStopped: boolean): Promise<string | null> {
+async function containerId(rt: ContainerRuntime, includeStopped: boolean): Promise<string | null> {
     const args = ["ps", ...(includeStopped ? ["-a"] : []), "-q", "-f", `name=^${CONTAINER_NAME}$`];
-    const { code, stdout } = await dockerCapture(args);
+    const { code, stdout } = await capture(rt, args);
     if (code !== 0) return null;
     const id = stdout.trim();
     return id.length > 0 ? id : null;
 }
 
-async function isProxyRunning(): Promise<boolean> {
-    return (await containerId(false)) !== null;
+async function isProxyRunning(rt: ContainerRuntime): Promise<boolean> {
+    return (await containerId(rt, false)) !== null;
 }
 
-function volumeArgs(): string[] {
+function volumeArgs(rt: ContainerRuntime): string[] {
     // Bind config.yaml and the auth dir from our data dir into the container.
-    return ["-v", `${env.cliproxyConfigPath}:${CONTAINER_CONFIG_PATH}`, "-v", `${env.cliproxyAuthDir}:${CONTAINER_AUTH_DIR}`];
+    // rt.mountArg adds Podman's `:z` relabel; Docker gets the bare form.
+    return ["-v", rt.mountArg(env.cliproxyConfigPath, CONTAINER_CONFIG_PATH), "-v", rt.mountArg(env.cliproxyAuthDir, CONTAINER_AUTH_DIR)];
 }
 
-async function removeContainer(): Promise<void> {
-    await dockerCapture(["rm", "-f", CONTAINER_NAME]);
+async function removeContainer(rt: ContainerRuntime): Promise<void> {
+    await capture(rt, ["rm", "-f", CONTAINER_NAME]);
 }
 
 /**
  * (Re)create the long-running proxy container. Recreating (vs reusing) applies
  * the current image and mount flags every time setup runs.
  */
-async function recreateContainer(): Promise<void> {
-    await removeContainer();
+async function recreateContainer(rt: ContainerRuntime): Promise<void> {
+    await removeContainer(rt);
     const args = [
         "run",
         "-d",
         "--name",
         CONTAINER_NAME,
+        // TODO(robustness): Podman is daemonless, so `unless-stopped` does not
+        // survive a host reboot without systemd/quadlets integration. The proxy
+        // still auto-starts within a session via ensureContainerRunning().
         "--restart",
         "unless-stopped",
         "-p",
         `${env.cliproxyPort}:${env.cliproxyPort}`,
-        ...volumeArgs(),
+        ...volumeArgs(rt),
         IMAGE,
     ];
-    const { code, stderr } = await dockerCapture(args);
+    const { code, stderr } = await capture(rt, args);
     if (code !== 0) throw new ProxyError(`Failed to start the proxy container.${stderr ? `\n  ${stderr.trim()}` : ""}`);
 }
 
-async function startProxy(): Promise<void> {
-    await recreateContainer();
+async function startProxy(rt: ContainerRuntime): Promise<void> {
+    await recreateContainer(rt);
     console.log(`\n  CLIProxyAPI is running on ${env.cliproxyBaseUrl}`);
 }
 
@@ -234,14 +218,14 @@ async function startProxy(): Promise<void> {
  * Bring the container up without forcing a recreate: reuse a running one, start
  * a stopped one, or create it if absent. Used on the TUI hot path.
  */
-async function ensureContainerRunning(): Promise<void> {
-    if (await isProxyRunning()) return;
-    if ((await containerId(true)) !== null) {
-        const { code, stderr } = await dockerCapture(["start", CONTAINER_NAME]);
+async function ensureContainerRunning(rt: ContainerRuntime): Promise<void> {
+    if (await isProxyRunning(rt)) return;
+    if ((await containerId(rt, true)) !== null) {
+        const { code, stderr } = await capture(rt, ["start", CONTAINER_NAME]);
         if (code !== 0) throw new ProxyError(`Failed to start the proxy container.${stderr ? `\n  ${stderr.trim()}` : ""}`);
         return;
     }
-    await recreateContainer();
+    await recreateContainer(rt);
 }
 
 // --- config ----------------------------------------------------------------
@@ -305,14 +289,14 @@ async function isAuthenticated(): Promise<boolean> {
  * interacts directly; `--no-browser` prints the URL instead of trying (and
  * failing) to launch a browser from inside the container.
  */
-async function runProviderLogin(provider: Provider): Promise<void> {
+async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promise<void> {
     const port = PROVIDER_CALLBACK_PORT[provider];
     const tty = process.stdin.isTTY ? ["-t"] : [];
     const publish = port === null ? [] : ["-p", `${port}:${port}`];
-    const args = ["run", "--rm", "-i", ...tty, ...volumeArgs(), ...publish, IMAGE, CONTAINER_BINARY, PROVIDER_LOGIN_FLAG[provider], "--no-browser"];
+    const args = ["run", "--rm", "-i", ...tty, ...volumeArgs(rt), ...publish, IMAGE, CONTAINER_BINARY, PROVIDER_LOGIN_FLAG[provider], "--no-browser"];
 
     console.log(`\n  Authenticating ${PROVIDER_LABEL[provider]} — open the printed URL in your browser…`);
-    const code = await dockerInherit(args);
+    const code = await inherit(rt, args);
     if (code !== 0) console.log(`  ${PROVIDER_LABEL[provider]} login exited with code ${code}; you can retry with \`inf setup\`.`);
 }
 
@@ -344,36 +328,37 @@ async function chooseProvider(preselected: Provider | undefined): Promise<Provid
  * Prompt (unless preselected) and run the login. Returns whether the proxy is
  * authenticated afterwards.
  */
-async function authenticate(preselected: Provider | undefined): Promise<boolean> {
+async function authenticate(rt: ContainerRuntime, preselected: Provider | undefined): Promise<boolean> {
     const chosen = await chooseProvider(preselected);
-    if (chosen) await runProviderLogin(chosen);
+    if (chosen) await runProviderLogin(rt, chosen);
     return isAuthenticated();
 }
 
 // --- shared entry used by the TUI ------------------------------------------
 
 /**
- * Make the proxy ready to serve the TUI: Docker up, image present, config
- * written, authenticated, container running. Throws ProxyError with actionable
- * guidance when it can't proceed (e.g. Docker down, or auth needed in a
- * non-interactive shell).
+ * Make the proxy ready to serve the TUI: runtime up, image present, config
+ * written, authenticated, container running. Throws ProxyError /
+ * ContainerRuntimeError with actionable guidance when it can't proceed (e.g.
+ * the runtime isn't ready, or auth is needed in a non-interactive shell).
  */
 export async function ensureProxyReady(): Promise<void> {
-    await ensureDocker();
+    const rt = activeRuntime();
+    await ensureReady(rt);
     await writeProxyConfig();
-    await pullImage(false);
+    await pullImage(rt, false);
 
     if (!(await isAuthenticated())) {
         if (!process.stdin.isTTY) {
             throw new ProxyError("CLIProxyAPI isn't authenticated yet.\n  Run `inf setup` to sign in to a provider before starting the TUI.");
         }
         console.log("\n  CLIProxyAPI isn't authenticated yet — let's sign in.");
-        if (!(await authenticate(undefined))) {
+        if (!(await authenticate(rt, undefined))) {
             throw new ProxyError("Authentication didn't complete.\n  Run `inf setup` to finish signing in, then try again.");
         }
     }
 
-    await ensureContainerRunning();
+    await ensureContainerRunning(rt);
 }
 
 /**
@@ -386,7 +371,7 @@ export async function ensureProxyReadyOrExit(): Promise<void> {
     try {
         await ensureProxyReady();
     } catch (error) {
-        if (error instanceof ProxyError) {
+        if (error instanceof ProxyError || error instanceof ContainerRuntimeError) {
             console.error(`\n  ${error.message}\n`);
         } else {
             console.error("\n  Could not start CLIProxyAPI:", error, "\n");
