@@ -6,6 +6,7 @@ import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 
 import { Bus } from "../lib/bus.ts";
 import { GLYPHS } from "../lib/glyphs.ts";
+import { zIndex } from "../lib/z_index.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { listSessionMessages } from "../db/primary_query.ts";
 import { chat } from "../modules/session/chat.ts";
@@ -325,7 +326,7 @@ export function App(props: AppProps) {
                         position="absolute"
                         top={2}
                         right={2}
-                        zIndex={200}
+                        zIndex={zIndex.toast}
                         maxWidth={Math.min(60, dims().width - 6)}
                         backgroundColor={theme().bgPanel}
                         border
@@ -347,7 +348,7 @@ export function App(props: AppProps) {
                 in-flow child is centered. Only the top dialog is mounted. */}
             <Show when={dialogTop()} keyed>
                 {(render: () => JSX.Element) => (
-                    <box position="absolute" top={0} left={0} right={0} bottom={0} zIndex={100} alignItems="center" justifyContent="center">
+                    <box position="absolute" top={0} left={0} right={0} bottom={0} zIndex={zIndex.modal} alignItems="center" justifyContent="center">
                         <box position="absolute" top={0} left={0} right={0} bottom={0} backgroundColor={theme().bg} opacity={0.92} />
                         {render()}
                     </box>
