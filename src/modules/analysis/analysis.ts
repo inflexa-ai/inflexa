@@ -26,9 +26,12 @@ export type CreateAnalysisInput = {
     projectId?: string | null;
 };
 
-// Kebab/lowercase the name; a symbol-only name (which slugs to empty) falls back to a
-// generated handle from a slice of randomUUIDv7() so every analysis still has a stable slug.
-function makeBaseSlug(name: string): string {
+/**
+ * Kebab/lowercase a name into a URL-safe slug. A symbol-only name (which slugs to empty) falls back
+ * to a generated `analysis-<6 hex>` handle (from a randomUUIDv7 slice) so every analysis still has a
+ * stable slug.
+ */
+export function makeBaseSlug(name: string): string {
     const slug = name
         .toLowerCase()
         .normalize("NFKD")

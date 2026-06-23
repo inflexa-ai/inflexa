@@ -136,7 +136,11 @@ export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
     );
 }
 
-function toModelMessages(stored: StoredMessage[]): ModelMessage[] {
+/**
+ * Flatten persisted messages into the AI SDK's `ModelMessage[]`: text parts only, joined per
+ * message; a message whose text is empty (e.g. an interrupted assistant placeholder) is dropped.
+ */
+export function toModelMessages(stored: StoredMessage[]): ModelMessage[] {
     const messages: ModelMessage[] = [];
     for (const m of stored) {
         const content = m.parts
@@ -172,7 +176,11 @@ async function resolveModelId(apiKey: string): Promise<string> {
     return cachedModelId;
 }
 
-function pickDefaultModel(ids: string[]): string {
+/**
+ * Pick the default model id by {@link MODEL_PREFERENCE} (claude > gpt > gemini > qwen, matched
+ * case-insensitively by substring), falling back to the first id when no family matches.
+ */
+export function pickDefaultModel(ids: string[]): string {
     for (const family of MODEL_PREFERENCE) {
         const match = ids.find((id) => id.toLowerCase().includes(family));
         if (match) return match;
