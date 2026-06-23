@@ -172,7 +172,9 @@ export function SelectList<T>(props: {
                 </Show>
             </scrollbox>
             <Show when={ranked()[cursor()]?.description}>
-                <text fg={theme().fgMuted}>{ranked()[cursor()]!.description}</text>
+                <box width="100%" flexShrink={0} backgroundColor={theme().bgRaised}>
+                    <text fg={theme().fgMuted}>{ranked()[cursor()]!.description}</text>
+                </box>
             </Show>
         </DialogPanel>
     );

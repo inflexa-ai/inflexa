@@ -45,7 +45,9 @@ export function DialogPanel(props: {
         >
             {props.children}
             <Show when={props.footer}>
-                <text fg={theme().fgMuted}>{props.footer}</text>
+                <box width="100%" flexShrink={0} backgroundColor={theme().bgRaised}>
+                    <text fg={theme().fgMuted}>{props.footer}</text>
+                </box>
             </Show>
         </box>
     );

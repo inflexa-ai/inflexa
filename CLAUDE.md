@@ -193,6 +193,18 @@ The TUI is Solid (`solid-js`) rendered to the terminal via `@opentui/solid`. Sol
 - Control flow with `<For>`/`<Show>`, never `.map()` in JSX.
 - Renderable refs: `let ref: SomeRenderable | null = null` + a ref callback. Focus via `queueMicrotask(() => r.focus())` — the renderable isn't ready synchronously.
 
+### Layout (flex) — opentui is NOT web CSS
+
+Two opentui-specific facts, both verified against the engine source and reproduced with the headless `testRender`/`captureCharFrame` harness (see "Verifying layout" below). When a layout overlaps, instrument it — do **not** reason by analogy to CSS.
+
+**1. `flexShrink` is derived from the dimensions.** A child with a non-numeric size (`"100%"`, `"auto"`, unset) defaults to `flexShrink: 1`; a numeric size → `0`. So a `width="100%"` box (e.g. the whole input bar) shrinks by default, and on a short terminal it collapses below its own border. Essential chrome that must keep its rows needs an explicit `flexShrink={0}` (see `input_bar.tsx`), letting the scroll region (`flexGrow` + `minHeight={0}`, as in `app.tsx`/`chat.tsx`) absorb the squeeze instead.
+
+**2. A `flexGrow` scrollbox overlaps its next flex sibling by one cell.** In a column, opentui's yoga layout gives a `flexGrow={1}` scrollbox a rendered height **one greater** than the height it contributes to the column flow — yoga places the following sibling at `scrollbox.y + height − 1`, *inside* the scrollbox's last row. The scroll content then bleeds onto whatever sits directly below (a footer hint, a detail line). This is **not** fixable with `minHeight`/`flexShrink`/`overflow`/wrapping/integer panel sizes — all were tried and reproduced the overlap; it is a yoga/scrollbox quirk, present at most panel heights, that only becomes *visible* when that row carries content.
+
+The remedy: **any fixed chrome row placed directly below a `flexGrow` scrollbox must be a full-width box painted with the panel background** (`<box width="100%" flexShrink={0} backgroundColor={…}><text/></box>`), so it opaquely reclaims its whole row. A bare `<text>` is not enough — it paints only its own glyphs, leaving the bled content showing through the gaps. Live sites: `dialog_panel.tsx` (footer), `select_list.tsx` (detail line).
+
+**Verifying layout.** `@opentui/solid`'s `testRender` + `captureCharFrame()` renders any component tree to a text frame at a fixed `{width, height}` with no TTY; `mockInput.pressKeys` drives scrolling, and a renderable's `.x/.y/.width/.height` + `yogaNode.getComputedLayout()` expose the computed boxes. Sweep a range of heights — these bugs are size-dependent and a single size hides them.
+
 ### Event bus
 
 - UI state updates flow from `Bus` events: subscribe in component setup with `Bus.on("inf", handler)` and always pair with `onCleanup(() => Bus.off("inf", handler))`.

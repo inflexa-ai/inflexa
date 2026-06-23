@@ -30,7 +30,11 @@ const keyBindings: KeyBinding[] = [
  */
 export function InputBar(props: InputBarProps) {
     return (
-        <box width="100%" flexDirection="column">
+        // flexShrink={0}: the input is essential chrome — it must always keep its rows. Without it,
+        // opentui defaults a "100%"-width (non-numeric) box to flexShrink=1, so on a short terminal
+        // (e.g. a tmux 2x2 pane) the whole bar gets squeezed below its border min and the textarea
+        // content paints above the bottom border. The Chat stream (flexGrow + minHeight=0) yields instead.
+        <box width="100%" flexDirection="column" flexShrink={0}>
             <box width="100%" minHeight={3} maxHeight={8} borderColor={theme().borderFocus} border paddingLeft={1} paddingRight={1}>
                 <textarea
                     ref={(r: TextareaRenderable) => props.onTextareaRef(r)}
