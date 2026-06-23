@@ -1,7 +1,7 @@
 import { createMemo } from "solid-js";
 import type { JSX } from "solid-js";
 
-import { GLYPHS } from "../../lib/glyphs.ts";
+import { GLYPHS } from "../../lib/design_system.ts";
 import { SelectList, type SelectItem } from "./select_list.tsx";
 import { useWorkspace, type Workspace } from "../contexts/workspace.ts";
 import type { Command } from "../commands.tsx";

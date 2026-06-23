@@ -4,12 +4,12 @@ import { PromptDialog } from "./components/prompt_dialog.tsx";
 import { ResultsDialog } from "./components/results_dialog.tsx";
 import { SelectList } from "./components/select_list.tsx";
 import { ConfigApp } from "./app_config.tsx";
+import { DesignGallery } from "./layout/design_gallery.tsx";
 import { setTheme } from "./theme.ts";
 import { notify } from "./hooks/notice.ts";
 import { keybindLabel } from "./keymap.ts";
 import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
-import { themes, themeIds, type ThemeId } from "../lib/themes.ts";
-import { GLYPHS } from "../lib/glyphs.ts";
+import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
 import { str256 } from "../lib/types.ts";
 import { createAnalysis, listRecentAnalyses } from "../modules/analysis/analysis.ts";
@@ -301,6 +301,13 @@ export const commands: Command[] = [
         description: "Open settings",
         category: "View",
         run: (ctx) => ctx.openDialog(() => <SettingsDialog />),
+    },
+    {
+        id: "view.design-gallery",
+        title: "Design gallery",
+        description: "Preview every stream-block state",
+        category: "View",
+        run: (ctx) => ctx.openDialog(() => <DesignGallery onClose={ctx.closeDialog} />),
     },
     {
         id: "app.quit",

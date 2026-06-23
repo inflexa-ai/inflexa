@@ -1,9 +1,11 @@
-import { For, Show, onMount, onCleanup, createEffect, on } from "solid-js";
+import { For, Show, onMount, onCleanup, createEffect, createMemo, on } from "solid-js";
 
 import { Bus } from "../../lib/bus.ts";
 import { theme } from "../theme.ts";
 import { MessageBlock } from "../layout/message_block.tsx";
+import { Welcome } from "./welcome.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
+import { getAnchor } from "../../db/primary_query.ts";
 import { messages, streamText, streamPartId, errorMsg, applyBusEvent, loadMessages, resetHotState } from "../hooks/conversation.ts";
 import type { BusEvent } from "../../types/events.ts";
 
@@ -37,21 +39,36 @@ export function Chat() {
         ),
     );
 
+    // Anchor for the welcome block. Pure `getAnchor` (NOT `resolveAnchor`, which writes a sighting
+    // heartbeat), so showing the empty-state welcome touches no disk — the no-litter rule.
+    const anchor = createMemo(() => {
+        const a = ws.analysis;
+        if (!a) return null;
+        return getAnchor(a.anchorId).match(
+            (x) => x,
+            () => null,
+        );
+    });
+
     return (
         <box flexDirection="column" flexGrow={1} minHeight={0}>
             <scrollbox flexGrow={1} stickyScroll stickyStart="bottom" paddingLeft={1} paddingRight={1} paddingTop={1}>
                 <Show when={messages.length === 0}>
-                    <box paddingTop={1} paddingBottom={1}>
-                        <text fg={theme().muted}>Welcome to inf. Type a message to begin.</text>
-                    </box>
+                    <Welcome
+                        greeting="welcome to inf"
+                        anchorPath={anchor()?.cachedPath}
+                        markerWritten={anchor()?.markerWritten}
+                        hints={["run /init", "^K for commands"]}
+                    />
                 </Show>
                 <For each={messages}>{(msg) => <MessageBlock role={msg.role} parts={msg.parts} streamPartId={streamPartId} streamText={streamText} />}</For>
             </scrollbox>
 
-            {/* Error banner */}
+            {/* Error banner: onAccent is the readable foreground on the filled error background
+                (replaces the prior bg-reuse hack of painting fg with the app background). */}
             <Show when={errorMsg()}>
                 <box height={1} width="100%" backgroundColor={theme().error} paddingLeft={1}>
-                    <text fg={theme().bg}>{errorMsg()}</text>
+                    <text fg={theme().onAccent}>{errorMsg()}</text>
                 </box>
             </Show>
         </box>

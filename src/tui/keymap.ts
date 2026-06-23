@@ -25,7 +25,7 @@ import { createSignal, onCleanup } from "solid-js";
 import { useKeyboard, useRenderer } from "@opentui/solid";
 import type { Renderable } from "@opentui/core";
 
-import { GLYPHS } from "../lib/glyphs.ts";
+import { GLYPHS } from "../lib/design_system.ts";
 import { readConfig } from "../lib/config.ts";
 
 /** A platform-neutral key chord, matched structurally against opentui's parsed key. */

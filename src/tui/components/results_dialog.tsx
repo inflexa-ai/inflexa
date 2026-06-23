@@ -2,7 +2,7 @@ import { For, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 
-import { GLYPHS } from "../../lib/glyphs.ts";
+import { GLYPHS } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
 import { useBindings, KEYS, chordLabel } from "../keymap.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
@@ -35,7 +35,7 @@ export function ResultsDialog(props: { title: string; lines: string[]; emptyText
                 width="100%"
                 paddingTop={1}
             >
-                <Show when={props.lines.length > 0} fallback={<text fg={theme().muted}>{props.emptyText}</text>}>
+                <Show when={props.lines.length > 0} fallback={<text fg={theme().fgMuted}>{props.emptyText}</text>}>
                     <For each={props.lines}>{(line) => <text fg={theme().fg}>{line}</text>}</For>
                 </Show>
             </scrollbox>

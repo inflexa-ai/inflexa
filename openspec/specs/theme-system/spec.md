@@ -5,7 +5,7 @@ TBD - created by archiving change add-selectable-themes. Update Purpose after ar
 ## Requirements
 ### Requirement: Reactive theme registry and accessor
 
-`src/tui/theme.ts` SHALL expose the active theme through a Solid signal so that colors read in the TUI are reactive. It SHALL provide reactive accessors over a registry of built-in themes — the registry and its type shapes (`Theme`/`ThemeColors`/`ThemeSyntax`) living in a dependency-light `src/lib/themes.ts` — keyed by a `ThemeId` domain type (a string-literal union, never a raw `string`), an accessor `theme()` returning the active theme's flat color tokens, a `setTheme(id: ThemeId)` mutator, an accessor for the active theme id, and a derived `syntaxStyle()` accessor giving the active theme's markdown highlight style. `theme.ts` SHALL NOT import `src/lib/config.ts`; the `ThemeId`/`themeIds`/`DEFAULT_THEME_ID` constants SHALL live in a solid-js-free module so the config layer can validate the persisted theme without loading the reactive registry on non-TUI command paths.
+`src/tui/theme.ts` SHALL expose the active theme through a Solid signal so that colors read in the TUI are reactive. It SHALL provide reactive accessors over a registry of built-in themes — the registry and its type shapes (`Theme`/`ThemeColors`/`ThemeSyntax`) living in the dependency-light, solid-js-free design-system module `src/lib/design_system.ts` — keyed by a `ThemeId` domain type (a string-literal union, never a raw `string`), an accessor `theme()` returning the active theme's flat color tokens, a `setTheme(id: ThemeId)` mutator, an accessor for the active theme id, and a derived `syntaxStyle()` accessor giving the active theme's markdown highlight style. `theme.ts` SHALL NOT import `src/lib/config.ts`; the `ThemeId`/`themeIds`/`DEFAULT_THEME_ID` constants SHALL live in a solid-js-free module so the config layer can validate the persisted theme without loading the reactive registry on non-TUI command paths.
 
 #### Scenario: Components read colors reactively
 
@@ -19,17 +19,37 @@ TBD - created by archiving change add-selectable-themes. Update Purpose after ar
 
 ### Requirement: Expanded semantic token vocabulary
 
-The theme token set SHALL retain every existing semantic role with its current meaning (`bg`, `bgFocused`, `border`, `fg`, `muted`, `accent`, `user`, `assistant`, `selected`, `success`, `warn`, `error`) and SHALL add the tokens `bgPanel` (elevated chrome such as header/status bars), `borderActive` (focused/active borders), `secondary` (secondary accent), and `info` (informational notices). Every token SHALL be present and non-empty in every built-in theme; partial themes SHALL NOT be representable in the `Theme` type.
+The theme token set SHALL be a standards-grounded functional vocabulary, grouped by prefix, with these roles and meanings:
+
+- **Surfaces**: `bg` (app background), `bgRaised` (elevated chrome — header/status bars, rail, panels), `bgActive` (hovered/selected/focused element background).
+- **Foreground (three tiers)**: `fg` (primary text), `fgMuted` (labels, meta), `fgSubtle` (hints, faint, disabled).
+- **Borders (two tiers)**: `border` (subtle dividers and frames), `borderFocus` (focused/active region).
+- **On-color**: `onAccent` (text/icons placed on a filled accent or status background).
+- **Accent**: `accent` (primary accent, focus, links), `secondary` (secondary accent).
+- **Status**: `success`, `warning`, `error`, `info`.
+- **Domain**: `user`, `assistant`, `tool`, `thinking`.
+
+Every token SHALL be present and non-empty in every built-in theme; partial themes SHALL NOT be representable in the `Theme` type. The vocabulary supersedes the prior names: `bgPanel`→`bgRaised`, `bgFocused`→`bgActive`, `muted`→`fgMuted`, `borderActive`→`borderFocus`, `warn`→`warning`, and the prior `selected` role is folded into `bgActive`. The design doc's example role names (`surface`/`raised`/`fgFaint`/`id`/`ok`/`danger`) SHALL NOT be used; the standard nouns (`success`/`error`, the `bg*/fg*/border*` grouping) are authoritative. No hex SHALL be inlined at any call site; colors SHALL be read as `theme().<role>` inside a tracking scope.
 
 #### Scenario: All tokens present in every built-in
 
 - **WHEN** the project type-checks
-- **THEN** each built-in theme object satisfies the `Theme` type with all color tokens defined, so no `undefined` color can reach the renderer
+- **THEN** each built-in theme object satisfies the `Theme` type with all color tokens (including `fgSubtle`, `onAccent`, `tool`, `thinking`) defined, so no `undefined` color can reach the renderer
 
-#### Scenario: Existing token names unchanged
+#### Scenario: Renamed tokens repoint at every call site
 
-- **WHEN** an existing consumer reads a previously-defined token (e.g. `accent`, `bgFocused`)
-- **THEN** the token still exists with the same semantic role, requiring only the `theme.X` → `theme().X` reactive-read change
+- **WHEN** a consumer previously read `theme().bgPanel`, `theme().bgFocused`, `theme().muted`, `theme().borderActive`, `theme().warn`, or `theme().selected`
+- **THEN** it now reads the corresponding new role (`bgRaised`, `bgActive`, `fgMuted`, `borderFocus`, `warning`, `bgActive`) and the old name no longer exists in `ThemeColors`, so any missed site fails compilation
+
+#### Scenario: Three foreground tiers are available
+
+- **WHEN** a component needs primary, secondary, or faint text
+- **THEN** it reads `theme().fg`, `theme().fgMuted`, or `theme().fgSubtle` respectively
+
+#### Scenario: On-color replaces background reuse
+
+- **WHEN** text or an icon is drawn on a filled accent or status background (e.g. the error banner)
+- **THEN** it reads `theme().onAccent` for its foreground, not `theme().bg`
 
 ### Requirement: Curated built-in themes with unchanged default
 

@@ -1,6 +1,6 @@
 import type { TextareaRenderable, KeyBinding } from "@opentui/core";
 
-import { GLYPHS } from "../../lib/glyphs.ts";
+import { GLYPHS } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
 import { SUBMIT_CHORD, NEWLINE_CHORD } from "../keymap.ts";
 
@@ -31,24 +31,24 @@ const keyBindings: KeyBinding[] = [
 export function InputBar(props: InputBarProps) {
     return (
         <box width="100%" flexDirection="column">
-            <box width="100%" minHeight={3} maxHeight={8} borderColor={theme().borderActive} border paddingLeft={1} paddingRight={1}>
+            <box width="100%" minHeight={3} maxHeight={8} borderColor={theme().borderFocus} border paddingLeft={1} paddingRight={1}>
                 <textarea
                     ref={(r: TextareaRenderable) => props.onTextareaRef(r)}
                     focused
                     width="100%"
                     placeholder={`Type a message${GLYPHS.ellipsis}`}
-                    placeholderColor={theme().muted}
+                    placeholderColor={theme().fgMuted}
                     textColor={theme().fg}
                     backgroundColor={theme().bg}
-                    focusedBackgroundColor={theme().bgFocused}
+                    focusedBackgroundColor={theme().bgActive}
                     keyBindings={keyBindings}
                     onSubmit={() => props.onSubmit()}
                 />
             </box>
             <box width="100%" flexDirection="row" paddingLeft={1} paddingRight={1}>
-                <text fg={theme().muted}>INSERT</text>
+                <text fg={theme().fgMuted}>INSERT</text>
                 <box flexGrow={1} />
-                <text fg={theme().muted}>xhigh /effort</text>
+                <text fg={theme().fgMuted}>xhigh /effort</text>
             </box>
         </box>
     );

@@ -1,7 +1,8 @@
 import { Show } from "solid-js";
 
-import { GLYPHS } from "../../lib/glyphs.ts";
+import { GLYPHS } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
+import { Bold } from "../components/emphasis.tsx";
 
 /** Which themed color the status bar's middle region uses. */
 export type StatusTone = "success" | "warn" | "error";
@@ -20,7 +21,7 @@ export type StatusBarProps = {
 
 function toneColor(tone: StatusTone): string {
     const t = theme();
-    return tone === "warn" ? t.warn : tone === "error" ? t.error : t.success;
+    return tone === "warn" ? t.warning : tone === "error" ? t.error : t.success;
 }
 
 /**
@@ -30,19 +31,19 @@ function toneColor(tone: StatusTone): string {
  */
 export function StatusBar(props: StatusBarProps) {
     return (
-        <box height={1} width="100%" flexDirection="row" backgroundColor={theme().bgPanel} paddingLeft={1} paddingRight={1}>
-            <text fg={theme().accent} attributes={1}>
-                {props.title}
+        <box height={1} width="100%" flexDirection="row" backgroundColor={theme().bgRaised} paddingLeft={1} paddingRight={1}>
+            <text fg={theme().accent}>
+                <Bold>{props.title}</Bold>
             </text>
             <Show when={props.subtitle} keyed>
-                {(subtitle: string) => <text fg={theme().muted}> | {subtitle}</text>}
+                {(subtitle: string) => <text fg={theme().fgMuted}> | {subtitle}</text>}
             </Show>
             <Show when={props.state} keyed>
                 {(state: { text: string; tone: StatusTone }) => <text fg={toneColor(state.tone)}> | {state.text}</text>}
             </Show>
             {/* Spacer pushes the affordance hints to the right edge. */}
             <box flexGrow={1} />
-            <text fg={theme().muted}>{props.hints.join(`  ${GLYPHS.middot}  `)}</text>
+            <text fg={theme().fgMuted}>{props.hints.join(`  ${GLYPHS.middot}  `)}</text>
         </box>
     );
 }

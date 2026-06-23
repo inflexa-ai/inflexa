@@ -1,10 +1,10 @@
 import { createSignal } from "solid-js";
 import { SyntaxStyle } from "@opentui/core";
 
-import { DEFAULT_THEME_ID, themes, type ThemeColors, type ThemeId } from "../lib/themes.ts";
+import { DEFAULT_THEME_ID, themes, type ThemeColors, type ThemeId } from "../lib/design_system.ts";
 
 // Reactive accessor layer for themes. The id list, palette data, and type shapes
-// live in the dependency-light, solid-js-free `src/lib/themes.ts` (so `config.ts`
+// live in the dependency-light, solid-js-free `src/lib/design_system.ts` (so `config.ts`
 // can validate the persisted theme without loading this reactive layer); this file
 // adds the active-theme signal on top. All TUI colors come from the ACTIVE theme —
 // never inline hex in components, and read colors via `theme().<token>` inside a
@@ -44,7 +44,7 @@ export type Notice = {
  */
 export function noticeColor(kind: Notice["kind"]): string {
     const t = theme();
-    return kind === "warn" ? t.warn : kind === "error" ? t.error : t.info;
+    return kind === "warn" ? t.warning : kind === "error" ? t.error : t.info;
 }
 
 /**

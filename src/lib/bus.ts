@@ -43,7 +43,9 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
                 messageId: event.part.messageId,
                 partId: event.part.id,
                 partType: event.part.type,
-                textLength: event.part.text.length,
+                // Only text/thinking parts carry `text`; the live bus only ever emits text parts,
+                // but the Part union now includes mock kinds without it, so narrow before reading.
+                textLength: "text" in event.part ? event.part.text.length : undefined,
             };
         case "part.delta":
             return {
