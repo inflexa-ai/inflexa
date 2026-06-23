@@ -28,3 +28,14 @@ export function db(): Result<Database, DbError> {
         return conn;
     });
 }
+
+/**
+ * Closes and forgets the shared connection so the next {@link db} call reopens (and re-migrates) a
+ * fresh database. Exists solely for the test harness, which resets the singleton between integration
+ * tests (src/test_support/db.ts). Production never closes it: the CLI is short-lived and the OS
+ * reclaims the handle on exit, so shutdown.ts deliberately doesn't bother.
+ */
+export function closeDb(): void {
+    _db?.close();
+    _db = null;
+}

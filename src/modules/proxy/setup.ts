@@ -247,7 +247,7 @@ async function writeProxyConfig(): Promise<{ created: boolean; apiKey?: string }
  * auth-dir is the in-container Linux path (mounted from env.cliproxyAuthDir), so
  * it is OS-safe regardless of the host.
  */
-function proxyConfig(apiKey: string): string {
+export function proxyConfig(apiKey: string): string {
     return `host: ""
 port: ${env.cliproxyPort}
 auth-dir: "${CONTAINER_AUTH_DIR}"
@@ -261,7 +261,7 @@ debug: false
  * Client-facing key for calling the proxy — distinct from the provider
  * credentials the login flows write under auth-dir.
  */
-function generateApiKey(): string {
+export function generateApiKey(): string {
     const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     const rand = new Uint8Array(45);
     crypto.getRandomValues(rand);

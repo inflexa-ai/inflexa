@@ -1,1 +1,7 @@
 preload = ["@opentui/solid/preload", "@opentui/solid/runtime-plugin-support"]
+
+# `bun test` uses [test].preload INSTEAD OF the top-level preload (it does not merge them), so the
+# opentui preloads are repeated here to keep render tests working — plus the env sandbox that points
+# XDG_* at a temp dir before any src/lib/env.ts import (see src/test_support/preload.ts).
+[test]
+preload = ["@opentui/solid/preload", "@opentui/solid/runtime-plugin-support", "./src/test_support/preload.ts"]
