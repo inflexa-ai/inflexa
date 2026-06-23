@@ -6,9 +6,13 @@ import type { Analysis } from "../../types/analysis.ts";
 import type { DbError } from "../../db/errors.ts";
 import type { IdOrName } from "../../lib/types.ts";
 
-// Platform opener: derived from the running OS (not config), so it stays out of env.ts.
-function openerArgv(dir: string): string[] {
-    switch (process.platform) {
+/**
+ * The OS-specific argv that opens `dir` in the file browser. `platform` defaults to the running OS
+ * (the opener is derived from the OS, not config, so it stays out of env.ts); it is a parameter only
+ * so tests can exercise each branch without mutating the global `process.platform`.
+ */
+export function openerArgv(dir: string, platform: NodeJS.Platform = process.platform): string[] {
+    switch (platform) {
         case "darwin":
             return ["open", dir];
         case "win32":

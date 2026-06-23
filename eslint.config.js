@@ -94,7 +94,9 @@ export default defineConfig([
     },
     {
         files: ["src/**/*.{ts,tsx}"],
-        ignores: ["src/lib/env.ts"],
+        // env.ts owns the canonical reads; the test preload is the one place allowed to *set* the
+        // XDG_* sandbox before env.ts freezes its paths (src/test_support/preload.ts).
+        ignores: ["src/lib/env.ts", "src/test_support/preload.ts"],
         rules: {
             "no-restricted-properties": [
                 "error",

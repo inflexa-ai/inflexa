@@ -42,7 +42,7 @@ function printIdentity(auth: StoredAuth): void {
  * whoami trusts it without signature verification (that is the API server's
  * job) and without any network round-trip.
  */
-function decodeIdTokenClaims(idToken: string): IdTokenClaims | null {
+export function decodeIdTokenClaims(idToken: string): IdTokenClaims | null {
     const payload = idToken.split(".")[1];
     if (!payload) return null;
     try {
