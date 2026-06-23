@@ -1,8 +1,8 @@
 import { For, Show } from "solid-js";
 
-import { GLYPHS } from "../../lib/glyphs.ts";
-import { zIndex } from "../../lib/z_index.ts";
+import { GLYPHS, zIndex } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
+import { Bold } from "../components/emphasis.tsx";
 import { leaderActive, pendingSequence, reachableKeys, sequenceLabel, type NextKey } from "../keymap.ts";
 
 // The which-key overlay: while a leader sequence is half-typed, this panel lists every reachable
@@ -31,7 +31,7 @@ export function WhichKey() {
                 zIndex={zIndex.popover}
                 maxWidth={50}
                 flexDirection="column"
-                backgroundColor={theme().bgPanel}
+                backgroundColor={theme().bgRaised}
                 border
                 borderColor={theme().accent}
                 title={`${sequenceLabel(pendingSequence())}${GLYPHS.ellipsis}`}
@@ -42,13 +42,13 @@ export function WhichKey() {
                 <For each={groups(keys())}>
                     {([label, entries]) => (
                         <box flexDirection="column">
-                            <text fg={theme().muted} attributes={1}>
-                                {label}
+                            <text fg={theme().fgMuted}>
+                                <Bold>{label}</Bold>
                             </text>
                             <For each={entries}>
                                 {(nk) => (
                                     <box flexDirection="row" paddingLeft={1}>
-                                        <text fg={theme().warn}>{nk.stroke}</text>
+                                        <text fg={theme().warning}>{nk.stroke}</text>
                                         <text fg={theme().fg}>
                                             {"  "}
                                             {nk.desc}

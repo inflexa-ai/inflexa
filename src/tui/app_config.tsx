@@ -4,12 +4,12 @@ import type { ScrollBoxRenderable } from "@opentui/core";
 
 import { readConfig, writeConfig, type Config } from "../lib/config.ts";
 import { env } from "../lib/env.ts";
-import { GLYPHS } from "../lib/glyphs.ts";
+import { GLYPHS, themes, themeIds } from "../lib/design_system.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { setTheme, theme, noticeColor, type Notice } from "./theme.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { useKeymapRoot, useBindings, KEYS, chordLabel } from "./keymap.ts";
-import { themes, themeIds } from "../lib/themes.ts";
+import { Bold, Reverse, Fg } from "./components/emphasis.tsx";
 import { runtimes, runtimeIds } from "../lib/container.ts";
 
 // `-?` strips optionality in the mapping: without it, an optional Config field (e.g. `keybinds`)
@@ -204,24 +204,36 @@ export function ConfigApp(props: { onClose?: () => void }) {
                 width="100%"
             >
                 <For each={settings}>
-                    {(setting, index) => (
-                        <box id={`section-${index()}`} flexDirection="column" paddingLeft={2} paddingTop={1}>
-                            <text fg={index() === section() ? theme().selected : theme().fg} attributes={1}>
-                                [{draft()[setting.key] ? "x" : " "}] {setting.label}
-                                {draft()[setting.key] !== saved()[setting.key] ? " *" : ""}
-                            </text>
-                            <box paddingLeft={4} flexDirection="column">
-                                <text fg={theme().muted}>{setting.description}</text>
-                                <Show when={setting.key === "telemetry"}>
-                                    <text fg={theme().muted}>Endpoint: {env.otelEndpoint ?? "not set (OTEL_EXPORTER_OTLP_ENDPOINT)"}</text>
-                                </Show>
+                    {(setting, index) => {
+                        // Selected section reads as an inverse bar; <Bold> survives the swap so the
+                        // label stays heavy. Non-focused rows are plain bold text.
+                        const focused = () => index() === section();
+                        const label = () =>
+                            `[${draft()[setting.key] ? "x" : " "}] ${setting.label}${draft()[setting.key] !== saved()[setting.key] ? " *" : ""}`;
+                        return (
+                            <box id={`section-${index()}`} flexDirection="column" paddingLeft={2} paddingTop={1}>
+                                <text fg={theme().fg}>
+                                    {focused() ? (
+                                        <Reverse>
+                                            <Bold>{label()}</Bold>
+                                        </Reverse>
+                                    ) : (
+                                        <Bold>{label()}</Bold>
+                                    )}
+                                </text>
+                                <box paddingLeft={4} flexDirection="column">
+                                    <text fg={theme().fgMuted}>{setting.description}</text>
+                                    <Show when={setting.key === "telemetry"}>
+                                        <text fg={theme().fgMuted}>Endpoint: {env.otelEndpoint ?? "not set (OTEL_EXPORTER_OTLP_ENDPOINT)"}</text>
+                                    </Show>
+                                </box>
                             </box>
-                        </box>
-                    )}
+                        );
+                    }}
                 </For>
 
                 <box id={`section-${THEME_SECTION}`} flexDirection="column" paddingLeft={2} paddingTop={1}>
-                    <text fg={section() === THEME_SECTION ? theme().accent : theme().muted}>theme</text>
+                    <text fg={theme().fg}>{section() === THEME_SECTION ? <Reverse>theme</Reverse> : <Fg role="fgMuted">theme</Fg>}</text>
                     <For each={themeIds}>
                         {(id) => {
                             // No separate cursor: the highlighted row is always the active draft theme
@@ -230,7 +242,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
                             const isActive = () => draft().theme === id;
                             return (
                                 <box paddingLeft={2}>
-                                    <text fg={isActive() && section() === THEME_SECTION ? theme().selected : isActive() ? theme().accent : theme().fg}>
+                                    <text fg={isActive() && section() === THEME_SECTION ? theme().secondary : isActive() ? theme().accent : theme().fg}>
                                         {isActive() ? `(${GLYPHS.circle})` : "( )"} {themes[id].name}
                                         {isActive() && saved().theme !== id ? " *" : ""}
                                     </text>
@@ -241,13 +253,15 @@ export function ConfigApp(props: { onClose?: () => void }) {
                 </box>
 
                 <box id={`section-${RUNTIME_SECTION}`} flexDirection="column" paddingLeft={2} paddingTop={1}>
-                    <text fg={section() === RUNTIME_SECTION ? theme().accent : theme().muted}>container runtime</text>
+                    <text fg={theme().fg}>
+                        {section() === RUNTIME_SECTION ? <Reverse>container runtime</Reverse> : <Fg role="fgMuted">container runtime</Fg>}
+                    </text>
                     <For each={runtimeIds}>
                         {(id) => {
                             const isActive = () => draft().runtime === id;
                             return (
                                 <box paddingLeft={2}>
-                                    <text fg={isActive() && section() === RUNTIME_SECTION ? theme().selected : isActive() ? theme().accent : theme().fg}>
+                                    <text fg={isActive() && section() === RUNTIME_SECTION ? theme().secondary : isActive() ? theme().accent : theme().fg}>
                                         {isActive() ? `(${GLYPHS.circle})` : "( )"} {runtimes[id].label}
                                         {isActive() && saved().runtime !== id ? " *" : ""}
                                     </text>
@@ -265,7 +279,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
             </Show>
 
             <box paddingLeft={2} paddingTop={1}>
-                <text fg={theme().muted}>File: {env.configPath}</text>
+                <text fg={theme().fgMuted}>File: {env.configPath}</text>
             </box>
         </box>
     );

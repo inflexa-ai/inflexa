@@ -33,9 +33,9 @@ export function DialogPanel(props: {
             width={props.width}
             height={props.height}
             flexDirection="column"
-            backgroundColor={theme().bgPanel}
+            backgroundColor={theme().bgRaised}
             border
-            borderColor={theme().borderActive}
+            borderColor={theme().borderFocus}
             title={props.title}
             titleColor={theme().accent}
             paddingLeft={1}
@@ -45,7 +45,7 @@ export function DialogPanel(props: {
         >
             {props.children}
             <Show when={props.footer}>
-                <text fg={theme().muted}>{props.footer}</text>
+                <text fg={theme().fgMuted}>{props.footer}</text>
             </Show>
         </box>
     );

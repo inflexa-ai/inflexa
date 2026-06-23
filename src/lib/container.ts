@@ -1,6 +1,6 @@
 // Container-runtime registry + execution wrapper. Selecting Docker vs Podman is
 // a config key (lib/config.ts), but the runtime descriptors, the spawn core, and
-// the readiness probe live here. Kept config-free — mirroring lib/themes.ts — so
+// the readiness probe live here. Kept config-free — mirroring lib/design_system.ts — so
 // lib/config.ts can import `runtimeIds` for its zod enum without a cycle. The
 // config-reading resolver (`activeRuntime`) therefore lives in lib/config.ts, not
 // here. The proxy module is today's only caller of the spawn core.

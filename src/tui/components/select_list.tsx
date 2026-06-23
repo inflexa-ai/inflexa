@@ -4,10 +4,11 @@ import type { JSX } from "solid-js";
 import type { InputRenderable, ScrollBoxRenderable } from "@opentui/core";
 
 import { rankBy } from "../../lib/fuzzy.ts";
-import { GLYPHS } from "../../lib/glyphs.ts";
+import { GLYPHS } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
 import { useBindings, KEYS, chordLabel } from "../keymap.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
+import { Bold } from "./emphasis.tsx";
 
 // The reusable searchable list: a single fuzzy-filtered, keyboard-navigable, grouped picker
 // shared by the command palette and every dialog picker (themes, analyses, sessions). It is
@@ -126,10 +127,10 @@ export function SelectList<T>(props: {
                 focused
                 width="100%"
                 placeholder={props.placeholder ?? `Type to filter${GLYPHS.ellipsis}`}
-                placeholderColor={theme().muted}
+                placeholderColor={theme().fgMuted}
                 textColor={theme().fg}
                 backgroundColor={theme().bg}
-                focusedBackgroundColor={theme().bgFocused}
+                focusedBackgroundColor={theme().bgActive}
                 onInput={(v) => {
                     setQuery(v);
                     setCursor(0);
@@ -143,26 +144,26 @@ export function SelectList<T>(props: {
                 width="100%"
                 paddingTop={1}
             >
-                <Show when={ranked().length > 0} fallback={<text fg={theme().muted}>{props.emptyText}</text>}>
+                <Show when={ranked().length > 0} fallback={<text fg={theme().fgMuted}>{props.emptyText}</text>}>
                     <For each={rows()}>
                         {(row) =>
                             row.kind === "header" ? (
-                                <text fg={theme().muted} attributes={1}>
-                                    {row.label}
+                                <text fg={theme().fgMuted}>
+                                    <Bold>{row.label}</Bold>
                                 </text>
                             ) : (
                                 <box
                                     id={`${lid}-${row.idx}`}
                                     width="100%"
                                     flexDirection="row"
-                                    backgroundColor={row.idx === cursor() ? theme().bgFocused : undefined}
+                                    backgroundColor={row.idx === cursor() ? theme().bgActive : undefined}
                                 >
-                                    <text fg={row.idx === cursor() ? theme().selected : theme().fg}>
+                                    <text fg={row.idx === cursor() ? theme().secondary : theme().fg}>
                                         {row.idx === cursor() ? `${GLYPHS.chevronRight} ` : "  "}
                                         {row.item.title}
                                     </text>
                                     <Show when={row.item.hint}>
-                                        <text fg={theme().muted}> {row.item.hint}</text>
+                                        <text fg={theme().fgMuted}> {row.item.hint}</text>
                                     </Show>
                                 </box>
                             )
@@ -171,7 +172,7 @@ export function SelectList<T>(props: {
                 </Show>
             </scrollbox>
             <Show when={ranked()[cursor()]?.description}>
-                <text fg={theme().muted}>{ranked()[cursor()]!.description}</text>
+                <text fg={theme().fgMuted}>{ranked()[cursor()]!.description}</text>
             </Show>
         </DialogPanel>
     );

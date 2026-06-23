@@ -2,7 +2,7 @@ import { onMount } from "solid-js";
 import type { JSX } from "solid-js";
 import type { InputRenderable } from "@opentui/core";
 
-import { GLYPHS } from "../../lib/glyphs.ts";
+import { GLYPHS } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
 import { useBindings, KEYS, chordLabel } from "../keymap.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
@@ -31,10 +31,10 @@ export function PromptDialog(props: {
                 width="100%"
                 value={props.initialValue ?? ""}
                 placeholder={props.placeholder ?? ""}
-                placeholderColor={theme().muted}
+                placeholderColor={theme().fgMuted}
                 textColor={theme().fg}
                 backgroundColor={theme().bg}
-                focusedBackgroundColor={theme().bgFocused}
+                focusedBackgroundColor={theme().bgActive}
                 onSubmit={() => props.onSubmit(inputRef?.value ?? "")}
             />
         </DialogPanel>

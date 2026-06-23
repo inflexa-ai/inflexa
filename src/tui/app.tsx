@@ -4,8 +4,7 @@ import { createStore, produce } from "solid-js/store";
 import type { TextareaRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 
-import { GLYPHS } from "../lib/glyphs.ts";
-import { zIndex } from "../lib/z_index.ts";
+import { GLYPHS, zIndex } from "../lib/design_system.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { theme, noticeColor, type Notice } from "./theme.ts";
 import { chatStatus } from "./hooks/status.ts";
@@ -210,7 +209,7 @@ export function App(props: AppProps) {
                             right={2}
                             zIndex={zIndex.toast}
                             maxWidth={Math.min(60, dims().width - 6)}
-                            backgroundColor={theme().bgPanel}
+                            backgroundColor={theme().bgRaised}
                             border
                             borderColor={noticeColor(n.kind)}
                             paddingLeft={1}

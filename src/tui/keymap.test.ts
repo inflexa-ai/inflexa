@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createRoot } from "solid-js";
 
-import { GLYPHS } from "../lib/glyphs.ts";
+import { GLYPHS } from "../lib/design_system.ts";
 import {
     parseChord,
     parseKeySpec,
