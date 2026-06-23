@@ -268,6 +268,16 @@ function leaderTimeoutMs(): number {
     return leaderTimeoutCache;
 }
 
+/**
+ * Test-only: drop the resolved-keybind + leader-timeout caches so the next read re-resolves from the
+ * (possibly rewritten) config. Production resolves once at startup and never changes within a run;
+ * tests swap the config file and call this to force re-resolution. Not referenced outside *.test.ts.
+ */
+export function __resetKeybindCache(): void {
+    resolvedCache = null;
+    leaderTimeoutCache = null;
+}
+
 // --- the mode stack -------------------------------------------------------------------------
 
 /** The base mode: layers tagged with it are live only when no modal is on the stack. */

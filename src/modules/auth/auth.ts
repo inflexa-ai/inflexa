@@ -350,7 +350,7 @@ export async function revokeRefreshToken(config: Auth0Config, refreshToken: stri
  * True when the access token has at most the safety buffer of validity left and
  * therefore warrants a refresh.
  */
-function isExpiring(auth: StoredAuth): boolean {
+export function isExpiring(auth: StoredAuth): boolean {
     return new Date(auth.expiresAt).getTime() - Date.now() <= EXPIRY_BUFFER_MS;
 }
 
@@ -433,7 +433,7 @@ function releaseRefreshLock(token: string): void {
  * id_token); on first login it is null and everything must be present.
  * Returns a detail string error so callers can wrap it in the right variant.
  */
-function tokenWireToStoredAuth(wire: TokenWire, previous: StoredAuth | null): Result<StoredAuth, string> {
+export function tokenWireToStoredAuth(wire: TokenWire, previous: StoredAuth | null): Result<StoredAuth, string> {
     const refreshToken = wire.refresh_token ?? previous?.refreshToken;
     const idToken = wire.id_token ?? previous?.idToken;
     if (!wire.access_token || typeof wire.expires_in !== "number" || !idToken) {

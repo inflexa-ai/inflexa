@@ -1,0 +1,69 @@
+import { afterAll, describe, expect, test } from "bun:test";
+import { onCleanup } from "solid-js";
+import { tmpdir } from "node:os";
+
+import { env } from "../lib/env.ts";
+import { runCli } from "./cli.ts";
+import { freshDb, resetDb } from "./db.ts";
+import { withRoot } from "./solid.ts";
+
+// Pin the three harness seams (env sandbox, temp DB, Solid root) so a refactor that breaks isolation
+// fails here loudly rather than silently corrupting every integration test that relies on them.
+
+describe("test preload (env sandbox)", () => {
+    test("redirects env.dbPath into an isolated temp dir, not the real home", () => {
+        expect(env.dbPath).toContain("inf-test-");
+        expect(env.dbPath.startsWith(tmpdir())).toBe(true);
+    });
+});
+
+describe("freshDb / resetDb", () => {
+    // Leave no open handle or stray DB file for the sibling test files that share this process.
+    afterAll(() => {
+        resetDb();
+    });
+
+    test("yields a migrated connection", () => {
+        const conn = freshDb();
+        const tables = conn
+            .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'")
+            .all()
+            .map((r) => r.name);
+        expect(tables).toContain("_migrations");
+        expect(tables).toContain("projects");
+    });
+
+    test("wipes on-disk state between calls", () => {
+        const first = freshDb();
+        first.run("CREATE TABLE harness_probe (x INTEGER)");
+        first.run("INSERT INTO harness_probe (x) VALUES (1)");
+
+        // Re-requesting resets: closes `first`, deletes the db file, reopens + re-migrates empty.
+        const second = freshDb();
+        const probe = second.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='harness_probe'").get();
+        expect(probe).toBeNull();
+    });
+});
+
+describe("withRoot", () => {
+    test("returns the body value and disposes the root afterward", () => {
+        let disposed = false;
+        const result = withRoot(() => {
+            onCleanup(() => {
+                disposed = true;
+            });
+            return 42;
+        });
+        expect(result).toBe(42);
+        expect(disposed).toBe(true);
+    });
+});
+
+describe("runCli", () => {
+    test("runs the real CLI subprocess and captures exit code + stdout", () => {
+        const result = runCli(["--help"]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("Usage: inf");
+        expect(result.stdout).toContain("sessions");
+    });
+});
