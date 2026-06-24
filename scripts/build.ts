@@ -7,7 +7,7 @@
 // only available through the JS API.
 import { $ } from "bun";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 
 import { createSolidTransformPlugin, resetSolidTransformPluginState } from "@opentui/solid/bun-plugin";
 
@@ -87,15 +87,50 @@ if (targets.some((target) => target.os !== hostOs || target.arch !== process.arc
 
 await $`rm -rf dist`;
 
+// Highlighting runs in opentui's tree-sitter worker, which the renderer spawns via
+// `new Worker(resolveWorkerPath())`. That path is dynamic, so Bun's compiler can't auto-detect and
+// embed the worker (Bun only auto-embeds `new Worker(new URL("./literal", import.meta.url))`); left
+// alone, the binary falls back to loading parser.worker.ts from cwd and fails with ModuleNotFound.
+// Adding the worker as a second entrypoint makes Bun bundle it (with web-tree-sitter and its
+// tree-sitter.wasm) into the executable. opentui exposes it as the `@opentui/core/parser.worker`
+// export expressly for this. (The grammar wasm/scm load via `with { type: "file" }` embeds in
+// src/tui/grammars/register.ts — a separate mechanism that needs no build wiring.)
+//
+// `buildRoot` pins Bun's project root: a standalone executable embeds each entrypoint at
+// `<bunfs-root>/<path-RELATIVE-to-the-build-root>`, NOT at its absolute path. The default root is the
+// common ancestor of the entrypoints — for us that is the repo (both src/index.ts and the worker live
+// under it) — so the worker embeds at `/$bunfs/root/node_modules/@opentui/core/parser.worker.js`. We
+// pin the root and derive the path the SAME way, instead of guessing, so the baked worker path matches
+// where Bun actually puts it. (Computing from the absolute path silently broke highlighting: the path
+// only happened to match when entrypoints lived in different filesystem trees.)
+const buildRoot = process.cwd();
+const workerEntry = Bun.resolveSync("@opentui/core/parser.worker", buildRoot);
+const workerRelToRoot = relative(buildRoot, workerEntry);
+
 const plugin = createSolidTransformPlugin();
 for (const target of targets) {
     const name = `inf-${target.os}-${target.arch}`;
+
+    // resolveWorkerPath prefers the global OTUI_TREE_SITTER_WORKER_PATH over its default, so bake the
+    // worker's embedded bunfs path in (the default `new URL("./parser.worker.js", …)` can't find it —
+    // the worker is a separate entrypoint, not beside the main bundle). Verified on darwin/linux.
+    // Windows uses the B:\~BUN\root root with backslashes; that mapping is unverified (cross targets
+    // aren't smoke-tested), so highlighting may degrade gracefully there (warmGrammars swallows a
+    // worker failure) — text still renders, just unstyled.
+    const workerBunfsPath =
+        target.os === "windows" ? `B:\\~BUN\\root\\${workerRelToRoot.split("/").join("\\")}` : `/$bunfs/root/${workerRelToRoot}`;
+    const targetDefine: Record<string, string> = {
+        ...define,
+        OTUI_TREE_SITTER_WORKER_PATH: JSON.stringify(workerBunfsPath),
+        // opentui's native loader consults OPENTUI_LIBC on linux to pick the glibc vs musl lib; bake it
+        // so the choice cannot be swayed at runtime (per opencode's build; we only ship glibc).
+        ...(target.os === "linux" ? { "process.env.OPENTUI_LIBC": JSON.stringify("glibc") } : {}),
+    };
+
     const result = await Bun.build({
-        entrypoints: ["src/index.ts"],
-        // opentui's native loader consults OPENTUI_LIBC on linux to pick the
-        // glibc vs musl lib; bake it so the choice cannot be swayed at
-        // runtime (per opencode's build; we only ship glibc).
-        define: target.os === "linux" ? { ...define, "process.env.OPENTUI_LIBC": JSON.stringify("glibc") } : define,
+        entrypoints: ["src/index.ts", workerEntry],
+        root: buildRoot,
+        define: targetDefine,
         plugins: [plugin],
         compile: {
             target: `bun-${target.os}-${target.arch}`,

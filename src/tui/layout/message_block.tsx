@@ -46,11 +46,19 @@ export function MessageBlock(props: MessageBlockProps) {
                             const content = (): string => (isStreaming() ? props.streamText() : part.text);
                             return (
                                 <Show when={content()}>
+                                    {/* Mirror opencode's markdown config exactly. `streaming` is pinned true, NOT
+                                        isStreaming(): in @opentui/core 0.4.0 `<markdown streaming={false}>` renders
+                                        nothing (verified headlessly), so a finalized/reloaded part would vanish the
+                                        instant the stream ends. `internalBlockMode="top-level"` is the streaming
+                                        block mode — without it, incrementally-grown content left inline syntax
+                                        (`**bold**`) rendered as raw literal `**`. content() switches source (live
+                                        streamText while streaming, stored part.text once flushed). */}
                                     <markdown
                                         content={content()}
                                         fg={theme().fg}
                                         syntaxStyle={syntaxStyle()}
-                                        streaming={isStreaming()}
+                                        streaming={true}
+                                        internalBlockMode="top-level"
                                         paddingLeft={space.md}
                                     />
                                 </Show>
