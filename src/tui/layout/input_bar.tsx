@@ -10,6 +10,11 @@ export type InputBarProps = {
     onTextareaRef: (r: TextareaRenderable) => void;
     /** Invoked when the user submits the message. */
     onSubmit: () => void;
+    /**
+     * Whether the textarea currently holds focus. Drives the INSERT/NORMAL mode word and the border
+     * tint: blurring the input (esc) enters NORMAL "scroll" mode where the vim scroll keys are live.
+     */
+    focused: () => boolean;
 };
 
 // Enter submits; Option/Alt+Enter inserts a newline (opentui delivers Option as Meta). These stay
@@ -35,7 +40,15 @@ export function InputBar(props: InputBarProps) {
         // (e.g. a tmux 2x2 pane) the whole bar gets squeezed below its border min and the textarea
         // content paints above the bottom border. The Chat stream (flexGrow + minHeight=0) yields instead.
         <box width="100%" flexDirection="column" flexShrink={0}>
-            <box width="100%" minHeight={3} maxHeight={8} borderColor={theme().borderFocus} border paddingLeft={1} paddingRight={1}>
+            <box
+                width="100%"
+                minHeight={3}
+                maxHeight={8}
+                borderColor={props.focused() ? theme().borderFocus : theme().border}
+                border
+                paddingLeft={1}
+                paddingRight={1}
+            >
                 <textarea
                     ref={(r: TextareaRenderable) => props.onTextareaRef(r)}
                     focused
@@ -50,7 +63,7 @@ export function InputBar(props: InputBarProps) {
                 />
             </box>
             <box width="100%" flexDirection="row" paddingLeft={1} paddingRight={1}>
-                <text fg={theme().fgMuted}>INSERT</text>
+                <text fg={theme().fgMuted}>{props.focused() ? "INSERT" : "NORMAL"}</text>
                 <box flexGrow={1} />
                 <text fg={theme().fgMuted}>xhigh /effort</text>
             </box>

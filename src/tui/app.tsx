@@ -1,7 +1,7 @@
 import { createSignal, createEffect, Show, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, produce } from "solid-js/store";
-import type { Renderable, TextareaRenderable } from "@opentui/core";
+import type { Renderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 
 import { GLYPHS, zIndex } from "../lib/design_system.ts";
@@ -13,7 +13,7 @@ import * as conversation from "./hooks/conversation.ts";
 import { currentNotice, notify } from "./hooks/notice.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
-import { useKeymapRoot, useBindings, pushMode, MODE_BASE, MODE_MODAL, resolveKeybind, keybindLabel, leaderSeq } from "./keymap.ts";
+import { useKeymapRoot, useBindings, pushMode, MODE_BASE, MODE_MODAL, resolveKeybind, keybindLabel, leaderSeq, KEYS } from "./keymap.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { Chat } from "./components/chat.tsx";
 import { InputBar } from "./layout/input_bar.tsx";
@@ -34,12 +34,18 @@ export function App(props: AppProps) {
 
     const [sidebarOpen, setSidebarOpen] = createSignal(true);
 
+    // INSERT vs NORMAL: true while the chat input holds focus (the default). Blurring it (esc) enters
+    // a vim-style "scroll mode" where the scroll keys below are live; the textarea's focused/blurred
+    // events (wired in onTextareaRef) keep this in sync however focus changes — keyboard or mouse.
+    const [inputFocused, setInputFocused] = createSignal(true);
+
     // Dialog host: a stack of render thunks; only the top one is mounted (see the render below).
     const [dialogs, setDialogs] = createStore<Array<() => JSX.Element>>([]);
     const dialogOpen = (): boolean => dialogs.length > 0;
     const dialogTop = (): (() => JSX.Element) | null => (dialogs.length > 0 ? dialogs[dialogs.length - 1]! : null);
 
     let textareaRef: TextareaRenderable | null = null;
+    let scrollboxRef: ScrollBoxRenderable | null = null;
 
     // In-app capabilities that close over App's local state, handed to the workspace store below.
     function openDialog(render: () => JSX.Element): void {
@@ -144,12 +150,47 @@ export function App(props: AppProps) {
         ],
     }));
 
+    // Vim-style scroll navigation. The chat textarea is always focused so plain letters insert text;
+    // these drive the conversation scrollbox by direct method calls (NOT opentui's own scrollbox key
+    // handler, which only fires when the scrollbox itself is focused — it never is). scrollBy's
+    // "viewport" unit scales by the visible height; scrollTo(scrollHeight) clamps and re-engages the
+    // bottom stickiness so the view resumes following new stream output.
+    function scrollToBottom(): void {
+        if (scrollboxRef) scrollboxRef.scrollTo(scrollboxRef.scrollHeight);
+    }
+
     // A focus-`target` layer: clear-input (ctrl+u) is live only while the chat textarea is focused —
-    // the fine-grained complement to `mode`, so it never fires when a dialog input owns focus.
+    // the fine-grained complement to `mode`, so it never fires when a dialog input owns focus. esc
+    // blurs the input into NORMAL scroll mode (the scroll layer below takes over).
     useBindings(() => ({
         mode: MODE_BASE,
         target: textareaRef,
-        bindings: [{ chord: resolveKeybind("app.clear-input"), run: () => textareaRef?.setText(""), desc: "Clear input", group: "Input" }],
+        bindings: [
+            { chord: resolveKeybind("app.clear-input"), run: () => textareaRef?.setText(""), desc: "Clear input", group: "Input" },
+            { chord: KEYS.escape, run: () => textareaRef?.blur(), desc: "Scroll mode (vim keys)", group: "Input" },
+        ],
+    }));
+
+    // Scroll-mode keys: live only while the input is BLURRED (NORMAL mode), so they never collide
+    // with typing. Disjoint from the input's own keys above (target-gated to the focused input), so
+    // the shared ctrl+u/ctrl+d never clash. `i`/enter (or a mouse click) refocus the input.
+    useBindings(() => ({
+        mode: MODE_BASE,
+        enabled: !inputFocused(),
+        bindings: [
+            { chord: [{ key: "g" }, { key: "g" }], run: () => scrollboxRef?.scrollTo(0), desc: "Scroll to top", group: "Scroll" },
+            { chord: { key: "g", shift: true }, run: scrollToBottom, desc: "Scroll to bottom", group: "Scroll" },
+            { chord: { key: "j" }, run: () => scrollboxRef?.scrollBy(1), desc: "Scroll down", group: "Scroll" },
+            { chord: { key: "k" }, run: () => scrollboxRef?.scrollBy(-1), desc: "Scroll up", group: "Scroll" },
+            { chord: KEYS.down, run: () => scrollboxRef?.scrollBy(1) },
+            { chord: KEYS.up, run: () => scrollboxRef?.scrollBy(-1) },
+            { chord: { key: "d", ctrl: true }, run: () => scrollboxRef?.scrollBy(0.5, "viewport"), desc: "Half page down", group: "Scroll" },
+            { chord: { key: "u", ctrl: true }, run: () => scrollboxRef?.scrollBy(-0.5, "viewport"), desc: "Half page up", group: "Scroll" },
+            { chord: KEYS.pageDown, run: () => scrollboxRef?.scrollBy(1, "viewport"), desc: "Page down", group: "Scroll" },
+            { chord: KEYS.pageUp, run: () => scrollboxRef?.scrollBy(-1, "viewport"), desc: "Page up", group: "Scroll" },
+            { chord: { key: "i" }, run: () => textareaRef?.focus(), desc: "Insert mode", group: "Input" },
+            { chord: KEYS.enter, run: () => textareaRef?.focus(), desc: "Focus input", group: "Input" },
+        ],
     }));
 
     // Push MODE_MODAL while any dialog is open and pop it when the stack empties (or App unmounts).
@@ -206,15 +247,21 @@ export function App(props: AppProps) {
                 <box flexDirection="row" flexGrow={1} minHeight={0} width="100%">
                     <box flexDirection="column" flexGrow={1} minHeight={0}>
                         {/* The live conversation: stream + error banner, all state in hooks/conversation.ts */}
-                        <Chat />
+                        <Chat onScrollboxRef={(r: ScrollBoxRenderable) => (scrollboxRef = r)} />
 
                         {/* Input area */}
                         <InputBar
                             onTextareaRef={(r: TextareaRenderable) => {
                                 textareaRef = r;
+                                // focused/blurred fire on every focus change (esc, the refocus effect, a
+                                // mouse click), making inputFocused the single source of truth for the
+                                // INSERT/NORMAL mode word and the scroll-key gate.
+                                r.on("focused", () => setInputFocused(true));
+                                r.on("blurred", () => setInputFocused(false));
                                 queueMicrotask(() => r.focus());
                             }}
                             onSubmit={() => void handleSubmit()}
+                            focused={inputFocused}
                         />
 
                         {/* Transient toast (single slot, auto-dismissed). Inside the chat column, not the

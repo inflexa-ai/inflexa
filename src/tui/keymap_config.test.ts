@@ -8,8 +8,8 @@ import { DEFAULT_THEME_ID } from "../lib/design_system.ts";
 import { env } from "../lib/env.ts";
 
 // A fake opentui key event for the dispatcher (mirrors keymap.test.ts's helper).
-function key(name: string, mods: Partial<Pick<KeyLike, "ctrl" | "meta" | "option">> = {}): KeyLike & { preventDefault: () => void } {
-    return { name, ctrl: false, meta: false, option: false, ...mods, preventDefault: () => {} };
+function key(name: string, mods: Partial<Pick<KeyLike, "ctrl" | "meta" | "option" | "shift">> = {}): KeyLike & { preventDefault: () => void } {
+    return { name, ctrl: false, meta: false, option: false, shift: false, ...mods, preventDefault: () => {} };
 }
 
 function writeKeybinds(keybinds: Record<string, string>): void {
