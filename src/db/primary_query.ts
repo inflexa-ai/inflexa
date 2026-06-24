@@ -50,6 +50,48 @@ export function listSessionMessages(sessionId: string): Result<StoredMessage[], 
     });
 }
 
+/**
+ * The newest `limit` messages of a session, oldest→newest, each with its parts assembled in order.
+ * The UI window query: it bounds mounted layout cost (a `<scrollbox>` clips painting but not Yoga
+ * layout, so cost scales with mounted count). The full-history {@link listSessionMessages} stays the
+ * source for the model context the engine builds — only the view is capped.
+ */
+export function listRecentSessionMessages(sessionId: string, limit: number): Result<StoredMessage[], DbError> {
+    return tryQuery("listRecentSessionMessages", (conn) => {
+        // Newest-first + LIMIT picks the recent window in SQL (not a JS slice of the whole history);
+        // reverse back to the oldest→newest order the stream renders in.
+        const msgRows = (
+            conn.query("SELECT id, data FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?").all(sessionId, limit) as {
+                id: string;
+                data: string;
+            }[]
+        ).reverse();
+
+        if (msgRows.length === 0) return [];
+
+        // Scope the parts fetch to the kept messages so a long history doesn't load every part just to
+        // drop most of them. Placeholders are `?` (values bound via `.all`), so the id list is not interpolated.
+        const ids = msgRows.map((r) => r.id);
+        const placeholders = ids.map(() => "?").join(", ");
+        const partRows = conn.query(`SELECT message_id, data FROM parts WHERE message_id IN (${placeholders}) ORDER BY id ASC`).all(...ids) as {
+            message_id: string;
+            data: string;
+        }[];
+
+        const partsByMsg = new Map<string, Part[]>();
+        for (const r of partRows) {
+            const arr = partsByMsg.get(r.message_id) ?? [];
+            arr.push(JSON.parse(r.data) as Part);
+            partsByMsg.set(r.message_id, arr);
+        }
+
+        return msgRows.map((r) => ({
+            info: JSON.parse(r.data),
+            parts: partsByMsg.get(r.id) ?? [],
+        }));
+    });
+}
+
 /** A session's chat belongs to one analysis; this lists every session under `analysisId`. The link lives in the `analysis_id` column (queried/joined), not the Session JSON. */
 export function listSessionsByAnalysis(analysisId: string): Result<Session[], DbError> {
     return tryQuery("listSessionsByAnalysis", (conn) => {

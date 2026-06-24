@@ -83,6 +83,11 @@ export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
     ).match(
         (val) => {
             Bus.emit("inf", { type: "message.created", message: val.assistantMsg });
+            // Broadcast the empty part now (symmetric with the user part above) so it lands in the
+            // store before deltas flow. Without it the assistant message renders with no parts, the
+            // streaming text binds to nothing, and tokens only appear at turn end (see the post-stream
+            // part.updated below) — the live typing effect needs the part mounted up front.
+            Bus.emit("inf", { type: "part.updated", part: val.assistantPart });
             return { ok: true as const, ...val };
         },
         (error) => ({ ok: false as const, error }),
@@ -96,6 +101,13 @@ export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
     // Stream the response. Model/network failures surface via session.error;
     // a user abort just stops and keeps whatever was streamed so far.
     let accumulated = "";
+    // Captures a streaming failure. The AI SDK does NOT throw model/API errors into the
+    // `textStream` consumer — it ends the stream and hands the error to `onError`. So a model
+    // error (e.g. the proxy advertising a model id the upstream then 404s) otherwise produces a
+    // SILENT empty assistant turn: the loop exits with no text and no exception, status goes idle,
+    // and the user sees a blank reply with no clue why. Capture it and surface it below, the same
+    // as a thrown setup failure.
+    let streamError: unknown;
     try {
         const apiKey = await readApiKey();
         const modelId = await resolveModelId(apiKey);
@@ -109,15 +121,22 @@ export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
             // OpenAI-format value through when translating to Claude, so set a
             // generous cap to make Claude work out of the box.
             maxOutputTokens: 8192,
+            onError: ({ error }) => {
+                streamError = error;
+            },
         });
         for await (const delta of result.textStream) {
             accumulated += delta;
             Bus.emit("inf", { type: "part.delta", sessionId, messageId: assistantMsg.id, partId: assistantPart.id, delta });
         }
     } catch (error) {
-        if (!abort?.aborted) {
-            Bus.emit("inf", { type: "session.error", sessionId, error: `Model error: ${describe(error)}` });
-        }
+        // Synchronous/setup failures (readApiKey, resolveModelId) throw here; streaming failures
+        // arrive via onError above. Funnel both through the single session.error emit below.
+        streamError = error;
+    }
+    // A user abort is not an error — it just stops and keeps whatever streamed so far.
+    if (streamError && !abort?.aborted) {
+        Bus.emit("inf", { type: "session.error", sessionId, error: `Model error: ${describe(streamError)}` });
     }
 
     // Persist the final assistant text (possibly partial on abort/error) and

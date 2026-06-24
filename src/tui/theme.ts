@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import { SyntaxStyle } from "@opentui/core";
 
-import { DEFAULT_THEME_ID, themes, type ThemeColors, type ThemeId } from "../lib/design_system.ts";
+import { DEFAULT_THEME_ID, markdownStyles, themes, type ThemeColors, type ThemeId } from "../lib/design_system.ts";
 
 // Reactive accessor layer for themes. The id list, palette data, and type shapes
 // live in the dependency-light, solid-js-free `src/lib/design_system.ts` (so `config.ts`
@@ -61,7 +61,9 @@ export function syntaxStyle(): SyntaxStyle {
     const id = activeThemeId();
     let style = syntaxStyleCache.get(id);
     if (!style) {
-        style = SyntaxStyle.fromStyles({ ...themes[id].syntax });
+        // Code-block scopes (themes[id].syntax) + markdown prose scopes (markdownStyles), so the
+        // same SyntaxStyle colors both fenced code and the surrounding markdown (headings, emphasis…).
+        style = SyntaxStyle.fromStyles({ ...themes[id].syntax, ...markdownStyles(themes[id].colors) });
         syntaxStyleCache.set(id, style);
     }
     return style;

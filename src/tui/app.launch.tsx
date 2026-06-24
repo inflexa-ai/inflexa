@@ -1,6 +1,7 @@
 import { render } from "@opentui/solid";
 import { ConsolePosition } from "@opentui/core";
 
+import { warmGrammars } from "./grammars/register.ts";
 import { ensureProxyReadyOrExit } from "../modules/proxy/setup.ts";
 import { resolveNewTarget, resolveResumeTarget, resolveDefaultTarget, type ChatTarget } from "../modules/analysis/launch.ts";
 import type { ContextFlags } from "../modules/analysis/context.ts";
@@ -26,7 +27,9 @@ async function renderChat(target: ChatTarget): Promise<void> {
     setTheme(readConfig().theme);
     void render(() => <App sessionId={target.sessionId} workingDir={target.workingDir} analysis={target.analysis} />, {
         exitOnCtrlC: false,
-        targetFps: 30,
+        // 60fps so the smooth streamed-text reveal (conversation.ts) repaints finely; the renderer is
+        // on-demand, so an idle chat still costs no frames. Matches the opencode TUI cadence.
+        targetFps: 60,
         screenMode: "alternate-screen",
         consoleOptions: {
             position: ConsolePosition.BOTTOM,
@@ -34,6 +37,12 @@ async function renderChat(target: ChatTarget): Promise<void> {
             sizePercent: 30,
         },
     });
+
+    // Register + warm the markdown/code tree-sitter grammars (see warmGrammars). Fire-and-forget AFTER
+    // render() takes over the terminal: in a `bun --compile` binary the worker isn't embedded and logs
+    // an error — running this post-render keeps that log inside the TUI console overlay instead of over
+    // the launch/picker output, and warmGrammars swallows the failure so it never breaks startup.
+    void warmGrammars();
 }
 
 /** `inf new [name] [paths...]` — create an analysis (anchor = cwd) and open its chat. */

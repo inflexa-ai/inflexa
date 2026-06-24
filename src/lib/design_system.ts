@@ -154,7 +154,7 @@ export type ThemeColors = {
  * Per-scope styling for fenced code blocks, applied via SyntaxStyle.fromStyles.
  * Keys are the tree-sitter capture scopes the markdown highlighter emits.
  */
-type SyntaxEntry = { fg: string; bold?: boolean; italic?: boolean };
+export type SyntaxEntry = { fg: string; bold?: boolean; italic?: boolean };
 
 export type ThemeSyntax = {
     keyword: SyntaxEntry;
@@ -167,6 +167,44 @@ export type ThemeSyntax = {
     operator: SyntaxEntry;
     punctuation: SyntaxEntry;
 };
+
+/**
+ * Markdown rendering colors, derived from a theme's palette so every theme gets consistent
+ * heading / emphasis / link / list styling without each repeating it. The `<markdown>` highlighter
+ * emits these `markup.*` capture scopes (opentui's bundled `assets/markdown` + `markdown_inline`
+ * highlight queries); `ThemeSyntax` covers the code-block scopes, this covers the prose ones.
+ *
+ * Heading levels are listed individually on purpose: opentui's `SyntaxStyle.getStyle` only falls a
+ * scope back to its FIRST segment (`markup.heading.1` → `markup`), never to `markup.heading`, so a
+ * lone `markup.heading` parent would not catch them. The markers themselves (`#`, `*`, `` ` ``) stay
+ * visible — opentui conceals them only when the renderable opts in, and (like opencode) we don't,
+ * since a terminal can't size an H1; this just colors the text so the structure reads clearly.
+ */
+export function markdownStyles(c: ThemeColors): Record<string, SyntaxEntry> {
+    const heading: SyntaxEntry = { fg: c.accent, bold: true };
+    const link: SyntaxEntry = { fg: c.info };
+    return {
+        markup: { fg: c.fg }, // base: first-segment fallback for any markup.* not set below
+        "markup.heading": heading,
+        "markup.heading.1": heading,
+        "markup.heading.2": heading,
+        "markup.heading.3": heading,
+        "markup.heading.4": heading,
+        "markup.heading.5": heading,
+        "markup.heading.6": heading,
+        "markup.strong": { fg: c.fg, bold: true },
+        "markup.italic": { fg: c.fg, italic: true },
+        "markup.strikethrough": { fg: c.fgMuted },
+        "markup.quote": { fg: c.fgMuted, italic: true },
+        "markup.link": link,
+        "markup.link.label": link,
+        "markup.link.url": link,
+        "markup.list": { fg: c.accent },
+        "markup.list.checked": { fg: c.success },
+        "markup.list.unchecked": { fg: c.fgMuted },
+        "markup.raw": { fg: c.secondary }, // inline `code`; fenced blocks are colored by the injected grammar
+    };
+}
 
 export type Theme = {
     id: ThemeId;

@@ -76,6 +76,15 @@ describe("applyBusEvent", () => {
         expect(chatStatus()).toBe("idle");
     });
 
+    test("message.created trims the store to the 200-message cap, dropping the oldest", () => {
+        for (let i = 0; i < 205; i++) {
+            applyBusEvent({ type: "message.created", message: message(`m${i}`, i % 2 === 0 ? "user" : "assistant") }, SID);
+        }
+        expect(messages.length).toBe(200);
+        expect(messages[0]?.id).toBe("m5"); // m0..m4 dropped
+        expect(messages[messages.length - 1]?.id).toBe("m204"); // newest retained
+    });
+
     test("session.error sets the error banner and the error status", () => {
         applyBusEvent({ type: "session.error", sessionId: SID, error: "boom" }, SID);
         expect(errorMsg()).toBe("boom");
