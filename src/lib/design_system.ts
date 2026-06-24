@@ -209,7 +209,8 @@ export function markdownStyles(c: ThemeColors): Record<string, SyntaxEntry> {
 export type Theme = {
     id: ThemeId;
     name: string;
-    /** Light vs dark base — drives nothing in code today; documents the palette's intent for the picker. */
+    /** Light vs dark base. Documents the palette's intent for the picker, and drives the chat selection
+     * highlight style (dark → native per-token inversion, light → flat highlight; see applySelectionColors). */
     variant: "dark" | "light";
     colors: ThemeColors;
     syntax: ThemeSyntax;

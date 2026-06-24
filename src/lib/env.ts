@@ -118,3 +118,17 @@ export function installDir(): string {
 export function installedBinPath(): string {
     return join(installDir(), process.platform === "win32" ? "inflexa.exe" : "inflexa");
 }
+
+/**
+ * Terminal-environment detection for the clipboard writer (src/lib/clipboard.ts), homed here because
+ * env.ts is the single sanctioned `process.env` reader. These are NOT inf configuration — they are
+ * terminal-multiplexer / display-server facts (the same category as `process.stdout.isTTY`), so they
+ * live OUTSIDE the `env`/`envDoc` config object and never appear in `--help`. All three vars are set
+ * at process startup and stable for its lifetime, so reading them once at module load is correct.
+ */
+export const terminalEnv = Object.freeze({
+    /** tmux or GNU screen is wrapping us — OSC 52 clipboard writes need DCS passthrough to escape it. */
+    multiplexed: Boolean(process.env.TMUX || process.env.STY),
+    /** Running under Wayland — the clipboard tool is `wl-copy` rather than X11's `xclip`. */
+    wayland: Boolean(process.env.WAYLAND_DISPLAY),
+});
