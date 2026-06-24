@@ -36,6 +36,12 @@ export type Chord = {
     ctrl?: boolean;
     /** Requires the Option/Alt modifier when true (delivered as Meta in most terminals). */
     alt?: boolean;
+    /**
+     * Requires the Shift modifier when true. opentui reports a capital letter as its LOWERCASE name
+     * plus `shift` (so `G` is `{ key: "g", shift: true }`) — the only way to bind shift+letter vim
+     * keys like `G` (scroll-to-bottom) distinctly from their lowercase counterpart.
+     */
+    shift?: boolean;
 };
 
 /** An ordered run of {@link Chord} strokes — a single key (length 1) or a multi-stroke sequence. */
@@ -51,6 +57,8 @@ export type KeyLike = {
     meta: boolean;
     /** Option held (the kitty protocol sets this alongside `meta`). */
     option: boolean;
+    /** Shift held (opentui reports a capital letter as its lowercase name with this set). */
+    shift: boolean;
 };
 
 /** The opentui key event the root handler receives: a {@link KeyLike} plus dispatch controls. */
@@ -65,12 +73,12 @@ type KeyEventLike = KeyLike & {
 
 /** The {@link Chord} a key event represents (Alt folded from either option or meta). */
 function eventChord(ev: KeyLike): Chord {
-    return { key: ev.name, ctrl: ev.ctrl, alt: ev.option || ev.meta };
+    return { key: ev.name, ctrl: ev.ctrl, alt: ev.option || ev.meta, shift: ev.shift };
 }
 
 /** Structural equality of two chords, treating an absent modifier as false. */
 function chordEq(a: Chord, b: Chord): boolean {
-    return a.key === b.key && (a.ctrl ?? false) === (b.ctrl ?? false) && (a.alt ?? false) === (b.alt ?? false);
+    return a.key === b.key && (a.ctrl ?? false) === (b.ctrl ?? false) && (a.alt ?? false) === (b.alt ?? false) && (a.shift ?? false) === (b.shift ?? false);
 }
 
 /**
@@ -136,6 +144,7 @@ export function parseChord(s: string): Chord {
         key: CANON[key] ?? key,
         ctrl: parts.includes("ctrl"),
         alt: parts.includes("alt") || parts.includes("opt") || parts.includes("option"),
+        shift: parts.includes("shift"),
     };
 }
 
@@ -165,6 +174,7 @@ function parseSequence(s: string, leader: Chord): Sequence {
 export function chordLabel(chord: Chord): string {
     const parts: string[] = [];
     if (chord.ctrl) parts.push("ctrl");
+    if (chord.shift) parts.push("shift");
     if (chord.alt) parts.push("alt");
     parts.push(KEY_LABEL[chord.key] ?? chord.key);
     return parts.join("+");
@@ -191,6 +201,8 @@ export const KEYS = {
     enter: { key: "return" },
     escape: { key: "escape" },
     space: { key: "space" },
+    pageUp: { key: "pageup" },
+    pageDown: { key: "pagedown" },
     q: { key: "q" },
     // Emacs-style cursor alternates, so the list keys work without leaving the home row.
     prevAlt: { key: "p", ctrl: true },

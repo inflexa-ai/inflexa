@@ -23,19 +23,21 @@ import {
 // A fake opentui key event for the dispatcher (KeyLike + preventDefault, optional eventType).
 function key(
     name: string,
-    mods: Partial<Pick<KeyLike, "ctrl" | "meta" | "option">> = {},
+    mods: Partial<Pick<KeyLike, "ctrl" | "meta" | "option" | "shift">> = {},
 ): KeyLike & { preventDefault: () => void; eventType?: "press" | "repeat" | "release" } {
-    return { name, ctrl: false, meta: false, option: false, ...mods, preventDefault: () => {} };
+    return { name, ctrl: false, meta: false, option: false, shift: false, ...mods, preventDefault: () => {} };
 }
 
 describe("parseChord / chordLabel", () => {
     test("parses modifiers and canonicalizes friendly names", () => {
-        expect(parseChord("ctrl+k")).toEqual({ key: "k", ctrl: true, alt: false });
-        expect(parseChord("enter")).toEqual({ key: "return", ctrl: false, alt: false });
-        expect(parseChord("alt+enter")).toEqual({ key: "return", ctrl: false, alt: true });
+        expect(parseChord("ctrl+k")).toEqual({ key: "k", ctrl: true, alt: false, shift: false });
+        expect(parseChord("enter")).toEqual({ key: "return", ctrl: false, alt: false, shift: false });
+        expect(parseChord("alt+enter")).toEqual({ key: "return", ctrl: false, alt: true, shift: false });
         // opt/option are Alt aliases.
         expect(parseChord("opt+x").alt).toBe(true);
         expect(parseChord("option+x").alt).toBe(true);
+        // shift is parsed and labeled (capital letters arrive as lowercase name + shift).
+        expect(parseChord("shift+g")).toEqual({ key: "g", ctrl: false, alt: false, shift: true });
     });
 
     test("labels are lowercase and platform-neutral; arrows render as glyphs", () => {
@@ -48,6 +50,7 @@ describe("parseChord / chordLabel", () => {
     test("a key string round-trips through parse → label", () => {
         expect(chordLabel(parseChord("ctrl+b"))).toBe("ctrl+b");
         expect(chordLabel(parseChord("alt+enter"))).toBe("alt+enter");
+        expect(chordLabel(parseChord("shift+g"))).toBe("shift+g");
     });
 });
 
@@ -64,6 +67,13 @@ describe("matchChord", () => {
         expect(matchChord({ key: "return", alt: true }, key("return", { option: true }))).toBe(true);
         // A non-Alt chord must reject an Alt-bearing event.
         expect(matchChord({ key: "return" }, key("return", { meta: true }))).toBe(false);
+    });
+
+    test("shift distinguishes G from g (capital = lowercase name + shift)", () => {
+        // `G` (scroll-to-bottom) must not fire on `g` (the gg-sequence prefix) and vice versa.
+        expect(matchChord({ key: "g", shift: true }, key("g", { shift: true }))).toBe(true);
+        expect(matchChord({ key: "g", shift: true }, key("g"))).toBe(false);
+        expect(matchChord({ key: "g" }, key("g", { shift: true }))).toBe(false);
     });
 });
 
@@ -144,13 +154,13 @@ describe("parseKeySpec", () => {
     test("comma denotes alternatives", () => {
         const alts = parseKeySpec("ctrl+c,ctrl+d", leader);
         expect(alts).toHaveLength(2);
-        expect(alts[0]).toEqual([{ key: "c", ctrl: true, alt: false }]);
-        expect(alts[1]).toEqual([{ key: "d", ctrl: true, alt: false }]);
+        expect(alts[0]).toEqual([{ key: "c", ctrl: true, alt: false, shift: false }]);
+        expect(alts[1]).toEqual([{ key: "d", ctrl: true, alt: false, shift: false }]);
     });
 
     test("<leader> expands to the leader chord as the first stroke", () => {
         const [seq] = parseKeySpec("<leader>n", leader);
-        expect(seq).toEqual([leader, { key: "n", ctrl: false, alt: false }]);
+        expect(seq).toEqual([leader, { key: "n", ctrl: false, alt: false, shift: false }]);
     });
 
     test("spaces denote a multi-stroke sequence", () => {

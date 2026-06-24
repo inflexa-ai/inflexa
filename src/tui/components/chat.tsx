@@ -1,4 +1,5 @@
 import { For, Show, onMount, onCleanup, createEffect, createMemo, on } from "solid-js";
+import type { ScrollBoxRenderable } from "@opentui/core";
 
 import { Bus } from "../../lib/bus.ts";
 import { theme } from "../theme.ts";
@@ -15,7 +16,12 @@ import type { BusEvent } from "../../types/events.ts";
  * subscription that feeds it and the reactive load/reset tied to the open session. The `Sidebar`
  * reads the same store's `messageCount`, so the store is shared rather than private here.
  */
-export function Chat() {
+export type ChatProps = {
+    /** Receives the scrollbox renderable on mount, so App's scroll keybinds can drive it. */
+    onScrollboxRef: (r: ScrollBoxRenderable) => void;
+};
+
+export function Chat(props: ChatProps) {
     const ws = useWorkspace();
 
     // The bus drives all message/stream mutations; filter each event by the currently-open session
@@ -52,7 +58,15 @@ export function Chat() {
 
     return (
         <box flexDirection="column" flexGrow={1} minHeight={0}>
-            <scrollbox flexGrow={1} stickyScroll stickyStart="bottom" paddingLeft={1} paddingRight={1} paddingTop={1}>
+            <scrollbox
+                ref={(r: ScrollBoxRenderable) => props.onScrollboxRef(r)}
+                flexGrow={1}
+                stickyScroll
+                stickyStart="bottom"
+                paddingLeft={1}
+                paddingRight={1}
+                paddingTop={1}
+            >
                 <Show when={messages.length === 0}>
                     <Welcome
                         greeting="welcome to inf"
