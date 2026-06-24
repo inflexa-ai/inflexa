@@ -28,6 +28,13 @@ export function theme(): ThemeColors {
     return themes[activeThemeId()].colors;
 }
 
+/** Active theme's light/dark base — read in a tracking scope for reactivity. Drives the selection
+ * highlight style (a dark palette's bright syntax suits OpenTUI's native per-token inversion; a light
+ * one needs a flat, color-preserving highlight instead). See applySelectionColors in app.tsx. */
+export function themeVariant(): "dark" | "light" {
+    return themes[activeThemeId()].variant;
+}
+
 /** A transient status-line notice surfaced in the TUI (the stdout-free feedback channel). */
 export type Notice = {
     /** Severity, which selects the notice color. */

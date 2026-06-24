@@ -1,15 +1,16 @@
 import { createSignal, createEffect, Show, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, produce } from "solid-js/store";
-import type { TextareaRenderable } from "@opentui/core";
+import type { Renderable, TextareaRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 
 import { GLYPHS, zIndex } from "../lib/design_system.ts";
 import { shutdown } from "../lib/shutdown.ts";
-import { theme, noticeColor, type Notice } from "./theme.ts";
+import { writeClipboard } from "../lib/clipboard.ts";
+import { theme, themeVariant, noticeColor, type Notice } from "./theme.ts";
 import { chatStatus } from "./hooks/status.ts";
 import * as conversation from "./hooks/conversation.ts";
-import { currentNotice } from "./hooks/notice.ts";
+import { currentNotice, notify } from "./hooks/notice.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { useKeymapRoot, useBindings, pushMode, MODE_BASE, MODE_MODAL, resolveKeybind, keybindLabel, leaderSeq } from "./keymap.ts";
@@ -89,6 +90,36 @@ export function App(props: AppProps) {
         if (cmd) void runCommand(cmd, workspace);
     }
 
+    // Per-palette selection highlight. Dark themes keep OpenTUI's native highlight (each cell's fg becomes
+    // its selection bg) — vivid against their bright syntax; light themes invert into mush, so there we
+    // flatten the bg to `bgActive` and leave the fg alone (each token keeps its syntax color). Applied on
+    // mouse-DOWN, not the `selection` event which only fires on mouse-up — too late for the first drag
+    // frame; walked over the tree because markdown's internal text/code children take no `selectionBg` prop.
+    function applySelectionColors(): void {
+        const bg = themeVariant() === "light" ? theme().bgActive : undefined;
+        const visit = (r: Renderable): void => {
+            // text/code/diff/textarea expose the setters, a box doesn't; the `in` guard makes the cast sound.
+            if ("selectionBg" in r) {
+                const sel = r as Renderable & { selectionBg: string | undefined; selectionFg: string | undefined };
+                sel.selectionBg = bg; // undefined = native highlight; reassigned each call so a theme switch re-derives
+                sel.selectionFg = undefined;
+            }
+            for (const child of r.getChildren()) visit(child);
+        };
+        visit(renderer.root);
+    }
+
+    // Copy-on-select (see TEXT-SELECTION-CLIPBOARD-REPORT.md): OpenTUI owns the selection, we just read,
+    // write, toast, clear. On the root box so a release anywhere copies.
+    // ponytail: unconditional — the report's Windows explicit-copy flag can be a config knob if asked.
+    function copySelection(): void {
+        const text = renderer.getSelection()?.getSelectedText();
+        if (!text) return; // empty → a plain click, not a drag
+        void writeClipboard(text); // best-effort, never rejects → notify optimistically
+        notify({ kind: "info", text: "Copied to clipboard" });
+        renderer.clearSelection();
+    }
+
     // Base chat keys, live only in base mode: opening a dialog pushes MODE_MODAL (effect below),
     // which suspends this whole layer at once — the declarative replacement for `if (dialogOpen)`.
     // Each app key has a direct chord AND a `<leader>` sequence (the leader, ctrl+x by default,
@@ -161,7 +192,7 @@ export function App(props: AppProps) {
 
     return (
         <WorkspaceContext.Provider value={workspace}>
-            <box flexDirection="column" width="100%" height="100%" backgroundColor={theme().bg}>
+            <box flexDirection="column" width="100%" height="100%" backgroundColor={theme().bg} onMouseDown={applySelectionColors} onMouseUp={copySelection}>
                 {/* Header */}
                 <StatusBar
                     title="inf"
@@ -185,6 +216,30 @@ export function App(props: AppProps) {
                             }}
                             onSubmit={() => void handleSubmit()}
                         />
+
+                        {/* Transient toast (single slot, auto-dismissed). Inside the chat column, not the
+                        root box, so it floats over the conversation and never the sidebar — opentui absolute
+                        positioning is parent-relative. zIndex keeps it above an open modal. */}
+                        <Show when={currentNotice()} keyed>
+                            {(n: Notice) => (
+                                <box
+                                    position="absolute"
+                                    top={1}
+                                    right={2}
+                                    zIndex={zIndex.toast}
+                                    maxWidth={Math.min(60, dims().width - 6)}
+                                    backgroundColor={theme().bgRaised}
+                                    border
+                                    borderColor={noticeColor(n.kind)}
+                                    paddingLeft={1}
+                                    paddingRight={1}
+                                >
+                                    <text fg={noticeColor(n.kind)}>
+                                        {n.kind === "error" ? GLYPHS.cross : n.kind === "warn" ? GLYPHS.warning : GLYPHS.circle} {n.text}
+                                    </text>
+                                </box>
+                            )}
+                        </Show>
                     </box>
 
                     {/* Full-height sidebar: spans both the stream and the input; ctrl+b toggles it. */}
@@ -196,31 +251,6 @@ export function App(props: AppProps) {
                 {/* which-key: while a leader sequence is pending, lists the reachable next keys.
                 Base-mode only, so it never overlaps a modal (a dialog suppresses base bindings). */}
                 <WhichKey />
-
-                {/* Transient toast: a floating top-right overlay (OpenCode-style), single slot,
-                auto-dismissed by the notice store. zIndex above the dialog host so a notice
-                raised by a background event still surfaces over an open modal. top={2} clears
-                the height-1 status bar with a one-row gap. */}
-                <Show when={currentNotice()} keyed>
-                    {(n: Notice) => (
-                        <box
-                            position="absolute"
-                            top={2}
-                            right={2}
-                            zIndex={zIndex.toast}
-                            maxWidth={Math.min(60, dims().width - 6)}
-                            backgroundColor={theme().bgRaised}
-                            border
-                            borderColor={noticeColor(n.kind)}
-                            paddingLeft={1}
-                            paddingRight={1}
-                        >
-                            <text fg={noticeColor(n.kind)}>
-                                {n.kind === "error" ? GLYPHS.cross : n.kind === "warn" ? GLYPHS.warning : GLYPHS.circle} {n.text}
-                            </text>
-                        </box>
-                    )}
-                </Show>
 
                 {/* Dialog host: the top modal floats above the chat as a full-screen absolute
                 overlay. It is a direct child of the full-screen root box (NOT a Portal — a
