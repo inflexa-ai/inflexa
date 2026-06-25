@@ -5,8 +5,10 @@ import { Bus } from "../../lib/bus.ts";
 import { theme } from "../theme.ts";
 import { MessageBlock } from "../layout/message_block.tsx";
 import { Welcome } from "./welcome.tsx";
+import { ThinkingIndicator } from "./thinking_indicator.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { getAnchor } from "../../db/primary_query.ts";
+import { chatStatus } from "../hooks/status.ts";
 import { messages, streamText, streamPartId, errorMsg, applyBusEvent, loadMessages, resetHotState } from "../hooks/conversation.ts";
 import type { BusEvent } from "../../types/events.ts";
 
@@ -76,6 +78,13 @@ export function Chat(props: ChatProps) {
                     />
                 </Show>
                 <For each={messages}>{(msg) => <MessageBlock role={msg.role} parts={msg.parts} streamPartId={streamPartId} streamText={streamText} />}</For>
+
+                {/* Live "thinking" indicator: sits under the last (assistant) turn for the whole busy
+                window — before the first token and while text streams below it — so the wait reads as
+                active. Inside the scrollbox so it scrolls with the conversation, not as fixed chrome. */}
+                <Show when={chatStatus() === "busy"}>
+                    <ThinkingIndicator />
+                </Show>
             </scrollbox>
 
             {/* Error banner: onAccent is the readable foreground on the filled error background

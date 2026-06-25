@@ -43,6 +43,12 @@ export const GLYPHS = {
     circleHollow: "○",
     /** U+25D0 — half-filled circle: in-progress / busy (chat `thinking` status). */
     circleHalf: "◐",
+    /**
+     * U+2800-block braille frames (fixed single-cell width) cycled as the live "thinking" spinner.
+     * The classic 10-frame `dots` sequence: more frames + smaller per-step motion than a 4-frame
+     * circle, so it reads as smooth continuous spin rather than a choppy quarter-flip.
+     */
+    spinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
     /** U+25AE — filled vertical bar: one cell of a progress meter. */
     bar: "▮",
     /** U+25C6 — filled diamond: the `thinking` gutter marker. */
