@@ -26,7 +26,7 @@ export function dieOn(message: string): (error: { type: string; cause?: unknown 
 /**
  * Interactive y/N confirmation for the text commands. On a TTY it is a clack prompt; with a
  * non-interactive stdin (pipe / heredoc / CI) it falls back to a line read so a scripted
- * `echo y | inf …` is still honored. Returns false on No, on cancel (Ctrl-C / Esc), and on
+ * `echo y | inflexa …` is still honored. Returns false on No, on cancel (Ctrl-C / Esc), and on
  * empty input / EOF (e.g. `</dev/null`) — genuine silence never proceeds. Text-command layer
  * ONLY — never call this from the opentui TUI, which owns the terminal in alternate-screen
  * mode and cannot share it with clack.

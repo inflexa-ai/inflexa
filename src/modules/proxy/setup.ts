@@ -6,7 +6,7 @@ import { activeRuntime } from "../../lib/config.ts";
 import { capture, ensureReady, inherit, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 
-// `inf setup` provisions CLIProxyAPI (https://help.router-for.me) as a container,
+// `inflexa setup` provisions CLIProxyAPI (https://help.router-for.me) as a container,
 // authenticates a provider, and starts it. We run it in a container — the project
 // ships an official image, so this drops the per-OS binary download entirely and
 // keeps one runtime across macOS, Linux, and Windows. The backing system (Docker
@@ -57,7 +57,7 @@ export async function setup(options: SetupOptions): Promise<void> {
                 console.log("  Already authenticated — skipping login (use `--provider <name>` to add or switch).");
             } else {
                 const authed = await authenticate(rt, provider);
-                if (!authed) console.log("  No provider authenticated yet — re-run `inf setup` to sign in.");
+                if (!authed) console.log("  No provider authenticated yet — re-run `inflexa setup` to sign in.");
             }
         }
 
@@ -84,7 +84,7 @@ function resolveProvider(options: SetupOptions): Provider | undefined {
 
 function printNextSteps(options: SetupOptions): void {
     console.log("\n  Done.");
-    if (!options.start) console.log("  The proxy starts automatically the next time you run `inf`.");
+    if (!options.start) console.log("  The proxy starts automatically the next time you run `inflexa`.");
     console.log(`  The TUI talks to the proxy at ${env.cliproxyBaseUrl}.`);
     console.log();
 }
@@ -92,7 +92,7 @@ function printNextSteps(options: SetupOptions): void {
 // --- proxy runtime ---------------------------------------------------------
 
 const IMAGE = "eceasy/cli-proxy-api:latest";
-const CONTAINER_NAME = "inf-cliproxy";
+const CONTAINER_NAME = "inflexa-cliproxy";
 
 /**
  * The image runs `./CLIProxyAPI` from WORKDIR /CLIProxyAPI (see upstream
@@ -297,7 +297,7 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
 
     console.log(`\n  Authenticating ${PROVIDER_LABEL[provider]} — open the printed URL in your browser…`);
     const code = await inherit(rt, args);
-    if (code !== 0) console.log(`  ${PROVIDER_LABEL[provider]} login exited with code ${code}; you can retry with \`inf setup\`.`);
+    if (code !== 0) console.log(`  ${PROVIDER_LABEL[provider]} login exited with code ${code}; you can retry with \`inflexa setup\`.`);
 }
 
 /**
@@ -350,11 +350,11 @@ export async function ensureProxyReady(): Promise<void> {
 
     if (!(await isAuthenticated())) {
         if (!process.stdin.isTTY) {
-            throw new ProxyError("CLIProxyAPI isn't authenticated yet.\n  Run `inf setup` to sign in to a provider before starting the TUI.");
+            throw new ProxyError("CLIProxyAPI isn't authenticated yet.\n  Run `inflexa setup` to sign in to a provider before starting the TUI.");
         }
         console.log("\n  CLIProxyAPI isn't authenticated yet — let's sign in.");
         if (!(await authenticate(rt, undefined))) {
-            throw new ProxyError("Authentication didn't complete.\n  Run `inf setup` to finish signing in, then try again.");
+            throw new ProxyError("Authentication didn't complete.\n  Run `inflexa setup` to finish signing in, then try again.");
         }
     }
 

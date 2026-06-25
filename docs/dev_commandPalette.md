@@ -232,7 +232,7 @@ unchanged:
     keybind: undefined,
     enabled: (ctx) => ctx.analysis !== null,
     run: (ctx) => runOpen(ctx.analysis!.id),   // same module fn the CLI's
-`inf open` calls
+`inflexa open` calls
 },
 
 An input-taking command opens a dialog (a small PromptDialog/picker built on

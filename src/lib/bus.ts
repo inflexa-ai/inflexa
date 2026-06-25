@@ -4,14 +4,18 @@ import type { BusEvent, StampedEvent } from "../types/events.ts";
 import { getLogger } from "./log.ts";
 
 class BusEmitter extends EventEmitter<{
-    inf: [StampedEvent];
+    inflexa: [StampedEvent];
 }> {
     override emit<E extends string | symbol>(
-        eventName: keyof EventEmitter.EventEmitterEventMap | "inf" | E,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- That is the stdlib signature that we are overriding
-        ...args: E extends "inf" ? { inf: [BusEvent] }[E] : E extends keyof EventEmitter.EventEmitterEventMap ? EventEmitter.EventEmitterEventMap[E] : any[]
+        eventName: keyof EventEmitter.EventEmitterEventMap | "inflexa" | E,
+        ...args: E extends "inflexa"
+            ? { inflexa: [BusEvent] }[E]
+            : E extends keyof EventEmitter.EventEmitterEventMap
+              ? EventEmitter.EventEmitterEventMap[E]
+              : // eslint-disable-next-line @typescript-eslint/no-explicit-any -- stdlib signature we are overriding
+                any[]
     ): boolean {
-        if (eventName === "inf" && args && args[0] && typeof args[0] === "object") {
+        if (eventName === "inflexa" && args && args[0] && typeof args[0] === "object") {
             args[0].__infId = args[0].__infId ?? randomUUIDv7();
         }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- args is BusEvent on input but StampedEvent after __infId mutation
@@ -68,7 +72,7 @@ export function initBusLogging(): void {
     subscribed = true;
 
     const log = getLogger("bus");
-    Bus.on("inf", (event) => {
+    Bus.on("inflexa", (event) => {
         log.info({ event: event.type, infId: event.__infId, ...eventFields(event) }, "bus event");
     });
 }

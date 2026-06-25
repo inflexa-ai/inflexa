@@ -114,12 +114,12 @@ Palette filtering SHALL use a small subsequence scorer — the shared `subsequen
 
 ### Requirement: Phase-1 commands run in-app over shared cores
 
-The palette SHALL ship the command set that needs no chat swap: Settings (embed the existing config screen as a dialog), Change theme (apply `setTheme` and persist via `writeConfig`), Open output folder (the library-pure `openOutputDir` core for the current analysis, which the `inf open` CLI's `runOpen` wraps), Show status (render `resolveContext` / `describeContext` output in a results dialog), List analyses (render `listRecentAnalyses` in a results dialog), New project (a prompt dialog calling `createProject`, with `Str256` validation at the boundary), and Quit (`ctx.quit()`). These commands SHALL reuse the existing library-pure module cores and SHALL surface results via dialogs or `ctx.notify`, never stdout.
+The palette SHALL ship the command set that needs no chat swap: Settings (embed the existing config screen as a dialog), Change theme (apply `setTheme` and persist via `writeConfig`), Open output folder (the library-pure `openOutputDir` core for the current analysis, which the `inflexa open` CLI's `runOpen` wraps), Show status (render `resolveContext` / `describeContext` output in a results dialog), List analyses (render `listRecentAnalyses` in a results dialog), New project (a prompt dialog calling `createProject`, with `Str256` validation at the boundary), and Quit (`ctx.quit()`). These commands SHALL reuse the existing library-pure module cores and SHALL surface results via dialogs or `ctx.notify`, never stdout.
 
 #### Scenario: Open output folder reuses the core
 
 - **WHEN** "Open output folder" runs with an analysis open
-- **THEN** it calls the same `openOutputDir` core that the `inf open` command's `runOpen` wraps
+- **THEN** it calls the same `openOutputDir` core that the `inflexa open` command's `runOpen` wraps
 
 #### Scenario: Read-only result renders in a dialog
 

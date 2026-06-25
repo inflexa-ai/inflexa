@@ -59,7 +59,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                 paddingTop={space.sm}
             >
                 <State n="1" label="welcome / startup">
-                    <Welcome greeting="welcome to inf" anchorPath="~/inflexa-tests" markerWritten={true} hints={["run /init", "ctrl+k for commands"]} />
+                    <Welcome greeting="welcome to inflexa" anchorPath="~/inflexa-tests" markerWritten={true} hints={["run /init", "ctrl+k for commands"]} />
                 </State>
                 <State n="2" label="plain chat turn">
                     <MessageBlock role="user" parts={[mockUserText]} streamPartId={noStreamId} streamText={noStreamText} />

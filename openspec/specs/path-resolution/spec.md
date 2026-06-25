@@ -5,12 +5,12 @@ Classification and resolution of analysis input path references (anchor-relative
 ## Requirements
 ### Requirement: Output fallback directory in env
 
-The system SHALL expose `env.outputFallbackDir` resolving to `join(dataDir(), "inf", "analyses")`, defined in `src/lib/env.ts` (the only `process.env` reader), with a matching `envDoc` entry so it renders in `--help`.
+The system SHALL expose `env.outputFallbackDir` resolving to `join(dataDir(), "inflexa", "analyses")`, defined in `src/lib/env.ts` (the only `process.env` reader), with a matching `envDoc` entry so it renders in `--help`.
 
 #### Scenario: Fallback dir derives from the data home
 
 - **WHEN** `env.outputFallbackDir` is read
-- **THEN** it equals `<data home>/inf/analyses`
+- **THEN** it equals `<data home>/inflexa/analyses`
 - **AND** an `envDoc.outputFallbackDir` entry of kind `path` exists for `--help`
 
 ### Requirement: Classify an input path into a reference
@@ -64,7 +64,7 @@ The system SHALL provide `resolveInputPath(input)` returning `Result<string | nu
 
 ### Requirement: Resolve the analysis output directory
 
-The system SHALL provide `resolveOutputDir(analysis)` returning `Result<string, DbError>` in `src/modules/analysis/output.ts`, using three cases in order: (1) when `analysis.outputDirectory` is non-null, use it; (2) else when the anchor resolves to a writable path, use `join(anchorPath, ".inf", "analyses", slug)`; (3) otherwise use `join(env.outputFallbackDir, slug)`. It SHALL NOT create the directory or persist the choice.
+The system SHALL provide `resolveOutputDir(analysis)` returning `Result<string, DbError>` in `src/modules/analysis/output.ts`, using three cases in order: (1) when `analysis.outputDirectory` is non-null, use it; (2) else when the anchor resolves to a writable path, use `join(anchorPath, ".inflexa", "analyses", slug)`; (3) otherwise use `join(env.outputFallbackDir, slug)`. It SHALL NOT create the directory or persist the choice.
 
 #### Scenario: Explicit override wins
 
@@ -74,7 +74,7 @@ The system SHALL provide `resolveOutputDir(analysis)` returning `Result<string, 
 #### Scenario: Writable anchor places output beside the data
 
 - **WHEN** `outputDirectory` is null and the anchor resolves to a writable path
-- **THEN** `resolveOutputDir` returns `join(anchorPath, ".inf", "analyses", slug)`
+- **THEN** `resolveOutputDir` returns `join(anchorPath, ".inflexa", "analyses", slug)`
 
 #### Scenario: Non-writable or unresolvable anchor uses the fallback
 

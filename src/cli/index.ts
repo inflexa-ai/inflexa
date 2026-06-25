@@ -11,7 +11,7 @@ export const cli = new Command();
  * — the single source of truth for documented paths/vars — so adding an entry
  * there surfaces it here automatically. Attached only to the root command (via
  * `addHelpText("after")`, not `"afterAll"`), so focused subcommand help such as
- * `inf setup --help` stays uncluttered.
+ * `inflexa setup --help` stays uncluttered.
  */
 function renderEnvHelp(): string {
     const pathRows: string[][] = [];
@@ -51,9 +51,9 @@ cli.name(pkg.name).description("Launch the interactive TUI (default), or run one
 // telemetry cleanly. Set before the subcommands so they inherit the behavior.
 cli.exitOverride();
 
-// Default command: bare `inf` resolves the analysis context for the current directory
+// Default command: bare `inflexa` resolves the analysis context for the current directory
 // (cwd's anchor → its analyses) and opens/pick/starts a chat, per the data model's central
-// "cd to the data, run inf, chat" flow. `--analysis`/`--project` override cwd resolution.
+// "cd to the data, run inflexa, chat" flow. `--analysis`/`--project` override cwd resolution.
 // Commander runs this action when no registered subcommand matches.
 cli.option("--analysis <id|name>", "Operate on a specific analysis")
     .option("--project <name>", "Scope to a project")
@@ -110,7 +110,7 @@ cli.command("open <idOrName>")
     });
 
 cli.command("status")
-    .description("Print what `inf` resolves to right now (loud context)")
+    .description("Print what `inflexa` resolves to right now (loud context)")
     .option("--analysis <id|name>", "Resolve a specific analysis")
     .option("--project <name>", "Scope to a project")
     .action(async (options: { analysis?: string; project?: string }) => {

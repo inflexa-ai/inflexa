@@ -81,7 +81,7 @@ export function initOtel(consented: boolean): boolean {
  * already redacted by the root logger before they reach this stream.
  */
 export function createOtelLogStream(): DestinationStream {
-    const otelLogger = logs.getLogger("inf");
+    const otelLogger = logs.getLogger("inflexa");
     return {
         write(line: string): void {
             try {

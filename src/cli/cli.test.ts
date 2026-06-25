@@ -4,11 +4,11 @@ import { runCli } from "../test_support/cli.ts";
 
 // e2e of the commander registry surface — help text and the error/exit-code contract. No DB needed:
 // --help exits before any action, and unknown option/command errors during parse.
-describe("inf help & usage (e2e)", () => {
+describe("inflexa help & usage (e2e)", () => {
     test("--help exits 0 and lists the registered commands", () => {
         const result = runCli(["--help"]);
         expect(result.exitCode).toBe(0);
-        expect(result.stdout).toContain("Usage: inf");
+        expect(result.stdout).toContain("Usage: inflexa");
         expect(result.stdout).toContain("project");
         expect(result.stdout).toContain("sessions");
     });

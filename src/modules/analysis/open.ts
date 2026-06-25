@@ -24,7 +24,7 @@ export function openerArgv(dir: string, platform: NodeJS.Platform = process.plat
 
 /**
  * Ensure an analysis's output directory exists and open it in the OS file browser; returns the
- * opened path. Library-pure (no stdout, no process exit) so both the `inf open` CLI adapter
+ * opened path. Library-pure (no stdout, no process exit) so both the `inflexa open` CLI adapter
  * and the in-app command palette can call it.
  */
 export function openOutputDir(analysis: Analysis): Result<string, DbError> {
@@ -35,7 +35,7 @@ export function openOutputDir(analysis: Analysis): Result<string, DbError> {
     });
 }
 
-/** `inf open <id|name>` — open an analysis's output directory in the OS file browser. */
+/** `inflexa open <id|name>` — open an analysis's output directory in the OS file browser. */
 export function runOpen(idOrName: IdOrName): void {
     const analysis = findAnalysis(idOrName).match((a) => a, dieOn("Failed to resolve analysis"));
     if (!analysis) fail(`No analysis found matching "${idOrName}".`);

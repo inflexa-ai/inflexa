@@ -8,14 +8,14 @@ import { findMarkerUpwards, markerPath, readMarker, writeMarker } from "./marker
 const created: string[] = [];
 
 function tmp(): string {
-    const dir = mkdtempSync(join(tmpdir(), "inf-marker-"));
+    const dir = mkdtempSync(join(tmpdir(), "inflexa-marker-"));
     created.push(dir);
     return dir;
 }
 
 function writeRawMarker(dir: string, content: string): void {
-    mkdirSync(join(dir, ".inf"), { recursive: true });
-    writeFileSync(join(dir, ".inf", "id"), content);
+    mkdirSync(join(dir, ".inflexa"), { recursive: true });
+    writeFileSync(join(dir, ".inflexa", "id"), content);
 }
 
 afterEach(() => {

@@ -6,7 +6,7 @@ import { env } from "./env.ts";
 
 const MAX_LOG_AGE_DAYS = 7;
 const MAX_LOG_BYTES = 20 * 1024 * 1024;
-const LOG_FILE_PATTERN = /^inf-(\d{4}-\d{2}-\d{2})(?:\.\d+)?\.log$/;
+const LOG_FILE_PATTERN = /^inflexa-(\d{4}-\d{2}-\d{2})(?:\.\d+)?\.log$/;
 
 /**
  * Rotation runs once, at startup — the CLI is short-lived, so every
@@ -28,14 +28,14 @@ function rotatedLogFile(): string {
     }
 
     const today = new Date().toISOString().slice(0, 10);
-    let file = join(env.logDir, `inf-${today}.log`);
+    let file = join(env.logDir, `inflexa-${today}.log`);
     for (let n = 2; ; n++) {
         try {
             if (statSync(file).size < MAX_LOG_BYTES) return file;
         } catch {
             return file;
         }
-        file = join(env.logDir, `inf-${today}.${n}.log`);
+        file = join(env.logDir, `inflexa-${today}.${n}.log`);
     }
 }
 

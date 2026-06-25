@@ -14,7 +14,7 @@ import type { Analysis } from "../../types/analysis.ts";
 const created: string[] = [];
 
 function tmp(): string {
-    const dir = mkdtempSync(join(tmpdir(), "inf-output-"));
+    const dir = mkdtempSync(join(tmpdir(), "inflexa-output-"));
     created.push(dir);
     return dir;
 }
@@ -51,11 +51,11 @@ describe("resolveOutputDir", () => {
         expect(resolveOutputDir(analysis({ outputDirectory: "/explicit/out" }))._unsafeUnwrap()).toBe("/explicit/out");
     });
 
-    test("case 2 — a resolvable, writable anchor → beside the data under .inf/analyses/<slug>", () => {
+    test("case 2 — a resolvable, writable anchor → beside the data under .inflexa/analyses/<slug>", () => {
         const home = tmp();
         writeMarker(home, "A1");
         insertAnchorAt("A1", home);
-        expect(resolveOutputDir(analysis())._unsafeUnwrap()).toBe(join(home, ".inf", "analyses", "myslug"));
+        expect(resolveOutputDir(analysis())._unsafeUnwrap()).toBe(join(home, ".inflexa", "analyses", "myslug"));
     });
 
     test("case 3 — an unresolvable anchor → the managed fallback dir", () => {

@@ -10,7 +10,7 @@ import { resolveAnchor } from "../anchor/anchor.ts";
 /**
  * Decide an analysis's output dir (does not create it). Three cases, in order:
  * 1. explicit override / prior fallback already recorded on the analysis;
- * 2. anchor resolves and is writable → beside the data under `.inf/`;
+ * 2. anchor resolves and is writable → beside the data under `.inflexa/`;
  * 3. fallback to managed storage so every analysis always has somewhere to write.
  */
 export function resolveOutputDir(analysis: Analysis): Result<string, DbError> {
@@ -18,7 +18,7 @@ export function resolveOutputDir(analysis: Analysis): Result<string, DbError> {
 
     return resolveAnchor(analysis.anchorId).map(({ path }) => {
         if (path !== null && isDirWritable(path)) {
-            return join(path, ".inf", "analyses", analysis.slug);
+            return join(path, ".inflexa", "analyses", analysis.slug);
         }
         return join(env.outputFallbackDir, analysis.slug);
     });

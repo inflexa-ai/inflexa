@@ -77,7 +77,7 @@ export const GLYPHS = {
 // `src/tui/theme.ts`, which imports from here. The ids live here too so
 // `src/lib/config.ts` can validate the persisted theme (its zod enum) without
 // dragging the reactive layer (and solid-js) onto every command path:
-// `src/index.ts` reads config at startup for every command (`inf auth login`, …).
+// `src/index.ts` reads config at startup for every command (`inflexa auth login`, …).
 
 /**
  * Ordered id list — single source of truth for the picker order, the `ThemeId` union,

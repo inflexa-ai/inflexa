@@ -41,7 +41,7 @@ export function makeBaseSlug(name: string): string {
     return `analysis-${randomUUIDv7().slice(-6).toLowerCase()}`;
 }
 
-// Slugs must be unique within the anchor: outputs live at <anchor>/.inf/analyses/<slug>/,
+// Slugs must be unique within the anchor: outputs live at <anchor>/.inflexa/analyses/<slug>/,
 // so two analyses sharing an anchor must not share a slug. Suffix -2, -3, … on collision.
 function uniqueSlugForAnchor(anchorId: string, name: string): Result<string, DbError> {
     const base = makeBaseSlug(name);
@@ -83,7 +83,7 @@ export function addInputs(analysisId: string, rawPaths: string[], cwd: string): 
 
 /**
  * Orchestrate analysis creation: anchor → unique slug → insert → inputs → output-dir
- * resolution + fallback persist. Output-dir *creation* is deferred to first chat / `inf open`;
+ * resolution + fallback persist. Output-dir *creation* is deferred to first chat / `inflexa open`;
  * here we only resolve and persist a stable path.
  */
 export function createAnalysis(opts: CreateAnalysisInput): Result<Analysis, DbError> {

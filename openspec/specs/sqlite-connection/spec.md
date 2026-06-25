@@ -23,14 +23,14 @@ The system SHALL open a SQLite database connection lazily on first access and re
 - **THEN** the system retries initialization and returns `ok(database)` on success
 
 ### Requirement: Database path configuration
-The system SHALL use `~/.local/share/inf/agent.db` as the default database path, overridable via the `INF_DB_PATH` environment variable. The system SHALL create parent directories if they do not exist.
+The system SHALL use `~/.local/share/inflexa/agent.db` as the default database path, overridable via the `INFLEXA_DB_PATH` environment variable. The system SHALL create parent directories if they do not exist.
 
 #### Scenario: Default path
-- **WHEN** `INF_DB_PATH` is not set
-- **THEN** the database is created at `~/.local/share/inf/agent.db`
+- **WHEN** `INFLEXA_DB_PATH` is not set
+- **THEN** the database is created at `~/.local/share/inflexa/agent.db`
 
 #### Scenario: Custom path via environment variable
-- **WHEN** `INF_DB_PATH` is set to `/tmp/test.db`
+- **WHEN** `INFLEXA_DB_PATH` is set to `/tmp/test.db`
 - **THEN** the database is created at `/tmp/test.db`
 
 #### Scenario: Parent directory creation

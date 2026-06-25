@@ -8,7 +8,7 @@ import { findMarkerUpwards } from "../anchor/marker.ts";
 import { classifyMarkerSighting, resolveAnchor } from "../anchor/anchor.ts";
 import { findAnalysis, listAnalysesForAnchorAt, listRecentAnalyses } from "./analysis.ts";
 
-/** What bare `inf` resolves to, by the spec's precedence. Pure data — the picker/prompts/printing live in the CLI/TUI layer. */
+/** What bare `inflexa` resolves to, by the spec's precedence. Pure data — the picker/prompts/printing live in the CLI/TUI layer. */
 export type ResolvedContext =
     | { kind: "analysis"; analysis: Analysis; anchorPath: string } // a single clear target
     | { kind: "anchor"; anchorPath: string; analyses: Analysis[] } // a folder with 0+ analyses → pick/new
@@ -20,7 +20,7 @@ export type ResolvedContext =
 export type ContextFlags = { analysis?: IdOrName; project?: IdOrName };
 
 /**
- * Decide what bare `inf` operates on, by the spec's precedence. Pure data — the picker,
+ * Decide what bare `inflexa` operates on, by the spec's precedence. Pure data — the picker,
  * prompts, and "loud context" printing live in the CLI/TUI layer.
  */
 export function resolveContext(cwd: string, flags: ContextFlags): Result<ResolvedContext, DbError> {

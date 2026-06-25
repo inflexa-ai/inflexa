@@ -5,7 +5,7 @@ TBD - created by archiving change intelligence-module. Update Purpose after arch
 ## Requirements
 ### Requirement: AI interaction is owned by the intelligence module
 
-The headless AI-interaction slice SHALL live at `src/modules/intelligence/`. It SHALL provide the model-streaming chat engine as `chat(opts: ChatOptions): Promise<Result<void, DbError>>` from `src/modules/intelligence/chat.ts`, and the `inf sessions` list command as `listSessions()` from `src/modules/intelligence/sessions.ts`. No `src/modules/session/` directory SHALL remain after the change. The move SHALL preserve behavior: `chat()` persists the user turn, streams the assistant response from the proxy, emits bus events, and persists the final text exactly as before; `listSessions()` prints saved sessions exactly as before.
+The headless AI-interaction slice SHALL live at `src/modules/intelligence/`. It SHALL provide the model-streaming chat engine as `chat(opts: ChatOptions): Promise<Result<void, DbError>>` from `src/modules/intelligence/chat.ts`, and the `inflexa sessions` list command as `listSessions()` from `src/modules/intelligence/sessions.ts`. No `src/modules/session/` directory SHALL remain after the change. The move SHALL preserve behavior: `chat()` persists the user turn, streams the assistant response from the proxy, emits bus events, and persists the final text exactly as before; `listSessions()` prints saved sessions exactly as before.
 
 #### Scenario: Chat engine resolves at the intelligence path
 

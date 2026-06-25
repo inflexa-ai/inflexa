@@ -5,7 +5,7 @@ import { listProjects, countAnalysesByProject, findProjectByRef } from "../../db
 import type { Analysis } from "../../types/analysis.ts";
 import type { Project } from "../../types/project.ts";
 
-/** `inf project new <name>` — create a project, validating the name at this CLI boundary. */
+/** `inflexa project new <name>` — create a project, validating the name at this CLI boundary. */
 export function projectNew(name: string, opts: { description?: string; tags?: string }): void {
     const validName = str256(name).match(
         (s) => s,
@@ -31,7 +31,7 @@ export function projectNew(name: string, opts: { description?: string; tags?: st
     );
 }
 
-/** `inf project ls` — list projects, each with its analysis count. */
+/** `inflexa project ls` — list projects, each with its analysis count. */
 export function projectLs(): void {
     listProjects().match((projects) => {
         if (projects.length === 0) {

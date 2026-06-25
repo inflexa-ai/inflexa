@@ -33,7 +33,7 @@ The system SHALL house the chat TUI's Direction-B app-shell composition kit unde
 
 ### Requirement: Persistent status bar
 
-`StatusBar` SHALL render a left region, an OPTIONAL middle region, and a right region. Left = `inf` in `theme().accent` plus a screen title or the active analysis name. The middle region is parameterized by the caller: in the chat it SHALL show the live session state (`ready`/`thinking`/`error`), each with a leading glyph (e.g. `● ready`), colored `theme().success`/`theme().warn`/`theme().error` and sourced from the shared chat-status store (see "Chat status lives in a shared reactive store"); in `config` it SHALL show the unsaved-changes indicator in `theme().warn` and SHALL render nothing when there are no unsaved changes. Right = affordance hint labels sourced from the central keymap. `StatusBar` SHALL import only `theme` (no `modules/`/`db/` imports) and SHALL be composed by both `app.tsx` and `app_config.tsx`, replacing their hand-rolled header boxes. All colors SHALL come from `theme()`; no hex is inlined.
+`StatusBar` SHALL render a left region, an OPTIONAL middle region, and a right region. Left = `inflexa` in `theme().accent` plus a screen title or the active analysis name. The middle region is parameterized by the caller: in the chat it SHALL show the live session state (`ready`/`thinking`/`error`), each with a leading glyph (e.g. `● ready`), colored `theme().success`/`theme().warn`/`theme().error` and sourced from the shared chat-status store (see "Chat status lives in a shared reactive store"); in `config` it SHALL show the unsaved-changes indicator in `theme().warn` and SHALL render nothing when there are no unsaved changes. Right = affordance hint labels sourced from the central keymap. `StatusBar` SHALL import only `theme` (no `modules/`/`db/` imports) and SHALL be composed by both `app.tsx` and `app_config.tsx`, replacing their hand-rolled header boxes. All colors SHALL come from `theme()`; no hex is inlined.
 
 #### Scenario: Shows analysis name and live state
 
@@ -42,12 +42,12 @@ The system SHALL house the chat TUI's Direction-B app-shell composition kit unde
 
 #### Scenario: Reused by the config screen
 
-- **WHEN** `inf config` renders
+- **WHEN** `inflexa config` renders
 - **THEN** its header is the shared `StatusBar`, not a separately hand-rolled box
 
 #### Scenario: Optional middle region in config
 
-- **WHEN** `inf config` has unsaved changes
+- **WHEN** `inflexa config` has unsaved changes
 - **THEN** the status bar's middle region shows the unsaved indicator, and renders nothing when there are no unsaved changes
 
 ### Requirement: Fixed-gutter message block

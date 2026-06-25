@@ -9,7 +9,7 @@ import { canonicalPath, writeMarker } from "../anchor/marker.ts";
 const created: string[] = [];
 
 function tmp(): string {
-    const dir = mkdtempSync(join(tmpdir(), "inf-input-"));
+    const dir = mkdtempSync(join(tmpdir(), "inflexa-input-"));
     created.push(dir);
     return dir;
 }

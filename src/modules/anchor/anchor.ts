@@ -22,7 +22,7 @@ function makeAnchor(id: string, dir: string, markerWritten: boolean): Anchor {
  * analysis creation and context resolution.
  *
  * WRITES TO DISK: in a writable dir with no marker, this mints an anchor and writes a
- * `.inf/id` marker. Call it only from a deliberate user action (e.g. analysis creation),
+ * `.inflexa/id` marker. Call it only from a deliberate user action (e.g. analysis creation),
  * never from a passive/background flow like TUI launch — that would litter markers in every
  * folder the app opens (no-litter policy). For startup reconciliation use {@link recoverAnchors}.
  */
@@ -138,7 +138,7 @@ export function resolveAnchor(anchorId: string, opts?: { searchRoots?: string[] 
             const matches = [...candidates].filter((d) => markerMatches(d, anchorId));
             const unique = matches.length === 1 ? matches[0] : null;
             if (unique) return selfHeal(anchor, anchorId, unique);
-            // Zero or multiple hits: do not guess — caller surfaces "run `inf relocate`".
+            // Zero or multiple hits: do not guess — caller surfaces "run `inflexa relocate`".
             return ok({ anchor, path: null });
         });
     });

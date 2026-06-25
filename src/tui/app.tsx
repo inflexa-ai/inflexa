@@ -236,7 +236,7 @@ export function App(props: AppProps) {
             <box flexDirection="column" width="100%" height="100%" backgroundColor={theme().bg} onMouseDown={applySelectionColors} onMouseUp={copySelection}>
                 {/* Header */}
                 <StatusBar
-                    title="inf"
+                    title="inflexa"
                     subtitle={workspace.analysis?.name}
                     state={statusState()}
                     hints={[keybindLabel("app.command-palette"), keybindLabel("app.toggle-sidebar"), keybindLabel("app.abort")]}

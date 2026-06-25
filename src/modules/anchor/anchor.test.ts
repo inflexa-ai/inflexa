@@ -13,7 +13,7 @@ import type { Anchor, AnchorMarker } from "../../types/anchor.ts";
 const created: string[] = [];
 
 function tmp(): string {
-    const dir = mkdtempSync(join(tmpdir(), "inf-anchor-"));
+    const dir = mkdtempSync(join(tmpdir(), "inflexa-anchor-"));
     created.push(dir);
     return dir;
 }

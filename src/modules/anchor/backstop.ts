@@ -26,7 +26,7 @@ function readMarkerSafe(dir: string): AnchorMarker | null {
 }
 
 /**
- * `inf repair [path]` — sync the anchor whose marker sits at `path` (default cwd) back to
+ * `inflexa repair [path]` — sync the anchor whose marker sits at `path` (default cwd) back to
  * that path. The marker travelled with the folder, so its on-disk identity is the truth;
  * the stored `cachedPath` is the stale hint we correct.
  */
@@ -56,11 +56,11 @@ export function runRepair(path?: string): void {
     }, dieOn("Failed to look up anchor"));
 }
 
-/** Args for `inf relocate`: a single `<fromPath> <toPath>` pair, or a `--from`/`--to` prefix sweep. */
+/** Args for `inflexa relocate`: a single `<fromPath> <toPath>` pair, or a `--from`/`--to` prefix sweep. */
 type RelocateArgs = { fromPath?: string; toPath?: string; from?: string; to?: string };
 
 /**
- * `inf relocate <fromPath> <toPath>` (one anchor) or `inf relocate --from <prefix> --to
+ * `inflexa relocate <fromPath> <toPath>` (one anchor) or `inflexa relocate --from <prefix> --to
  * <prefix>` (every anchor under a moved tree). Unlike `repair`, this forces the new path
  * even when no marker followed the folder — the case `repair` cannot cover.
  */
@@ -73,7 +73,7 @@ export async function runRelocate(args: RelocateArgs): Promise<void> {
         await relocateOne(args.fromPath, args.toPath);
         return;
     }
-    fail("Usage: inf relocate <from-path> <to-path>   OR   inf relocate --from <prefix> --to <prefix>");
+    fail("Usage: inflexa relocate <from-path> <to-path>   OR   inflexa relocate --from <prefix> --to <prefix>");
 }
 
 /** Re-point the single anchor currently tracked at `fromPath` to `toPath`. */
@@ -134,7 +134,7 @@ async function relocatePrefix(fromPrefix: string, toPrefix: string): Promise<voi
 }
 
 /**
- * `inf prune` — drop anchors whose folders are confirmed gone. "Confirmed" means three
+ * `inflexa prune` — drop anchors whose folders are confirmed gone. "Confirmed" means three
  * things together: the anchor had an on-disk marker, its cached folder no longer exists,
  * and reconciliation cannot re-find it. A transient or relocatable miss is never pruned.
  */

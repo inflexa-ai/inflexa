@@ -2,7 +2,7 @@ import { listRecentAnalyses } from "./analysis.ts";
 import { findProjectByRef, getAnchor } from "../../db/primary_query.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
 
-/** `inf ls [--project <p>]` — list recent analyses, each with its home folder. */
+/** `inflexa ls [--project <p>]` — list recent analyses, each with its home folder. */
 export function runLs(opts: { project?: string }): void {
     let projectId: string | undefined;
     if (opts.project) {

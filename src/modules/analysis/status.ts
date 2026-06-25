@@ -1,7 +1,7 @@
 import { resolveContext, describeContext, type ContextFlags } from "./context.ts";
 import { dieOn } from "../../lib/cli.ts";
 
-/** `inf status` — print what `inf` resolves to right now (loud context). Read-only; launches nothing. */
+/** `inflexa status` — print what `inflexa` resolves to right now (loud context). Read-only; launches nothing. */
 export function runStatus(flags: ContextFlags): void {
     const ctx = resolveContext(process.cwd(), flags).match((c) => c, dieOn("Failed to resolve context"));
 
@@ -26,10 +26,10 @@ export function runStatus(flags: ContextFlags): void {
             for (const a of ctx.analyses) console.log(`    - ${a.id}  ${a.name}`);
             return;
         case "empty":
-            console.log(`  no anchor here; \`inf\` would start a new analysis in ${ctx.cwd}`);
+            console.log(`  no anchor here; \`inflexa\` would start a new analysis in ${ctx.cwd}`);
             return;
         case "copy":
-            console.log(`  copied folder — re-mint or relocate before use (\`inf repair\`/\`inf relocate\`)`);
+            console.log(`  copied folder — re-mint or relocate before use (\`inflexa repair\`/\`inflexa relocate\`)`);
             return;
     }
 }

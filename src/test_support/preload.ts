@@ -13,7 +13,7 @@ import "../extensions/index.ts";
 // to give integration tests an isolated SQLite DB + config dir instead of the developer's real
 // home. POSIX-only: env.ts keys off XDG on macOS/Linux (the dev/CI platforms); on win32 it would
 // read LOCALAPPDATA/APPDATA, which this sandbox does not set.
-const sandbox = mkdtempSync(join(tmpdir(), "inf-test-"));
+const sandbox = mkdtempSync(join(tmpdir(), "inflexa-test-"));
 process.env.XDG_DATA_HOME = join(sandbox, "data");
 process.env.XDG_CONFIG_HOME = join(sandbox, "config");
 

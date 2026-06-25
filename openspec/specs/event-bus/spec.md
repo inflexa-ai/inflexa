@@ -17,22 +17,22 @@ The canonical `BusEvent` union type SHALL be defined in the shared domain-model 
 - **THEN** it can import `Bus` from `../../lib/bus.ts` and add its event variant to `src/types/events.ts` without creating a circular dependency
 
 ### Requirement: Callers publish via Bus.emit
-Callers SHALL publish events using `Bus.emit("inf", event)` where `event` conforms to `BusEvent`.
+Callers SHALL publish events using `Bus.emit("inflexa", event)` where `event` conforms to `BusEvent`.
 
 #### Scenario: Publishing a session status event
-- **WHEN** a caller invokes `Bus.emit("inf", { type: "session.status", sessionId: "s1", status: "busy" })`
-- **THEN** the event is delivered to all listeners registered on the `"inf"` channel
+- **WHEN** a caller invokes `Bus.emit("inflexa", { type: "session.status", sessionId: "s1", status: "busy" })`
+- **THEN** the event is delivered to all listeners registered on the `"inflexa"` channel
 - **AND** the event is stamped with `__infId` by the emit override
 
 ### Requirement: Callers subscribe via Bus.on and unsubscribe via Bus.off
-Callers SHALL subscribe using `Bus.on("inf", handler)` and unsubscribe using `Bus.off("inf", handler)`.
+Callers SHALL subscribe using `Bus.on("inflexa", handler)` and unsubscribe using `Bus.off("inflexa", handler)`.
 
 #### Scenario: Subscribing and receiving events
-- **WHEN** a caller registers a handler with `Bus.on("inf", handler)`
-- **THEN** the handler SHALL be invoked for every subsequent `Bus.emit("inf", event)` call
+- **WHEN** a caller registers a handler with `Bus.on("inflexa", handler)`
+- **THEN** the handler SHALL be invoked for every subsequent `Bus.emit("inflexa", event)` call
 
 #### Scenario: Unsubscribing stops delivery
-- **WHEN** a caller calls `Bus.off("inf", handler)` with the same function reference
+- **WHEN** a caller calls `Bus.off("inflexa", handler)` with the same function reference
 - **THEN** that handler SHALL no longer receive events
 
 ### Requirement: Single bus instance exported as Bus

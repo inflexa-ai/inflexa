@@ -13,7 +13,7 @@ import { canonicalPath, writeMarker } from "./marker.ts";
 const created: string[] = [];
 
 function tmp(): string {
-    const dir = mkdtempSync(join(tmpdir(), "inf-repair-"));
+    const dir = mkdtempSync(join(tmpdir(), "inflexa-repair-"));
     created.push(dir);
     return dir;
 }
@@ -27,7 +27,7 @@ afterEach(() => {
     created.length = 0;
 });
 
-describe("inf repair (e2e)", () => {
+describe("inflexa repair (e2e)", () => {
     test("re-points an anchor's cached path to the marker's current location", () => {
         const moved = tmp();
         writeMarker(moved, "A1");

@@ -7,16 +7,16 @@ The headless Auth0 device-authorization session layer — config baking, device-
 
 ### Requirement: Auth0 configuration
 
-Auth0 settings (`INF_AUTH0_DOMAIN`, `INF_AUTH0_CLIENT_ID`, `INF_AUTH0_AUDIENCE`) SHALL be read exclusively through the `bakedEnv` object in `src/lib/env.ts`, using literal `process.env.<NAME>` member access so that release builds (`bun run build`) can inline them as compile-time constants; dev runs fall back to the runtime environment through the same expressions. They are internal configuration: they SHALL NOT appear in `envDoc`/`--help`, and a compiled binary SHALL NOT be influenced by their runtime values. No client secret SHALL exist anywhere (public client). Auth operations that need this config SHALL fail with a typed error naming every missing variable; commands that do not use Auth0 SHALL be unaffected by their absence.
+Auth0 settings (`INFLEXA_AUTH0_DOMAIN`, `INFLEXA_AUTH0_CLIENT_ID`, `INFLEXA_AUTH0_AUDIENCE`) SHALL be read exclusively through the `bakedEnv` object in `src/lib/env.ts`, using literal `process.env.<NAME>` member access so that release builds (`bun run build`) can inline them as compile-time constants; dev runs fall back to the runtime environment through the same expressions. They are internal configuration: they SHALL NOT appear in `envDoc`/`--help`, and a compiled binary SHALL NOT be influenced by their runtime values. No client secret SHALL exist anywhere (public client). Auth operations that need this config SHALL fail with a typed error naming every missing variable; commands that do not use Auth0 SHALL be unaffected by their absence.
 
 #### Scenario: Missing configuration (dev build)
 
-- **WHEN** an auth operation runs in dev and `INF_AUTH0_DOMAIN` and `INF_AUTH0_AUDIENCE` are unset
-- **THEN** it returns a config error listing exactly `INF_AUTH0_DOMAIN` and `INF_AUTH0_AUDIENCE`
+- **WHEN** an auth operation runs in dev and `INFLEXA_AUTH0_DOMAIN` and `INFLEXA_AUTH0_AUDIENCE` are unset
+- **THEN** it returns a config error listing exactly `INFLEXA_AUTH0_DOMAIN` and `INFLEXA_AUTH0_AUDIENCE`
 
 #### Scenario: Baked values cannot be overridden
 
-- **WHEN** a release binary built with baked Auth0 values runs with different `INF_AUTH0_*` values in its environment
+- **WHEN** a release binary built with baked Auth0 values runs with different `INFLEXA_AUTH0_*` values in its environment
 - **THEN** the baked values are used and the runtime environment is ignored
 
 #### Scenario: Release build refuses incomplete configuration
@@ -31,12 +31,12 @@ Auth0 settings (`INF_AUTH0_DOMAIN`, `INF_AUTH0_CLIENT_ID`, `INF_AUTH0_AUDIENCE`)
 
 #### Scenario: Other commands unaffected
 
-- **WHEN** `inf sessions` runs with no `INF_AUTH0_*` variables set
+- **WHEN** `inflexa sessions` runs with no `INFLEXA_AUTH0_*` variables set
 - **THEN** it works exactly as before
 
 ### Requirement: Device authorization initiation
 
-The session layer SHALL request a device code via `POST https://{INF_AUTH0_DOMAIN}/oauth/device/code` (form-encoded) with `client_id`, `audience`, and scope `openid profile email offline_access`.
+The session layer SHALL request a device code via `POST https://{INFLEXA_AUTH0_DOMAIN}/oauth/device/code` (form-encoded) with `client_id`, `audience`, and scope `openid profile email offline_access`.
 
 #### Scenario: Successful initiation
 
@@ -50,7 +50,7 @@ The session layer SHALL request a device code via `POST https://{INF_AUTH0_DOMAI
 
 ### Requirement: Token polling
 
-The session layer SHALL poll `POST https://{INF_AUTH0_DOMAIN}/oauth/token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code` every `interval` seconds until a token arrives or `expires_in` elapses. Outcomes SHALL be classified by the `error` field of the JSON response body, never by HTTP status (Auth0 deviates from RFC 8628 statuses). A single transient failure (network error, request timeout, or unparseable body) SHALL NOT abort the flow: such failures SHALL be retried on subsequent intervals up to a small budget of *consecutive* failures, reset by any valid response, with the `expires_in` deadline still bounding the overall wait.
+The session layer SHALL poll `POST https://{INFLEXA_AUTH0_DOMAIN}/oauth/token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code` every `interval` seconds until a token arrives or `expires_in` elapses. Outcomes SHALL be classified by the `error` field of the JSON response body, never by HTTP status (Auth0 deviates from RFC 8628 statuses). A single transient failure (network error, request timeout, or unparseable body) SHALL NOT abort the flow: such failures SHALL be retried on subsequent intervals up to a small budget of *consecutive* failures, reset by any valid response, with the `expires_in` deadline still bounding the overall wait.
 
 #### Scenario: Authorization pending
 
@@ -84,7 +84,7 @@ The session layer SHALL poll `POST https://{INF_AUTH0_DOMAIN}/oauth/token` with 
 
 ### Requirement: Token persistence
 
-Tokens SHALL be persisted as JSON (`accessToken`, `refreshToken`, `idToken`, `expiresAt` as ISO-8601 computed from `expires_in`) at the auth path exposed by `env.ts` (`{configDir}/inf/auth.json`), created with `0600` permissions, written atomically (write temp file, then rename) so a crash mid-write cannot corrupt or strand stale credentials.
+Tokens SHALL be persisted as JSON (`accessToken`, `refreshToken`, `idToken`, `expiresAt` as ISO-8601 computed from `expires_in`) at the auth path exposed by `env.ts` (`{configDir}/inflexa/auth.json`), created with `0600` permissions, written atomically (write temp file, then rename) so a crash mid-write cannot corrupt or strand stale credentials.
 
 #### Scenario: First save
 
@@ -113,7 +113,7 @@ Tokens SHALL be persisted as JSON (`accessToken`, `refreshToken`, `idToken`, `ex
 #### Scenario: Refresh fails
 
 - **WHEN** the refresh request is rejected (revoked, expired by inactivity, or reuse-detected)
-- **THEN** a typed `refresh_failed` error is returned whose message tells the user to run `inf auth login`
+- **THEN** a typed `refresh_failed` error is returned whose message tells the user to run `inflexa auth login`
 
 #### Scenario: Never logged in
 
@@ -122,7 +122,7 @@ Tokens SHALL be persisted as JSON (`accessToken`, `refreshToken`, `idToken`, `ex
 
 #### Scenario: Concurrent refresh across processes
 
-- **WHEN** two inf processes both find the stored access token within 60 seconds of expiry at the same time
+- **WHEN** two inflexa processes both find the stored access token within 60 seconds of expiry at the same time
 - **THEN** one acquires the refresh lock and rotates the token while the other waits, and the waiter then re-reads the freshly persisted token and returns it without a second refresh request — so the rotated refresh token is never replayed and the grant family is not revoked
 
 #### Scenario: Crashed lock holder
@@ -132,7 +132,7 @@ Tokens SHALL be persisted as JSON (`accessToken`, `refreshToken`, `idToken`, `ex
 
 ### Requirement: Refresh token revocation
 
-The session layer SHALL expose revocation via `POST https://{INF_AUTH0_DOMAIN}/oauth/revoke` (form-encoded `client_id` + `token` = the stored refresh token), returning a `Result` so callers decide whether failure is fatal.
+The session layer SHALL expose revocation via `POST https://{INFLEXA_AUTH0_DOMAIN}/oauth/revoke` (form-encoded `client_id` + `token` = the stored refresh token), returning a `Result` so callers decide whether failure is fatal.
 
 #### Scenario: Successful revocation
 

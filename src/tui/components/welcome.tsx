@@ -5,7 +5,7 @@ import { GLYPHS, space } from "../../lib/design_system.ts";
 
 /** Props for {@link Welcome}. */
 export type WelcomeProps = {
-    /** Greeting line, e.g. `welcome to inf`. */
+    /** Greeting line, e.g. `welcome to inflexa`. */
     greeting: string;
     /** Active anchor path, shown with a health badge. Omitted when none. */
     anchorPath?: string;
@@ -16,7 +16,7 @@ export type WelcomeProps = {
 };
 
 /**
- * The welcome / startup block: the `inf` wordmark (rendered with the native
+ * The welcome / startup block: the `inflexa` wordmark (rendered with the native
  * `<ascii_font>`), a greeting, the active anchor path with a health badge, and
  * bottom hints. Purely presentational — the caller supplies anchor/greeting data
  * it has already read, so this block touches no disk (the no-litter rule).
@@ -24,7 +24,7 @@ export type WelcomeProps = {
 export function Welcome(props: WelcomeProps) {
     return (
         <box flexDirection="column" paddingBottom={space.md}>
-            <ascii_font text="inf" color={theme().accent} />
+            <ascii_font text="inflexa" color={theme().accent} />
             <text fg={theme().fg} paddingTop={space.sm}>
                 {props.greeting}
             </text>

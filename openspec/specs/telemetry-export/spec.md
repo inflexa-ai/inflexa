@@ -1,12 +1,12 @@
 # telemetry-export Specification
 
 ## Purpose
-Opt-in, consent-gated OpenTelemetry log export — config-stored consent and the `inf config` settings form, endpoint-gated OTel init, a redaction-respecting Pino→OTel bridge, fail-open behavior, and flush-on-shutdown.
+Opt-in, consent-gated OpenTelemetry log export — config-stored consent and the `inflexa config` settings form, endpoint-gated OTel init, a redaction-respecting Pino→OTel bridge, fail-open behavior, and flush-on-shutdown.
 
 ## Requirements
 
 ### Requirement: Opt-in consent stored in user config
-Telemetry SHALL be disabled by default. Consent SHALL be persisted as `{ "telemetry": boolean }` in a JSON config file under the user config directory (`XDG_CONFIG_HOME`/`~/.config` on Unix, `APPDATA` on Windows, path `inf/config.json`). A missing or unreadable config file SHALL be treated as consent not granted.
+Telemetry SHALL be disabled by default. Consent SHALL be persisted as `{ "telemetry": boolean }` in a JSON config file under the user config directory (`XDG_CONFIG_HOME`/`~/.config` on Unix, `APPDATA` on Windows, path `inflexa/config.json`). A missing or unreadable config file SHALL be treated as consent not granted.
 
 #### Scenario: Default is off
 - **WHEN** the CLI runs on a machine with no config file
@@ -17,14 +17,14 @@ Telemetry SHALL be disabled by default. Consent SHALL be persisted as `{ "teleme
 - **THEN** telemetry is treated as disabled and the CLI runs normally
 
 ### Requirement: Interactive settings command
-The system SHALL provide an `inf config` command that opens an interactive OpenTUI settings form built only from existing dependencies. The form SHALL show one checkbox row per setting; the telemetry row SHALL display a short disclosure of what is collected and whether an export endpoint is configured. Toggling a setting SHALL only update an in-form draft (marked as unsaved); pressing `s` or Ctrl+S SHALL persist the draft to the config file. Exiting with unsaved changes SHALL warn once and require a second exit press to discard. Exiting the form SHALL restore the terminal state (mouse tracking, alternate screen, input mode) before going through the flushing shutdown path.
+The system SHALL provide an `inflexa config` command that opens an interactive OpenTUI settings form built only from existing dependencies. The form SHALL show one checkbox row per setting; the telemetry row SHALL display a short disclosure of what is collected and whether an export endpoint is configured. Toggling a setting SHALL only update an in-form draft (marked as unsaved); pressing `s` or Ctrl+S SHALL persist the draft to the config file. Exiting with unsaved changes SHALL warn once and require a second exit press to discard. Exiting the form SHALL restore the terminal state (mouse tracking, alternate screen, input mode) before going through the flushing shutdown path.
 
 #### Scenario: Terminal is restored on exit
 - **WHEN** the user exits the form
 - **THEN** every terminal mode the form enabled (mouse tracking, alternate screen, bracketed paste) is reset and the shell behaves normally afterwards
 
 #### Scenario: Viewing settings
-- **WHEN** the user runs `inf config`
+- **WHEN** the user runs `inflexa config`
 - **THEN** a form shows the telemetry checkbox with its persisted state, the collection disclosure, and the endpoint configuration
 
 #### Scenario: Toggling only changes the draft
@@ -44,7 +44,7 @@ The system SHALL provide an `inf config` command that opens an interactive OpenT
 - **THEN** the form shows an error and the persisted state is unchanged
 
 ### Requirement: Explicit OTel initialization gated on consent and endpoint
-The system SHALL initialize the OpenTelemetry Logs SDK via an explicit, idempotent `initOtel()` call from the entry point, only when consent is granted AND `OTEL_EXPORTER_OTLP_ENDPOINT` is set. The SDK SHALL use a resource with `service.name` `inf` and the package version, and SHALL export via a batch log record processor to `<endpoint>/v1/logs` (trailing slashes stripped) over OTLP/HTTP.
+The system SHALL initialize the OpenTelemetry Logs SDK via an explicit, idempotent `initOtel()` call from the entry point, only when consent is granted AND `OTEL_EXPORTER_OTLP_ENDPOINT` is set. The SDK SHALL use a resource with `service.name` `inflexa` and the package version, and SHALL export via a batch log record processor to `<endpoint>/v1/logs` (trailing slashes stripped) over OTLP/HTTP.
 
 #### Scenario: Consent without endpoint
 - **WHEN** consent is granted but `OTEL_EXPORTER_OTLP_ENDPOINT` is unset
@@ -52,7 +52,7 @@ The system SHALL initialize the OpenTelemetry Logs SDK via an explicit, idempote
 
 #### Scenario: Consent and endpoint present
 - **WHEN** consent is granted and the endpoint is set
-- **THEN** log records are exported in batches to `<endpoint>/v1/logs` with the `inf` service resource
+- **THEN** log records are exported in batches to `<endpoint>/v1/logs` with the `inflexa` service resource
 
 #### Scenario: Repeated initialization
 - **WHEN** `initOtel()` is called more than once in a process

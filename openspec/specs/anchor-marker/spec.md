@@ -1,16 +1,16 @@
 # anchor-marker Specification
 
 ## Purpose
-The on-disk `.inf/id` folder-identity marker: its path helper, canonicalization, validated and write-once read/write, directory-writability check, and upward discovery — a filesystem-only module that mints no ids and has no DB coupling.
+The on-disk `.inflexa/id` folder-identity marker: its path helper, canonicalization, validated and write-once read/write, directory-writability check, and upward discovery — a filesystem-only module that mints no ids and has no DB coupling.
 ## Requirements
 ### Requirement: Marker path helper
 
-The system SHALL provide `markerPath(dir)` returning `join(dir, ".inf", "id")`, in the filesystem-only module `src/modules/anchor/marker.ts`.
+The system SHALL provide `markerPath(dir)` returning `join(dir, ".inflexa", "id")`, in the filesystem-only module `src/modules/anchor/marker.ts`.
 
 #### Scenario: Marker path composition
 
 - **WHEN** `markerPath("/data/genomics")` is called
-- **THEN** it returns `/data/genomics/.inf/id`
+- **THEN** it returns `/data/genomics/.inflexa/id`
 
 ### Requirement: Canonical path helper
 
@@ -23,31 +23,31 @@ The system SHALL provide `canonicalPath(p)` returning the canonical absolute for
 
 ### Requirement: Validated marker read
 
-The system SHALL provide `readMarker(dir)` returning the parsed `AnchorMarker` when `<dir>/.inf/id` exists and is valid, `null` when the file is absent, and throwing when the file exists but is malformed JSON or has a `schemaVersion` other than `1`.
+The system SHALL provide `readMarker(dir)` returning the parsed `AnchorMarker` when `<dir>/.inflexa/id` exists and is valid, `null` when the file is absent, and throwing when the file exists but is malformed JSON or has a `schemaVersion` other than `1`.
 
 #### Scenario: Absent marker
 
-- **WHEN** `<dir>/.inf/id` does not exist
+- **WHEN** `<dir>/.inflexa/id` does not exist
 - **THEN** `readMarker(dir)` returns `null`
 
 #### Scenario: Valid marker
 
-- **WHEN** `<dir>/.inf/id` contains `{ "schemaVersion": 1, "anchorId": "<uuidv7>" }`
+- **WHEN** `<dir>/.inflexa/id` contains `{ "schemaVersion": 1, "anchorId": "<uuidv7>" }`
 - **THEN** `readMarker(dir)` returns that `AnchorMarker`
 
 #### Scenario: Corrupt marker surfaces as an error
 
-- **WHEN** `<dir>/.inf/id` contains malformed JSON or a `schemaVersion` other than `1`
+- **WHEN** `<dir>/.inflexa/id` contains malformed JSON or a `schemaVersion` other than `1`
 - **THEN** `readMarker(dir)` throws rather than returning `null` or silently minting a new identity
 
 ### Requirement: Write-once marker write
 
-The system SHALL provide `writeMarker(dir, anchorId)` that writes `<dir>/.inf/id` only when no valid marker exists, creating `<dir>/.inf/` as needed, and returns the `AnchorMarker` now on disk. The caller supplies the `anchorId` (minted inline with `randomUUIDv7()`); the marker module mints no ids. When a valid marker already exists, it SHALL be returned unchanged without rewriting; when an existing marker is corrupt, it SHALL throw rather than overwrite.
+The system SHALL provide `writeMarker(dir, anchorId)` that writes `<dir>/.inflexa/id` only when no valid marker exists, creating `<dir>/.inflexa/` as needed, and returns the `AnchorMarker` now on disk. The caller supplies the `anchorId` (minted inline with `randomUUIDv7()`); the marker module mints no ids. When a valid marker already exists, it SHALL be returned unchanged without rewriting; when an existing marker is corrupt, it SHALL throw rather than overwrite.
 
 #### Scenario: First write creates the marker
 
 - **WHEN** `writeMarker(dir, id)` is called and no marker exists
-- **THEN** `<dir>/.inf/id` is created with `{ schemaVersion: 1, anchorId: id }`
+- **THEN** `<dir>/.inflexa/id` is created with `{ schemaVersion: 1, anchorId: id }`
 - **AND** the returned marker carries `id`
 
 #### Scenario: Second write is a no-op returning the existing id

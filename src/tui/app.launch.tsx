@@ -28,7 +28,7 @@ async function renderChat(target: ChatTarget): Promise<void> {
 
     // Claim the analysis before the alternate screen takes over, so a conflict surfaces as a plain
     // stderr line and a clean exit — no flash of TUI. Acquiring here (not in the headless resolvers)
-    // keeps the lock off the bare-`inf`-resolves-to-nothing path: that path returns null and never
+    // keeps the lock off the bare-`inflexa`-resolves-to-nothing path: that path returns null and never
     // reaches renderChat, so it writes no lock (no-litter policy).
     const lock = acquireAnalysisLock(target.analysis.id);
     if (!lock.acquired) {
@@ -57,17 +57,17 @@ async function renderChat(target: ChatTarget): Promise<void> {
     void warmGrammars();
 }
 
-/** `inf new [name] [paths...]` — create an analysis (anchor = cwd) and open its chat. */
+/** `inflexa new [name] [paths...]` — create an analysis (anchor = cwd) and open its chat. */
 export async function launchNew(opts: { name?: string; paths: string[]; project?: string; output?: string }): Promise<void> {
     await renderChat(await resolveNewTarget(opts));
 }
 
-/** `inf resume <id|name>` — reopen an analysis's chat. */
+/** `inflexa resume <id|name>` — reopen an analysis's chat. */
 export async function launchResume(ref: IdOrName): Promise<void> {
     await renderChat(resolveResumeTarget(ref));
 }
 
-/** Bare `inf [--analysis <x>|--project <p>]`: resolve context, then open/pick/start (or do nothing). */
+/** Bare `inflexa [--analysis <x>|--project <p>]`: resolve context, then open/pick/start (or do nothing). */
 export async function launchDefault(flags: ContextFlags): Promise<void> {
     const target = await resolveDefaultTarget(flags);
     if (target) await renderChat(target);
