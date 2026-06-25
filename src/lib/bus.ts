@@ -41,6 +41,13 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
                 messageId: event.message.id,
                 role: event.message.role,
             };
+        case "message.updated":
+            return {
+                sessionId: event.message.sessionId,
+                messageId: event.message.id,
+                role: event.message.role,
+                durationMs: event.message.durationMs,
+            };
         case "part.updated":
             return {
                 sessionId: event.part.sessionId,

@@ -77,7 +77,21 @@ export function Chat(props: ChatProps) {
                         hints={["run /init", "^K for commands"]}
                     />
                 </Show>
-                <For each={messages}>{(msg) => <MessageBlock role={msg.role} parts={msg.parts} streamPartId={streamPartId} streamText={streamText} />}</For>
+                {/* index() is the 1-based position within the mounted window (capped at MESSAGE_CAP);
+                for sessions under the cap it is the true turn number, and even past it a running
+                counter is what the numbering is for. */}
+                <For each={messages}>
+                    {(msg, index) => (
+                        <MessageBlock
+                            index={index() + 1}
+                            role={msg.role}
+                            durationMs={msg.durationMs}
+                            parts={msg.parts}
+                            streamPartId={streamPartId}
+                            streamText={streamText}
+                        />
+                    )}
+                </For>
 
                 {/* Live "thinking" indicator: sits under the last (assistant) turn for the whole busy
                 window — before the first token and while text streams below it — so the wait reads as

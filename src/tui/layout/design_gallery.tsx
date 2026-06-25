@@ -63,8 +63,15 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <Welcome greeting="welcome to inflexa" anchorPath="~/inflexa-tests" markerWritten={true} hints={["run /init", "ctrl+k for commands"]} />
                 </State>
                 <State n="2" label="plain chat turn">
-                    <MessageBlock role="user" parts={[mockUserText]} streamPartId={noStreamId} streamText={noStreamText} />
-                    <MessageBlock role="assistant" parts={[mockAssistantText]} streamPartId={noStreamId} streamText={noStreamText} />
+                    <MessageBlock index={1} role="user" parts={[mockUserText]} streamPartId={noStreamId} streamText={noStreamText} />
+                    <MessageBlock
+                        index={2}
+                        role="assistant"
+                        durationMs={2400}
+                        parts={[mockAssistantText]}
+                        streamPartId={noStreamId}
+                        streamText={noStreamText}
+                    />
                 </State>
                 <State n="3" label="thinking / reasoning (live indicator, collapsed, expanded)">
                     {/* Self-animating: it owns its spinner interval, so it spins live in the gallery. */}

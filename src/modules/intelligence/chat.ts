@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { Bus } from "../../lib/bus.ts";
 import { env } from "../../lib/env.ts";
-import { createMessage, createPart, updatePart } from "../../db/primary_mutation.ts";
+import { createMessage, updateMessage, createPart, updatePart } from "../../db/primary_mutation.ts";
 import { listSessionMessages } from "../../db/primary_query.ts";
 import { withTransaction } from "../../db/util.ts";
 import type { DbError } from "../../db/errors.ts";
@@ -139,12 +139,17 @@ export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
         Bus.emit("inflexa", { type: "session.error", sessionId, error: `Model error: ${describe(streamError)}` });
     }
 
-    // Persist the final assistant text (possibly partial on abort/error) and
-    // return to idle so the UI flushes the streamed text into the store.
+    // Persist the final assistant text (possibly partial on abort/error) and stamp the turn's
+    // wall-clock duration on the message, then return to idle so the UI flushes the streamed text.
+    // Duration is measured from the assistant message's creation (just before stream setup) to now,
+    // so it captures the whole perceived wait — model setup plus generation. Part text and message
+    // duration commit in one transaction so a half-written turn (text without duration) can't persist.
     (assistantPart as TextPart).text = accumulated;
-    return updatePart(assistantPart).match(
+    assistantMsg.durationMs = Date.now() - assistantMsg.createdAt;
+    return withTransaction("chat:finalizeAssistant", () => updatePart(assistantPart).andThen(() => updateMessage(assistantMsg))).match(
         () => {
             Bus.emit("inflexa", { type: "part.updated", part: assistantPart });
+            Bus.emit("inflexa", { type: "message.updated", message: assistantMsg });
             Bus.emit("inflexa", { type: "session.status", sessionId, status: "idle" });
             return ok<void, DbError>(undefined);
         },

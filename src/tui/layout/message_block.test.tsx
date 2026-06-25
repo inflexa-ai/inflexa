@@ -31,7 +31,7 @@ async function frameWith(node: Parameters<typeof testRender>[0], needle: string,
 describe("MessageBlock text rendering", () => {
     test("a finalized (non-streaming) text part renders its stored text", async () => {
         const frame = await frameWith(
-            () => <MessageBlock role="assistant" parts={[textPart("finalized answer")]} streamPartId={() => null} streamText={() => ""} />,
+            () => <MessageBlock index={1} role="assistant" parts={[textPart("finalized answer")]} streamPartId={() => null} streamText={() => ""} />,
             "finalized answer",
         );
         expect(frame).toContain("finalized answer");
@@ -39,7 +39,7 @@ describe("MessageBlock text rendering", () => {
 
     test("a streaming part renders the live stream text, not the (empty) stored text", async () => {
         const frame = await frameWith(
-            () => <MessageBlock role="assistant" parts={[textPart("")]} streamPartId={() => "p1"} streamText={() => "live tokens"} />,
+            () => <MessageBlock index={1} role="assistant" parts={[textPart("")]} streamPartId={() => "p1"} streamText={() => "live tokens"} />,
             "live tokens",
         );
         expect(frame).toContain("live tokens");
