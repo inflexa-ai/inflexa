@@ -1,4 +1,4 @@
-// Release build: compiles inf into a single executable with internal
+// Release build: compiles inflexa into a single executable with internal
 // configuration baked in as compile-time constants. Run via `bun run build`;
 // Bun loads a local .env automatically, CI provides real env vars.
 //
@@ -109,7 +109,7 @@ const workerRelToRoot = relative(buildRoot, workerEntry);
 
 const plugin = createSolidTransformPlugin();
 for (const target of targets) {
-    const name = `inf-${target.os}-${target.arch}`;
+    const name = `inflexa-${target.os}-${target.arch}`;
 
     // resolveWorkerPath prefers the global OTUI_TREE_SITTER_WORKER_PATH over its default, so bake the
     // worker's embedded bunfs path in (the default `new URL("./parser.worker.js", …)` can't find it —

@@ -156,7 +156,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
         exit();
     }
 
-    // Standalone (`inf config`): this screen owns the renderer, so install the root keymap handler
+    // Standalone (`inflexa config`): this screen owns the renderer, so install the root keymap handler
     // here. Embedded as a dialog: the host `App` already installed it — a second root would
     // double-dispatch every key — so we only register our bindings layer below.
     // eslint-disable-next-line solid/reactivity -- seed-once: props.onClose is fixed at mount (embedded vs standalone never changes), so this one-time read correctly decides which mode installs the root
@@ -185,7 +185,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
         // background shows through and light themes render dark text on a black screen.
         <box flexDirection="column" width="100%" height="100%" backgroundColor={theme().bg}>
             <StatusBar
-                title="inf config"
+                title="inflexa config"
                 state={dirty() ? { text: "unsaved changes", tone: "warn" } : undefined}
                 hints={[
                     `${chordLabel(KEYS.up)}/${chordLabel(KEYS.down)} section`,

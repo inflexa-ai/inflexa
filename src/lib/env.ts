@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 const dataVar = process.platform === "win32" ? "LOCALAPPDATA" : "XDG_DATA_HOME";
 const configVar = process.platform === "win32" ? "APPDATA" : "XDG_CONFIG_HOME";
-const logLevelVar = "INF_LOG_LEVEL";
+const logLevelVar = "INFLEXA_LOG_LEVEL";
 const otelEndpointVar = "OTEL_EXPORTER_OTLP_ENDPOINT";
 
 function dataDir(): string {
@@ -28,31 +28,31 @@ function configDir(): string {
 const cliproxyPort = 8317;
 
 export const env = Object.freeze({
-    dbPath: join(dataDir(), "inf", "agent.db"),
-    logDir: join(dataDir(), "inf", "logs"),
+    dbPath: join(dataDir(), "inflexa", "agent.db"),
+    logDir: join(dataDir(), "inflexa", "logs"),
     /**
      * Fallback output root, used only when an analysis's anchor folder is not writable
      * (a read-only mount, a directory owned by another user). The default lives beside
-     * the data at `<anchor>/.inf/analyses/<slug>/`; this guarantees every analysis always
+     * the data at `<anchor>/.inflexa/analyses/<slug>/`; this guarantees every analysis always
      * has somewhere to write. See src/modules/analysis/output.ts.
      */
-    outputFallbackDir: join(dataDir(), "inf", "analyses"),
+    outputFallbackDir: join(dataDir(), "inflexa", "analyses"),
     /**
-     * Advisory per-analysis instance locks: `<dataDir>/inf/locks/<analysisId>.lock`. One inf
+     * Advisory per-analysis instance locks: `<dataDir>/inflexa/locks/<analysisId>.lock`. One inflexa
      * process may have an analysis open at a time; the lock files coordinate that across instances.
      * See src/modules/analysis/lock.ts.
      */
-    locksDir: join(dataDir(), "inf", "locks"),
+    locksDir: join(dataDir(), "inflexa", "locks"),
     /**
      * CLIProxyAPI runs in a container (Docker or Podman, see
      * src/modules/proxy/setup.ts). The config and the provider-credential dir are
      * state we own, so they live under our data dir and are bind-mounted into the
      * container.
      */
-    cliproxyConfigPath: join(dataDir(), "inf", "cliproxy", "config.yaml"),
-    cliproxyAuthDir: join(dataDir(), "inf", "cliproxy", "auth"),
-    configPath: join(configDir(), "inf", "config.json"),
-    authPath: join(configDir(), "inf", "auth.json"),
+    cliproxyConfigPath: join(dataDir(), "inflexa", "cliproxy", "config.yaml"),
+    cliproxyAuthDir: join(dataDir(), "inflexa", "cliproxy", "auth"),
+    configPath: join(configDir(), "inflexa", "config.json"),
+    authPath: join(configDir(), "inflexa", "auth.json"),
     logLevel: process.env[logLevelVar],
     otelEndpoint: process.env[otelEndpointVar],
     /**
@@ -76,9 +76,9 @@ export const env = Object.freeze({
  * from this block, so there is nothing else to keep in sync.
  */
 export const bakedEnv = Object.freeze({
-    auth0Domain: process.env.INF_AUTH0_DOMAIN,
-    auth0ClientId: process.env.INF_AUTH0_CLIENT_ID,
-    auth0Audience: process.env.INF_AUTH0_AUDIENCE,
+    auth0Domain: process.env.INFLEXA_AUTH0_DOMAIN,
+    auth0ClientId: process.env.INFLEXA_AUTH0_CLIENT_ID,
+    auth0Audience: process.env.INFLEXA_AUTH0_AUDIENCE,
 });
 
 export type EnvDocEntry = { kind: "path"; label: string; description: string; baseVar: string } | { kind: "var"; name: string; description: string };
@@ -90,11 +90,11 @@ export const envDoc: Readonly<Record<Exclude<keyof typeof env, "cliproxyPort" | 
     outputFallbackDir: { kind: "path", label: "outputs", description: "analysis outputs when the anchor folder isn't writable", baseVar: dataVar },
     locksDir: { kind: "path", label: "locks", description: "advisory per-analysis instance locks", baseVar: dataVar },
     cliproxyConfigPath: { kind: "path", label: "proxy config", description: "CLIProxyAPI config, mounted into the proxy container", baseVar: dataVar },
-    cliproxyAuthDir: { kind: "path", label: "proxy auth", description: "CLIProxyAPI provider credentials, created by `inf setup`", baseVar: dataVar },
+    cliproxyAuthDir: { kind: "path", label: "proxy auth", description: "CLIProxyAPI provider credentials, created by `inflexa setup`", baseVar: dataVar },
     configPath: { kind: "path", label: "config", description: "settings (telemetry consent)", baseVar: configVar },
-    authPath: { kind: "path", label: "auth", description: "Auth0 session tokens, created by `inf auth login`", baseVar: configVar },
+    authPath: { kind: "path", label: "auth", description: "Auth0 session tokens, created by `inflexa auth login`", baseVar: configVar },
     logLevel: { kind: "var", name: logLevelVar, description: "log verbosity: trace|debug|info|warn|error|fatal (default: info)" },
-    otelEndpoint: { kind: "var", name: otelEndpointVar, description: "OTLP endpoint for log export; requires telemetry enabled via `inf config`" },
+    otelEndpoint: { kind: "var", name: otelEndpointVar, description: "OTLP endpoint for log export; requires telemetry enabled via `inflexa config`" },
 });
 
 // Dev-tooling paths for `bun run dev:install` (scripts/dev_install.ts): where the `inflexa`
@@ -109,10 +109,10 @@ export const envDoc: Readonly<Record<Exclude<keyof typeof env, "cliproxyPort" | 
  *   so a plain install there fails with EACCES.
  * - Windows: `%LOCALAPPDATA%\Microsoft\WindowsApps` — user-writable and on PATH by default.
  *
- * `INF_INSTALL_DIR` overrides it (e.g. `/usr/local/bin` with sudo, or a Homebrew prefix).
+ * `INFLEXA_INSTALL_DIR` overrides it (e.g. `/usr/local/bin` with sudo, or a Homebrew prefix).
  */
 export function installDir(): string {
-    const override = process.env.INF_INSTALL_DIR;
+    const override = process.env.INFLEXA_INSTALL_DIR;
     if (override) return override;
     if (process.platform === "win32") {
         const localAppData = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
@@ -128,7 +128,7 @@ export function installedBinPath(): string {
 
 /**
  * Terminal-environment detection for the clipboard writer (src/lib/clipboard.ts), homed here because
- * env.ts is the single sanctioned `process.env` reader. These are NOT inf configuration — they are
+ * env.ts is the single sanctioned `process.env` reader. These are NOT inflexa configuration — they are
  * terminal-multiplexer / display-server facts (the same category as `process.stdout.isTTY`), so they
  * live OUTSIDE the `env`/`envDoc` config object and never appear in `--help`. All three vars are set
  * at process startup and stable for its lifetime, so reading them once at module load is correct.

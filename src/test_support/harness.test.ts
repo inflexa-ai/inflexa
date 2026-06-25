@@ -12,7 +12,7 @@ import { withRoot } from "./solid.ts";
 
 describe("test preload (env sandbox)", () => {
     test("redirects env.dbPath into an isolated temp dir, not the real home", () => {
-        expect(env.dbPath).toContain("inf-test-");
+        expect(env.dbPath).toContain("inflexa-test-");
         expect(env.dbPath.startsWith(tmpdir())).toBe(true);
     });
 });
@@ -63,7 +63,7 @@ describe("runCli", () => {
     test("runs the real CLI subprocess and captures exit code + stdout", () => {
         const result = runCli(["--help"]);
         expect(result.exitCode).toBe(0);
-        expect(result.stdout).toContain("Usage: inf");
+        expect(result.stdout).toContain("Usage: inflexa");
         expect(result.stdout).toContain("sessions");
     });
 });

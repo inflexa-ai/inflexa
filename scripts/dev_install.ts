@@ -3,18 +3,18 @@
 // `bun run build` is instantly live with no re-install (build's `rm -rf dist`
 // doesn't break the link — it re-resolves once the new binary lands at the same
 // path). On Windows it copies, since symlinks need elevation, so re-run after
-// each build. Set INF_INSTALL_DIR to install somewhere other than the OS default.
+// each build. Set INFLEXA_INSTALL_DIR to install somewhere other than the OS default.
 import { copyFileSync, lstatSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { installDir, installedBinPath } from "../src/lib/env.ts";
 
-// The host's compiled binary in dist/, matching scripts/build.ts naming (`inf-<os>-<arch>`,
+// The host's compiled binary in dist/, matching scripts/build.ts naming (`inflexa-<os>-<arch>`,
 // with Bun's auto `.exe` on Windows). Inline here, with its only caller, since it's a
 // build-layout path (relative to the repo) rather than a runtime env path.
 function builtBinPath(): string {
     const os = process.platform === "win32" ? "windows" : process.platform;
     const ext = process.platform === "win32" ? ".exe" : "";
-    return join(import.meta.dir, "..", "dist", `inf-${os}-${process.arch}${ext}`);
+    return join(import.meta.dir, "..", "dist", `inflexa-${os}-${process.arch}${ext}`);
 }
 
 // lstat (not existsSync) so a broken/dangling symlink still counts as present.
@@ -68,7 +68,7 @@ try {
                 ? `  copy "${built}" "${target}"   (from an Administrator shell)`
                 : `  sudo ln -sfn "${built}" "${target}"`,
         );
-        console.error("…or set INF_INSTALL_DIR to a writable dir on your PATH (e.g. ~/.local/bin).");
+        console.error("…or set INFLEXA_INSTALL_DIR to a writable dir on your PATH (e.g. ~/.local/bin).");
     }
     process.exit(1);
 }

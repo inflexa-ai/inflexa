@@ -3,9 +3,9 @@ import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import type { AnchorMarker, AnchorId } from "../../types/anchor.ts";
 
-/** The on-disk marker for a folder: <dir>/.inf/id (write-once identity file). */
+/** The on-disk marker for a folder: <dir>/.inflexa/id (write-once identity file). */
 export function markerPath(dir: string): string {
-    return join(dir, ".inf", "id");
+    return join(dir, ".inflexa", "id");
 }
 
 /**
@@ -33,7 +33,7 @@ const anchorMarkerSchema = z.object({
 }) satisfies z.ZodType<AnchorMarker>;
 
 /**
- * Reads & validates <dir>/.inf/id. Returns null when the file is absent (the normal
+ * Reads & validates <dir>/.inflexa/id. Returns null when the file is absent (the normal
  * "not an anchor yet" case). Throws on malformed JSON or a marker that fails the schema:
  * corruption is surfaced so the caller can repair it, never silently re-minted (which
  * would orphan the existing identity and duplicate its analyses).
@@ -62,7 +62,7 @@ export function writeMarker(dir: string, anchorId: AnchorId): AnchorMarker {
     if (existing) return existing;
 
     const marker: AnchorMarker = { schemaVersion: 1, anchorId: anchorId };
-    mkdirSync(join(dir, ".inf"), { recursive: true });
+    mkdirSync(join(dir, ".inflexa"), { recursive: true });
     writeFileSync(markerPath(dir), `${JSON.stringify(marker, null, 2)}\n`, "utf8");
     return marker;
 }

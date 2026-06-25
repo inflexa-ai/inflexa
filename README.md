@@ -57,7 +57,7 @@ bun run dev doctor          # check Docker, architecture, disk, runtime
 Build a standalone `inflexa` binary:
 
 ```bash
-bun run build               # compiles dist/inf-<os>-<arch>
+bun run build               # compiles dist/inflexa-<os>-<arch>
 ```
 
 ## Configuration

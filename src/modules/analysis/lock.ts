@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { env } from "../../lib/env.ts";
 import { getLogger } from "../../lib/log.ts";
 
-// Per-analysis advisory lock so an analysis is open in at most one `inf` instance. Modeled on the
+// Per-analysis advisory lock so an analysis is open in at most one `inflexa` instance. Modeled on the
 // auth refresh lock (src/modules/auth/auth.ts:357-428) — an O_EXCL lock file under the data dir —
 // but with one deliberate divergence: liveness is PID-based, not time-based. The auth lock is held
 // for ~seconds during one token refresh, so an age threshold is a fine "crashed holder" proxy. An

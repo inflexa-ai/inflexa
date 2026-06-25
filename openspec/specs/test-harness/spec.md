@@ -15,7 +15,7 @@ the temp directory and no test writes to the developer's real home.
 
 #### Scenario: no writes leak to the real home
 - **WHEN** an integration test creates a DB and writes rows
-- **THEN** the developer's real `~/.local/share/inf` (or platform equivalent) is left untouched
+- **THEN** the developer's real `~/.local/share/inflexa` (or platform equivalent) is left untouched
 
 ### Requirement: Migrated temp-DB helper
 The harness SHALL provide a helper that yields a freshly-migrated SQLite database for a test and

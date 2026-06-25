@@ -7,7 +7,7 @@ TBD - created by archiving change add-analysis-instance-lock. Update Purpose aft
 
 The system SHALL acquire a per-analysis advisory lock when an analysis is opened for chat, before the terminal alternate screen is entered. If the analysis is already held by a live instance, the system SHALL refuse to open it, print a message naming the analysis to stderr, and exit with a non-zero status without entering the TUI. The lock SHALL be keyed by analysis id (not session id), since one analysis owns many sessions.
 
-The lock SHALL be written only as part of the deliberate open action; a launch path that resolves to no analysis (e.g. bare `inf` that prompts and is cancelled, or a folder-copy result) SHALL NOT write any lock file.
+The lock SHALL be written only as part of the deliberate open action; a launch path that resolves to no analysis (e.g. bare `inflexa` that prompts and is cancelled, or a folder-copy result) SHALL NOT write any lock file.
 
 #### Scenario: Opening a free analysis acquires the lock
 

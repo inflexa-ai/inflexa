@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "inf",
+      "name": "inflexa",
       "dependencies": {
         "@ai-sdk/openai-compatible": "^2.0.50",
         "@clack/prompts": "^1.5.1",

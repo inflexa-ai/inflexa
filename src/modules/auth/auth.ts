@@ -6,7 +6,7 @@ import { z } from "zod";
 import { bakedEnv, env } from "../../lib/env.ts";
 
 /**
- * offline_access is required: inf-cli's sliding session (log in once, renew on
+ * offline_access is required: inflexa's sliding session (log in once, renew on
  * use) depends on rotating refresh tokens. This deliberately diverges from
  * nxctl, which forbids the scope because it is a high-privilege admin tool.
  */
@@ -108,17 +108,17 @@ export function describeAuthError(error: AuthError): string {
         case "missing_config":
             return `This build has no Auth0 configuration (missing: ${error.missingVars.join(", ")}). Release binaries are built with these baked in; for development, set them in your environment or .env.`;
         case "not_authenticated":
-            return "Not logged in — run `inf auth login`.";
+            return "Not logged in — run `inflexa auth login`.";
         case "device_code_request_failed":
             return `Could not start the login flow: ${error.detail}`;
         case "token_poll_failed":
             return `Login failed: ${error.detail}`;
         case "authorization_expired":
-            return "The login code expired before it was confirmed — run `inf auth login` again.";
+            return "The login code expired before it was confirmed — run `inflexa auth login` again.";
         case "authorization_denied":
             return "Authorization was denied in the browser.";
         case "refresh_failed":
-            return `Could not renew the session (${error.detail}) — run \`inf auth login\`.`;
+            return `Could not renew the session (${error.detail}) — run \`inflexa auth login\`.`;
         case "revoke_failed":
             return `Could not revoke the session at Auth0: ${error.detail}`;
         case "token_read_failed":
@@ -134,7 +134,11 @@ export function resolveAuth0Config(): Result<Auth0Config, AuthError> {
     const audience = bakedEnv.auth0Audience;
     if (domain && clientId && audience) return ok({ domain, clientId, audience });
 
-    const missingVars = [...(domain ? [] : ["INF_AUTH0_DOMAIN"]), ...(clientId ? [] : ["INF_AUTH0_CLIENT_ID"]), ...(audience ? [] : ["INF_AUTH0_AUDIENCE"])];
+    const missingVars = [
+        ...(domain ? [] : ["INFLEXA_AUTH0_DOMAIN"]),
+        ...(clientId ? [] : ["INFLEXA_AUTH0_CLIENT_ID"]),
+        ...(audience ? [] : ["INFLEXA_AUTH0_AUDIENCE"]),
+    ];
     return err({ type: "missing_config", missingVars });
 }
 
@@ -390,7 +394,7 @@ async function acquireRefreshLock(): Promise<Result<string, AuthError>> {
         }
 
         if (Date.now() >= giveUpAt) {
-            return err({ type: "refresh_failed", detail: "timed out waiting for another inf process to finish renewing the session" });
+            return err({ type: "refresh_failed", detail: "timed out waiting for another inflexa process to finish renewing the session" });
         }
         await Promise.sleep(LOCK_POLL_MS);
     }

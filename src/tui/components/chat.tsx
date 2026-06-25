@@ -28,8 +28,8 @@ export function Chat(props: ChatProps) {
     // (read fresh per event — `ws.sessionId` is a reactive store field that a swap updates in place).
     const handler = (event: BusEvent): void => applyBusEvent(event, ws.sessionId);
     onMount(() => {
-        Bus.on("inf", handler);
-        onCleanup(() => Bus.off("inf", handler));
+        Bus.on("inflexa", handler);
+        onCleanup(() => Bus.off("inflexa", handler));
     });
 
     // Load on mount, and on an in-place session swap reset the hot state before loading the new
@@ -69,7 +69,7 @@ export function Chat(props: ChatProps) {
             >
                 <Show when={messages.length === 0}>
                     <Welcome
-                        greeting="welcome to inf"
+                        greeting="welcome to inflexa"
                         anchorPath={anchor()?.cachedPath}
                         markerWritten={anchor()?.markerWritten}
                         hints={["run /init", "^K for commands"]}

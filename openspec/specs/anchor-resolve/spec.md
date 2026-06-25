@@ -10,7 +10,7 @@ The system SHALL provide `getOrCreateAnchorForCwd(dir)` returning `Result<Anchor
 #### Scenario: Create anchor for an unmarked writable directory
 
 - **WHEN** `getOrCreateAnchorForCwd(dir)` is called on a writable directory with no marker
-- **THEN** a `.inf/id` marker is written into `dir`
+- **THEN** a `.inflexa/id` marker is written into `dir`
 - **AND** an anchors row is inserted with `markerWritten: true` and `cachedPath` equal to the canonical `dir`
 
 #### Scenario: Return existing anchor for a marked directory

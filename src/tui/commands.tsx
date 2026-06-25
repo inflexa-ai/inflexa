@@ -284,7 +284,7 @@ export const commands: Command[] = [
     {
         id: "view.status",
         title: "Show status",
-        description: "What inf resolves to here",
+        description: "What inflexa resolves to here",
         category: "View",
         run: (ctx) => ctx.openDialog(() => <StatusDialog />),
     },
@@ -312,7 +312,7 @@ export const commands: Command[] = [
     {
         id: "app.quit",
         title: "Quit",
-        description: "Exit inf",
+        description: "Exit inflexa",
         category: "App",
         // Display-only: ctrl+c (the abort chord) doubles as the exit affordance shown in the palette.
         keybind: keybindLabel("app.abort"),

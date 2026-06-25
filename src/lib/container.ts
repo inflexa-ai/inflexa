@@ -46,7 +46,7 @@ export const runtimes: Record<ContainerRuntimeId, ContainerRuntime> = {
         id: "docker",
         bin: "docker",
         label: "Docker",
-        notFoundHint: "Docker is required but was not found.\n  Install Docker Desktop (https://docs.docker.com/get-docker/) and re-run `inf setup`.",
+        notFoundHint: "Docker is required but was not found.\n  Install Docker Desktop (https://docs.docker.com/get-docker/) and re-run `inflexa setup`.",
         notReadyHint: "Docker is installed but the daemon isn't running.\n  Start Docker (Docker Desktop, or `sudo systemctl start docker`) and re-run.",
         mountArg(host: string, ctr: string): string {
             return `${host}:${ctr}`;
@@ -56,7 +56,7 @@ export const runtimes: Record<ContainerRuntimeId, ContainerRuntime> = {
         id: "podman",
         bin: "podman",
         label: "Podman",
-        notFoundHint: "Podman is required but was not found.\n  Install Podman (https://podman.io/docs/installation) and re-run `inf setup`.",
+        notFoundHint: "Podman is required but was not found.\n  Install Podman (https://podman.io/docs/installation) and re-run `inflexa setup`.",
         notReadyHint:
             "Podman is installed but not ready.\n  On macOS, start the Podman machine (`podman machine start`); on Linux, ensure rootless Podman is configured, then re-run.",
         mountArg(host: string, ctr: string): string {

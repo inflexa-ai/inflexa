@@ -60,7 +60,7 @@ export function noticeColor(kind: Notice["kind"]): string {
  * constructed at most once (total ≤ #themes) and never freed during the process
  * — no disposal/use-after-free concern. Reading the active-id signal keeps it
  * reactive (so `<markdown>` recolors on switch); being a plain function keeps it
- * lazy, so processes that render no markdown (e.g. `inf config`, which previews
+ * lazy, so processes that render no markdown (e.g. `inflexa config`, which previews
  * themes live) never build a style.
  */
 const syntaxStyleCache = new Map<ThemeId, SyntaxStyle>();

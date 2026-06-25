@@ -10,7 +10,7 @@ import { createAnalysis, matchAnalysis } from "./analysis.ts";
 import { resolveContext, describeContext, type ContextFlags } from "./context.ts";
 import { resolveOutputDir } from "./output.ts";
 
-// Headless launch resolution: the logic behind bare `inf`, `inf new`, and `inf resume` that
+// Headless launch resolution: the logic behind bare `inflexa`, `inflexa new`, and `inflexa resume` that
 // decides which analysis/chat to open (resolving context, prompting, creating) and produces a
 // ChatTarget the presentation layer renders. It is NOT presentation — it touches db/, anchor,
 // analysis, and lib/cli (clack) only, never tui/. The actual hand-off to the renderer lives in
@@ -40,7 +40,7 @@ function resolveChatTarget(opts: { analysis: Analysis; resumeSessionId?: string 
 
     // Automatic anchor recovery: heal anchors whose folders moved since last run so the chat
     // resolves to the live path. Recovery only, NEVER creation (no-litter policy) — minting a
-    // marker is reserved for a deliberate action like `inf new`, never a passive launch.
+    // marker is reserved for a deliberate action like `inflexa new`, never a passive launch.
     const log = getLogger("anchor");
     recoverAnchors([workingDir]).match(
         ({ recovered, unresolved }) => {
@@ -103,7 +103,7 @@ async function pickOrStartTarget(analyses: Analysis[], cwd: string): Promise<Cha
     return resolveChatTarget({ analysis: chosen });
 }
 
-/** `inf new [name] [paths...]` — create an analysis (anchor = cwd) and resolve its chat target. */
+/** `inflexa new [name] [paths...]` — create an analysis (anchor = cwd) and resolve its chat target. */
 export async function resolveNewTarget(opts: { name?: string; paths: string[]; project?: string; output?: string }): Promise<ChatTarget> {
     let projectId: string | null = null;
     if (opts.project) {
@@ -136,7 +136,7 @@ export async function resolveNewTarget(opts: { name?: string; paths: string[]; p
     return resolveChatTarget({ analysis });
 }
 
-/** `inf resume <id|name>` — resolve the chat target for an existing analysis. */
+/** `inflexa resume <id|name>` — resolve the chat target for an existing analysis. */
 export function resolveResumeTarget(ref: IdOrName): ChatTarget {
     const match = matchAnalysis(ref).match((m) => m, dieOn("Failed to resolve analysis"));
     if (!match) fail(`No analysis found matching "${ref}".`);
@@ -146,14 +146,14 @@ export function resolveResumeTarget(ref: IdOrName): ChatTarget {
     if (match.others.length > 0) {
         console.error(`Multiple analyses match "${ref}":`);
         for (const a of [match.analysis, ...match.others]) console.error(`  ${a.id}  ${a.name}`);
-        fail("Re-run `inf resume` with a specific id.");
+        fail("Re-run `inflexa resume` with a specific id.");
     }
 
     return resolveChatTarget({ analysis: match.analysis });
 }
 
 /**
- * Bare `inf [--analysis <x>|--project <p>]`: resolve context, print it loudly, then resolve a
+ * Bare `inflexa [--analysis <x>|--project <p>]`: resolve context, print it loudly, then resolve a
  * chat target by opening/picking/starting. Returns null when there is nothing to render
  * (cancelled, or a copied folder that must be repaired first).
  */
@@ -194,7 +194,7 @@ export async function resolveDefaultTarget(flags: ContextFlags): Promise<ChatTar
             // job and isn't wired yet — direct the user to the backstop instead of guessing.
             // TODO(extend): offer re-mint+clone vs fork once the copy-resolution lands.
             console.log("  This folder looks like a copy of a tracked folder.");
-            console.log("  Re-mint or relocate its identity before use: `inf repair` / `inf relocate`.");
+            console.log("  Re-mint or relocate its identity before use: `inflexa repair` / `inflexa relocate`.");
             return null;
     }
 }

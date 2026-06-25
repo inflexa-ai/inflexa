@@ -1,11 +1,11 @@
 # context-resolution Specification
 
 ## Purpose
-Precedence-based resolution of what bare `inf` operates on (explicit flag → `.inf` marker walk-up → empty, with a copy guard), plus a human-readable one-line description printed before any action.
+Precedence-based resolution of what bare `inflexa` operates on (explicit flag → `.inflexa` marker walk-up → empty, with a copy guard), plus a human-readable one-line description printed before any action.
 ## Requirements
-### Requirement: Resolve bare-inf context by precedence
+### Requirement: Resolve bare-inflexa context by precedence
 
-The system SHALL provide `resolveContext(cwd, flags)` returning `Result<ResolvedContext, DbError>` in `src/modules/analysis/context.ts` that resolves what bare `inf` operates on, in precedence order: an explicit `flags.analysis` or `flags.project` wins outright; otherwise the nearest `.inf` marker at or above `cwd` determines an anchor and its analyses; otherwise the context is empty. `ResolvedContext` is a discriminated union with kinds `analysis`, `anchor`, `pick`, `empty`, and `copy`.
+The system SHALL provide `resolveContext(cwd, flags)` returning `Result<ResolvedContext, DbError>` in `src/modules/analysis/context.ts` that resolves what bare `inflexa` operates on, in precedence order: an explicit `flags.analysis` or `flags.project` wins outright; otherwise the nearest `.inflexa` marker at or above `cwd` determines an anchor and its analyses; otherwise the context is empty. `ResolvedContext` is a discriminated union with kinds `analysis`, `anchor`, `pick`, `empty`, and `copy`.
 
 #### Scenario: Explicit analysis flag resolves to that analysis
 

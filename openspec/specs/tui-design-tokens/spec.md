@@ -1,7 +1,7 @@
 # tui-design-tokens Specification
 
 ## Purpose
-TBD - created by archiving change inf-design-system. Update Purpose after archive.
+TBD - created by archiving change inflexa-design-system. Update Purpose after archive.
 ## Requirements
 ### Requirement: Named layout, spacing, and stroke tokens
 

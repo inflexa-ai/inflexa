@@ -12,7 +12,7 @@ import { asStr256 } from "../lib/types.ts";
 const created: string[] = [];
 
 function tmp(): string {
-    const dir = mkdtempSync(join(tmpdir(), "inf-e2e-"));
+    const dir = mkdtempSync(join(tmpdir(), "inflexa-e2e-"));
     created.push(dir);
     return dir;
 }
@@ -43,7 +43,7 @@ afterEach(() => {
 });
 
 describe("read commands (e2e)", () => {
-    test("inf ls lists a seeded analysis", () => {
+    test("inflexa ls lists a seeded analysis", () => {
         seedAnalysis();
         closeDb();
         const result = runCli(["ls"]);
@@ -51,14 +51,14 @@ describe("read commands (e2e)", () => {
         expect(result.stdout).toContain("My Analysis");
     });
 
-    test("inf ls reports when there are no analyses", () => {
+    test("inflexa ls reports when there are no analyses", () => {
         closeDb();
         const result = runCli(["ls"]);
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("No analyses found");
     });
 
-    test("inf project ls lists a seeded project", () => {
+    test("inflexa project ls lists a seeded project", () => {
         createProject({ name: asStr256("Acme"), description: null, tags: [] })._unsafeUnwrap();
         closeDb();
         const result = runCli(["project", "ls"]);
@@ -66,7 +66,7 @@ describe("read commands (e2e)", () => {
         expect(result.stdout).toContain("Acme");
     });
 
-    test("inf sessions lists a seeded session", () => {
+    test("inflexa sessions lists a seeded session", () => {
         seedAnalysis();
         createSession({ title: "My Chat", analysisId: "ana1" })._unsafeUnwrap();
         closeDb();
@@ -75,7 +75,7 @@ describe("read commands (e2e)", () => {
         expect(result.stdout).toContain("My Chat");
     });
 
-    test("inf status in a marker-less directory reports empty context", () => {
+    test("inflexa status in a marker-less directory reports empty context", () => {
         const dir = tmp();
         closeDb();
         const result = runCli(["status"], { cwd: dir });
@@ -90,7 +90,7 @@ describe("no-litter policy (e2e)", () => {
         closeDb();
         const result = runCli(["status"], { cwd: dir });
         expect(result.exitCode).toBe(0);
-        // The passive flow must leave the directory untouched — no .inf/id minted.
-        expect(existsSync(join(dir, ".inf", "id"))).toBe(false);
+        // The passive flow must leave the directory untouched — no .inflexa/id minted.
+        expect(existsSync(join(dir, ".inflexa", "id"))).toBe(false);
     });
 });

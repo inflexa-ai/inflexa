@@ -5,7 +5,7 @@ import { closeDb } from "../../db/primary.ts";
 import { freshDb } from "../../test_support/db.ts";
 import { findProjectByRef } from "../../db/primary_query.ts";
 
-// e2e: drive the real `inf` binary as a subprocess against the sandboxed DB. freshDb() lays down an
+// e2e: drive the real `inflexa` binary as a subprocess against the sandboxed DB. freshDb() lays down an
 // empty migrated DB; closeDb() releases it so the subprocess opens it cleanly. The parent reads back
 // through the same file (db() reopens) to assert persisted STATE, not just stdout.
 beforeEach(() => {
@@ -13,7 +13,7 @@ beforeEach(() => {
     closeDb();
 });
 
-describe("inf project new (e2e)", () => {
+describe("inflexa project new (e2e)", () => {
     test("creates a project: exits 0, prints confirmation, persists the row", () => {
         const result = runCli(["project", "new", "Acme"]);
         expect(result.exitCode).toBe(0);

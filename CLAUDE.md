@@ -81,7 +81,7 @@ Format: `// TODO(<tag>): <reason>`. Never use a bare `// TODO`.
 
 ### Resolving an id-or-name reference
 
-When a command resolves a user-supplied reference that may be **either an id or a human name/slug** (`inf resume <x>`, `--analysis <x>`, …):
+When a command resolves a user-supplied reference that may be **either an id or a human name/slug** (`inflexa resume <x>`, `--analysis <x>`, …):
 
 - **Type the parameter `IdOrName`** (from `lib/types.ts`), never a bare `string` — the alias makes "resolve this by id OR name" legible at the call site.
 - **Resolve it in a SINGLE query, id-first** — never fetch-by-id then fall back to fetch-by-name, and never load all rows to `.find`/`.filter` in JS. Put the priority in SQL:
@@ -207,7 +207,7 @@ The remedy: **any fixed chrome row placed directly below a `flexGrow` scrollbox 
 
 ### Event bus
 
-- UI state updates flow from `Bus` events: subscribe in component setup with `Bus.on("inf", handler)` and always pair with `onCleanup(() => Bus.off("inf", handler))`.
+- UI state updates flow from `Bus` events: subscribe in component setup with `Bus.on("inflexa", handler)` and always pair with `onCleanup(() => Bus.off("inflexa", handler))`.
 - Handlers must filter events by `sessionId` before applying them.
 
 ### Colors

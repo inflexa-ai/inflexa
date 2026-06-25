@@ -21,7 +21,7 @@ function storedAuth(overrides: Partial<StoredAuth> = {}): StoredAuth {
 
 describe("describeAuthError", () => {
     const errors: AuthError[] = [
-        { type: "missing_config", missingVars: ["INF_AUTH0_DOMAIN"] },
+        { type: "missing_config", missingVars: ["INFLEXA_AUTH0_DOMAIN"] },
         { type: "not_authenticated" },
         { type: "device_code_request_failed", detail: "boom" },
         { type: "token_poll_failed", detail: "nope" },
@@ -40,7 +40,7 @@ describe("describeAuthError", () => {
     });
 
     test("interpolates the variant's own detail into the message", () => {
-        expect(describeAuthError({ type: "missing_config", missingVars: ["INF_AUTH0_DOMAIN"] })).toContain("INF_AUTH0_DOMAIN");
+        expect(describeAuthError({ type: "missing_config", missingVars: ["INFLEXA_AUTH0_DOMAIN"] })).toContain("INFLEXA_AUTH0_DOMAIN");
         expect(describeAuthError({ type: "device_code_request_failed", detail: "boom" })).toContain("boom");
         expect(describeAuthError({ type: "token_read_failed", cause: new Error("read failed") })).toContain("read failed");
     });

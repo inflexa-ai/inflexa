@@ -9,7 +9,7 @@ export type StatusTone = "success" | "warn" | "error";
 
 /** Props for {@link StatusBar}. */
 export type StatusBarProps = {
-    /** Left identity, shown bold in the accent color (e.g. `inf`). */
+    /** Left identity, shown bold in the accent color (e.g. `inflexa`). */
     title: string;
     /** Optional secondary left text, shown muted (e.g. the active analysis name). */
     subtitle?: string;

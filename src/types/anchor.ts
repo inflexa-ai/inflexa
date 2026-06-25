@@ -2,14 +2,14 @@ import type { ID } from "@/lib/types";
 
 /**
  * The folder's stable identity — a `randomUUIDv7()` written write-once into the marker
- * (`.inf/id`). It keys the anchor across moves and renames; the row's stored path is
+ * (`.inflexa/id`). It keys the anchor across moves and renames; the row's stored path is
  * only a cache, reconciled back to this id.
  */
 export type AnchorId = ID;
 
 /** Invisible folder-identity record. Keyed by the marker id, not its path. */
 export type Anchor = {
-    /** the marker UUID; the row's primary key, mirrored on disk in `.inf/id` */
+    /** the marker UUID; the row's primary key, mirrored on disk in `.inflexa/id` */
     id: AnchorId;
     createdAt: number;
     /** bumped on data edits (e.g. cachedPath); distinct from lastSeen */
@@ -22,7 +22,7 @@ export type Anchor = {
     lastSeen: number;
 };
 
-/** Contents of the write-once on-disk marker `<anchor>/.inf/id`. */
+/** Contents of the write-once on-disk marker `<anchor>/.inflexa/id`. */
 export type AnchorMarker = {
     schemaVersion: 1;
     anchorId: AnchorId;

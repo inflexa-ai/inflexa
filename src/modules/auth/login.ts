@@ -34,7 +34,7 @@ export async function login(): Promise<void> {
     saveAuth(grant.value).match(
         () => {
             const expires = new Date(grant.value.expiresAt).toLocaleString();
-            console.log(`  Logged in. Access token expires ${expires}; the session renews automatically while you keep using inf.`);
+            console.log(`  Logged in. Access token expires ${expires}; the session renews automatically while you keep using inflexa.`);
         },
         (error) => {
             console.error(`  ${describeAuthError(error)}`);

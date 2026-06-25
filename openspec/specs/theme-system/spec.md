@@ -67,11 +67,11 @@ The CLI SHALL ship multiple curated dark built-in themes, including `tokyo-night
 
 ### Requirement: Live theme switching
 
-Calling `setTheme(id)` SHALL repaint the currently-running render root in place — every themed surface in that root recolors on the next frame, with no process restart and no renderer re-creation. The `inf config` screen remains a user-facing switch surface, and the chat TUI (`app.tsx`) SHALL ALSO provide in-session switch surfaces via the command palette's "Change theme" command and the embedded Settings dialog. In all cases the switch repaints the running render root in place and the chosen theme is persisted via `writeConfig`. The chat TUI SHALL still apply the persisted theme at launch.
+Calling `setTheme(id)` SHALL repaint the currently-running render root in place — every themed surface in that root recolors on the next frame, with no process restart and no renderer re-creation. The `inflexa config` screen remains a user-facing switch surface, and the chat TUI (`app.tsx`) SHALL ALSO provide in-session switch surfaces via the command palette's "Change theme" command and the embedded Settings dialog. In all cases the switch repaints the running render root in place and the chosen theme is persisted via `writeConfig`. The chat TUI SHALL still apply the persisted theme at launch.
 
 #### Scenario: Config screen recolors live on switch
 
-- **WHEN** the theme is switched while `inf config` is running
+- **WHEN** the theme is switched while `inflexa config` is running
 - **THEN** the config screen's chrome, notices, and theme list recolor on the next frame without a restart
 
 #### Scenario: Chat TUI reflects the saved theme at launch
@@ -114,11 +114,11 @@ The selected theme SHALL persist in `config.json` under a `theme` key whose valu
 
 ### Requirement: Theme picker in the config TUI
 
-The `inf config` screen SHALL present the built-in themes as a visible, navigable list that previews live and commits on save, reusing the screen's draft/saved/dirty model. Moving the highlight onto a theme SHALL apply it immediately (live preview) and set it as the draft selection, marking the screen dirty; saving SHALL persist the selection; quitting with unsaved changes and discarding SHALL revert the live theme to the previously-saved one.
+The `inflexa config` screen SHALL present the built-in themes as a visible, navigable list that previews live and commits on save, reusing the screen's draft/saved/dirty model. Moving the highlight onto a theme SHALL apply it immediately (live preview) and set it as the draft selection, marking the screen dirty; saving SHALL persist the selection; quitting with unsaved changes and discarding SHALL revert the live theme to the previously-saved one.
 
 #### Scenario: Live preview while navigating the list
 
-- **WHEN** the user moves the highlight across the theme list in `inf config`
+- **WHEN** the user moves the highlight across the theme list in `inflexa config`
 - **THEN** the entire config screen recolors immediately to the highlighted theme and the screen is marked as having unsaved changes
 
 #### Scenario: Save commits the preview

@@ -5,7 +5,7 @@ import { dieOn, fail } from "../../lib/cli.ts";
 import type { IdOrName } from "../../lib/types.ts";
 
 /**
- * `inf analysis set-project <analysis> [project]` — attach/move/clear an analysis's grouping.
+ * `inflexa analysis set-project <analysis> [project]` — attach/move/clear an analysis's grouping.
  * A missing `projectRef` clears it.
  */
 export function runSetProject(analysisRef: IdOrName, projectRef: IdOrName | null): void {
