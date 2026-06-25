@@ -8,6 +8,7 @@ import { useBindings, KEYS, chordLabel } from "../keymap.ts";
 import { DialogPanel } from "../components/dialog_panel.tsx";
 import { Welcome } from "../components/welcome.tsx";
 import { ThinkingBlock } from "../components/thinking_block.tsx";
+import { ThinkingIndicator } from "../components/thinking_indicator.tsx";
 import { ToolBlock } from "../components/tool_block.tsx";
 import { DiffBlock } from "../components/diff_block.tsx";
 import { RunBlock } from "../components/run_block.tsx";
@@ -65,7 +66,9 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <MessageBlock role="user" parts={[mockUserText]} streamPartId={noStreamId} streamText={noStreamText} />
                     <MessageBlock role="assistant" parts={[mockAssistantText]} streamPartId={noStreamId} streamText={noStreamText} />
                 </State>
-                <State n="3" label="thinking / reasoning (collapsed, then expanded)">
+                <State n="3" label="thinking / reasoning (live indicator, collapsed, expanded)">
+                    {/* Self-animating: it owns its spinner interval, so it spins live in the gallery. */}
+                    <ThinkingIndicator />
                     <ThinkingBlock text={mockThinking.text} durationMs={mockThinking.durationMs} />
                     <ThinkingBlock text={mockThinking.text} durationMs={mockThinking.durationMs} expanded />
                 </State>
