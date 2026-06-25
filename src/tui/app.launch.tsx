@@ -4,8 +4,10 @@ import { ConsolePosition } from "@opentui/core";
 import { warmGrammars } from "./grammars/register.ts";
 import { ensureProxyReadyOrExit } from "../modules/proxy/setup.ts";
 import { resolveNewTarget, resolveResumeTarget, resolveDefaultTarget, type ChatTarget } from "../modules/analysis/launch.ts";
+import { acquireAnalysisLock } from "../modules/analysis/lock.ts";
 import type { ContextFlags } from "../modules/analysis/context.ts";
 import { readConfig } from "../lib/config.ts";
+import { shutdown } from "../lib/shutdown.ts";
 import type { IdOrName } from "../lib/types.ts";
 import { App } from "./app.tsx";
 import { setTheme } from "./theme.ts";
@@ -23,6 +25,16 @@ import { setTheme } from "./theme.ts";
  */
 async function renderChat(target: ChatTarget): Promise<void> {
     await ensureProxyReadyOrExit();
+
+    // Claim the analysis before the alternate screen takes over, so a conflict surfaces as a plain
+    // stderr line and a clean exit — no flash of TUI. Acquiring here (not in the headless resolvers)
+    // keeps the lock off the bare-`inf`-resolves-to-nothing path: that path returns null and never
+    // reaches renderChat, so it writes no lock (no-litter policy).
+    const lock = acquireAnalysisLock(target.analysis.id);
+    if (!lock.acquired) {
+        console.error(`"${target.analysis.name}" is already open in another instance. Open or resume a different analysis.`);
+        await shutdown(1);
+    }
 
     setTheme(readConfig().theme);
     void render(() => <App sessionId={target.sessionId} workingDir={target.workingDir} analysis={target.analysis} />, {
