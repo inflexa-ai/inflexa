@@ -3,6 +3,8 @@ import { createStore } from "solid-js/store";
 import type { JSX } from "solid-js";
 
 import { projectForAnalysis } from "../../modules/project/project.ts";
+import { acquireAnalysisLock, releaseAnalysisLock } from "../../modules/analysis/lock.ts";
+import { notify } from "../hooks/notice.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { Project } from "../../types/project.ts";
 
@@ -69,8 +71,22 @@ export function createWorkspace(init: WorkspaceInit): Workspace {
         closeDialog: init.closeDialog,
         quit: init.quit,
         // The store's own setter, captured here so the scope has a single writer. References
-        // `setStore` from the destructuring above — created now, only invoked after the store exists.
+        // `store`/`setStore` from the destructuring above — created now, only invoked after the
+        // store exists. This is also the lock chokepoint: as the SOLE scope writer, re-keying the
+        // analysis lock here means no in-process switch can bypass it. Invariant: acquire the target
+        // BEFORE releasing the current, so a refused switch never strands us lockless.
         openSession(sessionId, workingDir, analysis) {
+            const prev = store.analysis;
+            // A same-analysis session switch (prev.id === analysis.id) needs no re-key — we already
+            // hold this analysis's lock (acquire would re-entrantly succeed, release would drop the
+            // lock we still want), so skip it entirely and just swap the session.
+            if (!prev || prev.id !== analysis.id) {
+                if (!acquireAnalysisLock(analysis.id).acquired) {
+                    notify({ kind: "warn", text: `"${analysis.name}" is already open in another instance.` });
+                    return; // keep the current analysis open and its lock held; abort the swap
+                }
+                if (prev) releaseAnalysisLock(prev.id);
+            }
             setStore({ analysis, sessionId, workingDir, project: projectForAnalysis(analysis) });
         },
     });

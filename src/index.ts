@@ -4,6 +4,7 @@ import "./extensions/index.ts";
 import { CommanderError } from "commander";
 
 import { cli } from "./cli/index.ts";
+import { releaseHeldAnalysisLock } from "./modules/analysis/lock.ts";
 import { initBusLogging } from "./lib/bus.ts";
 import { readConfig } from "./lib/config.ts";
 import { addLogStream, flushLogsSync, getLogger } from "./lib/log.ts";
@@ -22,6 +23,10 @@ process.on("beforeExit", () => {
     void shutdown(typeof process.exitCode === "number" ? process.exitCode : 0);
 });
 process.on("exit", flushLogsSync);
+// Release this instance's analysis lock on any exit. This single sync hook covers the graceful TUI
+// quit too (App.quit → shutdown → process.exit), so no separate release in App.quit() is needed.
+// SIGKILL bypasses it; that stale lock is reclaimed by the pid check on the next open.
+process.on("exit", releaseHeldAnalysisLock);
 
 getLogger("main").info({ argv: process.argv.slice(2) }, "cli start");
 

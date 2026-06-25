@@ -38,6 +38,12 @@ export const env = Object.freeze({
      */
     outputFallbackDir: join(dataDir(), "inf", "analyses"),
     /**
+     * Advisory per-analysis instance locks: `<dataDir>/inf/locks/<analysisId>.lock`. One inf
+     * process may have an analysis open at a time; the lock files coordinate that across instances.
+     * See src/modules/analysis/lock.ts.
+     */
+    locksDir: join(dataDir(), "inf", "locks"),
+    /**
      * CLIProxyAPI runs in a container (Docker or Podman, see
      * src/modules/proxy/setup.ts). The config and the provider-credential dir are
      * state we own, so they live under our data dir and are bind-mounted into the
@@ -82,6 +88,7 @@ export const envDoc: Readonly<Record<Exclude<keyof typeof env, "cliproxyPort" | 
     dbPath: { kind: "path", label: "database", description: "saved sessions (SQLite)", baseVar: dataVar },
     logDir: { kind: "path", label: "logs", description: "log files, rotated daily, 7-day retention", baseVar: dataVar },
     outputFallbackDir: { kind: "path", label: "outputs", description: "analysis outputs when the anchor folder isn't writable", baseVar: dataVar },
+    locksDir: { kind: "path", label: "locks", description: "advisory per-analysis instance locks", baseVar: dataVar },
     cliproxyConfigPath: { kind: "path", label: "proxy config", description: "CLIProxyAPI config, mounted into the proxy container", baseVar: dataVar },
     cliproxyAuthDir: { kind: "path", label: "proxy auth", description: "CLIProxyAPI provider credentials, created by `inf setup`", baseVar: dataVar },
     configPath: { kind: "path", label: "config", description: "settings (telemetry consent)", baseVar: configVar },
