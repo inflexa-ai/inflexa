@@ -8,6 +8,7 @@ import type { Message, Part } from "./session.ts";
 export type BusEvent =
     | { type: "session.status"; sessionId: string; status: "idle" | "busy" | "error" }
     | { type: "message.created"; message: Message }
+    | { type: "message.updated"; message: Message }
     | { type: "part.updated"; part: Part }
     | { type: "part.delta"; sessionId: string; messageId: string; partId: string; delta: string }
     | { type: "session.error"; sessionId: string; error: string };

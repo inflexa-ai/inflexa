@@ -2,11 +2,11 @@ import { For, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 
 import { syntaxStyle, theme } from "../theme.ts";
-import { space, MARKERS } from "../../lib/design_system.ts";
+import { space, GLYPHS, MARKERS } from "../../lib/design_system.ts";
 import { ThinkingBlock } from "../components/thinking_block.tsx";
 import { ToolBlock } from "../components/tool_block.tsx";
 import { DiffBlock } from "../components/diff_block.tsx";
-import { Bold } from "../components/emphasis.tsx";
+import { Bold, Fg } from "../components/emphasis.tsx";
 import type { Part } from "../../types/session.ts";
 
 /** A chat turn's author. */
@@ -14,8 +14,12 @@ export type MessageRole = "user" | "assistant";
 
 /** Props for {@link MessageBlock}. */
 export type MessageBlockProps = {
+    /** 1-based position of this turn in the rendered conversation, shown beside the role label. */
+    index: number;
     /** Who authored the turn — selects the gutter marker and its color. */
     role: MessageRole;
+    /** Assistant-only turn duration in ms; shown beside the number. Omitted on user turns and before the turn finishes. */
+    durationMs?: number;
     /** The turn's parts (text, plus the mock thinking/tool/file-edit kinds). */
     parts: Part[];
     /** The part id currently streaming, or null — read reactively. */
@@ -33,10 +37,17 @@ export type MessageBlockProps = {
  * accessors and flips to the stored text once the part completes.
  */
 export function MessageBlock(props: MessageBlockProps) {
+    // `· #N`, plus `· Ns` for a completed assistant turn (whole seconds, matching the thinking
+    // block's readout). User turns and not-yet-finished assistant turns show only the number.
+    const meta = (): string => {
+        const dur = props.role === "assistant" && props.durationMs !== undefined ? ` ${GLYPHS.middot} ${Math.round(props.durationMs / 1000)}s` : "";
+        return `  ${GLYPHS.middot} #${props.index}${dur}`;
+    };
     return (
         <box width="100%" flexDirection="column" paddingBottom={space.sm}>
             <text fg={theme()[props.role === "user" ? MARKERS.you.role : MARKERS.assistant.role]}>
                 <Bold>{props.role === "user" ? `${MARKERS.you.glyph} You` : `${MARKERS.assistant.glyph} Inflexa`}</Bold>
+                <Fg role="fgSubtle">{meta()}</Fg>
             </text>
             <For each={props.parts}>
                 {(part): JSX.Element => {

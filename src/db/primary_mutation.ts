@@ -78,6 +78,13 @@ export function createMessage(sessionId: string, role: "user" | "assistant"): Re
     });
 }
 
+/** Persists `message`'s data blob (e.g. the assistant turn's stamped `durationMs`). Returns rows changed — `0` when no such message exists. */
+export function updateMessage(message: Message): Result<number, DbError> {
+    return tryMutation("updateMessage", (conn) => {
+        return conn.query("UPDATE messages SET data = ? WHERE id = ?").run(JSON.stringify(message), message.id).changes;
+    });
+}
+
 /** Creates and persists a text part under a message — the unit the assistant streams into. */
 export function createPart(sessionId: string, messageId: string, text: string): Result<TextPart, DbError> {
     const part: TextPart = {

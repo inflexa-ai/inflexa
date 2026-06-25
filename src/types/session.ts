@@ -10,6 +10,8 @@ export type Message = {
     sessionId: string;
     role: "user" | "assistant";
     createdAt: number;
+    /** Wall-clock duration of the turn, ms. Assistant turns only — stamped when the stream finishes; absent on user turns and on an assistant turn not yet completed. */
+    durationMs?: number;
 };
 
 /** A plain text part — the only kind the live engine produces and the only kind persisted. */

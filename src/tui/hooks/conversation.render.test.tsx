@@ -23,7 +23,9 @@ describe("streamed assistant text survives finalization (rendered)", () => {
         const setup = await testRender(
             () => (
                 <box flexDirection="column">
-                    <For each={messages}>{(m) => <MessageBlock role={m.role} parts={m.parts} streamPartId={streamPartId} streamText={streamText} />}</For>
+                    <For each={messages}>
+                        {(m, i) => <MessageBlock index={i() + 1} role={m.role} parts={m.parts} streamPartId={streamPartId} streamText={streamText} />}
+                    </For>
                 </box>
             ),
             { width: 50, height: 16 },

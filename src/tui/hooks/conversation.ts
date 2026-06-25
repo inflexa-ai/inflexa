@@ -19,6 +19,8 @@ export type UIMessage = {
     id: string;
     role: "user" | "assistant";
     parts: Part[];
+    /** Assistant-only turn duration in ms, set when the turn finishes (a `message.updated` event); undefined otherwise. */
+    durationMs?: number;
 };
 
 // The most-recent turns the UI mounts. Layout cost scales with mounted message count (the scrollbox
@@ -102,10 +104,24 @@ export function applyBusEvent(event: BusEvent, sessionId: string): void {
                             id: event.message.id,
                             role: event.message.role,
                             parts: [],
+                            durationMs: event.message.durationMs,
                         });
                         // Re-enforce the mount cap on every live insert (a turn pushes user+assistant),
                         // dropping the oldest so a long running session can't grow the store unbounded.
                         while (msgs.length > MESSAGE_CAP) msgs.shift();
+                    }),
+                );
+            }
+            break;
+
+        case "message.updated":
+            if (event.message.sessionId === sessionId) {
+                setMessages(
+                    produce((msgs) => {
+                        const msg = msgs.find((m) => m.id === event.message.id);
+                        // Only the duration is mutable post-creation today; copy it across rather than
+                        // replacing the whole UIMessage (its `parts` are owned by the part reducers).
+                        if (msg) msg.durationMs = event.message.durationMs;
                     }),
                 );
             }
@@ -158,6 +174,7 @@ export function loadMessages(sessionId: string): void {
                 id: m.info.id,
                 role: m.info.role,
                 parts: m.parts,
+                durationMs: m.info.durationMs,
             }));
             setMessages(uiMsgs);
         },
