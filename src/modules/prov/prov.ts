@@ -11,6 +11,7 @@ import { loadOrGenerateKeypair, computeChainHash, signHexDigest } from "./signin
 import { loadAuth } from "../auth/auth.ts";
 import { decodeIdTokenClaims } from "../auth/whoami.ts";
 import pkg from "../../../package.json";
+import { WaitGroup } from "@/lib/wg.ts";
 
 // The provenance recorder: a process-global bus subscriber that keeps each open analysis's PROV
 // document in memory (append-only) and persists it to `analyses.provenance`. Recording is decoupled
@@ -50,6 +51,7 @@ const chainHashes = new Map<string, string | null>();
 // Analyses whose live doc has appends not yet written to the column, awaiting the next flush.
 const dirty = new Set<string>();
 let flushScheduled = false;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let subscribed = false;
 
 /**
@@ -127,69 +129,55 @@ function liveDocForAnalysis(analysisId: string): ProvDocument | null {
 function scheduleFlush(): void {
     if (flushScheduled) return;
     flushScheduled = true;
-    setTimeout(() => {
+    flushTimer = setTimeout(() => {
         flushScheduled = false;
+        flushTimer = null;
         void flushProvenanceAsync();
     }, 0);
 }
 
 /**
- * Async flush: serialize, compute chain hash, sign, then persist all three columns. This is the
- * normal path (called from the coalesced `setTimeout`). A signing failure degrades to unsigned —
- * the provenance is still written, just without integrity columns.
+ * Async flush: serialize, compute chain hash, sign, then persist all three columns atomically.
+ * Every flush is signed — unsigned provenance is never written. A signing failure skips the
+ * persist entirely (the dirty set retains the analysis so the next flush retries). Shutdown
+ * registers this via {@link onShutdown} so un-flushed provenance is signed and persisted before
+ * `process.exit()`. Dirty analyses are flushed concurrently via a {@link WaitGroup} — each
+ * analysis signs independently (the keypair is process-cached, so there is no lock contention),
+ * and `allSettled` ensures one failure doesn't block the others.
  */
 async function flushProvenanceAsync(): Promise<void> {
-    for (const analysisId of [...dirty]) {
+    const wg = new WaitGroup();
+    wg.goMany([...dirty], async (analysisId) => {
         const doc = liveDocs.get(analysisId);
         if (!doc) {
             dirty.delete(analysisId);
-            continue;
+            return;
         }
         const json = doc.unified().serialize("json");
 
-        let chainHash: string | null = null;
-        let signature: string | null = null;
         try {
             const kp = await loadOrGenerateKeypair();
-            if (kp) {
-                const prev = chainHashes.get(analysisId) ?? null;
-                chainHash = await computeChainHash(prev, json);
-                signature = await signHexDigest(kp.privateKey, chainHash);
+            if (!kp) {
+                log.error({ analysisId }, "no signing key available; provenance not persisted");
+                return;
             }
+            const prev = chainHashes.get(analysisId) ?? null;
+            const chainHash = await computeChainHash(prev, json);
+            const signature = await signHexDigest(kp.privateKey, chainHash);
+
+            updateAnalysisProvenance(analysisId, json, chainHash, signature).match(
+                () => {
+                    dirty.delete(analysisId);
+                    chainHashes.set(analysisId, chainHash);
+                },
+                (e) => log.error({ analysisId, err: e.type }, "failed to persist provenance"),
+            );
         } catch (cause) {
-            log.warn({ analysisId, cause }, "signing failed; persisting provenance unsigned");
+            log.error({ analysisId, cause }, "signing failed; provenance not persisted");
         }
+    });
 
-        // The UPDATE atomically rotates provenance_chain_hash → provenance_prev_chain_hash
-        // before writing the new chainHash, so the caller doesn't need to pass prev.
-        updateAnalysisProvenance(analysisId, json, chainHash, signature).match(
-            () => {
-                dirty.delete(analysisId);
-                if (chainHash) chainHashes.set(analysisId, chainHash);
-            },
-            (e) => log.error({ analysisId, err: e.type }, "failed to persist provenance"),
-        );
-    }
-}
-
-/**
- * Sync exit backstop: persist provenance WITHOUT signing. `process.on("exit")` handlers must be
- * synchronous — WebCrypto is async, so we cannot sign here. An unsigned flush is strictly better
- * than losing the un-flushed tail: the data is preserved and `verify` reports "unsigned" rather
- * than "empty" or stale.
- */
-export function flushProvenance(): void {
-    for (const analysisId of [...dirty]) {
-        const doc = liveDocs.get(analysisId);
-        if (!doc) {
-            dirty.delete(analysisId);
-            continue;
-        }
-        updateAnalysisProvenance(analysisId, doc.unified().serialize("json")).match(
-            () => dirty.delete(analysisId),
-            (e) => log.error({ analysisId, err: e.type }, "failed to persist provenance"),
-        );
-    }
+    await wg.wait();
 }
 
 /** Test-only: drop all in-memory live documents, chain hashes, and pending flushes so a fresh DB starts from a clean recorder. */
@@ -197,8 +185,9 @@ export function resetProvenanceRecorderForTests(): void {
     liveDocs.clear();
     chainHashes.clear();
     dirty.clear();
+    if (flushTimer) clearTimeout(flushTimer);
+    flushTimer = null;
     flushScheduled = false;
 }
 
-/** Async flush exposed for tests that need signing (the sync `flushProvenance` skips it). */
 export { flushProvenanceAsync };

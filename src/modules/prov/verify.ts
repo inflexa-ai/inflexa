@@ -168,6 +168,37 @@ export function readSidecar(sigPath: string): Sidecar | null {
     }
 }
 
+// TODO(slop): why does this throw? Why don't you use neverthrow?
+/**
+ * Verify an exported provenance file against its `.sig.json` sidecar. Shared by the CLI
+ * `prov verify-file` action and the TUI "Verify provenance (export)" command — both need the same
+ * read-sidecar → import-key → verify-payload pipeline. Returns `null` when no sidecar exists;
+ * throws on a corrupt sidecar or invalid public key (the caller decides error UX).
+ *
+ * // TODO(robustness): the public key is trusted solely because it travels in the sidecar — an
+ * // attacker who replaces both the provenance file and the sidecar (with their own key) passes
+ * // verification. For teammate-to-teammate sharing over trusted channels this is fine; for stronger
+ * // trust, support key pinning: the verifier registers the signer's public key once, then future
+ * // verify calls check the sidecar's key against the pinned one.
+ */
+export async function verifyExportFile(provPath: string): Promise<VerifyResult | null> {
+    const sigPath = `${provPath}.sig.json`;
+    if (!existsSync(sigPath)) return null;
+
+    const sidecar = readSidecar(sigPath);
+    if (!sidecar) throw new Error(`Sidecar at ${sigPath} is invalid or missing required fields.`);
+
+    let publicKey: CryptoKey;
+    try {
+        publicKey = await crypto.subtle.importKey("jwk", sidecar.publicKey, "Ed25519", true, ["verify"]);
+    } catch {
+        throw new Error("The public key in the sidecar is invalid or unsupported.");
+    }
+
+    const provJson = readFileSync(provPath, "utf-8");
+    return verifyPayload(provJson, sidecar.payloadDigest, sidecar.signature, publicKey);
+}
+
 /**
  * CLI action for `inflexa prov verify-file <path>`: verify an exported provenance file against
  * its `.sig.json` sidecar. No database or analysis row needed — a colleague who receives the
@@ -176,32 +207,15 @@ export function readSidecar(sigPath: string): Sidecar | null {
 export async function runVerifyFile(path: string): Promise<void> {
     if (!existsSync(path)) fail(`File not found: ${path}`);
 
-    const sigPath = `${path}.sig.json`;
-    if (!existsSync(sigPath)) {
-        console.log("No sidecar found: the provenance file cannot be verified without a .sig.json sidecar.");
-        return;
-    }
-
-    const sidecar = readSidecar(sigPath);
-    if (!sidecar) {
-        fail(`Sidecar at ${sigPath} is invalid or missing required fields.`);
-    }
-
-    // TODO(robustness): the public key is trusted solely because it travels in the sidecar — an
-    // attacker who replaces both the provenance file and the sidecar (with their own key) passes
-    // verification. For teammate-to-teammate sharing over trusted channels this is fine; for stronger
-    // trust, support key pinning: the verifier registers the signer's public key once, then future
-    // verify-file calls check the sidecar's key against the pinned one.
-    let publicKey: CryptoKey;
     try {
-        publicKey = await crypto.subtle.importKey("jwk", sidecar.publicKey, "Ed25519", true, ["verify"]);
-    } catch {
-        fail("The public key in the sidecar is invalid or unsupported.");
+        const result = await verifyExportFile(path);
+        if (!result) {
+            console.log("No sidecar found: the provenance file cannot be verified without a .sig.json sidecar.");
+            return;
+        }
+        console.log(formatVerifyResult(result));
+        if (result.status === "tampered") process.exitCode = 1;
+    } catch (e) {
+        fail(e instanceof Error ? e.message : String(e));
     }
-
-    const provJson = readFileSync(path, "utf-8");
-    const result = await verifyPayload(provJson, sidecar.payloadDigest, sidecar.signature, publicKey);
-    console.log(formatVerifyResult(result));
-
-    if (result.status === "tampered") process.exitCode = 1;
 }

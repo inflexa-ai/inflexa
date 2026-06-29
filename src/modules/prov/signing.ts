@@ -119,9 +119,12 @@ export async function loadPublicKey(): Promise<CryptoKey | null> {
 
 /**
  * Export the public key as JWK for inclusion in an export sidecar — lets a third party verify
- * without access to the keypair file. Returns `null` when no keypair is available.
+ * without access to the keypair file. Prefers the in-memory cached key (avoiding a file re-read
+ * that could race with another process writing a different keypair); falls back to disk when the
+ * keypair hasn't been loaded yet. Returns `null` when no keypair is available.
  */
 export async function exportPublicKeyJwk(): Promise<JWK | null> {
+    if (cached) return crypto.subtle.exportKey("jwk", cached.publicKey);
     const stored = readKeypairFile();
     return stored?.publicKey ?? null;
 }

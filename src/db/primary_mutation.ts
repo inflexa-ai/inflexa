@@ -250,14 +250,16 @@ export function relocateRawInputPrefix(fromPrefix: string, toPrefix: string): Re
 // --- Data model: provenance ---
 
 /**
- * Persists the PROV-JSON serialization of an analysis's provenance document, plus the optional
- * integrity columns. The UPDATE atomically rotates the chain: the current `provenance_chain_hash`
- * becomes `provenance_prev_chain_hash` before the new values land, so the verifier can always
- * recompute `chainHash = SHA-256(prevChainHash || provJson)` from stored data alone. Deliberately
- * does NOT bump `updated_at`: provenance is recorded metadata flushed asynchronously, not a user
- * data-edit — the same reasoning as `touchAnchor` leaving `updatedAt` alone. Returns rows changed.
+ * Persists the PROV-JSON serialization of an analysis's provenance document and its integrity
+ * columns. All three are required — unsigned provenance is never written (the signing key is
+ * generated on first use, so absence is a hard fault, not a graceful-degradation case). The
+ * UPDATE atomically rotates the chain: the current `provenance_chain_hash` becomes
+ * `provenance_prev_chain_hash` before the new values land, so the verifier can always recompute
+ * `chainHash = SHA-256(prevChainHash || provJson)` from stored data alone. Deliberately does NOT
+ * bump `updated_at`: provenance is recorded metadata flushed asynchronously, not a user data-edit
+ * — the same reasoning as `touchAnchor` leaving `updatedAt` alone. Returns rows changed.
  */
-export function updateAnalysisProvenance(id: string, provenance: string, chainHash?: string | null, signature?: string | null): Result<number, DbError> {
+export function updateAnalysisProvenance(id: string, provenance: string, chainHash: string, signature: string): Result<number, DbError> {
     return tryMutation("updateAnalysisProvenance", (conn) => {
         return conn
             .query(
@@ -268,6 +270,6 @@ export function updateAnalysisProvenance(id: string, provenance: string, chainHa
                      provenance_signature = ?
                  WHERE id = ?`,
             )
-            .run(provenance, chainHash ?? null, signature ?? null, id).changes;
+            .run(provenance, chainHash, signature, id).changes;
     });
 }

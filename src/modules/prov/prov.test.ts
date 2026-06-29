@@ -9,7 +9,7 @@ import { asStr256 } from "../../lib/types.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { ProvActor, ProvInputRef } from "../../types/prov.ts";
 import { appendCreation, appendInputAdded, appendInputRemoved, freshDocument, serializeProvenance } from "./document.ts";
-import { initProvenanceRecording, flushProvenance, flushProvenanceAsync, resetProvenanceRecorderForTests } from "./prov.ts";
+import { initProvenanceRecording, flushProvenanceAsync, resetProvenanceRecorderForTests } from "./prov.ts";
 import { getAnalysisIntegrity } from "../../db/primary_query.ts";
 import { computeChainHash, computePayloadDigest, verifyHexDigest, resetSigningForTests, loadOrGenerateKeypair } from "./signing.ts";
 import { verifyProvenance, verifyPayload } from "./verify.ts";
@@ -89,14 +89,23 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
     beforeEach(() => {
         freshDb();
         resetProvenanceRecorderForTests();
+        resetSigningForTests(null);
         initProvenanceRecording(); // idempotent: subscribes once across the whole test run
     });
 
-    test("emitted events accumulate in memory and flush to the analyses.provenance column", () => {
+    test("emitted events accumulate in memory and flush to the analyses.provenance column", async () => {
+        const { mkdirSync, rmSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const { tmpdir } = await import("node:os");
+        const { randomUUIDv7: uuid } = await import("bun");
+
+        const tmpDir = join(tmpdir(), `prov-accum-test-${uuid()}`);
+        mkdirSync(tmpDir, { recursive: true });
+        resetSigningForTests(join(tmpDir, "prov_key.json"));
+
         insertAnchor({ id: "anchor1", createdAt: 1, updatedAt: 1, cachedPath: "/tmp/x", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
         insertAnalysis(analysis)._unsafeUnwrap();
 
-        // No provenance until something is recorded.
         expect(getAnalysisProvenance("a1")._unsafeUnwrap()).toBeNull();
 
         Bus.emit("inflexa", { type: "prov.analysis_created", analysisId: "a1", actor: system });
@@ -107,29 +116,38 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
             input: { path: "data.csv", isDir: false, anchorId: "anchor1" },
             derivedFromAnalysisId: null,
         });
-        // Drive the flush synchronously rather than waiting on the coalesced timer.
-        flushProvenance();
+        await flushProvenanceAsync();
 
         const stored = getAnalysisProvenance("a1")._unsafeUnwrap();
         expect(stored).not.toBeNull();
-        // Stored form is valid PROV-JSON that deserializes back into a document holding both agents.
         const doc = ProvDocument.deserialize(stored!, "json");
         const provn = doc.serialize("provn");
         expect(provn).toContain("entity(inflexa:analysis-a1");
         expect(provn).toContain("agent(inflexa:agent-system");
         expect(provn).toContain("agent(inflexa:agent-user-alice_example_org");
 
-        // serializeProvenance reads the same column back for export.
         const exported = serializeProvenance(analysis, "provn")._unsafeUnwrap();
         expect(exported).toContain("used(inflexa:action-");
+
+        resetSigningForTests(null);
+        rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    test("reopening deserializes the stored doc and appends onto it", () => {
+    test("reopening deserializes the stored doc and appends onto it", async () => {
+        const { mkdirSync, rmSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const { tmpdir } = await import("node:os");
+        const { randomUUIDv7: uuid } = await import("bun");
+
+        const tmpDir = join(tmpdir(), `prov-reopen-test-${uuid()}`);
+        mkdirSync(tmpDir, { recursive: true });
+        resetSigningForTests(join(tmpDir, "prov_key.json"));
+
         insertAnchor({ id: "anchor1", createdAt: 1, updatedAt: 1, cachedPath: "/tmp/x", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
         insertAnalysis(analysis)._unsafeUnwrap();
 
         Bus.emit("inflexa", { type: "prov.analysis_created", analysisId: "a1", actor: system });
-        flushProvenance();
+        await flushProvenanceAsync();
 
         // Simulate a new process: drop in-memory state so the next event rebuilds from the column.
         resetProvenanceRecorderForTests();
@@ -141,12 +159,14 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
             input: { path: "later.csv", isDir: false, anchorId: "anchor1" },
             derivedFromAnalysisId: null,
         });
-        flushProvenance();
+        await flushProvenanceAsync();
 
-        // The reloaded document retains the creation action AND the later add.
         const provn = serializeProvenance(analysis, "provn")._unsafeUnwrap();
         expect(provn).toContain("inflexa:CreateAnalysis");
         expect(provn).toContain("later.csv");
+
+        resetSigningForTests(null);
+        rmSync(tmpDir, { recursive: true, force: true });
     });
 
     test("async flush signs provenance and the signature verifies against the chain hash", async () => {
@@ -304,23 +324,6 @@ describe("export sidecar (writeSidecar via the full export path)", () => {
 
         resetSigningForTests(null);
         rmSync(tmpDir, { recursive: true, force: true });
-    });
-
-    test("unsigned provenance produces no sidecar", () => {
-        freshDb();
-        resetProvenanceRecorderForTests();
-
-        insertAnchor({ id: "anchor1", createdAt: 1, updatedAt: 1, cachedPath: "/tmp/x", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
-        insertAnalysis(analysis)._unsafeUnwrap();
-
-        // Sync flush (no signing) leaves integrity columns NULL.
-        Bus.emit("inflexa", { type: "prov.analysis_created", analysisId: "a1", actor: system });
-        flushProvenance();
-
-        const integrity = getAnalysisIntegrity("a1")._unsafeUnwrap();
-        expect(integrity!.chainHash).toBeNull();
-        expect(integrity!.signature).toBeNull();
-        // The sidecar writer skips when chainHash/signature are null — no file to check.
     });
 });
 

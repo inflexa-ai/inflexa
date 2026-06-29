@@ -185,13 +185,16 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
         console.log = (msg: string) => {
             output += msg;
         };
-        await runVerifyFile(provPath);
-        console.log = origLog;
+        try {
+            await runVerifyFile(provPath);
 
-        expect(output).toContain("FAILED");
-        expect(process.exitCode).toBe(1);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- resetting exitCode to 0 after the tampered test so it doesn't leak into the test runner's exit status
-        (process as any).exitCode = 0;
+            expect(output).toContain("FAILED");
+            expect(process.exitCode).toBe(1);
+        } finally {
+            console.log = origLog;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- restore exitCode so a throw above doesn't poison the runner's exit status
+            (process as any).exitCode = 0;
+        }
     });
 
     test("missing sidecar: reports that verification is not possible", async () => {

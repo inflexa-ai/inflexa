@@ -5,7 +5,7 @@ import type { IdOrName } from "../../lib/types.ts";
 import type { DbError } from "../../db/errors.ts";
 import { findProjectByRef } from "../../db/primary_query.ts";
 import { findMarkerUpwards } from "../anchor/marker.ts";
-import { classifyMarkerSighting, resolveAnchor } from "../anchor/anchor.ts";
+import { classifyMarkerSighting, resolveAnchor, resolvedPathOrCached } from "../anchor/anchor.ts";
 import { findAnalysis, listAnalysesForAnchorAt, listRecentAnalyses } from "./analysis.ts";
 
 /** What bare `inflexa` resolves to, by the spec's precedence. Pure data — the picker/prompts/printing live in the CLI/TUI layer. */
@@ -34,7 +34,7 @@ export function resolveContext(cwd: string, flags: ContextFlags): Result<Resolve
             return resolveAnchor(analysis.anchorId).map((resolved) => ({
                 kind: "analysis",
                 analysis,
-                anchorPath: resolved ? (resolved.path ?? resolved.anchor.cachedPath) : cwd,
+                anchorPath: resolvedPathOrCached(resolved) ?? cwd,
             }));
         });
     }
@@ -63,7 +63,7 @@ export function resolveContext(cwd: string, flags: ContextFlags): Result<Resolve
         // carry on — listAnalysesForAnchorAt returns nothing, so this resolves to an empty anchor the
         // user can start an analysis in (which re-establishes the row from the marker).
         return resolveAnchor(marker.anchorId).andThen((resolved) => {
-            const anchorPath = resolved ? (resolved.path ?? resolved.anchor.cachedPath) : found.dir;
+            const anchorPath = resolvedPathOrCached(resolved) ?? found.dir;
             return listAnalysesForAnchorAt(cwd).map((analyses): ResolvedContext => {
                 const [only] = analyses;
                 if (analyses.length === 1 && only) return { kind: "analysis", analysis: only, anchorPath };
