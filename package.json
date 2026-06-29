@@ -26,7 +26,7 @@
         "@opentelemetry/resources": "^2.8.0",
         "@opentelemetry/sdk-logs": "^0.219.0",
         "@opentelemetry/semantic-conventions": "^1.41.1",
-        "@opentui/core": "0.4.0",
+        "@opentui/core": "0.4.2",
         "@opentui/solid": "^0.4.0",
         "ai": "^6.0.205",
         "commander": "^15",
@@ -43,7 +43,7 @@
         "eslint-plugin-solid": "^0.14.5",
         "globals": "^17.6.0",
         "prettier": "^3.8.1",
-        "prettier-plugin-tailwindcss": "^0.7.2",
+        "prettier-plugin-tailwindcss": "^0.8.0",
         "typescript": "^5.7.0",
         "typescript-eslint": "^8.61.0"
     }
