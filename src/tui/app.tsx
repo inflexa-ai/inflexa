@@ -117,7 +117,7 @@ export function App(props: AppProps) {
 
     // Copy-on-select (see TEXT-SELECTION-CLIPBOARD-REPORT.md): OpenTUI owns the selection, we just read,
     // write, toast, clear. On the root box so a release anywhere copies.
-    // ponytail: unconditional — the report's Windows explicit-copy flag can be a config knob if asked.
+    // Unconditional for now — the report's Windows explicit-copy flag can become a config knob if asked.
     function copySelection(): void {
         const text = renderer.getSelection()?.getSelectedText();
         if (!text) return; // empty → a plain click, not a drag
@@ -274,7 +274,12 @@ export function App(props: AppProps) {
                                     top={1}
                                     right={2}
                                     zIndex={zIndex.toast}
-                                    maxWidth={Math.min(60, dims().width - 6)}
+                                    // A DEFINITE width (not maxWidth) so a long line wraps instead of clipping —
+                                    // opentui only wraps text whose box has a resolved width; maxWidth sizes to the
+                                    // text's single-line length and then clips the overflow (hiding a long export
+                                    // path mid-string). Size to the text so short toasts stay snug, capped so a long
+                                    // path wraps within the cap. +6 = border (2) + padding (2) + glyph and its space (2).
+                                    width={Math.min(60, dims().width - 6, n.text.length + 6)}
                                     backgroundColor={theme().bgRaised}
                                     border
                                     borderColor={noticeColor(n.kind)}

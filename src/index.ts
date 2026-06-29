@@ -5,22 +5,30 @@ import { CommanderError } from "commander";
 
 import { cli } from "./cli/index.ts";
 import { releaseHeldAnalysisLock } from "./modules/analysis/lock.ts";
+import { initProvenanceRecording, flushProvenanceAsync } from "./modules/prov/prov.ts";
 import { initBusLogging } from "./lib/bus.ts";
 import { readConfig } from "./lib/config.ts";
 import { addLogStream, flushLogsSync, getLogger } from "./lib/log.ts";
 import { createOtelLogStream, initOtel } from "./lib/otel.ts";
-import { shutdown } from "./lib/shutdown.ts";
+import { onShutdown, shutdown } from "./lib/shutdown.ts";
 
 if (initOtel(readConfig().telemetry)) {
     addLogStream(createOtelLogStream());
 }
 initBusLogging();
+// Subscribe the provenance recorder before any command can emit a `prov.*` event (createAnalysis
+// runs before the TUI opens). The eager import pulls tsprov into startup for every command — accepted
+// as the simple, correct choice now that the package builds; lazy-load the recorder if that cost bites.
+initProvenanceRecording();
+// Flush un-persisted provenance (with signing) during shutdown — registered as a hook so the
+// dependency direction stays correct (module → lib, never lib → module).
+onShutdown(flushProvenanceAsync);
 
 // Commands that exit by event-loop drain (sessions, telemetry) never call
 // shutdown() themselves; beforeExit catches them. It does not fire on the
 // TUI's explicit shutdown()/process.exit() path.
-process.on("beforeExit", () => {
-    void shutdown(typeof process.exitCode === "number" ? process.exitCode : 0);
+process.on("beforeExit", (exitCode) => {
+    void shutdown(exitCode);
 });
 process.on("exit", flushLogsSync);
 // Release this instance's analysis lock on any exit. This single sync hook covers the graceful TUI

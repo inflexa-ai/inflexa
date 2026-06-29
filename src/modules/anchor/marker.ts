@@ -16,6 +16,7 @@ export function markerPath(dir: string): string {
  */
 export function canonicalPath(p: string): string {
     try {
+        // TODO(slop): neverthrow
         return realpathSync(p);
     } catch {
         return resolve(p);
@@ -42,12 +43,12 @@ export function readMarker(dir: string): AnchorMarker | null {
     const path = markerPath(dir);
     if (!existsSync(path)) return null;
 
-    const raw = readFileSync(path, "utf8");
+    const raw = readFileSync(path, "utf8"); // TODO(slop): make a wrapper that returns result - since I guess this throws
     // A present-but-invalid marker is corruption, not absence. JSON.parseWith returns null
     // for both a parse error and a schema mismatch, so the existsSync gate above is what
     // separates "no marker" (null, fine) from "broken marker" (throw, never silently re-minted).
     const marker = JSON.parseWith(raw, anchorMarkerSchema);
-    if (!marker) throw new Error(`corrupt anchor marker at ${path}: ${raw}`);
+    if (!marker) throw new Error(`corrupt anchor marker at ${path}: ${raw}`); // TODO(slop): don't throw, return result
     return marker;
 }
 
@@ -62,8 +63,8 @@ export function writeMarker(dir: string, anchorId: AnchorId): AnchorMarker {
     if (existing) return existing;
 
     const marker: AnchorMarker = { schemaVersion: 1, anchorId: anchorId };
-    mkdirSync(join(dir, ".inflexa"), { recursive: true });
-    writeFileSync(markerPath(dir), `${JSON.stringify(marker, null, 2)}\n`, "utf8");
+    mkdirSync(join(dir, ".inflexa"), { recursive: true }); // TODO(slop): Make wrapper - don't throw
+    writeFileSync(markerPath(dir), `${JSON.stringify(marker, null, 2)}\n`, "utf8"); // TODO(slop): make wrapper - don't throw
     return marker;
 }
 
@@ -74,6 +75,7 @@ export function writeMarker(dir: string, anchorId: AnchorId): AnchorMarker {
  */
 export function isDirWritable(dir: string): boolean {
     try {
+        // TODO(slop): neverthrow
         accessSync(dir, constants.W_OK);
         return true;
     } catch {
@@ -92,7 +94,7 @@ export function findMarkerUpwards(startDir: string): { dir: string; marker: Anch
     for (;;) {
         const marker = readMarker(dir);
         if (marker) return { dir, marker };
-        const parent = dirname(dir);
+        const parent = dirname(dir); // TODO(slop): make a wrapper that returns result and change the call.
         if (parent === dir) return null; // reached filesystem root
         dir = parent;
     }

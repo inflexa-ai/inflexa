@@ -1,15 +1,17 @@
 import { randomUUIDv7 } from "bun";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { ok, err, Result } from "neverthrow";
 import type { Analysis, AnalysisInput } from "../../types/analysis.ts";
 import type { Str256, IdOrName } from "../../lib/types.ts";
 import type { DbError } from "../../db/errors.ts";
 import { findAnalysesByRef, listAnalyses, listAnalysesByAnchor, listAnalysesByProject, listAnalysisInputs } from "../../db/primary_query.ts";
-import { insertAnalysis, insertAnalysisInput, updateAnalysis } from "../../db/primary_mutation.ts";
+import { insertAnalysis, insertAnalysisInput, deleteAnalysisInput, updateAnalysis } from "../../db/primary_mutation.ts";
+import { currentUserActor } from "../prov/prov.ts";
+import { Bus } from "../../lib/bus.ts";
 import { getOrCreateAnchorForCwd } from "../anchor/anchor.ts";
 import { findMarkerUpwards } from "../anchor/marker.ts";
 import { classifyInputPath } from "./input.ts";
-import { resolveOutputDir } from "./output.ts";
+import { resolveOutputDir, defaultOutputSubdir } from "./output.ts";
 import { env } from "../../lib/env.ts";
 
 /** Args for {@link createAnalysis}. `name` is validated to {@link Str256} at the CLI boundary. */
@@ -59,6 +61,49 @@ function refKey(input: AnalysisInput): string {
     return `${input.anchorId ?? ""}|${input.path}`;
 }
 
+/** The first analysis in `candidates` whose output dir contains `path` (a true path-boundary match), or null. */
+export function matchOutputPrefix(path: string, candidates: { id: string; dir: string }[]): string | null {
+    for (const c of candidates) {
+        // Boundary match only: `dir` exactly, or `dir` followed by a separator — so `…/a-extra` does
+        // not match output dir `…/a` (the same guard relocateRawInputPrefix uses).
+        if (path === c.dir || path.startsWith(c.dir + sep)) return c.id;
+    }
+    return null;
+}
+
+/**
+ * Detect whether `input` is itself another inflexa analysis's output, returning that analysis's id
+ * (to record as `derivedFromAnalysisId`, linking the two provenance documents) or null.
+ *
+ * Side-effect-FREE by design: uses only pure reads (`listAnalysesByAnchor`/`listAnalyses`), never
+ * `resolveOutputDir`/`resolveAnchor` — whose Step-1 `touchAnchor` would bump every other anchor's
+ * `last_seen` on each add, a false "sighting" that corrupts the heartbeat. Two cases are provable
+ * from stored data alone:
+ *  - an anchor-relative input under a sibling's DEFAULT output (`<anchor>/.inflexa/analyses/<slug>/`):
+ *    same anchor, so its stored relpath is prefixed by that analysis's default output subdir;
+ *  - a raw absolute input under some analysis's EXPLICIT `outputDirectory`.
+ * Not detected (best-effort, per the "if possible" spec): XDG-fallback outputs, and a default output
+ * reached from a different anchor than the input's own.
+ */
+export function detectSourceAnalysis(input: AnalysisInput, excludeAnalysisId: string): Result<string | null, DbError> {
+    if (input.anchorId !== null) {
+        const anchorId = input.anchorId;
+        return listAnalysesByAnchor(anchorId).map((siblings) =>
+            matchOutputPrefix(
+                input.path,
+                siblings.filter((a) => a.id !== excludeAnalysisId && a.outputDirectory === null).map((a) => ({ id: a.id, dir: defaultOutputSubdir(a.slug) })),
+            ),
+        );
+    }
+    return listAnalyses().map((all) =>
+        matchOutputPrefix(
+            input.path,
+            // Only analyses that pinned an explicit (absolute) output dir; a raw input's path is absolute too.
+            all.flatMap((a) => (a.id !== excludeAnalysisId && a.outputDirectory !== null ? [{ id: a.id, dir: a.outputDirectory }] : [])),
+        ),
+    );
+}
+
 /**
  * Classify each raw path, de-dup (batch + existing), and reject a non-existent path with a
  * clear error rather than storing a dangling ref.
@@ -76,9 +121,45 @@ export function addInputs(analysisId: string, rawPaths: string[], cwd: string): 
                 seen.add(key);
                 toInsert.push(input);
             }
-            return Result.combine(toInsert.map((input) => insertAnalysisInput(input))).map(() => toInsert);
+            // Emit each add onto the provenance chain (actor resolved once for the batch); the recorder
+            // appends it to the analysis's PROV document. When an input is itself another analysis's
+            // output, `derivedFromAnalysisId` links the two documents (detection is side-effect-free —
+            // see detectSourceAnalysis).
+            const actor = currentUserActor();
+            return Result.combine(
+                toInsert.map((input) =>
+                    insertAnalysisInput(input).andThen(() =>
+                        detectSourceAnalysis(input, analysisId).map((sourceId) => {
+                            Bus.emit("inflexa", {
+                                type: "prov.input_added",
+                                analysisId: input.analysisId,
+                                actor,
+                                input,
+                                derivedFromAnalysisId: sourceId,
+                            });
+                        }),
+                    ),
+                ),
+            ).map(() => toInsert);
         }),
     );
+}
+
+/**
+ * Remove a single input ref and record the removal in the analysis's provenance chain. Returns the
+ * removed input, or `null` when no matching ref existed (nothing removed, nothing to record).
+ */
+export function removeInput(input: AnalysisInput): Result<AnalysisInput | null, DbError> {
+    return deleteAnalysisInput(input).map((changed) => {
+        if (changed === 0) return null;
+        Bus.emit("inflexa", {
+            type: "prov.input_removed",
+            analysisId: input.analysisId,
+            actor: currentUserActor(),
+            input,
+        });
+        return input;
+    });
 }
 
 /**
@@ -101,19 +182,30 @@ export function createAnalysis(opts: CreateAnalysisInput): Result<Analysis, DbEr
                 updatedAt: now,
             };
             const inputPaths = opts.inputPaths && opts.inputPaths.length > 0 ? opts.inputPaths : [anchor.cachedPath];
-            return insertAnalysis(analysis)
-                .andThen((created) => addInputs(created.id, inputPaths, opts.cwd).map(() => created))
-                .andThen((created) =>
-                    resolveOutputDir(created).andThen((outDir) => {
-                        // Persist only the XDG fallback (case 3); a writable-anchor path (case 2)
-                        // stays null = derived, and an override is already absolute on the row.
-                        if (created.outputDirectory === null && outDir.startsWith(env.outputFallbackDir)) {
-                            const persisted: Analysis = { ...created, outputDirectory: outDir };
-                            return updateAnalysis(persisted).map(() => persisted);
-                        }
+            return (
+                insertAnalysis(analysis)
+                    // Seed the provenance document with the creation event before any input events.
+                    .andThen((created) => {
+                        Bus.emit("inflexa", {
+                            type: "prov.analysis_created",
+                            analysisId: created.id,
+                            actor: currentUserActor(),
+                        });
                         return ok(created);
-                    }),
-                );
+                    })
+                    .andThen((created) => addInputs(created.id, inputPaths, opts.cwd).map(() => created))
+                    .andThen((created) =>
+                        resolveOutputDir(created).andThen((outDir) => {
+                            // Persist only the XDG fallback (case 3); a writable-anchor path (case 2)
+                            // stays null = derived, and an override is already absolute on the row.
+                            if (created.outputDirectory === null && outDir.startsWith(env.outputFallbackDir)) {
+                                const persisted: Analysis = { ...created, outputDirectory: outDir };
+                                return updateAnalysis(persisted).map(() => persisted);
+                            }
+                            return ok(created);
+                        }),
+                    )
+            );
         }),
     );
 }

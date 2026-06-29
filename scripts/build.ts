@@ -39,6 +39,14 @@ function bakedVarNames(source: string): string[] {
     return names;
 }
 
+// Bake the exact source commit so a release binary can report what it was built from (the
+// provenance `system` actor stamps it). Left empty if this is not a git checkout, which the
+// bakedEnv missing-guard below then rejects with a clear error.
+process.env.INFLEXA_GIT_COMMIT = await $`git rev-parse HEAD`
+    .text()
+    .then((sha) => sha.trim())
+    .catch(() => "");
+
 const bakedVars = bakedVarNames(await Bun.file(ENV_TS).text());
 
 const define: Record<string, string> = {};
@@ -117,8 +125,7 @@ for (const target of targets) {
     // Windows uses the B:\~BUN\root root with backslashes; that mapping is unverified (cross targets
     // aren't smoke-tested), so highlighting may degrade gracefully there (warmGrammars swallows a
     // worker failure) — text still renders, just unstyled.
-    const workerBunfsPath =
-        target.os === "windows" ? `B:\\~BUN\\root\\${workerRelToRoot.split("/").join("\\")}` : `/$bunfs/root/${workerRelToRoot}`;
+    const workerBunfsPath = target.os === "windows" ? `B:\\~BUN\\root\\${workerRelToRoot.split("/").join("\\")}` : `/$bunfs/root/${workerRelToRoot}`;
     const targetDefine: Record<string, string> = {
         ...define,
         OTUI_TREE_SITTER_WORKER_PATH: JSON.stringify(workerBunfsPath),
@@ -215,6 +222,7 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
     function readMatchingText(pkgDir: string, matcher: RegExp): string | null {
         let entries: string[];
         try {
+            // TODO(slop): neverthrow
             entries = readdirSync(pkgDir);
         } catch {
             return null;
@@ -226,6 +234,7 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
             .sort()
             .map((entry) => {
                 try {
+                    // TODO(slop): neverthrow
                     return readFileSync(join(pkgDir, entry), "utf8").trim();
                 } catch {
                     return "";

@@ -67,6 +67,12 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
             };
         case "session.error":
             return { sessionId: event.sessionId, error: event.error };
+        case "prov.analysis_created":
+            return { analysisId: event.analysisId, actorKind: event.actor.kind };
+        case "prov.input_added":
+            return { analysisId: event.analysisId, actorKind: event.actor.kind, inputPath: event.input.path };
+        case "prov.input_removed":
+            return { analysisId: event.analysisId, actorKind: event.actor.kind, inputPath: event.input.path };
     }
 }
 
