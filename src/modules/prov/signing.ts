@@ -158,6 +158,12 @@ export async function computeChainHash(prevChainHashHex: string | null, provJson
     return bytesToHex(hash);
 }
 
+/** Simple `SHA-256(provJson)` — the self-contained content digest used in the export sidecar. */
+export async function computePayloadDigest(provJson: string): Promise<string> {
+    const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(provJson)));
+    return bytesToHex(hash);
+}
+
 // --- Sign / Verify ---
 
 /** Sign a hex-encoded chain hash with the private key, returning a hex-encoded 64-byte Ed25519 signature. */

@@ -2,9 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import { findAnalysisForProv, serializeProvenance } from "./document.ts";
-import { exportPublicKeyJwk } from "./signing.ts";
-import { getAnalysisIntegrity } from "../../db/primary_query.ts";
-import type { Sidecar } from "./verify.ts";
+import { buildSidecar } from "./verify.ts";
 import { ensureOutputDir } from "../analysis/output.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
 
@@ -16,7 +14,8 @@ import { dieOn, fail } from "../../lib/cli.ts";
  * `inflexa prov export <analysis> [--format json|provn] [--output <file>]` — serialize an analysis's
  * provenance document. By DEFAULT writes `provenance.<format>` into the analysis's output folder
  * (under `.inflexa/`, created if needed); `--output <file>` overrides the destination. When a
- * signature is available and the public key can be read, a sidecar `.sig.json` is written alongside.
+ * signing key is available, a sidecar `.sig.json` is written alongside with a content digest and
+ * Ed25519 signature for third-party verification.
  */
 export async function runExportProvenance(ref: string, opts: { format?: string; output?: string }): Promise<void> {
     const format = parseFormat(opts.format);
@@ -33,32 +32,17 @@ export async function runExportProvenance(ref: string, opts: { format?: string; 
     }
     console.log(`Wrote ${format} provenance for "${analysis.name}" to ${dest}`);
 
-    await writeSidecar(analysis.id, dest);
+    await writeSidecar(document, dest);
 }
 
 /**
- * Write the verification sidecar (`<dest>.sig.json`) when the analysis has a stored signature
- * and the public key is available. Silently skipped when either is absent.
+ * Write the verification sidecar (`<dest>.sig.json`) by computing a content digest of the
+ * exported provenance and signing it. Silently skipped when no signing key is available.
  */
-async function writeSidecar(analysisId: string, provDest: string): Promise<void> {
-    const integrity = getAnalysisIntegrity(analysisId).match(
-        (i) => i,
-        () => null,
-    );
-    if (!integrity?.chainHash || !integrity.signature) return;
+async function writeSidecar(provJson: string, provDest: string): Promise<void> {
+    const sidecar = await buildSidecar(provJson);
+    if (!sidecar) return;
 
-    const publicKey = await exportPublicKeyJwk();
-    if (!publicKey) return;
-
-    const sidecar: Sidecar = {
-        payloadType: "application/json; profile=prov-json",
-        payloadDigestAlgorithm: "SHA-256",
-        payloadDigest: integrity.chainHash,
-        payloadDigestMethod: "verbatim",
-        signatureAlgorithm: "Ed25519",
-        signature: integrity.signature,
-        publicKey,
-    };
     const sigDest = `${provDest}.sig.json`;
     try {
         writeFileSync(sigDest, JSON.stringify(sidecar, null, 2));

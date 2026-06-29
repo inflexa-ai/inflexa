@@ -101,6 +101,15 @@ export const migrations: Migration[] = [
             ALTER TABLE analyses ADD COLUMN provenance_signature TEXT;
         `,
     },
+    {
+        // The verifier needs the PREVIOUS chain hash to recompute the current one:
+        // H_n = SHA-256(H_{n-1} || json_n). Without it, verification after a second flush
+        // always reports "tampered" because the verifier seeds from SHA-256("") instead of H_{n-1}.
+        version: 4,
+        up: `
+            ALTER TABLE analyses ADD COLUMN provenance_prev_chain_hash TEXT;
+        `,
+    },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {

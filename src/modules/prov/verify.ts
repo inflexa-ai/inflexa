@@ -4,15 +4,20 @@ import type { VerifyResult } from "../../types/prov.ts";
 import type { IdOrName } from "../../lib/types.ts";
 import { getAnalysisIntegrity } from "../../db/primary_query.ts";
 import { findAnalysisForProv } from "./document.ts";
-import { computeChainHash, verifyChainHash, loadPublicKey } from "./signing.ts";
+import { computeChainHash, computePayloadDigest, verifyChainHash, loadPublicKey, loadOrGenerateKeypair, exportPublicKeyJwk, signChainHash } from "./signing.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
 
 /**
- * Pure verification: recompute the chain hash from the stored PROV-JSON and check the signature.
- * All inputs are passed in — no DB or file I/O here, so the function is directly unit-testable.
+ * DB-path verification: recompute the rolling chain hash from `prevChainHash` and the stored
+ * PROV-JSON, then check the Ed25519 signature over it. Used by `prov verify` (the internal
+ * command that reads integrity columns from the database).
+ *
+ * `prevChainHash` is the chain hash from the PREVIOUS flush — needed to recompute the current one
+ * (`H_n = SHA-256(H_{n-1} || json_n)`). `null` on the first flush, where the seed is SHA-256("").
  */
 export async function verifyProvenance(
     provJson: string | null,
+    prevChainHash: string | null,
     storedChainHash: string | null,
     storedSignature: string | null,
     publicKey: CryptoKey | null,
@@ -21,7 +26,7 @@ export async function verifyProvenance(
     if (storedChainHash === null || storedSignature === null) return { status: "unsigned" };
     if (publicKey === null) return { status: "no-key" };
 
-    const recomputed = await computeChainHash(null, provJson);
+    const recomputed = await computeChainHash(prevChainHash, provJson);
     if (recomputed !== storedChainHash) {
         return { status: "tampered", detail: "chain hash mismatch: the PROV-JSON has been modified since it was signed" };
     }
@@ -29,6 +34,25 @@ export async function verifyProvenance(
     const ok = await verifyChainHash(publicKey, storedSignature, storedChainHash);
     if (!ok) {
         return { status: "tampered", detail: "signature verification failed: the chain hash or signature has been modified" };
+    }
+
+    return { status: "valid" };
+}
+
+/**
+ * File-path verification: check a simple `SHA-256(provJson)` content digest and its Ed25519
+ * signature. Used by `prov verify-file` and the TUI "Verify provenance (export)" command —
+ * the sidecar is self-contained, no chain mechanics needed.
+ */
+export async function verifyPayload(provJson: string, storedDigest: string, storedSignature: string, publicKey: CryptoKey): Promise<VerifyResult> {
+    const recomputed = await computePayloadDigest(provJson);
+    if (recomputed !== storedDigest) {
+        return { status: "tampered", detail: "payload digest mismatch: the provenance file has been modified since it was signed" };
+    }
+
+    const ok = await verifyChainHash(publicKey, storedSignature, storedDigest);
+    if (!ok) {
+        return { status: "tampered", detail: "signature verification failed: the digest or signature has been modified" };
     }
 
     return { status: "valid" };
@@ -51,6 +75,22 @@ export function formatVerifyResult(result: VerifyResult): string {
 }
 
 /**
+ * Verify an analysis's stored provenance from its DB integrity columns: load the integrity data,
+ * load the public key, and run {@link verifyProvenance}. Returns `null` only when the analysis
+ * row does not exist. Shared by the CLI `prov verify` action and the TUI palette command.
+ */
+export async function verifyAnalysisIntegrity(analysisId: string): Promise<VerifyResult | null> {
+    const integrity = getAnalysisIntegrity(analysisId).match(
+        (i) => i,
+        () => null,
+    );
+    if (!integrity) return null;
+
+    const publicKey = await loadPublicKey();
+    return verifyProvenance(integrity.provenance, integrity.prevChainHash, integrity.chainHash, integrity.signature, publicKey);
+}
+
+/**
  * CLI action for `inflexa prov verify <analysis>`: resolve the analysis, load integrity data
  * from the DB, load the public key, run verification, and print the result.
  */
@@ -58,36 +98,69 @@ export async function runVerifyProvenance(ref: string): Promise<void> {
     const analysis = findAnalysisForProv(ref as IdOrName).match((a) => a, dieOn("Failed to resolve analysis"));
     if (!analysis) fail(`No analysis found matching "${ref}".`);
 
-    const integrity = getAnalysisIntegrity(analysis.id).match((i) => i, dieOn("Failed to read provenance"));
-    if (!integrity) fail(`No analysis row for "${ref}".`);
+    const result = await verifyAnalysisIntegrity(analysis.id);
+    if (!result) fail(`No analysis row for "${ref}".`);
 
-    const publicKey = await loadPublicKey();
-    const result = await verifyProvenance(integrity.provenance, integrity.chainHash, integrity.signature, publicKey);
     console.log(formatVerifyResult(result));
-
     if (result.status === "tampered") process.exitCode = 1;
 }
 
 /**
- * The self-describing sidecar envelope. Zod-validated on read so a corrupt or
- * hand-edited `.sig.json` surfaces a clear "invalid sidecar" error instead of
- * a downstream type confusion. The same schema is used to construct the sidecar
- * at export time, keeping the two sides in sync.
+ * The self-describing export sidecar. A recipient verifies integrity with just the provenance
+ * file and this sidecar — no database, no chain history, no internal state needed.
+ *
+ * Zod-validated on read so a corrupt or hand-edited `.sig.json` surfaces a clear "invalid
+ * sidecar" error instead of a downstream type confusion.
  */
 export const sidecarSchema = z.object({
-    payloadType: z.string(),
-    payloadDigestAlgorithm: z.string(),
+    /** MIME type of the payload file. */
+    payloadType: z.literal("application/json; profile=prov-json"),
+    /** Hash algorithm used to compute {@link payloadDigest}. */
+    payloadDigestAlgorithm: z.literal("SHA-256"),
+    /** `SHA-256(file bytes)` — the recipient recomputes this from the file and compares. */
     payloadDigest: z.string(),
-    payloadDigestMethod: z.string(),
-    signatureAlgorithm: z.string(),
+    /** How the digest input was derived — "verbatim" means exact file bytes, no canonicalization. */
+    payloadDigestMethod: z.literal("verbatim"),
+    /** Signature algorithm. */
+    signatureAlgorithm: z.literal("Ed25519"),
+    /** Ed25519 signature over the {@link payloadDigest} — proves it was produced by the key holder. */
     signature: z.string(),
+    /** The signer's public key as JWK — lets the recipient verify without the keypair file. */
     publicKey: z.record(z.string(), z.unknown()),
 });
 
 /** The validated sidecar shape — inferred from the schema so the type never drifts. */
 export type Sidecar = z.infer<typeof sidecarSchema>;
 
-function readSidecar(sigPath: string): Sidecar | null {
+/**
+ * Build a sidecar for an exported provenance file. Computes `SHA-256(provJson)` as the content
+ * digest and signs it with the Ed25519 private key. Returns `null` when no signing key is
+ * available. The sidecar is self-contained — a recipient verifies with just the file and the
+ * sidecar, no chain history or database access needed.
+ */
+export async function buildSidecar(provJson: string): Promise<Sidecar | null> {
+    const kp = await loadOrGenerateKeypair();
+    if (!kp) return null;
+
+    const publicKeyJwk = await exportPublicKeyJwk();
+    if (!publicKeyJwk) return null;
+
+    const digest = await computePayloadDigest(provJson);
+    const signature = await signChainHash(kp.privateKey, digest);
+
+    return {
+        payloadType: "application/json; profile=prov-json",
+        payloadDigestAlgorithm: "SHA-256",
+        payloadDigest: digest,
+        payloadDigestMethod: "verbatim",
+        signatureAlgorithm: "Ed25519",
+        signature,
+        publicKey: publicKeyJwk as Record<string, unknown>,
+    };
+}
+
+/** Parse a `.sig.json` sidecar file, returning `null` on missing/corrupt/malformed. */
+export function readSidecar(sigPath: string): Sidecar | null {
     try {
         return JSON.parseWith(readFileSync(sigPath, "utf-8"), sidecarSchema);
     } catch {
@@ -127,7 +200,7 @@ export async function runVerifyFile(path: string): Promise<void> {
     }
 
     const provJson = readFileSync(path, "utf-8");
-    const result = await verifyProvenance(provJson, sidecar.payloadDigest, sidecar.signature, publicKey);
+    const result = await verifyPayload(provJson, sidecar.payloadDigest, sidecar.signature, publicKey);
     console.log(formatVerifyResult(result));
 
     if (result.status === "tampered") process.exitCode = 1;
