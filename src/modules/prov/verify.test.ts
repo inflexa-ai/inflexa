@@ -43,59 +43,55 @@ describe("verifyProvenance (DB-path, chain hash verification)", () => {
 
     test("valid: correct chain hash and signature (first flush, prevChainHash = null)", async () => {
         useTempKeyDir();
-        const kp = await loadOrGenerateKeypair();
-        expect(kp).not.toBeNull();
+        const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
 
         const provJson = '{"entity":{"inflexa:analysis-a1":{}}}';
         const chainHash = await computeChainHash(null, provJson);
-        const signature = await signHexDigest(kp!.privateKey, chainHash);
+        const signature = await signHexDigest(kp.privateKey, chainHash);
 
-        const result = await verifyProvenance(provJson, null, chainHash, signature, kp!.publicKey);
+        const result = await verifyProvenance(provJson, null, chainHash, signature, kp.publicKey);
         expect(result.status).toBe("valid");
     });
 
     test("valid: correct chain hash and signature (second flush, prevChainHash set)", async () => {
         useTempKeyDir();
-        const kp = await loadOrGenerateKeypair();
-        expect(kp).not.toBeNull();
+        const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
 
         const firstJson = '{"entity":{"inflexa:analysis-a1":{}}}';
         const firstHash = await computeChainHash(null, firstJson);
 
         const secondJson = '{"entity":{"inflexa:analysis-a1":{"extra":true}}}';
         const secondHash = await computeChainHash(firstHash, secondJson);
-        const signature = await signHexDigest(kp!.privateKey, secondHash);
+        const signature = await signHexDigest(kp.privateKey, secondHash);
 
-        const result = await verifyProvenance(secondJson, firstHash, secondHash, signature, kp!.publicKey);
+        const result = await verifyProvenance(secondJson, firstHash, secondHash, signature, kp.publicKey);
         expect(result.status).toBe("valid");
     });
 
     test("tampered: modified PROV-JSON produces chain hash mismatch", async () => {
         useTempKeyDir();
-        const kp = await loadOrGenerateKeypair();
-        expect(kp).not.toBeNull();
+        const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
 
         const originalJson = '{"entity":{"inflexa:analysis-a1":{}}}';
         const chainHash = await computeChainHash(null, originalJson);
-        const signature = await signHexDigest(kp!.privateKey, chainHash);
+        const signature = await signHexDigest(kp.privateKey, chainHash);
 
         const tamperedJson = '{"entity":{"inflexa:analysis-a1":{"tampered":true}}}';
-        const result = await verifyProvenance(tamperedJson, null, chainHash, signature, kp!.publicKey);
+        const result = await verifyProvenance(tamperedJson, null, chainHash, signature, kp.publicKey);
         expect(result.status).toBe("tampered");
         expect(result.status === "tampered" && result.detail).toContain("chain hash mismatch");
     });
 
     test("tampered: modified signature fails Ed25519 verification", async () => {
         useTempKeyDir();
-        const kp = await loadOrGenerateKeypair();
-        expect(kp).not.toBeNull();
+        const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
 
         const provJson = '{"entity":{"inflexa:analysis-a1":{}}}';
         const chainHash = await computeChainHash(null, provJson);
-        const signature = await signHexDigest(kp!.privateKey, chainHash);
+        const signature = await signHexDigest(kp.privateKey, chainHash);
         const flipped = signature.slice(0, -2) + (signature.slice(-2) === "00" ? "01" : "00");
 
-        const result = await verifyProvenance(provJson, null, chainHash, flipped, kp!.publicKey);
+        const result = await verifyProvenance(provJson, null, chainHash, flipped, kp.publicKey);
         expect(result.status).toBe("tampered");
         expect(result.status === "tampered" && result.detail).toContain("signature verification failed");
     });
@@ -104,28 +100,26 @@ describe("verifyProvenance (DB-path, chain hash verification)", () => {
 describe("verifyPayload (file-path, simple content digest)", () => {
     test("valid: correct digest and signature", async () => {
         useTempKeyDir();
-        const kp = await loadOrGenerateKeypair();
-        expect(kp).not.toBeNull();
+        const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
 
         const provJson = '{"entity":{"inflexa:analysis-a1":{}}}';
         const digest = await computePayloadDigest(provJson);
-        const signature = await signHexDigest(kp!.privateKey, digest);
+        const signature = await signHexDigest(kp.privateKey, digest);
 
-        const result = await verifyPayload(provJson, digest, signature, kp!.publicKey);
+        const result = await verifyPayload(provJson, digest, signature, kp.publicKey);
         expect(result.status).toBe("valid");
     });
 
     test("tampered: modified file produces digest mismatch", async () => {
         useTempKeyDir();
-        const kp = await loadOrGenerateKeypair();
-        expect(kp).not.toBeNull();
+        const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
 
         const originalJson = '{"entity":{"inflexa:analysis-a1":{}}}';
         const digest = await computePayloadDigest(originalJson);
-        const signature = await signHexDigest(kp!.privateKey, digest);
+        const signature = await signHexDigest(kp.privateKey, digest);
 
         const tamperedJson = '{"entity":{"inflexa:analysis-a1":{"tampered":true}}}';
-        const result = await verifyPayload(tamperedJson, digest, signature, kp!.publicKey);
+        const result = await verifyPayload(tamperedJson, digest, signature, kp.publicKey);
         expect(result.status).toBe("tampered");
         expect(result.status === "tampered" && result.detail).toContain("payload digest mismatch");
     });
@@ -133,12 +127,11 @@ describe("verifyPayload (file-path, simple content digest)", () => {
 
 describe("runVerifyFile (file-based verification, no DB)", () => {
     async function writeSignedProvFile(dir: string): Promise<{ provPath: string; provJson: string }> {
-        const kp = await loadOrGenerateKeypair();
-        expect(kp).not.toBeNull();
+        const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
 
         const provJson = '{"entity":{"inflexa:analysis-file-test":{}}}';
         const digest = await computePayloadDigest(provJson);
-        const signature = await signHexDigest(kp!.privateKey, digest);
+        const signature = await signHexDigest(kp.privateKey, digest);
 
         const { exportPublicKeyJwk } = await import("./signing.ts");
         const publicKey = await exportPublicKeyJwk();

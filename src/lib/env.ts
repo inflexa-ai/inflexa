@@ -88,7 +88,9 @@ function resolveGitCommit(): string {
         throw new Error("INFLEXA_GIT_COMMIT is not set on production environment. This means the binary was not built correctly.");
 
     // Dev-only path: resolve from the working tree's HEAD.
-    return Bun.spawnSync(["git", "rev-parse", "HEAD"]).stdout.toString().trim();
+    const sha = Bun.spawnSync(["git", "rev-parse", "HEAD"]).stdout.toString().trim();
+    if (!sha) throw new Error("Could not resolve git HEAD — are you running outside a git checkout?");
+    return sha;
 }
 
 export const bakedEnv = Object.freeze({

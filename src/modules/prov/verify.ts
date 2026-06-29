@@ -4,7 +4,17 @@ import type { VerifyResult } from "../../types/prov.ts";
 import type { IdOrName } from "../../lib/types.ts";
 import { getAnalysisIntegrity } from "../../db/primary_query.ts";
 import { findAnalysisForProv } from "./document.ts";
-import { computeChainHash, computePayloadDigest, verifyHexDigest, loadPublicKey, loadOrGenerateKeypair, exportPublicKeyJwk, signHexDigest } from "./signing.ts";
+import { type Result, ok, err } from "neverthrow";
+import {
+    computeChainHash,
+    computePayloadDigest,
+    verifyHexDigest,
+    loadPublicKey,
+    loadOrGenerateKeypair,
+    exportPublicKeyJwk,
+    signHexDigest,
+    type SigningError,
+} from "./signing.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
 
 /**
@@ -138,21 +148,22 @@ export type Sidecar = z.infer<typeof sidecarSchema>;
 
 /**
  * Build a sidecar for an exported provenance file. Computes `SHA-256(provJson)` as the content
- * digest and signs it with the Ed25519 private key. Returns `null` when no signing key is
- * available. The sidecar is self-contained — a recipient verifies with just the file and the
- * sidecar, no chain history or database access needed.
+ * digest and signs it with the Ed25519 private key. Returns `err(SigningError)` when the signing
+ * key is unavailable — provenance is never exported unsigned. The sidecar is self-contained — a
+ * recipient verifies with just the file and the sidecar, no chain history or database access needed.
  */
-export async function buildSidecar(provJson: string): Promise<Sidecar | null> {
-    const kp = await loadOrGenerateKeypair();
-    if (!kp) return null;
+export async function buildSidecar(provJson: string): Promise<Result<Sidecar, SigningError>> {
+    const kpResult = await loadOrGenerateKeypair();
+    if (kpResult.isErr()) return err(kpResult.error);
+    const kp = kpResult.value;
 
     const publicKeyJwk = await exportPublicKeyJwk();
-    if (!publicKeyJwk) return null;
+    if (!publicKeyJwk) return err({ type: "public_key_export_failed" });
 
     const digest = await computePayloadDigest(provJson);
     const signature = await signHexDigest(kp.privateKey, digest);
 
-    return {
+    return ok({
         payloadType: "application/json; profile=prov-json",
         payloadDigestAlgorithm: "SHA-256",
         payloadDigest: digest,
@@ -160,7 +171,7 @@ export async function buildSidecar(provJson: string): Promise<Sidecar | null> {
         signatureAlgorithm: "Ed25519",
         signature,
         publicKey: publicKeyJwk as Record<string, unknown>,
-    };
+    });
 }
 
 /** Parse a `.sig.json` sidecar file, returning `null` on missing/corrupt/malformed. */
@@ -199,7 +210,12 @@ export async function verifyExportFile(provPath: string): Promise<VerifyResult |
         return { status: "invalid-key" };
     }
 
-    const provJson = readFileSync(provPath, "utf-8");
+    let provJson: string;
+    try {
+        provJson = readFileSync(provPath, "utf-8");
+    } catch {
+        return { status: "tampered", detail: `provenance file at ${provPath} is missing or unreadable` };
+    }
     return verifyPayload(provJson, sidecar.payloadDigest, sidecar.signature, publicKey);
 }
 
