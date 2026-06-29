@@ -291,3 +291,42 @@ export function listAnalysisInputs(analysisId: string): Result<AnalysisInput[], 
         }));
     });
 }
+
+// --- Data model: provenance ---
+
+/** The stored PROV-JSON serialization of an analysis's provenance document; `null` when nothing has been recorded yet (treated as an empty document). */
+export function getAnalysisProvenance(id: string): Result<string | null, DbError> {
+    return tryQuery("getAnalysisProvenance", (conn) => {
+        const row = conn.query("SELECT provenance FROM analyses WHERE id = ?").get(id) as { provenance: string | null } | null;
+        return row?.provenance ?? null;
+    });
+}
+
+/** The integrity columns for an analysis's provenance. All are `null` when unsigned. */
+export type AnalysisIntegrity = {
+    provenance: string | null;
+    prevChainHash: string | null;
+    chainHash: string | null;
+    signature: string | null;
+};
+
+/** Read provenance + integrity columns in one query — the verifier's single DB round-trip. */
+export function getAnalysisIntegrity(id: string): Result<AnalysisIntegrity | null, DbError> {
+    return tryQuery("getAnalysisIntegrity", (conn) => {
+        const row = conn
+            .query("SELECT provenance, provenance_prev_chain_hash, provenance_chain_hash, provenance_signature FROM analyses WHERE id = ?")
+            .get(id) as {
+            provenance: string | null;
+            provenance_prev_chain_hash: string | null;
+            provenance_chain_hash: string | null;
+            provenance_signature: string | null;
+        } | null;
+        if (!row) return null;
+        return {
+            provenance: row.provenance,
+            prevChainHash: row.provenance_prev_chain_hash,
+            chainHash: row.provenance_chain_hash,
+            signature: row.provenance_signature,
+        };
+    });
+}

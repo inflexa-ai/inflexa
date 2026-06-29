@@ -5,7 +5,7 @@ import type { IdOrName } from "../../lib/types.ts";
 import type { DbError } from "../../db/errors.ts";
 import { findProjectByRef } from "../../db/primary_query.ts";
 import { findMarkerUpwards } from "../anchor/marker.ts";
-import { classifyMarkerSighting, resolveAnchor } from "../anchor/anchor.ts";
+import { classifyMarkerSighting, resolveAnchor, resolvedPathOrCached } from "../anchor/anchor.ts";
 import { findAnalysis, listAnalysesForAnchorAt, listRecentAnalyses } from "./analysis.ts";
 
 /** What bare `inflexa` resolves to, by the spec's precedence. Pure data — the picker/prompts/printing live in the CLI/TUI layer. */
@@ -29,10 +29,12 @@ export function resolveContext(cwd: string, flags: ContextFlags): Result<Resolve
         return findAnalysis(flags.analysis).andThen((analysis): Result<ResolvedContext, DbError> => {
             // Unmatched flag: surface recent analyses so the command can report the mismatch.
             if (!analysis) return listRecentAnalyses().map((analyses) => ({ kind: "pick", analyses }));
-            return resolveAnchor(analysis.anchorId).map(({ anchor, path }) => ({
+            // The analysis's anchor row may be gone (user edited the DB) — fall back to cwd for display
+            // rather than failing; the analysis is still openable.
+            return resolveAnchor(analysis.anchorId).map((resolved) => ({
                 kind: "analysis",
                 analysis,
-                anchorPath: path ?? anchor.cachedPath,
+                anchorPath: resolvedPathOrCached(resolved) ?? cwd,
             }));
         });
     }
@@ -46,6 +48,7 @@ export function resolveContext(cwd: string, flags: ContextFlags): Result<Resolve
     // 2. The folder (or an ancestor) is an anchor.
     let found: ReturnType<typeof findMarkerUpwards>;
     try {
+        // TODO(slop): neverthrow
         found = findMarkerUpwards(cwd);
     } catch (cause) {
         return err({ type: "query_failed", op: "resolveContext:marker", cause });
@@ -56,8 +59,12 @@ export function resolveContext(cwd: string, flags: ContextFlags): Result<Resolve
     return classifyMarkerSighting(found.dir, marker).andThen((sighting): Result<ResolvedContext, DbError> => {
         // Copy guard: never auto-resolve a copied folder — let the command prompt.
         if (sighting === "copy") return ok({ kind: "copy", cwd, marker });
-        return resolveAnchor(marker.anchorId).andThen(({ anchor, path }) => {
-            const anchorPath = path ?? anchor.cachedPath;
+        // A marker on disk whose anchor row the DB no longer has (e.g. the user deleted the DB) is a
+        // routine desync, not an error: fall back to the marker's own directory for the anchor path and
+        // carry on — listAnalysesForAnchorAt returns nothing, so this resolves to an empty anchor the
+        // user can start an analysis in (which re-establishes the row from the marker).
+        return resolveAnchor(marker.anchorId).andThen((resolved) => {
+            const anchorPath = resolvedPathOrCached(resolved) ?? found.dir;
             return listAnalysesForAnchorAt(cwd).map((analyses): ResolvedContext => {
                 const [only] = analyses;
                 if (analyses.length === 1 && only) return { kind: "analysis", analysis: only, anchorPath };

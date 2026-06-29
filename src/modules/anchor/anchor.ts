@@ -58,7 +58,7 @@ export function getOrCreateAnchorForCwd(dir: string): Result<Anchor, DbError> {
     const writable = isDirWritable(abs);
     if (writable) {
         try {
-            writeMarker(abs, anchorId);
+            writeMarker(abs, anchorId); // TODO(slop): this will be refactored to return result, no need for catch
         } catch (cause) {
             return err({ type: "mutation_failed", op: "getOrCreateAnchorForCwd:writeMarker", cause });
         }
@@ -72,6 +72,7 @@ export function getOrCreateAnchorForCwd(dir: string): Result<Anchor, DbError> {
  */
 function markerMatches(dir: string, anchorId: string): boolean {
     try {
+        // TODO(slop): same here, try catch without reason
         return readMarker(dir)?.anchorId === anchorId;
     } catch {
         return false;
@@ -84,6 +85,7 @@ function markerMatches(dir: string, anchorId: string): boolean {
  */
 function findMatchingMarkerUpwards(startDir: string, anchorId: string): string | null {
     try {
+        // TODO(slop): neverthrow
         const found = findMarkerUpwards(startDir);
         return found && found.marker.anchorId === anchorId ? found.dir : null;
     } catch {
@@ -102,7 +104,15 @@ function ancestorsOf(dir: string): string[] {
     }
 }
 
-function selfHeal(anchor: Anchor, anchorId: string, dir: string): Result<{ anchor: Anchor; path: string | null }, DbError> {
+/** A resolved anchor and its current on-disk path (`null` when the folder can't be located). */
+export type ResolvedAnchor = { anchor: Anchor; path: string | null };
+
+/** Best-effort path: the resolved on-disk path, falling back to the anchor's cached path, or `null` when the anchor row is missing. */
+export function resolvedPathOrCached(r: ResolvedAnchor | null): string | null {
+    return r ? (r.path ?? r.anchor.cachedPath) : null;
+}
+
+function selfHeal(anchor: Anchor, anchorId: string, dir: string): Result<ResolvedAnchor, DbError> {
     const canonical = canonicalPath(dir);
     const healed: Anchor = { ...anchor, cachedPath: canonical };
     return updateAnchorCachedPath(anchorId, canonical).map(() => ({ anchor: healed, path: canonical }));
@@ -111,10 +121,17 @@ function selfHeal(anchor: Anchor, anchorId: string, dir: string): Result<{ ancho
 /**
  * Resolve a UUID to its current path, reconciling the cached path lazily. See the spec
  * (Folder identity & moves): cached-path check → cwd/ancestor self-heal → bounded search.
+ *
+ * Returns `null` when the DB has no row for `anchorId`. That is a NORMAL condition, not an error:
+ * the database is the user's local file and they may delete or edit it freely, while on-disk markers
+ * (and analyses that reference an anchor) persist independently — so a reference to a missing anchor
+ * is a routine desync. We degrade rather than hard-fail; the deliberate `getOrCreateAnchorForCwd`
+ * re-establishes the row from the on-disk marker when the user next acts (we never write on this
+ * passive resolve — the no-litter policy). See CLAUDE.md → "Local state can desync from the database".
  */
-export function resolveAnchor(anchorId: string, opts?: { searchRoots?: string[] }): Result<{ anchor: Anchor; path: string | null }, DbError> {
-    return getAnchor(anchorId).andThen((anchor): Result<{ anchor: Anchor; path: string | null }, DbError> => {
-        if (!anchor) return err({ type: "query_failed", op: "resolveAnchor", cause: new Error(`unknown anchor ${anchorId}`) });
+export function resolveAnchor(anchorId: string, opts?: { searchRoots?: string[] }): Result<ResolvedAnchor | null, DbError> {
+    return getAnchor(anchorId).andThen((anchor): Result<ResolvedAnchor | null, DbError> => {
+        if (!anchor) return ok(null);
 
         // Step 1: the cached path still holds our marker — cheapest, highest-hit case.
         if (markerMatches(anchor.cachedPath, anchorId)) {
@@ -130,7 +147,7 @@ export function resolveAnchor(anchorId: string, opts?: { searchRoots?: string[] 
         }
 
         // Step 3: bounded search over roots (+ ancestors) and known anchor cached paths.
-        return listAnchors().andThen((anchors): Result<{ anchor: Anchor; path: string | null }, DbError> => {
+        return listAnchors().andThen((anchors): Result<ResolvedAnchor, DbError> => {
             const candidates = new Set<string>();
             for (const root of roots) for (const d of ancestorsOf(root)) candidates.add(d);
             for (const a of anchors) candidates.add(resolve(a.cachedPath));
@@ -169,7 +186,9 @@ export function classifyMarkerSighting(dir: string, marker: AnchorMarker): Resul
  */
 export function recoverAnchors(searchRoots: string[] = [process.cwd()]): Result<{ recovered: number; unresolved: number }, DbError> {
     return listAnchors().andThen((anchors) =>
-        Result.combine(anchors.map((a) => resolveAnchor(a.id, { searchRoots }).map((r) => r.path))).map((paths) => {
+        // Every id comes from listAnchors, so the row always exists (r is non-null); the guard is
+        // only to satisfy resolveAnchor's nullable contract — a null would count as unresolved anyway.
+        Result.combine(anchors.map((a) => resolveAnchor(a.id, { searchRoots }).map((r) => r?.path ?? null))).map((paths) => {
             const unresolved = paths.filter((p) => p === null).length;
             return { recovered: paths.length - unresolved, unresolved };
         }),

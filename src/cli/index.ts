@@ -151,6 +151,31 @@ project
         projectLs();
     });
 
+const prov = cli.command("prov").description("Provenance — the recorded history of an analysis's inputs and actions");
+
+prov.command("export <analysis>")
+    .description("Export an analysis's provenance document as PROV (writes into its .inflexa output folder by default)")
+    .option("--format <format>", "json (PROV-JSON) or provn (PROV-N)", "json")
+    .option("--output <file>", "Write to this file instead of the analysis output folder")
+    .action(async (analysisRef: string, options: { format?: string; output?: string }) => {
+        const { runExportProvenance } = await import("../modules/prov/export.ts");
+        await runExportProvenance(analysisRef, { format: options.format, output: options.output });
+    });
+
+prov.command("verify <analysis>")
+    .description("Verify the integrity of an analysis's provenance chain and signature")
+    .action(async (analysisRef: string) => {
+        const { runVerifyProvenance } = await import("../modules/prov/verify.ts");
+        await runVerifyProvenance(analysisRef);
+    });
+
+prov.command("verify-file <path>")
+    .description("Verify an exported provenance file against its .sig.json sidecar (no database needed)")
+    .action(async (path: string) => {
+        const { runVerifyFile } = await import("../modules/prov/verify.ts");
+        await runVerifyFile(path);
+    });
+
 // Anchor move-backstop: the manual fallback for folder moves that the automatic
 // reconciliation in `resolveAnchor` cannot settle on its own. All addressed by path.
 cli.command("repair [path]")

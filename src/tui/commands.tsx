@@ -1,4 +1,9 @@
 import type { JSX } from "solid-js";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+// Type-only — erased at compile time, so it does NOT pull tsprov/verify into the TUI's startup path.
+import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
+import type { VerifyResult } from "../types/prov.ts";
 
 import { PromptDialog } from "./components/prompt_dialog.tsx";
 import { ResultsDialog } from "./components/results_dialog.tsx";
@@ -15,7 +20,7 @@ import { str256 } from "../lib/types.ts";
 import { createAnalysis, listRecentAnalyses } from "../modules/analysis/analysis.ts";
 import { resolveContext, describeContext } from "../modules/analysis/context.ts";
 import { openOutputDir } from "../modules/analysis/open.ts";
-import { resolveAnchor } from "../modules/anchor/anchor.ts";
+import { resolveAnchor, resolvedPathOrCached } from "../modules/anchor/anchor.ts";
 import { createProject, createSession } from "../db/primary_mutation.ts";
 import { listSessionsByAnalysis } from "../db/primary_query.ts";
 import type { Analysis } from "../types/analysis.ts";
@@ -53,7 +58,7 @@ export type Command = {
 // Resolve an analysis's live working directory from its anchor (falling back to cwd).
 function workingDirFor(a: Analysis): string {
     return resolveAnchor(a.anchorId).match(
-        ({ anchor, path }) => path ?? anchor.cachedPath,
+        (resolved) => resolvedPathOrCached(resolved) ?? process.cwd(),
         () => process.cwd(),
     );
 }
@@ -77,6 +82,22 @@ function openAnalysis(ws: Workspace, a: Analysis): void {
         return;
     }
     ws.openSession(session.id, workingDirFor(a), a);
+}
+
+/** Map a {@link VerifyResult} status to the appropriate notice severity. */
+function noticeKindFor(result: VerifyResult): "info" | "warn" | "error" {
+    switch (result.status) {
+        case "valid":
+        case "unsigned":
+        case "empty":
+            return "info";
+        case "no-key":
+            return "warn";
+        case "tampered":
+        case "invalid-sidecar":
+        case "invalid-key":
+            return "error";
+    }
 }
 
 function ThemePicker(): JSX.Element {
@@ -229,6 +250,70 @@ function SettingsDialog(): JSX.Element {
 
 /** The single source of truth. Add a command = add an entry here. Ordered by category so the
  *  unfiltered palette groups contiguously. */
+// Serialize the active analysis's provenance and write it into its output folder, then notify the
+// path. The PROV-building module (`prov/document.ts`) is imported LAZILY inside the action — it
+// depends on `@inflexa-ai/tsprov`, so a static import here would pull that into the TUI's startup
+// path; deferring it both keeps launch lean and contains any tsprov load failure to this action.
+async function exportProvenanceToFile(ws: Workspace, format: BuiltinProvFormat): Promise<void> {
+    const a = ws.analysis;
+    if (!a) return;
+
+    let prov: typeof import("../modules/prov/document.ts");
+    let output: typeof import("../modules/analysis/output.ts");
+    let verify: typeof import("../modules/prov/verify.ts");
+    try {
+        prov = await import("../modules/prov/document.ts");
+        output = await import("../modules/analysis/output.ts");
+        verify = await import("../modules/prov/verify.ts");
+    } catch {
+        notify({ kind: "error", text: "Provenance export is unavailable (the tsprov library failed to load)." });
+        return;
+    }
+
+    const dir = output.resolveOutputDir(a).match(
+        (d) => d,
+        () => null,
+    );
+    if (!dir) {
+        notify({ kind: "error", text: "Could not resolve this analysis's output directory." });
+        return;
+    }
+
+    const text = prov.serializeProvenance(a, format).match(
+        (t) => t,
+        (e) => {
+            notify({ kind: "error", text: `Failed to build provenance: ${e.type}` });
+            return null;
+        },
+    );
+    if (!text) return;
+
+    const dest = join(dir, `provenance.${format}`);
+    try {
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(dest, text);
+    } catch (cause) {
+        notify({ kind: "error", text: `Failed to write provenance: ${String(cause)}` });
+        return;
+    }
+
+    // Provenance + sidecar are one logical export: both must succeed before we report success.
+    const sidecarResult = await verify.buildSidecar(text);
+    if (sidecarResult.isErr()) {
+        notify({ kind: "error", text: `Signing failed (${sidecarResult.error.type}) — provenance is never exported unsigned.` });
+        return;
+    }
+    const sigDest = `${dest}.sig.json`;
+    try {
+        writeFileSync(sigDest, JSON.stringify(sidecarResult.value, null, 2));
+    } catch (cause) {
+        notify({ kind: "error", text: `Wrote provenance but sidecar failed: ${String(cause)}` });
+        return;
+    }
+
+    notify({ kind: "info", text: `Wrote ${format} provenance to ${dest}` });
+}
+
 export const commands: Command[] = [
     {
         id: "analysis.switch",
@@ -264,6 +349,92 @@ export const commands: Command[] = [
                 (d) => notify({ kind: "info", text: `Opened ${d}` }),
                 (e) => notify({ kind: "error", text: `Failed to open: ${e.type}` }),
             );
+        },
+    },
+    {
+        id: "prov.export-json",
+        title: "Export provenance (JSON)",
+        description: "Write this analysis's PROV-JSON provenance to its output folder",
+        category: "Analysis",
+        enabled: (ctx) => ctx.analysis !== null,
+        run: (ctx) => exportProvenanceToFile(ctx, "json"),
+    },
+    {
+        id: "prov.export-provn",
+        title: "Export provenance (PROV-N)",
+        description: "Write this analysis's PROV-N provenance to its output folder",
+        category: "Analysis",
+        enabled: (ctx) => ctx.analysis !== null,
+        run: (ctx) => exportProvenanceToFile(ctx, "provn"),
+    },
+    {
+        id: "prov.verify",
+        title: "Verify provenance (internal)",
+        description: "Check the integrity of the database provenance record",
+        category: "Analysis",
+        enabled: (ctx) => ctx.analysis !== null,
+        run: async (ctx) => {
+            const a = ctx.analysis;
+            if (!a) return;
+
+            let verify: typeof import("../modules/prov/verify.ts");
+            try {
+                verify = await import("../modules/prov/verify.ts");
+            } catch {
+                notify({ kind: "error", text: "Provenance verification is unavailable." });
+                return;
+            }
+
+            const result = await verify.verifyAnalysisIntegrity(a.id);
+            if (!result) {
+                notify({ kind: "error", text: "Could not read provenance data." });
+                return;
+            }
+
+            notify({ kind: noticeKindFor(result), text: verify.formatVerifyResult(result) });
+        },
+    },
+    {
+        id: "prov.verify-export",
+        title: "Verify provenance (export)",
+        description: "Check the integrity of the exported provenance files on disk",
+        category: "Analysis",
+        enabled: (ctx) => ctx.analysis !== null,
+        run: async (ctx) => {
+            const a = ctx.analysis;
+            if (!a) return;
+
+            let verify: typeof import("../modules/prov/verify.ts");
+            let output: typeof import("../modules/analysis/output.ts");
+            try {
+                verify = await import("../modules/prov/verify.ts");
+                output = await import("../modules/analysis/output.ts");
+            } catch {
+                notify({ kind: "error", text: "Provenance verification is unavailable." });
+                return;
+            }
+
+            const dir = output.resolveOutputDir(a).match(
+                (d) => d,
+                () => null,
+            );
+            if (!dir) {
+                notify({ kind: "error", text: "Could not resolve this analysis's output directory." });
+                return;
+            }
+
+            const provPath = join(dir, "provenance.json");
+            if (!existsSync(provPath)) {
+                notify({ kind: "warn", text: "No exported provenance.json found. Export provenance first." });
+                return;
+            }
+
+            const result = await verify.verifyExportFile(provPath);
+            if (!result) {
+                notify({ kind: "warn", text: "No .sig.json sidecar found. The export may be unsigned." });
+                return;
+            }
+            notify({ kind: noticeKindFor(result), text: verify.formatVerifyResult(result) });
         },
     },
     {

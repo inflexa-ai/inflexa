@@ -1,4 +1,13 @@
-preload = ["@opentui/solid/preload", "@opentui/solid/runtime-plugin-support"]
+# NOTE: top-level preload deliberately OMITS "@opentui/solid/runtime-plugin-support".
+# That preload registers @opentui/core's createRuntimePlugin globally (via Bun's
+# plugin() API), whose catch-all `onResolve({ filter: /.*/ })` calls import.meta.resolve
+# — which re-enters that same handler inside any Bun.build, recursing until the stack
+# overflows ("Maximum call stack size exceeded"). Because a global plugin participates in
+# every Bun.build in the process, it intermittently crashed `bun scripts/build.ts`. We
+# don't load external runtime plugins, so the support shim buys us nothing here; the JSX
+# transform (./preload) is all the dev runtime needs. It stays in [test] below because
+# render tests rely on it and never bundle. See opentui-issue-runtime-plugin-recursion.md.
+preload = ["@opentui/solid/preload"]
 
 # `bun test` uses [test].preload INSTEAD OF the top-level preload (it does not merge them), so the
 # opentui preloads are repeated here to keep render tests working — plus the env sandbox that points
