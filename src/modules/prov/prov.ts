@@ -106,7 +106,10 @@ function liveDocForAnalysis(analysisId: string): ProvDocument | null {
     // a fresh document; the integrity columns supply the prior chain hash for chaining subsequent flushes.
     const analysis = findAnalysesByRef(analysisId).match(
         (rows) => rows[0] ?? null,
-        () => null,
+        (e) => {
+            log.error({ analysisId, err: e.type, cause: e.cause }, "failed to look up analysis row");
+            return null;
+        },
     );
     if (!analysis) {
         log.warn({ analysisId }, "prov event for unknown analysis; skipping");
@@ -114,7 +117,10 @@ function liveDocForAnalysis(analysisId: string): ProvDocument | null {
     }
     const integrity = getAnalysisIntegrity(analysisId).match(
         (i) => i,
-        () => null,
+        (e) => {
+            log.warn({ analysisId, err: e.type }, "failed to read integrity columns; starting fresh chain");
+            return null;
+        },
     );
     const doc = loadDocument(analysis, integrity?.provenance ?? null);
     liveDocs.set(analysisId, doc);
@@ -145,7 +151,7 @@ function scheduleFlush(): void {
  * analysis signs independently (the keypair is process-cached, so there is no lock contention),
  * and `allSettled` ensures one failure doesn't block the others.
  */
-async function flushProvenanceAsync(): Promise<void> {
+export async function flushProvenanceAsync(): Promise<void> {
     const wg = new WaitGroup();
     wg.goMany([...dirty], async (analysisId) => {
         const doc = liveDocs.get(analysisId);
@@ -191,5 +197,3 @@ export function resetProvenanceRecorderForTests(): void {
     flushTimer = null;
     flushScheduled = false;
 }
-
-export { flushProvenanceAsync };

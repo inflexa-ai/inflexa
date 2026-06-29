@@ -235,6 +235,7 @@ export async function computePayloadDigest(provJson: string): Promise<string> {
 /** Sign a hex-encoded digest with the Ed25519 private key, returning a hex-encoded 64-byte signature. */
 export async function signHexDigest(privateKey: CryptoKey, digestHex: string): Promise<string> {
     const data = hexToBytes(digestHex);
+    // Safe: hexToBytes allocates a fresh Uint8Array, so .buffer starts at offset 0 and is not shared.
     const sig = await crypto.subtle.sign("Ed25519", privateKey, data.buffer as ArrayBuffer);
     return bytesToHex(new Uint8Array(sig));
 }
@@ -243,6 +244,7 @@ export async function signHexDigest(privateKey: CryptoKey, digestHex: string): P
 export async function verifyHexDigest(publicKey: CryptoKey, signatureHex: string, digestHex: string): Promise<boolean> {
     const sig = hexToBytes(signatureHex);
     const data = hexToBytes(digestHex);
+    // Safe: both Uint8Arrays are freshly allocated by hexToBytes — offset 0, not shared.
     return crypto.subtle.verify("Ed25519", publicKey, sig.buffer as ArrayBuffer, data.buffer as ArrayBuffer);
 }
 

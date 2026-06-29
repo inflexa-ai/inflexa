@@ -4,8 +4,6 @@
  * (`allSettled`) — callers handle errors inside their work functions, not at the barrier.
  */
 export class WaitGroup {
-    constructor() {}
-
     private work: Promise<unknown>[] = [];
 
     /** Track a single in-flight promise. */
