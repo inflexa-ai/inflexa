@@ -7,7 +7,7 @@
       "dependencies": {
         "@ai-sdk/openai-compatible": "^2.0.50",
         "@clack/prompts": "^1.5.1",
-        "@inflexa-ai/tsprov": "0.1.1",
+        "@inflexa-ai/tsprov": "0.2.0",
         "@opentelemetry/api": "^1.9.1",
         "@opentelemetry/api-logs": "^0.219.0",
         "@opentelemetry/exporter-logs-otlp-http": "^0.219.0",
@@ -134,7 +134,7 @@
 
     "@humanwhocodes/retry": ["@humanwhocodes/retry@0.4.3", "", {}, "sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ=="],
 
-    "@inflexa-ai/tsprov": ["@inflexa-ai/tsprov@0.1.1", "https://npm.pkg.github.com/download/@inflexa-ai/tsprov/0.1.1/73988290dbc76fe7b4900f268a4c386b4bb35fe0", { "dependencies": { "luxon": "^3.7.2" }, "peerDependencies": { "typescript": "^5" } }, "sha512-HXiXKSbFe934/tdMqIhcF2/sL39rTw1eI/sx0eKg1vp3g8coZRGs7lgTn/xS8ItAWQfin0teO8Lvt7aw7o+KMg=="],
+    "@inflexa-ai/tsprov": ["@inflexa-ai/tsprov@0.2.0", "https://npm.pkg.github.com/download/@inflexa-ai/tsprov/0.2.0/bac0548ff5bdb7000f0ddaac9978b64b6c82c38d", { "dependencies": { "luxon": "^3.7.2" } }, "sha512-vT3gwvqfFX1PXocqW7J0m3G9zITKyYfXGhpJ7CMvebC/qcUIApU6esDGbNrYHT1OwQyuQG9QNSX+i7oThdur0A=="],
 
     "@jridgewell/gen-mapping": ["@jridgewell/gen-mapping@0.3.13", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.0", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="],
 
