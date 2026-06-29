@@ -160,6 +160,8 @@ async function flushProvenanceAsync(): Promise<void> {
             log.warn({ analysisId, cause }, "signing failed; persisting provenance unsigned");
         }
 
+        // The UPDATE atomically rotates provenance_chain_hash → provenance_prev_chain_hash
+        // before writing the new chainHash, so the caller doesn't need to pass prev.
         updateAnalysisProvenance(analysisId, json, chainHash, signature).match(
             () => {
                 dirty.delete(analysisId);

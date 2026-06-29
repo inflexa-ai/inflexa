@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
 
-import { verifyProvenance, runVerifyFile } from "./verify.ts";
-import { computeChainHash, signChainHash, loadOrGenerateKeypair, exportPublicKeyJwk, resetSigningForTests } from "./signing.ts";
+import { verifyProvenance, verifyPayload, runVerifyFile } from "./verify.ts";
+import { computeChainHash, computePayloadDigest, signChainHash, loadOrGenerateKeypair, resetSigningForTests } from "./signing.ts";
 
 let tempDir: string | null = null;
 
@@ -25,23 +25,23 @@ afterEach(() => {
     }
 });
 
-describe("verifyProvenance (pure function, all five result variants)", () => {
+describe("verifyProvenance (DB-path, chain hash verification)", () => {
     test("empty: null provenance → status empty", async () => {
-        const result = await verifyProvenance(null, null, null, null);
+        const result = await verifyProvenance(null, null, null, null, null);
         expect(result.status).toBe("empty");
     });
 
     test("unsigned: provenance present but no chain hash or signature", async () => {
-        const result = await verifyProvenance('{"some":"prov"}', null, null, null);
+        const result = await verifyProvenance('{"some":"prov"}', null, null, null, null);
         expect(result.status).toBe("unsigned");
     });
 
     test("no-key: signature exists but no public key provided", async () => {
-        const result = await verifyProvenance('{"some":"prov"}', "abcd".repeat(16), "ef01".repeat(32), null);
+        const result = await verifyProvenance('{"some":"prov"}', null, "abcd".repeat(16), "ef01".repeat(32), null);
         expect(result.status).toBe("no-key");
     });
 
-    test("valid: correct chain hash and signature", async () => {
+    test("valid: correct chain hash and signature (first flush, prevChainHash = null)", async () => {
         useTempKeyDir();
         const kp = await loadOrGenerateKeypair();
         expect(kp).not.toBeNull();
@@ -50,7 +50,23 @@ describe("verifyProvenance (pure function, all five result variants)", () => {
         const chainHash = await computeChainHash(null, provJson);
         const signature = await signChainHash(kp!.privateKey, chainHash);
 
-        const result = await verifyProvenance(provJson, chainHash, signature, kp!.publicKey);
+        const result = await verifyProvenance(provJson, null, chainHash, signature, kp!.publicKey);
+        expect(result.status).toBe("valid");
+    });
+
+    test("valid: correct chain hash and signature (second flush, prevChainHash set)", async () => {
+        useTempKeyDir();
+        const kp = await loadOrGenerateKeypair();
+        expect(kp).not.toBeNull();
+
+        const firstJson = '{"entity":{"inflexa:analysis-a1":{}}}';
+        const firstHash = await computeChainHash(null, firstJson);
+
+        const secondJson = '{"entity":{"inflexa:analysis-a1":{"extra":true}}}';
+        const secondHash = await computeChainHash(firstHash, secondJson);
+        const signature = await signChainHash(kp!.privateKey, secondHash);
+
+        const result = await verifyProvenance(secondJson, firstHash, secondHash, signature, kp!.publicKey);
         expect(result.status).toBe("valid");
     });
 
@@ -64,7 +80,7 @@ describe("verifyProvenance (pure function, all five result variants)", () => {
         const signature = await signChainHash(kp!.privateKey, chainHash);
 
         const tamperedJson = '{"entity":{"inflexa:analysis-a1":{"tampered":true}}}';
-        const result = await verifyProvenance(tamperedJson, chainHash, signature, kp!.publicKey);
+        const result = await verifyProvenance(tamperedJson, null, chainHash, signature, kp!.publicKey);
         expect(result.status).toBe("tampered");
         expect(result.status === "tampered" && result.detail).toContain("chain hash mismatch");
     });
@@ -76,13 +92,42 @@ describe("verifyProvenance (pure function, all five result variants)", () => {
 
         const provJson = '{"entity":{"inflexa:analysis-a1":{}}}';
         const chainHash = await computeChainHash(null, provJson);
-        // Sign the correct hash, then flip a byte in the signature.
         const signature = await signChainHash(kp!.privateKey, chainHash);
         const flipped = signature.slice(0, -2) + (signature.slice(-2) === "00" ? "01" : "00");
 
-        const result = await verifyProvenance(provJson, chainHash, flipped, kp!.publicKey);
+        const result = await verifyProvenance(provJson, null, chainHash, flipped, kp!.publicKey);
         expect(result.status).toBe("tampered");
         expect(result.status === "tampered" && result.detail).toContain("signature verification failed");
+    });
+});
+
+describe("verifyPayload (file-path, simple content digest)", () => {
+    test("valid: correct digest and signature", async () => {
+        useTempKeyDir();
+        const kp = await loadOrGenerateKeypair();
+        expect(kp).not.toBeNull();
+
+        const provJson = '{"entity":{"inflexa:analysis-a1":{}}}';
+        const digest = await computePayloadDigest(provJson);
+        const signature = await signChainHash(kp!.privateKey, digest);
+
+        const result = await verifyPayload(provJson, digest, signature, kp!.publicKey);
+        expect(result.status).toBe("valid");
+    });
+
+    test("tampered: modified file produces digest mismatch", async () => {
+        useTempKeyDir();
+        const kp = await loadOrGenerateKeypair();
+        expect(kp).not.toBeNull();
+
+        const originalJson = '{"entity":{"inflexa:analysis-a1":{}}}';
+        const digest = await computePayloadDigest(originalJson);
+        const signature = await signChainHash(kp!.privateKey, digest);
+
+        const tamperedJson = '{"entity":{"inflexa:analysis-a1":{"tampered":true}}}';
+        const result = await verifyPayload(tamperedJson, digest, signature, kp!.publicKey);
+        expect(result.status).toBe("tampered");
+        expect(result.status === "tampered" && result.detail).toContain("payload digest mismatch");
     });
 });
 
@@ -92,8 +137,10 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
         expect(kp).not.toBeNull();
 
         const provJson = '{"entity":{"inflexa:analysis-file-test":{}}}';
-        const chainHash = await computeChainHash(null, provJson);
-        const signature = await signChainHash(kp!.privateKey, chainHash);
+        const digest = await computePayloadDigest(provJson);
+        const signature = await signChainHash(kp!.privateKey, digest);
+
+        const { exportPublicKeyJwk } = await import("./signing.ts");
         const publicKey = await exportPublicKeyJwk();
 
         const provPath = join(dir, "provenance.json");
@@ -102,7 +149,7 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
         const sidecar = {
             payloadType: "application/json; profile=prov-json",
             payloadDigestAlgorithm: "SHA-256",
-            payloadDigest: chainHash,
+            payloadDigest: digest,
             payloadDigestMethod: "verbatim",
             signatureAlgorithm: "Ed25519",
             signature,
@@ -116,7 +163,6 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
         useTempKeyDir();
         const { provPath } = await writeSignedProvFile(tempDir!);
 
-        // Capture stdout to check the output.
         const origLog = console.log;
         let output = "";
         console.log = (msg: string) => {
@@ -132,7 +178,6 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
         useTempKeyDir();
         const { provPath } = await writeSignedProvFile(tempDir!);
 
-        // Tamper with the provenance file after signing.
         writeFileSync(provPath, '{"entity":{"inflexa:analysis-file-test":{"tampered":true}}}');
 
         const origLog = console.log;
@@ -153,7 +198,6 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
         useTempKeyDir();
         const provPath = join(tempDir!, "no-sidecar.json");
         writeFileSync(provPath, '{"entity":{}}');
-        // No .sig.json written.
 
         const origLog = console.log;
         let output = "";

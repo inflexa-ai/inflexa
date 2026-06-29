@@ -11,8 +11,8 @@ import type { ProvActor, ProvInputRef } from "../../types/prov.ts";
 import { appendCreation, appendInputAdded, appendInputRemoved, freshDocument, serializeProvenance } from "./document.ts";
 import { initProvenanceRecording, flushProvenance, flushProvenanceAsync, resetProvenanceRecorderForTests } from "./prov.ts";
 import { getAnalysisIntegrity } from "../../db/primary_query.ts";
-import { computeChainHash, verifyChainHash, resetSigningForTests, loadOrGenerateKeypair, exportPublicKeyJwk } from "./signing.ts";
-import { verifyProvenance } from "./verify.ts";
+import { computeChainHash, computePayloadDigest, verifyChainHash, resetSigningForTests, loadOrGenerateKeypair } from "./signing.ts";
+import { verifyProvenance, verifyPayload } from "./verify.ts";
 
 const analysis: Analysis = {
     id: "a1",
@@ -172,7 +172,8 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
         expect(integrity!.chainHash).not.toBeNull();
         expect(integrity!.signature).not.toBeNull();
 
-        // Recompute the chain hash from the stored PROV-JSON and verify it matches.
+        // First flush: prevChainHash is null, so recompute seeds from SHA-256("").
+        expect(integrity!.prevChainHash).toBeNull();
         const recomputed = await computeChainHash(null, integrity!.provenance!);
         // Non-null assertions safe: the three `.not.toBeNull()` checks above guard them.
         expect(recomputed).toBe(integrity!.chainHash!);
@@ -219,6 +220,8 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
 
         // The second chain hash must differ from the first (the PROV-JSON grew).
         expect(second!.chainHash).not.toBe(first!.chainHash);
+        // The stored prevChainHash must be the first flush's chain hash.
+        expect(second!.prevChainHash).toBe(first!.chainHash);
 
         // The second chain hash must chain from the first: H2 = SHA-256(H1 || json2).
         const recomputed = await computeChainHash(first!.chainHash!, second!.provenance!);
@@ -228,6 +231,11 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
         const kp = await loadOrGenerateKeypair();
         const ok = await verifyChainHash(kp!.publicKey, second!.signature!, second!.chainHash!);
         expect(ok).toBe(true);
+
+        // verifyProvenance must report "valid" after multi-flush — this was the #CRT-1 bug:
+        // the verifier needs prevChainHash to recompute the rolling hash correctly.
+        const result = await verifyProvenance(second!.provenance, second!.prevChainHash, second!.chainHash, second!.signature, kp!.publicKey);
+        expect(result.status).toBe("valid");
 
         resetSigningForTests(null);
         rmSync(tmpDir, { recursive: true, force: true });
@@ -261,24 +269,16 @@ describe("export sidecar (writeSidecar via the full export path)", () => {
         const { writeFileSync: wf } = await import("node:fs");
         wf(provDest, provJson);
 
-        // Import and call the export module's sidecar path indirectly by checking the integrity data.
+        // The flush should have written integrity columns.
         const integrity = getAnalysisIntegrity("a1")._unsafeUnwrap();
         expect(integrity!.chainHash).not.toBeNull();
         expect(integrity!.signature).not.toBeNull();
 
-        const pubKey = await exportPublicKeyJwk();
-        expect(pubKey).not.toBeNull();
+        // Build the sidecar via the shared builder (mirrors the export path).
+        const { buildSidecar } = await import("./verify.ts");
+        const sidecar = await buildSidecar(provJson);
+        expect(sidecar).not.toBeNull();
 
-        // Write the sidecar manually (mirrors export.ts:writeSidecar logic) to verify the self-describing shape.
-        const sidecar = {
-            payloadType: "application/json; profile=prov-json",
-            payloadDigestAlgorithm: "SHA-256",
-            payloadDigest: integrity!.chainHash,
-            payloadDigestMethod: "verbatim",
-            signatureAlgorithm: "Ed25519",
-            signature: integrity!.signature,
-            publicKey: pubKey,
-        };
         const sigDest = `${provDest}.sig.json`;
         wf(sigDest, JSON.stringify(sidecar, null, 2));
 
@@ -289,17 +289,18 @@ describe("export sidecar (writeSidecar via the full export path)", () => {
         expect(parsed.payloadDigestAlgorithm).toBe("SHA-256");
         expect(parsed.payloadDigestMethod).toBe("verbatim");
         expect(parsed.signatureAlgorithm).toBe("Ed25519");
-        expect(parsed.payloadDigest).toBe(integrity!.chainHash);
-        expect(parsed.signature).toBe(integrity!.signature);
         expect(parsed.publicKey).toHaveProperty("kty", "OKP");
         expect(parsed.publicKey).toHaveProperty("crv", "Ed25519");
 
-        // Third-party verification: recompute chain hash from the file, verify the signature with the sidecar public key.
-        const recomputedHash = await computeChainHash(null, provJson);
-        expect(recomputedHash).toBe(parsed.payloadDigest);
+        // The sidecar's payloadDigest is a simple SHA-256(provJson), not the chain hash.
+        const contentDigest = await computePayloadDigest(provJson);
+        expect(parsed.payloadDigest).toBe(contentDigest);
+        expect(parsed.payloadDigest).not.toBe(integrity!.chainHash);
+
+        // Third-party verification: recompute digest from the file, verify the signature.
         const importedPub = await crypto.subtle.importKey("jwk", parsed.publicKey, "Ed25519", true, ["verify"]);
-        const ok = await verifyChainHash(importedPub, parsed.signature, parsed.payloadDigest);
-        expect(ok).toBe(true);
+        const result = await verifyPayload(provJson, parsed.payloadDigest, parsed.signature, importedPub);
+        expect(result.status).toBe("valid");
 
         resetSigningForTests(null);
         rmSync(tmpDir, { recursive: true, force: true });
@@ -347,7 +348,7 @@ describe("verifyProvenance end-to-end (bus → flush → verify)", () => {
         const integrity = getAnalysisIntegrity("a1")._unsafeUnwrap();
         const { loadPublicKey } = await import("./signing.ts");
         const pubKey = await loadPublicKey();
-        const result = await verifyProvenance(integrity!.provenance, integrity!.chainHash, integrity!.signature, pubKey);
+        const result = await verifyProvenance(integrity!.provenance, integrity!.prevChainHash, integrity!.chainHash, integrity!.signature, pubKey);
         expect(result.status).toBe("valid");
 
         resetSigningForTests(null);

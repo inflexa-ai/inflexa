@@ -251,15 +251,23 @@ export function relocateRawInputPrefix(fromPrefix: string, toPrefix: string): Re
 
 /**
  * Persists the PROV-JSON serialization of an analysis's provenance document, plus the optional
- * integrity columns (chain hash and Ed25519 signature). All three are written in a single UPDATE
- * so the column never disagrees with its signature. Deliberately does NOT bump `updated_at`:
- * provenance is recorded metadata flushed asynchronously, not a user data-edit — the same
- * reasoning as `touchAnchor` leaving `updatedAt` alone. Returns rows changed.
+ * integrity columns. The UPDATE atomically rotates the chain: the current `provenance_chain_hash`
+ * becomes `provenance_prev_chain_hash` before the new values land, so the verifier can always
+ * recompute `chainHash = SHA-256(prevChainHash || provJson)` from stored data alone. Deliberately
+ * does NOT bump `updated_at`: provenance is recorded metadata flushed asynchronously, not a user
+ * data-edit — the same reasoning as `touchAnchor` leaving `updatedAt` alone. Returns rows changed.
  */
 export function updateAnalysisProvenance(id: string, provenance: string, chainHash?: string | null, signature?: string | null): Result<number, DbError> {
     return tryMutation("updateAnalysisProvenance", (conn) => {
         return conn
-            .query("UPDATE analyses SET provenance = ?, provenance_chain_hash = ?, provenance_signature = ? WHERE id = ?")
+            .query(
+                `UPDATE analyses
+                 SET provenance = ?,
+                     provenance_prev_chain_hash = provenance_chain_hash,
+                     provenance_chain_hash = ?,
+                     provenance_signature = ?
+                 WHERE id = ?`,
+            )
             .run(provenance, chainHash ?? null, signature ?? null, id).changes;
     });
 }

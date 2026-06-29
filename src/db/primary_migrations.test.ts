@@ -40,19 +40,27 @@ describe("runMigrations", () => {
         expect(columns).toContain("provenance_signature");
     });
 
+    test("migration 4 adds the prev chain hash column for multi-flush verification", () => {
+        const columns = migratedMemoryDb()
+            .query<{ name: string }, []>("PRAGMA table_info(analyses)")
+            .all()
+            .map((c) => c.name);
+        expect(columns).toContain("provenance_prev_chain_hash");
+    });
+
     test("records the applied version in the _migrations ledger", () => {
         const versions = migratedMemoryDb()
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3]);
+        expect(versions).toEqual([1, 2, 3, 4]);
     });
 
     test("is idempotent: re-running applies nothing new", () => {
         const db = migratedMemoryDb();
         runMigrations(db, migrations)._unsafeUnwrap(); // second run
         const count = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM _migrations").get();
-        expect(count?.n).toBe(3);
+        expect(count?.n).toBe(4);
     });
 
     test("declares the analyses foreign keys to anchors and projects", () => {

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 // Type-only — erased at compile time, so it does NOT pull tsprov/verify into the TUI's startup path.
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
-import type { Sidecar } from "../modules/prov/verify.ts";
+import type { VerifyResult } from "../types/prov.ts";
 
 import { PromptDialog } from "./components/prompt_dialog.tsx";
 import { ResultsDialog } from "./components/results_dialog.tsx";
@@ -82,6 +82,20 @@ function openAnalysis(ws: Workspace, a: Analysis): void {
         return;
     }
     ws.openSession(session.id, workingDirFor(a), a);
+}
+
+/** Map a {@link VerifyResult} status to the appropriate notice severity. */
+function noticeKindFor(result: VerifyResult): "info" | "warn" | "error" {
+    switch (result.status) {
+        case "valid":
+        case "unsigned":
+        case "empty":
+            return "info";
+        case "no-key":
+            return "warn";
+        case "tampered":
+            return "error";
+    }
 }
 
 function ThemePicker(): JSX.Element {
@@ -244,13 +258,11 @@ async function exportProvenanceToFile(ws: Workspace, format: BuiltinProvFormat):
 
     let prov: typeof import("../modules/prov/document.ts");
     let output: typeof import("../modules/analysis/output.ts");
-    let query: typeof import("../db/primary_query.ts");
-    let signing: typeof import("../modules/prov/signing.ts");
+    let verify: typeof import("../modules/prov/verify.ts");
     try {
         prov = await import("../modules/prov/document.ts");
         output = await import("../modules/analysis/output.ts");
-        query = await import("../db/primary_query.ts");
-        signing = await import("../modules/prov/signing.ts");
+        verify = await import("../modules/prov/verify.ts");
     } catch {
         notify({ kind: "error", text: "Provenance export is unavailable (the tsprov library failed to load)." });
         return;
@@ -284,29 +296,14 @@ async function exportProvenanceToFile(ws: Workspace, format: BuiltinProvFormat):
     }
 
     // Provenance + sidecar are one logical export: both must succeed before we report success.
-    const integrity = query.getAnalysisIntegrity(a.id).match(
-        (i) => i,
-        () => null,
-    );
-    if (integrity?.chainHash && integrity.signature) {
-        const pubKey = await signing.exportPublicKeyJwk();
-        if (pubKey) {
-            const sidecar: Sidecar = {
-                payloadType: "application/json; profile=prov-json",
-                payloadDigestAlgorithm: "SHA-256",
-                payloadDigest: integrity.chainHash,
-                payloadDigestMethod: "verbatim",
-                signatureAlgorithm: "Ed25519",
-                signature: integrity.signature,
-                publicKey: pubKey,
-            };
-            const sigDest = `${dest}.sig.json`;
-            try {
-                writeFileSync(sigDest, JSON.stringify(sidecar, null, 2));
-            } catch (cause) {
-                notify({ kind: "error", text: `Wrote provenance but sidecar failed: ${String(cause)}` });
-                return;
-            }
+    const sidecar = await verify.buildSidecar(text);
+    if (sidecar) {
+        const sigDest = `${dest}.sig.json`;
+        try {
+            writeFileSync(sigDest, JSON.stringify(sidecar, null, 2));
+        } catch (cause) {
+            notify({ kind: "error", text: `Wrote provenance but sidecar failed: ${String(cause)}` });
+            return;
         }
     }
 
@@ -377,45 +374,20 @@ export const commands: Command[] = [
             if (!a) return;
 
             let verify: typeof import("../modules/prov/verify.ts");
-            let query: typeof import("../db/primary_query.ts");
-            let signing: typeof import("../modules/prov/signing.ts");
             try {
                 verify = await import("../modules/prov/verify.ts");
-                query = await import("../db/primary_query.ts");
-                signing = await import("../modules/prov/signing.ts");
             } catch {
                 notify({ kind: "error", text: "Provenance verification is unavailable." });
                 return;
             }
 
-            const integrity = query.getAnalysisIntegrity(a.id).match(
-                (i) => i,
-                () => null,
-            );
-            if (!integrity) {
+            const result = await verify.verifyAnalysisIntegrity(a.id);
+            if (!result) {
                 notify({ kind: "error", text: "Could not read provenance data." });
                 return;
             }
 
-            const publicKey = await signing.loadPublicKey();
-            const result = await verify.verifyProvenance(integrity.provenance, integrity.chainHash, integrity.signature, publicKey);
-            const text = verify.formatVerifyResult(result);
-
-            switch (result.status) {
-                case "valid":
-                    notify({ kind: "info", text });
-                    break;
-                case "unsigned":
-                case "empty":
-                    notify({ kind: "info", text });
-                    break;
-                case "no-key":
-                    notify({ kind: "warn", text });
-                    break;
-                case "tampered":
-                    notify({ kind: "error", text });
-                    break;
-            }
+            notify({ kind: noticeKindFor(result), text: verify.formatVerifyResult(result) });
         },
     },
     {
@@ -459,15 +431,7 @@ export const commands: Command[] = [
                 return;
             }
 
-            let sidecarSchema: typeof import("../modules/prov/verify.ts").sidecarSchema;
-            try {
-                sidecarSchema = (await import("../modules/prov/verify.ts")).sidecarSchema;
-            } catch {
-                notify({ kind: "error", text: "Provenance verification is unavailable." });
-                return;
-            }
-
-            const sidecar = JSON.parseWith(readFileSync(sigPath, "utf-8"), sidecarSchema);
+            const sidecar = verify.readSidecar(sigPath);
             if (!sidecar) {
                 notify({ kind: "error", text: "The .sig.json sidecar is invalid or missing required fields." });
                 return;
@@ -482,24 +446,9 @@ export const commands: Command[] = [
             }
 
             const provJson = readFileSync(provPath, "utf-8");
-            const result = await verify.verifyProvenance(provJson, sidecar.payloadDigest, sidecar.signature, publicKey);
-            const text = verify.formatVerifyResult(result);
+            const result = await verify.verifyPayload(provJson, sidecar.payloadDigest, sidecar.signature, publicKey);
 
-            switch (result.status) {
-                case "valid":
-                    notify({ kind: "info", text });
-                    break;
-                case "unsigned":
-                case "empty":
-                    notify({ kind: "info", text });
-                    break;
-                case "no-key":
-                    notify({ kind: "warn", text });
-                    break;
-                case "tampered":
-                    notify({ kind: "error", text });
-                    break;
-            }
+            notify({ kind: noticeKindFor(result), text: verify.formatVerifyResult(result) });
         },
     },
     {
