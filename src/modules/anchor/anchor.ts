@@ -105,6 +105,11 @@ function ancestorsOf(dir: string): string[] {
 /** A resolved anchor and its current on-disk path (`null` when the folder can't be located). */
 export type ResolvedAnchor = { anchor: Anchor; path: string | null };
 
+/** Best-effort path: the resolved on-disk path, falling back to the anchor's cached path, or `null` when the anchor row is missing. */
+export function resolvedPathOrCached(r: ResolvedAnchor | null): string | null {
+    return r ? (r.path ?? r.anchor.cachedPath) : null;
+}
+
 function selfHeal(anchor: Anchor, anchorId: string, dir: string): Result<ResolvedAnchor, DbError> {
     const canonical = canonicalPath(dir);
     const healed: Anchor = { ...anchor, cachedPath: canonical };

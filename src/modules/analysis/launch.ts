@@ -1,6 +1,6 @@
 import { findProjectByRef, getSession, listSessionsByAnalysis } from "../../db/primary_query.ts";
 import { createSession } from "../../db/primary_mutation.ts";
-import { recoverAnchors, resolveAnchor } from "../anchor/anchor.ts";
+import { recoverAnchors, resolveAnchor, resolvedPathOrCached } from "../anchor/anchor.ts";
 import { confirm, dieOn, fail, promptText, select } from "../../lib/cli.ts";
 import { getLogger } from "../../lib/log.ts";
 import { str256, type Str256, type IdOrName } from "../../lib/types.ts";
@@ -34,7 +34,7 @@ export type ChatTarget = {
 function resolveChatTarget(opts: { analysis: Analysis; resumeSessionId?: string }): ChatTarget {
     const analysis = opts.analysis;
     const workingDir = resolveAnchor(analysis.anchorId).match(
-        (resolved) => (resolved ? (resolved.path ?? resolved.anchor.cachedPath) : process.cwd()),
+        (resolved) => resolvedPathOrCached(resolved) ?? process.cwd(),
         () => process.cwd(),
     );
 

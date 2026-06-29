@@ -1,5 +1,5 @@
 import type { JSX } from "solid-js";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 // Type-only — erased at compile time, so it does NOT pull tsprov/verify into the TUI's startup path.
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
@@ -20,7 +20,7 @@ import { str256 } from "../lib/types.ts";
 import { createAnalysis, listRecentAnalyses } from "../modules/analysis/analysis.ts";
 import { resolveContext, describeContext } from "../modules/analysis/context.ts";
 import { openOutputDir } from "../modules/analysis/open.ts";
-import { resolveAnchor } from "../modules/anchor/anchor.ts";
+import { resolveAnchor, resolvedPathOrCached } from "../modules/anchor/anchor.ts";
 import { createProject, createSession } from "../db/primary_mutation.ts";
 import { listSessionsByAnalysis } from "../db/primary_query.ts";
 import type { Analysis } from "../types/analysis.ts";
@@ -58,7 +58,7 @@ export type Command = {
 // Resolve an analysis's live working directory from its anchor (falling back to cwd).
 function workingDirFor(a: Analysis): string {
     return resolveAnchor(a.anchorId).match(
-        (resolved) => (resolved ? (resolved.path ?? resolved.anchor.cachedPath) : process.cwd()),
+        (resolved) => resolvedPathOrCached(resolved) ?? process.cwd(),
         () => process.cwd(),
     );
 }
@@ -425,30 +425,16 @@ export const commands: Command[] = [
                 return;
             }
 
-            const sigPath = `${provPath}.sig.json`;
-            if (!existsSync(sigPath)) {
-                notify({ kind: "warn", text: "No .sig.json sidecar found. The export may be unsigned." });
-                return;
-            }
-
-            const sidecar = verify.readSidecar(sigPath);
-            if (!sidecar) {
-                notify({ kind: "error", text: "The .sig.json sidecar is invalid or missing required fields." });
-                return;
-            }
-
-            let publicKey: CryptoKey;
             try {
-                publicKey = await crypto.subtle.importKey("jwk", sidecar.publicKey, "Ed25519", true, ["verify"]);
-            } catch {
-                notify({ kind: "error", text: "The public key in the sidecar is invalid." });
-                return;
+                const result = await verify.verifyExportFile(provPath);
+                if (!result) {
+                    notify({ kind: "warn", text: "No .sig.json sidecar found. The export may be unsigned." });
+                    return;
+                }
+                notify({ kind: noticeKindFor(result), text: verify.formatVerifyResult(result) });
+            } catch (e) {
+                notify({ kind: "error", text: e instanceof Error ? e.message : String(e) });
             }
-
-            const provJson = readFileSync(provPath, "utf-8");
-            const result = await verify.verifyPayload(provJson, sidecar.payloadDigest, sidecar.signature, publicKey);
-
-            notify({ kind: noticeKindFor(result), text: verify.formatVerifyResult(result) });
         },
     },
     {

@@ -76,12 +76,29 @@ export const env = Object.freeze({
  * just add its dot access here — scripts/build.ts derives the baked-var list
  * from this block, so there is nothing else to keep in sync.
  */
+// Deferred so the spawnSync only runs when the value is first read (provenance actor, --version),
+// not on every CLI startup. In release builds --define inlines process.env.INFLEXA_GIT_COMMIT as a
+// string literal, so the fallback is dead code. The fallback is dev-only: resolve from git. If
+// neither source produces a commit, the binary was not built correctly — crash rather than silently
+// stamping provenance with garbage.
+let _gitCommit: string | undefined;
+function resolveGitCommit(): string {
+    if (process.env.INFLEXA_GIT_COMMIT) return process.env.INFLEXA_GIT_COMMIT;
+    if (process.env.NODE_ENV === "production")
+        throw new Error("INFLEXA_GIT_COMMIT is not set on production environment. This means the binary was not built correctly.");
+
+    // Dev-only path: resolve from the working tree's HEAD.
+    return Bun.spawnSync(["git", "rev-parse", "HEAD"]).stdout.toString().trim();
+}
+
 export const bakedEnv = Object.freeze({
     auth0Domain: process.env.INFLEXA_AUTH0_DOMAIN,
     auth0ClientId: process.env.INFLEXA_AUTH0_CLIENT_ID,
     auth0Audience: process.env.INFLEXA_AUTH0_AUDIENCE,
-    // Falls back to a live `git rev-parse` in dev; release builds inline the value via --define.
-    gitCommit: process.env.INFLEXA_GIT_COMMIT ?? Bun.spawnSync(["git", "rev-parse", "HEAD"]).stdout.toString().trim(),
+    get gitCommit(): string {
+        if (_gitCommit === undefined) _gitCommit = resolveGitCommit();
+        return _gitCommit;
+    },
 });
 
 export type EnvDocEntry = { kind: "path"; label: string; description: string; baseVar: string } | { kind: "var"; name: string; description: string };

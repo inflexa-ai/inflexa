@@ -32,7 +32,11 @@ export async function runExportProvenance(ref: string, opts: { format?: string; 
     }
     console.log(`Wrote ${format} provenance for "${analysis.name}" to ${dest}`);
 
-    await writeSidecar(document, dest);
+    // Sidecar is only meaningful for JSON exports — the payloadType claim must match the actual
+    // format, and PROV-N is a lossy re-serialization unverifiable against the chain hash.
+    if (format === "json") {
+        await writeSidecar(document, dest);
+    }
 }
 
 /**
