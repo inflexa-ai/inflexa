@@ -6,7 +6,7 @@ import { bakedEnv } from "../../lib/env.ts";
 import { getLogger } from "../../lib/log.ts";
 import { findAnalysesByRef, getAnalysisIntegrity } from "../../db/primary_query.ts";
 import { updateAnalysisProvenance } from "../../db/primary_mutation.ts";
-import { appendCreation, appendInputAdded, appendInputRemoved, loadDocument } from "./document.ts";
+import { appendCreation, appendInputAdded, appendInputRemoved, freshDocument, loadDocument } from "./document.ts";
 import { loadOrGenerateKeypair, computeChainHash, signHexDigest } from "./signing.ts";
 import { loadAuth } from "../auth/auth.ts";
 import { decodeIdTokenClaims } from "../auth/whoami.ts";
@@ -122,7 +122,14 @@ function liveDocForAnalysis(analysisId: string): ProvDocument | null {
             return null;
         },
     );
-    const doc = loadDocument(analysis, integrity?.provenance ?? null);
+    const docResult = loadDocument(analysis, integrity?.provenance ?? null);
+    if (docResult.isErr()) {
+        log.error({ analysisId, cause: docResult.error.cause }, "stored provenance is corrupt; starting fresh document");
+        const fresh = freshDocument(analysis);
+        liveDocs.set(analysisId, fresh);
+        return fresh;
+    }
+    const doc = docResult.value;
     liveDocs.set(analysisId, doc);
     // Seed the chain hash from the stored value so the next flush chains correctly.
     if (integrity?.chainHash) chainHashes.set(analysisId, integrity.chainHash);

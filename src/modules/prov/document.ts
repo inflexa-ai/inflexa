@@ -1,5 +1,5 @@
 import { randomUUIDv7 } from "bun";
-import { type Result } from "neverthrow";
+import { type Result, ok, err } from "neverthrow";
 import { ProvDocument, type BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import type { Analysis } from "../../types/analysis.ts";
 import type { ProvActor, ProvInputRef } from "../../types/prov.ts";
@@ -84,8 +84,13 @@ export function freshDocument(analysis: Analysis): ProvDocument {
 }
 
 /** Reconstruct an analysis's live document from its stored PROV-JSON, or seed a fresh one when nothing is stored yet. */
-export function loadDocument(analysis: Analysis, storedJson: string | null): ProvDocument {
-    return storedJson ? ProvDocument.deserialize(storedJson, "json") : freshDocument(analysis);
+export function loadDocument(analysis: Analysis, storedJson: string | null): Result<ProvDocument, { type: "prov_corrupt"; cause: unknown }> {
+    if (!storedJson) return ok(freshDocument(analysis));
+    try {
+        return ok(ProvDocument.deserialize(storedJson, "json"));
+    } catch (cause) {
+        return err({ type: "prov_corrupt" as const, cause });
+    }
 }
 
 // Each append function mints a fresh activity, stamps it at append time (the action's occurrence),
@@ -139,10 +144,11 @@ export function appendInputRemoved(doc: ProvDocument, analysisId: string, actor:
  * always over the JSON form).
  */
 export function serializeProvenance(analysis: Analysis, format: BuiltinProvFormat): Result<string, DbError> {
-    return getAnalysisProvenance(analysis.id).map((json) => {
-        if (json === null) return loadDocument(analysis, null).unified().serialize(format);
-        if (format === "json") return json;
-        return loadDocument(analysis, json).unified().serialize(format);
+    return getAnalysisProvenance(analysis.id).andThen((json): Result<string, DbError> => {
+        if (format === "json" && json !== null) return ok(json);
+        return loadDocument(analysis, json)
+            .map((doc) => doc.unified().serialize(format))
+            .mapErr((e): DbError => ({ type: "query_failed", op: "serializeProvenance:deserialize", cause: e.cause }));
     });
 }
 

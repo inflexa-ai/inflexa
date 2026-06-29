@@ -1,5 +1,7 @@
 # neverthrow migration audit
 
+> **Status: IMPLEMENTED.** All items below were migrated in commit `f4345b2` + follow-up fix. This file is now a reference for what was done and why.
+
 Comprehensive catalog of every `try/catch`, `throw`, and error-handling site in `src/`.
 Organized by verdict: what to convert, what to keep, and what stdlib calls need wrappers.
 
@@ -24,7 +26,7 @@ These modules/functions already return `Result<T, E>` and use `tryQuery`/`tryMut
 | `modules/prov/signing.ts` | `loadOrGenerateKeypair` | Returns `Promise<Result<ImportedKeypair, SigningError>>` |
 | `modules/prov/document.ts` | `serializeProvenance`, `findAnalysisForProv` | Return `Result<T, DbError>` |
 | `modules/prov/verify.ts` | `buildSidecar` | Returns `Promise<Result<Sidecar, SigningError>>` |
-| `modules/staging/staging.ts` | `stageInputs` | Returns `Result<Promise<StagedInput[]>, DbError>` |
+| `modules/staging/staging.ts` | `stageInputs` | Returns `Promise<Result<StagedInput[], DbError \| StagingError>>` (was `Result<Promise<...>>`, restructured) |
 
 ---
 
