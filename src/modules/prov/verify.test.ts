@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
 
 import { verifyProvenance, verifyPayload, runVerifyFile } from "./verify.ts";
-import { computeChainHash, computePayloadDigest, signChainHash, loadOrGenerateKeypair, resetSigningForTests } from "./signing.ts";
+import { computeChainHash, computePayloadDigest, signHexDigest, loadOrGenerateKeypair, resetSigningForTests } from "./signing.ts";
 
 let tempDir: string | null = null;
 
@@ -48,7 +48,7 @@ describe("verifyProvenance (DB-path, chain hash verification)", () => {
 
         const provJson = '{"entity":{"inflexa:analysis-a1":{}}}';
         const chainHash = await computeChainHash(null, provJson);
-        const signature = await signChainHash(kp!.privateKey, chainHash);
+        const signature = await signHexDigest(kp!.privateKey, chainHash);
 
         const result = await verifyProvenance(provJson, null, chainHash, signature, kp!.publicKey);
         expect(result.status).toBe("valid");
@@ -64,7 +64,7 @@ describe("verifyProvenance (DB-path, chain hash verification)", () => {
 
         const secondJson = '{"entity":{"inflexa:analysis-a1":{"extra":true}}}';
         const secondHash = await computeChainHash(firstHash, secondJson);
-        const signature = await signChainHash(kp!.privateKey, secondHash);
+        const signature = await signHexDigest(kp!.privateKey, secondHash);
 
         const result = await verifyProvenance(secondJson, firstHash, secondHash, signature, kp!.publicKey);
         expect(result.status).toBe("valid");
@@ -77,7 +77,7 @@ describe("verifyProvenance (DB-path, chain hash verification)", () => {
 
         const originalJson = '{"entity":{"inflexa:analysis-a1":{}}}';
         const chainHash = await computeChainHash(null, originalJson);
-        const signature = await signChainHash(kp!.privateKey, chainHash);
+        const signature = await signHexDigest(kp!.privateKey, chainHash);
 
         const tamperedJson = '{"entity":{"inflexa:analysis-a1":{"tampered":true}}}';
         const result = await verifyProvenance(tamperedJson, null, chainHash, signature, kp!.publicKey);
@@ -92,7 +92,7 @@ describe("verifyProvenance (DB-path, chain hash verification)", () => {
 
         const provJson = '{"entity":{"inflexa:analysis-a1":{}}}';
         const chainHash = await computeChainHash(null, provJson);
-        const signature = await signChainHash(kp!.privateKey, chainHash);
+        const signature = await signHexDigest(kp!.privateKey, chainHash);
         const flipped = signature.slice(0, -2) + (signature.slice(-2) === "00" ? "01" : "00");
 
         const result = await verifyProvenance(provJson, null, chainHash, flipped, kp!.publicKey);
@@ -109,7 +109,7 @@ describe("verifyPayload (file-path, simple content digest)", () => {
 
         const provJson = '{"entity":{"inflexa:analysis-a1":{}}}';
         const digest = await computePayloadDigest(provJson);
-        const signature = await signChainHash(kp!.privateKey, digest);
+        const signature = await signHexDigest(kp!.privateKey, digest);
 
         const result = await verifyPayload(provJson, digest, signature, kp!.publicKey);
         expect(result.status).toBe("valid");
@@ -122,7 +122,7 @@ describe("verifyPayload (file-path, simple content digest)", () => {
 
         const originalJson = '{"entity":{"inflexa:analysis-a1":{}}}';
         const digest = await computePayloadDigest(originalJson);
-        const signature = await signChainHash(kp!.privateKey, digest);
+        const signature = await signHexDigest(kp!.privateKey, digest);
 
         const tamperedJson = '{"entity":{"inflexa:analysis-a1":{"tampered":true}}}';
         const result = await verifyPayload(tamperedJson, digest, signature, kp!.publicKey);
@@ -138,7 +138,7 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
 
         const provJson = '{"entity":{"inflexa:analysis-file-test":{}}}';
         const digest = await computePayloadDigest(provJson);
-        const signature = await signChainHash(kp!.privateKey, digest);
+        const signature = await signHexDigest(kp!.privateKey, digest);
 
         const { exportPublicKeyJwk } = await import("./signing.ts");
         const publicKey = await exportPublicKeyJwk();

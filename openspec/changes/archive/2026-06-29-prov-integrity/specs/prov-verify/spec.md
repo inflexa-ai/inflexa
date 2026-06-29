@@ -99,7 +99,7 @@ The system SHALL extend `inflexa prov export` to write a sidecar file `provenanc
 {
   "payloadType": "application/json; profile=prov-json",
   "payloadDigestAlgorithm": "SHA-256",
-  "payloadDigest": "<hex-encoded SHA-256 chain hash>",
+  "payloadDigest": "<hex-encoded SHA-256 content digest>",
   "payloadDigestMethod": "verbatim",
   "signatureAlgorithm": "Ed25519",
   "signature": "<hex-encoded Ed25519 signature over the digest>",
@@ -123,6 +123,6 @@ The system SHALL extend `inflexa prov export` to write a sidecar file `provenanc
 
 - **WHEN** a third party has `provenance.json` and `provenance.json.sig.json`
 - **THEN** they read `payloadDigestAlgorithm` and `signatureAlgorithm` from the sidecar
-- **AND** they compute `SHA-256(SHA-256("") || file_contents)` over the provenance file bytes
+- **AND** they compute `SHA-256(file_contents)` over the provenance file bytes
 - **AND** they compare the result to `payloadDigest`
 - **AND** they verify the `signature` against the `payloadDigest` bytes using the `publicKey` with `Ed25519`
