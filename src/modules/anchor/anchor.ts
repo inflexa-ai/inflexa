@@ -6,7 +6,12 @@ import type { Anchor, AnchorMarker } from "../../types/anchor.ts";
 import type { DbError } from "../../db/errors.ts";
 import { getAnchor, listAnchors } from "../../db/primary_query.ts";
 import { insertAnchor, touchAnchor, updateAnchorCachedPath } from "../../db/primary_mutation.ts";
-import { canonicalPath, findMarkerUpwards, isDirWritable, readMarker, writeMarker } from "./marker.ts";
+import { canonicalPath, findMarkerUpwards, isDirWritable, readMarker, writeMarker, type MarkerError } from "./marker.ts";
+
+/** Bridge a marker-layer failure into the db-layer error type so callers that return `Result<T, DbError>` can propagate it without widening their error union. */
+function markerToDbError(op: string, e: MarkerError): DbError {
+    return { type: "query_failed", op, cause: e };
+}
 
 /**
  * `id` is the marker UUID (from the on-disk marker or freshly minted), stored as the
@@ -29,13 +34,9 @@ function makeAnchor(id: string, dir: string, markerWritten: boolean): Anchor {
 export function getOrCreateAnchorForCwd(dir: string): Result<Anchor, DbError> {
     const abs = canonicalPath(dir);
 
-    let marker: AnchorMarker | null;
-    try {
-        marker = readMarker(abs);
-    } catch (cause) {
-        // Corrupt on-disk marker surfaces through the Result channel, not as a throw.
-        return err({ type: "query_failed", op: "getOrCreateAnchorForCwd:readMarker", cause });
-    }
+    const markerResult = readMarker(abs);
+    if (markerResult.isErr()) return err(markerToDbError("getOrCreateAnchorForCwd:readMarker", markerResult.error));
+    const marker = markerResult.value;
 
     if (marker) {
         const anchorId = marker.anchorId;
@@ -57,11 +58,8 @@ export function getOrCreateAnchorForCwd(dir: string): Result<Anchor, DbError> {
     const anchorId = randomUUIDv7();
     const writable = isDirWritable(abs);
     if (writable) {
-        try {
-            writeMarker(abs, anchorId); // TODO(slop): this will be refactored to return result, no need for catch
-        } catch (cause) {
-            return err({ type: "mutation_failed", op: "getOrCreateAnchorForCwd:writeMarker", cause });
-        }
+        const writeResult = writeMarker(abs, anchorId);
+        if (writeResult.isErr()) return err(markerToDbError("getOrCreateAnchorForCwd:writeMarker", writeResult.error));
     }
     return insertAnchor(makeAnchor(anchorId, abs, writable));
 }
@@ -71,12 +69,9 @@ export function getOrCreateAnchorForCwd(dir: string): Result<Anchor, DbError> {
  * treated as non-matching here: resolution must not abort on an unrelated corrupt marker.
  */
 function markerMatches(dir: string, anchorId: string): boolean {
-    try {
-        // TODO(slop): same here, try catch without reason
-        return readMarker(dir)?.anchorId === anchorId;
-    } catch {
-        return false;
-    }
+    return readMarker(dir)
+        .map((m) => m?.anchorId === anchorId)
+        .unwrapOr(false);
 }
 
 /**
@@ -84,13 +79,9 @@ function markerMatches(dir: string, anchorId: string): boolean {
  * marker on the walk falls through to the bounded search rather than aborting resolution).
  */
 function findMatchingMarkerUpwards(startDir: string, anchorId: string): string | null {
-    try {
-        // TODO(slop): neverthrow
-        const found = findMarkerUpwards(startDir);
-        return found && found.marker.anchorId === anchorId ? found.dir : null;
-    } catch {
-        return null;
-    }
+    return findMarkerUpwards(startDir)
+        .map((found) => (found && found.marker.anchorId === anchorId ? found.dir : null))
+        .unwrapOr(null);
 }
 
 function ancestorsOf(dir: string): string[] {

@@ -1,7 +1,15 @@
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { type Result, ok, err } from "neverthrow";
 import { z } from "zod";
 import type { AnchorMarker, AnchorId } from "../../types/anchor.ts";
+import { readFileResult, writeFileResult, mkdirResult } from "../../lib/fs.ts";
+
+/** Marker-layer failure. Covers I/O (FS read/write) and data integrity (corrupt marker file). */
+export type MarkerError =
+    | { type: "marker_read_failed"; path: string; cause: unknown }
+    | { type: "marker_corrupt"; path: string; raw: string }
+    | { type: "marker_write_failed"; path: string; cause: unknown };
 
 /** The on-disk marker for a folder: <dir>/.inflexa/id (write-once identity file). */
 export function markerPath(dir: string): string {
@@ -16,7 +24,6 @@ export function markerPath(dir: string): string {
  */
 export function canonicalPath(p: string): string {
     try {
-        // TODO(slop): neverthrow
         return realpathSync(p);
     } catch {
         return resolve(p);
@@ -34,38 +41,47 @@ const anchorMarkerSchema = z.object({
 }) satisfies z.ZodType<AnchorMarker>;
 
 /**
- * Reads & validates <dir>/.inflexa/id. Returns null when the file is absent (the normal
- * "not an anchor yet" case). Throws on malformed JSON or a marker that fails the schema:
+ * Reads & validates <dir>/.inflexa/id. Returns `ok(null)` when the file is absent (the normal
+ * "not an anchor yet" case). Returns `err` on I/O failure or a marker that fails the schema:
  * corruption is surfaced so the caller can repair it, never silently re-minted (which
  * would orphan the existing identity and duplicate its analyses).
  */
-export function readMarker(dir: string): AnchorMarker | null {
+export function readMarker(dir: string): Result<AnchorMarker | null, MarkerError> {
     const path = markerPath(dir);
-    if (!existsSync(path)) return null;
+    if (!existsSync(path)) return ok(null);
 
-    const raw = readFileSync(path, "utf8"); // TODO(slop): make a wrapper that returns result - since I guess this throws
-    // A present-but-invalid marker is corruption, not absence. JSON.parseWith returns null
-    // for both a parse error and a schema mismatch, so the existsSync gate above is what
-    // separates "no marker" (null, fine) from "broken marker" (throw, never silently re-minted).
+    const read = readFileResult(path, "readMarker");
+    if (read.isErr()) return err({ type: "marker_read_failed", path, cause: read.error.cause });
+
+    const raw = read.value;
     const marker = JSON.parseWith(raw, anchorMarkerSchema);
-    if (!marker) throw new Error(`corrupt anchor marker at ${path}: ${raw}`); // TODO(slop): don't throw, return result
-    return marker;
+    if (!marker) return err({ type: "marker_corrupt", path, raw });
+    return ok(marker);
 }
 
 /**
  * Write-once: if a valid marker already exists it is returned unchanged (the folder
  * already has identity, so its UUID wins over the passed one and the file is never
- * rewritten — the marker records no mutable state). A corrupt existing marker throws
- * rather than being clobbered. Only an absent marker is created.
+ * rewritten — the marker records no mutable state). A corrupt existing marker returns
+ * an error rather than being clobbered. Only an absent marker is created.
  */
-export function writeMarker(dir: string, anchorId: AnchorId): AnchorMarker {
-    const existing = readMarker(dir); // throws if corrupt — do not overwrite corruption
-    if (existing) return existing;
+export function writeMarker(dir: string, anchorId: AnchorId): Result<AnchorMarker, MarkerError> {
+    return readMarker(dir).andThen((existing) => {
+        if (existing) return ok(existing);
 
-    const marker: AnchorMarker = { schemaVersion: 1, anchorId: anchorId };
-    mkdirSync(join(dir, ".inflexa"), { recursive: true }); // TODO(slop): Make wrapper - don't throw
-    writeFileSync(markerPath(dir), `${JSON.stringify(marker, null, 2)}\n`, "utf8"); // TODO(slop): make wrapper - don't throw
-    return marker;
+        const marker: AnchorMarker = { schemaVersion: 1, anchorId: anchorId };
+        const dotDir = join(dir, ".inflexa");
+        const path = markerPath(dir);
+
+        return mkdirResult(dotDir, "writeMarker:mkdir")
+            .mapErr((e): MarkerError => ({ type: "marker_write_failed", path, cause: e.cause }))
+            .andThen(() =>
+                writeFileResult(path, `${JSON.stringify(marker, null, 2)}\n`, "writeMarker:write").mapErr(
+                    (e): MarkerError => ({ type: "marker_write_failed", path, cause: e.cause }),
+                ),
+            )
+            .map(() => marker);
+    });
 }
 
 /**
@@ -75,7 +91,6 @@ export function writeMarker(dir: string, anchorId: AnchorId): AnchorMarker {
  */
 export function isDirWritable(dir: string): boolean {
     try {
-        // TODO(slop): neverthrow
         accessSync(dir, constants.W_OK);
         return true;
     } catch {
@@ -89,13 +104,14 @@ export function isDirWritable(dir: string): boolean {
  * instead of looping. A corrupt marker mid-walk propagates via readMarker — corruption
  * at a candidate anchor is a real error, not something to skip past.
  */
-export function findMarkerUpwards(startDir: string): { dir: string; marker: AnchorMarker } | null {
+export function findMarkerUpwards(startDir: string): Result<{ dir: string; marker: AnchorMarker } | null, MarkerError> {
     let dir = resolve(startDir);
     for (;;) {
-        const marker = readMarker(dir);
-        if (marker) return { dir, marker };
-        const parent = dirname(dir); // TODO(slop): make a wrapper that returns result and change the call.
-        if (parent === dir) return null; // reached filesystem root
+        const result = readMarker(dir);
+        if (result.isErr()) return err(result.error);
+        if (result.value) return ok({ dir, marker: result.value });
+        const parent = dirname(dir);
+        if (parent === dir) return ok(null);
         dir = parent;
     }
 }

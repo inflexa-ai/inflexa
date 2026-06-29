@@ -1,9 +1,9 @@
-import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { ok, err, type Result } from "neverthrow";
 import type { AnalysisInput } from "../../types/analysis.ts";
 import type { DbError } from "../../db/errors.ts";
+import { statResult } from "../../lib/fs.ts";
 import { canonicalPath, findMarkerUpwards } from "../anchor/marker.ts";
 import { resolveAnchor } from "../anchor/anchor.ts";
 
@@ -18,23 +18,17 @@ export function classifyInputPath(analysisId: string, rawPath: string, cwd: stri
 
     // `isDir` comes from a real stat. A non-existent path cannot honestly produce `isDir`, so
     // surface it (op marks it not-found) rather than defaulting — the caller rejects it.
-    let isDir: boolean;
-    try {
-        isDir = statSync(target).isDirectory();
-    } catch (cause) {
-        return err({ type: "query_failed", op: "classifyInputPath:notFound", cause });
-    }
+    const stat = statResult(target, "classifyInputPath:notFound");
+    if (stat.isErr()) return err({ type: "query_failed", op: "classifyInputPath:notFound", cause: stat.error.cause });
+    const isDir = stat.value.isDirectory();
 
     // Canonicalize now that we know it exists, so anchor membership and the stored relpath are
     // computed against symlink-resolved paths (consistent with the anchor's cachedPath).
     const abs = canonicalPath(target);
 
-    let found: { dir: string; marker: { anchorId: string } } | null;
-    try {
-        found = findMarkerUpwards(abs);
-    } catch (cause) {
-        return err({ type: "query_failed", op: "classifyInputPath:marker", cause });
-    }
+    const markerResult = findMarkerUpwards(abs);
+    if (markerResult.isErr()) return err({ type: "query_failed", op: "classifyInputPath:marker", cause: markerResult.error });
+    const found = markerResult.value;
 
     if (found) {
         const rel = relative(found.dir, abs);

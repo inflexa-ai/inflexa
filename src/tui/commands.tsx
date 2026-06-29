@@ -1,5 +1,5 @@
 import type { JSX } from "solid-js";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 // Type-only — erased at compile time, so it does NOT pull tsprov/verify into the TUI's startup path.
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
@@ -16,6 +16,7 @@ import { keybindLabel } from "./keymap.ts";
 import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
 import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
+import { mkdirResult, writeFileResult } from "../lib/fs.ts";
 import { str256 } from "../lib/types.ts";
 import { createAnalysis, listRecentAnalyses } from "../modules/analysis/analysis.ts";
 import { resolveContext, describeContext } from "../modules/analysis/context.ts";
@@ -289,11 +290,9 @@ async function exportProvenanceToFile(ws: Workspace, format: BuiltinProvFormat):
     if (!text) return;
 
     const dest = join(dir, `provenance.${format}`);
-    try {
-        mkdirSync(dir, { recursive: true });
-        writeFileSync(dest, text);
-    } catch (cause) {
-        notify({ kind: "error", text: `Failed to write provenance: ${String(cause)}` });
+    const writeResult = mkdirResult(dir, "exportProvenance:mkdir").andThen(() => writeFileResult(dest, text, "exportProvenance:write"));
+    if (writeResult.isErr()) {
+        notify({ kind: "error", text: `Failed to write provenance: ${String(writeResult.error.cause)}` });
         return;
     }
 
@@ -304,10 +303,9 @@ async function exportProvenanceToFile(ws: Workspace, format: BuiltinProvFormat):
         return;
     }
     const sigDest = `${dest}.sig.json`;
-    try {
-        writeFileSync(sigDest, JSON.stringify(sidecarResult.value, null, 2));
-    } catch (cause) {
-        notify({ kind: "error", text: `Wrote provenance but sidecar failed: ${String(cause)}` });
+    const sidecarWrite = writeFileResult(sigDest, JSON.stringify(sidecarResult.value, null, 2), "exportProvenance:sidecar");
+    if (sidecarWrite.isErr()) {
+        notify({ kind: "error", text: `Wrote provenance but sidecar failed: ${String(sidecarWrite.error.cause)}` });
         return;
     }
 

@@ -39,6 +39,9 @@ export type ChatOptions = {
     abort?: AbortSignal;
 };
 
+/** Setup failures surfaced before streaming begins — the proxy key is missing, unreachable, or reports no models. */
+export type ChatSetupError = { type: "proxy_key_missing" } | { type: "proxy_unreachable"; detail: string } | { type: "no_models" };
+
 export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
     const { sessionId, userText, abort } = opts;
 
@@ -108,31 +111,38 @@ export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
     // and the user sees a blank reply with no clue why. Capture it and surface it below, the same
     // as a thrown setup failure.
     let streamError: unknown;
-    try {
-        const apiKey = await readApiKey();
-        const modelId = await resolveModelId(apiKey);
-        const provider = createOpenAICompatible({ name: "cliproxy", baseURL: env.cliproxyApiUrl, apiKey });
-        const result = streamText({
-            model: provider(modelId),
-            system: SYSTEM_PROMPT,
-            messages: modelMessages,
-            abortSignal: abort,
-            // Anthropic requires an explicit max_tokens; the proxy passes the
-            // OpenAI-format value through when translating to Claude, so set a
-            // generous cap to make Claude work out of the box.
-            maxOutputTokens: 8192,
-            onError: ({ error }) => {
+    const keyResult = await readApiKey();
+    if (keyResult.isErr()) {
+        streamError = keyResult.error;
+    } else {
+        const modelResult = await resolveModelId(keyResult.value);
+        if (modelResult.isErr()) {
+            streamError = modelResult.error;
+        } else {
+            try {
+                const provider = createOpenAICompatible({ name: "cliproxy", baseURL: env.cliproxyApiUrl, apiKey: keyResult.value });
+                const result = streamText({
+                    model: provider(modelResult.value),
+                    system: SYSTEM_PROMPT,
+                    messages: modelMessages,
+                    abortSignal: abort,
+                    // Anthropic requires an explicit max_tokens; the proxy passes the
+                    // OpenAI-format value through when translating to Claude, so set a
+                    // generous cap to make Claude work out of the box.
+                    maxOutputTokens: 8192,
+                    onError: ({ error }) => {
+                        streamError = error;
+                    },
+                });
+                for await (const delta of result.textStream) {
+                    accumulated += delta;
+                    Bus.emit("inflexa", { type: "part.delta", sessionId, messageId: assistantMsg.id, partId: assistantPart.id, delta });
+                }
+            } catch (error) {
+                // Streaming failures from the AI SDK that surface as exceptions (not via onError).
                 streamError = error;
-            },
-        });
-        for await (const delta of result.textStream) {
-            accumulated += delta;
-            Bus.emit("inflexa", { type: "part.delta", sessionId, messageId: assistantMsg.id, partId: assistantPart.id, delta });
+            }
         }
-    } catch (error) {
-        // Synchronous/setup failures (readApiKey, resolveModelId) throw here; streaming failures
-        // arrive via onError above. Funnel both through the single session.error emit below.
-        streamError = error;
     }
     // A user abort is not an error — it just stops and keeps whatever streamed so far.
     if (streamError && !abort?.aborted) {
@@ -179,25 +189,23 @@ export function toModelMessages(stored: StoredMessage[]): ModelMessage[] {
 }
 
 /** The proxy requires the client API key we generated into its config at setup. */
-async function readApiKey(): Promise<string> {
+async function readApiKey(): Promise<Result<string, ChatSetupError>> {
     const text = await Bun.file(env.cliproxyConfigPath)
         .text()
         .catch(() => "");
     const key = text.match(/^api-keys:\s*\n\s*-\s*"([^"]+)"/m)?.[1];
-    if (!key) throw new Error("could not read the proxy API key — run `inflexa setup`");
-    return key;
+    if (!key) return err({ type: "proxy_key_missing" });
+    return ok(key);
 }
 
-async function resolveModelId(apiKey: string): Promise<string> {
-    if (cachedModelId) return cachedModelId;
+async function resolveModelId(apiKey: string): Promise<Result<string, ChatSetupError>> {
+    if (cachedModelId) return ok(cachedModelId);
     const res = await fetch(`${env.cliproxyApiUrl}/models`, { headers: { Authorization: `Bearer ${apiKey}` } });
-    if (!res.ok) throw new Error(`the proxy returned ${res.status} listing models`);
+    if (!res.ok) return err({ type: "proxy_unreachable", detail: `HTTP ${res.status}` });
     const models = await res.jsonWith(modelsSchema);
-    if (!models || models.data.length === 0) {
-        throw new Error("the proxy reported no models — is a provider authenticated? run `inflexa setup`");
-    }
+    if (!models || models.data.length === 0) return err({ type: "no_models" });
     cachedModelId = pickDefaultModel(models.data.map((m) => m.id));
-    return cachedModelId;
+    return ok(cachedModelId);
 }
 
 /**
@@ -213,5 +221,7 @@ export function pickDefaultModel(ids: string[]): string {
 }
 
 function describe(cause: unknown): string {
-    return cause instanceof Error ? cause.message : String(cause);
+    if (cause instanceof Error) return cause.message;
+    if (typeof cause === "object" && cause !== null && "type" in cause) return (cause as { type: string }).type;
+    return String(cause);
 }

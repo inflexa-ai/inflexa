@@ -4,7 +4,7 @@ import type { VerifyResult } from "../../types/prov.ts";
 import type { IdOrName } from "../../lib/types.ts";
 import { getAnalysisIntegrity } from "../../db/primary_query.ts";
 import { findAnalysisForProv } from "./document.ts";
-import { type Result, ok, err } from "neverthrow";
+import { type Result, err } from "neverthrow";
 import { getLogger } from "../../lib/log.ts";
 import {
     computeChainHash,
@@ -39,13 +39,23 @@ export async function verifyProvenance(
     if (storedChainHash === null || storedSignature === null) return { status: "unsigned" };
     if (publicKey === null) return { status: "no-key" };
 
-    const recomputed = await computeChainHash(prevChainHash, provJson);
-    if (recomputed !== storedChainHash) {
+    const hashResult = await computeChainHash(prevChainHash, provJson);
+    if (hashResult.isErr())
+        return {
+            status: "tampered",
+            detail: `chain hash computation failed: ${String("cause" in hashResult.error ? hashResult.error.cause : hashResult.error.type)}`,
+        };
+    if (hashResult.value !== storedChainHash) {
         return { status: "tampered", detail: "chain hash mismatch: the PROV-JSON has been modified since it was signed" };
     }
 
-    const sigOk = await verifyHexDigest(publicKey, storedSignature, storedChainHash);
-    if (!sigOk) {
+    const sigResult = await verifyHexDigest(publicKey, storedSignature, storedChainHash);
+    if (sigResult.isErr())
+        return {
+            status: "tampered",
+            detail: `signature verification failed: ${String("cause" in sigResult.error ? sigResult.error.cause : sigResult.error.type)}`,
+        };
+    if (!sigResult.value) {
         return { status: "tampered", detail: "signature verification failed: the chain hash or signature has been modified" };
     }
 
@@ -58,13 +68,23 @@ export async function verifyProvenance(
  * the sidecar is self-contained, no chain mechanics needed.
  */
 export async function verifyPayload(provJson: string, storedDigest: string, storedSignature: string, publicKey: CryptoKey): Promise<VerifyResult> {
-    const recomputed = await computePayloadDigest(provJson);
-    if (recomputed !== storedDigest) {
+    const digestResult = await computePayloadDigest(provJson);
+    if (digestResult.isErr())
+        return {
+            status: "tampered",
+            detail: `payload digest computation failed: ${String("cause" in digestResult.error ? digestResult.error.cause : digestResult.error.type)}`,
+        };
+    if (digestResult.value !== storedDigest) {
         return { status: "tampered", detail: "payload digest mismatch: the provenance file has been modified since it was signed" };
     }
 
-    const sigOk = await verifyHexDigest(publicKey, storedSignature, storedDigest);
-    if (!sigOk) {
+    const sigResult = await verifyHexDigest(publicKey, storedSignature, storedDigest);
+    if (sigResult.isErr())
+        return {
+            status: "tampered",
+            detail: `signature verification failed: ${String("cause" in sigResult.error ? sigResult.error.cause : sigResult.error.type)}`,
+        };
+    if (!sigResult.value) {
         return { status: "tampered", detail: "signature verification failed: the digest or signature has been modified" };
     }
 
@@ -163,21 +183,22 @@ export async function buildSidecar(provJson: string): Promise<Result<Sidecar, Si
     if (kpResult.isErr()) return err(kpResult.error);
     const kp = kpResult.value;
 
-    const publicKeyJwk = await exportPublicKeyJwk();
+    const pubKeyResult = await exportPublicKeyJwk();
+    if (pubKeyResult.isErr()) return err(pubKeyResult.error);
+    const publicKeyJwk = pubKeyResult.value;
     if (!publicKeyJwk) return err({ type: "public_key_export_failed" });
 
-    const digest = await computePayloadDigest(provJson);
-    const signature = await signHexDigest(kp.privateKey, digest);
-
-    return ok({
-        payloadType: "application/json; profile=prov-json",
-        payloadDigestAlgorithm: "SHA-256",
-        payloadDigest: digest,
-        payloadDigestMethod: "verbatim",
-        signatureAlgorithm: "Ed25519",
-        signature,
-        publicKey: publicKeyJwk as Record<string, unknown>,
-    });
+    return computePayloadDigest(provJson).andThen((digest) =>
+        signHexDigest(kp.privateKey, digest).map((signature) => ({
+            payloadType: "application/json; profile=prov-json" as const,
+            payloadDigestAlgorithm: "SHA-256" as const,
+            payloadDigest: digest,
+            payloadDigestMethod: "verbatim" as const,
+            signatureAlgorithm: "Ed25519" as const,
+            signature,
+            publicKey: publicKeyJwk as Record<string, unknown>,
+        })),
+    );
 }
 
 /** Parse a `.sig.json` sidecar file, returning `null` on missing/corrupt/malformed. */

@@ -168,21 +168,22 @@ export async function flushProvenanceAsync(): Promise<void> {
         }
         const kp = kpResult.value;
 
-        try {
-            const prev = chainHashes.get(analysisId) ?? null;
-            const chainHash = await computeChainHash(prev, json);
-            const signature = await signHexDigest(kp.privateKey, chainHash);
-
-            updateAnalysisProvenance(analysisId, json, chainHash, signature).match(
-                () => {
-                    dirty.delete(analysisId);
-                    chainHashes.set(analysisId, chainHash);
-                },
-                (e) => log.error({ analysisId, err: e.type }, "failed to persist provenance"),
-            );
-        } catch (cause) {
-            log.error({ analysisId, cause }, "signing failed; provenance not persisted");
+        const prev = chainHashes.get(analysisId) ?? null;
+        const result = await computeChainHash(prev, json).andThen((chainHash) =>
+            signHexDigest(kp.privateKey, chainHash).map((signature) => ({ chainHash, signature })),
+        );
+        if (result.isErr()) {
+            log.error({ analysisId, err: result.error }, "signing failed; provenance not persisted");
+            return;
         }
+        const { chainHash, signature } = result.value;
+        updateAnalysisProvenance(analysisId, json, chainHash, signature).match(
+            () => {
+                dirty.delete(analysisId);
+                chainHashes.set(analysisId, chainHash);
+            },
+            (e) => log.error({ analysisId, err: e.type }, "failed to persist provenance"),
+        );
     });
 
     await wg.wait();
