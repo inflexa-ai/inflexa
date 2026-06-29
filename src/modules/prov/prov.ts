@@ -7,7 +7,7 @@ import { getLogger } from "../../lib/log.ts";
 import { findAnalysesByRef, getAnalysisIntegrity } from "../../db/primary_query.ts";
 import { updateAnalysisProvenance } from "../../db/primary_mutation.ts";
 import { appendCreation, appendInputAdded, appendInputRemoved, loadDocument } from "./document.ts";
-import { loadOrGenerateKeypair, computeChainHash, signChainHash } from "./signing.ts";
+import { loadOrGenerateKeypair, computeChainHash, signHexDigest } from "./signing.ts";
 import { loadAuth } from "../auth/auth.ts";
 import { decodeIdTokenClaims } from "../auth/whoami.ts";
 import pkg from "../../../package.json";
@@ -154,7 +154,7 @@ async function flushProvenanceAsync(): Promise<void> {
             if (kp) {
                 const prev = chainHashes.get(analysisId) ?? null;
                 chainHash = await computeChainHash(prev, json);
-                signature = await signChainHash(kp.privateKey, chainHash);
+                signature = await signHexDigest(kp.privateKey, chainHash);
             }
         } catch (cause) {
             log.warn({ analysisId, cause }, "signing failed; persisting provenance unsigned");

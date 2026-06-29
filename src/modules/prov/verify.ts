@@ -4,7 +4,7 @@ import type { VerifyResult } from "../../types/prov.ts";
 import type { IdOrName } from "../../lib/types.ts";
 import { getAnalysisIntegrity } from "../../db/primary_query.ts";
 import { findAnalysisForProv } from "./document.ts";
-import { computeChainHash, computePayloadDigest, verifyChainHash, loadPublicKey, loadOrGenerateKeypair, exportPublicKeyJwk, signChainHash } from "./signing.ts";
+import { computeChainHash, computePayloadDigest, verifyHexDigest, loadPublicKey, loadOrGenerateKeypair, exportPublicKeyJwk, signHexDigest } from "./signing.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
 
 /**
@@ -31,7 +31,7 @@ export async function verifyProvenance(
         return { status: "tampered", detail: "chain hash mismatch: the PROV-JSON has been modified since it was signed" };
     }
 
-    const ok = await verifyChainHash(publicKey, storedSignature, storedChainHash);
+    const ok = await verifyHexDigest(publicKey, storedSignature, storedChainHash);
     if (!ok) {
         return { status: "tampered", detail: "signature verification failed: the chain hash or signature has been modified" };
     }
@@ -50,7 +50,7 @@ export async function verifyPayload(provJson: string, storedDigest: string, stor
         return { status: "tampered", detail: "payload digest mismatch: the provenance file has been modified since it was signed" };
     }
 
-    const ok = await verifyChainHash(publicKey, storedSignature, storedDigest);
+    const ok = await verifyHexDigest(publicKey, storedSignature, storedDigest);
     if (!ok) {
         return { status: "tampered", detail: "signature verification failed: the digest or signature has been modified" };
     }
@@ -146,7 +146,7 @@ export async function buildSidecar(provJson: string): Promise<Sidecar | null> {
     if (!publicKeyJwk) return null;
 
     const digest = await computePayloadDigest(provJson);
-    const signature = await signChainHash(kp.privateKey, digest);
+    const signature = await signHexDigest(kp.privateKey, digest);
 
     return {
         payloadType: "application/json; profile=prov-json",

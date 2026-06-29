@@ -25,6 +25,9 @@ type StoredKeypair = { publicKey: JWK; privateKey: JWK };
 export type ImportedKeypair = { publicKey: CryptoKey; privateKey: CryptoKey };
 
 let cached: ImportedKeypair | null = null;
+// Set after a parseable-but-unimportable JWK is encountered, so we don't re-read the file and
+// retry crypto.subtle.importKey on every flush cycle for the rest of the process.
+let importFailed = false;
 
 /** Resolve the keypair file path — tests override via `keyPathOverride`; production uses `env.provKeyPath`. */
 let keyPathOverride: string | null = null;
@@ -72,6 +75,7 @@ function writeKeypairFile(stored: StoredKeypair): void {
  */
 export async function loadOrGenerateKeypair(): Promise<ImportedKeypair | null> {
     if (cached) return cached;
+    if (importFailed) return null;
 
     const stored = readKeypairFile();
     if (stored) {
@@ -79,6 +83,7 @@ export async function loadOrGenerateKeypair(): Promise<ImportedKeypair | null> {
             cached = await importKeypair(stored);
             return cached;
         } catch (cause) {
+            importFailed = true;
             log.warn({ cause }, "corrupt provenance keypair file; provenance will be unsigned");
             return null;
         }
@@ -166,22 +171,23 @@ export async function computePayloadDigest(provJson: string): Promise<string> {
 
 // --- Sign / Verify ---
 
-/** Sign a hex-encoded chain hash with the private key, returning a hex-encoded 64-byte Ed25519 signature. */
-export async function signChainHash(privateKey: CryptoKey, chainHashHex: string): Promise<string> {
-    const data = hexToBytes(chainHashHex);
+/** Sign a hex-encoded digest with the Ed25519 private key, returning a hex-encoded 64-byte signature. */
+export async function signHexDigest(privateKey: CryptoKey, digestHex: string): Promise<string> {
+    const data = hexToBytes(digestHex);
     const sig = await crypto.subtle.sign("Ed25519", privateKey, data.buffer as ArrayBuffer);
     return bytesToHex(new Uint8Array(sig));
 }
 
-/** Verify a hex-encoded signature against a hex-encoded chain hash and a public key. */
-export async function verifyChainHash(publicKey: CryptoKey, signatureHex: string, chainHashHex: string): Promise<boolean> {
+/** Verify a hex-encoded Ed25519 signature against a hex-encoded digest and a public key. */
+export async function verifyHexDigest(publicKey: CryptoKey, signatureHex: string, digestHex: string): Promise<boolean> {
     const sig = hexToBytes(signatureHex);
-    const data = hexToBytes(chainHashHex);
+    const data = hexToBytes(digestHex);
     return crypto.subtle.verify("Ed25519", publicKey, sig.buffer as ArrayBuffer, data.buffer as ArrayBuffer);
 }
 
 /** Reset the cached keypair and optionally override the key path — test-only. */
 export function resetSigningForTests(overridePath?: string | null): void {
     cached = null;
+    importFailed = false;
     keyPathOverride = overridePath ?? null;
 }

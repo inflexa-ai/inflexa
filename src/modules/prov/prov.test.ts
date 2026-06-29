@@ -11,7 +11,7 @@ import type { ProvActor, ProvInputRef } from "../../types/prov.ts";
 import { appendCreation, appendInputAdded, appendInputRemoved, freshDocument, serializeProvenance } from "./document.ts";
 import { initProvenanceRecording, flushProvenance, flushProvenanceAsync, resetProvenanceRecorderForTests } from "./prov.ts";
 import { getAnalysisIntegrity } from "../../db/primary_query.ts";
-import { computeChainHash, computePayloadDigest, verifyChainHash, resetSigningForTests, loadOrGenerateKeypair } from "./signing.ts";
+import { computeChainHash, computePayloadDigest, verifyHexDigest, resetSigningForTests, loadOrGenerateKeypair } from "./signing.ts";
 import { verifyProvenance, verifyPayload } from "./verify.ts";
 
 const analysis: Analysis = {
@@ -180,7 +180,7 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
 
         // Verify the Ed25519 signature.
         const kp = await loadOrGenerateKeypair();
-        const ok = await verifyChainHash(kp!.publicKey, integrity!.signature!, integrity!.chainHash!);
+        const ok = await verifyHexDigest(kp!.publicKey, integrity!.signature!, integrity!.chainHash!);
         expect(ok).toBe(true);
 
         resetSigningForTests(null);
@@ -229,7 +229,7 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
 
         // The signature still verifies against the new chain hash.
         const kp = await loadOrGenerateKeypair();
-        const ok = await verifyChainHash(kp!.publicKey, second!.signature!, second!.chainHash!);
+        const ok = await verifyHexDigest(kp!.publicKey, second!.signature!, second!.chainHash!);
         expect(ok).toBe(true);
 
         // verifyProvenance must report "valid" after multi-flush — this was the #CRT-1 bug:

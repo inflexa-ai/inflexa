@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
 
-import { loadOrGenerateKeypair, loadPublicKey, computeChainHash, signChainHash, verifyChainHash, resetSigningForTests } from "./signing.ts";
+import { loadOrGenerateKeypair, loadPublicKey, computeChainHash, signHexDigest, verifyHexDigest, resetSigningForTests } from "./signing.ts";
 
 let tempDir: string | null = null;
 
@@ -47,8 +47,8 @@ describe("keypair lifecycle", () => {
         expect(kp2).not.toBeNull();
         // Both keypairs sign the same data to the same signature (Ed25519 is deterministic).
         const hash = await computeChainHash(null, "test");
-        const sig1 = await signChainHash(kp1!.privateKey, hash);
-        const sig2 = await signChainHash(kp2!.privateKey, hash);
+        const sig1 = await signHexDigest(kp1!.privateKey, hash);
+        const sig2 = await signHexDigest(kp2!.privateKey, hash);
         expect(sig1).toBe(sig2);
     });
 
@@ -105,9 +105,9 @@ describe("sign and verify", () => {
         const kp = await loadOrGenerateKeypair();
         expect(kp).not.toBeNull();
         const hash = await computeChainHash(null, '{"provenance":"data"}');
-        const sig = await signChainHash(kp!.privateKey, hash);
+        const sig = await signHexDigest(kp!.privateKey, hash);
         expect(sig).toHaveLength(128);
-        const ok = await verifyChainHash(kp!.publicKey, sig, hash);
+        const ok = await verifyHexDigest(kp!.publicKey, sig, hash);
         expect(ok).toBe(true);
     });
 
@@ -116,9 +116,9 @@ describe("sign and verify", () => {
         const kp = await loadOrGenerateKeypair();
         expect(kp).not.toBeNull();
         const hash = await computeChainHash(null, "original");
-        const sig = await signChainHash(kp!.privateKey, hash);
+        const sig = await signHexDigest(kp!.privateKey, hash);
         const tampered = await computeChainHash(null, "modified");
-        const ok = await verifyChainHash(kp!.publicKey, sig, tampered);
+        const ok = await verifyHexDigest(kp!.publicKey, sig, tampered);
         expect(ok).toBe(false);
     });
 
@@ -127,8 +127,8 @@ describe("sign and verify", () => {
         const kp = await loadOrGenerateKeypair();
         expect(kp).not.toBeNull();
         const hash = await computeChainHash(null, "deterministic");
-        const sig1 = await signChainHash(kp!.privateKey, hash);
-        const sig2 = await signChainHash(kp!.privateKey, hash);
+        const sig1 = await signHexDigest(kp!.privateKey, hash);
+        const sig2 = await signHexDigest(kp!.privateKey, hash);
         expect(sig1).toBe(sig2);
     });
 });
