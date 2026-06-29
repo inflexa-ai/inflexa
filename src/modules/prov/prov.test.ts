@@ -199,9 +199,9 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
         expect(recomputed).toBe(integrity!.chainHash!);
 
         // Verify the Ed25519 signature.
-        const kp = await loadOrGenerateKeypair();
-        const ok = await verifyHexDigest(kp!.publicKey, integrity!.signature!, integrity!.chainHash!);
-        expect(ok).toBe(true);
+        const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
+        const sigOk = await verifyHexDigest(kp.publicKey, integrity!.signature!, integrity!.chainHash!);
+        expect(sigOk).toBe(true);
 
         resetSigningForTests(null);
         rmSync(tmpDir, { recursive: true, force: true });
@@ -248,13 +248,13 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
         expect(recomputed).toBe(second!.chainHash!);
 
         // The signature still verifies against the new chain hash.
-        const kp = await loadOrGenerateKeypair();
-        const ok = await verifyHexDigest(kp!.publicKey, second!.signature!, second!.chainHash!);
-        expect(ok).toBe(true);
+        const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
+        const sigOk = await verifyHexDigest(kp.publicKey, second!.signature!, second!.chainHash!);
+        expect(sigOk).toBe(true);
 
         // verifyProvenance must report "valid" after multi-flush — this was the #CRT-1 bug:
         // the verifier needs prevChainHash to recompute the rolling hash correctly.
-        const result = await verifyProvenance(second!.provenance, second!.prevChainHash, second!.chainHash, second!.signature, kp!.publicKey);
+        const result = await verifyProvenance(second!.provenance, second!.prevChainHash, second!.chainHash, second!.signature, kp.publicKey);
         expect(result.status).toBe("valid");
 
         resetSigningForTests(null);
@@ -296,8 +296,9 @@ describe("export sidecar (writeSidecar via the full export path)", () => {
 
         // Build the sidecar via the shared builder (mirrors the export path).
         const { buildSidecar } = await import("./verify.ts");
-        const sidecar = await buildSidecar(provJson);
-        expect(sidecar).not.toBeNull();
+        const sidecarResult = await buildSidecar(provJson);
+        expect(sidecarResult.isOk()).toBe(true);
+        const sidecar = sidecarResult._unsafeUnwrap();
 
         const sigDest = `${provDest}.sig.json`;
         wf(sigDest, JSON.stringify(sidecar, null, 2));

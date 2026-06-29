@@ -1,5 +1,6 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, linkSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
+import { type Result, ok, err } from "neverthrow";
 import { env } from "../../lib/env.ts";
 import { getLogger } from "../../lib/log.ts";
 
@@ -8,9 +9,9 @@ import { getLogger } from "../../lib/log.ts";
  * sign/verify/chain-hash operations the recorder and verifier call. Confined to this file so a
  * WebCrypto fault is contained to provenance integrity, not recording.
  *
- * The keypair lives at `env.provKeyPath` as `{ publicKey: JWK, privateKey: JWK }`. Missing or
- * corrupt file degrades to unsigned — the caller (flush) still writes provenance, just without
- * integrity columns.
+ * The keypair lives at `env.provKeyPath` as `{ publicKey: JWK, privateKey: JWK }`. Provenance is
+ * never written unsigned — every failure to obtain the keypair surfaces as a `SigningError` on
+ * the err channel, forcing the caller to handle or propagate rather than silently skip signing.
  */
 
 const log = getLogger("prov:signing");
@@ -23,6 +24,13 @@ type StoredKeypair = { publicKey: JWK; privateKey: JWK };
 
 /** In-memory imported keypair — cached for the process lifetime to avoid re-importing on every flush. */
 export type ImportedKeypair = { publicKey: CryptoKey; privateKey: CryptoKey };
+
+/** Why a signing operation could not obtain the keypair. Every variant is a hard failure — provenance is never written unsigned. */
+export type SigningError =
+    | { type: "keypair_corrupt"; cause?: unknown }
+    | { type: "keypair_generation_failed"; cause: unknown }
+    | { type: "keypair_race_lost" }
+    | { type: "public_key_export_failed" };
 
 let cached: ImportedKeypair | null = null;
 // Set after a parseable-but-unimportable JWK is encountered, so we don't re-read the file and
@@ -63,42 +71,92 @@ function readKeypairFile(): StoredKeypair | null {
     }
 }
 
-function writeKeypairFile(stored: StoredKeypair): void {
-    mkdirSync(dirname(keyPath()), { recursive: true });
-    writeFileSync(keyPath(), JSON.stringify(stored, null, 2));
+/**
+ * Atomically persist the keypair: write to a PID-stamped temp file, then hard-link to the
+ * target path. `linkSync` fails with EEXIST if another process already created the file,
+ * so the winner's key is never overwritten. Returns `"created"` if this process won,
+ * `"exists"` if a valid keypair already occupies the path. If the existing file is corrupt
+ * (unparseable — e.g. leftover from a crash), removes it and retries the link once.
+ */
+function writeKeypairFileExclusive(stored: StoredKeypair): "created" | "exists" {
+    const target = keyPath();
+    mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+    const tmp = `${target}.${process.pid}.tmp`;
+    try {
+        writeFileSync(tmp, JSON.stringify(stored, null, 2), { mode: 0o600 });
+        // Hard-link is atomic and exclusive — fails EEXIST if target was created between
+        // our readKeypairFile() miss and now, preventing the second process from silently
+        // clobbering the first's key.
+        try {
+            linkSync(tmp, target);
+            return "created";
+        } catch (e: unknown) {
+            if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+            // Target exists — check if it's a valid keypair from a concurrent winner, or
+            // corrupt debris (e.g. a crash left partial JSON). If corrupt, remove and retry
+            // the link once; a concurrent process that wins the retry will have a valid file.
+            if (readKeypairFile()) return "exists";
+            try {
+                unlinkSync(target);
+                linkSync(tmp, target);
+                return "created";
+            } catch (retryErr: unknown) {
+                if ((retryErr as NodeJS.ErrnoException).code === "EEXIST") return "exists";
+                throw retryErr;
+            }
+        }
+    } finally {
+        try {
+            unlinkSync(tmp);
+        } catch {
+            // temp may not exist if writeFileSync failed before creating it
+        }
+    }
 }
 
 /**
- * Load the signing keypair from disk, or generate and persist one on first use. Returns `null`
- * when the file is corrupt and cannot be re-generated (should not happen in practice — generate
- * is infallible on supported runtimes). Cached for the process lifetime.
+ * Load the signing keypair from disk, or generate and persist one on first use. Returns
+ * `err(SigningError)` when the keypair cannot be obtained — provenance is never written unsigned.
+ * Cached for the process lifetime.
+ *
+ * Race-safe: if two processes both miss the read and generate concurrently, the exclusive write
+ * ensures exactly one wins; the loser adopts the winner's key from disk.
  */
-export async function loadOrGenerateKeypair(): Promise<ImportedKeypair | null> {
-    if (cached) return cached;
-    if (importFailed) return null;
+export async function loadOrGenerateKeypair(): Promise<Result<ImportedKeypair, SigningError>> {
+    if (cached) return ok(cached);
+    if (importFailed) return err({ type: "keypair_corrupt" });
 
     const stored = readKeypairFile();
     if (stored) {
         try {
             cached = await importKeypair(stored);
-            return cached;
+            return ok(cached);
         } catch (cause) {
             importFailed = true;
-            log.warn({ cause }, "corrupt provenance keypair file; provenance will be unsigned");
-            return null;
+            return err({ type: "keypair_corrupt", cause });
         }
     }
 
     try {
         const kp = await generateKeypair();
         const exported = await exportKeypair(kp);
-        writeKeypairFile(exported);
+        if (writeKeypairFileExclusive(exported) === "exists") {
+            const winner = readKeypairFile();
+            if (!winner) return err({ type: "keypair_race_lost" });
+            try {
+                cached = await importKeypair(winner);
+            } catch (cause) {
+                importFailed = true;
+                return err({ type: "keypair_corrupt", cause });
+            }
+            log.info("adopted provenance signing keypair from concurrent process");
+            return ok(cached);
+        }
         cached = { publicKey: kp.publicKey, privateKey: kp.privateKey };
         log.info("generated provenance signing keypair");
-        return cached;
+        return ok(cached);
     } catch (cause) {
-        log.warn({ cause }, "failed to generate provenance keypair; provenance will be unsigned");
-        return null;
+        return err({ type: "keypair_generation_failed", cause });
     }
 }
 

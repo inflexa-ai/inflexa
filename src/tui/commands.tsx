@@ -298,15 +298,17 @@ async function exportProvenanceToFile(ws: Workspace, format: BuiltinProvFormat):
     }
 
     // Provenance + sidecar are one logical export: both must succeed before we report success.
-    const sidecar = await verify.buildSidecar(text);
-    if (sidecar) {
-        const sigDest = `${dest}.sig.json`;
-        try {
-            writeFileSync(sigDest, JSON.stringify(sidecar, null, 2));
-        } catch (cause) {
-            notify({ kind: "error", text: `Wrote provenance but sidecar failed: ${String(cause)}` });
-            return;
-        }
+    const sidecarResult = await verify.buildSidecar(text);
+    if (sidecarResult.isErr()) {
+        notify({ kind: "error", text: `Signing failed (${sidecarResult.error.type}) — provenance is never exported unsigned.` });
+        return;
+    }
+    const sigDest = `${dest}.sig.json`;
+    try {
+        writeFileSync(sigDest, JSON.stringify(sidecarResult.value, null, 2));
+    } catch (cause) {
+        notify({ kind: "error", text: `Wrote provenance but sidecar failed: ${String(cause)}` });
+        return;
     }
 
     notify({ kind: "info", text: `Wrote ${format} provenance to ${dest}` });

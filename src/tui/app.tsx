@@ -279,7 +279,7 @@ export function App(props: AppProps) {
                                     // text's single-line length and then clips the overflow (hiding a long export
                                     // path mid-string). Size to the text so short toasts stay snug, capped so a long
                                     // path wraps within the cap. +6 = border (2) + padding (2) + glyph and its space (2).
-                                    width={Math.min(Math.min(60, dims().width - 6), n.text.length + 6)}
+                                    width={Math.min(60, dims().width - 6, n.text.length + 6)}
                                     backgroundColor={theme().bgRaised}
                                     border
                                     borderColor={noticeColor(n.kind)}

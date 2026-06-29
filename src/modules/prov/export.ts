@@ -39,17 +39,15 @@ export async function runExportProvenance(ref: string, opts: { format?: string; 
     }
 }
 
-/**
- * Write the verification sidecar (`<dest>.sig.json`) by computing a content digest of the
- * exported provenance and signing it. Silently skipped when no signing key is available.
- */
+/** Write the verification sidecar (`<dest>.sig.json`) alongside the exported provenance file. */
 async function writeSidecar(provJson: string, provDest: string): Promise<void> {
-    const sidecar = await buildSidecar(provJson);
-    if (!sidecar) return;
-
+    const result = await buildSidecar(provJson);
+    if (result.isErr()) {
+        fail(`Signing failed (${result.error.type}) — provenance is never exported unsigned.`);
+    }
     const sigDest = `${provDest}.sig.json`;
     try {
-        writeFileSync(sigDest, JSON.stringify(sidecar, null, 2));
+        writeFileSync(sigDest, JSON.stringify(result.value, null, 2));
         console.log(`Wrote verification sidecar to ${sigDest}`);
     } catch {
         // Non-fatal: the provenance file was already written successfully.

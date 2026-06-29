@@ -155,12 +155,14 @@ async function flushProvenanceAsync(): Promise<void> {
         }
         const json = doc.unified().serialize("json");
 
+        const kpResult = await loadOrGenerateKeypair();
+        if (kpResult.isErr()) {
+            log.error({ analysisId, err: kpResult.error.type }, "signing key unavailable; provenance not persisted");
+            return;
+        }
+        const kp = kpResult.value;
+
         try {
-            const kp = await loadOrGenerateKeypair();
-            if (!kp) {
-                log.error({ analysisId }, "no signing key available; provenance not persisted");
-                return;
-            }
             const prev = chainHashes.get(analysisId) ?? null;
             const chainHash = await computeChainHash(prev, json);
             const signature = await signHexDigest(kp.privateKey, chainHash);

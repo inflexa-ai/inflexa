@@ -58,7 +58,7 @@ export function getOrCreateAnchorForCwd(dir: string): Result<Anchor, DbError> {
     const writable = isDirWritable(abs);
     if (writable) {
         try {
-            writeMarker(abs, anchorId);
+            writeMarker(abs, anchorId); // TODO(slop): this will be refactored to return result, no need for catch
         } catch (cause) {
             return err({ type: "mutation_failed", op: "getOrCreateAnchorForCwd:writeMarker", cause });
         }
@@ -72,6 +72,7 @@ export function getOrCreateAnchorForCwd(dir: string): Result<Anchor, DbError> {
  */
 function markerMatches(dir: string, anchorId: string): boolean {
     try {
+        // TODO(slop): same here, try catch without reason
         return readMarker(dir)?.anchorId === anchorId;
     } catch {
         return false;
@@ -84,6 +85,7 @@ function markerMatches(dir: string, anchorId: string): boolean {
  */
 function findMatchingMarkerUpwards(startDir: string, anchorId: string): string | null {
     try {
+        // TODO(slop): neverthrow
         const found = findMarkerUpwards(startDir);
         return found && found.marker.anchorId === anchorId ? found.dir : null;
     } catch {
