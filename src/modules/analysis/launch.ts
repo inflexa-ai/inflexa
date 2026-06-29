@@ -34,7 +34,7 @@ export type ChatTarget = {
 function resolveChatTarget(opts: { analysis: Analysis; resumeSessionId?: string }): ChatTarget {
     const analysis = opts.analysis;
     const workingDir = resolveAnchor(analysis.anchorId).match(
-        ({ anchor, path }) => path ?? anchor.cachedPath,
+        (resolved) => (resolved ? (resolved.path ?? resolved.anchor.cachedPath) : process.cwd()),
         () => process.cwd(),
     );
 

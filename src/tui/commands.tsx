@@ -1,4 +1,8 @@
 import type { JSX } from "solid-js";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+// Type-only — erased at compile time, so it does NOT pull tsprov into the TUI's startup path.
+import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 
 import { PromptDialog } from "./components/prompt_dialog.tsx";
 import { ResultsDialog } from "./components/results_dialog.tsx";
@@ -53,7 +57,7 @@ export type Command = {
 // Resolve an analysis's live working directory from its anchor (falling back to cwd).
 function workingDirFor(a: Analysis): string {
     return resolveAnchor(a.anchorId).match(
-        ({ anchor, path }) => path ?? anchor.cachedPath,
+        (resolved) => (resolved ? (resolved.path ?? resolved.anchor.cachedPath) : process.cwd()),
         () => process.cwd(),
     );
 }
@@ -229,6 +233,80 @@ function SettingsDialog(): JSX.Element {
 
 /** The single source of truth. Add a command = add an entry here. Ordered by category so the
  *  unfiltered palette groups contiguously. */
+// Serialize the active analysis's provenance and write it into its output folder, then notify the
+// path. The PROV-building module (`prov/document.ts`) is imported LAZILY inside the action — it
+// depends on `@inflexa-ai/tsprov`, so a static import here would pull that into the TUI's startup
+// path; deferring it both keeps launch lean and contains any tsprov load failure to this action.
+async function exportProvenanceToFile(ws: Workspace, format: BuiltinProvFormat): Promise<void> {
+    const a = ws.analysis;
+    if (!a) return;
+
+    let prov: typeof import("../modules/prov/document.ts");
+    let output: typeof import("../modules/analysis/output.ts");
+    let query: typeof import("../db/primary_query.ts");
+    let signing: typeof import("../modules/prov/signing.ts");
+    try {
+        prov = await import("../modules/prov/document.ts");
+        output = await import("../modules/analysis/output.ts");
+        query = await import("../db/primary_query.ts");
+        signing = await import("../modules/prov/signing.ts");
+    } catch {
+        notify({ kind: "error", text: "Provenance export is unavailable (the tsprov library failed to load)." });
+        return;
+    }
+
+    const dir = output.resolveOutputDir(a).match(
+        (d) => d,
+        () => null,
+    );
+    if (!dir) {
+        notify({ kind: "error", text: "Could not resolve this analysis's output directory." });
+        return;
+    }
+
+    prov.serializeProvenance(a, format).match(
+        (text) => {
+            const dest = join(dir, `provenance.${format}`);
+            try {
+                mkdirSync(dir, { recursive: true });
+                writeFileSync(dest, text);
+                notify({ kind: "info", text: `Wrote ${format} provenance to ${dest}` });
+            } catch (cause) {
+                notify({ kind: "error", text: `Failed to write provenance: ${String(cause)}` });
+                return;
+            }
+
+            // Write the sidecar when a signature is stored and the public key is available.
+            const integrity = query.getAnalysisIntegrity(a.id).match(
+                (i) => i,
+                () => null,
+            );
+            if (integrity?.chainHash && integrity.signature) {
+                void signing.exportPublicKeyJwk().then((pubKey) => {
+                    if (!pubKey) return;
+                    const sidecar = {
+                        payloadType: "application/json; profile=prov-json",
+                        payloadDigestAlgorithm: "SHA-256",
+                        payloadDigest: integrity.chainHash,
+                        payloadDigestMethod: "verbatim",
+                        signatureAlgorithm: "Ed25519",
+                        signature: integrity.signature,
+                        publicKey: pubKey,
+                    };
+                    const sigDest = `${dest}.sig.json`;
+                    try {
+                        writeFileSync(sigDest, JSON.stringify(sidecar, null, 2));
+                        notify({ kind: "info", text: `Wrote verification sidecar to ${sigDest}` });
+                    } catch {
+                        // Non-fatal.
+                    }
+                });
+            }
+        },
+        (e) => notify({ kind: "error", text: `Failed to build provenance: ${e.type}` }),
+    );
+}
+
 export const commands: Command[] = [
     {
         id: "analysis.switch",
@@ -264,6 +342,74 @@ export const commands: Command[] = [
                 (d) => notify({ kind: "info", text: `Opened ${d}` }),
                 (e) => notify({ kind: "error", text: `Failed to open: ${e.type}` }),
             );
+        },
+    },
+    {
+        id: "prov.export-json",
+        title: "Export provenance (JSON)",
+        description: "Write this analysis's PROV-JSON provenance to its output folder",
+        category: "Analysis",
+        enabled: (ctx) => ctx.analysis !== null,
+        run: (ctx) => exportProvenanceToFile(ctx, "json"),
+    },
+    {
+        id: "prov.export-provn",
+        title: "Export provenance (PROV-N)",
+        description: "Write this analysis's PROV-N provenance to its output folder",
+        category: "Analysis",
+        enabled: (ctx) => ctx.analysis !== null,
+        run: (ctx) => exportProvenanceToFile(ctx, "provn"),
+    },
+    {
+        id: "prov.verify",
+        title: "Verify provenance",
+        description: "Check the integrity of this analysis's provenance chain and signature",
+        category: "Analysis",
+        enabled: (ctx) => ctx.analysis !== null,
+        run: async (ctx) => {
+            const a = ctx.analysis;
+            if (!a) return;
+
+            let verify: typeof import("../modules/prov/verify.ts");
+            let query: typeof import("../db/primary_query.ts");
+            let signing: typeof import("../modules/prov/signing.ts");
+            try {
+                verify = await import("../modules/prov/verify.ts");
+                query = await import("../db/primary_query.ts");
+                signing = await import("../modules/prov/signing.ts");
+            } catch {
+                notify({ kind: "error", text: "Provenance verification is unavailable." });
+                return;
+            }
+
+            const integrity = query.getAnalysisIntegrity(a.id).match(
+                (i) => i,
+                () => null,
+            );
+            if (!integrity) {
+                notify({ kind: "error", text: "Could not read provenance data." });
+                return;
+            }
+
+            const publicKey = await signing.loadPublicKey();
+            const result = await verify.verifyProvenance(integrity.provenance, integrity.chainHash, integrity.signature, publicKey);
+            const text = verify.formatVerifyResult(result);
+
+            switch (result.status) {
+                case "valid":
+                    notify({ kind: "info", text });
+                    break;
+                case "unsigned":
+                case "empty":
+                    notify({ kind: "info", text });
+                    break;
+                case "no-key":
+                    notify({ kind: "warn", text });
+                    break;
+                case "tampered":
+                    notify({ kind: "error", text });
+                    break;
+            }
         },
     },
     {

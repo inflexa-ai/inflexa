@@ -78,6 +78,29 @@ export const migrations: Migration[] = [
             CREATE INDEX idx_parts_session ON parts(session_id);
         `,
     },
+    {
+        // Provenance lives 1:1 with the analysis as the PROV-JSON serialization of its provenance
+        // document — built incrementally in memory (tsprov) from typed `prov.*` bus events and flushed
+        // here. It is read and written whole (export serializes it; reopening deserializes it back),
+        // never filtered or joined by an interior field, so it is one opaque column rather than a
+        // columnar event log — matching how sessions/messages/parts store their JSON blob. `NULL`
+        // until the first action is recorded (treated as an empty document).
+        version: 2,
+        up: `
+            ALTER TABLE analyses ADD COLUMN provenance TEXT;
+        `,
+    },
+    {
+        // Integrity columns for tamper-evident provenance: the chain hash links each flush state
+        // to its predecessor (SHA-256 rolling digest), and the Ed25519 signature proves the chain
+        // hash was produced by the holder of the signing key. Both are hex-encoded strings. NULL
+        // until the first signed flush — treated as "unsigned" by the verification logic.
+        version: 3,
+        up: `
+            ALTER TABLE analyses ADD COLUMN provenance_chain_hash TEXT;
+            ALTER TABLE analyses ADD COLUMN provenance_signature TEXT;
+        `,
+    },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {

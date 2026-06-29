@@ -5,6 +5,7 @@ import { CommanderError } from "commander";
 
 import { cli } from "./cli/index.ts";
 import { releaseHeldAnalysisLock } from "./modules/analysis/lock.ts";
+import { initProvenanceRecording, flushProvenance } from "./modules/prov/prov.ts";
 import { initBusLogging } from "./lib/bus.ts";
 import { readConfig } from "./lib/config.ts";
 import { addLogStream, flushLogsSync, getLogger } from "./lib/log.ts";
@@ -15,6 +16,10 @@ if (initOtel(readConfig().telemetry)) {
     addLogStream(createOtelLogStream());
 }
 initBusLogging();
+// Subscribe the provenance recorder before any command can emit a `prov.*` event (createAnalysis
+// runs before the TUI opens). The eager import pulls tsprov into startup for every command — accepted
+// as the simple, correct choice now that the package builds; lazy-load the recorder if that cost bites.
+initProvenanceRecording();
 
 // Commands that exit by event-loop drain (sessions, telemetry) never call
 // shutdown() themselves; beforeExit catches them. It does not fire on the
@@ -23,6 +28,9 @@ process.on("beforeExit", () => {
     void shutdown(typeof process.exitCode === "number" ? process.exitCode : 0);
 });
 process.on("exit", flushLogsSync);
+// Persist any un-flushed provenance synchronously on exit (the backstop to the recorder's async
+// flush). Safe here because nothing closes the DB before exit (primary.ts has no exit-time closeDb).
+process.on("exit", flushProvenance);
 // Release this instance's analysis lock on any exit. This single sync hook covers the graceful TUI
 // quit too (App.quit → shutdown → process.exit), so no separate release in App.quit() is needed.
 // SIGKILL bypasses it; that stale lock is reclaimed by the pid check on the next open.

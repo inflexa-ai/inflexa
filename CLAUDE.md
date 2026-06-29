@@ -79,6 +79,14 @@ Format: `// TODO(<tag>): <reason>`. Never use a bare `// TODO`.
 | `slop` | Works but should be extracted / cleaned up | Duplicated logic across two modules |
 | `robustness` | Missing hardening for stress conditions | No retry/backoff on a flaky external call |
 
+### Local state can desync from the database — never hard-fail on it
+
+The SQLite database is a file on the **user's own machine**: they may delete it, restore an old copy, or hand-edit it at will, and they are entitled to. Meanwhile other state lives **outside** it and persists independently — on-disk anchor markers (`.inflexa/id`), output folders, config. So the two stores routinely disagree: a marker (or a row's foreign key) can reference an id the database no longer has.
+
+**Treat "the referenced row is gone" as a normal, recoverable condition — never a hard error.** When code reads an id/marker/path from one store and looks it up in another, a miss must **heal** (reconstruct from the authoritative source — e.g. re-establish an anchor row from its on-disk marker, but only on a *deliberate* action, never a passive read — see the no-litter policy) or **degrade gracefully** (resolve to `null`/a sensible fallback and carry on), so the user still gets a working command. Returning a `query_failed`/`DbError` for a routine desync is a bug: it turns "your DB and your folders disagree" into a crash the user can't escape without surgery.
+
+Concretely: a lookup that can legitimately miss returns `T | null` (the miss is in-band), not an error; the caller picks a fallback. Reserve the error channel for genuine faults (the query itself failed). See `resolveAnchor` (`modules/anchor/anchor.ts`): a marker pointing at a deleted anchor resolves to `null`, and bare `inflexa` then offers to start fresh in that folder rather than dying with `unknown anchor <id>`.
+
 ### Resolving an id-or-name reference
 
 When a command resolves a user-supplied reference that may be **either an id or a human name/slug** (`inflexa resume <x>`, `--analysis <x>`, …):
@@ -171,9 +179,23 @@ A module under `src/modules/<domain>/` groups everything about one domain: its l
 
 Reach for an extension only when a helper is genuinely cross-cutting; keep single-caller helpers in their owning file per the Coding rules.
 
+## Event bus — single bus, typed events
+
+There is **one bus** (`Bus` in `src/lib/bus.ts`), shared by every domain — session, provenance, and any future concern. Domain separation is by event `type` string, not by bus instance. **Never add a second bus** to separate concerns; if the current event contract feels wrong, the fix is better types, not more buses.
+
+- **One event type per domain action.** Each `BusEvent` member carries exactly the fields its action needs. Never pack multiple sub-actions into a single event discriminated by an interior field with nullable companions — that defeats TypeScript's narrowing and forces consumers to guard against impossible states. E.g. provenance has `prov.analysis_created`, `prov.input_added`, `prov.input_removed` — not one `prov.recorded` with a nullable `input`.
+- **Event types live in `src/types/events.ts`** — the `BusEvent` discriminated union is the contract. Session-scoped events carry `sessionId`; analysis-scoped events carry `analysisId`. Consumers filter by `type`.
+- **Design rationale:** a dedicated bus per domain only earns its keep when that domain needs its own subscriber lifecycle, backpressure, or error isolation. inflexa's bus is a fire-and-forget notification channel with one subscriber per concern — multiplying buses adds wiring overhead for no structural gain. (Validated against OpenCode, which routes ~80+ event types across all domains through a single typed bus.)
+
 ## Solid + opentui (TUI)
 
 The TUI is Solid (`solid-js`) rendered to the terminal via `@opentui/solid`. Solid is not React: components run once, reactivity lives in signals/stores, and there are no re-renders.
+
+### Design gallery
+
+**Before writing or changing TUI code, consult the design gallery** (`src/tui/layout/design_gallery.tsx`, opened via the "Design gallery" command-palette entry) — the read-only showcase of every existing block/widget and its states. Reuse what it shows; match its patterns.
+
+**If a task needs something the gallery doesn't cover** (a new block, state, or visual pattern), STOP and talk to the user about adding it to the design system / extending the gallery — don't invent ad-hoc UI off to the side. New surfaces become part of the gallery so it stays the single source of truth.
 
 ### Launch and exit
 
@@ -205,10 +227,12 @@ The remedy: **any fixed chrome row placed directly below a `flexGrow` scrollbox 
 
 **Verifying layout.** `@opentui/solid`'s `testRender` + `captureCharFrame()` renders any component tree to a text frame at a fixed `{width, height}` with no TTY; `mockInput.pressKeys` drives scrolling, and a renderable's `.x/.y/.width/.height` + `yogaNode.getComputedLayout()` expose the computed boxes. Sweep a range of heights — these bugs are size-dependent and a single size hides them.
 
-### Event bus
+### Event bus (TUI consumption)
 
-- UI state updates flow from `Bus` events: subscribe in component setup with `Bus.on("inflexa", handler)` and always pair with `onCleanup(() => Bus.off("inflexa", handler))`.
-- Handlers must filter events by `sessionId` before applying them.
+The bus contract and design rationale live in [Event bus — single bus, typed events](#event-bus--single-bus-typed-events) above. TUI-specific rules:
+
+- Subscribe in component setup with `Bus.on("inflexa", handler)` and always pair with `onCleanup(() => Bus.off("inflexa", handler))`.
+- Handlers must filter events by `sessionId` before applying them (provenance events carry `analysisId` and should be ignored).
 
 ### Colors
 

@@ -39,6 +39,14 @@ function bakedVarNames(source: string): string[] {
     return names;
 }
 
+// Bake the exact source commit so a release binary can report what it was built from (the
+// provenance `system` actor stamps it). Left empty if this is not a git checkout, which the
+// bakedEnv missing-guard below then rejects with a clear error.
+process.env.INFLEXA_GIT_COMMIT = await $`git rev-parse HEAD`
+    .text()
+    .then((sha) => sha.trim())
+    .catch(() => "");
+
 const bakedVars = bakedVarNames(await Bun.file(ENV_TS).text());
 
 const define: Record<string, string> = {};

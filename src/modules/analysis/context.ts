@@ -29,10 +29,12 @@ export function resolveContext(cwd: string, flags: ContextFlags): Result<Resolve
         return findAnalysis(flags.analysis).andThen((analysis): Result<ResolvedContext, DbError> => {
             // Unmatched flag: surface recent analyses so the command can report the mismatch.
             if (!analysis) return listRecentAnalyses().map((analyses) => ({ kind: "pick", analyses }));
-            return resolveAnchor(analysis.anchorId).map(({ anchor, path }) => ({
+            // The analysis's anchor row may be gone (user edited the DB) — fall back to cwd for display
+            // rather than failing; the analysis is still openable.
+            return resolveAnchor(analysis.anchorId).map((resolved) => ({
                 kind: "analysis",
                 analysis,
-                anchorPath: path ?? anchor.cachedPath,
+                anchorPath: resolved ? (resolved.path ?? resolved.anchor.cachedPath) : cwd,
             }));
         });
     }
@@ -56,8 +58,12 @@ export function resolveContext(cwd: string, flags: ContextFlags): Result<Resolve
     return classifyMarkerSighting(found.dir, marker).andThen((sighting): Result<ResolvedContext, DbError> => {
         // Copy guard: never auto-resolve a copied folder — let the command prompt.
         if (sighting === "copy") return ok({ kind: "copy", cwd, marker });
-        return resolveAnchor(marker.anchorId).andThen(({ anchor, path }) => {
-            const anchorPath = path ?? anchor.cachedPath;
+        // A marker on disk whose anchor row the DB no longer has (e.g. the user deleted the DB) is a
+        // routine desync, not an error: fall back to the marker's own directory for the anchor path and
+        // carry on — listAnalysesForAnchorAt returns nothing, so this resolves to an empty anchor the
+        // user can start an analysis in (which re-establishes the row from the marker).
+        return resolveAnchor(marker.anchorId).andThen((resolved) => {
+            const anchorPath = resolved ? (resolved.path ?? resolved.anchor.cachedPath) : found.dir;
             return listAnalysesForAnchorAt(cwd).map((analyses): ResolvedContext => {
                 const [only] = analyses;
                 if (analyses.length === 1 && only) return { kind: "analysis", analysis: only, anchorPath };

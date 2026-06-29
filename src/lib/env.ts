@@ -53,6 +53,7 @@ export const env = Object.freeze({
     cliproxyAuthDir: join(dataDir(), "inflexa", "cliproxy", "auth"),
     configPath: join(configDir(), "inflexa", "config.json"),
     authPath: join(configDir(), "inflexa", "auth.json"),
+    provKeyPath: join(configDir(), "inflexa", "prov_key.json"),
     logLevel: process.env[logLevelVar],
     otelEndpoint: process.env[otelEndpointVar],
     /**
@@ -79,6 +80,8 @@ export const bakedEnv = Object.freeze({
     auth0Domain: process.env.INFLEXA_AUTH0_DOMAIN,
     auth0ClientId: process.env.INFLEXA_AUTH0_CLIENT_ID,
     auth0Audience: process.env.INFLEXA_AUTH0_AUDIENCE,
+    // Falls back to a live `git rev-parse` in dev; release builds inline the value via --define.
+    gitCommit: process.env.INFLEXA_GIT_COMMIT ?? Bun.spawnSync(["git", "rev-parse", "HEAD"]).stdout.toString().trim(),
 });
 
 export type EnvDocEntry = { kind: "path"; label: string; description: string; baseVar: string } | { kind: "var"; name: string; description: string };
@@ -93,6 +96,7 @@ export const envDoc: Readonly<Record<Exclude<keyof typeof env, "cliproxyPort" | 
     cliproxyAuthDir: { kind: "path", label: "proxy auth", description: "CLIProxyAPI provider credentials, created by `inflexa setup`", baseVar: dataVar },
     configPath: { kind: "path", label: "config", description: "settings (telemetry consent)", baseVar: configVar },
     authPath: { kind: "path", label: "auth", description: "Auth0 session tokens, created by `inflexa auth login`", baseVar: configVar },
+    provKeyPath: { kind: "path", label: "provenance key", description: "Ed25519 keypair for signing provenance chain hashes", baseVar: configVar },
     logLevel: { kind: "var", name: logLevelVar, description: "log verbosity: trace|debug|info|warn|error|fatal (default: info)" },
     otelEndpoint: { kind: "var", name: otelEndpointVar, description: "OTLP endpoint for log export; requires telemetry enabled via `inflexa config`" },
 });

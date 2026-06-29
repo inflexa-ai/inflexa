@@ -204,6 +204,18 @@ export function insertAnalysisInput(input: AnalysisInput): Result<AnalysisInput,
     });
 }
 
+/**
+ * Removes a single input ref, matched by its identity (owning analysis + path + source anchor).
+ * `anchor_id` is matched with `IS` so a `null` (raw path) ref compares equal. Returns rows
+ * deleted — `0` when no such ref exists.
+ */
+export function deleteAnalysisInput(input: AnalysisInput): Result<number, DbError> {
+    return tryMutation("deleteAnalysisInput", (conn) => {
+        return conn.query("DELETE FROM analysis_inputs WHERE analysis_id = ? AND path = ? AND anchor_id IS ?").run(input.analysisId, input.path, input.anchorId)
+            .changes;
+    });
+}
+
 /** Deletes every analysis homed at an anchor (their input refs cascade via the analysis FK). Used by `prune` before dropping a dead anchor, since the analyses→anchors FK has no ON DELETE CASCADE. Returns rows deleted. */
 export function deleteAnalysesForAnchor(anchorId: string): Result<number, DbError> {
     return tryMutation("deleteAnalysesForAnchor", (conn) => {
@@ -232,5 +244,22 @@ export function relocateRawInputPrefix(fromPrefix: string, toPrefix: string): Re
             }
         }
         return rewritten;
+    });
+}
+
+// --- Data model: provenance ---
+
+/**
+ * Persists the PROV-JSON serialization of an analysis's provenance document, plus the optional
+ * integrity columns (chain hash and Ed25519 signature). All three are written in a single UPDATE
+ * so the column never disagrees with its signature. Deliberately does NOT bump `updated_at`:
+ * provenance is recorded metadata flushed asynchronously, not a user data-edit — the same
+ * reasoning as `touchAnchor` leaving `updatedAt` alone. Returns rows changed.
+ */
+export function updateAnalysisProvenance(id: string, provenance: string, chainHash?: string | null, signature?: string | null): Result<number, DbError> {
+    return tryMutation("updateAnalysisProvenance", (conn) => {
+        return conn
+            .query("UPDATE analyses SET provenance = ?, provenance_chain_hash = ?, provenance_signature = ? WHERE id = ?")
+            .run(provenance, chainHash ?? null, signature ?? null, id).changes;
     });
 }
