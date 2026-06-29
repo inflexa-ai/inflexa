@@ -4,6 +4,7 @@ import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import { findAnalysisForProv, serializeProvenance } from "./document.ts";
 import { exportPublicKeyJwk } from "./signing.ts";
 import { getAnalysisIntegrity } from "../../db/primary_query.ts";
+import type { Sidecar } from "./verify.ts";
 import { ensureOutputDir } from "../analysis/output.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
 
@@ -49,7 +50,7 @@ async function writeSidecar(analysisId: string, provDest: string): Promise<void>
     const publicKey = await exportPublicKeyJwk();
     if (!publicKey) return;
 
-    const sidecar = {
+    const sidecar: Sidecar = {
         payloadType: "application/json; profile=prov-json",
         payloadDigestAlgorithm: "SHA-256",
         payloadDigest: integrity.chainHash,

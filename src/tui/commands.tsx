@@ -1,8 +1,9 @@
 import type { JSX } from "solid-js";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-// Type-only — erased at compile time, so it does NOT pull tsprov into the TUI's startup path.
+// Type-only — erased at compile time, so it does NOT pull tsprov/verify into the TUI's startup path.
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
+import type { Sidecar } from "../modules/prov/verify.ts";
 
 import { PromptDialog } from "./components/prompt_dialog.tsx";
 import { ResultsDialog } from "./components/results_dialog.tsx";
@@ -264,47 +265,52 @@ async function exportProvenanceToFile(ws: Workspace, format: BuiltinProvFormat):
         return;
     }
 
-    prov.serializeProvenance(a, format).match(
-        (text) => {
-            const dest = join(dir, `provenance.${format}`);
+    const text = prov.serializeProvenance(a, format).match(
+        (t) => t,
+        (e) => {
+            notify({ kind: "error", text: `Failed to build provenance: ${e.type}` });
+            return null;
+        },
+    );
+    if (!text) return;
+
+    const dest = join(dir, `provenance.${format}`);
+    try {
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(dest, text);
+    } catch (cause) {
+        notify({ kind: "error", text: `Failed to write provenance: ${String(cause)}` });
+        return;
+    }
+
+    // Provenance + sidecar are one logical export: both must succeed before we report success.
+    const integrity = query.getAnalysisIntegrity(a.id).match(
+        (i) => i,
+        () => null,
+    );
+    if (integrity?.chainHash && integrity.signature) {
+        const pubKey = await signing.exportPublicKeyJwk();
+        if (pubKey) {
+            const sidecar: Sidecar = {
+                payloadType: "application/json; profile=prov-json",
+                payloadDigestAlgorithm: "SHA-256",
+                payloadDigest: integrity.chainHash,
+                payloadDigestMethod: "verbatim",
+                signatureAlgorithm: "Ed25519",
+                signature: integrity.signature,
+                publicKey: pubKey,
+            };
+            const sigDest = `${dest}.sig.json`;
             try {
-                mkdirSync(dir, { recursive: true });
-                writeFileSync(dest, text);
-                notify({ kind: "info", text: `Wrote ${format} provenance to ${dest}` });
+                writeFileSync(sigDest, JSON.stringify(sidecar, null, 2));
             } catch (cause) {
-                notify({ kind: "error", text: `Failed to write provenance: ${String(cause)}` });
+                notify({ kind: "error", text: `Wrote provenance but sidecar failed: ${String(cause)}` });
                 return;
             }
+        }
+    }
 
-            // Write the sidecar when a signature is stored and the public key is available.
-            const integrity = query.getAnalysisIntegrity(a.id).match(
-                (i) => i,
-                () => null,
-            );
-            if (integrity?.chainHash && integrity.signature) {
-                void signing.exportPublicKeyJwk().then((pubKey) => {
-                    if (!pubKey) return;
-                    const sidecar = {
-                        payloadType: "application/json; profile=prov-json",
-                        payloadDigestAlgorithm: "SHA-256",
-                        payloadDigest: integrity.chainHash,
-                        payloadDigestMethod: "verbatim",
-                        signatureAlgorithm: "Ed25519",
-                        signature: integrity.signature,
-                        publicKey: pubKey,
-                    };
-                    const sigDest = `${dest}.sig.json`;
-                    try {
-                        writeFileSync(sigDest, JSON.stringify(sidecar, null, 2));
-                        notify({ kind: "info", text: `Wrote verification sidecar to ${sigDest}` });
-                    } catch {
-                        // Non-fatal.
-                    }
-                });
-            }
-        },
-        (e) => notify({ kind: "error", text: `Failed to build provenance: ${e.type}` }),
-    );
+    notify({ kind: "info", text: `Wrote ${format} provenance to ${dest}` });
 }
 
 export const commands: Command[] = [
@@ -362,8 +368,8 @@ export const commands: Command[] = [
     },
     {
         id: "prov.verify",
-        title: "Verify provenance",
-        description: "Check the integrity of this analysis's provenance chain and signature",
+        title: "Verify provenance (internal)",
+        description: "Check the integrity of the database provenance record",
         category: "Analysis",
         enabled: (ctx) => ctx.analysis !== null,
         run: async (ctx) => {
@@ -393,6 +399,90 @@ export const commands: Command[] = [
 
             const publicKey = await signing.loadPublicKey();
             const result = await verify.verifyProvenance(integrity.provenance, integrity.chainHash, integrity.signature, publicKey);
+            const text = verify.formatVerifyResult(result);
+
+            switch (result.status) {
+                case "valid":
+                    notify({ kind: "info", text });
+                    break;
+                case "unsigned":
+                case "empty":
+                    notify({ kind: "info", text });
+                    break;
+                case "no-key":
+                    notify({ kind: "warn", text });
+                    break;
+                case "tampered":
+                    notify({ kind: "error", text });
+                    break;
+            }
+        },
+    },
+    {
+        id: "prov.verify-export",
+        title: "Verify provenance (export)",
+        description: "Check the integrity of the exported provenance files on disk",
+        category: "Analysis",
+        enabled: (ctx) => ctx.analysis !== null,
+        run: async (ctx) => {
+            const a = ctx.analysis;
+            if (!a) return;
+
+            let verify: typeof import("../modules/prov/verify.ts");
+            let output: typeof import("../modules/analysis/output.ts");
+            try {
+                verify = await import("../modules/prov/verify.ts");
+                output = await import("../modules/analysis/output.ts");
+            } catch {
+                notify({ kind: "error", text: "Provenance verification is unavailable." });
+                return;
+            }
+
+            const dir = output.resolveOutputDir(a).match(
+                (d) => d,
+                () => null,
+            );
+            if (!dir) {
+                notify({ kind: "error", text: "Could not resolve this analysis's output directory." });
+                return;
+            }
+
+            const provPath = join(dir, "provenance.json");
+            if (!existsSync(provPath)) {
+                notify({ kind: "warn", text: "No exported provenance.json found. Export provenance first." });
+                return;
+            }
+
+            const sigPath = `${provPath}.sig.json`;
+            if (!existsSync(sigPath)) {
+                notify({ kind: "warn", text: "No .sig.json sidecar found. The export may be unsigned." });
+                return;
+            }
+
+            let sidecarSchema: typeof import("../modules/prov/verify.ts").sidecarSchema;
+            try {
+                sidecarSchema = (await import("../modules/prov/verify.ts")).sidecarSchema;
+            } catch {
+                notify({ kind: "error", text: "Provenance verification is unavailable." });
+                return;
+            }
+
+            const sidecar = JSON.parseWith(readFileSync(sigPath, "utf-8"), sidecarSchema);
+            if (!sidecar) {
+                notify({ kind: "error", text: "The .sig.json sidecar is invalid or missing required fields." });
+                return;
+            }
+
+            let publicKey: CryptoKey;
+            try {
+                publicKey = await crypto.subtle.importKey("jwk", sidecar.publicKey, "Ed25519", true, ["verify"]);
+            } catch {
+                notify({ kind: "error", text: "The public key in the sidecar is invalid." });
+                return;
+            }
+
+            const provJson = readFileSync(provPath, "utf-8");
+            const result = await verify.verifyProvenance(provJson, sidecar.payloadDigest, sidecar.signature, publicKey);
             const text = verify.formatVerifyResult(result);
 
             switch (result.status) {
