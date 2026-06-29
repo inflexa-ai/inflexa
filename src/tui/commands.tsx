@@ -94,6 +94,8 @@ function noticeKindFor(result: VerifyResult): "info" | "warn" | "error" {
         case "no-key":
             return "warn";
         case "tampered":
+        case "invalid-sidecar":
+        case "invalid-key":
             return "error";
     }
 }
@@ -425,16 +427,12 @@ export const commands: Command[] = [
                 return;
             }
 
-            try {
-                const result = await verify.verifyExportFile(provPath);
-                if (!result) {
-                    notify({ kind: "warn", text: "No .sig.json sidecar found. The export may be unsigned." });
-                    return;
-                }
-                notify({ kind: noticeKindFor(result), text: verify.formatVerifyResult(result) });
-            } catch (e) {
-                notify({ kind: "error", text: e instanceof Error ? e.message : String(e) });
+            const result = await verify.verifyExportFile(provPath);
+            if (!result) {
+                notify({ kind: "warn", text: "No .sig.json sidecar found. The export may be unsigned." });
+                return;
             }
+            notify({ kind: noticeKindFor(result), text: verify.formatVerifyResult(result) });
         },
     },
     {

@@ -71,6 +71,10 @@ export function formatVerifyResult(result: VerifyResult): string {
             return "Cannot verify: a signature exists but the signing key file is missing.";
         case "empty":
             return "No provenance has been recorded for this analysis.";
+        case "invalid-sidecar":
+            return `Invalid sidecar: ${result.detail}`;
+        case "invalid-key":
+            return "The public key in the sidecar is invalid or unsupported.";
     }
 }
 
@@ -168,12 +172,12 @@ export function readSidecar(sigPath: string): Sidecar | null {
     }
 }
 
-// TODO(slop): why does this throw? Why don't you use neverthrow?
 /**
  * Verify an exported provenance file against its `.sig.json` sidecar. Shared by the CLI
  * `prov verify-file` action and the TUI "Verify provenance (export)" command — both need the same
- * read-sidecar → import-key → verify-payload pipeline. Returns `null` when no sidecar exists;
- * throws on a corrupt sidecar or invalid public key (the caller decides error UX).
+ * read-sidecar → import-key → verify-payload pipeline. Returns `null` when no sidecar exists.
+ * Corrupt sidecars and invalid keys are returned as `VerifyResult` statuses, not thrown — callers
+ * handle them the same way as any other verification outcome.
  *
  * // TODO(robustness): the public key is trusted solely because it travels in the sidecar — an
  * // attacker who replaces both the provenance file and the sidecar (with their own key) passes
@@ -186,13 +190,13 @@ export async function verifyExportFile(provPath: string): Promise<VerifyResult |
     if (!existsSync(sigPath)) return null;
 
     const sidecar = readSidecar(sigPath);
-    if (!sidecar) throw new Error(`Sidecar at ${sigPath} is invalid or missing required fields.`);
+    if (!sidecar) return { status: "invalid-sidecar", detail: `sidecar at ${sigPath} is invalid or missing required fields` };
 
     let publicKey: CryptoKey;
     try {
         publicKey = await crypto.subtle.importKey("jwk", sidecar.publicKey, "Ed25519", true, ["verify"]);
     } catch {
-        throw new Error("The public key in the sidecar is invalid or unsupported.");
+        return { status: "invalid-key" };
     }
 
     const provJson = readFileSync(provPath, "utf-8");
@@ -207,15 +211,11 @@ export async function verifyExportFile(provPath: string): Promise<VerifyResult |
 export async function runVerifyFile(path: string): Promise<void> {
     if (!existsSync(path)) fail(`File not found: ${path}`);
 
-    try {
-        const result = await verifyExportFile(path);
-        if (!result) {
-            console.log("No sidecar found: the provenance file cannot be verified without a .sig.json sidecar.");
-            return;
-        }
-        console.log(formatVerifyResult(result));
-        if (result.status === "tampered") process.exitCode = 1;
-    } catch (e) {
-        fail(e instanceof Error ? e.message : String(e));
+    const result = await verifyExportFile(path);
+    if (!result) {
+        console.log("No sidecar found: the provenance file cannot be verified without a .sig.json sidecar.");
+        return;
     }
+    console.log(formatVerifyResult(result));
+    if (result.status === "tampered" || result.status === "invalid-sidecar" || result.status === "invalid-key") process.exitCode = 1;
 }
