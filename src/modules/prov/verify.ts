@@ -5,6 +5,7 @@ import type { IdOrName } from "../../lib/types.ts";
 import { getAnalysisIntegrity } from "../../db/primary_query.ts";
 import { findAnalysisForProv } from "./document.ts";
 import { type Result, ok, err } from "neverthrow";
+import { getLogger } from "../../lib/log.ts";
 import {
     computeChainHash,
     computePayloadDigest,
@@ -16,6 +17,8 @@ import {
     type SigningError,
 } from "./signing.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
+
+const log = getLogger("prov:verify");
 
 /**
  * DB-path verification: recompute the rolling chain hash from `prevChainHash` and the stored
@@ -41,8 +44,8 @@ export async function verifyProvenance(
         return { status: "tampered", detail: "chain hash mismatch: the PROV-JSON has been modified since it was signed" };
     }
 
-    const ok = await verifyHexDigest(publicKey, storedSignature, storedChainHash);
-    if (!ok) {
+    const sigOk = await verifyHexDigest(publicKey, storedSignature, storedChainHash);
+    if (!sigOk) {
         return { status: "tampered", detail: "signature verification failed: the chain hash or signature has been modified" };
     }
 
@@ -60,8 +63,8 @@ export async function verifyPayload(provJson: string, storedDigest: string, stor
         return { status: "tampered", detail: "payload digest mismatch: the provenance file has been modified since it was signed" };
     }
 
-    const ok = await verifyHexDigest(publicKey, storedSignature, storedDigest);
-    if (!ok) {
+    const sigOk = await verifyHexDigest(publicKey, storedSignature, storedDigest);
+    if (!sigOk) {
         return { status: "tampered", detail: "signature verification failed: the digest or signature has been modified" };
     }
 
@@ -96,7 +99,10 @@ export function formatVerifyResult(result: VerifyResult): string {
 export async function verifyAnalysisIntegrity(analysisId: string): Promise<VerifyResult | null> {
     const integrity = getAnalysisIntegrity(analysisId).match(
         (i) => i,
-        () => null,
+        (e) => {
+            log.error({ analysisId, err: e.type, cause: e.cause }, "failed to read integrity columns");
+            return null;
+        },
     );
     if (!integrity) return null;
 

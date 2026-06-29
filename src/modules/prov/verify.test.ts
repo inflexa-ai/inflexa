@@ -125,6 +125,26 @@ describe("verifyPayload (file-path, simple content digest)", () => {
     });
 });
 
+/**
+ * Run `fn` with console.log captured into a string. Restores console.log and process.exitCode
+ * on exit (even if `fn` throws), so one test's side effects don't leak into the next.
+ */
+async function captureConsole(fn: () => Promise<void>): Promise<{ output: string; exitCode: typeof process.exitCode }> {
+    const origLog = console.log;
+    const origExitCode = process.exitCode;
+    let output = "";
+    console.log = (msg: string) => {
+        output += msg;
+    };
+    try {
+        await fn();
+        return { output, exitCode: process.exitCode };
+    } finally {
+        console.log = origLog;
+        process.exitCode = origExitCode;
+    }
+}
+
 describe("runVerifyFile (file-based verification, no DB)", () => {
     async function writeSignedProvFile(dir: string): Promise<{ provPath: string; provJson: string }> {
         const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
@@ -156,14 +176,7 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
         useTempKeyDir();
         const { provPath } = await writeSignedProvFile(tempDir!);
 
-        const origLog = console.log;
-        let output = "";
-        console.log = (msg: string) => {
-            output += msg;
-        };
-        await runVerifyFile(provPath);
-        console.log = origLog;
-
+        const { output } = await captureConsole(() => runVerifyFile(provPath));
         expect(output).toContain("verified");
     });
 
@@ -173,21 +186,9 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
 
         writeFileSync(provPath, '{"entity":{"inflexa:analysis-file-test":{"tampered":true}}}');
 
-        const origLog = console.log;
-        let output = "";
-        console.log = (msg: string) => {
-            output += msg;
-        };
-        try {
-            await runVerifyFile(provPath);
-
-            expect(output).toContain("FAILED");
-            expect(process.exitCode).toBe(1);
-        } finally {
-            console.log = origLog;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- restore exitCode so a throw above doesn't poison the runner's exit status
-            (process as any).exitCode = 0;
-        }
+        const { output, exitCode } = await captureConsole(() => runVerifyFile(provPath));
+        expect(output).toContain("FAILED");
+        expect(exitCode).toBe(1);
     });
 
     test("missing sidecar: reports that verification is not possible", async () => {
@@ -195,14 +196,7 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
         const provPath = join(tempDir!, "no-sidecar.json");
         writeFileSync(provPath, '{"entity":{}}');
 
-        const origLog = console.log;
-        let output = "";
-        console.log = (msg: string) => {
-            output += msg;
-        };
-        await runVerifyFile(provPath);
-        console.log = origLog;
-
+        const { output } = await captureConsole(() => runVerifyFile(provPath));
         expect(output).toContain("No sidecar found");
     });
 });
