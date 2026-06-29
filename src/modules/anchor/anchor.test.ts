@@ -41,7 +41,14 @@ describe("resolveAnchor", () => {
         const dir = tmp();
         writeMarker(dir, "A1");
         insertAnchorRow("A1", dir);
-        expect(resolveAnchor("A1", { searchRoots: [dir] })._unsafeUnwrap().path).toBe(dir);
+        expect(resolveAnchor("A1", { searchRoots: [dir] })._unsafeUnwrap()?.path).toBe(dir);
+    });
+
+    test("missing row — resolves to null (a marker/DB desync is not an error)", () => {
+        // No anchor row: the user deleted/edited their local DB while a marker still references it.
+        // resolveAnchor must degrade to null, NOT a query_failed error, or bare `inflexa` crashes.
+        // _unsafeUnwrap throws on an Err, so a null return proves both "is ok" and "value is null".
+        expect(resolveAnchor("ghost", { searchRoots: [tmp()] })._unsafeUnwrap()).toBeNull();
     });
 
     test("step 2 — self-heals to a search root that holds the marker after a move", () => {
@@ -51,7 +58,7 @@ describe("resolveAnchor", () => {
         insertAnchorRow("A1", stale);
 
         const result = resolveAnchor("A1", { searchRoots: [moved] })._unsafeUnwrap();
-        expect(result.path).toBe(canonicalPath(moved));
+        expect(result?.path).toBe(canonicalPath(moved));
         // The drifted cached path was healed to the new (canonical) location.
         expect(getAnchor("A1")._unsafeUnwrap()?.cachedPath).toBe(canonicalPath(moved));
     });
@@ -62,7 +69,7 @@ describe("resolveAnchor", () => {
         rmSync(gone, { recursive: true, force: true }); // cached path gone, no marker anywhere
         const elsewhere = tmp(); // a search root with no matching marker
 
-        expect(resolveAnchor("A1", { searchRoots: [elsewhere] })._unsafeUnwrap().path).toBeNull();
+        expect(resolveAnchor("A1", { searchRoots: [elsewhere] })._unsafeUnwrap()?.path).toBeNull();
     });
 });
 

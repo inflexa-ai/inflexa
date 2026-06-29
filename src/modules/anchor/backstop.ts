@@ -145,7 +145,7 @@ export async function runPrune(): Promise<void> {
         if (!a.markerWritten) return false;
         if (existsSync(a.cachedPath)) return false;
         const refound = resolveAnchor(a.id).match(
-            (r) => r.path,
+            (r) => r?.path ?? null,
             () => null,
         );
         return refound === null;

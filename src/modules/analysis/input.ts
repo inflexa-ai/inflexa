@@ -53,5 +53,6 @@ export function classifyInputPath(analysisId: string, rawPath: string, cwd: stri
  */
 export function resolveInputPath(input: AnalysisInput): Result<string | null, DbError> {
     if (input.anchorId === null) return ok(input.path);
-    return resolveAnchor(input.anchorId).map(({ path }) => (path === null ? null : join(path, input.path)));
+    // A missing anchor row (null resolved) or unlocated folder (null path) both mean "can't resolve".
+    return resolveAnchor(input.anchorId).map((resolved) => (resolved?.path == null ? null : join(resolved.path, input.path)));
 }
