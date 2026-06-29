@@ -1,4 +1,5 @@
 import { readFileSync, existsSync } from "node:fs";
+import { z } from "zod";
 import type { VerifyResult } from "../../types/prov.ts";
 import type { IdOrName } from "../../lib/types.ts";
 import { getAnalysisIntegrity } from "../../db/primary_query.ts";
@@ -67,21 +68,28 @@ export async function runVerifyProvenance(ref: string): Promise<void> {
     if (result.status === "tampered") process.exitCode = 1;
 }
 
-/** The self-describing sidecar shape written by export.ts. */
-type Sidecar = {
-    payloadType: string;
-    payloadDigestAlgorithm: string;
-    payloadDigest: string;
-    payloadDigestMethod: string;
-    signatureAlgorithm: string;
-    signature: string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- JWK is a loose object from the sidecar file; we pass it straight to crypto.subtle.importKey which validates it.
-    publicKey: any;
-};
+/**
+ * The self-describing sidecar envelope. Zod-validated on read so a corrupt or
+ * hand-edited `.sig.json` surfaces a clear "invalid sidecar" error instead of
+ * a downstream type confusion. The same schema is used to construct the sidecar
+ * at export time, keeping the two sides in sync.
+ */
+export const sidecarSchema = z.object({
+    payloadType: z.string(),
+    payloadDigestAlgorithm: z.string(),
+    payloadDigest: z.string(),
+    payloadDigestMethod: z.string(),
+    signatureAlgorithm: z.string(),
+    signature: z.string(),
+    publicKey: z.record(z.string(), z.unknown()),
+});
+
+/** The validated sidecar shape — inferred from the schema so the type never drifts. */
+export type Sidecar = z.infer<typeof sidecarSchema>;
 
 function readSidecar(sigPath: string): Sidecar | null {
     try {
-        return JSON.parse(readFileSync(sigPath, "utf-8")) as Sidecar;
+        return JSON.parseWith(readFileSync(sigPath, "utf-8"), sidecarSchema);
     } catch {
         return null;
     }
@@ -102,8 +110,8 @@ export async function runVerifyFile(path: string): Promise<void> {
     }
 
     const sidecar = readSidecar(sigPath);
-    if (!sidecar?.payloadDigest || !sidecar.signature || !sidecar.publicKey) {
-        fail(`Sidecar at ${sigPath} is missing required fields.`);
+    if (!sidecar) {
+        fail(`Sidecar at ${sigPath} is invalid or missing required fields.`);
     }
 
     // TODO(robustness): the public key is trusted solely because it travels in the sidecar — an

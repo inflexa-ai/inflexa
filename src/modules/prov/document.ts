@@ -131,9 +131,19 @@ export function appendInputRemoved(doc: ProvDocument, analysisId: string, actor:
     doc.wasInvalidatedBy(inputQn, actionQn, time);
 }
 
-/** Build and serialize an analysis's provenance document from its stored PROV-JSON (or a fresh doc), in a tsprov built-in format (`"json"` | `"provn"`). Same-identifier records are unified first. */
+/**
+ * Serialize an analysis's provenance for export. For JSON format, returns the **exact stored bytes**
+ * from the DB column — the same bytes the chain hash was computed over, so the export is verifiable
+ * against the sidecar. For other formats (PROV-N), deserializes and re-serializes into the target
+ * format; this is a lossy conversion that cannot be verified against the chain hash (which is
+ * always over the JSON form).
+ */
 export function serializeProvenance(analysis: Analysis, format: BuiltinProvFormat): Result<string, DbError> {
-    return getAnalysisProvenance(analysis.id).map((json) => loadDocument(analysis, json).unified().serialize(format));
+    return getAnalysisProvenance(analysis.id).map((json) => {
+        if (json === null) return loadDocument(analysis, null).unified().serialize(format);
+        if (format === "json") return json;
+        return loadDocument(analysis, json).unified().serialize(format);
+    });
 }
 
 /**
