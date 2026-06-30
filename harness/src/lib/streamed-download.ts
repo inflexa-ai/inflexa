@@ -91,7 +91,7 @@ async function fetchStreamToFile(
             }
             if (!res.body) throw new Error("response body is null");
             const writer = createWriteStream(destPath, start !== undefined ? { flags, start } : { flags });
-            await pipeline(Readable.fromWeb(res.body), writer);
+            await pipeline(Readable.fromWeb(res.body as unknown as import("node:stream/web").ReadableStream), writer);
             return;
         } catch (err) {
             lastError = err instanceof Error ? err.message : String(err);
@@ -124,7 +124,7 @@ async function fetchRangeToFile(url: string, destPath: string, start: number, en
             }
             if (!res.body) throw new Error("response body is null");
             const writer = createWriteStream(destPath, { flags: "r+", start });
-            await pipeline(Readable.fromWeb(res.body), writer);
+            await pipeline(Readable.fromWeb(res.body as unknown as import("node:stream/web").ReadableStream), writer);
             return;
         } catch (err) {
             lastError = err instanceof Error ? err.message : String(err);

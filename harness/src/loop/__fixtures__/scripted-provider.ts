@@ -18,6 +18,7 @@ const ZERO_USAGE: Message["usage"] = {
     inference_geo: null,
     input_tokens: 0,
     output_tokens: 0,
+    output_tokens_details: null,
     server_tool_use: null,
     service_tier: null,
 };
