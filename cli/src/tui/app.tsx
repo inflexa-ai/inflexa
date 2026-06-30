@@ -314,8 +314,10 @@ export function App(props: AppProps) {
                 <WhichKey />
 
                 {/* Dialog host: the module-level stack + overlay, extracted to dialog_host.tsx.
-                A direct child of the full-screen root box (not a Portal — see dialog_host). */}
-                <DialogOverlay />
+                A direct child of the full-screen root box (not a Portal — see dialog_host).
+                The fallback reclaims focus to the chat input when a dialog opened while the
+                textarea was blurred (NORMAL scroll mode), so the user is never left stranded. */}
+                <DialogOverlay fallbackFocus={() => textareaRef} />
             </box>
         </WorkspaceContext.Provider>
     );

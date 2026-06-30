@@ -13,6 +13,10 @@ export type ConfirmResult = boolean | undefined;
  * A binary confirm / cancel dialog. Left/right arrows toggle the active choice; enter commits it;
  * esc cancels outright. The active choice is rendered as a highlighted pill (accent bg + onAccent
  * text) so the user sees which action enter will take.
+ *
+ * The active choice defaults to "cancel" — an accidental enter must not confirm a destructive
+ * action. Callers that want "confirm" as the default (a non-destructive yes/no) can override, but
+ * the safe default errs toward not destroying user data.
  */
 export function ConfirmDialog(props: {
     /** Panel title shown in the border chrome. */
@@ -25,8 +29,10 @@ export function ConfirmDialog(props: {
     onCancel: () => void;
     /** Override label for the cancel button (defaults to "cancel"). */
     cancelLabel?: string;
+    /** The initially-active choice — defaults to "cancel" so enter doesn't confirm by accident. */
+    defaultActive?: "confirm" | "cancel";
 }): JSX.Element {
-    const [active, setActive] = createSignal<"confirm" | "cancel">("confirm");
+    const [active, setActive] = createSignal<"confirm" | "cancel">(props.defaultActive ?? "cancel");
 
     function toggle(): void {
         setActive((a) => (a === "confirm" ? "cancel" : "confirm"));

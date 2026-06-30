@@ -99,16 +99,29 @@ export function useDialog(): DialogApi {
  * Also handles:
  * - **Focus save/restore**: captures the focused renderable when the first dialog opens, restores
  *   it (with a tree-walk guard) when the last dialog closes. Ported from OpenCode's dialog.tsx.
+ *   When the prior focus was `null` (a dialog opened while no widget was focused, e.g. the chat
+ *   textarea was blurred into NORMAL scroll mode), the `fallbackFocus` ref reclaims focus so the
+ *   user is never left stranded with no focused widget after a dialog closes.
  * - **Click-outside-to-dismiss**: clicking the scrim outside the content panel closes the dialog,
- *   with a selection guard (a text-selection drag release does not dismiss).
+ *   with a selection guard (a text-selection drag release does not dismiss). Dismissal routes
+ *   through {@link dialogClose}, which fires the top entry's `onClose` — the single dismiss hook.
+ *   Callers that need cleanup on dismiss (releasing a lock, reverting optimistic state) wire it
+ *   through `onClose` at `dialogPush` time, not through the content component's `onCancel`.
  */
-export function DialogOverlay(): JSX.Element {
+export function DialogOverlay(props: {
+    /**
+     * The renderable to refocus when the last dialog closes and no prior focus was captured (the
+     * dialog opened while nothing was focused). The app shell supplies its home input widget.
+     */
+    fallbackFocus?: () => Renderable | null;
+}): JSX.Element {
     const renderer = useRenderer();
     let savedFocus: Renderable | null = null;
     // Whether the mouseDown was over a text selection (skip dismiss on the matching mouseUp).
     let dismissGuard = false;
 
-    // Focus save/restore: capture when 0→N, restore when N→0.
+    // Focus save/restore: capture when 0→N, restore when N→0. When nothing was focused when the
+    // dialog opened, fall back to the app shell's home widget so focus is never stranded.
     createEffect(() => {
         if (stack.length > 0 && savedFocus === null) {
             savedFocus = renderer.currentFocusedRenderable;
@@ -124,6 +137,15 @@ export function DialogOverlay(): JSX.Element {
                 if (renderer.root.findDescendantById(target.id) === undefined) return;
                 target.focus();
             }, 1);
+        } else if (stack.length === 0 && savedFocus === null) {
+            // No prior focus to restore — fall back to the app's home widget.
+            const fallback = props.fallbackFocus?.();
+            if (!fallback) return;
+            queueMicrotask(() => {
+                if (fallback.isDestroyed) return;
+                if (renderer.root.findDescendantById(fallback.id) === undefined) return;
+                fallback.focus();
+            });
         }
     });
 

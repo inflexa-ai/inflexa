@@ -80,6 +80,11 @@ export function PromptDialog(props: {
             textareaRef.blur();
         } else {
             textareaRef.focus();
+            // Mark ready so the enter-to-submit binding (gated on `ready()`) is live. Reaching this
+            // branch means busy flipped to false — including the case where the dialog opened with
+            // busy=true (onMount's microtask early-returned without setting ready), so a later
+            // busy→false transition must enable submit here rather than leave it permanently off.
+            setReady(true);
         }
     });
 
