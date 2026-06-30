@@ -800,7 +800,13 @@ export const commands: Command[] = [
                                 entityName={p.name}
                                 onConfirm={() => {
                                     deleteProject(p.id).match(
-                                        () => notify({ kind: "info", text: `Deleted project "${p.name}"` }),
+                                        (changed) => {
+                                            if (changed === 0) {
+                                                notify({ kind: "warn", text: "Project not found." });
+                                                return;
+                                            }
+                                            notify({ kind: "info", text: `Deleted project "${p.name}"` });
+                                        },
                                         (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
                                     );
                                 }}
