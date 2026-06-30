@@ -8,12 +8,15 @@ import { defineConfig } from "eslint/config";
 // Patch eslint-plugin-neverthrow for ESLint v10 — the plugin reads
 // context.parserServices / context.getScope() which were moved to
 // context.sourceCode.parserServices / context.sourceCode.getScope(node).
+// getScope must resolve to the visitor's current node (not the AST root) so
+// the plugin's variable-reference tracker can find function-local assignments.
 const originalRule = neverthrowPlugin.rules["must-use-result"];
 const neverthrow = {
     rules: {
         "must-use-result": {
             ...originalRule,
             create(context) {
+                let visitingNode = null;
                 const patched = Object.create(context, {
                     parserServices: {
                         get() {
@@ -22,11 +25,19 @@ const neverthrow = {
                     },
                     getScope: {
                         value() {
-                            return context.sourceCode.getScope(context.sourceCode.ast);
+                            return context.sourceCode.getScope(visitingNode || context.sourceCode.ast);
                         },
                     },
                 });
-                return originalRule.create(patched);
+                const visitors = originalRule.create(patched);
+                const wrapped = {};
+                for (const [key, fn] of Object.entries(visitors)) {
+                    wrapped[key] = function (node) {
+                        visitingNode = node;
+                        return fn.call(this, node);
+                    };
+                }
+                return wrapped;
             },
         },
     },
