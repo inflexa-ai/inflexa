@@ -1,7 +1,7 @@
 import { randomUUIDv7 } from "bun";
 import { sep } from "node:path";
 import type { Result } from "neverthrow";
-import { tryMutation } from "./util.ts";
+import { tryMutation, withTransaction } from "./util.ts";
 import type { DbError } from "./errors.ts";
 import type { Session, Message, Part, TextPart } from "../types/session.ts";
 import type { Anchor } from "../types/anchor.ts";
@@ -220,6 +220,63 @@ export function deleteAnalysisInput(input: AnalysisInput): Result<number, DbErro
 export function deleteAnalysesForAnchor(anchorId: string): Result<number, DbError> {
     return tryMutation("deleteAnalysesForAnchor", (conn) => {
         return conn.query("DELETE FROM analyses WHERE anchor_id = ?").run(anchorId).changes;
+    });
+}
+
+/** Deletes a single analysis by id. Its `analysis_inputs` and `sessions` cascade via FKs. Returns rows deleted from analyses — `0` when no such row exists. */
+export function deleteAnalysis(id: string): Result<number, DbError> {
+    return tryMutation("deleteAnalysis", (conn) => {
+        return conn.query("DELETE FROM analyses WHERE id = ?").run(id).changes;
+    });
+}
+
+/** Deletes a project by id. Analyses referencing it are NOT deleted — their `project_id` is NULLed so they become ungrouped. Returns rows deleted — `0` when no such row exists. */
+export function deleteProject(id: string): Result<number, DbError> {
+    return withTransaction("deleteProject", () =>
+        tryMutation("deleteProject.unlink", (conn) => {
+            conn.query("UPDATE analyses SET project_id = NULL, updated_at = ? WHERE project_id = ?").run(Date.now(), id);
+        }).andThen(() =>
+            tryMutation("deleteProject.delete", (conn) => {
+                return conn.query("DELETE FROM projects WHERE id = ?").run(id).changes;
+            }),
+        ),
+    );
+}
+
+/** Deletes a session and its messages/parts (which cascade via FKs). Returns rows deleted — `0` when no such row exists. */
+export function deleteSession(id: string): Result<number, DbError> {
+    return tryMutation("deleteSession", (conn) => {
+        return conn.query("DELETE FROM sessions WHERE id = ?").run(id).changes;
+    });
+}
+
+/** Renames a session by rewriting its JSON `data` blob's `title` field. Returns rows changed — `0` when no such session exists. */
+export function renameSession(id: string, title: string): Result<number, DbError> {
+    return tryMutation("renameSession", (conn) => {
+        const row = conn.query("SELECT data FROM sessions WHERE id = ?").get(id) as { data: string } | null;
+        if (!row) return 0;
+        // Data written by our own JSON.stringify in createSession — parse failure means a corrupt
+        // DB blob, which tryMutation surfaces as mutation_failed (an appropriate severity).
+        const session = JSON.parse(row.data) as Session;
+        session.title = title;
+        session.updatedAt = Date.now();
+        return conn.query("UPDATE sessions SET data = ? WHERE id = ?").run(JSON.stringify(session), id).changes;
+    });
+}
+
+/** Renames an analysis and regenerates its slug. The caller provides the new name + slug. Returns rows changed — `0` when no such analysis exists. */
+export function renameAnalysis(id: string, name: Str256, slug: string): Result<number, DbError> {
+    return tryMutation("renameAnalysis", (conn) => {
+        return conn.query("UPDATE analyses SET name = ?, slug = ?, updated_at = ? WHERE id = ?").run(name, slug, Date.now(), id).changes;
+    });
+}
+
+/** Updates a project's mutable fields (name, description, tags). Returns rows changed — `0` when no such project exists. */
+export function updateProject(id: string, opts: { name: Str256; description: string | null; tags: string[] }): Result<number, DbError> {
+    return tryMutation("updateProject", (conn) => {
+        return conn
+            .query("UPDATE projects SET name = ?, description = ?, tags = ?, updated_at = ? WHERE id = ?")
+            .run(opts.name, opts.description, opts.tags.join(","), Date.now(), id).changes;
     });
 }
 
