@@ -1,6 +1,6 @@
 import { randomUUIDv7 } from "bun";
 import { resolve, sep } from "node:path";
-import { ok, err, Result } from "neverthrow";
+import { ok, Result } from "neverthrow";
 import type { Analysis, AnalysisInput } from "../../types/analysis.ts";
 import type { Str256, IdOrName } from "../../lib/types.ts";
 import type { DbError } from "../../db/errors.ts";
@@ -212,14 +212,9 @@ export function createAnalysis(opts: CreateAnalysisInput): Result<Analysis, DbEr
 
 /** Analyses anchored at the nearest marker for `dir`; empty when there is no marker. */
 export function listAnalysesForAnchorAt(dir: string): Result<Analysis[], DbError> {
-    let found: ReturnType<typeof findMarkerUpwards>;
-    try {
-        found = findMarkerUpwards(dir);
-    } catch (cause) {
-        return err({ type: "query_failed", op: "listAnalysesForAnchorAt:marker", cause });
-    }
-    if (!found) return ok([]);
-    return listAnalysesByAnchor(found.marker.anchorId);
+    return findMarkerUpwards(dir)
+        .mapErr((cause): DbError => ({ type: "query_failed", op: "listAnalysesForAnchorAt:marker", cause }))
+        .andThen((found) => (found ? listAnalysesByAnchor(found.marker.anchorId) : ok([])));
 }
 
 /** All analyses, or those for `opts.projectId` when given — most-recent-first. */

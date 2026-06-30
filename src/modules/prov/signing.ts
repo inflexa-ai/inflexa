@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, linkSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
-import { type Result, ok, err } from "neverthrow";
+import { type Result, ResultAsync, ok, err } from "neverthrow";
 import { env } from "../../lib/env.ts";
 import { getLogger } from "../../lib/log.ts";
 
@@ -25,12 +25,13 @@ type StoredKeypair = { publicKey: JWK; privateKey: JWK };
 /** In-memory imported keypair — cached for the process lifetime to avoid re-importing on every flush. */
 export type ImportedKeypair = { publicKey: CryptoKey; privateKey: CryptoKey };
 
-/** Why a signing operation could not obtain the keypair. Every variant is a hard failure — provenance is never written unsigned. */
+/** Why a signing/crypto operation failed. Every variant is a hard failure — provenance is never written unsigned. */
 export type SigningError =
     | { type: "keypair_corrupt"; cause?: unknown }
     | { type: "keypair_generation_failed"; cause: unknown }
     | { type: "keypair_race_lost" }
-    | { type: "public_key_export_failed" };
+    | { type: "public_key_export_failed" }
+    | { type: "crypto_failed"; op: string; cause: unknown };
 
 let cached: ImportedKeypair | null = null;
 // Set after a parseable-but-unimportable JWK is encountered, so we don't re-read the file and
@@ -181,10 +182,15 @@ export async function loadPublicKey(): Promise<CryptoKey | null> {
  * that could race with another process writing a different keypair); falls back to disk when the
  * keypair hasn't been loaded yet. Returns `null` when no keypair is available.
  */
-export async function exportPublicKeyJwk(): Promise<JWK | null> {
-    if (cached) return crypto.subtle.exportKey("jwk", cached.publicKey);
+export function exportPublicKeyJwk(): ResultAsync<JWK | null, SigningError> {
+    if (cached) {
+        return ResultAsync.fromPromise(
+            crypto.subtle.exportKey("jwk", cached.publicKey),
+            (cause): SigningError => ({ type: "crypto_failed", op: "exportPublicKeyJwk", cause }),
+        );
+    }
     const stored = readKeypairFile();
-    return stored?.publicKey ?? null;
+    return ResultAsync.fromSafePromise(Promise.resolve(stored?.publicKey ?? null));
 }
 
 // --- Chain hash ---
@@ -214,38 +220,50 @@ async function emptySeed(): Promise<Uint8Array> {
  * Compute the chain hash: `SHA-256(prevBytes || provJsonBytes)`. When `prevChainHashHex` is null
  * (first flush), the seed is `SHA-256("")`.
  */
-export async function computeChainHash(prevChainHashHex: string | null, provJson: string): Promise<string> {
-    const prev = prevChainHashHex ? hexToBytes(prevChainHashHex) : await emptySeed();
-    const jsonBytes = new TextEncoder().encode(provJson);
-    const combined = new Uint8Array(prev.length + jsonBytes.length);
-    combined.set(prev, 0);
-    combined.set(jsonBytes, prev.length);
-    const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", combined));
-    return bytesToHex(hash);
+export function computeChainHash(prevChainHashHex: string | null, provJson: string): ResultAsync<string, SigningError> {
+    return ResultAsync.fromPromise(
+        (async () => {
+            const prev = prevChainHashHex ? hexToBytes(prevChainHashHex) : await emptySeed();
+            const jsonBytes = new TextEncoder().encode(provJson);
+            const combined = new Uint8Array(prev.length + jsonBytes.length);
+            combined.set(prev, 0);
+            combined.set(jsonBytes, prev.length);
+            const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", combined));
+            return bytesToHex(hash);
+        })(),
+        (cause): SigningError => ({ type: "crypto_failed", op: "computeChainHash", cause }),
+    );
 }
 
 /** Simple `SHA-256(provJson)` — the self-contained content digest used in the export sidecar. */
-export async function computePayloadDigest(provJson: string): Promise<string> {
-    const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(provJson)));
-    return bytesToHex(hash);
+export function computePayloadDigest(provJson: string): ResultAsync<string, SigningError> {
+    return ResultAsync.fromPromise(
+        crypto.subtle.digest("SHA-256", new TextEncoder().encode(provJson)).then((buf) => bytesToHex(new Uint8Array(buf))),
+        (cause): SigningError => ({ type: "crypto_failed", op: "computePayloadDigest", cause }),
+    );
 }
 
 // --- Sign / Verify ---
 
 /** Sign a hex-encoded digest with the Ed25519 private key, returning a hex-encoded 64-byte signature. */
-export async function signHexDigest(privateKey: CryptoKey, digestHex: string): Promise<string> {
+export function signHexDigest(privateKey: CryptoKey, digestHex: string): ResultAsync<string, SigningError> {
     const data = hexToBytes(digestHex);
     // Safe: hexToBytes allocates a fresh Uint8Array, so .buffer starts at offset 0 and is not shared.
-    const sig = await crypto.subtle.sign("Ed25519", privateKey, data.buffer as ArrayBuffer);
-    return bytesToHex(new Uint8Array(sig));
+    return ResultAsync.fromPromise(
+        crypto.subtle.sign("Ed25519", privateKey, data.buffer as ArrayBuffer).then((sig) => bytesToHex(new Uint8Array(sig))),
+        (cause): SigningError => ({ type: "crypto_failed", op: "signHexDigest", cause }),
+    );
 }
 
 /** Verify a hex-encoded Ed25519 signature against a hex-encoded digest and a public key. */
-export async function verifyHexDigest(publicKey: CryptoKey, signatureHex: string, digestHex: string): Promise<boolean> {
+export function verifyHexDigest(publicKey: CryptoKey, signatureHex: string, digestHex: string): ResultAsync<boolean, SigningError> {
     const sig = hexToBytes(signatureHex);
     const data = hexToBytes(digestHex);
     // Safe: both Uint8Arrays are freshly allocated by hexToBytes — offset 0, not shared.
-    return crypto.subtle.verify("Ed25519", publicKey, sig.buffer as ArrayBuffer, data.buffer as ArrayBuffer);
+    return ResultAsync.fromPromise(
+        crypto.subtle.verify("Ed25519", publicKey, sig.buffer as ArrayBuffer, data.buffer as ArrayBuffer),
+        (cause): SigningError => ({ type: "crypto_failed", op: "verifyHexDigest", cause }),
+    );
 }
 
 /** Reset the cached keypair and optionally override the key path — test-only. */

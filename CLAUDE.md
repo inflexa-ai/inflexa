@@ -32,6 +32,37 @@ bun run format       # Format all of src/
 
 - **Don't extract single-caller helpers or sub-components into separate files.** Keep them in the same file as their caller. A new file is justified only when multiple callers exist — that's when a real reusable pattern emerges.
 
+## Error handling — neverthrow first
+
+**`Result<T, E>` from `neverthrow` is the default error channel.** Every function that can fail returns `Result` (sync) or `ResultAsync` (async). The `eslint-plugin-neverthrow` `must-use-result` rule is set to `error` — an unconsumed `Result` is a build failure.
+
+### The rule
+
+1. **Return `Result`, don't `throw`.** A function's failure mode is part of its signature. If it can fail, the return type says so (`Result<T, SomeError>`). Callers handle both branches with `.match`, `.andThen`, `.map`, `.mapErr`, etc.
+2. **`throw` requires explicit user approval.** Before writing a `throw`, get confirmation. The only pre-approved exceptions are:
+   - **Exhaustive-switch defaults** — `throw new Error("unhandled: ...")` (or `never`-typed) in a `default:` branch that the compiler should make unreachable. This is a programmer bug, not a runtime failure.
+   - **Top-level entry-point bail-outs** — `fail()` / `dieOn()` in `lib/cli.ts` at the CLI boundary, where the process is about to exit anyway.
+   - **`throw` inside `bun:sqlite` transactions** — bun's `transaction()` API uses throw-to-rollback; the `TxAbort` pattern in `db/util.ts` bridges this into `Result`.
+3. **Wrap throwing stdlib / external calls at the boundary.** When a function you don't control throws (`readFileSync`, `mkdirSync`, `writeFileSync`, `JSON.parse`, `crypto.*`, `Bun.spawn`, etc.), wrap it in a function that returns `Result`. The wrapper lives beside its callers (in `lib/` if cross-cutting, in the module if local). Existing examples: `tryQuery`/`tryMutation` in `db/util.ts`, `JSON.parseWith` in `extensions/json.ext.ts`.
+4. **`try/catch` is only for bridging throws into `Result`.** A `try/catch` that doesn't produce a `Result` is a code smell — it means either the caught function should return `Result` itself, or the catch block should.
+
+### Error types
+
+- **Domain errors are discriminated unions** — `type FooError = { type: "x"; ... } | { type: "y"; ... }`, not `Error` subclasses. This gives exhaustive `switch` and zero prototype overhead.
+- **`DbError`** (in `db/errors.ts`) is the storage-layer error. Absence is `T | null` on the `ok` channel, never an error.
+- **Keep error types as narrow as the function needs.** A function that can only fail one way returns `Result<T, { type: "io_failed"; cause: unknown }>`, not `Result<T, AllErrors>`.
+
+### Consuming Results
+
+- **At CLI boundaries:** `result.match(v => v, dieOn("context"))` — print and exit.
+- **In module logic:** `.andThen` / `.map` to chain, `.mapErr` to translate error types across layers.
+- **In the TUI:** the presentation layer may `.match` to render success/error states.
+- **Never `.unwrap()` or `._unsafeUnwrap()` in production code.** These defeat the purpose. If you need the value and want to crash on error, you're at a CLI boundary — use `dieOn`. **Exception:** test files (`*.test.ts`) may use `._unsafeUnwrap()` to extract values where an unexpected `Err` is itself a test failure.
+
+### Migrating existing `throw` → `Result`
+
+The codebase has legacy `throw`/`try-catch` sites being migrated. When touching a function that throws, convert it to return `Result` if the change is contained (the function + its direct callers). Don't leave a half-migrated state where a function both throws AND returns `Result`. Mark sites you notice but can't convert in-scope with `// TODO(slop): neverthrow`.
+
 ## Code Comments
 
 Comment the why, not the what.
@@ -48,7 +79,7 @@ Document the decisions you made.
 
 Document what is NOT there.
 
-- Flag shortcuts and unhandled cases explicitly rather than leaving them silent. Use `throw new Error("not implemented")` (or a `// TODO:` with an issue link) instead of a stub that returns a fake value.
+- Flag shortcuts and unhandled cases explicitly rather than leaving them silent. Use `err({ type: "not_implemented" })` when the function returns `Result`, or `throw new Error("not implemented")` only in exhaustive-switch defaults and pre-approved boundary sites (see [Error handling](#error-handling--neverthrow-first)), instead of a stub that returns a fake value.
 - In exhaustive `switch`/discriminated-union handling, use a `never`-typed default branch so the compiler flags any case you forgot — this documents "everything is handled" and breaks the build when it stops being true.
 - Note future optimization opportunities and the deliberate absence of an implementation (e.g., why a method is intentionally not provided, why a type guard is omitted).
 

@@ -46,8 +46,8 @@ describe("verifyProvenance (DB-path, chain hash verification)", () => {
         const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
 
         const provJson = '{"entity":{"inflexa:analysis-a1":{}}}';
-        const chainHash = await computeChainHash(null, provJson);
-        const signature = await signHexDigest(kp.privateKey, chainHash);
+        const chainHash = (await computeChainHash(null, provJson))._unsafeUnwrap();
+        const signature = (await signHexDigest(kp.privateKey, chainHash))._unsafeUnwrap();
 
         const result = await verifyProvenance(provJson, null, chainHash, signature, kp.publicKey);
         expect(result.status).toBe("valid");
@@ -58,11 +58,11 @@ describe("verifyProvenance (DB-path, chain hash verification)", () => {
         const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
 
         const firstJson = '{"entity":{"inflexa:analysis-a1":{}}}';
-        const firstHash = await computeChainHash(null, firstJson);
+        const firstHash = (await computeChainHash(null, firstJson))._unsafeUnwrap();
 
         const secondJson = '{"entity":{"inflexa:analysis-a1":{"extra":true}}}';
-        const secondHash = await computeChainHash(firstHash, secondJson);
-        const signature = await signHexDigest(kp.privateKey, secondHash);
+        const secondHash = (await computeChainHash(firstHash, secondJson))._unsafeUnwrap();
+        const signature = (await signHexDigest(kp.privateKey, secondHash))._unsafeUnwrap();
 
         const result = await verifyProvenance(secondJson, firstHash, secondHash, signature, kp.publicKey);
         expect(result.status).toBe("valid");
@@ -73,8 +73,8 @@ describe("verifyProvenance (DB-path, chain hash verification)", () => {
         const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
 
         const originalJson = '{"entity":{"inflexa:analysis-a1":{}}}';
-        const chainHash = await computeChainHash(null, originalJson);
-        const signature = await signHexDigest(kp.privateKey, chainHash);
+        const chainHash = (await computeChainHash(null, originalJson))._unsafeUnwrap();
+        const signature = (await signHexDigest(kp.privateKey, chainHash))._unsafeUnwrap();
 
         const tamperedJson = '{"entity":{"inflexa:analysis-a1":{"tampered":true}}}';
         const result = await verifyProvenance(tamperedJson, null, chainHash, signature, kp.publicKey);
@@ -87,8 +87,8 @@ describe("verifyProvenance (DB-path, chain hash verification)", () => {
         const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
 
         const provJson = '{"entity":{"inflexa:analysis-a1":{}}}';
-        const chainHash = await computeChainHash(null, provJson);
-        const signature = await signHexDigest(kp.privateKey, chainHash);
+        const chainHash = (await computeChainHash(null, provJson))._unsafeUnwrap();
+        const signature = (await signHexDigest(kp.privateKey, chainHash))._unsafeUnwrap();
         const flipped = signature.slice(0, -2) + (signature.slice(-2) === "00" ? "01" : "00");
 
         const result = await verifyProvenance(provJson, null, chainHash, flipped, kp.publicKey);
@@ -103,8 +103,8 @@ describe("verifyPayload (file-path, simple content digest)", () => {
         const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
 
         const provJson = '{"entity":{"inflexa:analysis-a1":{}}}';
-        const digest = await computePayloadDigest(provJson);
-        const signature = await signHexDigest(kp.privateKey, digest);
+        const digest = (await computePayloadDigest(provJson))._unsafeUnwrap();
+        const signature = (await signHexDigest(kp.privateKey, digest))._unsafeUnwrap();
 
         const result = await verifyPayload(provJson, digest, signature, kp.publicKey);
         expect(result.status).toBe("valid");
@@ -115,8 +115,8 @@ describe("verifyPayload (file-path, simple content digest)", () => {
         const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
 
         const originalJson = '{"entity":{"inflexa:analysis-a1":{}}}';
-        const digest = await computePayloadDigest(originalJson);
-        const signature = await signHexDigest(kp.privateKey, digest);
+        const digest = (await computePayloadDigest(originalJson))._unsafeUnwrap();
+        const signature = (await signHexDigest(kp.privateKey, digest))._unsafeUnwrap();
 
         const tamperedJson = '{"entity":{"inflexa:analysis-a1":{"tampered":true}}}';
         const result = await verifyPayload(tamperedJson, digest, signature, kp.publicKey);
@@ -150,11 +150,11 @@ describe("runVerifyFile (file-based verification, no DB)", () => {
         const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
 
         const provJson = '{"entity":{"inflexa:analysis-file-test":{}}}';
-        const digest = await computePayloadDigest(provJson);
-        const signature = await signHexDigest(kp.privateKey, digest);
+        const digest = (await computePayloadDigest(provJson))._unsafeUnwrap();
+        const signature = (await signHexDigest(kp.privateKey, digest))._unsafeUnwrap();
 
         const { exportPublicKeyJwk } = await import("./signing.ts");
-        const publicKey = await exportPublicKeyJwk();
+        const publicKey = (await exportPublicKeyJwk())._unsafeUnwrap();
 
         const provPath = join(dir, "provenance.json");
         writeFileSync(provPath, provJson);

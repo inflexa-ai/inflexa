@@ -5,6 +5,8 @@
 // config-reading resolver (`activeRuntime`) therefore lives in lib/config.ts, not
 // here. The proxy module is today's only caller of the spawn core.
 
+import { type Result, ok, err } from "neverthrow";
+
 /**
  * Ordered id list — single source of truth for the picker order, the
  * `ContainerRuntimeId` union, and the config zod enum. Docker is first: it is the
@@ -91,14 +93,15 @@ export async function inherit(rt: ContainerRuntime, args: string[]): Promise<num
 }
 
 /**
- * Verify the runtime is installed and usable before issuing commands. Throws a
- * {@link ContainerRuntimeError} with runtime-specific guidance: `notFoundHint`
- * when the binary is absent, `notReadyHint` when `info` fails (daemon down /
- * Podman machine not started).
+ * Verify the runtime is installed and usable before issuing commands. Returns
+ * a {@link ContainerRuntimeError} on the error channel with runtime-specific
+ * guidance: `notFoundHint` when the binary is absent, `notReadyHint` when
+ * `info` fails (daemon down / Podman machine not started).
  */
-export async function ensureReady(rt: ContainerRuntime): Promise<void> {
-    if (!Bun.which(rt.bin)) throw new ContainerRuntimeError(rt.notFoundHint);
+export async function ensureReady(rt: ContainerRuntime): Promise<Result<void, ContainerRuntimeError>> {
+    if (!Bun.which(rt.bin)) return err(new ContainerRuntimeError(rt.notFoundHint));
     // `info` exits non-zero when the runtime is installed but not reachable.
     const { code } = await capture(rt, ["info"]);
-    if (code !== 0) throw new ContainerRuntimeError(rt.notReadyHint);
+    if (code !== 0) return err(new ContainerRuntimeError(rt.notReadyHint));
+    return ok(undefined);
 }

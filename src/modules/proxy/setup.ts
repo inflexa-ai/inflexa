@@ -2,6 +2,7 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline/promises";
 
+import { type Result, ok, err } from "neverthrow";
 import { activeRuntime } from "../../lib/config.ts";
 import { capture, ensureReady, inherit, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
@@ -33,12 +34,25 @@ type SetupOptions = {
 };
 
 export async function setup(options: SetupOptions): Promise<void> {
+    const providerResult = resolveProvider(options);
+    if (providerResult.isErr()) {
+        console.error(`\n  ${providerResult.error.message}\n`);
+        process.exitCode = 1;
+        return;
+    }
+    const provider = providerResult.value;
+    const rt = activeRuntime();
+
+    const readyResult = await ensureReady(rt);
+    if (readyResult.isErr()) {
+        console.error(`\n  ${readyResult.error.message}\n`);
+        process.exitCode = 1;
+        return;
+    }
+
+    // writeProxyConfig, isAuthenticated, and authenticate are not yet Result-wrapped — a catch-all
+    // ensures their rejections still produce friendly output instead of a raw stack trace.
     try {
-        const provider = resolveProvider(options);
-        const rt = activeRuntime();
-
-        await ensureReady(rt);
-
         const { created, apiKey } = await writeProxyConfig();
         if (created) {
             console.log(`\n  Wrote ${env.cliproxyConfigPath}`);
@@ -47,12 +61,14 @@ export async function setup(options: SetupOptions): Promise<void> {
             console.log(`\n  Keeping existing config at ${env.cliproxyConfigPath}`);
         }
 
-        await pullImage(rt, options.force);
+        const pullResult = await pullImage(rt, options.force);
+        if (pullResult.isErr()) {
+            console.error(`\n  ${pullResult.error.message}\n`);
+            process.exitCode = 1;
+            return;
+        }
 
         if (options.auth) {
-            // Credentials persist in the mounted auth dir, so re-running setup
-            // shouldn't force a re-login. Skip the prompt when already signed in;
-            // an explicit --provider still triggers a fresh login to add/switch.
             if (provider === undefined && (await isAuthenticated())) {
                 console.log("  Already authenticated — skipping login (use `--provider <name>` to add or switch).");
             } else {
@@ -61,25 +77,28 @@ export async function setup(options: SetupOptions): Promise<void> {
             }
         }
 
-        if (options.start) await startProxy(rt);
+        if (options.start) {
+            const startResult = await startProxy(rt);
+            if (startResult.isErr()) {
+                console.error(`\n  ${startResult.error.message}\n`);
+                process.exitCode = 1;
+                return;
+            }
+        }
 
         printNextSteps(options);
     } catch (error) {
-        if (error instanceof ProxyError || error instanceof ContainerRuntimeError) {
-            console.error(`\n  ${error.message}\n`);
-        } else {
-            console.error("\n  Setup failed unexpectedly:", error, "\n");
-        }
+        console.error("\n  Setup failed unexpectedly:", error, "\n");
         process.exitCode = 1;
     }
 }
 
-function resolveProvider(options: SetupOptions): Provider | undefined {
-    if (options.provider === undefined) return undefined;
+function resolveProvider(options: SetupOptions): Result<Provider | undefined, ProxyError> {
+    if (options.provider === undefined) return ok(undefined);
     if (!isProvider(options.provider)) {
-        throw new ProxyError(`Unknown provider '${options.provider}'. Choose one of: ${PROVIDERS.join(", ")}.`);
+        return err(new ProxyError(`Unknown provider '${options.provider}'. Choose one of: ${PROVIDERS.join(", ")}.`));
     }
-    return options.provider;
+    return ok(options.provider);
 }
 
 function printNextSteps(options: SetupOptions): void {
@@ -152,10 +171,11 @@ async function imageExists(rt: ContainerRuntime): Promise<boolean> {
     return (await capture(rt, ["image", "inspect", IMAGE])).code === 0;
 }
 
-async function pullImage(rt: ContainerRuntime, force: boolean): Promise<void> {
-    if (!force && (await imageExists(rt))) return;
+async function pullImage(rt: ContainerRuntime, force: boolean): Promise<Result<void, ProxyError>> {
+    if (!force && (await imageExists(rt))) return ok(undefined);
     console.log(`  Pulling ${IMAGE}…`);
-    if ((await inherit(rt, ["pull", IMAGE])) !== 0) throw new ProxyError(`Failed to pull ${IMAGE}.`);
+    if ((await inherit(rt, ["pull", IMAGE])) !== 0) return err(new ProxyError(`Failed to pull ${IMAGE}.`));
+    return ok(undefined);
 }
 
 /**
@@ -188,7 +208,7 @@ async function removeContainer(rt: ContainerRuntime): Promise<void> {
  * (Re)create the long-running proxy container. Recreating (vs reusing) applies
  * the current image and mount flags every time setup runs.
  */
-async function recreateContainer(rt: ContainerRuntime): Promise<void> {
+async function recreateContainer(rt: ContainerRuntime): Promise<Result<void, ProxyError>> {
     await removeContainer(rt);
     const args = [
         "run",
@@ -206,26 +226,29 @@ async function recreateContainer(rt: ContainerRuntime): Promise<void> {
         IMAGE,
     ];
     const { code, stderr } = await capture(rt, args);
-    if (code !== 0) throw new ProxyError(`Failed to start the proxy container.${stderr ? `\n  ${stderr.trim()}` : ""}`);
+    if (code !== 0) return err(new ProxyError(`Failed to start the proxy container.${stderr ? `\n  ${stderr.trim()}` : ""}`));
+    return ok(undefined);
 }
 
-async function startProxy(rt: ContainerRuntime): Promise<void> {
-    await recreateContainer(rt);
+async function startProxy(rt: ContainerRuntime): Promise<Result<void, ProxyError>> {
+    const result = await recreateContainer(rt);
+    if (result.isErr()) return result;
     console.log(`\n  CLIProxyAPI is running on ${env.cliproxyBaseUrl}`);
+    return ok(undefined);
 }
 
 /**
  * Bring the container up without forcing a recreate: reuse a running one, start
  * a stopped one, or create it if absent. Used on the TUI hot path.
  */
-async function ensureContainerRunning(rt: ContainerRuntime): Promise<void> {
-    if (await isProxyRunning(rt)) return;
+async function ensureContainerRunning(rt: ContainerRuntime): Promise<Result<void, ProxyError>> {
+    if (await isProxyRunning(rt)) return ok(undefined);
     if ((await containerId(rt, true)) !== null) {
         const { code, stderr } = await capture(rt, ["start", CONTAINER_NAME]);
-        if (code !== 0) throw new ProxyError(`Failed to start the proxy container.${stderr ? `\n  ${stderr.trim()}` : ""}`);
-        return;
+        if (code !== 0) return err(new ProxyError(`Failed to start the proxy container.${stderr ? `\n  ${stderr.trim()}` : ""}`));
+        return ok(undefined);
     }
-    await recreateContainer(rt);
+    return recreateContainer(rt);
 }
 
 // --- config ----------------------------------------------------------------
@@ -338,27 +361,43 @@ async function authenticate(rt: ContainerRuntime, preselected: Provider | undefi
 
 /**
  * Make the proxy ready to serve the TUI: runtime up, image present, config
- * written, authenticated, container running. Throws ProxyError /
- * ContainerRuntimeError with actionable guidance when it can't proceed (e.g.
- * the runtime isn't ready, or auth is needed in a non-interactive shell).
+ * written, authenticated, container running. Returns a {@link ProxyError} or
+ * {@link ContainerRuntimeError} on the error channel with actionable guidance
+ * when it can't proceed (e.g. the runtime isn't ready, or auth is needed in a
+ * non-interactive shell).
  */
-export async function ensureProxyReady(): Promise<void> {
+export async function ensureProxyReady(): Promise<Result<void, ProxyError | ContainerRuntimeError>> {
     const rt = activeRuntime();
-    await ensureReady(rt);
-    await writeProxyConfig();
-    await pullImage(rt, false);
+    const readyResult = await ensureReady(rt);
+    if (readyResult.isErr()) return readyResult;
+
+    // writeProxyConfig and authenticate are not yet Result-wrapped — catch their
+    // rejections so they flow through the Result channel instead of escaping as
+    // unhandled rejections (the caller has no try/catch).
+    try {
+        await writeProxyConfig();
+    } catch (cause) {
+        return err(new ProxyError(`Failed to write proxy config: ${cause instanceof Error ? cause.message : String(cause)}`));
+    }
+
+    const pullResult = await pullImage(rt, false);
+    if (pullResult.isErr()) return pullResult;
 
     if (!(await isAuthenticated())) {
         if (!process.stdin.isTTY) {
-            throw new ProxyError("CLIProxyAPI isn't authenticated yet.\n  Run `inflexa setup` to sign in to a provider before starting the TUI.");
+            return err(new ProxyError("CLIProxyAPI isn't authenticated yet.\n  Run `inflexa setup` to sign in to a provider before starting the TUI."));
         }
         console.log("\n  CLIProxyAPI isn't authenticated yet — let's sign in.");
-        if (!(await authenticate(rt, undefined))) {
-            throw new ProxyError("Authentication didn't complete.\n  Run `inflexa setup` to finish signing in, then try again.");
+        try {
+            if (!(await authenticate(rt, undefined))) {
+                return err(new ProxyError("Authentication didn't complete.\n  Run `inflexa setup` to finish signing in, then try again."));
+            }
+        } catch (cause) {
+            return err(new ProxyError(`Authentication failed: ${cause instanceof Error ? cause.message : String(cause)}`));
         }
     }
 
-    await ensureContainerRunning(rt);
+    return ensureContainerRunning(rt);
 }
 
 /**
@@ -368,14 +407,9 @@ export async function ensureProxyReady(): Promise<void> {
  * BEFORE render().
  */
 export async function ensureProxyReadyOrExit(): Promise<void> {
-    try {
-        await ensureProxyReady();
-    } catch (error) {
-        if (error instanceof ProxyError || error instanceof ContainerRuntimeError) {
-            console.error(`\n  ${error.message}\n`);
-        } else {
-            console.error("\n  Could not start CLIProxyAPI:", error, "\n");
-        }
+    const result = await ensureProxyReady();
+    if (result.isErr()) {
+        console.error(`\n  ${result.error.message}\n`);
         process.exit(1);
     }
 }

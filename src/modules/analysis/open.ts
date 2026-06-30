@@ -30,7 +30,11 @@ export function openerArgv(dir: string, platform: NodeJS.Platform = process.plat
 export function openOutputDir(analysis: Analysis): Result<string, DbError> {
     // ensure (not just resolve) — the directory must exist to be opened.
     return ensureOutputDir(analysis).map((dir) => {
-        Bun.spawn(openerArgv(dir), { stdout: "inherit", stderr: "inherit" });
+        try {
+            Bun.spawn(openerArgv(dir), { stdout: "inherit", stderr: "inherit" });
+        } catch {
+            // Fire-and-forget: a missing opener (ENOENT) is not worth crashing for.
+        }
         return dir;
     });
 }
