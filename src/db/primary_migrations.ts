@@ -5,9 +5,9 @@ import type { Migration } from "./util.ts";
 
 export const migrations: Migration[] = [
     {
-        // Single forward-only baseline. Tables are declared parent-before-child so every FK is a
-        // backward reference. Columns follow the house order: the identity triple
-        // (id, created_at, updated_at) first and colocated, then core data, then foreign keys last.
+        // Single baseline. Tables are declared parent-before-child so every FK is a backward
+        // reference. Columns follow the house order: the identity triple (id, created_at,
+        // updated_at) first and colocated, then core data, then foreign keys last.
         version: 1,
         up: `
             CREATE TABLE anchors (
@@ -33,6 +33,10 @@ export const migrations: Migration[] = [
                 name TEXT NOT NULL,
                 slug TEXT NOT NULL,
                 output_directory TEXT,
+                provenance TEXT,
+                provenance_chain_hash TEXT,
+                provenance_signature TEXT,
+                provenance_prev_chain_hash TEXT,
                 anchor_id TEXT NOT NULL REFERENCES anchors(id),
                 project_id TEXT REFERENCES projects(id),
                 -- Outputs live at …/analyses/<slug>/, so a slug must be unique within its anchor.
@@ -44,6 +48,8 @@ export const migrations: Migration[] = [
             -- Each row's path is relative-to-anchor when anchor_id is set (so it rides the anchor's
             -- UUID across moves/renames) and absolute otherwise. The analysis FK cascades — dropping
             -- an analysis takes its input refs with it. No identity triple: a ref is not an entity.
+            -- anchor_id is nullable (raw absolute paths have no anchor), and SQLite treats each NULL
+            -- as distinct in UNIQUE constraints — so a partial index pair covers both cases.
             CREATE TABLE analysis_inputs (
                 path TEXT NOT NULL,
                 is_dir INTEGER NOT NULL DEFAULT 0,
@@ -51,13 +57,20 @@ export const migrations: Migration[] = [
                 anchor_id TEXT REFERENCES anchors(id)
             );
             CREATE INDEX idx_analysis_inputs_analysis ON analysis_inputs(analysis_id);
+            CREATE UNIQUE INDEX uq_analysis_inputs_anchored
+                ON analysis_inputs(analysis_id, path, anchor_id)
+                WHERE anchor_id IS NOT NULL;
+            CREATE UNIQUE INDEX uq_analysis_inputs_unanchored
+                ON analysis_inputs(analysis_id, path)
+                WHERE anchor_id IS NULL;
             -- Chat tables: the row is the opaque JSON \`data\` blob; the only columns are the id and
             -- the FK indexes. A session links to its analysis (one analysis, many sessions) via the
-            -- analysis_id column, not the blob.
+            -- analysis_id column, not the blob. Deleting an analysis cascades to its sessions,
+            -- which cascades to messages, which cascades to parts.
             CREATE TABLE sessions (
                 id TEXT PRIMARY KEY,
                 data TEXT NOT NULL,
-                analysis_id TEXT REFERENCES analyses(id)
+                analysis_id TEXT REFERENCES analyses(id) ON DELETE CASCADE
             );
             CREATE INDEX idx_sessions_analysis ON sessions(analysis_id);
             CREATE TABLE messages (
@@ -76,81 +89,6 @@ export const migrations: Migration[] = [
             );
             CREATE INDEX idx_parts_message ON parts(message_id);
             CREATE INDEX idx_parts_session ON parts(session_id);
-        `,
-    },
-    {
-        // Provenance lives 1:1 with the analysis as the PROV-JSON serialization of its provenance
-        // document — built incrementally in memory (tsprov) from typed `prov.*` bus events and flushed
-        // here. It is read and written whole (export serializes it; reopening deserializes it back),
-        // never filtered or joined by an interior field, so it is one opaque column rather than a
-        // columnar event log — matching how sessions/messages/parts store their JSON blob. `NULL`
-        // until the first action is recorded (treated as an empty document).
-        version: 2,
-        up: `
-            ALTER TABLE analyses ADD COLUMN provenance TEXT;
-        `,
-    },
-    {
-        // Integrity columns for tamper-evident provenance: the chain hash links each flush state
-        // to its predecessor (SHA-256 rolling digest), and the Ed25519 signature proves the chain
-        // hash was produced by the holder of the signing key. Both are hex-encoded strings. NULL
-        // until the first signed flush — treated as "unsigned" by the verification logic.
-        version: 3,
-        up: `
-            ALTER TABLE analyses ADD COLUMN provenance_chain_hash TEXT;
-            ALTER TABLE analyses ADD COLUMN provenance_signature TEXT;
-        `,
-    },
-    {
-        // The verifier needs the PREVIOUS chain hash to recompute the current one:
-        // H_n = SHA-256(H_{n-1} || json_n). Without it, verification after a second flush
-        // always reports "tampered" because the verifier seeds from SHA-256("") instead of H_{n-1}.
-        version: 4,
-        up: `
-            ALTER TABLE analyses ADD COLUMN provenance_prev_chain_hash TEXT;
-        `,
-    },
-    {
-        // The analysis_inputs table had no uniqueness constraint, allowing duplicate rows for the
-        // same (analysis_id, path, anchor_id) tuple. The deletion query already keys on this
-        // triple, so a UNIQUE index aligns the schema with the application's identity model.
-        // anchor_id is nullable (raw absolute paths have no anchor), and SQLite treats each NULL
-        // as distinct in UNIQUE constraints — so two rows with the same (analysis_id, path, NULL)
-        // would NOT collide. We use a partial + expression index pair to cover both cases:
-        // one for non-null anchor_id, one for null anchor_id.
-        version: 5,
-        up: `
-            DELETE FROM analysis_inputs WHERE rowid NOT IN (
-                SELECT MIN(rowid) FROM analysis_inputs
-                GROUP BY analysis_id, path, COALESCE(anchor_id, '')
-            );
-            CREATE UNIQUE INDEX uq_analysis_inputs_anchored
-                ON analysis_inputs(analysis_id, path, anchor_id)
-                WHERE anchor_id IS NOT NULL;
-            CREATE UNIQUE INDEX uq_analysis_inputs_unanchored
-                ON analysis_inputs(analysis_id, path)
-                WHERE anchor_id IS NULL;
-        `,
-    },
-    {
-        // The sessions FK to analyses originally had no ON DELETE CASCADE, so deleting an
-        // analysis left orphaned sessions. SQLite cannot ALTER a FK constraint — the only
-        // option is to recreate the table. Indexes on sessions are rebuilt explicitly.
-        // Safe despite messages/parts referencing sessions(id): SQLite enforces FKs at DML
-        // time only (INSERT/UPDATE/DELETE), never on DDL (DROP/ALTER RENAME). After the
-        // rename, the table named `sessions` exists with identical columns, so the FK text
-        // in messages/parts resolves correctly on the next DML.
-        version: 6,
-        up: `
-            CREATE TABLE sessions_new (
-                id TEXT PRIMARY KEY,
-                data TEXT NOT NULL,
-                analysis_id TEXT REFERENCES analyses(id) ON DELETE CASCADE
-            );
-            INSERT INTO sessions_new SELECT * FROM sessions;
-            DROP TABLE sessions;
-            ALTER TABLE sessions_new RENAME TO sessions;
-            CREATE INDEX idx_sessions_analysis ON sessions(analysis_id);
         `,
     },
 ];

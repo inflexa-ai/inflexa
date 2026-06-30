@@ -34,7 +34,7 @@ import {
     renameAnalysis,
     updateAnalysisProject,
 } from "../db/primary_mutation.ts";
-import { listSessionsByAnalysis, listProjects, listAnalysisInputs, countAnalysesByProject } from "../db/primary_query.ts";
+import { getSession, listSessionsByAnalysis, listProjects, listAnalysisInputs, countAnalysesByProject } from "../db/primary_query.ts";
 import type { Analysis, AnalysisInput } from "../types/analysis.ts";
 import type { Session } from "../types/session.ts";
 import type { Project } from "../types/project.ts";
@@ -740,10 +740,14 @@ export const commands: Command[] = [
         run: (ctx) => {
             const a = ctx.analysis;
             if (!a) return;
+            const sessionTitle = getSession(ctx.sessionId).match(
+                (s) => s?.title ?? "this session",
+                () => "this session",
+            );
             ctx.openDialog(() => (
                 <ConfirmDeleteDialog
                     entityLabel="session"
-                    entityName="this session"
+                    entityName={sessionTitle}
                     onConfirm={() => {
                         deleteSession(ctx.sessionId).match(
                             (changed) => {
