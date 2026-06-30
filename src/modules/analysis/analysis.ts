@@ -45,7 +45,7 @@ export function makeBaseSlug(name: string): string {
 
 // Slugs must be unique within the anchor: outputs live at <anchor>/.inflexa/analyses/<slug>/,
 // so two analyses sharing an anchor must not share a slug. Suffix -2, -3, … on collision.
-function uniqueSlugForAnchor(anchorId: string, name: string): Result<string, DbError> {
+export function uniqueSlugForAnchor(anchorId: string, name: string): Result<string, DbError> {
     const base = makeBaseSlug(name);
     return listAnalysesByAnchor(anchorId).map((existing) => {
         const taken = new Set(existing.map((a) => a.slug));

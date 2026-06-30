@@ -53,14 +53,31 @@ describe("runMigrations", () => {
             .query<{ version: number }, []>("SELECT version FROM _migrations ORDER BY version")
             .all()
             .map((r) => r.version);
-        expect(versions).toEqual([1, 2, 3, 4]);
+        expect(versions).toEqual([1, 2, 3, 4, 5, 6]);
     });
 
     test("is idempotent: re-running applies nothing new", () => {
         const db = migratedMemoryDb();
         runMigrations(db, migrations)._unsafeUnwrap(); // second run
         const count = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM _migrations").get();
-        expect(count?.n).toBe(4);
+        expect(count?.n).toBe(6);
+    });
+
+    test("migration 5 enforces uniqueness on analysis_inputs", () => {
+        const db = migratedMemoryDb();
+        const indexes = db
+            .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='analysis_inputs'")
+            .all()
+            .map((r) => r.name);
+        expect(indexes).toContain("uq_analysis_inputs_anchored");
+        expect(indexes).toContain("uq_analysis_inputs_unanchored");
+    });
+
+    test("migration 6 adds ON DELETE CASCADE to sessions.analysis_id FK", () => {
+        const fks = migratedMemoryDb().query<{ table: string; on_delete: string }, []>("PRAGMA foreign_key_list(sessions)").all();
+        const analysisFk = fks.find((f) => f.table === "analyses");
+        expect(analysisFk).toBeDefined();
+        expect(analysisFk!.on_delete).toBe("CASCADE");
     });
 
     test("declares the analyses foreign keys to anchors and projects", () => {

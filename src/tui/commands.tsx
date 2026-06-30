@@ -18,14 +18,26 @@ import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts"
 import { readConfig, writeConfig } from "../lib/config.ts";
 import { mkdirResult, writeFileResult } from "../lib/fs.ts";
 import { str256 } from "../lib/types.ts";
-import { createAnalysis, listRecentAnalyses } from "../modules/analysis/analysis.ts";
+import { createAnalysis, listRecentAnalyses, uniqueSlugForAnchor, addInputs, removeInput } from "../modules/analysis/analysis.ts";
 import { resolveContext, describeContext } from "../modules/analysis/context.ts";
 import { openOutputDir } from "../modules/analysis/open.ts";
 import { resolveAnchor, resolvedPathOrCached } from "../modules/anchor/anchor.ts";
-import { createProject, createSession } from "../db/primary_mutation.ts";
-import { listSessionsByAnalysis } from "../db/primary_query.ts";
-import type { Analysis } from "../types/analysis.ts";
+import { loadAuth, describeAuthError } from "../modules/auth/auth.ts";
+import { decodeIdTokenClaims } from "../modules/auth/whoami.ts";
+import {
+    createProject,
+    createSession,
+    deleteAnalysis,
+    deleteProject,
+    deleteSession,
+    renameSession,
+    renameAnalysis,
+    updateAnalysisProject,
+} from "../db/primary_mutation.ts";
+import { listSessionsByAnalysis, listProjects, listAnalysisInputs, countAnalysesByProject } from "../db/primary_query.ts";
+import type { Analysis, AnalysisInput } from "../types/analysis.ts";
 import type { Session } from "../types/session.ts";
+import type { Project } from "../types/project.ts";
 
 // The command registry: the SINGLE source of truth for the palette. Adding a command is one
 // entry in `commands`. Each command's `run` acts only through the `Workspace` (the context store
@@ -189,7 +201,7 @@ function SwitchAnalysisDialog(): JSX.Element {
             title="Switch analysis"
             placeholder={`Search analyses${GLYPHS.ellipsis}`}
             items={items}
-            emptyText="No analyses yet"
+            emptyText="No analyses yet — use ctrl+k → New analysis to create one"
             onCancel={() => ws.closeDialog()}
             onSelect={(a: Analysis) => {
                 ws.closeDialog();
@@ -215,7 +227,7 @@ function SwitchSessionDialog(): JSX.Element {
             title="Switch session"
             placeholder={`Search sessions${GLYPHS.ellipsis}`}
             items={items}
-            emptyText="No sessions for this analysis"
+            emptyText="Only one session — send a message to start, or switch analysis first"
             onCancel={() => ws.closeDialog()}
             onSelect={(s: Session) => {
                 ws.closeDialog();
@@ -248,6 +260,175 @@ function SettingsDialog(): JSX.Element {
     const ws = useWorkspace();
     // Embedded mode: ConfigApp hands control back via onClose instead of tearing down the renderer.
     return <ConfigApp onClose={() => ws.closeDialog()} />;
+}
+
+function WhoamiDialog(): JSX.Element {
+    const ws = useWorkspace();
+    const lines: string[] = [];
+    loadAuth().match(
+        (auth) => {
+            const claims = decodeIdTokenClaims(auth.idToken);
+            if (claims?.name) lines.push(`Name:    ${claims.name}`);
+            if (claims?.email) lines.push(`Email:   ${claims.email}`);
+            if (claims?.sub) lines.push(`Subject: ${claims.sub}`);
+            const expiresAt = new Date(auth.expiresAt);
+            const status = expiresAt.getTime() > Date.now() ? `active — expires ${expiresAt.toLocaleString()}` : "expired — renews on next use";
+            lines.push(`Session: ${status}`);
+        },
+        (error) => lines.push(describeAuthError(error)),
+    );
+    return <ResultsDialog title="Identity" lines={lines} emptyText="Not logged in" onClose={() => ws.closeDialog()} />;
+}
+
+function ProjectListDialog(): JSX.Element {
+    const ws = useWorkspace();
+    const lines = listProjects().match(
+        (projects) =>
+            projects.map((p) => {
+                const count = countAnalysesByProject(p.id).match(
+                    (n) => n,
+                    () => 0,
+                );
+                const tags = p.tags.length ? ` [${p.tags.join(", ")}]` : "";
+                return `${p.name}${tags}  (${count} analyses)`;
+            }),
+        (e) => [`Failed: ${e.type}`],
+    );
+    return <ResultsDialog title="Projects" lines={lines} emptyText="No projects yet" onClose={() => ws.closeDialog()} />;
+}
+
+function SetProjectDialog(): JSX.Element {
+    const ws = useWorkspace();
+    const a = ws.analysis;
+    const projects = listProjects().match(
+        (ps) => ps,
+        () => [],
+    );
+    const items = [
+        { value: null as string | null, title: "(none)", description: "Clear project grouping" },
+        ...projects.map((p: Project) => ({ value: p.id as string | null, title: p.name, description: p.description ?? undefined })),
+    ];
+    return (
+        <SelectList
+            title="Set project"
+            placeholder={`Search projects${GLYPHS.ellipsis}`}
+            items={items}
+            emptyText="No projects — create one first"
+            onCancel={() => ws.closeDialog()}
+            onSelect={(projectId: string | null) => {
+                ws.closeDialog();
+                if (!a) return;
+                updateAnalysisProject(a.id, projectId).match(
+                    () => {
+                        const name = projectId ? (projects.find((p) => p.id === projectId)?.name ?? "unknown") : "none";
+                        notify({ kind: "info", text: `Project: ${name}` });
+                    },
+                    (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
+                );
+            }}
+        />
+    );
+}
+
+function AddInputDialog(): JSX.Element {
+    const ws = useWorkspace();
+    return (
+        <PromptDialog
+            title="Add input"
+            placeholder="File or directory path (relative to analysis root)"
+            onCancel={() => ws.closeDialog()}
+            onSubmit={(raw) => {
+                ws.closeDialog();
+                const a = ws.analysis;
+                if (!a || !raw.trim()) return;
+                addInputs(a.id, [raw.trim()], ws.workingDir).match(
+                    () => notify({ kind: "info", text: `Added input: ${raw.trim()}` }),
+                    (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
+                );
+            }}
+        />
+    );
+}
+
+function RemoveInputDialog(): JSX.Element {
+    const ws = useWorkspace();
+    const a = ws.analysis;
+    const inputs = a
+        ? listAnalysisInputs(a.id).match(
+              (xs) => xs,
+              () => [],
+          )
+        : [];
+    const items = inputs.map((input: AnalysisInput) => ({
+        value: input,
+        title: input.path,
+        description: input.isDir ? "directory" : "file",
+    }));
+    return (
+        <SelectList
+            title="Remove input"
+            placeholder={`Search inputs${GLYPHS.ellipsis}`}
+            items={items}
+            emptyText="No inputs to remove"
+            onCancel={() => ws.closeDialog()}
+            onSelect={(input: AnalysisInput) => {
+                ws.closeDialog();
+                if (!a) return;
+                removeInput(input).match(
+                    () => notify({ kind: "info", text: `Removed input: ${input.path}` }),
+                    (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
+                );
+            }}
+        />
+    );
+}
+
+function RenameAnalysisDialog(): JSX.Element {
+    const ws = useWorkspace();
+    return (
+        <PromptDialog
+            title="Rename analysis"
+            placeholder="New name"
+            onCancel={() => ws.closeDialog()}
+            onSubmit={(raw) => {
+                ws.closeDialog();
+                const a = ws.analysis;
+                if (!a) return;
+                str256(raw).match(
+                    (name) =>
+                        uniqueSlugForAnchor(a.anchorId, name)
+                            .andThen((slug) => renameAnalysis(a.id, name, slug))
+                            .match(
+                                () => notify({ kind: "info", text: `Renamed to "${raw.trim()}"` }),
+                                (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
+                            ),
+                    (err) => notify({ kind: "warn", text: err === "empty" ? "A name is required." : "Keep the name to 256 characters or fewer." }),
+                );
+            }}
+        />
+    );
+}
+
+function RenameSessionDialog(): JSX.Element {
+    const ws = useWorkspace();
+    return (
+        <PromptDialog
+            title="Rename session"
+            placeholder="New title"
+            onCancel={() => ws.closeDialog()}
+            onSubmit={(raw) => {
+                ws.closeDialog();
+                if (!raw.trim()) {
+                    notify({ kind: "warn", text: "A title is required." });
+                    return;
+                }
+                renameSession(ws.sessionId, raw.trim()).match(
+                    () => notify({ kind: "info", text: `Session renamed to "${raw.trim()}"` }),
+                    (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
+                );
+            }}
+        />
+    );
 }
 
 /** The single source of truth. Add a command = add an entry here. Ordered by category so the
@@ -334,6 +515,59 @@ export const commands: Command[] = [
         description: "Show recent analyses",
         category: "Analysis",
         run: (ctx) => ctx.openDialog(() => <AnalysesListDialog />),
+    },
+    {
+        id: "analysis.rename",
+        title: "Rename analysis",
+        description: "Change the current analysis's name",
+        category: "Analysis",
+        enabled: (ctx) => ctx.analysis !== null,
+        run: (ctx) => ctx.openDialog(() => <RenameAnalysisDialog />),
+    },
+    {
+        id: "analysis.add-input",
+        title: "Add input",
+        description: "Add a file or directory as an input to this analysis",
+        category: "Analysis",
+        enabled: (ctx) => ctx.analysis !== null,
+        run: (ctx) => ctx.openDialog(() => <AddInputDialog />),
+    },
+    {
+        id: "analysis.remove-input",
+        title: "Remove input",
+        description: "Remove an input from this analysis",
+        category: "Analysis",
+        enabled: (ctx) => ctx.analysis !== null,
+        run: (ctx) => ctx.openDialog(() => <RemoveInputDialog />),
+    },
+    {
+        id: "analysis.set-project",
+        title: "Set project",
+        description: "Attach, move, or clear this analysis's project grouping",
+        category: "Analysis",
+        enabled: (ctx) => ctx.analysis !== null,
+        run: (ctx) => ctx.openDialog(() => <SetProjectDialog />),
+    },
+    {
+        id: "analysis.delete",
+        title: "Delete analysis",
+        description: "Permanently delete this analysis and its sessions",
+        category: "Analysis",
+        enabled: (ctx) => ctx.analysis !== null,
+        run: (ctx) => {
+            const a = ctx.analysis;
+            if (!a) return;
+            deleteAnalysis(a.id).match(
+                (changed) => {
+                    if (changed === 0) {
+                        notify({ kind: "warn", text: "Analysis not found." });
+                        return;
+                    }
+                    notify({ kind: "info", text: `Deleted analysis "${a.name}"` });
+                },
+                (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
+            );
+        },
     },
     {
         id: "analysis.open-output",
@@ -445,11 +679,78 @@ export const commands: Command[] = [
         run: (ctx) => ctx.openDialog(() => <SwitchSessionDialog />),
     },
     {
+        id: "session.rename",
+        title: "Rename session",
+        description: "Change the current session's title",
+        category: "Session",
+        run: (ctx) => ctx.openDialog(() => <RenameSessionDialog />),
+    },
+    {
+        id: "session.delete",
+        title: "Delete session",
+        description: "Permanently delete the current session and its messages",
+        category: "Session",
+        run: (ctx) => {
+            deleteSession(ctx.sessionId).match(
+                (changed) => {
+                    if (changed === 0) {
+                        notify({ kind: "warn", text: "Session not found." });
+                        return;
+                    }
+                    notify({ kind: "info", text: "Session deleted." });
+                },
+                (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
+            );
+        },
+    },
+    {
         id: "project.new",
         title: "New project",
         description: "Create a project grouping",
         category: "Project",
         run: (ctx) => ctx.openDialog(() => <NewProjectDialog />),
+    },
+    {
+        id: "project.list",
+        title: "List projects",
+        description: "Show all projects with analysis counts",
+        category: "Project",
+        run: (ctx) => ctx.openDialog(() => <ProjectListDialog />),
+    },
+    {
+        id: "project.delete",
+        title: "Delete project",
+        description: "Delete a project (analyses are ungrouped, not deleted)",
+        category: "Project",
+        run: (ctx) => {
+            const projects = listProjects().match(
+                (ps) => ps,
+                () => [],
+            );
+            ctx.openDialog(() => (
+                <SelectList
+                    title="Delete project"
+                    placeholder={`Select project to delete${GLYPHS.ellipsis}`}
+                    items={projects.map((p: Project) => ({ value: p, title: p.name, description: p.description ?? undefined }))}
+                    emptyText="No projects"
+                    onCancel={() => ctx.closeDialog()}
+                    onSelect={(p: Project) => {
+                        ctx.closeDialog();
+                        deleteProject(p.id).match(
+                            () => notify({ kind: "info", text: `Deleted project "${p.name}"` }),
+                            (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
+                        );
+                    }}
+                />
+            ));
+        },
+    },
+    {
+        id: "auth.whoami",
+        title: "Show identity",
+        description: "Show the logged-in user and session status",
+        category: "App",
+        run: (ctx) => ctx.openDialog(() => <WhoamiDialog />),
     },
     {
         id: "view.status",

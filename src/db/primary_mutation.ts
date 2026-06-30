@@ -223,6 +223,57 @@ export function deleteAnalysesForAnchor(anchorId: string): Result<number, DbErro
     });
 }
 
+/** Deletes a single analysis by id. Its `analysis_inputs` cascade via the FK; sessions do NOT cascade (see §3.2 in the audit) so they are cleaned up explicitly here. Returns rows deleted from analyses — `0` when no such row exists. */
+export function deleteAnalysis(id: string): Result<number, DbError> {
+    return tryMutation("deleteAnalysis", (conn) => {
+        conn.query("DELETE FROM sessions WHERE analysis_id = ?").run(id);
+        return conn.query("DELETE FROM analyses WHERE id = ?").run(id).changes;
+    });
+}
+
+/** Deletes a project by id. Analyses referencing it are NOT deleted — their `project_id` is NULLed so they become ungrouped. Returns rows deleted — `0` when no such row exists. */
+export function deleteProject(id: string): Result<number, DbError> {
+    return tryMutation("deleteProject", (conn) => {
+        conn.query("UPDATE analyses SET project_id = NULL, updated_at = ? WHERE project_id = ?").run(Date.now(), id);
+        return conn.query("DELETE FROM projects WHERE id = ?").run(id).changes;
+    });
+}
+
+/** Deletes a session and its messages/parts (which cascade via FKs). Returns rows deleted — `0` when no such row exists. */
+export function deleteSession(id: string): Result<number, DbError> {
+    return tryMutation("deleteSession", (conn) => {
+        return conn.query("DELETE FROM sessions WHERE id = ?").run(id).changes;
+    });
+}
+
+/** Renames a session by rewriting its JSON `data` blob's `title` field. Returns rows changed — `0` when no such session exists. */
+export function renameSession(id: string, title: string): Result<number, DbError> {
+    return tryMutation("renameSession", (conn) => {
+        const row = conn.query("SELECT data FROM sessions WHERE id = ?").get(id) as { data: string } | null;
+        if (!row) return 0;
+        const session = JSON.parse(row.data) as Session;
+        session.title = title;
+        session.updatedAt = Date.now();
+        return conn.query("UPDATE sessions SET data = ? WHERE id = ?").run(JSON.stringify(session), id).changes;
+    });
+}
+
+/** Renames an analysis and regenerates its slug. The caller provides the new name + slug. Returns rows changed — `0` when no such analysis exists. */
+export function renameAnalysis(id: string, name: Str256, slug: string): Result<number, DbError> {
+    return tryMutation("renameAnalysis", (conn) => {
+        return conn.query("UPDATE analyses SET name = ?, slug = ?, updated_at = ? WHERE id = ?").run(name, slug, Date.now(), id).changes;
+    });
+}
+
+/** Updates a project's mutable fields (name, description, tags). Returns rows changed — `0` when no such project exists. */
+export function updateProject(id: string, opts: { name: Str256; description: string | null; tags: string[] }): Result<number, DbError> {
+    return tryMutation("updateProject", (conn) => {
+        return conn
+            .query("UPDATE projects SET name = ?, description = ?, tags = ?, updated_at = ? WHERE id = ?")
+            .run(opts.name, opts.description, opts.tags.join(","), Date.now(), id).changes;
+    });
+}
+
 /**
  * Rewrites the path prefix of every raw (anchor-less) input under a moved tree
  * (`fromPrefix` → `toPrefix`). Anchor-relative inputs already ride their anchor's reconciled

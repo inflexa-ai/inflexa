@@ -110,6 +110,41 @@ export const migrations: Migration[] = [
             ALTER TABLE analyses ADD COLUMN provenance_prev_chain_hash TEXT;
         `,
     },
+    {
+        // The analysis_inputs table had no uniqueness constraint, allowing duplicate rows for the
+        // same (analysis_id, path, anchor_id) tuple. The deletion query already keys on this
+        // triple, so a UNIQUE index aligns the schema with the application's identity model.
+        // anchor_id is nullable (raw absolute paths have no anchor), and SQLite treats each NULL
+        // as distinct in UNIQUE constraints — so two rows with the same (analysis_id, path, NULL)
+        // would NOT collide. We use a partial + expression index pair to cover both cases:
+        // one for non-null anchor_id, one for null anchor_id.
+        version: 5,
+        up: `
+            CREATE UNIQUE INDEX uq_analysis_inputs_anchored
+                ON analysis_inputs(analysis_id, path, anchor_id)
+                WHERE anchor_id IS NOT NULL;
+            CREATE UNIQUE INDEX uq_analysis_inputs_unanchored
+                ON analysis_inputs(analysis_id, path)
+                WHERE anchor_id IS NULL;
+        `,
+    },
+    {
+        // The sessions FK to analyses originally had no ON DELETE CASCADE, so deleting an
+        // analysis left orphaned sessions. SQLite cannot ALTER a FK constraint — the only
+        // option is to recreate the table. Indexes on sessions are rebuilt automatically.
+        version: 6,
+        up: `
+            CREATE TABLE sessions_new (
+                id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                analysis_id TEXT REFERENCES analyses(id) ON DELETE CASCADE
+            );
+            INSERT INTO sessions_new SELECT * FROM sessions;
+            DROP TABLE sessions;
+            ALTER TABLE sessions_new RENAME TO sessions;
+            CREATE INDEX idx_sessions_analysis ON sessions(analysis_id);
+        `,
+    },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): Result<void, DbError> {
