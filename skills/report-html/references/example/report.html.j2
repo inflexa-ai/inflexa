@@ -1,0 +1,202 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Gene Expression Analysis{% endblock %}
+
+{% block sidebar %}
+  {% set sidebar_items = [
+    {"id": "overview",   "label": "Overview"},
+    {"id": "volcano",    "label": "Volcano Plot"},
+    {"id": "top-genes",  "label": "Top DEGs"}
+  ] %}
+  {% set sidebar_brand_label = "DEG" %}
+  {% set sidebar_footer = "GSE200209 · 2026" %}
+  {% include "components/sidebar.html.j2" %}
+{% endblock %}
+
+{% block header_eyebrow %}
+<p class="font-mono text-xs font-semibold tracking-widest uppercase text-primary-500">DIFFERENTIAL EXPRESSION · NSCLC</p>
+{% endblock %}
+{% block header_title %}Differential Gene Expression Analysis{% endblock %}
+{% block header_subtitle %}
+<p class="text-lg text-slate-600 leading-relaxed">Fluoxetine-treated A549 and H1299 cells profiled against vehicle controls; 12,847 genes assayed, 629 differentially expressed at FDR &lt; 0.05.</p>
+<p class="mt-3 font-mono text-xs text-slate-400">GSE200209 · A549 + H1299 · 24 h treatment · n=6 per arm</p>
+{% endblock %}
+
+{% block content %}
+
+<!-- Overview Section (white, dots) -->
+<section id="overview" class="bg-white py-12 md:py-16 relative texture-dots texture-noise">
+  <div class="mx-auto max-w-[1600px] px-6 md:px-8 lg:px-12">
+    <div class="fade-in">
+      {% set section_label = "OVERVIEW" %}
+      {% set section_title = "Expression Analysis Summary" %}
+      {% set section_description = "Summary of differential expression analysis results from fluoxetine-treated NSCLC cell lines." %}
+      {% include "components/section-header.html.j2" %}
+    </div>
+
+    <!-- Stats Row -->
+    <div class="fade-in grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8" data-delay="100">
+      {% set stat_value = "12,847" %}
+      {% set stat_label = "Total Genes" %}
+      {% set stat_detail = "after filtering" %}
+      {% set stat_color = "primary" %}
+      {% include "components/stat-card.html.j2" %}
+
+      {% set stat_value = "342" %}
+      {% set stat_label = "Upregulated" %}
+      {% set stat_detail = "padj < 0.05, log2FC > 1" %}
+      {% set stat_color = "red" %}
+      {% include "components/stat-card.html.j2" %}
+
+      {% set stat_value = "287" %}
+      {% set stat_label = "Downregulated" %}
+      {% set stat_detail = "padj < 0.05, log2FC < -1" %}
+      {% set stat_color = "green" %}
+      {% include "components/stat-card.html.j2" %}
+
+      {% set stat_value = "4.8%" %}
+      {% set stat_label = "DEG Rate" %}
+      {% set stat_detail = "629 / 12,847" %}
+      {% set stat_color = "purple" %}
+      {% include "components/stat-card.html.j2" %}
+    </div>
+
+    <!-- Insight Box -->
+    <div class="fade-in" data-delay="200">
+      {% set insight_title = "Key Finding" %}
+      {% set insight_text = "Fluoxetine treatment induces significant ER stress response, with DDIT3 and ATF4 among the top upregulated genes (log2FC > 2.5). The unfolded protein response (UPR) pathway shows coordinated activation across multiple effectors, suggesting a potential mechanism for NSCLC cell growth inhibition." %}
+      {% set insight_color = "purple" %}
+      {% include "components/insight-box.html.j2" %}
+
+      <div class="mt-4 flex gap-2 items-center">
+        <span class="font-mono text-[11px] text-slate-400 uppercase tracking-wider">Evidence</span>
+        {% set badge_text = "High Confidence" %}
+        {% set badge_level = "high" %}
+        {% include "components/badge.html.j2" %}
+
+        {% set badge_text = "3 Studies" %}
+        {% set badge_level = "primary" %}
+        {% include "components/badge.html.j2" %}
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Volcano Plot Section (slate-50, grid) -->
+<section id="volcano" class="bg-slate-50 py-12 md:py-16 relative texture-grid texture-noise">
+  <div class="mx-auto max-w-[1600px] px-6 md:px-8 lg:px-12">
+    <div class="fade-in">
+      {% set section_label = "VISUALIZATION" %}
+      {% set section_title = "Volcano Plot" %}
+      {% set section_description = "Log2 fold change vs. statistical significance for all genes." %}
+      {% include "components/section-header.html.j2" %}
+    </div>
+
+    <div class="fade-in" data-delay="100">
+      {% set chart_id = "volcano-plot" %}
+      {% set chart_title = "Volcano Plot" %}
+      {% set chart_subtitle = "Red = upregulated, Blue = downregulated, Gray = not significant" %}
+      {% set chart_height = "500px" %}
+      {% include "components/chart-container.html.j2" %}
+    </div>
+  </div>
+</section>
+
+<!-- Top DEGs Table Section (white, dots) -->
+<section id="top-genes" class="bg-white py-12 md:py-16 relative texture-dots texture-noise">
+  <div class="mx-auto max-w-[1600px] px-6 md:px-8 lg:px-12">
+    <div class="fade-in">
+      {% set section_label = "DATA" %}
+      {% set section_title = "Top Differentially Expressed Genes" %}
+      {% set section_description = "Ranked by adjusted p-value. Click column headers to sort." %}
+      {% include "components/section-header.html.j2" %}
+    </div>
+
+    <div class="fade-in" data-delay="100">
+      {% set table_id = "deg-table" %}
+      {% set table_headers = [
+        {"label": "Gene", "sort_type": "string"},
+        {"label": "log2FC", "sort_type": "number"},
+        {"label": "padj", "sort_type": "number"},
+        {"label": "baseMean", "sort_type": "number"},
+        {"label": "Direction", "sort_type": "string"}
+      ] %}
+      {% set table_rows = [
+        ["<span class='gene'>DDIT3</span>", "3.42", "1.2e-15", "892", "<span class='text-red-500 font-medium'>Up</span>"],
+        ["<span class='gene'>ATF4</span>", "2.87", "4.5e-12", "1204", "<span class='text-red-500 font-medium'>Up</span>"],
+        ["<span class='gene'>HSPA5</span>", "2.31", "2.1e-10", "3421", "<span class='text-red-500 font-medium'>Up</span>"],
+        ["<span class='gene'>CCND1</span>", "-2.15", "8.7e-09", "2156", "<span class='text-primary-500 font-medium'>Down</span>"],
+        ["<span class='gene'>MYC</span>", "-1.94", "3.2e-07", "1876", "<span class='text-primary-500 font-medium'>Down</span>"]
+      ] %}
+      {% include "components/data-table.html.j2" %}
+    </div>
+
+    <!-- Block Progress Bar Example -->
+    <div class="fade-in mt-8" data-delay="200">
+      <div class="corner-accents border border-slate-200 bg-white p-6 hover:shadow-md transition-shadow duration-200">
+        <div class="font-mono text-xs font-semibold uppercase tracking-widest text-primary-500 mb-4">Pathway Scores</div>
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-700">UPR / ER Stress</span>
+            <span class="block-progress"><span class="filled-high">████████</span><span class="empty">░░</span> <span class="score">0.87</span></span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-700">Apoptosis</span>
+            <span class="block-progress"><span class="filled-mid">██████</span><span class="empty">░░░░</span> <span class="score">0.64</span></span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-700">Cell Cycle</span>
+            <span class="block-progress"><span class="filled-low">████</span><span class="empty">░░░░░░</span> <span class="score">0.41</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+{% endblock %}
+
+{% block footer_left %}Generated {{ "now" }} — GSE200209{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('inflexa-theme-ready', () => {
+    const chart = echarts.init(document.getElementById('volcano-plot'), 'inflexa');
+
+    // Load volcano data from CSV
+    fetch('assets/volcano-data.csv')
+      .then(r => r.text())
+      .then(text => {
+        const lines = text.trim().split('\n');
+        const data = lines.slice(1).map(line => {
+          const [gene, log2fc, padj] = line.split(',');
+          const fc = parseFloat(log2fc);
+          const pval = -Math.log10(parseFloat(padj));
+          const sig = Math.abs(fc) > 1 && parseFloat(padj) < 0.05;
+          return { value: [fc, pval], name: gene, itemStyle: {
+            color: sig ? (fc > 0 ? '#ef4444' : '#576dea') : '#94a3b8',
+            opacity: sig ? 0.8 : 0.3
+          }};
+        });
+
+        chart.setOption({
+          xAxis: { name: 'log2 Fold Change', nameLocation: 'center', nameGap: 30 },
+          yAxis: { name: '-log10(padj)', nameLocation: 'center', nameGap: 45 },
+          tooltip: {
+            formatter: p => `<strong>${p.data.name}</strong><br>log2FC: ${p.data.value[0].toFixed(2)}<br>-log10(padj): ${p.data.value[1].toFixed(2)}`
+          },
+          series: [{
+            type: 'scatter',
+            data: data,
+            symbolSize: 5,
+            emphasis: { itemStyle: { borderColor: '#576dea', borderWidth: 1 } }
+          }],
+          dataZoom: [
+            { type: 'inside', xAxisIndex: 0 },
+            { type: 'inside', yAxisIndex: 0 }
+          ]
+        });
+      });
+  });
+</script>
+{% endblock %}

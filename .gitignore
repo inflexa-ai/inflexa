@@ -13,6 +13,18 @@ dist
 dist-ssr
 *.local
 
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Guard against tsc emitting alongside source. the harness builds to harness/dist (ignored
+# above); these catch an accidental in-place emit. Scoped to core, NOT blanket
+# **/src — cli/src ships a hand-written assets.d.ts that must stay tracked.
+harness/src/**/*.js
+harness/src/**/*.d.ts
+
+# sandbox-server Go binary: built into the image, never committed
+images/sandbox-base/server/sandbox-server
+
 # bun is the package manager; npm/yarn lockfiles must not be committed
 package-lock.json
 yarn.lock

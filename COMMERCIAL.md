@@ -19,7 +19,7 @@ Everything you need to do real, auditable analysis locally:
 - **Full provenance and lineage**, stored locally in SQLite, with reproduction and export.
 - **Docker sandbox execution** of all generated code.
 - **Local report / dossier generation.**
-- **Bring-your-own-key to any supported LLM provider, plus local models** - so you can run end-to-end offline if you choose. (See `docs/privacy.md` for exactly what, if anything, leaves your machine in each mode.)
+- **Bring-your-own-key to any supported LLM provider, plus local models** - so you can run end-to-end offline if you choose.
 - **Single-user, single-machine** operation with no account required.
 
 ## What the commercial platform adds

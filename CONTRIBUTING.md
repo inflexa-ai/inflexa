@@ -37,15 +37,15 @@ If you're not sure where to start, look for issues labeled `good first issue` or
 
 ```bash
 git clone https://github.com/inflexa-ai/inf-cli.git
-cd inf-cli
+cd inf-cli/cli
 bun install
 bun run build
 
-# sanity-check your environment - checks Docker, architecture, disk, runtime
-bun run dev doctor
+# sanity-check your environment - installs, authenticates, and starts the model proxy (Docker/Podman)
+bun run dev setup
 ```
 
-If `doctor` or `demo` fails on a clean setup, that's itself a high-value bug report. Please open an issue with your OS, architecture, Docker version, and the full output.
+If `setup` fails on a clean setup, that's itself a high-value bug report. Please open an issue with your OS, architecture, Docker version, and the full output.
 
 ## Making changes
 
@@ -91,7 +91,7 @@ These areas get **extra scrutiny**, because Inflexa runs on real biological data
 
 - **Analytical methods:** be explicit about the method, cite the relevant literature where appropriate, and make sure tool/library versions are pinned. Scientific correctness is a review criterion, not an afterthought.
 - **Sandbox:** preserve the security model (default no network egress, working-directory-only mounts, resource limits). Any change that loosens isolation must be called out explicitly and justified.
-- **Provenance:** changes to what is recorded, or to the SQLite schema, must keep prior analyses reproducible (or document the expected variance) and update `docs/provenance.md`.
+- **Provenance:** changes to what is recorded, or to the SQLite schema, must keep prior analyses reproducible (or document the expected variance).
 
 When in doubt, open a design proposal first.
 

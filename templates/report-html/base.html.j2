@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Report{% endblock %}</title>
+
+  <!-- Tailwind CSS v4 (Play CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+
+  <!-- ECharts -->
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+
+  <!-- Fonts: Space Grotesk (headings/body) + IBM Plex Mono (data/labels/genes) -->
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource-variable/space-grotesk@5.1.1/index.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource-variable/ibm-plex-mono@5.1.1/index.css" rel="stylesheet">
+
+  <!-- Tailwind v4 theme -->
+  <style type="text/tailwindcss">
+    @theme {
+      --color-primary-50: #f0f1fe;
+      --color-primary-100: #dde0fc;
+      --color-primary-200: #bcc2f9;
+      --color-primary-300: #9ba5f5;
+      --color-primary-400: #7987f0;
+      --color-primary-500: #576dea;
+      --color-primary-600: #4458d4;
+      --color-primary-700: #3545b0;
+      --font-sans: 'Space Grotesk Variable', system-ui, sans-serif;
+      --font-mono: 'IBM Plex Mono Variable', ui-monospace, monospace;
+    }
+  </style>
+
+  <style>
+    /* ── Base ──────────────────────────────────────── */
+    body {
+      font-family: 'Space Grotesk Variable', system-ui, sans-serif;
+      background: #ffffff;
+      color: #475569;
+    }
+    .font-mono, code, .gene {
+      font-family: 'IBM Plex Mono Variable', ui-monospace, monospace;
+    }
+
+    /* ── Corner Accent Cards ──────────────────────── */
+    .corner-accents {
+      position: relative;
+    }
+    .corner-accents::before,
+    .corner-accents::after {
+      content: '';
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      transition: all 0.3s ease;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .corner-accents::before {
+      top: -1px;
+      left: -1px;
+      border-top: 2px solid #bcc2f9;
+      border-left: 2px solid #bcc2f9;
+    }
+    .corner-accents::after {
+      bottom: -1px;
+      right: -1px;
+      border-bottom: 2px solid #bcc2f9;
+      border-right: 2px solid #bcc2f9;
+    }
+    .corner-accents:hover::before,
+    .corner-accents:hover::after {
+      width: 28px;
+      height: 28px;
+      border-color: #576dea;
+    }
+
+    /* ── Window Chrome Panel ──────────────────────── */
+    .window-chrome .chrome-dots span {
+      transition: background-color 0.3s ease;
+    }
+    .window-chrome:hover .chrome-dots .dot-1 { background-color: #fb7185; }
+    .window-chrome:hover .chrome-dots .dot-2 { background-color: #fbbf24; }
+    .window-chrome:hover .chrome-dots .dot-3 { background-color: #4ade80; }
+
+    /* ── Terminal Card ────────────────────────────── */
+    .terminal-card {
+      position: relative;
+      overflow: hidden;
+    }
+    .terminal-card::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(148, 163, 184, 0.03) 2px,
+        rgba(148, 163, 184, 0.03) 4px
+      );
+      transition: opacity 0.3s ease;
+    }
+    .terminal-card:hover::after {
+      opacity: 1;
+    }
+
+    /* ── Block Progress Bar ───────────────────────── */
+    .block-progress {
+      font-family: 'IBM Plex Mono Variable', ui-monospace, monospace;
+      font-size: 14px;
+    }
+    .block-progress .filled-high { color: #576dea; }
+    .block-progress .filled-mid  { color: #f59e0b; }
+    .block-progress .filled-low  { color: #f43f5e; }
+    .block-progress .empty       { color: #e2e8f0; }
+
+    /* ── Section Textures ─────────────────────────── */
+    .texture-dots,
+    .texture-grid,
+    .texture-noise {
+      position: relative;
+    }
+    .texture-dots > *,
+    .texture-grid > *,
+    .texture-noise > * {
+      position: relative;
+      z-index: 1;
+    }
+    .texture-dots::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background: rgba(148, 163, 184, 0.2);
+      -webkit-mask-image:
+        radial-gradient(ellipse 80% 60% at 50% 50%, black 0%, transparent 70%),
+        radial-gradient(circle 0.75px at center, white 100%, transparent 100%);
+      -webkit-mask-composite: source-in;
+      mask-image:
+        radial-gradient(ellipse 80% 60% at 50% 50%, black 0%, transparent 70%),
+        radial-gradient(circle 0.75px at center, white 100%, transparent 100%);
+      mask-composite: intersect;
+      -webkit-mask-size: 100% 100%, 6px 6px;
+      mask-size: 100% 100%, 6px 6px;
+    }
+    .texture-grid::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background-image:
+        linear-gradient(to right, transparent calc(100% - 1px), rgba(148, 163, 184, 0.15) 100%),
+        linear-gradient(to bottom, transparent calc(100% - 1px), rgba(148, 163, 184, 0.15) 100%);
+      background-size: 32px 32px;
+      -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, black 0%, transparent 70%);
+      mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, black 0%, transparent 70%);
+    }
+    .texture-noise::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E");
+      background-size: 200px 200px;
+    }
+
+    /* ── Fade-In Animation ────────────────────────── */
+    .fade-in {
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.7s ease-out, transform 0.7s ease-out;
+    }
+    .fade-in-visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ── Sidebar ──────────────────────────────────── */
+    /* When a sidebar is rendered, shift the rest of the page right on lg+ */
+    @media (min-width: 1024px) {
+      body:has(#report-sidebar) { padding-left: 15rem; }
+    }
+    .sidebar-link {
+      border-left: 2px solid transparent;
+    }
+    .sidebar-link.active {
+      color: #576dea;
+      background-color: #f0f1fe;
+      border-left-color: #576dea;
+      font-weight: 600;
+    }
+    .sidebar-link.active .text-slate-300 { color: #576dea; }
+
+    /* ── Scrollbar ────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+    /* ── Animations ───────────────────────────────── */
+    @keyframes blink { 50% { opacity: 0; } }
+    .animate-blink { animation: blink 1s step-end infinite; }
+
+    /* ── Reduced Motion ───────────────────────────── */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    /* ── Print ────────────────────────────────────── */
+    @media print {
+      footer { background: white !important; color: #334155 !important; }
+      .no-print { display: none !important; }
+      .fade-in { opacity: 1 !important; transform: none !important; }
+      .texture-dots::before,
+      .texture-grid::before,
+      .texture-noise::after { display: none !important; }
+    }
+  </style>
+</head>
+<body class="antialiased font-sans">
+
+  {% block sidebar %}{% endblock %}
+
+  <!-- Hero -->
+  <header id="report-hero" class="bg-white relative texture-noise">
+    <div class="mx-auto max-w-[1600px] px-6 md:px-8 lg:px-12 pt-12 md:pt-20 pb-10 md:pb-14">
+      {% block header_eyebrow %}{% endblock %}
+      <h1 class="mt-3 text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900 leading-[1.05] max-w-4xl">
+        {% block header_title %}{% endblock %}
+      </h1>
+      <div class="mt-5 max-w-3xl">
+        {% block header_subtitle %}{% endblock %}
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- Footer -->
+  <footer class="bg-slate-900">
+    <div class="mx-auto max-w-[1600px] px-6 md:px-8 lg:px-12 py-8">
+      <div class="flex items-center justify-between">
+        <div class="text-sm text-slate-400">{% block footer_left %}{% endblock %}</div>
+        <div class="font-mono text-[11px] tracking-wider text-slate-500">Powered by Inflexa Cortex</div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Built-in: ECharts theme registration -->
+  <script>
+    echarts.registerTheme('inflexa', {{ echarts_theme | safe }});
+    // Page scripts wire up charts after this runs, so expose a sentinel for
+    // forward-compat callers and defer event dispatch until DOMContentLoaded
+    // so document-level listeners registered later still fire.
+    window.__inflexaThemeReady = true;
+    window.onInflexaThemeReady = function (cb) {
+      if (window.__inflexaThemeReady) Promise.resolve().then(cb);
+      else document.addEventListener('inflexa-theme-ready', cb, { once: true });
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () {
+        document.dispatchEvent(new Event('inflexa-theme-ready'));
+      });
+    } else {
+      setTimeout(function () {
+        document.dispatchEvent(new Event('inflexa-theme-ready'));
+      }, 0);
+    }
+  </script>
+
+  <!-- Built-in: Sortable Tables -->
+  <script>
+    document.querySelectorAll('table[data-sortable]').forEach(table => {
+      table.querySelectorAll('th[data-sort]').forEach(header => {
+        header.style.cursor = 'pointer';
+        header.addEventListener('click', () => {
+          const tbody = table.querySelector('tbody');
+          const rows = Array.from(tbody.querySelectorAll('tr'));
+          const asc = header.dataset.sortDir !== 'asc';
+          const type = header.dataset.sort || 'string';
+          const idx = Array.from(header.parentElement.children).indexOf(header);
+          table.querySelectorAll('th[data-sort]').forEach(h => { delete h.dataset.sortDir; });
+          header.dataset.sortDir = asc ? 'asc' : 'desc';
+          rows.sort((a, b) => {
+            let av = a.children[idx]?.dataset.value ?? a.children[idx]?.textContent.trim() ?? '';
+            let bv = b.children[idx]?.dataset.value ?? b.children[idx]?.textContent.trim() ?? '';
+            if (type === 'number') { av = parseFloat(av) || 0; bv = parseFloat(bv) || 0; return asc ? av - bv : bv - av; }
+            return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+          });
+          rows.forEach(r => tbody.appendChild(r));
+        });
+      });
+    });
+    window.addEventListener('resize', () => {
+      document.querySelectorAll('[data-echarts-id]').forEach(el => {
+        const c = echarts.getInstanceByDom(el); if (c) c.resize();
+      });
+    });
+  </script>
+
+  <!-- Built-in: Fade-In Observer -->
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            const delay = parseInt(entry.target.dataset.delay || '0');
+            setTimeout(() => entry.target.classList.add('fade-in-visible'), delay);
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.08 });
+      document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+    });
+  </script>
+
+  <!-- Built-in: Sidebar active-section tracking + mobile toggle -->
+  <script>
+    (function () {
+      const sidebar = document.getElementById('report-sidebar');
+      if (!sidebar) return;
+      const links = Array.from(sidebar.querySelectorAll('[data-sidebar-link]'));
+      const linkMap = new Map();
+      const sectionIds = [];
+      links.forEach(l => {
+        const href = l.getAttribute('href') || '';
+        if (href.startsWith('#')) {
+          const id = href.slice(1);
+          linkMap.set(id, l);
+          sectionIds.push(id);
+        }
+      });
+      function setActive(id) {
+        links.forEach(l => l.classList.remove('active'));
+        const link = linkMap.get(id);
+        if (link) link.classList.add('active');
+      }
+      if (sectionIds.length) setActive(sectionIds[0]);
+      const observer = new IntersectionObserver((entries) => {
+        const visible = entries
+          .filter(e => e.isIntersecting)
+          .map(e => ({ id: e.target.id, top: e.boundingClientRect.top }))
+          .sort((a, b) => a.top - b.top);
+        if (visible.length) setActive(visible[0].id);
+      }, { rootMargin: '-15% 0px -70% 0px', threshold: 0 });
+      sectionIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) observer.observe(el);
+      });
+
+      const toggle = document.getElementById('sidebar-mobile-toggle');
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          const open = sidebar.classList.toggle('translate-x-0');
+          sidebar.classList.toggle('-translate-x-full', !open);
+          toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        });
+        links.forEach(l => l.addEventListener('click', () => {
+          if (window.innerWidth < 1024) {
+            sidebar.classList.add('-translate-x-full');
+            sidebar.classList.remove('translate-x-0');
+            toggle.setAttribute('aria-expanded', 'false');
+          }
+        }));
+      }
+    })();
+  </script>
+
+  <!-- Page-specific scripts -->
+  {% block scripts %}{% endblock %}
+
+</body>
+</html>

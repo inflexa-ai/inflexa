@@ -34,7 +34,7 @@ It is built for scientists, bioinformaticians, and engineers who need analysis t
 4. Inputs, code, parameters, and outputs are recorded as a provenance graph in SQLite.
 5. You inspect the lineage, export it, and reproduce the run later.
 
-See [`docs/sandbox.md`](./docs/sandbox.md) for the execution model, [`docs/provenance.md`](./docs/provenance.md) for what gets recorded, and [`docs/privacy.md`](./docs/privacy.md) for exactly what, if anything, leaves your machine in each mode.
+The execution model, provenance graph, and sandbox protocol are implemented in [`harness/`](./harness), the host-agnostic agent harness — see [`harness/CONTEXT.md`](./harness/CONTEXT.md) and the design decisions, which live as specs in [`harness/openspec/specs/`](./harness/openspec/specs/).
 
 ## Requirements
 
@@ -43,15 +43,15 @@ See [`docs/sandbox.md`](./docs/sandbox.md) for the execution model, [`docs/prove
 
 ## Quick start
 
-Run from source:
+The CLI lives in [`cli/`](./cli). Run from source:
 
 ```bash
 git clone https://github.com/inflexa-ai/inf-cli.git
-cd inf-cli
+cd inf-cli/cli
 bun install
 
 bun run dev                 # launch the TUI
-bun run dev doctor          # check Docker, architecture, disk, runtime
+bun run dev setup           # install, authenticate, and start the model proxy
 ```
 
 Build a standalone `inflexa` binary:
@@ -60,11 +60,25 @@ Build a standalone `inflexa` binary:
 bun run build               # compiles dist/inflexa-<os>-<arch>
 ```
 
+See [`cli/README.md`](./cli/README.md) for the full CLI developer guide.
+
 ## Configuration
 
 Inflexa supports bring-your-own-key for supported LLM providers, as well as local models. Run `inflexa config` (or `bun run dev config`) to view and edit your configuration.
 
 <!-- TODO: document supported providers and how to set API keys. -->
+
+## Repository layout
+
+This repository is a monorepo of independent subsystems — work inside the one you are changing; each has its own dependencies and tooling.
+
+| Directory | What it is |
+|-|-|
+| [`cli/`](./cli) | The local-first TUI/CLI — this product. SQLite storage, auth, the chat UI. Start here to run from source. |
+| [`harness/`](./harness) | `@inflexa-ai/harness`, the host-agnostic agent harness: agent loop, durable workflows, sandbox protocol, providers. |
+| [`skills/`](./skills) | Shared bioinformatics skill packs the agent loads at runtime. |
+| [`templates/`](./templates) | Report-rendering templates. |
+| [`images/sandbox-base/`](./images/sandbox-base) | The sandbox Docker image and its Go execution server. |
 
 ## Open source and commercial
 
