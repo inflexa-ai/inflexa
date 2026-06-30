@@ -1,26 +1,26 @@
 import { Show } from "solid-js";
 import type { JSX } from "solid-js";
 
-import { theme } from "../theme.ts";
-
-/** A box dimension: a cell count, `"auto"`, or a percentage string — the subset opentui accepts. */
-type Dimension = number | "auto" | `${number}%`;
+import { dialogSize, type DialogSize } from "../../../lib/design_system.ts";
+import { theme } from "../../theme.ts";
 
 /**
  * The shared chrome for every modal dialog: a bordered panel painted with the panel
- * background, an accent-colored title, and an optional muted footer-hint line rendered as
+ * background, an optional accent-colored title, and an optional muted footer-hint line rendered as
  * the last row. Pure presentation — it owns NO keyboard or focus, because list navigation,
  * input submit, and scroll differ per widget, so each composing dialog declares its own keymap
  * layer (`useBindings`) and focus-on-mount. Callers supply only the body via `children` plus the
  * panel size and footer text.
+ *
+ * Sizing comes from the {@link dialogSize} design-system constant — no raw width/height escape
+ * hatches. The three tiers (`md`/`lg`/`xl`) cover every dialog shape: content-height prompts,
+ * tall pickers, and full-screen showcases.
  */
 export function DialogPanel(props: {
-    /** Panel title, rendered in the border in the accent color. */
-    title: string;
-    /** Panel width — a percentage string (e.g. `"70%"`) or a cell count. */
-    width: Dimension;
-    /** Panel height; omit to size to content (the short prompt panel). */
-    height?: Dimension;
+    /** Panel title, rendered in the border in the accent color. Optional — omit for an untitled bordered panel. */
+    title?: string;
+    /** Named size preset from the design system — `md` (prompt), `lg` (picker), or `xl` (showcase). */
+    size: DialogSize;
     /** When true, adds top+bottom padding of 1 — breathing room for short panels. */
     padY?: boolean;
     /** The muted hint line shown as the last row (e.g. `"↑/↓ move · Enter select · Esc cancel"`). */
@@ -28,16 +28,18 @@ export function DialogPanel(props: {
     /** The dialog body. */
     children: JSX.Element;
 }): JSX.Element {
+    const dims = () => dialogSize[props.size];
+
     return (
         <box
-            width={props.width}
-            height={props.height}
+            width={dims().width}
+            height={dims().height}
             flexDirection="column"
             backgroundColor={theme().bgRaised}
             border
             borderColor={theme().borderFocus}
             title={props.title}
-            titleColor={theme().accent}
+            titleColor={props.title ? theme().accent : undefined}
             paddingLeft={1}
             paddingRight={1}
             paddingTop={props.padY ? 1 : undefined}

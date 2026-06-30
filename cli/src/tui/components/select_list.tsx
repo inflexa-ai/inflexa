@@ -7,7 +7,7 @@ import { rankBy } from "../../lib/fuzzy.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
 import { useBindings, KEYS, chordLabel } from "../keymap.ts";
-import { DialogPanel } from "./dialog_panel.tsx";
+import { DialogPanel } from "./dialog/dialog_panel.tsx";
 import { Bold } from "./emphasis.tsx";
 
 // The reusable searchable list: a single fuzzy-filtered, keyboard-navigable, grouped picker
@@ -116,8 +116,7 @@ export function SelectList<T>(props: {
     return (
         <DialogPanel
             title={props.title}
-            width="70%"
-            height="60%"
+            size="lg"
             footer={`${chordLabel(KEYS.up)}/${chordLabel(KEYS.down)} move ${GLYPHS.middot} ${chordLabel(KEYS.enter)} select ${GLYPHS.middot} ${chordLabel(KEYS.escape)} cancel`}
         >
             <input

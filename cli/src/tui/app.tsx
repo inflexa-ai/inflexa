@@ -1,6 +1,4 @@
-import { createSignal, createEffect, Show, onCleanup } from "solid-js";
-import type { JSX } from "solid-js";
-import { createStore, produce } from "solid-js/store";
+import { createSignal, Show } from "solid-js";
 import type { Renderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 
@@ -13,7 +11,8 @@ import * as conversation from "./hooks/conversation.ts";
 import { currentNotice, notify } from "./hooks/notice.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
-import { useKeymapRoot, useBindings, pushMode, MODE_BASE, MODE_MODAL, resolveKeybind, keybindLabel, leaderSeq, KEYS } from "./keymap.ts";
+import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./components/dialog/dialog_host.tsx";
+import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, leaderSeq, KEYS } from "./keymap.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { Chat } from "./components/chat.tsx";
 import { InputBar } from "./layout/input_bar.tsx";
@@ -39,21 +38,9 @@ export function App(props: AppProps) {
     // events (wired in onTextareaRef) keep this in sync however focus changes — keyboard or mouse.
     const [inputFocused, setInputFocused] = createSignal(true);
 
-    // Dialog host: a stack of render thunks; only the top one is mounted (see the render below).
-    const [dialogs, setDialogs] = createStore<Array<() => JSX.Element>>([]);
-    const dialogOpen = (): boolean => dialogs.length > 0;
-    const dialogTop = (): (() => JSX.Element) | null => (dialogs.length > 0 ? dialogs[dialogs.length - 1]! : null);
-
     let textareaRef: TextareaRenderable | null = null;
     let scrollboxRef: ScrollBoxRenderable | null = null;
 
-    // In-app capabilities that close over App's local state, handed to the workspace store below.
-    function openDialog(render: () => JSX.Element): void {
-        setDialogs(produce((d) => d.push(render)));
-    }
-    function closeDialog(): void {
-        setDialogs(produce((d) => d.pop()));
-    }
     // Quit cleanly: destroy() restores the terminal (mouse tracking, alternate screen, cooked mode)
     // before exit — process.exit() alone skips OpenTUI's cleanup and leaves the shell broken.
     async function quit(): Promise<void> {
@@ -72,8 +59,8 @@ export function App(props: AppProps) {
         analysis: props.analysis,
         sessionId: props.sessionId,
         workingDir: props.workingDir,
-        openDialog,
-        closeDialog,
+        openDialog: dialogPush,
+        closeDialog: dialogClose,
         quit,
     });
     /* eslint-enable solid/reactivity */
@@ -90,8 +77,17 @@ export function App(props: AppProps) {
             {
                 chord: resolveKeybind("app.abort"),
                 run: () => {
-                    if (dialogOpen()) {
-                        closeDialog();
+                    if (dialogIsOpen()) {
+                        // When text is selected inside a dialog, ctrl+c copies instead of dismissing —
+                        // matches OpenCode's selection-aware behavior.
+                        const selected = renderer.getSelection()?.getSelectedText();
+                        if (selected) {
+                            void writeClipboard(selected);
+                            notify({ kind: "info", text: "Copied to clipboard" });
+                            renderer.clearSelection();
+                            return;
+                        }
+                        dialogClose();
                         return;
                     }
                     if (chatStatus() === "busy") {
@@ -146,11 +142,11 @@ export function App(props: AppProps) {
     useBindings(() => ({
         mode: MODE_BASE,
         bindings: [
-            { chord: resolveKeybind("app.command-palette"), run: () => openDialog(() => <CommandPalette commands={commands} />) },
+            { chord: resolveKeybind("app.command-palette"), run: () => dialogPush(() => <CommandPalette commands={commands} />) },
             { chord: resolveKeybind("app.toggle-sidebar"), run: () => setSidebarOpen((open) => !open) },
             {
                 chord: leaderSeq("k"),
-                run: () => openDialog(() => <CommandPalette commands={commands} />),
+                run: () => dialogPush(() => <CommandPalette commands={commands} />),
                 desc: "Command palette",
                 group: "App",
             },
@@ -206,15 +202,6 @@ export function App(props: AppProps) {
         ],
     }));
 
-    // Push MODE_MODAL while any dialog is open and pop it when the stack empties (or App unmounts).
-    // Re-runs on each length change: a nested open pops the prior push then adds one, so exactly
-    // one modal entry is ever on the stack.
-    createEffect(() => {
-        if (dialogs.length === 0) return;
-        const pop = pushMode(MODE_MODAL);
-        onCleanup(pop);
-    });
-
     // TODO(robustness): minimal slash-command stub — only quit aliases for now. Replace with a
     // proper registry (parser, help listing, extensible command map) when the slash system lands.
     const QUIT_ALIASES = new Set(["quit", "exit", "q", "bye", "ciao"]);
@@ -245,12 +232,6 @@ export function App(props: AppProps) {
         // its bus events drive the stream, so App only hands off the user text.
         await conversation.send({ sessionId: workspace.sessionId, userText: text });
     }
-
-    // Restore focus to the chat input whenever the last dialog closes (a dialog's input grabs
-    // the single focus slot; nothing returns it automatically).
-    createEffect(() => {
-        if (!dialogOpen()) queueMicrotask(() => textareaRef?.focus());
-    });
 
     const statusState = (): { text: string; tone: "success" | "warn" | "error" } =>
         chatStatus() === "busy"
@@ -332,19 +313,9 @@ export function App(props: AppProps) {
                 Base-mode only, so it never overlaps a modal (a dialog suppresses base bindings). */}
                 <WhichKey />
 
-                {/* Dialog host: the top modal floats above the chat as a full-screen absolute
-                overlay. It is a direct child of the full-screen root box (NOT a Portal — a
-                Portal's wrapper box has no size, so absolute insets would collapse it to the
-                bottom). zIndex lifts it above the chat siblings; the scrim dims them; the
-                in-flow child is centered. Only the top dialog is mounted. */}
-                <Show when={dialogTop()} keyed>
-                    {(render: () => JSX.Element) => (
-                        <box position="absolute" top={0} left={0} right={0} bottom={0} zIndex={zIndex.modal} alignItems="center" justifyContent="center">
-                            <box position="absolute" top={0} left={0} right={0} bottom={0} backgroundColor={theme().bg} opacity={0.92} />
-                            {render()}
-                        </box>
-                    )}
-                </Show>
+                {/* Dialog host: the module-level stack + overlay, extracted to dialog_host.tsx.
+                A direct child of the full-screen root box (not a Portal — see dialog_host). */}
+                <DialogOverlay />
             </box>
         </WorkspaceContext.Provider>
     );

@@ -665,6 +665,25 @@ export type Space = keyof typeof space;
 /** A border-role key (`panel` | `overlay` | `focus` | `danger`). */
 export type Stroke = keyof typeof stroke;
 
+/**
+ * Named dialog size presets — the single source of truth for dialog panel dimensions,
+ * the way `space` is for padding and `stroke` is for borders. OpenCode defines three
+ * fixed-column widths (60/88/116); we use percentages for terminal responsiveness but
+ * the same three-tier structure (prompt / picker / showcase). Height is `undefined` for
+ * content-height dialogs (prompts, confirms) and a percentage for tall ones (pickers, galleries).
+ */
+export const dialogSize = {
+    /** Short prompts, confirms, alerts — content height. */
+    md: { width: "60%" as const, height: undefined },
+    /** Pickers, lists, results — taller, wider. */
+    lg: { width: "70%" as const, height: "60%" as const },
+    /** Full showcases, galleries, large forms. */
+    xl: { width: "80%" as const, height: "80%" as const },
+} as const;
+
+/** A dialog size preset key. */
+export type DialogSize = keyof typeof dialogSize;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Stacking order (z-index ladder)
 // ─────────────────────────────────────────────────────────────────────────────

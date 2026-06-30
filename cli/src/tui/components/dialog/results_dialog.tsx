@@ -2,9 +2,9 @@ import { For, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 
-import { GLYPHS } from "../../lib/design_system.ts";
-import { theme } from "../theme.ts";
-import { useBindings, KEYS, chordLabel } from "../keymap.ts";
+import { GLYPHS } from "../../../lib/design_system.ts";
+import { theme } from "../../theme.ts";
+import { useBindings, KEYS, chordLabel } from "../../keymap.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
 
 /** A read-only, scrollable list of lines with an empty-state message. Esc/q/Enter close. */
@@ -22,8 +22,7 @@ export function ResultsDialog(props: { title: string; lines: string[]; emptyText
     return (
         <DialogPanel
             title={props.title}
-            width="70%"
-            height="60%"
+            size="lg"
             footer={`${chordLabel(KEYS.up)}/${chordLabel(KEYS.down)} scroll ${GLYPHS.middot} ${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}
         >
             <scrollbox

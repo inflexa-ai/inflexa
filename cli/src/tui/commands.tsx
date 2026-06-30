@@ -5,8 +5,8 @@ import { join } from "node:path";
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import type { VerifyResult } from "../types/prov.ts";
 
-import { PromptDialog } from "./components/prompt_dialog.tsx";
-import { ResultsDialog } from "./components/results_dialog.tsx";
+import { PromptDialog } from "./components/dialog/prompt_dialog.tsx";
+import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
 import { SelectList } from "./components/select_list.tsx";
 import { ConfigApp } from "./app_config.tsx";
 import { DesignGallery } from "./layout/design_gallery.tsx";

@@ -5,7 +5,7 @@ import type { ScrollBoxRenderable } from "@opentui/core";
 import { GLYPHS, space } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
 import { useBindings, KEYS, chordLabel } from "../keymap.ts";
-import { DialogPanel } from "../components/dialog_panel.tsx";
+import { DialogPanel } from "../components/dialog/dialog_panel.tsx";
 import { Welcome } from "../components/welcome.tsx";
 import { ThinkingBlock } from "../components/thinking_block.tsx";
 import { ThinkingIndicator } from "../components/thinking_indicator.tsx";
@@ -49,7 +49,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
     }));
     const runSteps = mockRun.steps.map((s) => ({ label: s.label, state: s.state }));
     return (
-        <DialogPanel title="Design system — stream blocks" width="80%" height="80%" footer={`${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}>
+        <DialogPanel title="Design system — stream blocks" size="xl" footer={`${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}>
             <scrollbox
                 ref={(r: ScrollBoxRenderable) => {
                     scrollRef = r;
