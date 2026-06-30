@@ -1,7 +1,7 @@
 import { randomUUIDv7 } from "bun";
 import { sep } from "node:path";
 import type { Result } from "neverthrow";
-import { tryMutation } from "./util.ts";
+import { tryMutation, withTransaction } from "./util.ts";
 import type { DbError } from "./errors.ts";
 import type { Session, Message, Part, TextPart } from "../types/session.ts";
 import type { Anchor } from "../types/anchor.ts";
@@ -232,10 +232,15 @@ export function deleteAnalysis(id: string): Result<number, DbError> {
 
 /** Deletes a project by id. Analyses referencing it are NOT deleted — their `project_id` is NULLed so they become ungrouped. Returns rows deleted — `0` when no such row exists. */
 export function deleteProject(id: string): Result<number, DbError> {
-    return tryMutation("deleteProject", (conn) => {
-        conn.query("UPDATE analyses SET project_id = NULL, updated_at = ? WHERE project_id = ?").run(Date.now(), id);
-        return conn.query("DELETE FROM projects WHERE id = ?").run(id).changes;
-    });
+    return withTransaction("deleteProject", () =>
+        tryMutation("deleteProject.unlink", (conn) => {
+            conn.query("UPDATE analyses SET project_id = NULL, updated_at = ? WHERE project_id = ?").run(Date.now(), id);
+        }).andThen(() =>
+            tryMutation("deleteProject.delete", (conn) => {
+                return conn.query("DELETE FROM projects WHERE id = ?").run(id).changes;
+            }),
+        ),
+    );
 }
 
 /** Deletes a session and its messages/parts (which cascade via FKs). Returns rows deleted — `0` when no such row exists. */
@@ -250,6 +255,8 @@ export function renameSession(id: string, title: string): Result<number, DbError
     return tryMutation("renameSession", (conn) => {
         const row = conn.query("SELECT data FROM sessions WHERE id = ?").get(id) as { data: string } | null;
         if (!row) return 0;
+        // Data written by our own JSON.stringify in createSession — parse failure means a corrupt
+        // DB blob, which tryMutation surfaces as mutation_failed (an appropriate severity).
         const session = JSON.parse(row.data) as Session;
         session.title = title;
         session.updatedAt = Date.now();

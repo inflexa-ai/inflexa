@@ -258,8 +258,28 @@ function StatusDialog(): JSX.Element {
 
 function SettingsDialog(): JSX.Element {
     const ws = useWorkspace();
-    // Embedded mode: ConfigApp hands control back via onClose instead of tearing down the renderer.
     return <ConfigApp onClose={() => ws.closeDialog()} />;
+}
+
+/** Confirm-to-delete: type the entity name to proceed. Prevents accidental destructive deletes. */
+function ConfirmDeleteDialog(props: { entityLabel: string; entityName: string; onConfirm: () => void }): JSX.Element {
+    const ws = useWorkspace();
+    return (
+        <PromptDialog
+            title={`Delete ${props.entityLabel}?`}
+            placeholder={`Type "${props.entityName}" to confirm`}
+            onCancel={() => ws.closeDialog()}
+            onSubmit={(raw) => {
+                if (raw.trim() !== props.entityName) {
+                    notify({ kind: "warn", text: "Name does not match — deletion cancelled." });
+                    ws.closeDialog();
+                    return;
+                }
+                ws.closeDialog();
+                props.onConfirm();
+            }}
+        />
+    );
 }
 
 function WhoamiDialog(): JSX.Element {
@@ -566,25 +586,33 @@ export const commands: Command[] = [
         run: (ctx) => {
             const a = ctx.analysis;
             if (!a) return;
-            deleteAnalysis(a.id).match(
-                (changed) => {
-                    if (changed === 0) {
-                        notify({ kind: "warn", text: "Analysis not found." });
-                        return;
-                    }
-                    notify({ kind: "info", text: `Deleted analysis "${a.name}"` });
-                    const remaining = listRecentAnalyses().match(
-                        (as) => as,
-                        () => [],
-                    );
-                    if (remaining.length > 0) {
-                        openAnalysis(ctx, remaining[0]!);
-                    } else {
-                        void ctx.quit();
-                    }
-                },
-                (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
-            );
+            ctx.openDialog(() => (
+                <ConfirmDeleteDialog
+                    entityLabel="analysis"
+                    entityName={a.name}
+                    onConfirm={() => {
+                        deleteAnalysis(a.id).match(
+                            (changed) => {
+                                if (changed === 0) {
+                                    notify({ kind: "warn", text: "Analysis not found." });
+                                    return;
+                                }
+                                notify({ kind: "info", text: `Deleted analysis "${a.name}"` });
+                                const remaining = listRecentAnalyses().match(
+                                    (as) => as,
+                                    () => [],
+                                );
+                                if (remaining.length > 0) {
+                                    openAnalysis(ctx, remaining[0]!);
+                                } else {
+                                    void ctx.quit();
+                                }
+                            },
+                            (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
+                        );
+                    }}
+                />
+            ));
         },
     },
     {
@@ -708,19 +736,29 @@ export const commands: Command[] = [
         title: "Delete session",
         description: "Permanently delete the current session and its messages",
         category: "Session",
+        enabled: (ctx) => ctx.analysis !== null,
         run: (ctx) => {
             const a = ctx.analysis;
-            deleteSession(ctx.sessionId).match(
-                (changed) => {
-                    if (changed === 0) {
-                        notify({ kind: "warn", text: "Session not found." });
-                        return;
-                    }
-                    notify({ kind: "info", text: "Session deleted." });
-                    if (a) openAnalysis(ctx, a);
-                },
-                (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
-            );
+            if (!a) return;
+            ctx.openDialog(() => (
+                <ConfirmDeleteDialog
+                    entityLabel="session"
+                    entityName="this session"
+                    onConfirm={() => {
+                        deleteSession(ctx.sessionId).match(
+                            (changed) => {
+                                if (changed === 0) {
+                                    notify({ kind: "warn", text: "Session not found." });
+                                    return;
+                                }
+                                notify({ kind: "info", text: "Session deleted." });
+                                openAnalysis(ctx, a);
+                            },
+                            (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
+                        );
+                    }}
+                />
+            ));
         },
     },
     {
@@ -756,10 +794,18 @@ export const commands: Command[] = [
                     onCancel={() => ctx.closeDialog()}
                     onSelect={(p: Project) => {
                         ctx.closeDialog();
-                        deleteProject(p.id).match(
-                            () => notify({ kind: "info", text: `Deleted project "${p.name}"` }),
-                            (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
-                        );
+                        ctx.openDialog(() => (
+                            <ConfirmDeleteDialog
+                                entityLabel="project"
+                                entityName={p.name}
+                                onConfirm={() => {
+                                    deleteProject(p.id).match(
+                                        () => notify({ kind: "info", text: `Deleted project "${p.name}"` }),
+                                        (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
+                                    );
+                                }}
+                            />
+                        ));
                     }}
                 />
             ));

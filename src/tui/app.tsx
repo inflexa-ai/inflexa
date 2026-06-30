@@ -229,6 +229,7 @@ export function App(props: AppProps) {
                 textareaRef!.setText("");
                 if (chatStatus() === "busy") {
                     conversation.abort();
+                    notify({ kind: "info", text: "Stream aborted — /quit again to exit" });
                     return;
                 }
                 renderer.destroy();

@@ -120,6 +120,10 @@ export const migrations: Migration[] = [
         // one for non-null anchor_id, one for null anchor_id.
         version: 5,
         up: `
+            DELETE FROM analysis_inputs WHERE rowid NOT IN (
+                SELECT MIN(rowid) FROM analysis_inputs
+                GROUP BY analysis_id, path, COALESCE(anchor_id, '')
+            );
             CREATE UNIQUE INDEX uq_analysis_inputs_anchored
                 ON analysis_inputs(analysis_id, path, anchor_id)
                 WHERE anchor_id IS NOT NULL;
