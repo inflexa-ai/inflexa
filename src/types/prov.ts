@@ -38,7 +38,7 @@ export type ProvInputRef = {
 };
 
 /**
- * The outcome of `inflexa prov verify`: one of five mutually exclusive states, each with enough
+ * The outcome of `inflexa prov verify`: one of several mutually exclusive states, each with enough
  * detail for the CLI/TUI to render a clear message.
  */
 export type VerifyResult =
@@ -48,4 +48,5 @@ export type VerifyResult =
     | { status: "no-key" }
     | { status: "empty" }
     | { status: "invalid-sidecar"; detail: string }
-    | { status: "invalid-key" };
+    | { status: "invalid-key" }
+    | { status: "verify-error"; detail: string };

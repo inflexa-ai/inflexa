@@ -1,9 +1,9 @@
-import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { ok, type Result } from "neverthrow";
 import type { Analysis } from "../../types/analysis.ts";
 import type { DbError } from "../../db/errors.ts";
 import { env } from "../../lib/env.ts";
+import { mkdirResult } from "../../lib/fs.ts";
 import { isDirWritable } from "../anchor/marker.ts";
 import { resolveAnchor } from "../anchor/anchor.ts";
 
@@ -41,8 +41,9 @@ export function resolveOutputDir(analysis: Analysis): Result<string, DbError> {
  * (the write boundary); nothing here touches source data.
  */
 export function ensureOutputDir(analysis: Analysis): Result<string, DbError> {
-    return resolveOutputDir(analysis).map((dir) => {
-        mkdirSync(dir, { recursive: true });
-        return dir;
-    });
+    return resolveOutputDir(analysis).andThen((dir) =>
+        mkdirResult(dir, "ensureOutputDir")
+            .map(() => dir)
+            .mapErr((e): DbError => ({ type: "mutation_failed", op: "ensureOutputDir", cause: e.cause })),
+    );
 }

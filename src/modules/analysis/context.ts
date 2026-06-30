@@ -46,13 +46,9 @@ export function resolveContext(cwd: string, flags: ContextFlags): Result<Resolve
     }
 
     // 2. The folder (or an ancestor) is an anchor.
-    let found: ReturnType<typeof findMarkerUpwards>;
-    try {
-        // TODO(slop): neverthrow
-        found = findMarkerUpwards(cwd);
-    } catch (cause) {
-        return err({ type: "query_failed", op: "resolveContext:marker", cause });
-    }
+    const markerResult = findMarkerUpwards(cwd);
+    if (markerResult.isErr()) return err({ type: "query_failed", op: "resolveContext:marker", cause: markerResult.error });
+    const found = markerResult.value;
     if (!found) return ok({ kind: "empty", cwd }); // 3. Nothing here.
 
     const marker = found.marker;

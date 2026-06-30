@@ -194,13 +194,13 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
 
         // First flush: prevChainHash is null, so recompute seeds from SHA-256("").
         expect(integrity!.prevChainHash).toBeNull();
-        const recomputed = await computeChainHash(null, integrity!.provenance!);
+        const recomputed = (await computeChainHash(null, integrity!.provenance!))._unsafeUnwrap();
         // Non-null assertions safe: the three `.not.toBeNull()` checks above guard them.
         expect(recomputed).toBe(integrity!.chainHash!);
 
         // Verify the Ed25519 signature.
         const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
-        const sigOk = await verifyHexDigest(kp.publicKey, integrity!.signature!, integrity!.chainHash!);
+        const sigOk = (await verifyHexDigest(kp.publicKey, integrity!.signature!, integrity!.chainHash!))._unsafeUnwrap();
         expect(sigOk).toBe(true);
 
         resetSigningForTests(null);
@@ -244,12 +244,12 @@ describe("provenance recorder (bus → in-memory doc → column)", () => {
         expect(second!.prevChainHash).toBe(first!.chainHash);
 
         // The second chain hash must chain from the first: H2 = SHA-256(H1 || json2).
-        const recomputed = await computeChainHash(first!.chainHash!, second!.provenance!);
+        const recomputed = (await computeChainHash(first!.chainHash!, second!.provenance!))._unsafeUnwrap();
         expect(recomputed).toBe(second!.chainHash!);
 
         // The signature still verifies against the new chain hash.
         const kp = (await loadOrGenerateKeypair())._unsafeUnwrap();
-        const sigOk = await verifyHexDigest(kp.publicKey, second!.signature!, second!.chainHash!);
+        const sigOk = (await verifyHexDigest(kp.publicKey, second!.signature!, second!.chainHash!))._unsafeUnwrap();
         expect(sigOk).toBe(true);
 
         // verifyProvenance must report "valid" after multi-flush — this was the #CRT-1 bug:
@@ -314,7 +314,7 @@ describe("export sidecar (writeSidecar via the full export path)", () => {
         expect(parsed.publicKey).toHaveProperty("crv", "Ed25519");
 
         // The sidecar's payloadDigest is a simple SHA-256(provJson), not the chain hash.
-        const contentDigest = await computePayloadDigest(provJson);
+        const contentDigest = (await computePayloadDigest(provJson))._unsafeUnwrap();
         expect(parsed.payloadDigest).toBe(contentDigest);
         expect(parsed.payloadDigest).not.toBe(integrity!.chainHash);
 

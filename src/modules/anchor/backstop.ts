@@ -18,12 +18,7 @@ import { resolveAnchor } from "./anchor.ts";
 
 /** Read a marker, treating corruption as "absent" — these commands only need presence/identity. */
 function readMarkerSafe(dir: string): AnchorMarker | null {
-    try {
-        // TODO(slop): neverthrow
-        return readMarker(dir);
-    } catch {
-        return null;
-    }
+    return readMarker(dir).unwrapOr(null);
 }
 
 /**
@@ -34,13 +29,9 @@ function readMarkerSafe(dir: string): AnchorMarker | null {
 export function runRepair(path?: string): void {
     const dir = canonicalPath(path ?? process.cwd());
 
-    let marker: AnchorMarker | null;
-    try {
-        // TODO(slop): neverthrow
-        marker = readMarker(dir);
-    } catch (cause) {
-        fail(`Could not read the marker at ${dir} (corrupt?):`, cause);
-    }
+    const markerResult = readMarker(dir);
+    if (markerResult.isErr()) fail(`Could not read the marker at ${dir} (corrupt?):`, markerResult.error);
+    const marker = markerResult.value;
     if (!marker) fail(`No marker at ${dir}. Nothing to repair.`);
     const anchorId = marker.anchorId;
 
