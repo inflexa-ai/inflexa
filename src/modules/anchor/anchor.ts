@@ -9,8 +9,8 @@ import { insertAnchor, touchAnchor, updateAnchorCachedPath } from "../../db/prim
 import { canonicalPath, findMarkerUpwards, isDirWritable, readMarker, writeMarker, type MarkerError } from "./marker.ts";
 
 /** Bridge a marker-layer failure into the db-layer error type so callers that return `Result<T, DbError>` can propagate it without widening their error union. */
-function markerToDbError(op: string, e: MarkerError): DbError {
-    return { type: "query_failed", op, cause: e };
+function markerToDbError(op: string, e: MarkerError, kind: "query_failed" | "mutation_failed" = "query_failed"): DbError {
+    return { type: kind, op, cause: e };
 }
 
 /**
@@ -59,7 +59,7 @@ export function getOrCreateAnchorForCwd(dir: string): Result<Anchor, DbError> {
     const writable = isDirWritable(abs);
     if (writable) {
         const writeResult = writeMarker(abs, anchorId);
-        if (writeResult.isErr()) return err(markerToDbError("getOrCreateAnchorForCwd:writeMarker", writeResult.error));
+        if (writeResult.isErr()) return err(markerToDbError("getOrCreateAnchorForCwd:writeMarker", writeResult.error, "mutation_failed"));
     }
     return insertAnchor(makeAnchor(anchorId, abs, writable));
 }

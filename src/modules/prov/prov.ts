@@ -125,6 +125,9 @@ function liveDocForAnalysis(analysisId: string): ProvDocument | null {
     const docResult = loadDocument(analysis, integrity?.provenance ?? null);
     if (docResult.isErr()) {
         log.error({ analysisId, cause: docResult.error.cause }, "stored provenance is corrupt; starting fresh document");
+        // Clear the stale chain hash so the next flush starts a new chain instead
+        // of chaining from the old (now-disconnected) hash.
+        chainHashes.delete(analysisId);
         const fresh = freshDocument(analysis);
         liveDocs.set(analysisId, fresh);
         return fresh;

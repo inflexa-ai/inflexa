@@ -208,7 +208,12 @@ async function readApiKey(): Promise<Result<string, ChatSetupError>> {
 
 async function resolveModelId(apiKey: string): Promise<Result<string, ChatSetupError>> {
     if (cachedModelId) return ok(cachedModelId);
-    const res = await fetch(`${env.cliproxyApiUrl}/models`, { headers: { Authorization: `Bearer ${apiKey}` } });
+    let res: Response;
+    try {
+        res = await fetch(`${env.cliproxyApiUrl}/models`, { headers: { Authorization: `Bearer ${apiKey}` } });
+    } catch (cause) {
+        return err({ type: "proxy_unreachable", detail: cause instanceof Error ? cause.message : String(cause) });
+    }
     if (!res.ok) return err({ type: "proxy_unreachable", detail: `HTTP ${res.status}` });
     const models = await res.jsonWith(modelsSchema);
     if (!models || models.data.length === 0) return err({ type: "no_models" });

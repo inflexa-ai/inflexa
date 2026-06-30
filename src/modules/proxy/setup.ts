@@ -361,16 +361,24 @@ async function authenticate(rt: ContainerRuntime, preselected: Provider | undefi
 
 /**
  * Make the proxy ready to serve the TUI: runtime up, image present, config
- * written, authenticated, container running. Throws ProxyError /
- * ContainerRuntimeError with actionable guidance when it can't proceed (e.g.
- * the runtime isn't ready, or auth is needed in a non-interactive shell).
+ * written, authenticated, container running. Returns a {@link ProxyError} or
+ * {@link ContainerRuntimeError} on the error channel with actionable guidance
+ * when it can't proceed (e.g. the runtime isn't ready, or auth is needed in a
+ * non-interactive shell).
  */
 export async function ensureProxyReady(): Promise<Result<void, ProxyError | ContainerRuntimeError>> {
     const rt = activeRuntime();
     const readyResult = await ensureReady(rt);
     if (readyResult.isErr()) return readyResult;
 
-    await writeProxyConfig();
+    // writeProxyConfig and authenticate are not yet Result-wrapped — catch their
+    // rejections so they flow through the Result channel instead of escaping as
+    // unhandled rejections (the caller has no try/catch).
+    try {
+        await writeProxyConfig();
+    } catch (cause) {
+        return err(new ProxyError(`Failed to write proxy config: ${cause instanceof Error ? cause.message : String(cause)}`));
+    }
 
     const pullResult = await pullImage(rt, false);
     if (pullResult.isErr()) return pullResult;
@@ -380,8 +388,12 @@ export async function ensureProxyReady(): Promise<Result<void, ProxyError | Cont
             return err(new ProxyError("CLIProxyAPI isn't authenticated yet.\n  Run `inflexa setup` to sign in to a provider before starting the TUI."));
         }
         console.log("\n  CLIProxyAPI isn't authenticated yet — let's sign in.");
-        if (!(await authenticate(rt, undefined))) {
-            return err(new ProxyError("Authentication didn't complete.\n  Run `inflexa setup` to finish signing in, then try again."));
+        try {
+            if (!(await authenticate(rt, undefined))) {
+                return err(new ProxyError("Authentication didn't complete.\n  Run `inflexa setup` to finish signing in, then try again."));
+            }
+        } catch (cause) {
+            return err(new ProxyError(`Authentication failed: ${cause instanceof Error ? cause.message : String(cause)}`));
         }
     }
 
