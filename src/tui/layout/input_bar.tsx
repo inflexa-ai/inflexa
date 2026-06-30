@@ -3,6 +3,7 @@ import type { TextareaRenderable, KeyBinding } from "@opentui/core";
 import { GLYPHS } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
 import { SUBMIT_CHORD, NEWLINE_CHORD } from "../keymap.ts";
+import { Bold, Fg } from "../components/emphasis.tsx";
 
 /** Props for {@link InputBar}. */
 export type InputBarProps = {
@@ -27,11 +28,12 @@ const keyBindings: KeyBinding[] = [
 ];
 
 /**
- * The chat input bar: the bordered textarea plus a single muted footer row of session/mode info
- * (`INSERT` … `xhigh /effort`), hardcoded until those features are integrated. Global keybind
- * hints are deliberately NOT shown here — they live only in the status bar, so the header and
- * this footer never repeat the same keys. The host keeps the textarea ref so it can read/clear
- * the buffer and restore focus when a dialog closes.
+ * The chat input bar: the bordered textarea plus a mode footer row (`INSERT` / `NORMAL`).
+ * NORMAL mode gets a distinct background (`bgActive`) and accent color so the user knows vim
+ * scroll keys are live and typing won't insert. Global keybind hints are deliberately NOT shown
+ * here — they live only in the status bar, so the header and this footer never repeat the same
+ * keys. The host keeps the textarea ref so it can read/clear the buffer and restore focus when
+ * a dialog closes.
  */
 export function InputBar(props: InputBarProps) {
     return (
@@ -62,10 +64,17 @@ export function InputBar(props: InputBarProps) {
                     onSubmit={() => props.onSubmit()}
                 />
             </box>
-            <box width="100%" flexDirection="row" paddingLeft={1} paddingRight={1}>
-                <text fg={theme().fgMuted}>{props.focused() ? "INSERT" : "NORMAL"}</text>
+            <box width="100%" flexDirection="row" paddingLeft={1} paddingRight={1} backgroundColor={props.focused() ? undefined : theme().bgActive}>
+                <text fg={props.focused() ? theme().fgMuted : theme().accent}>
+                    {props.focused() ? (
+                        "INSERT"
+                    ) : (
+                        <Bold>
+                            <Fg role="accent">NORMAL</Fg>
+                        </Bold>
+                    )}
+                </text>
                 <box flexGrow={1} />
-                <text fg={theme().fgMuted}>xhigh /effort</text>
             </box>
         </box>
     );

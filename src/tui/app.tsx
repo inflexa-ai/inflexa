@@ -82,13 +82,26 @@ export function App(props: AppProps) {
     // declarative layer; the dispatcher picks the winner — no hand-branched if/else here.
     useKeymapRoot();
 
-    // Streaming abort stays active even with a dialog open (no `mode`), so a response can always
-    // be cancelled; high priority so it wins over any modal binding that shares ctrl+c. The thunk
-    // is re-invoked by the dispatcher per keystroke, so the chatStatus() read is always fresh.
+    // Three-way ctrl+c: dismiss dialog → abort stream → quit. Always active (no `mode` gate),
+    // high priority so it wins over any modal binding that shares the chord.
     useBindings(() => ({
-        enabled: chatStatus() === "busy",
         priority: 100,
-        bindings: [{ chord: resolveKeybind("app.abort"), run: () => conversation.abort() }],
+        bindings: [
+            {
+                chord: resolveKeybind("app.abort"),
+                run: () => {
+                    if (dialogOpen()) {
+                        closeDialog();
+                        return;
+                    }
+                    if (chatStatus() === "busy") {
+                        conversation.abort();
+                        return;
+                    }
+                    void quit();
+                },
+            },
+        ],
     }));
 
     function runCommandById(id: string): void {
@@ -202,16 +215,31 @@ export function App(props: AppProps) {
         onCleanup(pop);
     });
 
+    // TODO(robustness): minimal slash-command stub — only quit aliases for now. Replace with a
+    // proper registry (parser, help listing, extensible command map) when the slash system lands.
+    const QUIT_ALIASES = new Set(["quit", "exit", "q", "bye", "ciao"]);
+
     async function handleSubmit() {
-        if (chatStatus() === "busy") return;
         const text = textareaRef?.editBuffer.getText().trim();
         if (!text) return;
-        textareaRef!.setText("");
 
-        if (text === "/quit" || text === "/exit") {
-            renderer.destroy();
-            await shutdown(0);
+        if (text.startsWith("/")) {
+            const name = text.slice(1).split(/\s+/)[0]?.toLowerCase();
+            if (name && QUIT_ALIASES.has(name)) {
+                textareaRef!.setText("");
+                if (chatStatus() === "busy") {
+                    conversation.abort();
+                    notify({ kind: "info", text: "Stream aborted — /quit again to exit" });
+                    return;
+                }
+                renderer.destroy();
+                await shutdown(0);
+                return;
+            }
         }
+
+        if (chatStatus() === "busy") return;
+        textareaRef!.setText("");
 
         // The conversation store owns the request lifecycle (the AbortController + the chat() call);
         // its bus events drive the stream, so App only hands off the user text.
