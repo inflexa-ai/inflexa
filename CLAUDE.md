@@ -57,7 +57,7 @@ bun run format       # Format all of src/
 - **At CLI boundaries:** `result.match(v => v, dieOn("context"))` — print and exit.
 - **In module logic:** `.andThen` / `.map` to chain, `.mapErr` to translate error types across layers.
 - **In the TUI:** the presentation layer may `.match` to render success/error states.
-- **Never `.unwrap()` or `._unsafeUnwrap()`.** These defeat the purpose. If you need the value and want to crash on error, you're at a CLI boundary — use `dieOn`.
+- **Never `.unwrap()` or `._unsafeUnwrap()` in production code.** These defeat the purpose. If you need the value and want to crash on error, you're at a CLI boundary — use `dieOn`. **Exception:** test files (`*.test.ts`) may use `._unsafeUnwrap()` to extract values where an unexpected `Err` is itself a test failure.
 
 ### Migrating existing `throw` → `Result`
 

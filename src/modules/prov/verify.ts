@@ -42,7 +42,7 @@ export async function verifyProvenance(
     const hashResult = await computeChainHash(prevChainHash, provJson);
     if (hashResult.isErr())
         return {
-            status: "tampered",
+            status: "verify-error",
             detail: `chain hash computation failed: ${String("cause" in hashResult.error ? hashResult.error.cause : hashResult.error.type)}`,
         };
     if (hashResult.value !== storedChainHash) {
@@ -52,7 +52,7 @@ export async function verifyProvenance(
     const sigResult = await verifyHexDigest(publicKey, storedSignature, storedChainHash);
     if (sigResult.isErr())
         return {
-            status: "tampered",
+            status: "verify-error",
             detail: `signature verification failed: ${String("cause" in sigResult.error ? sigResult.error.cause : sigResult.error.type)}`,
         };
     if (!sigResult.value) {
@@ -71,7 +71,7 @@ export async function verifyPayload(provJson: string, storedDigest: string, stor
     const digestResult = await computePayloadDigest(provJson);
     if (digestResult.isErr())
         return {
-            status: "tampered",
+            status: "verify-error",
             detail: `payload digest computation failed: ${String("cause" in digestResult.error ? digestResult.error.cause : digestResult.error.type)}`,
         };
     if (digestResult.value !== storedDigest) {
@@ -81,7 +81,7 @@ export async function verifyPayload(provJson: string, storedDigest: string, stor
     const sigResult = await verifyHexDigest(publicKey, storedSignature, storedDigest);
     if (sigResult.isErr())
         return {
-            status: "tampered",
+            status: "verify-error",
             detail: `signature verification failed: ${String("cause" in sigResult.error ? sigResult.error.cause : sigResult.error.type)}`,
         };
     if (!sigResult.value) {
@@ -108,6 +108,8 @@ export function formatVerifyResult(result: VerifyResult): string {
             return `Invalid sidecar: ${result.detail}`;
         case "invalid-key":
             return "The public key in the sidecar is invalid or unsupported.";
+        case "verify-error":
+            return `Verification could not complete (internal error): ${result.detail}`;
     }
 }
 
@@ -142,7 +144,7 @@ export async function runVerifyProvenance(ref: string): Promise<void> {
     if (!result) fail(`No analysis row for "${ref}".`);
 
     console.log(formatVerifyResult(result));
-    if (result.status === "tampered") process.exitCode = 1;
+    if (result.status === "tampered" || result.status === "verify-error") process.exitCode = 1;
 }
 
 /**
@@ -260,5 +262,6 @@ export async function runVerifyFile(path: string): Promise<void> {
         return;
     }
     console.log(formatVerifyResult(result));
-    if (result.status === "tampered" || result.status === "invalid-sidecar" || result.status === "invalid-key") process.exitCode = 1;
+    if (result.status === "tampered" || result.status === "invalid-sidecar" || result.status === "invalid-key" || result.status === "verify-error")
+        process.exitCode = 1;
 }

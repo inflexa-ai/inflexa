@@ -50,40 +50,47 @@ export async function setup(options: SetupOptions): Promise<void> {
         return;
     }
 
-    const { created, apiKey } = await writeProxyConfig();
-    if (created) {
-        console.log(`\n  Wrote ${env.cliproxyConfigPath}`);
-        if (apiKey) console.log(`  Client API key (use this to call the proxy): ${apiKey}`);
-    } else {
-        console.log(`\n  Keeping existing config at ${env.cliproxyConfigPath}`);
-    }
-
-    const pullResult = await pullImage(rt, options.force);
-    if (pullResult.isErr()) {
-        console.error(`\n  ${pullResult.error.message}\n`);
-        process.exitCode = 1;
-        return;
-    }
-
-    if (options.auth) {
-        if (provider === undefined && (await isAuthenticated())) {
-            console.log("  Already authenticated — skipping login (use `--provider <name>` to add or switch).");
+    // writeProxyConfig, isAuthenticated, and authenticate are not yet Result-wrapped — a catch-all
+    // ensures their rejections still produce friendly output instead of a raw stack trace.
+    try {
+        const { created, apiKey } = await writeProxyConfig();
+        if (created) {
+            console.log(`\n  Wrote ${env.cliproxyConfigPath}`);
+            if (apiKey) console.log(`  Client API key (use this to call the proxy): ${apiKey}`);
         } else {
-            const authed = await authenticate(rt, provider);
-            if (!authed) console.log("  No provider authenticated yet — re-run `inflexa setup` to sign in.");
+            console.log(`\n  Keeping existing config at ${env.cliproxyConfigPath}`);
         }
-    }
 
-    if (options.start) {
-        const startResult = await startProxy(rt);
-        if (startResult.isErr()) {
-            console.error(`\n  ${startResult.error.message}\n`);
+        const pullResult = await pullImage(rt, options.force);
+        if (pullResult.isErr()) {
+            console.error(`\n  ${pullResult.error.message}\n`);
             process.exitCode = 1;
             return;
         }
-    }
 
-    printNextSteps(options);
+        if (options.auth) {
+            if (provider === undefined && (await isAuthenticated())) {
+                console.log("  Already authenticated — skipping login (use `--provider <name>` to add or switch).");
+            } else {
+                const authed = await authenticate(rt, provider);
+                if (!authed) console.log("  No provider authenticated yet — re-run `inflexa setup` to sign in.");
+            }
+        }
+
+        if (options.start) {
+            const startResult = await startProxy(rt);
+            if (startResult.isErr()) {
+                console.error(`\n  ${startResult.error.message}\n`);
+                process.exitCode = 1;
+                return;
+            }
+        }
+
+        printNextSteps(options);
+    } catch (error) {
+        console.error("\n  Setup failed unexpectedly:", error, "\n");
+        process.exitCode = 1;
+    }
 }
 
 function resolveProvider(options: SetupOptions): Result<Provider | undefined, ProxyError> {

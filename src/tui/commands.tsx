@@ -97,6 +97,7 @@ function noticeKindFor(result: VerifyResult): "info" | "warn" | "error" {
         case "tampered":
         case "invalid-sidecar":
         case "invalid-key":
+        case "verify-error":
             return "error";
     }
 }

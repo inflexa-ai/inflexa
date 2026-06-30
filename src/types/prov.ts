@@ -48,4 +48,5 @@ export type VerifyResult =
     | { status: "no-key" }
     | { status: "empty" }
     | { status: "invalid-sidecar"; detail: string }
-    | { status: "invalid-key" };
+    | { status: "invalid-key" }
+    | { status: "verify-error"; detail: string };

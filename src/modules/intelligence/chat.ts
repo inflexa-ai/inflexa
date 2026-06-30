@@ -111,37 +111,45 @@ export async function chat(opts: ChatOptions): Promise<Result<void, DbError>> {
     // and the user sees a blank reply with no clue why. Capture it and surface it below, the same
     // as a thrown setup failure.
     let streamError: unknown;
-    const keyResult = await readApiKey();
-    if (keyResult.isErr()) {
-        streamError = keyResult.error;
-    } else {
-        const modelResult = await resolveModelId(keyResult.value);
-        if (modelResult.isErr()) {
-            streamError = modelResult.error;
-        } else {
-            try {
-                const provider = createOpenAICompatible({ name: "cliproxy", baseURL: env.cliproxyApiUrl, apiKey: keyResult.value });
-                const result = streamText({
-                    model: provider(modelResult.value),
-                    system: SYSTEM_PROMPT,
-                    messages: modelMessages,
-                    abortSignal: abort,
-                    // Anthropic requires an explicit max_tokens; the proxy passes the
-                    // OpenAI-format value through when translating to Claude, so set a
-                    // generous cap to make Claude work out of the box.
-                    maxOutputTokens: 8192,
-                    onError: ({ error }) => {
-                        streamError = error;
-                    },
-                });
-                for await (const delta of result.textStream) {
-                    accumulated += delta;
-                    Bus.emit("inflexa", { type: "part.delta", sessionId, messageId: assistantMsg.id, partId: assistantPart.id, delta });
-                }
-            } catch (error) {
-                // Streaming failures from the AI SDK that surface as exceptions (not via onError).
-                streamError = error;
+    const apiKey = (await readApiKey()).match(
+        (k) => k,
+        (e) => {
+            streamError = e;
+            return null;
+        },
+    );
+    const modelId = apiKey
+        ? (await resolveModelId(apiKey)).match(
+              (m) => m,
+              (e) => {
+                  streamError = e;
+                  return null;
+              },
+          )
+        : null;
+    if (apiKey && modelId) {
+        try {
+            const provider = createOpenAICompatible({ name: "cliproxy", baseURL: env.cliproxyApiUrl, apiKey });
+            const result = streamText({
+                model: provider(modelId),
+                system: SYSTEM_PROMPT,
+                messages: modelMessages,
+                abortSignal: abort,
+                // Anthropic requires an explicit max_tokens; the proxy passes the
+                // OpenAI-format value through when translating to Claude, so set a
+                // generous cap to make Claude work out of the box.
+                maxOutputTokens: 8192,
+                onError: ({ error }) => {
+                    streamError = error;
+                },
+            });
+            for await (const delta of result.textStream) {
+                accumulated += delta;
+                Bus.emit("inflexa", { type: "part.delta", sessionId, messageId: assistantMsg.id, partId: assistantPart.id, delta });
             }
+        } catch (error) {
+            // Streaming failures from the AI SDK that surface as exceptions (not via onError).
+            streamError = error;
         }
     }
     // A user abort is not an error — it just stops and keeps whatever streamed so far.
@@ -222,6 +230,19 @@ export function pickDefaultModel(ids: string[]): string {
 
 function describe(cause: unknown): string {
     if (cause instanceof Error) return cause.message;
-    if (typeof cause === "object" && cause !== null && "type" in cause) return (cause as { type: string }).type;
+    if (typeof cause === "object" && cause !== null && "type" in cause) {
+        // ChatSetupError carries a discriminated `type` — map it to actionable guidance.
+        const typed = cause as ChatSetupError;
+        switch (typed.type) {
+            case "proxy_key_missing":
+                return "could not read the proxy API key — run `inflexa setup`";
+            case "proxy_unreachable":
+                return `the proxy returned ${typed.detail} listing models`;
+            case "no_models":
+                return "the proxy reported no models — is a provider authenticated? run `inflexa setup`";
+            default:
+                return (cause as { type: string }).type;
+        }
+    }
     return String(cause);
 }

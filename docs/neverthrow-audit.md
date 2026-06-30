@@ -26,7 +26,7 @@ These modules/functions already return `Result<T, E>` and use `tryQuery`/`tryMut
 | `modules/prov/signing.ts` | `loadOrGenerateKeypair` | Returns `Promise<Result<ImportedKeypair, SigningError>>` |
 | `modules/prov/document.ts` | `serializeProvenance`, `findAnalysisForProv` | Return `Result<T, DbError>` |
 | `modules/prov/verify.ts` | `buildSidecar` | Returns `Promise<Result<Sidecar, SigningError>>` |
-| `modules/staging/staging.ts` | `stageInputs` | Returns `Promise<Result<StagedInput[], DbError \| StagingError>>` (was `Result<Promise<...>>`, restructured) |
+| `modules/staging/staging.ts` | `stageInputs` | Returns `Promise<Result<StagedInput[], DbError \| StagingError>>` (was `Result<Promise<...>>`, restructured). **Downstream fork only** — this module does not exist in inf-cli yet. |
 
 ---
 
@@ -80,7 +80,7 @@ Two well-defined failure modes (`not_found`, `not_ready`) that map to a discrimi
 |---|---|---|
 | `sha256File(path)` | `Promise<string>`, rejects on stream error | `ResultAsync<string, HashError>` |
 
-Callers (`staging.ts`) currently have no try/catch — an I/O error is an unhandled rejection. Converting makes the failure visible.
+Callers (`staging.ts`, downstream fork only) currently have no try/catch — an I/O error is an unhandled rejection. Converting makes the failure visible.
 
 #### `modules/intelligence/chat.ts`
 
@@ -151,7 +151,7 @@ These catch blocks are correct and should NOT be converted:
 | `prov/export.ts` | 28-31, 49-55 | CLI action — `fail()` / best-effort sidecar write |
 | `prov/verify.ts` | 213-216, 219-222 | Bridging `crypto.subtle.importKey` + `readFileSync` into `VerifyResult` status |
 | `prov/signing.ts` | 67-71, 85-115, 131-137, 140-160, 171-175 | Bridging FS + WebCrypto into `Result<T, SigningError>` (except the crypto primitives — see §2) |
-| `staging/staging.ts` | 49-53 | Hardlink fallback to copy — catch is the intentional fallback, not an error |
+| `staging/staging.ts` | 49-53 | Hardlink fallback to copy — catch is the intentional fallback, not an error (**downstream fork only**) |
 
 ---
 
@@ -242,10 +242,10 @@ These are calls to throwing stdlib functions inside `.map()`/`.andThen()` callba
 |---|---|---|---|---|
 | `analysis/output.ts` | `ensureOutputDir` | 45 | `mkdirSync` inside `.map()` | Permission denied blows up past `DbError` |
 | `analysis/open.ts` | `openOutputDir` | 33 | `Bun.spawn` inside `.map()` | Missing opener binary blows up |
-| `staging/staging.ts` | `stageFile` | 48 | `mkdirSync` | Permission denied |
-| `staging/staging.ts` | `stageFile` | 52 | `copyFileSync` (fallback after `linkSync` catch) | Cross-fs + copy failure |
-| `staging/staging.ts` | `stageSingleFile` | 84 | `statSync` | File vanished between stage and stat |
-| `staging/staging.ts` | `walkFiles` | 63 | `readdirSync` | Permission denied |
-| `staging/staging.ts` | `stageSingleFile` | 83 | `sha256File` | Async rejection inside Promise |
+| `staging/staging.ts` | `stageFile` | 48 | `mkdirSync` | Permission denied (**downstream fork only**) |
+| `staging/staging.ts` | `stageFile` | 52 | `copyFileSync` (fallback after `linkSync` catch) | Cross-fs + copy failure (**downstream fork only**) |
+| `staging/staging.ts` | `stageSingleFile` | 84 | `statSync` | File vanished between stage and stat (**downstream fork only**) |
+| `staging/staging.ts` | `walkFiles` | 63 | `readdirSync` | Permission denied (**downstream fork only**) |
+| `staging/staging.ts` | `stageSingleFile` | 83 | `sha256File` | Async rejection inside Promise (**downstream fork only**) |
 
-**Staging structural gap:** `stageInputs` returns `Result<Promise<StagedInput[]>, DbError>` — the DB-read phase is Result-wrapped, but the entire filesystem I/O phase runs inside the unwrapped `Promise`. Any FS error during staging becomes an unhandled rejection rather than flowing through Result. The fix is to change the return type to `ResultAsync<StagedInput[], DbError | StagingError>` so the I/O phase is also Result-wrapped.
+**Staging structural gap (downstream fork only — module does not exist in inf-cli yet):** `stageInputs` returns `Result<Promise<StagedInput[]>, DbError>` — the DB-read phase is Result-wrapped, but the entire filesystem I/O phase runs inside the unwrapped `Promise`. Any FS error during staging becomes an unhandled rejection rather than flowing through Result. The fix is to change the return type to `ResultAsync<StagedInput[], DbError | StagingError>` so the I/O phase is also Result-wrapped.
