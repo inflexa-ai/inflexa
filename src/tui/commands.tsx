@@ -18,7 +18,7 @@ import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts"
 import { readConfig, writeConfig } from "../lib/config.ts";
 import { mkdirResult, writeFileResult } from "../lib/fs.ts";
 import { str256 } from "../lib/types.ts";
-import { createAnalysis, listRecentAnalyses, uniqueSlugForAnchor, addInputs, removeInput } from "../modules/analysis/analysis.ts";
+import { createAnalysis, listRecentAnalyses, uniqueSlugForAnchor, addInputs, removeInput, matchAnalysis } from "../modules/analysis/analysis.ts";
 import { resolveContext, describeContext } from "../modules/analysis/context.ts";
 import { openOutputDir } from "../modules/analysis/open.ts";
 import { resolveAnchor, resolvedPathOrCached } from "../modules/anchor/anchor.ts";
@@ -399,7 +399,16 @@ function RenameAnalysisDialog(): JSX.Element {
                         uniqueSlugForAnchor(a.anchorId, name)
                             .andThen((slug) => renameAnalysis(a.id, name, slug))
                             .match(
-                                () => notify({ kind: "info", text: `Renamed to "${raw.trim()}"` }),
+                                () => {
+                                    notify({ kind: "info", text: `Renamed to "${raw.trim()}"` });
+                                    // Re-fetch the updated analysis so the workspace store (sidebar, status bar) reflects the new name.
+                                    matchAnalysis(a.id).match(
+                                        (m) => {
+                                            if (m) ws.openSession(ws.sessionId, ws.workingDir, m.analysis);
+                                        },
+                                        () => {},
+                                    );
+                                },
                                 (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
                             ),
                     (err) => notify({ kind: "warn", text: err === "empty" ? "A name is required." : "Keep the name to 256 characters or fewer." }),
@@ -564,6 +573,15 @@ export const commands: Command[] = [
                         return;
                     }
                     notify({ kind: "info", text: `Deleted analysis "${a.name}"` });
+                    const remaining = listRecentAnalyses().match(
+                        (as) => as,
+                        () => [],
+                    );
+                    if (remaining.length > 0) {
+                        openAnalysis(ctx, remaining[0]!);
+                    } else {
+                        void ctx.quit();
+                    }
                 },
                 (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
             );
@@ -691,6 +709,7 @@ export const commands: Command[] = [
         description: "Permanently delete the current session and its messages",
         category: "Session",
         run: (ctx) => {
+            const a = ctx.analysis;
             deleteSession(ctx.sessionId).match(
                 (changed) => {
                     if (changed === 0) {
@@ -698,6 +717,7 @@ export const commands: Command[] = [
                         return;
                     }
                     notify({ kind: "info", text: "Session deleted." });
+                    if (a) openAnalysis(ctx, a);
                 },
                 (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
             );

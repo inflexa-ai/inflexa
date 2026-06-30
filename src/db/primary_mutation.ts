@@ -223,10 +223,9 @@ export function deleteAnalysesForAnchor(anchorId: string): Result<number, DbErro
     });
 }
 
-/** Deletes a single analysis by id. Its `analysis_inputs` cascade via the FK; sessions do NOT cascade (see §3.2 in the audit) so they are cleaned up explicitly here. Returns rows deleted from analyses — `0` when no such row exists. */
+/** Deletes a single analysis by id. Its `analysis_inputs` and `sessions` cascade via FKs (sessions gained CASCADE in migration v6). Returns rows deleted from analyses — `0` when no such row exists. */
 export function deleteAnalysis(id: string): Result<number, DbError> {
     return tryMutation("deleteAnalysis", (conn) => {
-        conn.query("DELETE FROM sessions WHERE analysis_id = ?").run(id);
         return conn.query("DELETE FROM analyses WHERE id = ?").run(id).changes;
     });
 }

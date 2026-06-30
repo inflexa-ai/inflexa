@@ -131,7 +131,11 @@ export const migrations: Migration[] = [
     {
         // The sessions FK to analyses originally had no ON DELETE CASCADE, so deleting an
         // analysis left orphaned sessions. SQLite cannot ALTER a FK constraint — the only
-        // option is to recreate the table. Indexes on sessions are rebuilt automatically.
+        // option is to recreate the table. Indexes on sessions are rebuilt explicitly.
+        // Safe despite messages/parts referencing sessions(id): SQLite enforces FKs at DML
+        // time only (INSERT/UPDATE/DELETE), never on DDL (DROP/ALTER RENAME). After the
+        // rename, the table named `sessions` exists with identical columns, so the FK text
+        // in messages/parts resolves correctly on the next DML.
         version: 6,
         up: `
             CREATE TABLE sessions_new (

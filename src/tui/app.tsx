@@ -82,7 +82,7 @@ export function App(props: AppProps) {
     // declarative layer; the dispatcher picks the winner — no hand-branched if/else here.
     useKeymapRoot();
 
-    // Two-stage ctrl+c: abort the stream if busy, quit if idle. Always active (no `mode` gate),
+    // Three-way ctrl+c: dismiss dialog → abort stream → quit. Always active (no `mode` gate),
     // high priority so it wins over any modal binding that shares the chord.
     useBindings(() => ({
         priority: 100,
@@ -90,6 +90,10 @@ export function App(props: AppProps) {
             {
                 chord: resolveKeybind("app.abort"),
                 run: () => {
+                    if (dialogOpen()) {
+                        closeDialog();
+                        return;
+                    }
                     if (chatStatus() === "busy") {
                         conversation.abort();
                         return;
@@ -225,7 +229,6 @@ export function App(props: AppProps) {
                 textareaRef!.setText("");
                 if (chatStatus() === "busy") {
                     conversation.abort();
-                    notify({ kind: "info", text: "Stopped streaming. Type /quit again to exit." });
                     return;
                 }
                 renderer.destroy();
