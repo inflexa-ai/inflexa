@@ -1,0 +1,12 @@
+{# Mono tag/badge: {% include "components/badge.html.j2" %}
+   Expects: badge_text, badge_level (high|medium|low|primary, default "primary") #}
+{% set badge_styles = {
+  "high":    "background-color: #f0fdf4; color: #15803d;",
+  "medium":  "background-color: #fffbeb; color: #b45309;",
+  "low":     "background-color: #fef2f2; color: #b91c1c;",
+  "primary": "background-color: #f0f1fe; color: #3545b0;"
+} %}
+<span class="inline-flex items-center rounded-sm px-2 py-0.5 font-mono text-[11px] font-medium"
+      style="{{ badge_styles[badge_level | default('primary')] }}">
+  {{ badge_text }}
+</span>

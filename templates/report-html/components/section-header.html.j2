@@ -1,0 +1,11 @@
+{# Section header with mono label: {% include "components/section-header.html.j2" %}
+   Expects: section_title, section_description (optional), section_label (optional) #}
+<div class="mb-8">
+  {% if section_label %}
+  <div class="font-mono text-xs font-semibold uppercase tracking-widest text-primary-500 mb-3">{{ section_label }}</div>
+  {% endif %}
+  <h2 class="text-3xl font-semibold tracking-tight text-slate-900">{{ section_title }}</h2>
+  {% if section_description %}
+  <p class="mt-3 max-w-2xl text-base leading-relaxed text-slate-600">{{ section_description }}</p>
+  {% endif %}
+</div>

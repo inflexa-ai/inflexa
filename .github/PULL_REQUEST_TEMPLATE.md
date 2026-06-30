@@ -32,4 +32,4 @@ Closes #<!-- issue number, if any -->
 
 - [ ] **Methods:** the method is stated, relevant literature cited where appropriate, and tool/library versions are pinned.
 - [ ] **Sandbox:** the security model is preserved (default no network egress, working-directory-only mounts, resource limits); any loosening is called out and justified.
-- [ ] **Provenance:** prior analyses remain reproducible (or the expected variance is documented), and `docs/provenance.md` is updated.
+- [ ] **Provenance:** prior analyses remain reproducible (or the expected variance is documented).
