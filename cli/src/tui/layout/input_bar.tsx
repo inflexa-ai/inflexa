@@ -2,7 +2,7 @@ import type { TextareaRenderable, KeyBinding } from "@opentui/core";
 
 import { GLYPHS } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
-import { SUBMIT_CHORD, NEWLINE_CHORD } from "../keymap.ts";
+import { SUBMIT_CHORD, NEWLINE_CHORD, chordLabel } from "../keymap.ts";
 import { Bold, Fg } from "../components/emphasis.tsx";
 
 /** Props for {@link InputBar}. */
@@ -18,22 +18,23 @@ export type InputBarProps = {
     focused: () => boolean;
 };
 
-// Enter submits; Option/Alt+Enter inserts a newline (opentui delivers Option as Meta). These stay
-// at the textarea/renderable level (not the global keymap engine) because they are cursor-aware
-// editing actions the engine can't see; the chords are still sourced from the keymap so the
-// submit/newline keys have a single definition.
+// Enter submits; Ctrl+J inserts a newline. These stay at the textarea/renderable level (not the
+// global keymap engine) because they are cursor-aware editing actions the engine can't see; the
+// chords are still sourced from the keymap so the submit/newline keys have a single definition.
+// Shift+Enter is a silent bonus for kitty-protocol-capable terminals (where shift on Enter is
+// reliably delivered); in legacy terminals it's indistinguishable from Enter and harmlessly no-ops.
 const keyBindings: KeyBinding[] = [
     { name: SUBMIT_CHORD.key, action: "submit" },
-    { name: NEWLINE_CHORD.key, meta: NEWLINE_CHORD.alt, action: "newline" },
+    { name: NEWLINE_CHORD.key, ctrl: NEWLINE_CHORD.ctrl, action: "newline" },
+    { name: "return", shift: true, action: "newline" },
 ];
 
 /**
  * The chat input bar: the bordered textarea plus a mode footer row (`INSERT` / `NORMAL`).
  * NORMAL mode gets a distinct background (`bgActive`) and accent color so the user knows vim
- * scroll keys are live and typing won't insert. Global keybind hints are deliberately NOT shown
- * here — they live only in the status bar, so the header and this footer never repeat the same
- * keys. The host keeps the textarea ref so it can read/clear the buffer and restore focus when
- * a dialog closes.
+ * scroll keys are live and typing won't insert. The footer shows the newline-key hint (a
+ * textarea-level affordance) — global keybind hints live only in the status bar. The host keeps
+ * the textarea ref so it can read/clear the buffer and restore focus when a dialog closes.
  */
 export function InputBar(props: InputBarProps) {
     return (
@@ -75,6 +76,7 @@ export function InputBar(props: InputBarProps) {
                     )}
                 </text>
                 <box flexGrow={1} />
+                <text fg={theme().fgSubtle}>{chordLabel(NEWLINE_CHORD)} newline</text>
             </box>
         </box>
     );

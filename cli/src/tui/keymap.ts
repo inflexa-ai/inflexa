@@ -212,10 +212,12 @@ export const KEYS = {
 /** Submit the chat message (textarea-level; see input_bar's `keyBindings`). */
 export const SUBMIT_CHORD: Chord = { key: "return" };
 /**
- * Insert a newline instead of submitting. The lone Alt opt-in: it is input editing, not
- * navigation, so the Alt-unreliability trade-off is acceptable (and opentui delivers it as Meta).
+ * Insert a newline instead of submitting. Ctrl+J — the ASCII linefeed character (0x0A), always
+ * distinct from Enter (0x0D) in every terminal, including through tmux. Alt+Enter and Shift+Enter
+ * both fail under macOS/tmux (Option is a compose key; tmux strips shift from Enter without kitty
+ * protocol). The textarea also binds Shift+Enter as a silent bonus for kitty-capable terminals.
  */
-export const NEWLINE_CHORD: Chord = { key: "return", alt: true };
+export const NEWLINE_CHORD: Chord = { key: "j", ctrl: true };
 
 // --- remappable app keybindings -------------------------------------------------------------
 

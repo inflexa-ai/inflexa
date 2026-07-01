@@ -74,7 +74,7 @@ export function Chat(props: ChatProps) {
                         greeting="welcome to inflexa"
                         anchorPath={anchor()?.cachedPath}
                         markerWritten={anchor()?.markerWritten}
-                        hints={["ctrl+k commands", "ctrl+x leader", "esc scroll mode"]}
+                        hints={["ctrl+k commands", "ctrl+j newline", "ctrl+x leader", "esc scroll mode"]}
                     />
                 </Show>
                 {/* index() is the 1-based position within the mounted window (capped at MESSAGE_CAP);
