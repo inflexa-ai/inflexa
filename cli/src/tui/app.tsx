@@ -15,7 +15,7 @@ import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./componen
 import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, leaderSeq, KEYS } from "./keymap.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { Chat } from "./components/chat.tsx";
-import { InputBar } from "./layout/input_bar.tsx";
+import { ChatBar } from "./layout/chat_bar.tsx";
 import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
 import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
@@ -259,18 +259,13 @@ export function App(props: AppProps) {
                         <Chat onScrollboxRef={(r: ScrollBoxRenderable) => (scrollboxRef = r)} />
 
                         {/* Input area */}
-                        <InputBar
+                        <ChatBar
                             onTextareaRef={(r: TextareaRenderable) => {
                                 textareaRef = r;
-                                // focused/blurred fire on every focus change (esc, the refocus effect, a
-                                // mouse click), making inputFocused the single source of truth for the
-                                // INSERT/NORMAL mode word and the scroll-key gate.
-                                r.on("focused", () => setInputFocused(true));
-                                r.on("blurred", () => setInputFocused(false));
                                 queueMicrotask(() => r.focus());
                             }}
                             onSubmit={() => void handleSubmit()}
-                            focused={inputFocused}
+                            onFocusChange={setInputFocused}
                         />
 
                         {/* Transient toast (single slot, auto-dismissed). Inside the chat column, not the

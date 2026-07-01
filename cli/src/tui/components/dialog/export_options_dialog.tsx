@@ -8,6 +8,7 @@ import { theme } from "../../theme.ts";
 import { useBindings, KEYS, chordLabel } from "../../keymap.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
 import { Bold } from "../emphasis.tsx";
+import { TextArea } from "../text_area.tsx";
 
 /** A togglable boolean option shown as a checkbox row. */
 export type OptionItem = {
@@ -113,7 +114,8 @@ export function ExportOptionsDialog(props: {
         ],
     }));
 
-    // When the text field is active, enter in the textarea confirms the whole form.
+    // When the text field is active, the form-level enter-to-confirm is in the keymap engine
+    // as a fallback — TextArea's renderable-level submit fires first when the textarea is focused.
     useBindings(() => ({
         enabled: activeKey() === "__text__",
         bindings: [{ chord: KEYS.enter, run: confirm, desc: "Confirm", group: "Dialog" }],
@@ -143,17 +145,15 @@ export function ExportOptionsDialog(props: {
                         <text fg={theme().fg}>
                             <Bold>{field.label}:</Bold>
                         </text>
-                        <textarea
+                        <TextArea
+                            chrome="bare"
                             height={3}
-                            ref={(val: TextareaRenderable) => {
-                                textareaRef = val;
-                            }}
-                            initialValue={field.defaultValue}
                             placeholder={field.placeholder}
-                            placeholderColor={theme().fgMuted}
-                            textColor={theme().fg}
-                            focusedTextColor={theme().fg}
-                            cursorColor={theme().fg}
+                            initialValue={field.defaultValue}
+                            onRef={(r: TextareaRenderable) => {
+                                textareaRef = r;
+                            }}
+                            onSubmit={confirm}
                         />
                     </box>
                 )}

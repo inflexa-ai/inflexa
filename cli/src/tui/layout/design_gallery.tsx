@@ -15,11 +15,17 @@ import { RunBlock } from "../components/run_block.tsx";
 import { ErrorBlock } from "../components/error_block.tsx";
 import { MessageBlock } from "./message_block.tsx";
 import { Bold, Italic, Underline, Dim, Reverse, Fg } from "../components/emphasis.tsx";
+import { TextArea } from "../components/text_area.tsx";
+import { TextInput } from "../components/text_input.tsx";
 import { mockUserText, mockAssistantText, mockThinking, mockToolCall, mockFileEdit, mockRun } from "../../lib/mock_fixtures.ts";
 
 // Nothing streams in the gallery — MessageBlock's streaming accessors are constant stubs.
 const noStreamId = (): string | null => null;
 const noStreamText = (): string => "";
+
+const noop = (): void => {
+    /* gallery showcase: submit is a no-op since inputs are non-interactive */
+};
 
 function State(props: { n: string; label: string; children: JSX.Element }): JSX.Element {
     return (
@@ -107,7 +113,22 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         Press {GLYPHS.middot} ctrl+k {GLYPHS.middot} in the chat to open the live command palette overlay.
                     </text>
                 </State>
-                <State n="9" label="type & emphasis">
+                <State n="9" label="TextArea — full / compact / bare chrome">
+                    <text fg={theme().fgMuted}>click a textarea to see INSERT {GLYPHS.arrowRight} NORMAL mode shift</text>
+                    <text fg={theme().fgMuted}>full (border signals focus, host adds footer):</text>
+                    <TextArea chrome="full" placeholder="Type a message…" onSubmit={noop} />
+                    <text fg={theme().fgMuted}>compact (mode word in border title):</text>
+                    <TextArea chrome="compact" placeholder="Enter a name…" onSubmit={noop} />
+                    <text fg={theme().fgMuted}>bare (background shift only):</text>
+                    <TextArea chrome="bare" placeholder="Bare textarea…" onSubmit={noop} />
+                </State>
+                <State n="10" label="TextInput — compact / bare chrome">
+                    <text fg={theme().fgMuted}>compact (bordered, focus shifts border):</text>
+                    <TextInput chrome="compact" placeholder="Filter…" />
+                    <text fg={theme().fgMuted}>bare (no border):</text>
+                    <TextInput chrome="bare" placeholder="Type to filter…" />
+                </State>
+                <State n="11" label="type & emphasis">
                     <text>
                         <Bold>bold</Bold> <Fg role="fgMuted">— names, active items</Fg>
                     </text>

@@ -9,6 +9,7 @@ import { theme } from "../theme.ts";
 import { useBindings, KEYS, chordLabel } from "../keymap.ts";
 import { DialogPanel } from "./dialog/dialog_panel.tsx";
 import { Bold } from "./emphasis.tsx";
+import { TextInput } from "./text_input.tsx";
 
 // The reusable searchable list: a single fuzzy-filtered, keyboard-navigable, grouped picker
 // shared by the command palette and every dialog picker (themes, analyses, sessions). It is
@@ -119,17 +120,12 @@ export function SelectList<T>(props: {
             size="lg"
             footer={`${chordLabel(KEYS.up)}/${chordLabel(KEYS.down)} move ${GLYPHS.middot} ${chordLabel(KEYS.enter)} select ${GLYPHS.middot} ${chordLabel(KEYS.escape)} cancel`}
         >
-            <input
-                ref={(r: InputRenderable) => {
+            <TextInput
+                chrome="bare"
+                placeholder={props.placeholder ?? `Type to filter${GLYPHS.ellipsis}`}
+                onRef={(r: InputRenderable) => {
                     inputRef = r;
                 }}
-                focused
-                width="100%"
-                placeholder={props.placeholder ?? `Type to filter${GLYPHS.ellipsis}`}
-                placeholderColor={theme().fgMuted}
-                textColor={theme().fg}
-                backgroundColor={theme().bg}
-                focusedBackgroundColor={theme().bgActive}
                 onInput={(v) => {
                     setQuery(v);
                     setCursor(0);

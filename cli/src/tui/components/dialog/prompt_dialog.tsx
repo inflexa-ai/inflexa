@@ -6,6 +6,7 @@ import { GLYPHS } from "../../../lib/design_system.ts";
 import { theme } from "../../theme.ts";
 import { useBindings, KEYS, chordLabel } from "../../keymap.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
+import { TextArea } from "../text_area.tsx";
 
 /**
  * A text prompt dialog: title, optional description, a textarea input, enter-to-submit,
@@ -18,7 +19,7 @@ export function PromptDialog(props: {
     title: string;
     /** Optional JSX description rendered between the title and the textarea. */
     description?: () => JSX.Element;
-    /** Textarea placeholder text. */
+    /** Placeholder text when the field is empty. */
     placeholder?: string;
     /** Initial textarea value. */
     value?: string;
@@ -34,7 +35,6 @@ export function PromptDialog(props: {
     onCancel: () => void;
 }): JSX.Element {
     let textareaRef: TextareaRenderable | undefined;
-    const [ready, setReady] = createSignal(false);
     const [spinFrame, setSpinFrame] = createSignal(0);
 
     createEffect(() => {
@@ -48,16 +48,10 @@ export function PromptDialog(props: {
         });
     });
 
-    function submit(): void {
+    function submit(text: string): void {
         if (props.busy) return;
-        if (textareaRef) props.onSubmit(textareaRef.plainText);
+        props.onSubmit(text);
     }
-
-    useBindings(() => ({
-        enabled: ready() && !props.busy,
-        priority: 1,
-        bindings: [{ chord: KEYS.enter, run: submit, desc: "Submit", group: "Dialog" }],
-    }));
 
     useBindings(() => ({
         bindings: [{ chord: KEYS.escape, run: () => props.onCancel(), desc: "Cancel", group: "Dialog" }],
@@ -70,7 +64,6 @@ export function PromptDialog(props: {
             if (props.busy) return;
             textareaRef.focus();
             textareaRef.gotoLineEnd();
-            setReady(true);
         });
     });
 
@@ -80,11 +73,6 @@ export function PromptDialog(props: {
             textareaRef.blur();
         } else {
             textareaRef.focus();
-            // Mark ready so the enter-to-submit binding (gated on `ready()`) is live. Reaching this
-            // branch means busy flipped to false — including the case where the dialog opened with
-            // busy=true (onMount's microtask early-returned without setting ready), so a later
-            // busy→false transition must enable submit here rather than leave it permanently off.
-            setReady(true);
         }
     });
 
@@ -97,17 +85,16 @@ export function PromptDialog(props: {
                 <Show when={props.description} keyed>
                     {(desc: () => JSX.Element) => desc()}
                 </Show>
-                <textarea
+                <TextArea
+                    chrome="compact"
                     height={props.height ?? 1}
-                    ref={(val: TextareaRenderable) => {
-                        textareaRef = val;
-                    }}
+                    placeholder={props.placeholder}
                     initialValue={props.value}
-                    placeholder={props.placeholder ?? ""}
-                    placeholderColor={theme().fgMuted}
-                    textColor={props.busy ? theme().fgMuted : theme().fg}
-                    focusedTextColor={props.busy ? theme().fgMuted : theme().fg}
-                    cursorColor={props.busy ? theme().bgActive : theme().fg}
+                    busy={props.busy}
+                    onRef={(r: TextareaRenderable) => {
+                        textareaRef = r;
+                    }}
+                    onSubmit={submit}
                 />
                 <Show when={props.busy}>
                     <text fg={theme().fgMuted}>

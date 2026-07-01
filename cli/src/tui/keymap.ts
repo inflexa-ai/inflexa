@@ -209,7 +209,7 @@ export const KEYS = {
     nextAlt: { key: "n", ctrl: true },
 } as const satisfies Record<string, Chord>;
 
-/** Submit the chat message (textarea-level; see input_bar's `keyBindings`). */
+/** Submit the chat message (textarea-level; see TextArea's `keyBindings`). */
 export const SUBMIT_CHORD: Chord = { key: "return" };
 /**
  * Insert a newline instead of submitting. Ctrl+J — the ASCII linefeed character (0x0A), always
@@ -218,6 +218,9 @@ export const SUBMIT_CHORD: Chord = { key: "return" };
  * protocol). The textarea also binds Shift+Enter as a silent bonus for kitty-capable terminals.
  */
 export const NEWLINE_CHORD: Chord = { key: "j", ctrl: true };
+
+/** Pre-derived display label for the newline chord — single source for every footer/hint that shows it. */
+export const NEWLINE_LABEL: string = chordLabel(NEWLINE_CHORD);
 
 // --- remappable app keybindings -------------------------------------------------------------
 
