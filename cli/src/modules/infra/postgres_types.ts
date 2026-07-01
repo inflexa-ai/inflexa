@@ -62,6 +62,8 @@ export type PostgresError =
     | { type: "runtime_not_ready"; message: string }
     | { type: "image_pull_failed"; image: string; message: string }
     | { type: "container_start_failed"; message: string }
+    | { type: "container_stop_failed"; message: string }
+    | { type: "compose_file_write_failed"; message: string }
     | { type: "ready_timeout"; message: string }
     | { type: "vector_install_failed"; message: string }
     | { type: "compose_not_available"; message: string };

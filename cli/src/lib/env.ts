@@ -60,7 +60,7 @@ export const env = Object.freeze({
     cliproxyAuthDir: join(dataDir(), "inflexa", "cliproxy", "auth"),
     /**
      * Postgres data directory — bind-mounted into the inflexa-postgres container at
-     * `/var/lib/postgresql/data` so DB state persists across CLI restarts. See
+     * `/var/lib/postgresql` (the PG 18+ parent mount) so DB state persists across CLI restarts. See
      * src/modules/infra/postgres.ts.
      */
     postgresDataDir: join(dataDir(), "inflexa", "postgres"),

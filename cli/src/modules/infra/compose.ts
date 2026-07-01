@@ -27,6 +27,11 @@ export const PROXY_CONTAINER_NAME = `${PREFIX}-cliproxy`;
 export const POSTGRES_CONTAINER_NAME = `${PREFIX}-postgres`;
 const NETWORK_NAME = PREFIX;
 
+/** Escape a value for use inside a YAML double-quoted string (`"…"`). */
+function escapeYaml(s: string): string {
+    return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+}
+
 /**
  * Generate a Docker Compose file defining both services on a shared network.
  * The compose file is YAML; we template it as a string to avoid a YAML dep.
@@ -56,9 +61,9 @@ services:
     ports:
       - "${conn.port}:${CONTAINER_PG_PORT}"
     environment:
-      POSTGRES_DB: "${conn.database}"
-      POSTGRES_USER: "${conn.user}"
-      POSTGRES_PASSWORD: "${conn.password}"
+      POSTGRES_DB: "${escapeYaml(conn.database)}"
+      POSTGRES_USER: "${escapeYaml(conn.user)}"
+      POSTGRES_PASSWORD: "${escapeYaml(conn.password)}"
     volumes:
       - "${env.postgresDataDir}:${CONTAINER_DATA_PATH}"
     networks:
@@ -81,7 +86,7 @@ export function writeComposeFile(conn: PostgresConnection): Result<void, Postgre
             writeFileSync(env.composeFilePath, generateComposeFile(conn));
         },
         (cause): PostgresError => ({
-            type: "container_start_failed",
+            type: "compose_file_write_failed",
             message: `Failed to write compose file: ${cause instanceof Error ? cause.message : String(cause)}`,
         }),
     )();
@@ -155,7 +160,7 @@ export async function composeDown(rt: ContainerRuntime): Promise<Result<void, Po
     const { code, stderr } = await capture(rt, composeArgs(["down"]));
     if (code !== 0) {
         return err({
-            type: "container_start_failed",
+            type: "container_stop_failed",
             message: `Failed to stop containers via compose.${stderr ? `\n  ${stderr.trim()}` : ""}`,
         });
     }

@@ -159,8 +159,8 @@ export function ConfigApp(props: { onClose?: () => void }) {
         const trimmed = value.trim();
         if (field === "port") {
             const n = Number(trimmed);
-            if (!Number.isInteger(n) || n <= 0) {
-                setNotice({ kind: "error", text: `"${trimmed}" is not a valid port number.` });
+            if (!Number.isInteger(n) || n <= 0 || n > 65535) {
+                setNotice({ kind: "error", text: `"${trimmed}" is not a valid port number (1-65535).` });
                 return;
             }
             setDraft({ ...draft(), postgres: { ...pgDraft(), port: n } });

@@ -124,11 +124,9 @@ export async function provisionPostgres(options: SetupOptions): Promise<Result<P
 
     if (!options.start) return ok({ kind: "skipped_no_start", conn });
 
-    console.log("  Waiting for Postgres to be ready…");
     const readyResult2 = await waitForReady(rt, conn);
     if (readyResult2.isErr()) return err(readyResult2.error);
 
-    console.log("  Installing pgvector extension…");
     const vectorResult = await ensureVectorExtension(rt, conn);
     if (vectorResult.isErr()) return err(vectorResult.error);
 
