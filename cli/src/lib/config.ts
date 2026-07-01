@@ -6,6 +6,7 @@ import { z } from "zod";
 import { DEFAULT_THEME_ID, themeIds } from "./design_system.ts";
 import { runtimeIds, runtimes, type ContainerRuntime } from "./container.ts";
 import { env } from "./env.ts";
+import { DEFAULT_DATABASE, DEFAULT_PASSWORD, DEFAULT_PORT, DEFAULT_USER, type PostgresConnection } from "../modules/infra/postgres_types.ts";
 
 const configSchema = z.object({
     telemetry: z.boolean(),
@@ -17,6 +18,22 @@ const configSchema = z.object({
     keybinds: z.record(z.string(), z.string()).optional(),
     // How long (ms) a half-typed leader sequence stays pending before it is abandoned.
     leaderTimeout: z.number().int().positive().catch(2000).default(2000),
+    // Postgres substrate for the embedded harness. Optional — every field falls back
+    // per-field to the defaults in modules/infra/postgres_types.ts. Always provisions a local
+    // container alongside the proxy (no external mode). The catch salvages a corrupt
+    // `postgres` value to safe defaults; no `.default()` at this level — when the key is
+    // absent entirely, readConfig yields postgres: undefined and resolvePostgresConfig
+    // fills in the per-field defaults.
+    postgres: z
+        .object({
+            host: z.string().optional(),
+            port: z.number().int().positive().optional(),
+            database: z.string().optional(),
+            user: z.string().optional(),
+            password: z.string().optional(),
+        })
+        .catch({})
+        .optional(),
 });
 export type Config = z.infer<typeof configSchema>;
 
@@ -50,4 +67,23 @@ export function writeConfig(config: Config): Result<void, ConfigError> {
         },
         (cause): ConfigError => ({ type: "config_write_failed", cause }),
     )();
+}
+
+/**
+ * Resolve the postgres config from {@link readConfig}, filling every unset field
+ * per-field with the defaults from modules/infra/postgres_types.ts. The result is a
+ * fully-populated {@link PostgresConnection} — no `undefined` fields — the
+ * harness-wiring change will hand to `createPool` as a `PoolConfig`. Missing or
+ * corrupt config yields all-defaults (mode docker, image pgvector/pgvector:pg18,
+ * db/user/password inflexa, port 8432), so a fresh install never blocks boot.
+ */
+export function resolvePostgresConfig(): PostgresConnection {
+    const pg = readConfig().postgres;
+    return {
+        host: pg?.host ?? "localhost",
+        port: pg?.port ?? DEFAULT_PORT,
+        database: pg?.database ?? DEFAULT_DATABASE,
+        user: pg?.user ?? DEFAULT_USER,
+        password: pg?.password ?? DEFAULT_PASSWORD,
+    };
 }

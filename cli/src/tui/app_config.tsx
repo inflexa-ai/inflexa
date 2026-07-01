@@ -2,7 +2,7 @@ import { render, useRenderer } from "@opentui/solid";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 
-import { readConfig, writeConfig, type Config } from "../lib/config.ts";
+import { readConfig, resolvePostgresConfig, writeConfig, type Config } from "../lib/config.ts";
 import { env } from "../lib/env.ts";
 import { GLYPHS, themes, themeIds } from "../lib/design_system.ts";
 import { shutdown } from "../lib/shutdown.ts";
@@ -10,6 +10,7 @@ import { setTheme, theme, noticeColor, type Notice } from "./theme.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { useKeymapRoot, useBindings, KEYS, chordLabel } from "./keymap.ts";
 import { Bold, Reverse, Fg } from "./components/emphasis.tsx";
+import { PromptDialog } from "./components/prompt_dialog.tsx";
 import { runtimes, runtimeIds } from "../lib/container.ts";
 
 // `-?` strips optionality in the mapping: without it, an optional Config field (e.g. `keybinds`)
@@ -35,28 +36,55 @@ const settings: Setting[] = [
 
 /**
  * Two-level navigation model. Up/down move between SECTIONS (each boolean toggle is
- * its own section, then the theme radio group, then the runtime radio group);
- * left/right change the focused section's value. A radio section needs no separate
- * cursor — its highlighted option is always the active draft value, which left/right
- * moves (preview and selection are unified) — so a Section carries only its kind.
+ * its own section, then the theme radio group, then the runtime radio group, then
+ * postgres fields); left/right change the focused section's value. A radio section
+ * needs no separate cursor — its highlighted option is always the active draft value,
+ * which left/right moves. A Section carries only its kind.
  */
-type Section = { kind: "toggle"; settingIndex: number } | { kind: "theme" } | { kind: "runtime" };
-const sections: Section[] = [...settings.map((_, i): Section => ({ kind: "toggle", settingIndex: i })), { kind: "theme" }, { kind: "runtime" }];
-/** Section indices of the two radio groups (the toggles occupy `0 … settings.length-1`). */
+type Section = { kind: "toggle"; settingIndex: number } | { kind: "theme" } | { kind: "runtime" } | { kind: "postgres_field"; field: PgField };
+
+const PG_FIELDS = ["host", "port", "database", "user", "password"] as const;
+type PgField = (typeof PG_FIELDS)[number];
+
+const PG_FIELD_LABELS: Record<PgField, string> = {
+    host: "host",
+    port: "port",
+    database: "database",
+    user: "user",
+    password: "password",
+};
+
+const sections: Section[] = [
+    ...settings.map((_, i): Section => ({ kind: "toggle", settingIndex: i })),
+    { kind: "theme" },
+    { kind: "runtime" },
+    ...PG_FIELDS.map((f): Section => ({ kind: "postgres_field", field: f })),
+];
+/** Section indices of the radio groups (the toggles occupy `0 … settings.length-1`). */
 const THEME_SECTION = settings.length;
 const RUNTIME_SECTION = settings.length + 1;
+const PG_FIELD_SECTIONS_START = settings.length + 2;
 
 export function ConfigApp(props: { onClose?: () => void }) {
     const renderer = useRenderer();
     // Read config once; saved and draft both start from it. Focus starts on the first
     // section (the telemetry toggle) — the top of the form — so every section, including
     // the toggles, is reachable by walking down from a fixed, predictable origin.
-    const initial = readConfig();
+    // Seed postgres with resolved defaults so the form shows every field even when
+    // config.json has no `postgres` key. writeConfig persists these explicit values.
+    const initial = { ...readConfig(), postgres: resolvePostgresConfig() };
     const [saved, setSaved] = createSignal(initial);
     const [draft, setDraft] = createSignal(initial);
     const [section, setSection] = createSignal(0);
     const [notice, setNotice] = createSignal<Notice | null>(null);
     const [quitArmed, setQuitArmed] = createSignal(false);
+    // When set, a Postgres text field is being edited via a PromptDialog overlay.
+    const [editingPgField, setEditingPgField] = createSignal<PgField | null>(null);
+
+    /** The draft's postgres config — guaranteed non-null (seeded with resolved defaults). */
+    const pgDraft = () => draft().postgres!;
+    /** The saved postgres config — guaranteed non-null (seeded with resolved defaults). */
+    const pgSaved = () => saved().postgres!;
 
     // The form is taller than a short terminal can show. Without a scroll container the
     // flex column shrinks every section's height to fit, painting rows on top of each
@@ -68,7 +96,11 @@ export function ConfigApp(props: { onClose?: () => void }) {
         scrollRef?.scrollChildIntoView(`section-${section()}`);
     });
 
-    const dirty = () => settings.some((s) => draft()[s.key] !== saved()[s.key]) || draft().theme !== saved().theme || draft().runtime !== saved().runtime;
+    const dirty = () =>
+        settings.some((s) => draft()[s.key] !== saved()[s.key]) ||
+        draft().theme !== saved().theme ||
+        draft().runtime !== saved().runtime ||
+        PG_FIELDS.some((f) => pgDraft()[f] !== pgSaved()[f]);
 
     // Left/right change the focused section's value. Radios step through their option
     // list (clamped, with live theme preview); the toggle is a two-state control on the
@@ -93,8 +125,10 @@ export function ConfigApp(props: { onClose?: () => void }) {
                 setDraft({ ...draft(), runtime: id });
                 break;
             }
+            case "postgres_field": {
+                break;
+            }
             default: {
-                // Exhaustiveness: a new Section kind must add a case above, or this breaks the build.
                 const _exhaustive: never = s;
                 void _exhaustive;
             }
@@ -110,6 +144,32 @@ export function ConfigApp(props: { onClose?: () => void }) {
         if (s.kind !== "toggle") return;
         const { key } = settings[s.settingIndex]!;
         setDraft({ ...draft(), [key]: !draft()[key] });
+        setNotice(null);
+        setQuitArmed(false);
+    }
+
+    // Enter on a postgres_field section opens a prompt dialog for inline text editing.
+    function editFocusedPgField(): void {
+        const s = sections[section()]!;
+        if (s.kind !== "postgres_field") return;
+        setEditingPgField(s.field);
+    }
+
+    function setPgField(field: PgField, value: string): void {
+        const trimmed = value.trim();
+        if (field === "port") {
+            const n = Number(trimmed);
+            if (!Number.isInteger(n) || n <= 0) {
+                setNotice({ kind: "error", text: `"${trimmed}" is not a valid port number.` });
+                return;
+            }
+            setDraft({ ...draft(), postgres: { ...pgDraft(), port: n } });
+        } else if (trimmed === "") {
+            setNotice({ kind: "error", text: "Value cannot be empty." });
+            return;
+        } else {
+            setDraft({ ...draft(), postgres: { ...pgDraft(), [field]: trimmed } });
+        }
         setNotice(null);
         setQuitArmed(false);
     }
@@ -171,8 +231,14 @@ export function ConfigApp(props: { onClose?: () => void }) {
             { chord: { key: "c", ctrl: true }, run: requestExit },
             { chord: { key: "s" }, run: save },
             { chord: KEYS.space, run: toggleFocused },
-            { chord: KEYS.enter, run: toggleFocused },
-            // Section nav leaves notice/quit-arm state intact (only value edits clear those).
+            {
+                chord: KEYS.enter,
+                run: () => {
+                    const s = sections[section()]!;
+                    if (s.kind === "postgres_field") editFocusedPgField();
+                    else toggleFocused();
+                },
+            },
             { chord: KEYS.up, run: () => setSection(Math.max(0, section() - 1)) },
             { chord: KEYS.down, run: () => setSection(Math.min(sections.length - 1, section() + 1)) },
             { chord: KEYS.left, run: () => step(-1) },
@@ -205,8 +271,6 @@ export function ConfigApp(props: { onClose?: () => void }) {
             >
                 <For each={settings}>
                     {(setting, index) => {
-                        // Selected section reads as an inverse bar; <Bold> survives the swap so the
-                        // label stays heavy. Non-focused rows are plain bold text.
                         const focused = () => index() === section();
                         const label = () =>
                             `[${draft()[setting.key] ? "x" : " "}] ${setting.label}${draft()[setting.key] !== saved()[setting.key] ? " *" : ""}`;
@@ -236,9 +300,6 @@ export function ConfigApp(props: { onClose?: () => void }) {
                     <text fg={theme().fg}>{section() === THEME_SECTION ? <Reverse>theme</Reverse> : <Fg role="fgMuted">theme</Fg>}</text>
                     <For each={themeIds}>
                         {(id) => {
-                            // No separate cursor: the highlighted row is always the active draft theme
-                            // (left/right move it). Bright `selected` when this section is focused, the
-                            // dimmer `accent` when it isn't, plain `fg` for the rest.
                             const isActive = () => draft().theme === id;
                             return (
                                 <box paddingLeft={2}>
@@ -270,6 +331,41 @@ export function ConfigApp(props: { onClose?: () => void }) {
                         }}
                     </For>
                 </box>
+
+                <For each={PG_FIELDS}>
+                    {(field, i) => {
+                        // eslint-disable-next-line solid/reactivity -- PG_FIELDS is static; the index is stable for the row's lifetime, so seeding-once is safe.
+                        const fieldSection = PG_FIELD_SECTIONS_START + i();
+                        const focused = () => section() === fieldSection;
+                        const value = () => String(pgDraft()[field]);
+                        const changed = () => pgDraft()[field] !== pgSaved()[field];
+                        return (
+                            <box id={`section-${fieldSection}`} flexDirection="column" paddingLeft={2} paddingTop={1}>
+                                <text fg={theme().fg}>
+                                    {focused() ? (
+                                        <Reverse>
+                                            {PG_FIELD_LABELS[field]}: {value()}
+                                            {changed() ? " *" : ""}
+                                        </Reverse>
+                                    ) : (
+                                        <Fg role="fgMuted">
+                                            {PG_FIELD_LABELS[field]}: {value()}
+                                            {changed() ? " *" : ""}
+                                        </Fg>
+                                    )}
+                                </text>
+                                <Show when={field === "password"}>
+                                    <box paddingLeft={4}>
+                                        <text fg={theme().fgMuted}>shown in clear text — local connection credential</text>
+                                    </box>
+                                </Show>
+                                <box paddingLeft={4}>
+                                    <text fg={theme().fgMuted}>press Enter to edit</text>
+                                </box>
+                            </box>
+                        );
+                    }}
+                </For>
             </scrollbox>
 
             <Show when={notice()}>
@@ -281,6 +377,22 @@ export function ConfigApp(props: { onClose?: () => void }) {
             <box paddingLeft={2} paddingTop={1}>
                 <text fg={theme().fgMuted}>File: {env.configPath}</text>
             </box>
+
+            {/* Postgres text-field editor overlay. Rendered as a full-screen takeover
+                 over the form; the PromptDialog's own Esc binding cancels and returns here. */}
+            <Show when={editingPgField()}>
+                <box width="100%" height="100%" alignItems="center" justifyContent="center" backgroundColor={theme().bg}>
+                    <PromptDialog
+                        title={`postgres.${editingPgField()!}`}
+                        initialValue={String(pgDraft()[editingPgField()!])}
+                        onSubmit={(value: string) => {
+                            setPgField(editingPgField()!, value);
+                            setEditingPgField(null);
+                        }}
+                        onCancel={() => setEditingPgField(null)}
+                    />
+                </box>
+            </Show>
         </box>
     );
 }

@@ -225,15 +225,37 @@ auth.command("whoami")
         whoami();
     });
 
+cli.command("up")
+    .description("Start the inflexa infrastructure containers (proxy + Postgres)")
+    .action(async () => {
+        const { up } = await import("../modules/infra/lifecycle.ts");
+        await up();
+    });
+
+cli.command("down")
+    .description("Stop the inflexa infrastructure containers")
+    .option("--delete-data", "Delete Postgres data and proxy credentials (requires confirmation)")
+    .action(async (options: { deleteData?: boolean }) => {
+        const { down } = await import("../modules/infra/lifecycle.ts");
+        await down({ deleteData: options.deleteData ?? false });
+    });
+
 cli.command("setup")
-    .description("Install, authenticate, and start CLIProxyAPI (Docker or Podman)")
+    .description("Install, authenticate, and start CLIProxyAPI and Postgres (Docker or Podman)")
     .option("--provider <name>", "Authenticate a provider non-interactively: gemini|openai|claude|qwen|iflow")
     .option("--no-auth", "Skip the provider authentication step")
-    .option("--no-start", "Set up only; don't start the proxy container")
-    .option("--force", "Re-pull the proxy image even if it is already cached")
-    .action(async (options: { provider?: string; auth: boolean; start: boolean; force?: boolean }) => {
-        const { setup } = await import("../modules/proxy/setup.ts");
-        await setup({ provider: options.provider, auth: options.auth, start: options.start, force: options.force ?? false });
+    .option("--no-start", "Set up only; don't start the proxy or Postgres containers")
+    .option("--no-postgres", "Skip the Postgres provisioning step")
+    .option("--force", "Re-pull images even if they are already cached")
+    .action(async (options: { provider?: string; auth: boolean; start: boolean; postgres: boolean; force?: boolean }) => {
+        const { setup } = await import("../modules/infra/setup.ts");
+        await setup({
+            provider: options.provider,
+            auth: options.auth,
+            start: options.start,
+            force: options.force ?? false,
+            postgres: options.postgres,
+        });
     });
 
 cli.addHelpText("after", renderEnvHelp);

@@ -55,12 +55,24 @@ export async function confirm(question: string): Promise<boolean> {
  * argument). Cancelling (Ctrl-C / Esc) aborts the command. Text-command layer ONLY — never
  * from the opentui TUI, which owns the terminal in alternate-screen mode.
  */
-export async function promptText(message: string, opts?: { validate?: (value: string) => string | undefined }): Promise<string> {
+export async function promptText(
+    message: string,
+    opts?: {
+        validate?: (value: string) => string | undefined;
+        /** Visual hint shown when the field is empty. */
+        placeholder?: string;
+        /** Fallback returned when the user submits empty input (press Enter to accept). */
+        defaultValue?: string;
+    },
+): Promise<string> {
     if (!process.stdin.isTTY) fail(`${message}: a value is required, but stdin is not interactive — pass it as an argument.`);
     const validate = opts?.validate;
-    // clack hands the validator `string | undefined` (empty submit); normalize to "" so callers
-    // can take a plain `(string) => …`.
-    const answer = await clackText({ message, validate: validate ? (v) => validate(v ?? "") : undefined });
+    const answer = await clackText({
+        message,
+        placeholder: opts?.placeholder,
+        defaultValue: opts?.defaultValue,
+        validate: validate ? (v) => validate(v ?? "") : undefined,
+    });
     if (isCancel(answer)) fail("Cancelled.");
     return answer;
 }
