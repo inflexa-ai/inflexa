@@ -1,28 +1,6 @@
-# tui-components Specification
+# tui-components Specification (delta)
 
-## Purpose
-TBD - created by archiving change extract-tui-components. Update Purpose after archive.
-## Requirements
-### Requirement: Shared TUI component directory with a membership rule
-
-The system SHALL house shared, domain-agnostic TUI widgets under `src/tui/components/`. A widget SHALL belong in `components/` only when it (a) imports nothing beyond `theme` and `@opentui/*` / `solid-js` — no imports from `src/modules/`, `src/db/`, or other domain code — and (b) has two or more callers. Widgets SHALL be one component per file (no barrel/index re-exports), and callers SHALL import each component from its own file. A palette- or feature-specific adapter (e.g. `CommandPalette`, which maps `Command` domain objects) SHALL NOT live in `components/`; it stays in the `tui/` app-shell.
-
-The chat TUI's app-shell **composition kit** is distinct from reusable widgets and SHALL live in `src/tui/layout/` (see the `tui-layout` capability), distinguished by **role** rather than by import shape: `components/` holds reusable, domain-agnostic widgets, while `layout/` holds the structural parts the screen is assembled from. A kit part SHALL stay in `layout/` even when it would otherwise satisfy the `components/` rule — for example a generic, multi-caller `StatusBar` that imports only `theme` belongs in `layout/`, not `components/`, because it is shell composition.
-
-#### Scenario: Generic widget lives in components/
-
-- **WHEN** a widget imports only `theme` + opentui/solid and has ≥2 callers
-- **THEN** it resides in `src/tui/components/` as its own file, imported directly by each caller
-
-#### Scenario: Domain-coupled adapter stays out of components/
-
-- **WHEN** a component imports domain types (e.g. `Command`, an `Analysis`) or module code
-- **THEN** it stays in the `tui/` app-shell, not in `components/`
-
-#### Scenario: Composition kit lives in layout/, not components/
-
-- **WHEN** a part is one of the app-shell composition kit (status bar, message block, input bar, sidebar) — even a generic, multi-caller one like `StatusBar`
-- **THEN** it resides in `src/tui/layout/`, not `src/tui/components/`, because the two directories are distinguished by role (shell composition vs reusable widget)
+## MODIFIED Requirements
 
 ### Requirement: DialogPanel chrome shell
 
@@ -114,37 +92,3 @@ The system SHALL provide a `DialogPanel` component in `src/tui/components/` that
 
 - **WHEN** `SelectList` renders in multi or radio mode
 - **THEN** its footer shows mode-appropriate hints (space to toggle, enter to confirm, selection count)
-
-### Requirement: command_palette.tsx is palette-only
-
-After the move, `src/tui/command_palette.tsx` SHALL contain only the palette concerns: the single dispatch verb `runCommand` and the `CommandPalette` adapter. It SHALL NOT define `PromptDialog` or `ResultsDialog`. Every former importer of those widgets SHALL import them from `src/tui/components/` instead, with no compatibility shim or re-export left behind.
-
-#### Scenario: Shells no longer defined in the palette file
-
-- **WHEN** `command_palette.tsx` is read after the change
-- **THEN** it defines `runCommand` and `CommandPalette` only, and exports no dialog shells
-
-#### Scenario: No shim left behind
-
-- **WHEN** the codebase is searched for re-exports of the moved widgets from `command_palette.tsx` or the old `select_list.tsx` path
-- **THEN** none exist; every importer points at `src/tui/components/`
-
-### Requirement: Single shared Notice type and color mapping
-
-The system SHALL define the `Notice` type (`{ kind: "info" | "warn" | "error"; text: string }`) exactly once, in `src/tui/theme.ts`, together with a `noticeColor(kind: Notice["kind"]): string` helper that reads `theme()` reactively and returns the semantic color for the kind. They live in `theme.ts` (the reactive theme accessor) because a notice kind maps onto a matching palette role — `noticeColor` is a theme accessor. `commands.tsx` (the `CommandContext.notify` signature), `app.tsx`, and `app_config.tsx` SHALL import them from `src/tui/theme.ts`; the duplicate `Notice` definitions and the inlined/duplicated color mapping SHALL be removed. `noticeColor` SHALL be layout-agnostic — callers decide whether to use the returned color as a background or foreground. No `NoticeBanner` component SHALL be extracted, because the screens render notices with different layouts.
-
-#### Scenario: One definition, three importers
-
-- **WHEN** `Notice` or `noticeColor` is needed in `commands.tsx`, `app.tsx`, or `app_config.tsx`
-- **THEN** it is imported from `src/tui/theme.ts`, and no other file defines `Notice`
-
-#### Scenario: Color mapping is reused, layout is not
-
-- **WHEN** `app.tsx` colors its transient banner and `app_config.tsx` colors its in-flow notice text
-- **THEN** both derive the color from `noticeColor(kind)` while keeping their own distinct layouts
-
-#### Scenario: Notice type stays out of src/types/
-
-- **WHEN** deciding where `Notice` lives
-- **THEN** it is in the `tui/` presentation layer (`src/tui/theme.ts`), not `src/types/` (reserved for persisted entities and the event contract)
-

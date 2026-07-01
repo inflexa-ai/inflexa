@@ -3,7 +3,8 @@ import type { JSX } from "solid-js";
 
 import { GLYPHS } from "../../../lib/design_system.ts";
 import { theme } from "../../theme.ts";
-import { useBindings, KEYS, chordLabel } from "../../keymap.ts";
+import { KEYS, chordLabel } from "../../keymap.ts";
+import { useDialogBindings, useDialogCancel } from "./dialog_host.tsx";
 import { DialogPanel } from "./dialog_panel.tsx";
 
 /** The user's choice: `true` = confirmed, `false` = cancelled, `undefined` = dismissed via esc. */
@@ -11,8 +12,8 @@ export type ConfirmResult = boolean | undefined;
 
 /**
  * A binary confirm / cancel dialog. Left/right arrows toggle the active choice; enter commits it;
- * esc cancels outright. The active choice is rendered as a highlighted pill (accent bg + onAccent
- * text) so the user sees which action enter will take.
+ * esc cancels via the host's structural binding. The active choice is rendered as a highlighted
+ * pill (accent bg + onAccent text) so the user sees which action enter will take.
  *
  * The active choice defaults to "cancel" — an accidental enter must not confirm a destructive
  * action. Callers that want "confirm" as the default (a non-destructive yes/no) can override, but
@@ -23,9 +24,11 @@ export function ConfirmDialog(props: {
     title: string;
     /** The body question / message, rendered in the muted foreground. */
     message: string;
+    /** `danger` renders the destructive-confirm chrome (double border, error color). */
+    tone?: "default" | "danger";
     /** Called when the user confirms (enter with "confirm" active). */
     onConfirm: () => void;
-    /** Called when the user cancels (enter with "cancel" active, or esc). */
+    /** Called when the user cancels: enter with "cancel" active, or any non-commit close (esc, click-outside). */
     onCancel: () => void;
     /** Override label for the cancel button (defaults to "cancel"). */
     cancelLabel?: string;
@@ -33,6 +36,8 @@ export function ConfirmDialog(props: {
     defaultActive?: "confirm" | "cancel";
 }): JSX.Element {
     const [active, setActive] = createSignal<"confirm" | "cancel">(props.defaultActive ?? "cancel");
+
+    useDialogCancel(() => props.onCancel());
 
     function toggle(): void {
         setActive((a) => (a === "confirm" ? "cancel" : "confirm"));
@@ -43,10 +48,9 @@ export function ConfirmDialog(props: {
         else props.onCancel();
     }
 
-    useBindings(() => ({
+    useDialogBindings(() => ({
         bindings: [
             { chord: KEYS.enter, run: commit, desc: "Confirm selection", group: "Dialog" },
-            { chord: KEYS.escape, run: () => props.onCancel(), desc: "Cancel", group: "Dialog" },
             { chord: KEYS.left, run: toggle, desc: "Switch option", group: "Dialog" },
             { chord: KEYS.right, run: toggle, desc: "Switch option", group: "Dialog" },
         ],
@@ -58,6 +62,7 @@ export function ConfirmDialog(props: {
         <DialogPanel
             title={props.title}
             size="md"
+            tone={props.tone}
             padY
             footer={`${chordLabel(KEYS.left)}/${chordLabel(KEYS.right)} switch ${GLYPHS.middot} ${chordLabel(KEYS.enter)} confirm ${GLYPHS.middot} ${chordLabel(KEYS.escape)} cancel`}
         >

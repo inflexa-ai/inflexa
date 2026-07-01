@@ -267,6 +267,7 @@ function ConfirmDeleteDialog(props: { entityLabel: string; entityName: string; o
     return (
         <PromptDialog
             title={`Delete ${props.entityLabel}?`}
+            tone="danger"
             placeholder={`Type "${props.entityName}" to confirm`}
             onCancel={() => ws.closeDialog()}
             onSubmit={(raw) => {

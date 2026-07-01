@@ -13,19 +13,34 @@ export type TextInputProps = {
     chrome: TextInputChrome;
     /** Placeholder text shown when the input is empty. */
     placeholder?: string;
+    /** Initial text value (seeded on mount, not reactive). */
+    initialValue?: string;
+    /**
+     * When true, dims the text and hides the cursor to signal that input is locked — the same
+     * visual contract as TextArea's `busy`. Suppressing submit is the host's job (the input still
+     * fires `onSubmit`; hosts like PromptDialog gate it on their busy state).
+     */
+    busy?: boolean;
     /** Called when the input gains or loses focus. The component tracks focus internally. */
     onFocusChange?: (focused: boolean) => void;
     /** Receives the input renderable on mount (the host owns focus). */
     onRef?: (r: InputRenderable) => void;
     /** Invoked on every keystroke with the current text value. */
     onInput?: (value: string) => void;
+    /**
+     * Invoked with the current text when the user presses enter, mirroring TextArea's submit
+     * contract at the renderable level. Omit it and enter stays a no-op for the input itself —
+     * hosts like SelectList handle enter in their own keymap layer instead.
+     */
+    onSubmit?: (value: string) => void;
 };
 
 /**
- * Shared single-line input primitive with themed styling and per-keystroke `onInput`. Wraps
- * opentui's `<input>` — no mode concept (always INSERT), no submit/newline chords. Uncontrolled:
- * focus state is owned internally. Clicking the border chrome focuses the input. Two chrome
- * tiers: `"compact"` (bordered, border color shifts on focus) and `"bare"` (no border).
+ * Shared single-line input primitive with themed styling, per-keystroke `onInput`, and optional
+ * enter-to-submit. Wraps opentui's `<input>` — no mode concept (always INSERT), no newline
+ * mechanism (strictly single-line). Uncontrolled: focus state is owned internally. Clicking the
+ * border chrome focuses the input. Two chrome tiers: `"compact"` (bordered, border color shifts
+ * on focus) and `"bare"` (no border).
  */
 export function TextInput(props: TextInputProps): JSX.Element {
     const [focused, setFocused] = createSignal(true);
@@ -62,18 +77,30 @@ export function TextInput(props: TextInputProps): JSX.Element {
             ref={handleRef}
             focused
             width="100%"
+            value={props.initialValue}
             placeholder={props.placeholder ?? ""}
             placeholderColor={theme().fgMuted}
-            textColor={theme().fg}
+            textColor={props.busy ? theme().fgMuted : theme().fg}
             backgroundColor={theme().bg}
             focusedBackgroundColor={theme().bgActive}
+            cursorColor={props.busy ? theme().bg : theme().fg}
             onInput={(v: string) => props.onInput?.(v)}
+            onSubmit={() => props.onSubmit?.(ref?.value ?? "")}
         />
     );
 
-    // bare: no border. compact: bordered with focus-dependent border color, click-to-focus.
+    // bare: no border, but still a height-1 wrapper — InputRenderableOptions omits `height`, and
+    // inside an auto-height parent the bare input otherwise resolves to zero rows (invisible).
+    // compact: bordered with focus-dependent border color, click-to-focus.
     return (
-        <Show when={!isBare()} fallback={input}>
+        <Show
+            when={!isBare()}
+            fallback={
+                <box width="100%" height={1} flexShrink={0}>
+                    {input}
+                </box>
+            }
+        >
             <box width="100%" border borderColor={focused() ? theme().borderFocus : theme().border} paddingLeft={1} paddingRight={1} onMouseUp={handleClick}>
                 {input}
             </box>

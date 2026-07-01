@@ -1,11 +1,11 @@
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type { TextareaRenderable } from "@opentui/core";
-import { onMount } from "solid-js";
 
 import { GLYPHS } from "../../../lib/design_system.ts";
 import { theme } from "../../theme.ts";
-import { useBindings, KEYS, chordLabel } from "../../keymap.ts";
+import { KEYS, chordLabel } from "../../keymap.ts";
+import { useDialogBindings, useDialogCancel, useDialogEntry } from "./dialog_host.tsx";
 import { DialogPanel } from "./dialog_panel.tsx";
 import { Bold } from "../emphasis.tsx";
 import { TextArea } from "../text_area.tsx";
@@ -41,8 +41,8 @@ export type ExportOptionsResult = {
 /**
  * A form dialog with an optional text field and a list of togglable checkbox options. Tab cycles
  * focus between the text field and each option; space toggles the focused option; enter confirms
- * the whole form. Ported from OpenCode's export-options dialog but genericized — callers supply
- * their own option items and text-field config.
+ * the whole form; esc/cancel is the host's. Ported from OpenCode's export-options dialog but
+ * genericized — callers supply their own option items and text-field config.
  *
  * When `textField` is provided, the dialog opens with the textarea focused and tab moves to the
  * first option. When absent, the first option is focused initially.
@@ -56,10 +56,13 @@ export function ExportOptionsDialog(props: {
     items: OptionItem[];
     /** Called with the final form state when the user confirms. */
     onConfirm: (result: ExportOptionsResult) => void;
-    /** Called when the user cancels (esc). */
+    /** Called when the dialog closes for any non-commit reason (esc, click-outside, ctrl+c). */
     onCancel: () => void;
 }): JSX.Element {
+    const dialog = useDialogEntry();
     let textareaRef: TextareaRenderable | undefined;
+
+    useDialogCancel(() => props.onCancel());
 
     const allKeys = (): string[] => {
         const keys: string[] = [];
@@ -74,6 +77,18 @@ export function ExportOptionsDialog(props: {
     for (const item of props.items) initValues[item.key] = item.defaultValue;
     /* eslint-enable solid/reactivity */
     const [values, setValues] = createSignal<Record<string, boolean>>(initValues);
+
+    // Renderable focus must track the visual active row: while the textarea keeps opentui focus,
+    // every unbound printable key lands in it even though an option row is highlighted. Blur on
+    // leave / focus on return keeps "who looks active" and "who eats keys" the same widget.
+    createEffect(() => {
+        if (!textareaRef || textareaRef.isDestroyed) return;
+        if (activeKey() === "__text__") {
+            if (dialog?.isTop() !== false) textareaRef.focus();
+        } else {
+            textareaRef.blur();
+        }
+    });
 
     function cycleNext(): void {
         const keys = allKeys();
@@ -97,16 +112,13 @@ export function ExportOptionsDialog(props: {
         props.onConfirm(result);
     }
 
-    // Tab cycles through all fields (text + options). Escape cancels.
-    useBindings(() => ({
-        bindings: [
-            { chord: { key: "tab" }, run: cycleNext, desc: "Next option", group: "Dialog" },
-            { chord: KEYS.escape, run: () => props.onCancel(), desc: "Cancel", group: "Dialog" },
-        ],
+    // Tab cycles through all fields (text + options). Esc/cancel comes from the host.
+    useDialogBindings(() => ({
+        bindings: [{ chord: { key: "tab" }, run: cycleNext, desc: "Next option", group: "Dialog" }],
     }));
 
     // Space toggles the active option (only when not on the text field).
-    useBindings(() => ({
+    useDialogBindings(() => ({
         enabled: activeKey() !== "__text__",
         bindings: [
             { chord: KEYS.space, run: toggleCurrent, desc: "Toggle option", group: "Dialog" },
@@ -116,20 +128,10 @@ export function ExportOptionsDialog(props: {
 
     // When the text field is active, the form-level enter-to-confirm is in the keymap engine
     // as a fallback — TextArea's renderable-level submit fires first when the textarea is focused.
-    useBindings(() => ({
+    useDialogBindings(() => ({
         enabled: activeKey() === "__text__",
         bindings: [{ chord: KEYS.enter, run: confirm, desc: "Confirm", group: "Dialog" }],
     }));
-
-    onMount(() => {
-        if (textareaRef) {
-            queueMicrotask(() => {
-                if (!textareaRef || textareaRef.isDestroyed) return;
-                textareaRef.focus();
-                textareaRef.gotoLineEnd();
-            });
-        }
-    });
 
     const isOnText = () => activeKey() === "__text__";
     const footer = () =>
@@ -152,6 +154,8 @@ export function ExportOptionsDialog(props: {
                             initialValue={field.defaultValue}
                             onRef={(r: TextareaRenderable) => {
                                 textareaRef = r;
+                                r.gotoLineEnd();
+                                dialog?.setInitialFocus(r);
                             }}
                             onSubmit={confirm}
                         />

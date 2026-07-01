@@ -385,6 +385,15 @@ function seqOf(b: BoundBinding): Sequence {
  * (it relies on `onCleanup` to deregister). The `config` thunk is re-read on each keystroke, so it
  * may freely read signals to drive `enabled`/`mode`/`target` — the declarative replacement for a
  * hand-branched `useKeyboard` handler.
+ *
+ * **Bare-printable-key rule**: a layer that can be active while a text input/textarea is focused
+ * MUST NOT bind unmodified printable keys (bare letters, digits, space) — the engine dispatches
+ * BEFORE the focused editor and `preventDefault`s matches, so such a binding steals typed
+ * characters from the input. Bare printables are fine in layers that can never coexist with a
+ * focused editor: read-only dialogs (`q` to close), focus-`target`-gated NORMAL-mode keys, or
+ * dialog-entry-gated screen layers that suspend while a prompt is stacked above
+ * (`useDialogBindings`). Layers inside dialogs SHOULD register via `useDialogBindings`
+ * (dialog_host.tsx), not this function, so a stacked dialog suspends them.
  */
 export function useBindings(config: () => LayerConfig): void {
     const token = randomUUIDv7();

@@ -69,6 +69,12 @@ export function App(props: AppProps) {
 
     // Three-way ctrl+c: dismiss dialog → abort stream → quit. Always active (no `mode` gate),
     // high priority so it wins over any modal binding that shares the chord.
+    // A dialog may VETO its dismissal (busy prompt, dirty config). The first vetoed press stops
+    // there — the veto blocks accidental dismissal and the dialog shows its own feedback; a quick
+    // second press escalates past the stuck dialog to the next tier, keeping a panic exit within
+    // two keystrokes.
+    let lastVetoAt = 0;
+    const VETO_ESCALATE_WINDOW_MS = 1500;
     useBindings(() => ({
         priority: 100,
         bindings: [
@@ -85,8 +91,14 @@ export function App(props: AppProps) {
                             renderer.clearSelection();
                             return;
                         }
-                        dialogClose();
-                        return;
+                        if (dialogClose("dismiss")) {
+                            lastVetoAt = 0;
+                            return;
+                        }
+                        const now = Date.now();
+                        const escalate = now - lastVetoAt < VETO_ESCALATE_WINDOW_MS;
+                        lastVetoAt = now;
+                        if (!escalate) return;
                     }
                     if (chatStatus() === "busy") {
                         conversation.abort();

@@ -1,12 +1,13 @@
 import { randomUUIDv7 } from "bun";
-import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type { InputRenderable, ScrollBoxRenderable } from "@opentui/core";
 
 import { rankBy } from "../../lib/fuzzy.ts";
 import { GLYPHS } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
-import { useBindings, KEYS, chordLabel } from "../keymap.ts";
+import { KEYS, chordLabel } from "../keymap.ts";
+import { useDialogBindings, useDialogCancel, useDialogEntry } from "./dialog/dialog_host.tsx";
 import { DialogPanel } from "./dialog/dialog_panel.tsx";
 import { Bold } from "./emphasis.tsx";
 import { TextInput } from "./text_input.tsx";
@@ -50,10 +51,12 @@ export function SelectList<T>(props: {
 }): JSX.Element {
     // Unique per instance so row ids never collide across nested/sibling lists.
     const lid = randomUUIDv7();
+    const dialog = useDialogEntry();
     const [query, setQuery] = createSignal("");
     const [cursor, setCursor] = createSignal(0);
-    let inputRef: InputRenderable | null = null;
     let scrollRef: ScrollBoxRenderable | null = null;
+
+    useDialogCancel(() => props.onCancel());
 
     const ranked = createMemo(() =>
         rankBy(props.items, query(), [
@@ -82,14 +85,19 @@ export function SelectList<T>(props: {
         const n = ranked().length;
         if (cursor() > n - 1) setCursor(Math.max(0, n - 1));
     });
-    // Keep the highlighted row visible.
+    // Keep the highlighted row visible. When the cursor sits on the FIRST item of a group, also
+    // pull the group header into view: the header is a separate row the cursor never lands on, so
+    // scrolling back up would otherwise stop at the item and leave the header stranded above the
+    // viewport forever. Item first, header second — moving DOWN onto a group's first item must not
+    // trade the item's visibility for the header's (both end up visible on any viewport ≥ 2 rows).
     createEffect(() => {
         const i = cursor();
         scrollRef?.scrollChildIntoView(`${lid}-${i}`);
+        const j = rows().findIndex((r) => r.kind === "item" && r.idx === i);
+        if (j > 0 && rows()[j - 1]!.kind === "header") {
+            scrollRef?.scrollChildIntoView(`${lid}-h-${j - 1}`);
+        }
     });
-
-    // The renderable isn't ready synchronously; grab focus on the next microtask.
-    onMount(() => queueMicrotask(() => inputRef?.focus()));
 
     function up(): void {
         setCursor((i) => Math.max(0, i - 1));
@@ -102,11 +110,10 @@ export function SelectList<T>(props: {
         if (item) props.onSelect(item.value);
     }
 
-    // No `mode`, so this layer stays live while the host's MODE_BASE keys are suspended. The two
+    // Entry-gated so a dialog stacked above suspends these keys; esc/cancel is the host's. The two
     // emacs-style alternates (ctrl+p/ctrl+n) bind to the same actions as the arrows.
-    useBindings(() => ({
+    useDialogBindings(() => ({
         bindings: [
-            { chord: KEYS.escape, run: () => props.onCancel() },
             { chord: KEYS.up, run: up },
             { chord: KEYS.prevAlt, run: up },
             { chord: KEYS.down, run: down },
@@ -124,9 +131,7 @@ export function SelectList<T>(props: {
             <TextInput
                 chrome="bare"
                 placeholder={props.placeholder ?? `Type to filter${GLYPHS.ellipsis}`}
-                onRef={(r: InputRenderable) => {
-                    inputRef = r;
-                }}
+                onRef={(r: InputRenderable) => dialog?.setInitialFocus(r)}
                 onInput={(v) => {
                     setQuery(v);
                     setCursor(0);
@@ -145,9 +150,9 @@ export function SelectList<T>(props: {
             >
                 <Show when={ranked().length > 0} fallback={<text fg={theme().fgMuted}>{props.emptyText}</text>}>
                     <For each={rows()}>
-                        {(row) =>
+                        {(row, index) =>
                             row.kind === "header" ? (
-                                <text fg={theme().fgMuted}>
+                                <text id={`${lid}-h-${index()}`} fg={theme().fgMuted}>
                                     <Bold>{row.label}</Bold>
                                 </text>
                             ) : (

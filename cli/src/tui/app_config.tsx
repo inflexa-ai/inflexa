@@ -1,5 +1,5 @@
 import { render, useRenderer } from "@opentui/solid";
-import { createEffect, createSignal, For, Show, onCleanup } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 
 import { readConfig, resolvePostgresConfig, writeConfig, type Config } from "../lib/config.ts";
@@ -8,7 +8,8 @@ import { GLYPHS, themes, themeIds } from "../lib/design_system.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { setTheme, theme, noticeColor, type Notice } from "./theme.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
-import { useKeymapRoot, useBindings, KEYS, chordLabel, pushMode, MODE_MODAL } from "./keymap.ts";
+import { useKeymapRoot, KEYS, chordLabel } from "./keymap.ts";
+import { DialogOverlay, dialogPush, dialogClose, useDialogBindings, useDialogClose, useDialogCloseGuard } from "./components/dialog/dialog_host.tsx";
 import { Bold, Reverse, Fg } from "./components/emphasis.tsx";
 import { PromptDialog } from "./components/dialog/prompt_dialog.tsx";
 import { ScrollPane } from "./components/scroll_pane.tsx";
@@ -79,15 +80,21 @@ export function ConfigApp(props: { onClose?: () => void }) {
     const [section, setSection] = createSignal(0);
     const [notice, setNotice] = createSignal<Notice | null>(null);
     const [quitArmed, setQuitArmed] = createSignal(false);
-    // When set, a Postgres text field is being edited via a PromptDialog overlay.
-    const [editingPgField, setEditingPgField] = createSignal<PgField | null>(null);
 
-    // Suspend the form's base-mode bindings while the prompt dialog is open so keys
-    // like `q` or `s` are handled by the focused input instead of triggering exit/save.
-    createEffect(() => {
-        if (!editingPgField()) return;
-        const pop = pushMode(MODE_MODAL);
-        onCleanup(pop);
+    // Embedded as a dialog: the host's esc / click-outside / ctrl+c route here instead of popping
+    // the entry outright, so the two-press dirty guard survives every dismissal gesture, not just
+    // the form-layer keys. Both hooks are no-ops standalone (no entry).
+    useDialogCloseGuard((reason) => {
+        if (reason === "commit") return true;
+        if (dirty() && !quitArmed()) {
+            armQuit();
+            return false;
+        }
+        return true;
+    });
+    // A non-commit pop skips exit(), so the live theme preview must revert here.
+    useDialogClose((reason) => {
+        if (reason !== "commit") setTheme(saved().theme);
     });
 
     /** The draft's postgres config — guaranteed non-null (seeded with resolved defaults). */
@@ -157,11 +164,25 @@ export function ConfigApp(props: { onClose?: () => void }) {
         setQuitArmed(false);
     }
 
-    // Enter on a postgres_field section opens a prompt dialog for inline text editing.
+    // Enter on a postgres_field section opens a prompt dialog for inline text editing. Goes
+    // through the dialog host (embedded: stacks on this screen's entry, suspending the form's
+    // keys; standalone: the DialogOverlay rendered below hosts it) — the form layer's bare keys
+    // (`s`, `q`, space) stay suspended while the prompt is open, so they type into the field.
     function editFocusedPgField(): void {
         const s = sections[section()]!;
         if (s.kind !== "postgres_field") return;
-        setEditingPgField(s.field);
+        const field = s.field;
+        dialogPush(() => (
+            <PromptDialog
+                title={`postgres.${field}`}
+                value={String(pgDraft()[field])}
+                onSubmit={(value: string) => {
+                    dialogClose();
+                    setPgField(field, value);
+                }}
+                onCancel={() => {}}
+            />
+        ));
     }
 
     function setPgField(field: PgField, value: string): void {
@@ -215,11 +236,16 @@ export function ConfigApp(props: { onClose?: () => void }) {
         void shutdown(0);
     }
 
+    /** First exit attempt with unsaved changes arms the confirm; shared by the form keys and the host veto. */
+    function armQuit(): void {
+        setQuitArmed(true);
+        setNotice({ kind: "warn", text: "Unsaved changes — press s to save, or q/Esc again to discard." });
+    }
+
     // First q/Esc/ctrl+c with unsaved changes arms a confirm; the second discards and exits.
     function requestExit(): void {
         if (dirty() && !quitArmed()) {
-            setQuitArmed(true);
-            setNotice({ kind: "warn", text: "Unsaved changes — press s to save, or q/Esc again to discard." });
+            armQuit();
             return;
         }
         exit();
@@ -231,9 +257,11 @@ export function ConfigApp(props: { onClose?: () => void }) {
     // eslint-disable-next-line solid/reactivity -- seed-once: props.onClose is fixed at mount (embedded vs standalone never changes), so this one-time read correctly decides which mode installs the root
     if (!props.onClose) useKeymapRoot();
 
-    // No `mode`, so this layer is live in base mode (standalone) and in modal mode (embedded). The
-    // ctrl+c here quits this screen — distinct from the chat's remappable `app.abort`.
-    useBindings(() => ({
+    // Dialog-entry gated: live while this screen is the top entry (embedded) or while no dialog
+    // is open (standalone) — so the pg-field prompt suspends these bare keys (`q`, `s`, space,
+    // arrows) and they type into the field instead of firing form actions. The ctrl+c here quits
+    // this screen — distinct from the chat's remappable `app.abort`.
+    useDialogBindings(() => ({
         bindings: [
             { chord: KEYS.q, run: requestExit },
             { chord: KEYS.escape, run: requestExit },
@@ -390,20 +418,10 @@ export function ConfigApp(props: { onClose?: () => void }) {
                 <text fg={theme().fgMuted}>File: {env.configPath}</text>
             </box>
 
-            {/* Postgres text-field editor overlay. Rendered as a full-screen takeover
-                 over the form; the PromptDialog's own Esc binding cancels and returns here. */}
-            <Show when={editingPgField()}>
-                <box width="100%" height="100%" alignItems="center" justifyContent="center" backgroundColor={theme().bg}>
-                    <PromptDialog
-                        title={`postgres.${editingPgField()!}`}
-                        value={String(pgDraft()[editingPgField()!])}
-                        onSubmit={(value: string) => {
-                            setPgField(editingPgField()!, value);
-                            setEditingPgField(null);
-                        }}
-                        onCancel={() => setEditingPgField(null)}
-                    />
-                </box>
+            {/* Standalone owns its renderer, so it mounts its own overlay for the pg-field
+                 prompt; embedded reuses the chat App's (one DialogOverlay per renderer). */}
+            <Show when={!props.onClose}>
+                <DialogOverlay />
             </Show>
         </box>
     );

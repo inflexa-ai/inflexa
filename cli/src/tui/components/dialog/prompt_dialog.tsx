@@ -1,41 +1,57 @@
-import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type { TextareaRenderable } from "@opentui/core";
 
 import { GLYPHS } from "../../../lib/design_system.ts";
-import { theme } from "../../theme.ts";
-import { useBindings, KEYS, chordLabel } from "../../keymap.ts";
+import { KEYS, chordLabel } from "../../keymap.ts";
+import { useDialogCancel, useDialogCloseGuard, useDialogEntry } from "./dialog_host.tsx";
 import { DialogPanel } from "./dialog_panel.tsx";
 import { TextArea } from "../text_area.tsx";
+import { TextInput } from "../text_input.tsx";
 
 /**
- * A text prompt dialog: title, optional description, a textarea input, enter-to-submit,
- * esc-to-cancel. The single prompt widget for all text-entry dialogs — short names (height=1,
- * the default) and longer compositions (height=3+) alike. Supports an optional busy state
- * that dims the input, disables submit, and shows an animated braille spinner.
+ * A text prompt dialog: title, optional description, a text field, enter-to-submit. The single
+ * prompt widget for all text-entry dialogs. The `multiline` prop selects the primitive: off (the
+ * default) renders the single-line `TextInput` — enter submits, nothing can insert a newline, and
+ * no INSERT/NORMAL mode word appears (a modal has no reachable NORMAL mode; esc closes the dialog
+ * via the host); on renders the multi-line `TextArea` with the submit/newline chords and `height`
+ * honored. Both use `chrome="bare"` — the dialog panel border is the sole chrome.
+ *
+ * Esc/cancel is the HOST's: the dialog binds no keys itself. It participates in the close funnel
+ * via its entry handle — `onCancel` fires for every non-commit close (esc, click-outside, ctrl+c),
+ * and the busy state vetoes ALL closes, making an in-flight operation dismissal-proof.
  */
 export function PromptDialog(props: {
     /** Panel title shown in the border chrome. */
     title: string;
-    /** Optional JSX description rendered between the title and the textarea. */
+    /** `danger` renders the destructive-confirm chrome (double border, error color) — type-to-confirm deletes. */
+    tone?: "default" | "danger";
+    /** Optional JSX description rendered between the title and the text field. */
     description?: () => JSX.Element;
     /** Placeholder text when the field is empty. */
     placeholder?: string;
-    /** Initial textarea value. */
+    /** Initial field value. */
     value?: string;
-    /** Textarea row height — 1 for single-line prompts (the default), 3+ for multi-line. */
+    /** When true, renders a multi-line TextArea instead of the single-line TextInput. */
+    multiline?: boolean;
+    /** TextArea row height when `multiline` (defaults to 3). Ignored for single-line prompts. */
     height?: number;
-    /** When true, the input is dimmed and unfocusable and the busy text is shown. */
+    /** When true, the input is dimmed and unfocusable, submit is disabled, and every close is vetoed. */
     busy?: boolean;
-    /** Message shown below the input while `busy` is true (defaults to "Working…"). */
+    /** Message shown in the footer while `busy` is true (defaults to "Working…"). */
     busyText?: string;
-    /** Called with the textarea's plain text when the user submits. */
+    /** Called with the field's plain text when the user submits. */
     onSubmit: (value: string) => void;
-    /** Called when the user cancels (esc). */
+    /** Called when the dialog closes for any non-commit reason (esc, click-outside, ctrl+c). */
     onCancel: () => void;
 }): JSX.Element {
-    let textareaRef: TextareaRenderable | undefined;
+    const dialog = useDialogEntry();
+    // Input extends Textarea in opentui, so one ref type covers both primitives.
+    let editRef: TextareaRenderable | undefined;
     const [spinFrame, setSpinFrame] = createSignal(0);
+
+    useDialogCloseGuard(() => !props.busy);
+    useDialogCancel(() => props.onCancel());
 
     createEffect(() => {
         if (!props.busy) return;
@@ -53,53 +69,56 @@ export function PromptDialog(props: {
         props.onSubmit(text);
     }
 
-    useBindings(() => ({
-        bindings: [{ chord: KEYS.escape, run: () => props.onCancel(), desc: "Cancel", group: "Dialog" }],
-    }));
-
-    onMount(() => {
-        // eslint-disable-next-line solid/reactivity -- one-time mount: props.busy is read once to gate initial focus; the createEffect below handles subsequent changes
-        queueMicrotask(() => {
-            if (!textareaRef || textareaRef.isDestroyed) return;
-            if (props.busy) return;
-            textareaRef.focus();
-            textareaRef.gotoLineEnd();
-        });
-    });
+    function handleRef(r: TextareaRenderable): void {
+        editRef = r;
+        r.gotoLineEnd();
+        if (!props.busy) dialog?.setInitialFocus(r);
+    }
 
     createEffect(() => {
-        if (!textareaRef || textareaRef.isDestroyed) return;
+        if (!editRef || editRef.isDestroyed) return;
         if (props.busy) {
-            textareaRef.blur();
-        } else {
-            textareaRef.focus();
+            editRef.blur();
+        } else if (dialog?.isTop()) {
+            // isTop guards the grab: a covered prompt must not steal focus back from the dialog
+            // above it, and a gallery-embedded showcase (null handle) must not grab at all.
+            editRef.focus();
         }
     });
 
-    const footer = () =>
-        props.busy ? `${props.busyText ?? `Working${GLYPHS.ellipsis}`}` : `${chordLabel(KEYS.enter)} submit ${GLYPHS.middot} ${chordLabel(KEYS.escape)} cancel`;
+    const footer = (): string =>
+        props.busy
+            ? `${GLYPHS.spinner[spinFrame()]} ${props.busyText ?? `Working${GLYPHS.ellipsis}`}`
+            : `${chordLabel(KEYS.enter)} submit ${GLYPHS.middot} ${chordLabel(KEYS.escape)} cancel`;
 
     return (
-        <DialogPanel title={props.title} size="md" padY footer={footer()}>
+        <DialogPanel title={props.title} size="md" tone={props.tone} padY footer={footer()}>
             <box gap={1}>
                 <Show when={props.description} keyed>
                     {(desc: () => JSX.Element) => desc()}
                 </Show>
-                <TextArea
-                    chrome="compact"
-                    height={props.height ?? 1}
-                    placeholder={props.placeholder}
-                    initialValue={props.value}
-                    busy={props.busy}
-                    onRef={(r: TextareaRenderable) => {
-                        textareaRef = r;
-                    }}
-                    onSubmit={submit}
-                />
-                <Show when={props.busy}>
-                    <text fg={theme().fgMuted}>
-                        {GLYPHS.spinner[spinFrame()]} {props.busyText ?? `Working${GLYPHS.ellipsis}`}
-                    </text>
+                <Show
+                    when={props.multiline}
+                    fallback={
+                        <TextInput
+                            chrome="bare"
+                            placeholder={props.placeholder}
+                            initialValue={props.value}
+                            busy={props.busy}
+                            onRef={handleRef}
+                            onSubmit={submit}
+                        />
+                    }
+                >
+                    <TextArea
+                        chrome="bare"
+                        height={props.height ?? 3}
+                        placeholder={props.placeholder}
+                        initialValue={props.value}
+                        busy={props.busy}
+                        onRef={handleRef}
+                        onSubmit={submit}
+                    />
                 </Show>
             </box>
         </DialogPanel>

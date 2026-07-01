@@ -2,8 +2,14 @@ import type { JSX } from "solid-js";
 
 import { GLYPHS, space } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
-import { useBindings, KEYS, chordLabel } from "../keymap.ts";
+import { KEYS, chordLabel } from "../keymap.ts";
+import { useDialogBindings, useDialogCancel, useDialogEntry, DialogShowcase } from "../components/dialog/dialog_host.tsx";
 import { DialogPanel } from "../components/dialog/dialog_panel.tsx";
+import { PromptDialog } from "../components/dialog/prompt_dialog.tsx";
+import { ConfirmDialog } from "../components/dialog/confirm_dialog.tsx";
+import { AlertDialog } from "../components/dialog/alert_dialog.tsx";
+import { ResultsDialog } from "../components/dialog/results_dialog.tsx";
+import { ExportOptionsDialog } from "../components/dialog/export_options_dialog.tsx";
 import { Welcome } from "../components/welcome.tsx";
 import { ThinkingBlock } from "../components/thinking_block.tsx";
 import { ThinkingIndicator } from "../components/thinking_indicator.tsx";
@@ -44,17 +50,19 @@ function State(props: { n: string; label: string; children: JSX.Element }): JSX.
  * mock data ever leaks into a real session. Esc/q close.
  */
 export function DesignGallery(props: { onClose: () => void }): JSX.Element {
-    // Scroll keys (and focus-on-mount) come from ScrollPane; only the close keys are bound here.
-    useBindings(() => ({
-        bindings: [
-            { chord: KEYS.escape, run: () => props.onClose() },
-            { chord: KEYS.q, run: () => props.onClose() },
-        ],
+    const dialog = useDialogEntry();
+
+    useDialogCancel(() => props.onClose());
+
+    // Scroll keys (and focus-on-mount) come from ScrollPane; esc/cancel is the host's. `q` is a
+    // bare printable but compliant: no text input coexists with it in this read-only showcase.
+    useDialogBindings(() => ({
+        bindings: [{ chord: KEYS.q, run: () => props.onClose() }],
     }));
     const runSteps = mockRun.steps.map((s) => ({ label: s.label, state: s.state }));
     return (
         <DialogPanel title="Design system — stream blocks" size="xl" footer={`${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}>
-            <ScrollPane flexGrow={1} width="100%" paddingTop={space.sm}>
+            <ScrollPane focusOnMount={false} onRef={(r) => dialog?.setInitialFocus(r)} flexGrow={1} width="100%" paddingTop={space.sm}>
                 <State n="1" label="welcome / startup">
                     <Welcome greeting="welcome to inflexa" anchorPath="~/inflexa-tests" markerWritten={true} hints={["run /init", "ctrl+k for commands"]} />
                 </State>
@@ -118,7 +126,50 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <text fg={theme().fgMuted}>bare (no border):</text>
                     <TextInput chrome="bare" placeholder="Type to filter…" />
                 </State>
-                <State n="11" label="type & emphasis">
+                <State n="11" label="dialogs — sizes, tones, and the content family (inert exhibits)">
+                    <text fg={theme().fgMuted}>PromptDialog — single-line (md, TextInput, no mode word):</text>
+                    <DialogShowcase>
+                        <PromptDialog title="New project" placeholder="Project name" onSubmit={noop} onCancel={noop} />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>PromptDialog — multiline (TextArea, ctrl+j newline):</text>
+                    <DialogShowcase>
+                        <PromptDialog title="Description" multiline height={3} placeholder="A longer text…" onSubmit={noop} onCancel={noop} />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>PromptDialog — busy (spinner in footer, dismissal vetoed):</text>
+                    <DialogShowcase>
+                        <PromptDialog title="Rename" value="analysis-1" busy busyText="Renaming…" onSubmit={noop} onCancel={noop} />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>danger tone (double border — destructive confirms):</text>
+                    <DialogShowcase>
+                        <PromptDialog title="Delete project?" tone="danger" placeholder={`Type "acme" to confirm`} onSubmit={noop} onCancel={noop} />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>ConfirmDialog — binary choice, cancel is the safe default:</text>
+                    <DialogShowcase>
+                        <ConfirmDialog title="Discard changes?" message="Unsaved edits will be lost." onConfirm={noop} onCancel={noop} />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>AlertDialog — single acknowledgement:</text>
+                    <DialogShowcase>
+                        <AlertDialog title="Heads up" message="The proxy restarted." onClose={noop} />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>ResultsDialog — read-only scrollable lines (lg, fixed height):</text>
+                    <DialogShowcase>
+                        <ResultsDialog title="Projects" lines={["acme — 3 analyses", "demo — 1 analysis"]} emptyText="No projects yet" onClose={noop} />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>ExportOptionsDialog — text field + checkbox options:</text>
+                    <DialogShowcase>
+                        <ExportOptionsDialog
+                            title="Export report"
+                            textField={{ label: "Filename", defaultValue: "report.html", placeholder: "report.html" }}
+                            items={[
+                                { key: "figures", label: "Include figures", defaultValue: true },
+                                { key: "raw", label: "Include raw data", defaultValue: false },
+                            ]}
+                            onConfirm={noop}
+                            onCancel={noop}
+                        />
+                    </DialogShowcase>
+                </State>
+                <State n="12" label="type & emphasis">
                     <text>
                         <Bold>bold</Bold> <Fg role="fgMuted">— names, active items</Fg>
                     </text>
