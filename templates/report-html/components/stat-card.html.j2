@@ -1,0 +1,15 @@
+{# Stat card with corner accents: {% include "components/stat-card.html.j2" %}
+   Expects: stat_value, stat_label, stat_detail (optional), stat_color (optional: primary|green|red|purple|amber, default "primary") #}
+{% set color_map = {
+  "primary": "#576dea",
+  "green": "#22c55e",
+  "red": "#ef4444",
+  "purple": "#a78bfa",
+  "amber": "#f59e0b"
+} %}
+{% set resolved_color = color_map[stat_color | default("primary")] | default("#576dea") %}
+<div class="corner-accents border border-slate-200 bg-white p-6 hover:shadow-md transition-shadow duration-200">
+  <div class="font-mono text-3xl font-bold" style="color: {{ resolved_color }};">{{ stat_value }}</div>
+  <div class="font-mono text-xs font-medium text-slate-500 mt-2 uppercase tracking-wider">{{ stat_label }}</div>
+  {% if stat_detail %}<div class="text-sm text-slate-400 mt-1">{{ stat_detail }}</div>{% endif %}
+</div>

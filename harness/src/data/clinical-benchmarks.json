@@ -1,0 +1,108 @@
+{
+  "_comment": "Clinical phase-transition probabilities and likelihood-of-approval benchmarks by therapeutic area. Used by §2.5d (Clinical Benchmarks). Source: BIO Industry / IQVIA / QLS Advisors 'Clinical Development Success Rates' (2011-2020 cohort, published 2021). Numbers represent industry-wide aggregate probabilities — not target-specific. Refresh annually when next BIO/IQVIA report drops; bump schema_version on any structural change.",
+  "schema_version": 1,
+  "data_version": "2021.1",
+  "data_window": "2011-2020",
+  "source": "BIO Industry / IQVIA / QLS Advisors — Clinical Development Success Rates 2011-2020",
+  "url": "https://go.bio.org/rs/490-EHZ-999/images/ClinicalDevelopmentSuccessRates2011_2020.pdf",
+  "refresh_procedure": "Annual: pull the latest BIO/IQVIA Clinical Development Success Rates report, copy phase-transition tables from Appendix A, update phase_transitions and likelihood_of_approval keyed by therapeutic area, bump data_version (calendar.minor), and update data_window. Validate by running mastra/__tests__/clinical-benchmarks.test.ts.",
+  "phase_transitions": {
+    "all": {
+      "phase1_to_phase2": 0.524,
+      "phase2_to_phase3": 0.286,
+      "phase3_to_nda": 0.585,
+      "nda_to_approval": 0.906,
+      "phase1_to_approval": 0.079
+    },
+    "oncology": {
+      "phase1_to_phase2": 0.522,
+      "phase2_to_phase3": 0.249,
+      "phase3_to_nda": 0.479,
+      "nda_to_approval": 0.879,
+      "phase1_to_approval": 0.054
+    },
+    "cardiovascular": {
+      "phase1_to_phase2": 0.575,
+      "phase2_to_phase3": 0.249,
+      "phase3_to_nda": 0.564,
+      "nda_to_approval": 0.851,
+      "phase1_to_approval": 0.069
+    },
+    "metabolic": {
+      "phase1_to_phase2": 0.598,
+      "phase2_to_phase3": 0.295,
+      "phase3_to_nda": 0.55,
+      "nda_to_approval": 0.864,
+      "phase1_to_approval": 0.084
+    },
+    "neurology": {
+      "phase1_to_phase2": 0.555,
+      "phase2_to_phase3": 0.293,
+      "phase3_to_nda": 0.559,
+      "nda_to_approval": 0.834,
+      "phase1_to_approval": 0.076
+    },
+    "psychiatry": {
+      "phase1_to_phase2": 0.526,
+      "phase2_to_phase3": 0.345,
+      "phase3_to_nda": 0.539,
+      "nda_to_approval": 0.847,
+      "phase1_to_approval": 0.083
+    },
+    "infectious_disease": {
+      "phase1_to_phase2": 0.706,
+      "phase2_to_phase3": 0.488,
+      "phase3_to_nda": 0.755,
+      "nda_to_approval": 0.926,
+      "phase1_to_approval": 0.241
+    },
+    "autoimmune": {
+      "phase1_to_phase2": 0.643,
+      "phase2_to_phase3": 0.328,
+      "phase3_to_nda": 0.642,
+      "nda_to_approval": 0.876,
+      "phase1_to_approval": 0.119
+    },
+    "respiratory": {
+      "phase1_to_phase2": 0.626,
+      "phase2_to_phase3": 0.317,
+      "phase3_to_nda": 0.587,
+      "nda_to_approval": 0.886,
+      "phase1_to_approval": 0.103
+    },
+    "gastroenterology": {
+      "phase1_to_phase2": 0.61,
+      "phase2_to_phase3": 0.355,
+      "phase3_to_nda": 0.625,
+      "nda_to_approval": 0.866,
+      "phase1_to_approval": 0.117
+    },
+    "hematology": {
+      "phase1_to_phase2": 0.586,
+      "phase2_to_phase3": 0.327,
+      "phase3_to_nda": 0.741,
+      "nda_to_approval": 0.91,
+      "phase1_to_approval": 0.129
+    },
+    "rare_disease": {
+      "phase1_to_phase2": 0.766,
+      "phase2_to_phase3": 0.487,
+      "phase3_to_nda": 0.784,
+      "nda_to_approval": 0.921,
+      "phase1_to_approval": 0.269
+    }
+  },
+  "indication_to_therapeutic_area": [
+    { "patterns": ["cancer", "carcinoma", "leukemia", "lymphoma", "melanoma", "sarcoma", "tumor", "tumour", "neoplasm", "myeloma", "glioma"], "therapeutic_area": "oncology" },
+    { "patterns": ["heart", "cardiac", "cardio", "atherosclerosis", "stroke", "hypertension", "myocardial"], "therapeutic_area": "cardiovascular" },
+    { "patterns": ["diabetes", "obesity", "metabolic", "lipid", "cholesterol"], "therapeutic_area": "metabolic" },
+    { "patterns": ["alzheimer", "parkinson", "huntington", "epilepsy", "neurodegeneration", "multiple sclerosis", "ALS"], "therapeutic_area": "neurology" },
+    { "patterns": ["depression", "schizophrenia", "anxiety", "bipolar", "psychotic"], "therapeutic_area": "psychiatry" },
+    { "patterns": ["HIV", "hepatitis", "tuberculosis", "malaria", "infection", "viral", "bacterial", "antibiotic"], "therapeutic_area": "infectious_disease" },
+    { "patterns": ["lupus", "rheumatoid", "psoriasis", "crohn", "ulcerative colitis", "autoimmune", "inflammatory"], "therapeutic_area": "autoimmune" },
+    { "patterns": ["asthma", "COPD", "pulmonary", "respiratory", "bronchitis"], "therapeutic_area": "respiratory" },
+    { "patterns": ["IBS", "GI", "gastroenter", "intestinal", "bowel", "liver", "hepatic"], "therapeutic_area": "gastroenterology" },
+    { "patterns": ["anemia", "thrombocytopenia", "hemophilia", "hematolog", "blood disorder"], "therapeutic_area": "hematology" },
+    { "patterns": ["orphan", "rare", "ultra-rare"], "therapeutic_area": "rare_disease" }
+  ]
+}

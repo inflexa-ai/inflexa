@@ -1,0 +1,27 @@
+{# Sortable data table: {% include "components/data-table.html.j2" %}
+   Expects: table_id, table_headers (list of {label, sort_type?}), table_rows (list of lists) #}
+<div class="corner-accents border border-slate-200 bg-white overflow-hidden hover:shadow-md transition-shadow duration-200">
+  <div class="overflow-x-auto">
+    <table id="{{ table_id }}" data-sortable class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-slate-200 bg-slate-50">
+          {% for h in table_headers %}
+          <th class="px-4 py-3 text-left font-mono text-[11px] font-semibold text-slate-500 uppercase tracking-wider select-none hover:bg-slate-100 transition-colors"
+              data-sort="{{ h.sort_type | default('string') }}">
+            {{ h.label }} <span class="sort-arrow text-slate-300 ml-1">&#x2195;</span>
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in table_rows %}
+        <tr class="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-b-0">
+          {% for cell in row %}
+          <td class="px-4 py-2.5 text-slate-700">{{ cell }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

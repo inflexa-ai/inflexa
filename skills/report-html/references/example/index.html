@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gene Expression Analysis</title>
+
+  <!-- Tailwind CSS v4 (Play CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+
+  <!-- ECharts -->
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+
+  <!-- Fonts: Space Grotesk (headings/body) + IBM Plex Mono (data/labels/genes) -->
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource-variable/space-grotesk@5.1.1/index.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource-variable/ibm-plex-mono@5.1.1/index.css" rel="stylesheet">
+
+  <!-- Tailwind v4 theme -->
+  <style type="text/tailwindcss">
+    @theme {
+      --color-primary-50: #f0f1fe;
+      --color-primary-100: #dde0fc;
+      --color-primary-200: #bcc2f9;
+      --color-primary-300: #9ba5f5;
+      --color-primary-400: #7987f0;
+      --color-primary-500: #576dea;
+      --color-primary-600: #4458d4;
+      --color-primary-700: #3545b0;
+      --font-sans: 'Space Grotesk Variable', system-ui, sans-serif;
+      --font-mono: 'IBM Plex Mono Variable', ui-monospace, monospace;
+    }
+  </style>
+
+  <style>
+    /* ── Base ──────────────────────────────────────── */
+    body {
+      font-family: 'Space Grotesk Variable', system-ui, sans-serif;
+      background: #ffffff;
+      color: #475569;
+    }
+    .font-mono, code, .gene {
+      font-family: 'IBM Plex Mono Variable', ui-monospace, monospace;
+    }
+
+    /* ── Corner Accent Cards ──────────────────────── */
+    .corner-accents {
+      position: relative;
+    }
+    .corner-accents::before,
+    .corner-accents::after {
+      content: '';
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      transition: all 0.3s ease;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .corner-accents::before {
+      top: -1px;
+      left: -1px;
+      border-top: 2px solid #bcc2f9;
+      border-left: 2px solid #bcc2f9;
+    }
+    .corner-accents::after {
+      bottom: -1px;
+      right: -1px;
+      border-bottom: 2px solid #bcc2f9;
+      border-right: 2px solid #bcc2f9;
+    }
+    .corner-accents:hover::before,
+    .corner-accents:hover::after {
+      width: 28px;
+      height: 28px;
+      border-color: #576dea;
+    }
+
+    /* ── Window Chrome Panel ──────────────────────── */
+    .window-chrome .chrome-dots span {
+      transition: background-color 0.3s ease;
+    }
+    .window-chrome:hover .chrome-dots .dot-1 { background-color: #fb7185; }
+    .window-chrome:hover .chrome-dots .dot-2 { background-color: #fbbf24; }
+    .window-chrome:hover .chrome-dots .dot-3 { background-color: #4ade80; }
+
+    /* ── Terminal Card ────────────────────────────── */
+    .terminal-card {
+      position: relative;
+      overflow: hidden;
+    }
+    .terminal-card::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(148, 163, 184, 0.03) 2px,
+        rgba(148, 163, 184, 0.03) 4px
+      );
+      transition: opacity 0.3s ease;
+    }
+    .terminal-card:hover::after {
+      opacity: 1;
+    }
+
+    /* ── Block Progress Bar ───────────────────────── */
+    .block-progress {
+      font-family: 'IBM Plex Mono Variable', ui-monospace, monospace;
+      font-size: 14px;
+    }
+    .block-progress .filled-high { color: #576dea; }
+    .block-progress .filled-mid  { color: #f59e0b; }
+    .block-progress .filled-low  { color: #f43f5e; }
+    .block-progress .empty       { color: #e2e8f0; }
+
+    /* ── Section Textures ─────────────────────────── */
+    .texture-dots,
+    .texture-grid,
+    .texture-noise {
+      position: relative;
+    }
+    .texture-dots > *,
+    .texture-grid > *,
+    .texture-noise > * {
+      position: relative;
+      z-index: 1;
+    }
+    .texture-dots::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background: rgba(148, 163, 184, 0.2);
+      -webkit-mask-image:
+        radial-gradient(ellipse 80% 60% at 50% 50%, black 0%, transparent 70%),
+        radial-gradient(circle 0.75px at center, white 100%, transparent 100%);
+      -webkit-mask-composite: source-in;
+      mask-image:
+        radial-gradient(ellipse 80% 60% at 50% 50%, black 0%, transparent 70%),
+        radial-gradient(circle 0.75px at center, white 100%, transparent 100%);
+      mask-composite: intersect;
+      -webkit-mask-size: 100% 100%, 6px 6px;
+      mask-size: 100% 100%, 6px 6px;
+    }
+    .texture-grid::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background-image:
+        linear-gradient(to right, transparent calc(100% - 1px), rgba(148, 163, 184, 0.15) 100%),
+        linear-gradient(to bottom, transparent calc(100% - 1px), rgba(148, 163, 184, 0.15) 100%);
+      background-size: 32px 32px;
+      -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, black 0%, transparent 70%);
+      mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, black 0%, transparent 70%);
+    }
+    .texture-noise::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E");
+      background-size: 200px 200px;
+    }
+
+    /* ── Fade-In Animation ────────────────────────── */
+    .fade-in {
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.7s ease-out, transform 0.7s ease-out;
+    }
+    .fade-in-visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ── Sidebar ──────────────────────────────────── */
+    /* When a sidebar is rendered, shift the rest of the page right on lg+ */
+    @media (min-width: 1024px) {
+      body:has(#report-sidebar) { padding-left: 15rem; }
+    }
+    .sidebar-link {
+      border-left: 2px solid transparent;
+    }
+    .sidebar-link.active {
+      color: #576dea;
+      background-color: #f0f1fe;
+      border-left-color: #576dea;
+      font-weight: 600;
+    }
+    .sidebar-link.active .text-slate-300 { color: #576dea; }
+
+    /* ── Scrollbar ────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+    /* ── Animations ───────────────────────────────── */
+    @keyframes blink { 50% { opacity: 0; } }
+    .animate-blink { animation: blink 1s step-end infinite; }
+
+    /* ── Reduced Motion ───────────────────────────── */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    /* ── Print ────────────────────────────────────── */
+    @media print {
+      footer { background: white !important; color: #334155 !important; }
+      .no-print { display: none !important; }
+      .fade-in { opacity: 1 !important; transform: none !important; }
+      .texture-dots::before,
+      .texture-grid::before,
+      .texture-noise::after { display: none !important; }
+    }
+  </style>
+</head>
+<body class="antialiased font-sans">
+
+  
+  
+  
+  
+  
+<aside id="report-sidebar"
+       class="fixed top-0 left-0 z-40 h-screen w-60 flex flex-col border-r border-slate-200 bg-white/95 backdrop-blur transform -translate-x-full lg:translate-x-0 transition-transform duration-200"
+       aria-label="Report navigation">
+  <div class="flex items-center gap-2 px-5 py-5 border-b border-slate-200">
+    <span class="font-mono text-sm font-semibold tracking-wider text-primary-500">inflexa</span>
+    
+    <span class="text-slate-300">|</span>
+    <span class="font-mono text-[11px] font-semibold tracking-wider text-slate-400 uppercase">DEG</span>
+    
+  </div>
+  <nav class="flex-1 overflow-y-auto py-3" aria-label="Report sections">
+    
+    <a href="#overview" data-sidebar-link
+       class="sidebar-link flex items-center gap-3 px-5 py-2 text-sm text-slate-500 hover:text-slate-900 hover:bg-slate-50 transition-colors">
+      
+      <span class="font-mono text-[10px] font-semibold tracking-wider text-slate-300 shrink-0 w-4 text-right">1</span>
+      
+      <span class="truncate">Overview</span>
+    </a>
+    
+    <a href="#volcano" data-sidebar-link
+       class="sidebar-link flex items-center gap-3 px-5 py-2 text-sm text-slate-500 hover:text-slate-900 hover:bg-slate-50 transition-colors">
+      
+      <span class="font-mono text-[10px] font-semibold tracking-wider text-slate-300 shrink-0 w-4 text-right">2</span>
+      
+      <span class="truncate">Volcano Plot</span>
+    </a>
+    
+    <a href="#top-genes" data-sidebar-link
+       class="sidebar-link flex items-center gap-3 px-5 py-2 text-sm text-slate-500 hover:text-slate-900 hover:bg-slate-50 transition-colors">
+      
+      <span class="font-mono text-[10px] font-semibold tracking-wider text-slate-300 shrink-0 w-4 text-right">3</span>
+      
+      <span class="truncate">Top DEGs</span>
+    </a>
+    
+  </nav>
+  
+  <div class="px-5 py-4 border-t border-slate-200 text-xs text-slate-400">GSE200209 · 2026</div>
+  
+</aside>
+
+<button id="sidebar-mobile-toggle" type="button"
+        class="lg:hidden fixed top-3 right-3 z-50 inline-flex items-center justify-center h-9 w-9 rounded-md border border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 transition-colors"
+        aria-label="Toggle navigation" aria-controls="report-sidebar" aria-expanded="false">
+  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="3" y1="6" x2="21" y2="6"></line>
+    <line x1="3" y1="12" x2="21" y2="12"></line>
+    <line x1="3" y1="18" x2="21" y2="18"></line>
+  </svg>
+</button>
+
+
+
+  <!-- Hero -->
+  <header id="report-hero" class="bg-white relative texture-noise">
+    <div class="mx-auto max-w-[1600px] px-6 md:px-8 lg:px-12 pt-12 md:pt-20 pb-10 md:pb-14">
+      
+<p class="font-mono text-xs font-semibold tracking-widest uppercase text-primary-500">DIFFERENTIAL EXPRESSION · NSCLC</p>
+
+      <h1 class="mt-3 text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900 leading-[1.05] max-w-4xl">
+        Differential Gene Expression Analysis
+      </h1>
+      <div class="mt-5 max-w-3xl">
+        
+<p class="text-lg text-slate-600 leading-relaxed">Fluoxetine-treated A549 and H1299 cells profiled against vehicle controls; 12,847 genes assayed, 629 differentially expressed at FDR &lt; 0.05.</p>
+<p class="mt-3 font-mono text-xs text-slate-400">GSE200209 · A549 + H1299 · 24 h treatment · n=6 per arm</p>
+
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main>
+    
+
+<!-- Overview Section (white, dots) -->
+<section id="overview" class="bg-white py-12 md:py-16 relative texture-dots texture-noise">
+  <div class="mx-auto max-w-[1600px] px-6 md:px-8 lg:px-12">
+    <div class="fade-in">
+      
+      
+      
+      
+<div class="mb-8">
+  
+  <div class="font-mono text-xs font-semibold uppercase tracking-widest text-primary-500 mb-3">OVERVIEW</div>
+  
+  <h2 class="text-3xl font-semibold tracking-tight text-slate-900">Expression Analysis Summary</h2>
+  
+  <p class="mt-3 max-w-2xl text-base leading-relaxed text-slate-600">Summary of differential expression analysis results from fluoxetine-treated NSCLC cell lines.</p>
+  
+</div>
+
+    </div>
+
+    <!-- Stats Row -->
+    <div class="fade-in grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8" data-delay="100">
+      
+      
+      
+      
+      
+
+
+<div class="corner-accents border border-slate-200 bg-white p-6 hover:shadow-md transition-shadow duration-200">
+  <div class="font-mono text-3xl font-bold" style="color: #576dea;">12,847</div>
+  <div class="font-mono text-xs font-medium text-slate-500 mt-2 uppercase tracking-wider">Total Genes</div>
+  <div class="text-sm text-slate-400 mt-1">after filtering</div>
+</div>
+
+
+      
+      
+      
+      
+      
+
+
+<div class="corner-accents border border-slate-200 bg-white p-6 hover:shadow-md transition-shadow duration-200">
+  <div class="font-mono text-3xl font-bold" style="color: #ef4444;">342</div>
+  <div class="font-mono text-xs font-medium text-slate-500 mt-2 uppercase tracking-wider">Upregulated</div>
+  <div class="text-sm text-slate-400 mt-1">padj < 0.05, log2FC > 1</div>
+</div>
+
+
+      
+      
+      
+      
+      
+
+
+<div class="corner-accents border border-slate-200 bg-white p-6 hover:shadow-md transition-shadow duration-200">
+  <div class="font-mono text-3xl font-bold" style="color: #22c55e;">287</div>
+  <div class="font-mono text-xs font-medium text-slate-500 mt-2 uppercase tracking-wider">Downregulated</div>
+  <div class="text-sm text-slate-400 mt-1">padj < 0.05, log2FC < -1</div>
+</div>
+
+
+      
+      
+      
+      
+      
+
+
+<div class="corner-accents border border-slate-200 bg-white p-6 hover:shadow-md transition-shadow duration-200">
+  <div class="font-mono text-3xl font-bold" style="color: #a78bfa;">4.8%</div>
+  <div class="font-mono text-xs font-medium text-slate-500 mt-2 uppercase tracking-wider">DEG Rate</div>
+  <div class="text-sm text-slate-400 mt-1">629 / 12,847</div>
+</div>
+
+    </div>
+
+    <!-- Insight Box -->
+    <div class="fade-in" data-delay="200">
+      
+      
+      
+      
+
+
+<div class="corner-accents border border-slate-200 bg-white p-6 hover:shadow-md transition-shadow duration-200">
+  <div class="flex items-start gap-3">
+    <div class="h-1 w-1 shrink-0 mt-2.5" style="background: #a78bfa;"></div>
+    <div>
+      <div class="text-base font-semibold text-slate-900 mb-2">Key Finding</div>
+      <div class="text-base leading-relaxed text-slate-600">Fluoxetine treatment induces significant ER stress response, with DDIT3 and ATF4 among the top upregulated genes (log2FC > 2.5). The unfolded protein response (UPR) pathway shows coordinated activation across multiple effectors, suggesting a potential mechanism for NSCLC cell growth inhibition.</div>
+    </div>
+  </div>
+</div>
+
+
+      <div class="mt-4 flex gap-2 items-center">
+        <span class="font-mono text-[11px] text-slate-400 uppercase tracking-wider">Evidence</span>
+        
+        
+        
+
+<span class="inline-flex items-center rounded-sm px-2 py-0.5 font-mono text-[11px] font-medium"
+      style="background-color: #f0fdf4; color: #15803d;">
+  High Confidence
+</span>
+
+
+        
+        
+        
+
+<span class="inline-flex items-center rounded-sm px-2 py-0.5 font-mono text-[11px] font-medium"
+      style="background-color: #f0f1fe; color: #3545b0;">
+  3 Studies
+</span>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Volcano Plot Section (slate-50, grid) -->
+<section id="volcano" class="bg-slate-50 py-12 md:py-16 relative texture-grid texture-noise">
+  <div class="mx-auto max-w-[1600px] px-6 md:px-8 lg:px-12">
+    <div class="fade-in">
+      
+      
+      
+      
+<div class="mb-8">
+  
+  <div class="font-mono text-xs font-semibold uppercase tracking-widest text-primary-500 mb-3">VISUALIZATION</div>
+  
+  <h2 class="text-3xl font-semibold tracking-tight text-slate-900">Volcano Plot</h2>
+  
+  <p class="mt-3 max-w-2xl text-base leading-relaxed text-slate-600">Log2 fold change vs. statistical significance for all genes.</p>
+  
+</div>
+
+    </div>
+
+    <div class="fade-in" data-delay="100">
+      
+      
+      
+      
+      
+<div class="window-chrome rounded-xl border border-slate-200 bg-white overflow-hidden hover:-translate-y-1 hover:shadow-xl hover:border-slate-300 transition-all duration-500"
+     style="box-shadow: 0 8px 30px -8px rgba(15,23,42,0.08), 0 4px 12px -4px rgba(15,23,42,0.04);">
+  <div class="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50/50">
+    <div class="chrome-dots flex items-center gap-1.5">
+      <span class="dot-1 h-2.5 w-2.5 rounded-full bg-slate-300 transition-colors duration-300"></span>
+      <span class="dot-2 h-2.5 w-2.5 rounded-full bg-slate-300 transition-colors duration-300"></span>
+      <span class="dot-3 h-2.5 w-2.5 rounded-full bg-slate-300 transition-colors duration-300"></span>
+    </div>
+    
+    <div class="text-center flex-1 px-4">
+      <span class="text-sm font-semibold text-slate-900">Volcano Plot</span>
+      <span class="text-xs text-slate-400 ml-2">Red = upregulated, Blue = downregulated, Gray = not significant</span>
+    </div>
+    
+    <span class="font-mono text-[11px] font-semibold tracking-wider text-primary-500">CORTEX</span>
+  </div>
+  <div class="p-4">
+    <div id="volcano-plot" data-echarts-id style="width: 100%; height: 500px;"></div>
+  </div>
+</div>
+
+    </div>
+  </div>
+</section>
+
+<!-- Top DEGs Table Section (white, dots) -->
+<section id="top-genes" class="bg-white py-12 md:py-16 relative texture-dots texture-noise">
+  <div class="mx-auto max-w-[1600px] px-6 md:px-8 lg:px-12">
+    <div class="fade-in">
+      
+      
+      
+      
+<div class="mb-8">
+  
+  <div class="font-mono text-xs font-semibold uppercase tracking-widest text-primary-500 mb-3">DATA</div>
+  
+  <h2 class="text-3xl font-semibold tracking-tight text-slate-900">Top Differentially Expressed Genes</h2>
+  
+  <p class="mt-3 max-w-2xl text-base leading-relaxed text-slate-600">Ranked by adjusted p-value. Click column headers to sort.</p>
+  
+</div>
+
+    </div>
+
+    <div class="fade-in" data-delay="100">
+      
+      
+      
+      
+<div class="corner-accents border border-slate-200 bg-white overflow-hidden hover:shadow-md transition-shadow duration-200">
+  <div class="overflow-x-auto">
+    <table id="deg-table" data-sortable class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-slate-200 bg-slate-50">
+          
+          <th class="px-4 py-3 text-left font-mono text-[11px] font-semibold text-slate-500 uppercase tracking-wider select-none hover:bg-slate-100 transition-colors"
+              data-sort="string">
+            Gene <span class="sort-arrow text-slate-300 ml-1">&#x2195;</span>
+          </th>
+          
+          <th class="px-4 py-3 text-left font-mono text-[11px] font-semibold text-slate-500 uppercase tracking-wider select-none hover:bg-slate-100 transition-colors"
+              data-sort="number">
+            log2FC <span class="sort-arrow text-slate-300 ml-1">&#x2195;</span>
+          </th>
+          
+          <th class="px-4 py-3 text-left font-mono text-[11px] font-semibold text-slate-500 uppercase tracking-wider select-none hover:bg-slate-100 transition-colors"
+              data-sort="number">
+            padj <span class="sort-arrow text-slate-300 ml-1">&#x2195;</span>
+          </th>
+          
+          <th class="px-4 py-3 text-left font-mono text-[11px] font-semibold text-slate-500 uppercase tracking-wider select-none hover:bg-slate-100 transition-colors"
+              data-sort="number">
+            baseMean <span class="sort-arrow text-slate-300 ml-1">&#x2195;</span>
+          </th>
+          
+          <th class="px-4 py-3 text-left font-mono text-[11px] font-semibold text-slate-500 uppercase tracking-wider select-none hover:bg-slate-100 transition-colors"
+              data-sort="string">
+            Direction <span class="sort-arrow text-slate-300 ml-1">&#x2195;</span>
+          </th>
+          
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr class="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-b-0">
+          
+          <td class="px-4 py-2.5 text-slate-700"><span class='gene'>DDIT3</span></td>
+          
+          <td class="px-4 py-2.5 text-slate-700">3.42</td>
+          
+          <td class="px-4 py-2.5 text-slate-700">1.2e-15</td>
+          
+          <td class="px-4 py-2.5 text-slate-700">892</td>
+          
+          <td class="px-4 py-2.5 text-slate-700"><span class='text-red-500 font-medium'>Up</span></td>
+          
+        </tr>
+        
+        <tr class="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-b-0">
+          
+          <td class="px-4 py-2.5 text-slate-700"><span class='gene'>ATF4</span></td>
+          
+          <td class="px-4 py-2.5 text-slate-700">2.87</td>
+          
+          <td class="px-4 py-2.5 text-slate-700">4.5e-12</td>
+          
+          <td class="px-4 py-2.5 text-slate-700">1204</td>
+          
+          <td class="px-4 py-2.5 text-slate-700"><span class='text-red-500 font-medium'>Up</span></td>
+          
+        </tr>
+        
+        <tr class="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-b-0">
+          
+          <td class="px-4 py-2.5 text-slate-700"><span class='gene'>HSPA5</span></td>
+          
+          <td class="px-4 py-2.5 text-slate-700">2.31</td>
+          
+          <td class="px-4 py-2.5 text-slate-700">2.1e-10</td>
+          
+          <td class="px-4 py-2.5 text-slate-700">3421</td>
+          
+          <td class="px-4 py-2.5 text-slate-700"><span class='text-red-500 font-medium'>Up</span></td>
+          
+        </tr>
+        
+        <tr class="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-b-0">
+          
+          <td class="px-4 py-2.5 text-slate-700"><span class='gene'>CCND1</span></td>
+          
+          <td class="px-4 py-2.5 text-slate-700">-2.15</td>
+          
+          <td class="px-4 py-2.5 text-slate-700">8.7e-09</td>
+          
+          <td class="px-4 py-2.5 text-slate-700">2156</td>
+          
+          <td class="px-4 py-2.5 text-slate-700"><span class='text-primary-500 font-medium'>Down</span></td>
+          
+        </tr>
+        
+        <tr class="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-b-0">
+          
+          <td class="px-4 py-2.5 text-slate-700"><span class='gene'>MYC</span></td>
+          
+          <td class="px-4 py-2.5 text-slate-700">-1.94</td>
+          
+          <td class="px-4 py-2.5 text-slate-700">3.2e-07</td>
+          
+          <td class="px-4 py-2.5 text-slate-700">1876</td>
+          
+          <td class="px-4 py-2.5 text-slate-700"><span class='text-primary-500 font-medium'>Down</span></td>
+          
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+</div>
+
+    </div>
+
+    <!-- Block Progress Bar Example -->
+    <div class="fade-in mt-8" data-delay="200">
+      <div class="corner-accents border border-slate-200 bg-white p-6 hover:shadow-md transition-shadow duration-200">
+        <div class="font-mono text-xs font-semibold uppercase tracking-widest text-primary-500 mb-4">Pathway Scores</div>
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-700">UPR / ER Stress</span>
+            <span class="block-progress"><span class="filled-high">████████</span><span class="empty">░░</span> <span class="score">0.87</span></span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-700">Apoptosis</span>
+            <span class="block-progress"><span class="filled-mid">██████</span><span class="empty">░░░░</span> <span class="score">0.64</span></span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-700">Cell Cycle</span>
+            <span class="block-progress"><span class="filled-low">████</span><span class="empty">░░░░░░</span> <span class="score">0.41</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="bg-slate-900">
+    <div class="mx-auto max-w-[1600px] px-6 md:px-8 lg:px-12 py-8">
+      <div class="flex items-center justify-between">
+        <div class="text-sm text-slate-400">Generated now — GSE200209</div>
+        <div class="font-mono text-[11px] tracking-wider text-slate-500">Powered by Inflexa Cortex</div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Built-in: ECharts theme registration -->
+  <script>
+    echarts.registerTheme('inflexa', {"color":["#576dea","#ef4444","#22c55e","#a78bfa","#f59e0b","#ec4899","#06b6d4","#f97316","#8b5cf6","#14b8a6"],"backgroundColor":"transparent","textStyle":{"fontFamily":"'Space Grotesk Variable', system-ui, sans-serif","fontSize":12,"color":"#64748b"},"title":{"show":false},"legend":{"bottom":0,"textStyle":{"fontSize":11,"color":"#64748b"},"itemGap":16,"itemWidth":12,"itemHeight":12},"grid":{"left":60,"right":24,"top":24,"bottom":48,"containLabel":false},"tooltip":{"backgroundColor":"#ffffff","borderColor":"#e2e8f0","textStyle":{"color":"#334155","fontSize":12},"extraCssText":"border-radius: 4px; box-shadow: 0 4px 12px rgba(15,23,42,0.1);"},"toolbox":{"feature":{"saveAsImage":{"title":"Save","pixelRatio":2}},"iconStyle":{"borderColor":"#94a3b8"},"right":16,"top":0},"xAxis":{"axisLine":{"lineStyle":{"color":"#e2e8f0"}},"axisTick":{"lineStyle":{"color":"#e2e8f0"}},"axisLabel":{"color":"#64748b","fontSize":11},"splitLine":{"lineStyle":{"color":"#f1f5f9","type":"dashed"}}},"yAxis":{"axisLine":{"show":false},"axisTick":{"show":false},"axisLabel":{"color":"#64748b","fontSize":11},"splitLine":{"lineStyle":{"color":"#f1f5f9","type":"dashed"}}}});
+    // Page scripts wire up charts after this runs, so expose a sentinel for
+    // forward-compat callers and defer event dispatch until DOMContentLoaded
+    // so document-level listeners registered later still fire.
+    window.__inflexaThemeReady = true;
+    window.onInflexaThemeReady = function (cb) {
+      if (window.__inflexaThemeReady) Promise.resolve().then(cb);
+      else document.addEventListener('inflexa-theme-ready', cb, { once: true });
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () {
+        document.dispatchEvent(new Event('inflexa-theme-ready'));
+      });
+    } else {
+      setTimeout(function () {
+        document.dispatchEvent(new Event('inflexa-theme-ready'));
+      }, 0);
+    }
+  </script>
+
+  <!-- Built-in: Sortable Tables -->
+  <script>
+    document.querySelectorAll('table[data-sortable]').forEach(table => {
+      table.querySelectorAll('th[data-sort]').forEach(header => {
+        header.style.cursor = 'pointer';
+        header.addEventListener('click', () => {
+          const tbody = table.querySelector('tbody');
+          const rows = Array.from(tbody.querySelectorAll('tr'));
+          const asc = header.dataset.sortDir !== 'asc';
+          const type = header.dataset.sort || 'string';
+          const idx = Array.from(header.parentElement.children).indexOf(header);
+          table.querySelectorAll('th[data-sort]').forEach(h => { delete h.dataset.sortDir; });
+          header.dataset.sortDir = asc ? 'asc' : 'desc';
+          rows.sort((a, b) => {
+            let av = a.children[idx]?.dataset.value ?? a.children[idx]?.textContent.trim() ?? '';
+            let bv = b.children[idx]?.dataset.value ?? b.children[idx]?.textContent.trim() ?? '';
+            if (type === 'number') { av = parseFloat(av) || 0; bv = parseFloat(bv) || 0; return asc ? av - bv : bv - av; }
+            return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+          });
+          rows.forEach(r => tbody.appendChild(r));
+        });
+      });
+    });
+    window.addEventListener('resize', () => {
+      document.querySelectorAll('[data-echarts-id]').forEach(el => {
+        const c = echarts.getInstanceByDom(el); if (c) c.resize();
+      });
+    });
+  </script>
+
+  <!-- Built-in: Fade-In Observer -->
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            const delay = parseInt(entry.target.dataset.delay || '0');
+            setTimeout(() => entry.target.classList.add('fade-in-visible'), delay);
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.08 });
+      document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+    });
+  </script>
+
+  <!-- Built-in: Sidebar active-section tracking + mobile toggle -->
+  <script>
+    (function () {
+      const sidebar = document.getElementById('report-sidebar');
+      if (!sidebar) return;
+      const links = Array.from(sidebar.querySelectorAll('[data-sidebar-link]'));
+      const linkMap = new Map();
+      const sectionIds = [];
+      links.forEach(l => {
+        const href = l.getAttribute('href') || '';
+        if (href.startsWith('#')) {
+          const id = href.slice(1);
+          linkMap.set(id, l);
+          sectionIds.push(id);
+        }
+      });
+      function setActive(id) {
+        links.forEach(l => l.classList.remove('active'));
+        const link = linkMap.get(id);
+        if (link) link.classList.add('active');
+      }
+      if (sectionIds.length) setActive(sectionIds[0]);
+      const observer = new IntersectionObserver((entries) => {
+        const visible = entries
+          .filter(e => e.isIntersecting)
+          .map(e => ({ id: e.target.id, top: e.boundingClientRect.top }))
+          .sort((a, b) => a.top - b.top);
+        if (visible.length) setActive(visible[0].id);
+      }, { rootMargin: '-15% 0px -70% 0px', threshold: 0 });
+      sectionIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) observer.observe(el);
+      });
+
+      const toggle = document.getElementById('sidebar-mobile-toggle');
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          const open = sidebar.classList.toggle('translate-x-0');
+          sidebar.classList.toggle('-translate-x-full', !open);
+          toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        });
+        links.forEach(l => l.addEventListener('click', () => {
+          if (window.innerWidth < 1024) {
+            sidebar.classList.add('-translate-x-full');
+            sidebar.classList.remove('translate-x-0');
+            toggle.setAttribute('aria-expanded', 'false');
+          }
+        }));
+      }
+    })();
+  </script>
+
+  <!-- Page-specific scripts -->
+  
+<script>
+  document.addEventListener('inflexa-theme-ready', () => {
+    const chart = echarts.init(document.getElementById('volcano-plot'), 'inflexa');
+
+    // Load volcano data from CSV
+    fetch('assets/volcano-data.csv')
+      .then(r => r.text())
+      .then(text => {
+        const lines = text.trim().split('\n');
+        const data = lines.slice(1).map(line => {
+          const [gene, log2fc, padj] = line.split(',');
+          const fc = parseFloat(log2fc);
+          const pval = -Math.log10(parseFloat(padj));
+          const sig = Math.abs(fc) > 1 && parseFloat(padj) < 0.05;
+          return { value: [fc, pval], name: gene, itemStyle: {
+            color: sig ? (fc > 0 ? '#ef4444' : '#576dea') : '#94a3b8',
+            opacity: sig ? 0.8 : 0.3
+          }};
+        });
+
+        chart.setOption({
+          xAxis: { name: 'log2 Fold Change', nameLocation: 'center', nameGap: 30 },
+          yAxis: { name: '-log10(padj)', nameLocation: 'center', nameGap: 45 },
+          tooltip: {
+            formatter: p => `<strong>${p.data.name}</strong><br>log2FC: ${p.data.value[0].toFixed(2)}<br>-log10(padj): ${p.data.value[1].toFixed(2)}`
+          },
+          series: [{
+            type: 'scatter',
+            data: data,
+            symbolSize: 5,
+            emphasis: { itemStyle: { borderColor: '#576dea', borderWidth: 1 } }
+          }],
+          dataZoom: [
+            { type: 'inside', xAxisIndex: 0 },
+            { type: 'inside', yAxisIndex: 0 }
+          ]
+        });
+      });
+  });
+</script>
+
+
+</body>
+</html>
