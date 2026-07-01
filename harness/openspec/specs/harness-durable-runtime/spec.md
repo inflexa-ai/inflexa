@@ -1,0 +1,254 @@
+# harness-durable-runtime Specification
+
+## Purpose
+
+Defines the harness runtime architecture: how the same agent loop runs in two
+execution modes, how durable work is composed and scheduled, how it survives
+host restarts, and where the line between open-source core and a managed
+embedder is drawn.
+
+The shaping decision is that **chat is not a workflow**. Chat turns are
+short-lived and bounded by user attention; if a host process dies mid-turn the
+user re-sends the message, so paying the DBOS write tax (a workflow row plus a
+step row per LLM/tool call) for every turn buys little. Only the operations the
+user has explicitly asked to be durable — analyses, target assessments,
+data-profile, and ephemeral exploration — run as DBOS workflows, started from
+tools and independent of the chat turn that triggered them. The single
+`runAgent` primitive runs in both contexts: in-process behind a no-op
+`passthroughStep` for chat, and behind a `durableStep` that wraps each call as a
+named `DBOS.runStep` inside a workflow body. The loop body never imports DBOS.
+
+Composition is centralized. `assembleCoreRuntime` is the one host-neutral
+assembly point: it registers the durable workflows and builds the conversation
+agent over the registered callables, in a load-bearing order. Dependencies are
+split by lifetime — construction-time collaborators (`Pool`, providers, logger,
+sandbox factories, seam realizations) are injected when a module is built;
+call-time values (`Session`, `AbortSignal`, `EmitFn`) are passed as explicit
+parameters. There is no `AsyncLocalStorage`, no magic-key bag, and no ambient
+accessor: a module's dependency list is its factory signature.
+
+The runtime is a host-agnostic library behind a small set of injected capability
+seams, runnable with filesystem/no-op defaults; each deployment is an embedder
+that wires concrete realizations at the composition root and core never branches
+on which realization is bound. Durable scheduling is dependency-gated rather
+than wave-batched — each child workflow starts the moment its `depends_on` steps
+complete, with fail-fast sibling cancellation — and it is written to replay
+deterministically under DBOS recovery. Recovery itself rides a host-supplied
+stable executor identity, with no standing recovery component or HTTP route in
+core.
+
+## Requirements
+
+### Requirement: Chat runs in-process; durable operations run as DBOS workflows
+
+Chat turns SHALL run in-process, single-replica per turn, with no workflow or
+step rows. User-named long operations (`executeAnalysis`,
+`executeTargetAssessment`, the data-profile task, and `runEphemeral`) SHALL run
+as DBOS workflows started from tools and SHALL be independent of the chat turn
+that triggered them. The same `runAgent` body SHALL serve both modes through an
+injected `RunStep` — `passthroughStep` in chat, `durableStep` inside workflow
+steps.
+
+#### Scenario: A tool starts a workflow that outlives the chat turn
+
+- **GIVEN** a chat turn whose agent dispatches `execute_plan`
+- **WHEN** the tool launches the `executeAnalysis` workflow
+- **THEN** the workflow runs independently of the in-process chat turn and continues if the turn ends
+
+#### Scenario: A pod death mid-turn does not lose durable work
+
+- **GIVEN** a chat turn that has already started a durable workflow
+- **WHEN** the host process dies mid-turn
+- **THEN** the user re-sends the message and the already-running workflow is unaffected
+
+### Requirement: The durable RunStep adapter wraps calls as named DBOS steps
+
+The harness SHALL provide a `durableStep` satisfying the `RunStep` seam
+(`<T>(name, fn) => Promise<T>`) that executes `fn` as a `DBOS.runStep` named
+`name`. The loop body SHALL remain unaware of DBOS, depending only on the
+`RunStep` shape. The step name is the replay cache key (see the harness-agent-loop spec)
+and SHALL NOT be reformatted at the adapter.
+
+#### Scenario: durableStep runs the function as a named step
+
+- **GIVEN** a launched runtime inside a workflow context
+- **WHEN** `durableStep("llm-0", fn)` is invoked
+- **THEN** `fn` runs as a DBOS step recorded under the name `llm-0`
+
+### Requirement: assembleCoreRuntime is the single host-neutral composition root
+
+`assembleCoreRuntime` SHALL be the one assembly point that registers the durable
+workflows with DBOS AND builds the conversation agent over the registered
+callables. Registration order SHALL be preserved because the parent's child
+dispatch closes over the registered child callable: the sandbox-step workflow
+SHALL register before `executeAnalysis`, which receives that callable. All
+workflows SHALL register in this one call before `launchDbos`, so they land under
+one `applicationVersion` cohort.
+
+#### Scenario: The parent workflow is built over the registered child callable
+
+- **WHEN** `assembleCoreRuntime` runs
+- **THEN** the sandbox-step workflow is registered first
+- **AND** `executeAnalysis` is built with the registered sandbox-step callable, not a pre-built one
+
+### Requirement: Dependencies are split by lifetime with no ambient lookups
+
+The runtime SHALL inject construction-time dependencies (`Pool`, `ChatProvider`,
+`EmbeddingProvider`, logger, sandbox factories, seam realizations) when a module
+is built. Call-time values (`Session`, `AbortSignal`, `EmitFn`) SHALL be passed
+as explicit parameters. The runtime SHALL NOT use `AsyncLocalStorage`, a
+magic-key context bag, or module-level ambient accessors for dependencies.
+Modules SHALL be factory closures whose dependency list is their factory
+signature.
+
+#### Scenario: A module declares its dependencies in its factory signature
+
+- **GIVEN** a module that needs the connection pool
+- **WHEN** it is constructed
+- **THEN** it receives the pool as a factory dependency rather than reaching for an ambient accessor
+
+### Requirement: Capability seams isolate core from managed realizations
+
+Core SHALL declare its external capabilities as injected seams and ship trivial
+local realizations, so it runs with filesystem/no-op defaults and no
+hosted-service dependency. The five external seams SHALL be `RunAuthorizer`
+(the sole constructor of a `RunSession`; OSS `createLocalRunAuthorizer`),
+`ResolveBilling` (attribution headers at the wire call; OSS noop returns `{}`),
+`ArtifactRegistry` (post-step recording; OSS `createFilesystemArtifactRegistry`),
+`RunCharge` (run-level billing bracket; OSS `createNoopRunCharge`), and
+`PreviewPublisher` (report preview URLs; OSS `UnavailablePreviewPublisher`). The
+shared `RunLauncher` seam (single realization `createDbosRunLauncher`) SHALL be
+the only way tools start durable runs. Core SHALL NOT branch on which realization
+is bound.
+
+#### Scenario: An embedder swaps a seam without touching core
+
+- **GIVEN** an embedder that wires a cloud `ArtifactRegistry` at the composition root
+- **WHEN** a workflow records artifacts through the seam
+- **THEN** core calls the same interface and never inspects which realization is bound
+
+#### Scenario: Tools reach the durability engine only through RunLauncher
+
+- **GIVEN** the `execute_plan` and `run_ephemeral` tools
+- **WHEN** they start a durable run
+- **THEN** they call `RunLauncher` (`launch` / `launchAndAwait`) and never import the DBOS engine directly
+
+### Requirement: Step scheduling is dependency-gated and fails fast
+
+`executeAnalysis` SHALL start each step's child workflow the moment all of its
+`depends_on` steps have completed, with no wave barrier. A computed topological
+level MAY be persisted and emitted for UI layout but SHALL NOT gate execution.
+Execution SHALL be fail-fast: the first step failure or declared blocker SHALL
+cancel in-flight sibling children with explicit `DBOS.cancelWorkflow` and stop
+scheduling new steps.
+
+#### Scenario: A ready step starts without waiting for an unrelated sibling
+
+- **GIVEN** a step whose single dependency has just completed
+- **WHEN** the scheduler recomputes the ready set
+- **THEN** that step starts immediately even if an unrelated step is still running
+
+#### Scenario: First failure cancels in-flight siblings
+
+- **GIVEN** several sibling child workflows in flight
+- **WHEN** one of them fails or reports a blocker
+- **THEN** the parent cancels the remaining in-flight children via `DBOS.cancelWorkflow` and schedules no further steps
+
+### Requirement: The scheduler replays deterministically
+
+The parent workflow body SHALL reach the same durable operations in the same
+order on replay. The "which child finished first" decision SHALL use
+`DBOS.waitFirst` (a checkpointed step), NOT `Promise.race` over `getResult`. UI
+emits from the workflow body SHALL be awaited in loop order, and any conditional
+post-step emit driven by a non-deterministic producer SHALL gate on a value
+checkpointed in `DBOS.runStep`.
+
+#### Scenario: The completion order is checkpointed
+
+- **GIVEN** multiple completed child workflows whose `getResult` resolves instantly on replay
+- **WHEN** the scheduler selects the next finished child
+- **THEN** it uses `DBOS.waitFirst` so the winning workflow id is recorded and replays identically
+
+### Requirement: DBOS launches with a stable executor identity and recovers under it
+
+The host SHALL call `launchDbos` after configuring and registering workflows.
+Configuration SHALL set `executorID` from the host's stable process identity, an
+optional `applicationVersion`, and an `adminPort`. When the same process slot
+relaunches under the same `executorID`, DBOS SHALL be able to reclaim the pending
+workflows its predecessor left behind. Core SHALL NOT ship an HTTP recovery route
+or a standing recovery component; operator controls for retired executor ids are
+a host concern.
+
+#### Scenario: Executor identity is provided by the host
+
+- **GIVEN** a host has chosen executor id `"core-worker-0"`
+- **WHEN** `launchDbos` runs
+- **THEN** DBOS is configured with `executorID = "core-worker-0"`
+
+#### Scenario: A restart under the same identity can recover in-flight workflows
+
+- **GIVEN** a host process that crashed with pending workflows under `executorID = "core-worker-0"`
+- **WHEN** a new process launches under the same `executorID`
+- **THEN** DBOS can reclaim those pending workflows without any core-owned recovery route
+
+### Requirement: runEphemeral is a turn-scoped workflow
+
+`runEphemeral` SHALL run as a real DBOS workflow so its sandbox callbacks route
+through DBOS messaging, but it SHALL be turn-scoped: awaited inline by the
+`run_ephemeral` tool via `RunLauncher.launchAndAwait`, cancelled on chat
+disconnect (`DBOS.cancelWorkflow`), and never recovered. Because DBOS has no
+zero-recovery knob, the launch path SHALL cancel any `ephemeral:`-prefixed
+`PENDING` workflow owned by this executor BEFORE recovery runs, so a dead pod's
+ephemeral run never re-executes.
+
+#### Scenario: An ephemeral run is cancelled on chat disconnect
+
+- **GIVEN** a `run_ephemeral` call awaiting its workflow result inline
+- **WHEN** the chat turn's `AbortSignal` fires
+- **THEN** the launcher cancels the workflow and returns a `{ status: "cancelled" }` outcome
+
+#### Scenario: A dead pod's ephemeral workflow is never recovered
+
+- **GIVEN** an `ephemeral:`-prefixed `PENDING` workflow left by a crashed process
+- **WHEN** a new process launches under the same executor id
+- **THEN** the pre-launch sweep marks it `CANCELLED` before DBOS recovery selects it
+
+### Requirement: Lifecycle flags are process-local
+
+Core SHALL expose process-local lifecycle helpers so a host can mark the process
+draining and use that fact in its own readiness/traffic policy.
+
+#### Scenario: Draining flag flips
+
+- **WHEN** `markDraining()` is called
+- **THEN** `isDraining()` returns `true`
+
+### Requirement: Graceful shutdown order is injectable
+
+`runShutdownSequence` SHALL mark draining, close the host's HTTP server through
+an injected callback, shut DBOS down, close the app pool, flush telemetry/logs,
+and exit. Core SHALL NOT own the HTTP server itself.
+
+#### Scenario: Shutdown ordering is preserved
+
+- **GIVEN** a host wires all shutdown callbacks
+- **WHEN** `runShutdownSequence` runs
+- **THEN** DBOS shutdown runs after HTTP drain and before pool close
+
+### Requirement: DBOS owns its system connections; the application pool is bounded per process
+
+DBOS SHALL manage its own system-database connections. Application queries use
+the app pool. `runtime/connection-budget.ts` SHALL verify the per-process
+connection footprint fits inside Postgres `max_connections`.
+
+#### Scenario: Pools are distinct
+
+- **WHEN** the runtime launches
+- **THEN** application queries use the app pool
+- **AND** DBOS uses its own system-database pool
+
+#### Scenario: Per-process budget is documented and configurable
+
+- **GIVEN** Postgres exposes a known `max_connections`
+- **WHEN** the application pool `max` is configured
+- **THEN** the guard checks one process's footprint and reports available headroom

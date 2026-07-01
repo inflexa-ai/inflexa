@@ -1,0 +1,22 @@
+{# ECharts container with window chrome: {% include "components/chart-container.html.j2" %}
+   Expects: chart_id, chart_title (optional), chart_subtitle (optional), chart_height (optional, default "400px") #}
+<div class="window-chrome rounded-xl border border-slate-200 bg-white overflow-hidden hover:-translate-y-1 hover:shadow-xl hover:border-slate-300 transition-all duration-500"
+     style="box-shadow: 0 8px 30px -8px rgba(15,23,42,0.08), 0 4px 12px -4px rgba(15,23,42,0.04);">
+  <div class="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50/50">
+    <div class="chrome-dots flex items-center gap-1.5">
+      <span class="dot-1 h-2.5 w-2.5 rounded-full bg-slate-300 transition-colors duration-300"></span>
+      <span class="dot-2 h-2.5 w-2.5 rounded-full bg-slate-300 transition-colors duration-300"></span>
+      <span class="dot-3 h-2.5 w-2.5 rounded-full bg-slate-300 transition-colors duration-300"></span>
+    </div>
+    {% if chart_title %}
+    <div class="text-center flex-1 px-4">
+      <span class="text-sm font-semibold text-slate-900">{{ chart_title }}</span>
+      {% if chart_subtitle %}<span class="text-xs text-slate-400 ml-2">{{ chart_subtitle }}</span>{% endif %}
+    </div>
+    {% endif %}
+    <span class="font-mono text-[11px] font-semibold tracking-wider text-primary-500">CORTEX</span>
+  </div>
+  <div class="p-4">
+    <div id="{{ chart_id }}" data-echarts-id style="width: 100%; height: {{ chart_height | default('400px') }};"></div>
+  </div>
+</div>

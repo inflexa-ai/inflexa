@@ -1,0 +1,200 @@
+# Provenance tracking for R scripts in Inflexa sandbox containers.
+#
+# Wraps base R and popular package file-reading functions with trace()
+# hooks that report read operations to a provenance log file. The
+# sandbox-server reads this file after command execution completes.
+#
+# R's socketConnection() only supports TCP — not Unix domain sockets —
+# so R writes to a log file ($PROVENANCE_SOCKET.rlog) instead of the
+# Unix socket used by Python and LD_PRELOAD. The Go server reads both.
+#
+# Loaded before user code when R_PROFILE points to this file.
+
+local({
+  prov_socket <- Sys.getenv("PROVENANCE_SOCKET", "")
+  if (nchar(prov_socket) == 0) return(invisible(NULL))
+
+  # R writes to a sidecar file; Go server reads it after execution.
+  prov_file <- paste0(prov_socket, ".rlog")
+
+  prefixes <- strsplit(
+    Sys.getenv("PROVENANCE_DATA_PREFIXES", "/data/"),
+    ":",
+    fixed = TRUE
+  )[[1]]
+
+  # Dedup environment: one report per unique (path, op) per process
+  seen <- new.env(parent = emptyenv())
+  dedup_cap <- 32768L
+  prov_debug <- Sys.getenv("PROVENANCE_DEBUG") == "1"
+
+  send_prov <- function(path, op = "read") {
+    abs_path <- normalizePath(path, mustWork = FALSE)
+    if (!any(startsWith(abs_path, prefixes))) return(invisible(NULL))
+    key <- paste0(abs_path, "|", op)
+    if (length(ls(seen)) < dedup_cap) {
+      if (exists(key, envir = seen)) return(invisible(NULL))
+      assign(key, TRUE, envir = seen)
+    }
+
+    # Manual JSON — no jsonlite dependency.
+    escaped <- gsub("\\\\", "\\\\\\\\", abs_path)
+    escaped <- gsub('"', '\\\\"', escaped)
+    msg <- sprintf('{"t":%f,"p":"%s","pid":%d,"layer":"r","op":"%s"}',
+                   as.numeric(Sys.time()), escaped, Sys.getpid(), op)
+
+    tryCatch(
+      cat(msg, "\n", sep = "", file = prov_file, append = TRUE),
+      error = function(e) {
+        if (prov_debug) message(paste0("[provtrack-r] send_prov failed: ", e$message))
+      }
+    )
+  }
+
+  # Build a tracer expression that accesses the named argument directly.
+  # trace() runs the tracer in the traced function's environment where
+  # formal parameters are already bound — so we reference them by name.
+  #
+  # For "..." args (e.g., file.remove(...)), we use c(...) to collect
+  # the dots into a character vector. For named args, we reference the
+  # symbol directly. Both branches loop over character vectors so
+  # multi-path calls like unlink(c("a.csv", "b.csv")) are tracked.
+  make_tracer <- function(arg_name, op = "read") {
+    if (arg_name == "...") {
+      bquote(tryCatch({
+        .prov_vals <- c(...)
+        if (is.character(.prov_vals)) {
+          for (.p in .prov_vals) .(send_prov)(.p, .(op))
+        }
+      }, error = function(e) invisible(NULL)))
+    } else {
+      arg_sym <- as.name(arg_name)
+      bquote(tryCatch({
+        .prov_val <- .(arg_sym)
+        if (is.character(.prov_val)) {
+          for (.p in .prov_val) .(send_prov)(.p, .(op))
+        }
+      }, error = function(e) invisible(NULL)))
+    }
+  }
+
+  # --- Map: function → (package, argument name) ---
+  # Each entry: list(pkg, arg) where arg is the formal parameter holding the path
+  fn_map <- list(
+    # utils package
+    "read.csv"    = list(pkg = "utils", arg = "file"),
+    "read.csv2"   = list(pkg = "utils", arg = "file"),
+    "read.table"  = list(pkg = "utils", arg = "file"),
+    "read.delim"  = list(pkg = "utils", arg = "file"),
+    "read.delim2" = list(pkg = "utils", arg = "file"),
+    # base package
+    "readRDS"     = list(pkg = "base", arg = "file"),
+    "readLines"   = list(pkg = "base", arg = "con"),
+    "scan"        = list(pkg = "base", arg = "file"),
+    "load"        = list(pkg = "base", arg = "file"),
+    "source"      = list(pkg = "base", arg = "file"),
+    "readBin"     = list(pkg = "base", arg = "con"),
+    "readChar"    = list(pkg = "base", arg = "con"),
+    "file"        = list(pkg = "base", arg = "description")
+  )
+
+  for (fn in names(fn_map)) {
+    info <- fn_map[[fn]]
+    tryCatch(
+      trace(fn,
+            tracer = make_tracer(info$arg),
+            where = asNamespace(info$pkg),
+            print = FALSE),
+      error = function(e) {
+        if (prov_debug) message(paste0("[provtrack-r] trace(", fn, ") failed: ", e$message))
+      }
+    )
+  }
+
+  # --- Write functions ---
+  write_map <- list(
+    # utils package
+    "write.csv"   = list(pkg = "utils", arg = "file"),
+    "write.csv2"  = list(pkg = "utils", arg = "file"),
+    "write.table" = list(pkg = "utils", arg = "file"),
+    # base package
+    "writeLines"  = list(pkg = "base", arg = "con"),
+    "saveRDS"     = list(pkg = "base", arg = "file"),
+    "save"        = list(pkg = "base", arg = "file"),
+    "writeBin"    = list(pkg = "base", arg = "con"),
+    "writeChar"   = list(pkg = "base", arg = "con"),
+    "sink"        = list(pkg = "base", arg = "file")
+  )
+
+  for (fn in names(write_map)) {
+    info <- write_map[[fn]]
+    tryCatch(
+      trace(fn,
+            tracer = make_tracer(info$arg, "write"),
+            where = asNamespace(info$pkg),
+            print = FALSE),
+      error = function(e) {
+        if (prov_debug) message(paste0("[provtrack-r] trace(", fn, ") failed: ", e$message))
+      }
+    )
+  }
+
+  # --- Delete functions ---
+  delete_fns <- list(
+    "file.remove" = list(pkg = "base", arg = "..."),
+    "unlink"      = list(pkg = "base", arg = "x")
+  )
+
+  for (fn in names(delete_fns)) {
+    info <- delete_fns[[fn]]
+    tryCatch(
+      trace(fn,
+            tracer = make_tracer(info$arg, "delete"),
+            where = asNamespace(info$pkg),
+            print = FALSE),
+      error = function(e) {
+        if (prov_debug) message(paste0("[provtrack-r] trace(", fn, ") failed: ", e$message))
+      }
+    )
+  }
+
+  # --- Package hooks: instrument at load time ---
+  # Most tidyverse/data.table read functions use "file" as first arg
+  pkg_hooks <- list(
+    "data.table" = list("fread" = "input"),
+    "readr"      = list("read_csv" = "file", "read_tsv" = "file",
+                         "read_delim" = "file", "read_csv2" = "file",
+                         "read_fwf" = "file", "read_table" = "file",
+                         "read_log" = "file", "read_rds" = "file"),
+    "readxl"     = list("read_excel" = "path", "read_xls" = "path",
+                         "read_xlsx" = "path"),
+    "arrow"      = list("read_parquet" = "file", "read_feather" = "file",
+                         "read_csv_arrow" = "file",
+                         "read_tsv_arrow" = "file"),
+    "vroom"      = list("vroom" = "file"),
+    "haven"      = list("read_sas" = "data_file", "read_sav" = "file",
+                         "read_dta" = "file", "read_xpt" = "file")
+  )
+
+  for (pkg in names(pkg_hooks)) {
+    local({
+      pkg_name <- pkg
+      fn_args <- pkg_hooks[[pkg]]
+      setHook(
+        packageEvent(pkg_name, "onLoad"),
+        function(...) {
+          for (fn in names(fn_args)) {
+            arg <- fn_args[[fn]]
+            tryCatch(
+              trace(fn,
+                    tracer = make_tracer(arg),
+                    where = asNamespace(pkg_name),
+                    print = FALSE),
+              error = function(e) invisible(NULL)
+            )
+          }
+        }
+      )
+    })
+  }
+})

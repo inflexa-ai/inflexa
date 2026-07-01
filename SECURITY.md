@@ -8,8 +8,8 @@ We take the security of Inflexa seriously. Because Inflexa is a local agent that
 
 Two facts shape what counts as a vulnerability:
 
-1. **The Docker sandbox is the containment boundary.** Generated code runs inside the sandbox image, which by default has **no network egress**, mounts **only your project working directory**, runs under **CPU/memory limits**, and has **no access to host credentials**. The most serious class of issue is anything that breaks this boundary. See [`docs/sandbox.md`](./docs/sandbox.md).
-2. **What leaves your machine depends on the model provider you configure.** With local models, Inflexa runs end-to-end offline. With bring-your-own-key (BYOK) to a cloud provider, the data you send to that provider leaves your machine *by design and by your configuration*. See [`docs/privacy.md`](./docs/privacy.md) for the exact data-egress matrix.
+1. **The Docker sandbox is the containment boundary.** Generated code runs inside the sandbox image, which by default has **no network egress**, mounts **only your project working directory**, runs under **CPU/memory limits**, and has **no access to host credentials**. The most serious class of issue is anything that breaks this boundary. The sandbox protocol is implemented in [`harness/`](./harness) — see [`harness/CONTEXT.md`](./harness/CONTEXT.md).
+2. **What leaves your machine depends on the model provider you configure.** With local models, Inflexa runs end-to-end offline. With bring-your-own-key (BYOK) to a cloud provider, the data you send to that provider leaves your machine *by design and by your configuration*.
 
 ## Supported versions
 
@@ -54,7 +54,7 @@ Given the architecture, the highest-value reports concern:
 - **Isolation weaknesses** - the sandbox running with more access than documented: unexpected network egress when it should be disabled, mounts beyond the working directory, or access to host credentials or environment.
 - **Prompt-injection-to-execution** - content embedded in a dataset, file, metadata, or model response that induces the agent to run harmful code or attempt data exfiltration **beyond what the documented sandbox containment would prevent**. (Inducing the agent to *generate* questionable code that the sandbox still contains is interesting, but the security boundary is the sandbox; tell us when that boundary fails to hold.)
 - **Provenance integrity** - tampering with, forging, or silently corrupting the SQLite lineage/audit record.
-- **Unexpected data egress** - data leaving the machine in a mode where [`docs/privacy.md`](./docs/privacy.md) says it should not (e.g. data sent to a provider while in a local-only configuration).
+- **Unexpected data egress** - data leaving the machine in a mode where it should not (e.g. data sent to a provider while in a local-only configuration).
 - **Secret and credential handling** - leakage of LLM provider API keys or other secrets via logs, error messages, the provenance store, or telemetry.
 - **Supply-chain integrity** - issues affecting the integrity or authenticity of the published npm package or the Docker sandbox image, including problems with signing, SBOMs, or build provenance.
 - **Dependency vulnerabilities** with a realistic, demonstrated exploit path through Inflexa.
