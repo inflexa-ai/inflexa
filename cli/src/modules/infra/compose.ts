@@ -1,8 +1,8 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { Result, ok, err } from "neverthrow";
-import { capture, type ContainerRuntime } from "../../lib/container.ts";
+import { capture, inherit, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { CONTAINER_DATA_PATH, CONTAINER_PG_PORT, DEFAULT_IMAGE, type PostgresConnection, type PostgresError } from "./postgres_types.ts";
 
@@ -93,10 +93,11 @@ export function writeComposeFile(conn: PostgresConnection): Result<void, Postgre
 }
 
 /**
- * Generate and write the compose file if it doesn't already exist, or
- * always regenerate it (idempotent — setup always regenerates).
+ * Generate and write the compose file if it doesn't already exist.
+ * Setup uses {@link writeComposeFile} directly to always regenerate.
  */
 export function ensureComposeFile(conn: PostgresConnection): Result<void, PostgresError> {
+    if (existsSync(env.composeFilePath)) return ok(undefined);
     return writeComposeFile(conn);
 }
 
@@ -104,34 +105,8 @@ function composeArgs(subcommand: string[]): string[] {
     return ["compose", "-f", env.composeFilePath, ...subcommand];
 }
 
-/**
- * Remove pre-existing standalone containers that would conflict with compose.
- * The prior iteration created `inflexa-cliproxy` and `inflexa-postgres` via
- * individual `docker run` calls; compose can't adopt them because they weren't
- * created by compose. We detect standalone containers by checking for the
- * absence of the `com.docker.compose.project` label that compose sets on
- * every container it manages.
- */
-async function removeStandaloneContainers(rt: ContainerRuntime): Promise<void> {
-    const names = [PROXY_CONTAINER_NAME, POSTGRES_CONTAINER_NAME];
-    for (const name of names) {
-        const { code, stdout } = await capture(rt, ["inspect", "--format", '{{index .Config.Labels "com.docker.compose.project"}}', name]);
-        if (code !== 0) continue;
-        // Empty label = standalone container (not created by compose).
-        // Non-empty = compose-managed, leave it alone.
-        if (stdout.trim() === "") {
-            await capture(rt, ["rm", "-f", name]);
-        }
-    }
-}
-
 /** Start all services in the compose file (idempotent — already-running services are untouched). */
 export async function composeUp(rt: ContainerRuntime): Promise<Result<void, PostgresError>> {
-    // Migrate: remove standalone containers from the prior iteration's `docker run` approach.
-    // Without this, compose fails with "container name already in use" when a container
-    // with the same name exists but wasn't created by compose.
-    await removeStandaloneContainers(rt);
-
     const { code, stderr } = await capture(rt, composeArgs(["up", "-d"]));
     if (code !== 0) {
         return err({
@@ -153,6 +128,40 @@ export async function composePull(rt: ContainerRuntime): Promise<Result<void, Po
         });
     }
     return ok(undefined);
+}
+
+/**
+ * Pull all images in the compose file with inherited stdio so the user sees progress.
+ * Used on the TUI launch path where silent buffering would make the app appear to hang.
+ */
+export async function composePullInteractive(rt: ContainerRuntime): Promise<Result<void, PostgresError>> {
+    const code = await inherit(rt, composeArgs(["pull"]));
+    if (code !== 0) {
+        return err({
+            type: "image_pull_failed",
+            image: `${PROXY_IMAGE}, ${DEFAULT_IMAGE}`,
+            message: `Failed to pull images via compose. Run \`${rt.bin} compose -f ${env.composeFilePath} pull\` manually.`,
+        });
+    }
+    return ok(undefined);
+}
+
+/**
+ * Pull any compose images that are not already present locally, streaming progress
+ * to the terminal. Skips the network round-trip entirely when every image is cached.
+ */
+export async function composePullIfMissing(rt: ContainerRuntime): Promise<Result<void, PostgresError>> {
+    const images = [PROXY_IMAGE, DEFAULT_IMAGE];
+    const missing = await Promise.all(
+        images.map(async (image) => {
+            const { code } = await capture(rt, ["image", "inspect", image]);
+            return code !== 0;
+        }),
+    );
+    if (!missing.some(Boolean)) return ok(undefined);
+
+    console.log("  Pulling container images (this may take a moment)…");
+    return composePullInteractive(rt);
 }
 
 /** Stop and remove all compose-managed containers and the shared network. */

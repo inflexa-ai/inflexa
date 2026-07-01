@@ -1,5 +1,5 @@
 import { render, useRenderer } from "@opentui/solid";
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show, onCleanup } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 
 import { readConfig, resolvePostgresConfig, writeConfig, type Config } from "../lib/config.ts";
@@ -8,7 +8,7 @@ import { GLYPHS, themes, themeIds } from "../lib/design_system.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { setTheme, theme, noticeColor, type Notice } from "./theme.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
-import { useKeymapRoot, useBindings, KEYS, chordLabel } from "./keymap.ts";
+import { useKeymapRoot, useBindings, KEYS, chordLabel, pushMode, MODE_MODAL } from "./keymap.ts";
 import { Bold, Reverse, Fg } from "./components/emphasis.tsx";
 import { PromptDialog } from "./components/prompt_dialog.tsx";
 import { runtimes, runtimeIds } from "../lib/container.ts";
@@ -80,6 +80,14 @@ export function ConfigApp(props: { onClose?: () => void }) {
     const [quitArmed, setQuitArmed] = createSignal(false);
     // When set, a Postgres text field is being edited via a PromptDialog overlay.
     const [editingPgField, setEditingPgField] = createSignal<PgField | null>(null);
+
+    // Suspend the form's base-mode bindings while the prompt dialog is open so keys
+    // like `q` or `s` are handled by the focused input instead of triggering exit/save.
+    createEffect(() => {
+        if (!editingPgField()) return;
+        const pop = pushMode(MODE_MODAL);
+        onCleanup(pop);
+    });
 
     /** The draft's postgres config — guaranteed non-null (seeded with resolved defaults). */
     const pgDraft = () => draft().postgres!;

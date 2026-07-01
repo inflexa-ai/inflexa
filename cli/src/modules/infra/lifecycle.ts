@@ -4,7 +4,7 @@ import { activeRuntime, resolvePostgresConfig } from "../../lib/config.ts";
 import { ensureReady } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { promptText } from "../../lib/cli.ts";
-import { composeUp, composeDown, composeAvailable, ensureComposeFile } from "./compose.ts";
+import { composeUp, composeDown, composePullIfMissing, composeAvailable, ensureComposeFile } from "./compose.ts";
 
 // `inflexa up` / `inflexa down` — explicit lifecycle commands for the infra
 // stack. `up` is the same as the self-healing gate but user-initiated; `down`
@@ -34,6 +34,13 @@ export async function up(): Promise<void> {
     );
     if (writeErr) {
         console.error(`\n  ${writeErr.message}\n`);
+        process.exitCode = 1;
+        return;
+    }
+
+    const pullResult = await composePullIfMissing(rt);
+    if (pullResult.isErr()) {
+        console.error(`\n  ${pullResult.error.message}\n`);
         process.exitCode = 1;
         return;
     }

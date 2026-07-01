@@ -8,7 +8,7 @@ import { ensureReady, ContainerRuntimeError, type ContainerRuntime } from "../..
 import { env } from "../../lib/env.ts";
 import { select, promptText } from "../../lib/cli.ts";
 import { type PostgresConnection } from "./postgres_types.ts";
-import { writeComposeFile, composeUp, composePull, composeAvailable } from "./compose.ts";
+import { writeComposeFile, composeUp, composePull, composePullIfMissing, composeAvailable } from "./compose.ts";
 
 // `inflexa setup` provisions the inflexa infrastructure stack: CLIProxyAPI (the
 // local model proxy) and Postgres + pgvector (the harness substrate). Both run
@@ -489,6 +489,14 @@ export async function ensureProxyReady(): Promise<Result<void, ProxyError | Cont
     );
     if (composeWriteErr) {
         return err(new ProxyError(`Failed to generate compose file: ${composeWriteErr.message}`));
+    }
+
+    // Pull missing images with streaming progress before compose up. compose up -d
+    // would implicitly pull via capture(), but that buffers silently and makes the
+    // TUI launch appear to hang on a fresh install.
+    const pullResult = await composePullIfMissing(rt);
+    if (pullResult.isErr()) {
+        return err(new ProxyError(pullResult.error.message));
     }
 
     const upResult = await composeUp(rt);
