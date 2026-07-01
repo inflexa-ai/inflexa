@@ -2,7 +2,7 @@ import { render } from "@opentui/solid";
 import { ConsolePosition } from "@opentui/core";
 
 import { warmGrammars } from "./grammars/register.ts";
-import { ensureProxyReadyOrExit } from "../modules/proxy/setup.ts";
+import { ensureProxyReadyOrExit } from "../modules/infra/setup.ts";
 import { resolveNewTarget, resolveResumeTarget, resolveDefaultTarget, type ChatTarget } from "../modules/analysis/launch.ts";
 import { acquireAnalysisLock } from "../modules/analysis/lock.ts";
 import type { ContextFlags } from "../modules/analysis/context.ts";
