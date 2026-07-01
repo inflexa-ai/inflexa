@@ -10,6 +10,7 @@ import { useBindings, KEYS, chordLabel } from "../keymap.ts";
 import { DialogPanel } from "./dialog/dialog_panel.tsx";
 import { Bold } from "./emphasis.tsx";
 import { TextInput } from "./text_input.tsx";
+import { ScrollPane } from "./scroll_pane.tsx";
 
 // The reusable searchable list: a single fuzzy-filtered, keyboard-navigable, grouped picker
 // shared by the command palette and every dialog picker (themes, analyses, sessions). It is
@@ -131,8 +132,11 @@ export function SelectList<T>(props: {
                     setCursor(0);
                 }}
             />
-            <scrollbox
-                ref={(r: ScrollBoxRenderable) => {
+            {/* Never focused (the filter TextInput holds focus), so ScrollPane's scroll keys stay
+            dead — the pane is just the shared scrollbox wrapper; the cursor drives scrolling. */}
+            <ScrollPane
+                focusOnMount={false}
+                onRef={(r: ScrollBoxRenderable) => {
                     scrollRef = r;
                 }}
                 flexGrow={1}
@@ -165,7 +169,7 @@ export function SelectList<T>(props: {
                         }
                     </For>
                 </Show>
-            </scrollbox>
+            </ScrollPane>
             <Show when={ranked()[cursor()]?.description}>
                 <box width="100%" flexShrink={0} backgroundColor={theme().bgRaised}>
                     <text fg={theme().fgMuted}>{ranked()[cursor()]!.description}</text>

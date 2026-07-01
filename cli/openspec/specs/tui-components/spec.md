@@ -53,6 +53,8 @@ The system SHALL provide a `DialogPanel` component in `src/tui/components/` that
 
 `SelectList` SHALL use the shared `TextInput` component (with `chrome="bare"`) for its filter input instead of a raw opentui `<input>` element. `PromptDialog` SHALL use the shared `TextArea` component (with `chrome="compact"`) for its text entry instead of a raw opentui `<textarea>` element. `ExportOptionsDialog` SHALL use the shared `TextArea` component (with `chrome="bare"`) for its optional text field instead of a raw opentui `<textarea>` element.
 
+`ResultsDialog` SHALL render its line list inside a `ScrollPane` (see the `scroll-pane` capability) instead of a raw focused `<scrollbox>`, inheriting the canonical scroll key set (`gg`/`G`/`j`/`k`/arrows/`ctrl+d`/`ctrl+u`/page/home/end at ScrollPane step sizes). Its footer hint SHALL describe the scroll keys from the shared chord definitions (via `chordLabel`), not hand-written key text.
+
 #### Scenario: SelectList single-mode behavior preserved
 
 - **WHEN** a caller renders `SelectList` from `src/tui/components/select_list.tsx` without a `mode` prop
@@ -86,7 +88,12 @@ The system SHALL provide a `DialogPanel` component in `src/tui/components/` that
 #### Scenario: PromptDialog and ResultsDialog relocated
 
 - **WHEN** a caller needs a single-line prompt or a read-only results list
-- **THEN** it imports `PromptDialog` / `ResultsDialog` from `src/tui/components/`, and Enter-submit / Esc-cancel and scroll / Esc-q-Enter-close behave exactly as before
+- **THEN** it imports `PromptDialog` / `ResultsDialog` from `src/tui/components/`, and Enter-submit / Esc-cancel and Esc-q-Enter-close behave exactly as before
+
+#### Scenario: ResultsDialog scrolls via ScrollPane
+
+- **WHEN** `ResultsDialog` is open with more lines than fit the viewport
+- **THEN** `gg`/`G`/`j`/`k`/arrows/page keys scroll the list at ScrollPane step sizes, and the footer hint text is derived from the shared chord definitions
 
 #### Scenario: Footer hints unchanged for single mode
 

@@ -1,17 +1,15 @@
-import { For, onMount, Show } from "solid-js";
+import { For, Show } from "solid-js";
 import type { JSX } from "solid-js";
-import type { ScrollBoxRenderable } from "@opentui/core";
 
 import { GLYPHS } from "../../../lib/design_system.ts";
 import { theme } from "../../theme.ts";
 import { useBindings, KEYS, chordLabel } from "../../keymap.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
+import { ScrollPane, SCROLL_HINT } from "../scroll_pane.tsx";
 
 /** A read-only, scrollable list of lines with an empty-state message. Esc/q/Enter close. */
 export function ResultsDialog(props: { title: string; lines: string[]; emptyText: string; onClose: () => void }): JSX.Element {
-    let scrollRef: ScrollBoxRenderable | null = null;
-    onMount(() => queueMicrotask(() => scrollRef?.focus()));
-    // up/down are deliberately unbound: leaving them unhandled lets the focused scrollbox scroll.
+    // Scroll keys (and focus-on-mount) come from ScrollPane; only the close keys are bound here.
     useBindings(() => ({
         bindings: [
             { chord: KEYS.escape, run: () => props.onClose() },
@@ -20,24 +18,12 @@ export function ResultsDialog(props: { title: string; lines: string[]; emptyText
         ],
     }));
     return (
-        <DialogPanel
-            title={props.title}
-            size="lg"
-            footer={`${chordLabel(KEYS.up)}/${chordLabel(KEYS.down)} scroll ${GLYPHS.middot} ${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}
-        >
-            <scrollbox
-                ref={(r: ScrollBoxRenderable) => {
-                    scrollRef = r;
-                }}
-                focused
-                flexGrow={1}
-                width="100%"
-                paddingTop={1}
-            >
+        <DialogPanel title={props.title} size="lg" footer={`${SCROLL_HINT} ${GLYPHS.middot} ${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}>
+            <ScrollPane flexGrow={1} width="100%" paddingTop={1}>
                 <Show when={props.lines.length > 0} fallback={<text fg={theme().fgMuted}>{props.emptyText}</text>}>
                     <For each={props.lines}>{(line) => <text fg={theme().fg}>{line}</text>}</For>
                 </Show>
-            </scrollbox>
+            </ScrollPane>
         </DialogPanel>
     );
 }

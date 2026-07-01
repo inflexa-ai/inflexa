@@ -10,7 +10,8 @@ import { setTheme, theme, noticeColor, type Notice } from "./theme.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { useKeymapRoot, useBindings, KEYS, chordLabel, pushMode, MODE_MODAL } from "./keymap.ts";
 import { Bold, Reverse, Fg } from "./components/emphasis.tsx";
-import { PromptDialog } from "./components/prompt_dialog.tsx";
+import { PromptDialog } from "./components/dialog/prompt_dialog.tsx";
+import { ScrollPane } from "./components/scroll_pane.tsx";
 import { runtimes, runtimeIds } from "../lib/container.ts";
 
 // `-?` strips optionality in the mapping: without it, an optional Config field (e.g. `keybinds`)
@@ -269,8 +270,11 @@ export function ConfigApp(props: { onClose?: () => void }) {
                 ]}
             />
 
-            <scrollbox
-                ref={(r: ScrollBoxRenderable) => {
+            {/* Never focused (the config screen's keys drive section nav), so ScrollPane's scroll
+            keys stay dead — the pane is just the shared scrollbox wrapper. */}
+            <ScrollPane
+                focusOnMount={false}
+                onRef={(r: ScrollBoxRenderable) => {
                     scrollRef = r;
                 }}
                 flexGrow={1}
@@ -374,7 +378,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
                         );
                     }}
                 </For>
-            </scrollbox>
+            </ScrollPane>
 
             <Show when={notice()}>
                 <box paddingLeft={2} paddingTop={1}>
@@ -392,7 +396,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
                 <box width="100%" height="100%" alignItems="center" justifyContent="center" backgroundColor={theme().bg}>
                     <PromptDialog
                         title={`postgres.${editingPgField()!}`}
-                        initialValue={String(pgDraft()[editingPgField()!])}
+                        value={String(pgDraft()[editingPgField()!])}
                         onSubmit={(value: string) => {
                             setPgField(editingPgField()!, value);
                             setEditingPgField(null);

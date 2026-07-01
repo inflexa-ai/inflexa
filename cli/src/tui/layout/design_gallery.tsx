@@ -1,6 +1,4 @@
-import { onMount } from "solid-js";
 import type { JSX } from "solid-js";
-import type { ScrollBoxRenderable } from "@opentui/core";
 
 import { GLYPHS, space } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
@@ -17,6 +15,7 @@ import { MessageBlock } from "./message_block.tsx";
 import { Bold, Italic, Underline, Dim, Reverse, Fg } from "../components/emphasis.tsx";
 import { TextArea } from "../components/text_area.tsx";
 import { TextInput } from "../components/text_input.tsx";
+import { ScrollPane } from "../components/scroll_pane.tsx";
 import { mockUserText, mockAssistantText, mockThinking, mockToolCall, mockFileEdit, mockRun } from "../../lib/mock_fixtures.ts";
 
 // Nothing streams in the gallery — MessageBlock's streaming accessors are constant stubs.
@@ -45,8 +44,7 @@ function State(props: { n: string; label: string; children: JSX.Element }): JSX.
  * mock data ever leaks into a real session. Esc/q close.
  */
 export function DesignGallery(props: { onClose: () => void }): JSX.Element {
-    let scrollRef: ScrollBoxRenderable | null = null;
-    onMount(() => queueMicrotask(() => scrollRef?.focus()));
+    // Scroll keys (and focus-on-mount) come from ScrollPane; only the close keys are bound here.
     useBindings(() => ({
         bindings: [
             { chord: KEYS.escape, run: () => props.onClose() },
@@ -56,15 +54,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
     const runSteps = mockRun.steps.map((s) => ({ label: s.label, state: s.state }));
     return (
         <DialogPanel title="Design system — stream blocks" size="xl" footer={`${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}>
-            <scrollbox
-                ref={(r: ScrollBoxRenderable) => {
-                    scrollRef = r;
-                }}
-                focused
-                flexGrow={1}
-                width="100%"
-                paddingTop={space.sm}
-            >
+            <ScrollPane flexGrow={1} width="100%" paddingTop={space.sm}>
                 <State n="1" label="welcome / startup">
                     <Welcome greeting="welcome to inflexa" anchorPath="~/inflexa-tests" markerWritten={true} hints={["run /init", "ctrl+k for commands"]} />
                 </State>
@@ -148,7 +138,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         <Reverse> reverse </Reverse> <Fg role="fgMuted">— selection / cursor row</Fg>
                     </text>
                 </State>
-            </scrollbox>
+            </ScrollPane>
         </DialogPanel>
     );
 }
