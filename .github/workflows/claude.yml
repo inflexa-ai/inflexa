@@ -47,11 +47,14 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # NOTE: do NOT set `prompt:` here. Providing `prompt` forces the
+          # action into "agent" (headless automation) mode, which runs the
+          # model but posts nothing back to the PR. For on-demand @claude
+          # mentions we want "tag" mode, which is selected precisely by the
+          # ABSENCE of `prompt` — it reads the triggering comment and posts a
+          # real review. Repo guidance is injected via --append-system-prompt.
+          #
           # This repo is an independent-subsystem monorepo (cli/, harness/, ...).
           # Review each changed subsystem against its own CLAUDE.md conventions.
-          prompt: |
-            This is the inflexa-ai/inf-cli monorepo of independent subsystems
-            (cli/, harness/, skills/, templates/, images/). Each subsystem is
-            self-contained with its own CLAUDE.md — review changed code against
-            the conventions of the subsystem it lives in. Focus on correctness
-            bugs, security issues, and missing tests; skip style nits.
+          claude_args: |
+            --append-system-prompt "This is the inflexa-ai/inf-cli monorepo of independent subsystems (cli/, harness/, skills/, templates/, images/). Each subsystem is self-contained with its own CLAUDE.md — review changed code against the conventions of the subsystem it lives in. Focus on correctness bugs, security issues, and missing tests; skip style nits."
