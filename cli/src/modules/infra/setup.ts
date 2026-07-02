@@ -33,6 +33,8 @@ type SetupOptions = {
     force: boolean;
     /** Whether to provision Postgres (default true; `--no-postgres` sets false). */
     postgres: boolean;
+    /** Preselected embedding mode from `--embeddings`; overrides the interactive prompt. */
+    embeddings?: "local" | "api-key" | "off";
 };
 
 export async function setup(options: SetupOptions): Promise<void> {
@@ -142,6 +144,19 @@ export async function setup(options: SetupOptions): Promise<void> {
             pgConn = resolvePostgresConfig();
         }
 
+        // --- embeddings ---
+        // Runs after auth + postgres, before "Setup complete". The interactive
+        // prompt (clack select) offers local / api-key / off; a non-TTY shell or
+        // a preselected `--embeddings` mode skips the prompt. See
+        // modules/embedding/setup.ts.
+        const { runEmbeddingSetup } = await import("../embedding/setup.ts");
+        const embedResult = await runEmbeddingSetup(process.stdin.isTTY, options.embeddings);
+        if (embedResult.isErr()) {
+            log.error(`Embedding setup: ${embedResult.error.message}`);
+            process.exitCode = 1;
+            return;
+        }
+
         printNextSteps(options, pgConn);
         outro("Setup complete");
     } catch (error) {
@@ -218,6 +233,7 @@ function printNextSteps(options: SetupOptions, conn: PostgresConnection): void {
     } else if (!options.postgres) {
         lines.push("Postgres provisioning skipped (--no-postgres).");
     }
+    lines.push("Embeddings: run `inflexa setup --embeddings local` (in-process) or `--embeddings api-key`.");
     if (!options.start) {
         lines.push("Containers start automatically on next `inflexa` run.");
     }
@@ -502,6 +518,16 @@ export async function ensureProxyReady(): Promise<Result<void, ProxyError | Cont
     const upResult = await composeUp(rt);
     if (upResult.isErr()) {
         return err(new ProxyError(`Failed to start containers: ${upResult.error.message}`));
+    }
+
+    // Embedding readiness gate: if the user previously opted into local mode,
+    // ensure the GGUF is still present. We do NOT run the interactive setup
+    // prompt here (that belongs to `inflexa setup`) — a missing model after a
+    // prior opt-in surfaces as an actionable error.
+    const { ensureEmbedderReady } = await import("../embedding/setup.ts");
+    const embedResult = await ensureEmbedderReady();
+    if (embedResult.isErr()) {
+        return err(new ProxyError(`Embeddings: ${embedResult.error.message}`));
     }
 
     return ok(undefined);

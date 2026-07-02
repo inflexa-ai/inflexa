@@ -13,7 +13,7 @@ function key(name: string, mods: Partial<Pick<KeyLike, "ctrl" | "meta" | "option
 }
 
 function writeKeybinds(keybinds: Record<string, string>): void {
-    writeConfig({ telemetry: false, theme: DEFAULT_THEME_ID, runtime: "docker", leaderTimeout: 2000, keybinds })._unsafeUnwrap();
+    writeConfig({ telemetry: false, theme: DEFAULT_THEME_ID, runtime: "docker", leaderTimeout: 2000, embedding: { mode: "off" }, keybinds })._unsafeUnwrap();
     __resetKeybindCache(); // keybinds resolve load-once; drop the cache so the new config is read
 }
 

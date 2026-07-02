@@ -59,7 +59,7 @@ describe("readConfig — fail-closed", () => {
 
 describe("writeConfig / readConfig round-trip", () => {
     test("a written config reads back identically", () => {
-        const cfg: Config = { telemetry: true, theme: DEFAULT_THEME_ID, runtime: "podman", leaderTimeout: 500 };
+        const cfg: Config = { telemetry: true, theme: DEFAULT_THEME_ID, runtime: "podman", leaderTimeout: 500, embedding: { mode: "off" } };
         writeConfig(cfg)._unsafeUnwrap();
         expect(readConfig()).toEqual(cfg);
     });

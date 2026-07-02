@@ -41,6 +41,17 @@ function renderEnvHelp(): string {
     return `\nPaths:\n${table(pathRows)}\n\nEnvironment:\n${table(varRows)}`;
 }
 
+/**
+ * Parse the `--embeddings` flag value. `undefined` (flag absent) → `undefined`
+ * (no preselect — setup prompts interactively); a valid mode string → itself;
+ * anything else → `null` (invalid, surfaced as a parse error before setup runs).
+ */
+function parseEmbeddingMode(value: string | undefined): "local" | "api-key" | "off" | null | undefined {
+    if (value === undefined) return undefined;
+    if (value === "local" || value === "api-key" || value === "off") return value;
+    return null;
+}
+
 cli.name(pkg.name).description("Launch the interactive TUI (default), or run one of the commands below.").version(pkg.version);
 
 // Commander exits via process.exit() for --help/--version/parse errors. That
@@ -255,20 +266,28 @@ cli.command("down")
     });
 
 cli.command("setup")
-    .description("Install, authenticate, and start CLIProxyAPI and Postgres (Docker or Podman)")
+    .description("Install, authenticate, and start CLIProxyAPI and Postgres (Docker or Podman); optionally configure embeddings")
     .option("--provider <name>", "Authenticate a provider non-interactively: gemini|openai|claude|qwen|iflow")
     .option("--no-auth", "Skip the provider authentication step")
     .option("--no-start", "Set up only; don't start the proxy or Postgres containers")
     .option("--no-postgres", "Skip the Postgres provisioning step")
     .option("--force", "Re-pull images even if they are already cached")
-    .action(async (options: { provider?: string; auth: boolean; start: boolean; postgres: boolean; force?: boolean }) => {
+    .option("--embeddings <mode>", "Configure embeddings non-interactively: local|api-key|off")
+    .action(async (options: { provider?: string; auth: boolean; start: boolean; postgres: boolean; force?: boolean; embeddings?: string }) => {
         const { setup } = await import("../modules/infra/setup.ts");
+        const embeddings = parseEmbeddingMode(options.embeddings);
+        if (embeddings === null) {
+            console.error("\n  `--embeddings` must be one of: local, api-key, off.\n");
+            process.exitCode = 1;
+            return;
+        }
         await setup({
             provider: options.provider,
             auth: options.auth,
             start: options.start,
             force: options.force ?? false,
             postgres: options.postgres,
+            embeddings,
         });
     });
 
