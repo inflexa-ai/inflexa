@@ -30,23 +30,32 @@
  *   NOT re-execute on replay. That is the load-bearing invariant
  *   production relies on for LLM-call deduplication across resume.
  *
- * File consolidation:
+ * Registration window:
  *
- *   All `DBOS.registerWorkflow` calls in this PR's workflow-replay test
- *   live in this single file. DBOS is process-global: once
- *   `DBOS.launch()` runs (lazily inside `setupDbosForTests`), further
- *   `registerWorkflow` calls are rejected with
+ *   DBOS is process-global: once `DBOS.launch()` runs (lazily inside
+ *   `setupDbosForTests`, shared across the whole `bun test` invocation),
+ *   further `registerWorkflow` calls are rejected with
  *   `DBOSConflictingRegistrationError`. Bun loads test files sequentially
- *   (load module → run `beforeAll` → run tests → next file), so a second
- *   file's top-level registrations would always fire AFTER the first
- *   file's launch. `just test-workflow` invokes `bun test` once per file
- *   in `harness/workflows/__tests__/dbos/` to dodge that constraint.
+ *   (load module → run `beforeAll` → run tests → next file), so this
+ *   file's top-level registrations can fire AFTER an earlier file's
+ *   launch. Every registration-heavy DBOS test file therefore self-heals:
+ *   at module top it bounces an already-launched engine (a plain
+ *   `DBOS.shutdown()` — no `deregister` — keeps every prior registration
+ *   and reopens the registration window), then relaunches in `beforeAll`
+ *   via `DBOS.launch()`, which reuses the config the rig already set.
+ *   This makes the files order-independent within one bun process.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import { setupDbosForTests, type DbosTestRig } from "../../../__tests__/setup/dbos.js";
+
+// Reopen the registration window if an earlier test file already launched
+// the shared DBOS engine (see "Registration window" above).
+if (DBOS.isInitialized()) {
+    await DBOS.shutdown();
+}
 
 // ── 10.6 — chaos mirror ─────────────────────────────────────────────────
 
@@ -249,6 +258,9 @@ let rig: DbosTestRig;
 
 beforeAll(async () => {
     rig = await setupDbosForTests("workflow_replay");
+    // Relaunch when the module-top registration-window bounce stopped the
+    // engine; a no-op when the rig's lazy launch above did the launching.
+    if (!DBOS.isInitialized()) await DBOS.launch();
 });
 
 afterAll(async () => {

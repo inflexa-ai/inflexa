@@ -4,12 +4,12 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "bun:test";
 import { errAsync, okAsync } from "neverthrow";
-
-import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ModelMessage } from "ai";
 
 import { toProviderError } from "../providers/errors.js";
-import type { ChatProvider, ChatRequest, Message } from "../providers/types.js";
+import type { ChatProvider, ChatRequest, ChatResponse } from "../providers/types.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
+import { makeMessage, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
 import { createWorkspaceFilesystem, type WorkspaceFilesystem } from "../workspace/filesystem.js";
 
 import { generateStepSummary } from "./step-summary.js";
@@ -18,14 +18,15 @@ interface RecordedCall {
     readonly req: ChatRequest;
 }
 
-function makeProvider(responses: ReadonlyArray<Message | Error>): { provider: ChatProvider; calls: RecordedCall[] } {
+function makeProvider(responses: ReadonlyArray<ChatResponse | Error>): { provider: ChatProvider; calls: RecordedCall[] } {
     const calls: RecordedCall[] = [];
     let i = 0;
     const provider: ChatProvider = {
+        capabilities: { toolCalling: true },
         chat(req) {
             // The loop mutates its working `messages` array in place across
             // iterations, so snapshot it at call time before it's appended to.
-            calls.push({ req: { ...req, messages: [...(req.messages ?? [])] } });
+            calls.push({ req: { ...req, messages: [...req.messages] } });
             const r = responses[i++];
             if (r instanceof Error) return errAsync(toProviderError(r, "test"));
             if (!r) throw new Error(`scripted provider exhausted at call ${i}`);
@@ -38,30 +39,12 @@ function makeProvider(responses: ReadonlyArray<Message | Error>): { provider: Ch
     return { provider, calls };
 }
 
-function asMessage(content: unknown[], stopReason: string): Message {
-    return {
-        id: "msg-1",
-        type: "message",
-        role: "assistant",
-        model: "claude-opus-4-7",
-        content,
-        stop_reason: stopReason,
-        stop_sequence: null,
-        usage: {
-            input_tokens: 10,
-            output_tokens: 10,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-        },
-    } as unknown as Message;
+function textMessage(text: string): ChatResponse {
+    return makeMessage([textBlock(text)], "end_turn");
 }
 
-function textMessage(text: string): Message {
-    return asMessage([{ type: "text", text }], "end_turn");
-}
-
-function readFileCall(id: string, path: string): Message {
-    return asMessage([{ type: "tool_use", id, name: "read_file", input: { path } }], "tool_use");
+function readFileCall(id: string, path: string): ChatResponse {
+    return makeMessage([toolUseBlock(id, "read_file", { path })], "tool_use");
 }
 
 /** Fake fs whose readFile is never expected to fire — for the no-read paths. */
@@ -77,7 +60,7 @@ const NOOP_FS: WorkspaceFilesystem = {
     },
 };
 
-const TRANSCRIPT: MessageParam[] = [
+const TRANSCRIPT: ModelMessage[] = [
     { role: "user", content: "Analyze the count matrix at data/inputs/counts.csv." },
     {
         role: "assistant",
@@ -209,7 +192,7 @@ describe("generateStepSummary", () => {
     });
 
     it("returns undefined when the final turn has no text content", async () => {
-        const reply = asMessage([], "end_turn");
+        const reply = makeMessage([], "end_turn");
         const { provider } = makeProvider([reply]);
         const out = await generateStepSummary({
             provider,
@@ -232,16 +215,16 @@ describe("generateStepSummary", () => {
     });
 
     it("drops a trailing assistant tool_use round from the transcript before sending", async () => {
-        const trailingToolUse: MessageParam[] = [
+        const trailingToolUse: ModelMessage[] = [
             ...TRANSCRIPT,
             {
                 role: "assistant",
                 content: [
                     { type: "text", text: "Let me look up the gene." },
                     {
-                        type: "tool_use",
-                        id: "tu_1",
-                        name: "search_gene",
+                        type: "tool-call",
+                        toolCallId: "tu_1",
+                        toolName: "search_gene",
                         input: { q: "TP53" },
                     },
                 ],

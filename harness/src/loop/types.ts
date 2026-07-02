@@ -8,18 +8,16 @@
  * The loop body itself knows nothing about DBOS, HTTP, or memory.
  */
 
-import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ModelMessage } from "ai";
 
 import type { ChatStreamEvent } from "../providers/types.js";
 import type { Tool } from "../tools/define-tool.js";
 
 /**
- * A loop message. The harness's working message array is Anthropic-shaped
- * `MessageParam` (see the harness-providers spec) — it holds both assistant replies (appended
- * verbatim from `provider.chat`) and the `user` tool-result messages the
- * loop pushes after each `tool_use` round.
+ * A loop message. The harness's working message array is AI SDK-shaped
+ * `ModelMessage`.
  */
-export type LoopMessage = MessageParam;
+export type LoopMessage = ModelMessage;
 
 /**
  * Everything `runAgent` needs to drive one agent: identity, the system

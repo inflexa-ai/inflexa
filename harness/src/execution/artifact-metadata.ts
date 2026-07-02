@@ -21,14 +21,13 @@
  * obligation on every provider call.
  */
 
-import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { ok } from "neverthrow";
 
 import type { AgentSession } from "../auth/types.js";
 import { forSubAgent } from "../auth/types.js";
 import { runAgent } from "../loop/run-agent.js";
 import { passthroughStep } from "../loop/run-step.js";
-import type { AgentDefinition } from "../loop/types.js";
+import type { AgentDefinition, LoopMessage } from "../loop/types.js";
 import type { AgentChat } from "../providers/types.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
 import { createReadFileTool } from "../tools/workspace/read-file.js";
@@ -59,7 +58,7 @@ export interface GenerateFileMetadataOptions {
      * agent's intent so descriptions reflect what the file was produced for.
      * Optional: empty/absent degrades to path-only describing.
      */
-    readonly messages?: readonly MessageParam[];
+    readonly messages?: readonly LoopMessage[];
     /** Workspace read seam — backs the scoped `read_file` tool. */
     readonly workspaceFs?: WorkspaceFilesystem;
     /** Absolute host path to the step's writable output tree — `read_file`'s working dir. */
@@ -124,12 +123,12 @@ function buildPrompt(artifacts: readonly ArtifactForMetadata[]): string {
  * it has no matching `tool_result`, so prefixing it onto a fresh loop turn
  * would be an invalid message sequence.
  */
-function sanitizeTranscript(messages: readonly MessageParam[]): MessageParam[] {
-    const out: MessageParam[] = [...messages];
+function sanitizeTranscript(messages: readonly LoopMessage[]): LoopMessage[] {
+    const out: LoopMessage[] = [...messages];
     while (out.length > 0) {
         const last = out[out.length - 1]!;
         const blocks = Array.isArray(last.content) ? last.content : [];
-        const hasOpenToolUse = last.role === "assistant" && blocks.some((b) => b.type === "tool_use");
+        const hasOpenToolUse = last.role === "assistant" && blocks.some((b) => b.type === "tool-call");
         if (hasOpenToolUse) {
             out.pop();
             continue;

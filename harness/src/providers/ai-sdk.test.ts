@@ -1,0 +1,146 @@
+import { describe, expect, it } from "bun:test";
+import type { LanguageModelV4, LanguageModelV4CallOptions, LanguageModelV4GenerateResult, LanguageModelV4Usage } from "@ai-sdk/provider";
+
+import { makeSession } from "./__fixtures__/session.js";
+import { createAiSdkProvider, createConfiguredAiSdkProvider } from "./ai-sdk.js";
+import type { ChatRequest } from "./types.js";
+
+const usage: LanguageModelV4Usage = {
+    inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
+    outputTokens: { total: 0, text: 0, reasoning: 0 },
+};
+
+function okResult(text = "ok"): LanguageModelV4GenerateResult {
+    return {
+        content: [{ type: "text", text }],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage,
+        warnings: [],
+    };
+}
+
+function fakeModel(impl: (options: LanguageModelV4CallOptions) => Promise<LanguageModelV4GenerateResult>): LanguageModelV4 {
+    return {
+        specificationVersion: "v4",
+        provider: "fake-provider",
+        modelId: "fake-model",
+        supportedUrls: {},
+        doGenerate: impl,
+        doStream: async () => {
+            throw new Error("streaming is not used in these tests");
+        },
+    };
+}
+
+const request: ChatRequest = {
+    system: "You are a test model.",
+    messages: [{ role: "user", content: "hello" }],
+    tools: {},
+};
+
+describe("createAiSdkProvider", () => {
+    it("runs an embedder-supplied AI SDK language model and applies billing headers", async () => {
+        const calls: LanguageModelV4CallOptions[] = [];
+        const provider = createAiSdkProvider({
+            model: fakeModel(async (options) => {
+                calls.push(options);
+                return okResult("done");
+            }),
+            resolveBilling: async () => ({ "X-Billing-Context": "bc-test", "X-Billing-Virtual-Key": "vk-test" }),
+        });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        expect(result._unsafeUnwrap().message).toEqual({ role: "assistant", content: [{ type: "text", text: "done" }] });
+        expect(calls[0]!.headers).toMatchObject({
+            "x-billing-context": "bc-test",
+            "x-billing-virtual-key": "vk-test",
+        });
+    });
+
+    it("returns classified ProviderError values for provider failures", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                throw Object.assign(new Error("payment required"), { status: 402 });
+            }),
+            resolveBilling: async () => ({}),
+        });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isErr()).toBe(true);
+        expect(result._unsafeUnwrapErr()).toMatchObject({
+            type: "budget",
+            retryable: false,
+        });
+    });
+
+    it("preserves retryability classification for transient upstream failures", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                throw Object.assign(new Error("upstream unavailable"), { status: 503 });
+            }),
+            resolveBilling: async () => ({}),
+        });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isErr()).toBe(true);
+        expect(result._unsafeUnwrapErr()).toMatchObject({
+            type: "provider",
+            retryable: true,
+        });
+    });
+
+    it("rethrows aborts instead of classifying them", async () => {
+        const signal = AbortSignal.abort();
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                throw new DOMException("aborted", "AbortError");
+            }),
+            resolveBilling: async () => ({}),
+        });
+
+        try {
+            await provider.chat(request, makeSession(), signal);
+            throw new Error("expected abort to be rethrown");
+        } catch (err) {
+            expect(err).toBeInstanceOf(DOMException);
+            expect((err as DOMException).name).toBe("AbortError");
+        }
+    });
+
+    it("rejects tool-required agents before the first model call when tool calling is disabled", async () => {
+        const calls: LanguageModelV4CallOptions[] = [];
+        const provider = createAiSdkProvider({
+            model: fakeModel(async (options) => {
+                calls.push(options);
+                return okResult();
+            }),
+            resolveBilling: async () => ({}),
+            capabilities: { toolCalling: false },
+        });
+
+        expect(provider.capabilities.toolCalling).toBe(false);
+        expect(calls).toHaveLength(0);
+    });
+});
+
+describe("createConfiguredAiSdkProvider", () => {
+    it("constructs an OpenAI-compatible provider from endpoint/key/model configuration", () => {
+        const provider = createConfiguredAiSdkProvider({
+            config: {
+                kind: "openai-compatible",
+                name: "self-hosted",
+                baseURL: "http://models.local/v1",
+                apiKey: "test-key",
+                model: "local-tool-model",
+                capabilities: { toolCalling: true },
+            },
+            resolveBilling: async () => ({}),
+        });
+
+        expect(provider.capabilities.toolCalling).toBe(true);
+    });
+});

@@ -17,7 +17,7 @@
  * workflow rather than returning a coverage envelope.
  */
 
-import type { ContentBlock, Tool } from "@anthropic-ai/sdk/resources/messages";
+import { jsonSchema, tool as aiTool, type ToolCallPart } from "ai";
 import { z } from "zod";
 
 import type { AgentSession } from "../../../auth/types.js";
@@ -65,7 +65,7 @@ export class StructuredOutputParseError extends Error {
  * `tool.input_schema`. Strips `$schema` (Anthropic rejects it) and asserts
  * a top-level `"type": "object"` (Anthropic rejects oneOf at the root).
  */
-function schemaToJsonSchema(schema: z.ZodType, stepName: string): Tool["input_schema"] {
+function schemaToJsonSchema(schema: z.ZodType, stepName: string): Record<string, unknown> {
     const jsonSchema = z.toJSONSchema(schema) as Record<string, unknown>;
     delete jsonSchema.$schema;
 
@@ -75,13 +75,14 @@ function schemaToJsonSchema(schema: z.ZodType, stepName: string): Tool["input_sc
     // `z.toJSONSchema()` returns an untyped JSON-schema object; it is structurally
     // Anthropic's `input_schema` once the top-level `type:"object"` check above passes
     // (the one shape Anthropic requires), which is the invariant making this cast safe.
-    return jsonSchema as unknown as Tool["input_schema"];
+    return jsonSchema;
 }
 
-function extractToolUseInput(blocks: readonly ContentBlock[]): unknown | undefined {
+function extractToolUseInput(blocks: readonly unknown[]): unknown | undefined {
     for (const block of blocks) {
-        if (block.type === "tool_use" && block.name === SUBMIT_TOOL_NAME) {
-            return block.input;
+        const part = block as Partial<ToolCallPart>;
+        if (part.type === "tool-call" && part.toolName === SUBMIT_TOOL_NAME) {
+            return part.input;
         }
     }
     return undefined;
@@ -96,17 +97,16 @@ function extractToolUseInput(blocks: readonly ContentBlock[]): unknown | undefin
 export async function structuredLlmCall<TSchema extends z.ZodType>(opts: StructuredLlmCallOptions<TSchema>): Promise<StructuredLlmResult<TSchema>> {
     const inputSchema = schemaToJsonSchema(opts.schema, opts.stepName);
 
-    const submitTool: Tool = {
-        name: SUBMIT_TOOL_NAME,
-        description: `Submit the structured output. Call this tool exactly once with the final answer.`,
-        input_schema: inputSchema,
-    };
-
     const req: ChatRequest = {
         system: opts.system,
         messages: [{ role: "user", content: opts.prompt }],
-        tools: [submitTool],
-        tool_choice: { type: "tool", name: SUBMIT_TOOL_NAME },
+        tools: {
+            [SUBMIT_TOOL_NAME]: aiTool({
+                description: `Submit the structured output. Call this tool exactly once with the final answer.`,
+                inputSchema: jsonSchema(inputSchema),
+            }),
+        },
+        toolChoice: { type: "tool", toolName: SUBMIT_TOOL_NAME },
     };
 
     const result: RunLlmStepResult = await runLlmStep({
@@ -122,7 +122,8 @@ export async function structuredLlmCall<TSchema extends z.ZodType>(opts: Structu
         return result;
     }
 
-    const raw = extractToolUseInput(result.message.content);
+    const content = result.response.message.content;
+    const raw = extractToolUseInput(Array.isArray(content) ? content : []);
     if (raw === undefined) {
         throw new StructuredOutputParseError(`structuredLlmCall(${opts.stepName}): model returned no submit tool_use block`);
     }

@@ -3,11 +3,12 @@
 ## Purpose
 
 Define the harness agent loop — `runAgent`, a pure-async function that drives
-one agent to a terminal reply. The loop owns the four Anthropic message-shape
-invariants, a deterministic step-naming contract (consumed by DBOS replay
-caching and workflow-transcript reconstruction), the tool-error boundary that
-turns `err(ToolError)`, thrown, and Zod-invalid tool calls into `is_error` tool
-results, the iteration-cap wrap-up that forces a text answer instead of
+one agent to a terminal reply over AI SDK `ModelMessage`s. The loop owns the
+four message-shape invariants (in AI SDK message terms), a deterministic
+step-naming contract (consumed by DBOS replay caching and
+workflow-transcript reconstruction), the tool-error boundary that turns
+`err(ToolError)`, thrown, and Zod-invalid tool calls into model-visible error
+tool results, the iteration-cap wrap-up that forces a text answer instead of
 throwing, and sub-agent delegation via a child `Session`. Durability (`runStep`)
 and the event sink (`emit`) are injected, so the same loop body serves the
 in-process chat route and durable DBOS workflow steps.
@@ -18,28 +19,26 @@ callers record the real `finish_reason` instead of a hardcoded `"stop"`, see
 that a run was capped by the runaway guard (`cappedOut`), and see how many
 output-token truncations the loop recovered from.
 
-**`max_tokens` is a recoverable soft-error, not a stop.** A model that hits its
-output ceiling mid-tool-call (commonly while streaming a large file body into a
-`write_file` arg) would, if treated as a clean stop, append a truncated
-`tool_use` that is never dispatched — silently losing the work. So the loop
-never executes a truncated trailing `tool_use` (its input may be valid JSON yet
-half-complete): it refuses the call with a retryable `is_error` `tool_result`,
-still dispatches any earlier complete tool calls from the same turn, steers a
-truncated prose turn with a corrective `user` message, and continues. Recovery
-is bounded by `maxIterations`. The output-token cap itself is owned per-model by
-the provider (see the harness-providers spec), and every provider normalizes its
-truncation signal into the single Anthropic `stop_reason: "max_tokens"` the loop
-branches on.
+**Output-token truncation is a recoverable soft-error, not a stop.** A model
+that hits its output ceiling mid-tool-call (commonly while streaming a large
+file body into a `write_file` arg) would, if treated as a clean stop, append a
+truncated tool call that is never dispatched — silently losing the work. So the
+loop never executes a truncated trailing tool call (its input may be valid JSON
+yet half-complete): it refuses the call with a retryable model-visible error
+tool result, still dispatches any earlier complete tool calls from the same
+turn, steers a truncated prose turn with a corrective user message, and
+continues. Recovery is bounded by `maxIterations`. The output-token cap itself
+is owned per-model by the AI SDK provider runtime, which surfaces a single
+truncation signal the loop branches on.
 
-**Tool dispatch is partitioned by durability ownership.** Tools wrapped in the
-loop's default `runStep` are dispatched concurrently — each reserves exactly one
-function-id synchronously in array order, keeping the bio-lookup fan-out
-parallel and replay-deterministic. Tools that opt out via `bodyContext: true`
-(the sandbox mutate tools, which run unwrapped in the workflow body so their
-internal `DBOS.recv` is legal) are dispatched sequentially after the wrapped
-batch, because they reserve multiple function-ids across awaits and concurrent
-ones would race the replay counter. Results are reassembled by original index,
-so the tool_use↔tool_result ordering invariant holds regardless of execution
+**Tool dispatch is partitioned by durability ownership.** Each tool declares an
+execution mode (see the harness-tools spec). `step` tools are wrapped as
+deterministic durable steps and may run concurrently where AI SDK allows
+parallel tool calls. `workflow` tools (the sandbox mutate tools) run through
+their workflow-backed execution path — never inside a DBOS step context, so
+their internal `DBOS.recv` is legal. `inline` tools run only when pure with no
+external side effects. Results are associated with the original tool-call ids,
+so the tool-call↔tool-result correspondence holds regardless of execution
 order.
 
 A thin wrapper, `runToTerminal`, drives agents whose result is delivered
@@ -54,109 +53,115 @@ do not collide with the first run's.
 
 ### Requirement: The loop preserves the four message-shape invariants
 
-`runAgent` SHALL guarantee, on every iteration: (1) assistant content blocks — including signed `thinking` blocks — are appended verbatim; (2) all `tool_use` blocks from one assistant message produce `tool_result` blocks in exactly one following `user` message with no interleaved text; (3) parallel `tool_use` blocks are dispatched and their results assembled in array order; (4) the messages array is append-only — prior messages are never mutated.
+The AI SDK-backed `runAgent` integration SHALL preserve the loop invariants in AI SDK message terms: (1) assistant provider metadata required for continuation is preserved; (2) every assistant tool call produces a corresponding tool result message/part accepted by AI SDK; (3) parallel tool calls are dispatched according to tool execution mode and their results are assembled against the original tool-call ids; (4) the transcript is append-only and prior messages are never mutated.
 
-#### Scenario: A signed thinking block round-trips
+#### Scenario: Signed provider metadata round-trips
 
-- **GIVEN** a provider reply containing a `thinking` block with a signature
+- **GIVEN** an AI SDK provider reply containing signed provider metadata required for continuation
 - **WHEN** the loop appends the reply
-- **THEN** the assistant message in the array carries the identical `signature`
+- **THEN** the stored assistant message retains that provider metadata
 
-#### Scenario: Tool results follow tool uses in one user message
+#### Scenario: Tool results correspond to tool calls
 
-- **GIVEN** an assistant reply with three `tool_use` blocks
+- **GIVEN** an assistant reply with three tool calls
 - **WHEN** the loop dispatches them
-- **THEN** exactly one following `user` message carries three `tool_result` blocks, with no interleaved user text
+- **THEN** each tool call has a corresponding AI SDK tool result associated with the same tool-call id
 
-#### Scenario: Parallel tool results preserve array order
+#### Scenario: Parallel tool results preserve tool-call association
 
-- **GIVEN** an assistant reply with `tool_use` blocks ordered `[A, B, C]`
-- **WHEN** the tools resolve in the order `C, A, B`
-- **THEN** the `tool_result` blocks are assembled in the order `[A, B, C]`
+- **GIVEN** an assistant reply with tool calls ordered `[A, B, C]`
+- **WHEN** step-backed tools resolve in the order `C, A, B`
+- **THEN** the loop returns results associated with tool-call ids `[A, B, C]`
 
 ### Requirement: Step names are deterministic and follow the documented scheme
 
-The loop SHALL name each LLM step `llm-${i}` and each tool step `tool-${name}-${toolUseId}`. Step naming SHALL be deterministic given identical inputs. This scheme is a contract consumed by DBOS replay caching (PR #3) and workflow-transcript reconstruction.
+The AI SDK loop integration SHALL name each model-call step deterministically and each step-backed tool execution deterministically. Default names SHALL remain stable for DBOS replay and workflow-transcript reconstruction; workflow call sites MAY provide an attempt-aware formatter that preserves the same semantic slots while adding the attempt suffix.
 
 #### Scenario: Two runs over identical inputs produce identical step names
 
-- **GIVEN** a fixed sequence of provider replies and tool results
+- **GIVEN** a fixed sequence of AI SDK model replies and tool results
 - **WHEN** `runAgent` is run twice
-- **THEN** both runs emit the identical ordered sequence of step names
+- **THEN** both runs emit the identical ordered sequence of model and tool step names
 
 ### Requirement: The loop wraps tool failures as error tool results
 
-When a tool's `execute` returns `err(ToolError)` or throws, the loop SHALL catch it at the dispatch boundary and produce `tool_result { is_error: true, content: { error, retryable } }` — a `ToolError` is used verbatim, any other throwable is classified by origin. When tool input fails Zod validation, the loop SHALL produce `tool_result { is_error: true }` before calling `execute`. A tool failure SHALL NOT abort the loop, except for an error the injected `isFatalLoopError` predicate marks fatal (e.g. a `bodyContext` tool's workflow-cancellation throw), which is re-raised.
+When a tool execution returns `err(ToolError)`, throws, or receives invalid input, the AI SDK tool wrapper SHALL return an error tool result that the model can read and recover from. A fatal loop error matched by the injected fatal predicate, including cancellation from a workflow-backed tool, SHALL propagate out of the loop rather than becoming a model-visible tool result.
 
 #### Scenario: A throwing tool becomes an error tool result
 
-- **GIVEN** a tool whose `execute` throws
-- **WHEN** the loop dispatches it
-- **THEN** the corresponding `tool_result` has `is_error: true` and the loop continues
+- **GIVEN** a tool whose execution throws
+- **WHEN** the AI SDK loop dispatches it
+- **THEN** the corresponding tool result is marked as an error and the loop can continue
 
 #### Scenario: A fatal loop error is re-raised, not swallowed
 
-- **GIVEN** a `bodyContext` tool whose `execute` throws an error matched by `isFatalLoopError`
+- **GIVEN** a workflow-backed tool whose execution throws an error matched by `isFatalLoopError`
 - **WHEN** the loop dispatches it
-- **THEN** the error propagates out of the loop instead of becoming an `is_error` tool result
+- **THEN** the error propagates out of the loop instead of becoming a model-visible tool result
 
 #### Scenario: Invalid tool input is rejected before execute runs
 
-- **GIVEN** a `tool_use` whose input fails the tool's Zod schema
-- **WHEN** the loop dispatches it
-- **THEN** `execute` is never called and the `tool_result` has `is_error: true`
+- **GIVEN** a tool call whose input fails the tool's Zod schema
+- **WHEN** the tool wrapper validates it
+- **THEN** the tool implementation is never called and the model receives an error tool result
 
 ### Requirement: runAgent returns the message array plus a terminal finish signal
 
-`runAgent` SHALL resolve to `{ messages, finish }`. `messages` is the append-only array (initial messages plus every appended assistant reply and tool-result message). `finish` SHALL be `{ reason, cappedOut, truncationRecoveries }`: `reason` is the real terminal `stop_reason` on a clean stop or `"max_iterations"` when the runaway guard fired; `cappedOut` is true only on that wrap-up path; `truncationRecoveries` counts the `max_tokens` soft-errors the loop recovered from.
+`runAgent` SHALL resolve to `{ messages, finish }`. `messages` SHALL be the append-only AI SDK `ModelMessage` transcript. `finish` SHALL expose the terminal reason, whether the loop hit the iteration cap, and how many output-token truncations were recovered.
 
 #### Scenario: A clean stop reports the real stop reason
 
-- **GIVEN** a provider whose final reply has `stop_reason: "end_turn"`
+- **GIVEN** an AI SDK model whose final reply terminates cleanly
 - **WHEN** `runAgent` returns
-- **THEN** `finish.reason` is `"end_turn"`, `finish.cappedOut` is false
+- **THEN** `finish.reason` records the model's terminal reason and `finish.cappedOut` is false
 
 ### Requirement: The loop forces a wrap-up at the iteration cap
 
-When the loop reaches `maxIterations`, it SHALL make one final provider call with `tools: []`, forcing a text reply, and return `{ messages, finish }` with `finish.reason = "max_iterations"` and `finish.cappedOut = true` — it SHALL NOT throw.
+When the loop reaches `maxIterations`, it SHALL force one final tool-less model call or AI SDK-equivalent finalization pass, append the response, and return `{ messages, finish }` with `finish.reason = "max_iterations"` and `finish.cappedOut = true`. It SHALL NOT throw solely because the iteration cap was reached.
 
 #### Scenario: A non-terminating loop wraps up instead of throwing
 
-- **GIVEN** a provider that always returns `stop_reason: "tool_use"`
+- **GIVEN** a provider that always returns tool calls
 - **WHEN** the loop reaches `maxIterations`
-- **THEN** it makes one tool-less call, appends the text reply, and returns `{ messages, finish }` with `finish.reason = "max_iterations"` and `finish.cappedOut = true`, without throwing
+- **THEN** it makes one tool-less finalization call, appends the text reply, and returns `{ messages, finish }` with `finish.reason = "max_iterations"` and `finish.cappedOut = true`
 
 ### Requirement: max_tokens is a recoverable soft-error
 
-On a reply with `stop_reason: "max_tokens"` the loop SHALL NOT execute the truncated trailing `tool_use`; it SHALL synthesize a retryable `is_error` `tool_result` for that call (generic wording, naming no tool), still dispatch any earlier complete `tool_use` blocks from the same turn, and continue. A truncated reply carrying no `tool_use` SHALL be steered with a corrective `user` message and continued. Each recovery SHALL increment `finish.truncationRecoveries`, and recovery SHALL be bounded by `maxIterations`.
+On an output-token truncation signal from the AI SDK provider runtime, the loop SHALL NOT execute an incomplete trailing tool call. It SHALL provide a retryable model-visible error for that call where a tool call id exists, still dispatch any earlier complete tool calls from the same turn, and continue. A truncated prose reply SHALL be steered with a corrective user message and continued. Each recovery SHALL increment `finish.truncationRecoveries`, and recovery SHALL be bounded by `maxIterations`.
 
 #### Scenario: A truncated trailing tool call is refused, not executed
 
-- **GIVEN** an assistant reply with `stop_reason: "max_tokens"` ending in a `tool_use`
+- **GIVEN** a model reply that terminates due to output-token truncation while ending in a tool call
 - **WHEN** the loop processes it
-- **THEN** that tool's `execute` is never called, its `tool_result` is `is_error: true`, the loop continues, and `finish.truncationRecoveries` is incremented
+- **THEN** that tool implementation is never called, the model receives a retryable error result, the loop continues, and `finish.truncationRecoveries` is incremented
 
 #### Scenario: Earlier complete tool calls in a truncated turn still run
 
-- **GIVEN** a `max_tokens` reply with `tool_use` blocks `[A, B]` where `B` is the truncated trailing call
+- **GIVEN** a truncated reply with complete tool call `A` and incomplete trailing tool call `B`
 - **WHEN** the loop processes it
-- **THEN** `A` is dispatched normally and `B` is refused, with both `tool_result`s assembled in order `[A, B]`
+- **THEN** `A` is dispatched normally and `B` is refused
 
 #### Scenario: A truncated prose turn is steered and continued
 
-- **GIVEN** a `max_tokens` reply containing no `tool_use`
+- **GIVEN** a truncated reply containing no tool call
 - **WHEN** the loop processes it
-- **THEN** it appends a corrective `user` message and continues rather than returning
+- **THEN** it appends a corrective user message and continues rather than returning
 
 ### Requirement: Tool dispatch is partitioned by durability ownership
 
-Within one turn the loop SHALL dispatch tools wrapped in `runStep` concurrently, reserving each one's step synchronously in array order, and SHALL dispatch `bodyContext` tools sequentially after the wrapped batch. Results SHALL be assembled by the tool call's original index regardless of execution order.
+Within one turn the AI SDK loop integration SHALL dispatch tool calls according to each tool's execution mode. `step` tools SHALL be wrapped as deterministic durable steps and MAY run concurrently where AI SDK allows parallel tool calls. `workflow` tools SHALL enter their workflow-backed execution path and SHALL NOT run inside a DBOS step context. `inline` tools SHALL run only when they are pure and have no external side effects. Results SHALL be associated with the original tool-call ids.
 
-#### Scenario: bodyContext tools run after the concurrent wrapped batch
+#### Scenario: Workflow-backed tools avoid DBOS step context
 
-- **GIVEN** a turn whose `tool_use` blocks mix wrapped tools and a `bodyContext` tool
+- **GIVEN** a turn whose tool calls include a workflow-backed sandbox mutate tool
+- **WHEN** the loop dispatches it
+- **THEN** the tool runs through its workflow-backed execution path rather than inside a `DBOS.runStep`
+
+#### Scenario: Step-backed tools cache through deterministic steps
+
+- **GIVEN** a turn whose tool calls include external lookup tools
 - **WHEN** the loop dispatches them
-- **THEN** the wrapped tools run concurrently, the `bodyContext` tool runs sequentially afterward, and every `tool_result` lands at its original index
+- **THEN** each lookup runs through a deterministic `runStep` wrapper and can cache-hit on DBOS replay
 
 ### Requirement: runToTerminal salvages a run that never reached its terminal tool
 

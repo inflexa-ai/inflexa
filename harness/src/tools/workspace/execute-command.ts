@@ -96,7 +96,7 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
         id: "execute_command",
         // `awaitExec`-recv is body-only (`DBOS.recv`), so this runs unwrapped in
         // the workflow body; durability is self-owned (submit step + body recv). See the harness-tools spec.
-        bodyContext: true,
+        executionMode: "workflow",
         description:
             "Run a command in the sandbox and return its stdout/stderr/exit code. " +
             "Use for scripts, CLI tools, shell pipes, and anything the workspace " +

@@ -69,7 +69,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
         expect(ctx.session.provenance.callPath).toEqual(["conversation-agent"]);
 
         // Tool roster: 6 (3 cross-domain + 3 biology literature).
-        expect(provider.calls[0]!.tools).toHaveLength(6);
+        expect(Object.keys(provider.calls[0]!.tools)).toHaveLength(6);
 
         // Only one provider call — fast path skipped the conversion retry.
         expect(provider.calls).toHaveLength(1);
@@ -95,8 +95,7 @@ describe("generateAnalogyReport sub-agent tool", () => {
 
         // Conversion call: no tools, system prompt is the conversion instruction.
         const conversionCall = provider.calls[1]!;
-        expect(conversionCall.tools).toEqual([]);
-        expect(conversionCall.temperature).toBe(0);
+        expect(conversionCall.tools).toEqual({});
     });
 
     it("surfaces an extraction-failed envelope when conversion also fails", async () => {

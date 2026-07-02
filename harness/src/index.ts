@@ -67,4 +67,4 @@ export { createAnthropicProvider } from "./providers/anthropic.js";
 export type { AnthropicProviderDeps } from "./providers/anthropic.js";
 export { createEmbeddingProvider } from "./providers/embedding.js";
 export type { EmbeddingProviderDeps } from "./providers/embedding.js";
-export type { ChatProvider, EmbeddingProvider, ChatRequest, ChatStreamEvent, Message } from "./providers/types.js";
+export type { ChatProvider, EmbeddingProvider, ChatRequest, ChatResponse, ChatStreamEvent, ModelMessage } from "./providers/types.js";

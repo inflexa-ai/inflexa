@@ -20,6 +20,14 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import { setupDbosForTests, type DbosTestRig } from "./dbos.js";
 
+// Reopen the registration window if an earlier test file already launched
+// the shared DBOS engine: a plain shutdown (no `deregister`) keeps every
+// prior registration and lets the top-level `registerWorkflow` calls below
+// through; `beforeAll` relaunches via `DBOS.launch()`.
+if (DBOS.isInitialized()) {
+    await DBOS.shutdown();
+}
+
 const incrementAndWait = DBOS.registerWorkflow(
     async (x: number): Promise<number> => {
         return x + 1;
@@ -68,6 +76,9 @@ let rig: DbosTestRig;
 
 beforeAll(async () => {
     rig = await setupDbosForTests("dbos_rig_smoke");
+    // Relaunch when the module-top registration-window bounce stopped the
+    // engine; a no-op when the rig's lazy launch above did the launching.
+    if (!DBOS.isInitialized()) await DBOS.launch();
 });
 
 afterAll(async () => {

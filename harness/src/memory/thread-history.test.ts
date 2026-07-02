@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { ContentBlockParam, MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ModelMessage, ToolResultPart } from "ai";
 import { metrics } from "@opentelemetry/api";
 import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type MetricData, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import type { Pool } from "pg";
@@ -12,46 +12,42 @@ const THREAD = "analysis-thread-1";
 
 // --- message builders -------------------------------------------------------
 
-function userText(text: string): MessageParam {
+function userText(text: string): ModelMessage {
     return { role: "user", content: [{ type: "text", text }] };
 }
-function assistantText(text: string): MessageParam {
+function assistantText(text: string): ModelMessage {
     return { role: "assistant", content: [{ type: "text", text }] };
 }
-function assistantToolUse(id: string, name: string, input: unknown): MessageParam {
-    return { role: "assistant", content: [{ type: "tool_use", id, name, input }] };
+function assistantToolUse(id: string, name: string, input: unknown): ModelMessage {
+    return { role: "assistant", content: [{ type: "tool-call", toolCallId: id, toolName: name, input }] };
 }
-function userToolResult(id: string, content: string): MessageParam {
+function userToolResult(id: string, content: string): ModelMessage {
     return {
-        role: "user",
-        content: [{ type: "tool_result", tool_use_id: id, content }],
+        role: "tool",
+        content: [{ type: "tool-result", toolCallId: id, toolName: "legacy_tool", output: { type: "text", value: content } }],
     };
 }
-function assistantThinking(thinking: string, signature: string): MessageParam {
-    return { role: "assistant", content: [{ type: "thinking", thinking, signature }] };
+function assistantThinking(thinking: string, signature: string): ModelMessage {
+    return { role: "assistant", content: [{ type: "reasoning", text: thinking, providerOptions: { anthropic: { signature } } }] };
 }
 
 /** Token cost of a turn — the same per-message count `appendTurn` stamps. */
-function turnCost(messages: readonly MessageParam[]): number {
+function turnCost(messages: readonly ModelMessage[]): number {
     return messages.reduce((sum, m) => sum + countTokens(m.content), 0);
 }
 
-/** Assert a loaded window is a valid Anthropic message sequence. */
-function assertValidSequence(messages: readonly MessageParam[]): void {
+/** Assert a loaded window is a valid AI SDK model-message sequence. */
+function assertValidSequence(messages: readonly ModelMessage[]): void {
     const first = messages[0];
     expect(first).toBeDefined();
     expect(first!.role).toBe("user");
-    if (typeof first!.content !== "string") {
-        const hasToolResult = first!.content.some((b: ContentBlockParam) => b.type === "tool_result");
-        expect(hasToolResult).toBe(false);
-    }
     const seenToolUse = new Set<string>();
     for (const m of messages) {
         if (typeof m.content === "string") continue;
-        for (const b of m.content as ContentBlockParam[]) {
-            if (b.type === "tool_use") seenToolUse.add(b.id);
-            if (b.type === "tool_result") {
-                expect(seenToolUse.has(b.tool_use_id)).toBe(true);
+        for (const b of m.content) {
+            if (b.type === "tool-call") seenToolUse.add(b.toolCallId);
+            if (b.type === "tool-result") {
+                expect(seenToolUse.has((b as ToolResultPart).toolCallId)).toBe(true);
             }
         }
     }
@@ -92,10 +88,10 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-    await meterProvider.shutdown();
+    await meterProvider?.shutdown();
     metrics.disable();
     __resetThreadHistoryMetricsForTest();
-    await drop();
+    await drop?.();
 });
 
 // --- round-trip -------------------------------------------------------------
@@ -123,11 +119,13 @@ describe("appendTurn / loadRecent round-trip", () => {
         await history.appendTurn(THREAD, [userText("reason about this"), assistantThinking("step-by-step reasoning", signature)]);
 
         const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
-        const thinking = loaded
+        const reasoning = loaded
             .flatMap((m) => (typeof m.content === "string" ? [] : m.content))
-            .find((b): b is Extract<ContentBlockParam, { type: "thinking" }> => b.type === "thinking");
-        expect(thinking).toBeDefined();
-        expect(thinking!.signature).toBe(signature);
+            .find((b) => b.type === "reasoning");
+        expect(reasoning).toMatchObject({
+            type: "reasoning",
+            providerOptions: { anthropic: { signature } },
+        });
     });
 
     it("returns an empty array for a thread with no messages", async () => {
@@ -216,8 +214,8 @@ describe("loadRecent boundary snapping", () => {
         expect(loaded).toEqual(turn2);
         assertValidSequence(loaded);
 
-        const toolUseIdx = loaded.findIndex((m) => typeof m.content !== "string" && m.content.some((b) => b.type === "tool_use"));
-        const toolResultIdx = loaded.findIndex((m) => typeof m.content !== "string" && m.content.some((b) => b.type === "tool_result"));
+        const toolUseIdx = loaded.findIndex((m) => typeof m.content !== "string" && m.content.some((b) => b.type === "tool-call"));
+        const toolResultIdx = loaded.findIndex((m) => m.role === "tool" && typeof m.content !== "string" && m.content.some((b) => b.type === "tool-result"));
         expect(toolUseIdx).toBeGreaterThanOrEqual(0);
         expect(toolResultIdx).toBe(toolUseIdx + 1);
     });

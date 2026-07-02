@@ -255,19 +255,14 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
                 const reply = unwrapOrThrow(
                     await deps.provider.chat(
                         {
-                            temperature: 0,
-                            tools: [],
-                            system: [
-                                {
-                                    type: "text",
-                                    text:
-                                        "You convert an analogical-reasoner's free-text output " +
-                                        "into a strict AnalogyReportSchema JSON envelope. You " +
-                                        "preserve information faithfully and never invent content. " +
-                                        "You return ONLY raw JSON — no prose, no markdown fences, " +
-                                        "no commentary.",
-                                },
-                            ],
+                            tools: {},
+                            toolChoice: "none",
+                            system:
+                                "You convert an analogical-reasoner's free-text output " +
+                                "into a strict AnalogyReportSchema JSON envelope. You " +
+                                "preserve information faithfully and never invent content. " +
+                                "You return ONLY raw JSON — no prose, no markdown fences, " +
+                                "no commentary.",
                             messages: [{ role: "user", content: buildConversionPrompt(rawText) }],
                         },
                         childSession,
@@ -275,10 +270,14 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
                     ),
                 );
 
-                const convertedText = reply.content
-                    .filter((b): b is { type: "text"; text: string } & typeof b => b.type === "text")
-                    .map((b) => b.text)
-                    .join("");
+                const content = reply.message.content;
+                const convertedText =
+                    typeof content === "string"
+                        ? content
+                        : content
+                              .filter((b): b is { type: "text"; text: string } & typeof b => b.type === "text")
+                              .map((b) => b.text)
+                              .join("");
 
                 const parse = tryParseEnvelope(convertedText);
                 if (!parse.ok) return ok(buildExtractionFailedEnvelope());

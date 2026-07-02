@@ -1,7 +1,7 @@
 /**
  * The harness tool primitive.
  *
- * `defineTool` packages a `Tool` and emits its Anthropic `input_schema`
+ * `defineTool` packages a `Tool` and emits its AI SDK input schema
  * from the Zod `inputSchema` via Zod 4's native `z.toJSONSchema()`. It is
  * dependency-agnostic (see the harness-durable-runtime spec): a pure tool is a module-scope
  * `defineTool(...)`; a dependency-bearing tool is a factory closure that
@@ -37,6 +37,8 @@ export interface ToolError {
     readonly cause?: unknown;
 }
 
+export type ToolExecutionMode = "step" | "workflow" | "inline";
+
 /** Runtime guard — does a `Result`'s error value carry the `ToolError` shape? */
 export function isToolError(value: unknown): value is ToolError {
     return typeof value === "object" && value !== null && typeof (value as ToolError).error === "string" && typeof (value as ToolError).retryable === "boolean";
@@ -55,31 +57,20 @@ export interface ToolContext {
     /**
      * Wrap durable work in a replay-cached step. The loop namespaces the name
      * under the tool's own step name, so a tool just passes a short local label.
-     * `bodyContext` tools (which run unwrapped in the workflow body — see `Tool`)
-     * own their durability through this seam and their internal body calls.
      */
     readonly runStep: RunStep;
 }
 
 /**
- * A packaged tool: identity, the Zod input contract, the emitted Anthropic
- * `input_schema`, and the executor. The TypeScript return type of `execute`
- * is the output contract — Anthropic tools carry no output schema on the wire.
+ * A packaged tool: identity, the Zod input contract, the emitted AI SDK input
+ * schema, execution mode, and the executor.
  */
 export interface Tool<Input = unknown, Output = unknown> {
     readonly id: string;
     readonly description: string;
     readonly inputSchema: z.ZodType;
     readonly jsonSchema: Record<string, unknown>;
-    /**
-     * Opt out of the loop's default `runStep` wrap (see the harness-tools spec). A `bodyContext`
-     * tool runs unwrapped, in the workflow body, so its internal `DBOS.recv` /
-     * `DBOS.writeStream` (body-only) calls are legal. Exactly the sandbox mutate
-     * tools (`execute_command`, `write_file`, `edit_file`) carry it; they own
-     * their own durability (submit is a step, recv is a body call). Default
-     * (unset/false) keeps the wrap, so external-API tools cache on replay.
-     */
-    readonly bodyContext?: boolean;
+    readonly executionMode: ToolExecutionMode;
     execute(input: Input, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 }
 
@@ -87,14 +78,13 @@ export interface ToolDefinition<Schema extends z.ZodType, Output> {
     readonly id: string;
     readonly description: string;
     readonly inputSchema: Schema;
-    /** See `Tool.bodyContext`. Opt out of the loop's default `runStep` wrap. */
-    readonly bodyContext?: boolean;
+    readonly executionMode?: ToolExecutionMode;
     execute(input: z.infer<Schema>, ctx: ToolContext): Promise<Result<Output, ToolError>>;
 }
 
 /**
  * Package a `Tool`. The emitted JSON Schema must have a top-level
- * `"type": "object"` — Anthropic rejects anything else. A `z.discriminatedUnion`
+ * `"type": "object"` — model tool calling rejects anything else. A `z.discriminatedUnion`
  * emits a top-level `oneOf`; this throws at construction (fail fast — not at
  * the first LLM call). Union-shaped inputs must be modelled as a flat object
  * with a discriminator field.
@@ -113,12 +103,14 @@ export function defineTool<Schema extends z.ZodType, Output>(def: ToolDefinition
         );
     }
 
+    const executionMode: ToolExecutionMode = def.executionMode ?? "step";
+
     return {
         id: def.id,
         description: def.description,
         inputSchema: def.inputSchema,
         jsonSchema,
-        ...(def.bodyContext === true ? { bodyContext: true } : {}),
+        executionMode,
         execute: def.execute,
     };
 }

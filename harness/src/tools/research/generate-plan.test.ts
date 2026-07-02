@@ -60,7 +60,7 @@ describe("generatePlan loop-driving tool", () => {
         // The planner ran on a derived child Session with its 4 terminal tools.
         expect(provider.sessions[0]!.provenance.agentId).toBe("planner");
         expect(provider.sessions[0]!.provenance.callPath).toEqual(["conversation-agent", "planner"]);
-        expect(provider.calls[0]!.tools?.map((t) => t.name)).toEqual(["validate_plan", "submit_plan", "request_clarification", "report_blocker"]);
+        expect(Object.keys(provider.calls[0]!.tools)).toEqual(["validate_plan", "submit_plan", "request_clarification", "report_blocker"]);
     });
 
     it("surfaces request_clarification as a clarification outcome", async () => {

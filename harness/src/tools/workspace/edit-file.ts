@@ -95,7 +95,7 @@ export function createEditFileTool(deps: EditFileDeps) {
     return defineTool({
         id: "edit_file",
         // Body-only `awaitExec`-recv → runs unwrapped in the workflow body (see the harness-tools spec).
-        bodyContext: true,
+        executionMode: "workflow",
         description:
             "Edit a file in your working directory by replacing specific text. " +
             "Read the file first to get the exact text. When replace_all is false " +

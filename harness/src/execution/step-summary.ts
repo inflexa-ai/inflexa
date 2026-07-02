@@ -25,13 +25,11 @@
  * step time the workflow body already holds the array — pass it in.
  */
 
-import type { ContentBlockParam, MessageParam } from "@anthropic-ai/sdk/resources/messages";
-
 import type { AgentSession } from "../auth/types.js";
 import { forSubAgent } from "../auth/types.js";
 import { finalText, runAgent, type RunAgentResult } from "../loop/run-agent.js";
 import { passthroughStep } from "../loop/run-step.js";
-import type { AgentDefinition } from "../loop/types.js";
+import type { AgentDefinition, LoopMessage } from "../loop/types.js";
 import type { AgentChat } from "../providers/types.js";
 import { stepSummaryPrompt } from "../prompts/execute-analysis/step-summary.js";
 import { createReadFileTool } from "../tools/workspace/read-file.js";
@@ -59,7 +57,7 @@ export interface GenerateStepSummaryOptions {
     readonly session: AgentSession;
     readonly modelId: string;
     /** In-memory transcript from `runAgent` — assistant + tool-result rounds. */
-    readonly messages: readonly MessageParam[];
+    readonly messages: readonly LoopMessage[];
     readonly artifactPaths: readonly string[];
     /** Workspace read seam — backs the scoped `read_file` tool. */
     readonly workspaceFs: WorkspaceFilesystem;
@@ -77,14 +75,12 @@ export interface GenerateStepSummaryOptions {
  * loop turn: any final assistant `tool_use` block needs a matching
  * `tool_result` we are not going to produce. Drop the trailing partial round.
  */
-function sanitizeTranscript(messages: readonly MessageParam[]): MessageParam[] {
-    const out: MessageParam[] = [...messages];
+function sanitizeTranscript(messages: readonly LoopMessage[]): LoopMessage[] {
+    const out: LoopMessage[] = [...messages];
     while (out.length > 0) {
         const last = out[out.length - 1]!;
-        const blocks: ContentBlockParam[] = Array.isArray(last.content)
-            ? (last.content as ContentBlockParam[])
-            : [{ type: "text", text: String(last.content) }];
-        const hasOpenToolUse = last.role === "assistant" && blocks.some((b) => b.type === "tool_use");
+        const blocks = Array.isArray(last.content) ? last.content : [];
+        const hasOpenToolUse = last.role === "assistant" && blocks.some((b) => b.type === "tool-call");
         if (hasOpenToolUse) {
             out.pop();
             continue;

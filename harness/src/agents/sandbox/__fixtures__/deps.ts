@@ -64,6 +64,7 @@ export function makeFakeWorkspaceFs(): WorkspaceFilesystem {
 
 export function makeFakeChatProvider(): ChatProvider {
     return {
+        capabilities: { toolCalling: true },
         chat() {
             throw new Error("fake chat provider — not exercised in these tests");
         },

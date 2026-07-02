@@ -14,40 +14,38 @@
  * conversation-turn shaped on purpose, so reaching for it inside a
  * workflow step feels immediately wrong.
  *
- * The window is always a valid Anthropic message sequence: it begins on a
- * `user` message that is genuine user input — never a `tool_result`
- * continuation — and never splits a `tool_use`/`tool_result` pair. The turn
+ * The window is always a valid AI SDK model-message sequence: it begins on a
+ * `user` message that is genuine user input — never a `tool`-role
+ * continuation — and never splits a tool-call/tool-result pair. The turn
  * is the atomic unit; `appendTurn` writes one atomically and `loadRecent`
  * rounds the budget walk to turn boundaries.
  */
 
-import type { ContentBlockParam, MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ModelMessage } from "ai";
 import { type Histogram, metrics } from "@opentelemetry/api";
 import { ResultAsync, ok } from "neverthrow";
 import type { Pool } from "pg";
 
 import { type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
 import { countTokens } from "./count-tokens.js";
+import { envelopeMessage, parseStoredMessageEnvelope, type StoredMessageEnvelope } from "./ai-sdk-message-storage.js";
 
 /** A resolved `ok(undefined)` ResultAsync — the empty/seed transaction step. */
 function okVoid<E = DbError>(): ResultAsync<void, E> {
     return new ResultAsync(Promise.resolve(ok<void, E>(undefined)));
 }
 
-/** The stored shape of one message's content — Anthropic-shaped JSONB. */
-type StoredContent = string | ContentBlockParam[];
-
 interface MessageRow {
-    readonly role: string;
-    readonly content_jsonb: StoredContent;
+    readonly seq: string;
+    readonly message_envelope: unknown;
     readonly tokens: number;
 }
 
 /** One stored message, as returned by the display read (`loadPage`). */
 export interface StoredMessage {
     readonly seq: number;
-    readonly role: string;
-    readonly content: StoredContent;
+    readonly envelope: StoredMessageEnvelope;
+    readonly message: ModelMessage;
 }
 
 /**
@@ -72,12 +70,12 @@ export interface ThreadHistory {
      * Append one conversation turn — every message written in a single
      * transaction with a `seq` monotonically increasing per thread.
      */
-    appendTurn(threadId: string, messages: readonly MessageParam[]): ResultAsync<void, DbError>;
+    appendTurn(threadId: string, messages: readonly ModelMessage[]): ResultAsync<void, DbError>;
     /**
      * Return the most recent messages whose cumulative `tokens` fit
-     * `tokenBudget`, oldest-first, snapped to a valid Anthropic sequence.
+     * `tokenBudget`, oldest-first, snapped to a valid AI SDK model-message sequence.
      */
-    loadRecent(threadId: string, tokenBudget: number): ResultAsync<MessageParam[], DbError>;
+    loadRecent(threadId: string, tokenBudget: number): ResultAsync<ModelMessage[], DbError>;
     /**
      * Return one page of a thread's messages oldest-first for UI display —
      * NOT token-windowed (that is `loadRecent`'s job for the agent loop). No
@@ -89,22 +87,19 @@ export interface ThreadHistory {
 }
 
 /**
- * A turn starts on a `user` message that is genuine user input — string
- * content, or a content array with no `tool_result` block. A `user` message
- * carrying `tool_result` blocks is a mid-turn tool continuation, not a
- * boundary.
+ * A turn starts on a `user` message. In AI SDK message terms tool results
+ * are `tool`-role messages, so a mid-turn tool continuation never carries
+ * the `user` role and cannot open a turn.
  */
-function isGenuineUserStart(role: string, content: StoredContent): boolean {
-    if (role !== "user") return false;
-    if (typeof content === "string") return true;
-    return !content.some((block) => block.type === "tool_result");
+function isGenuineUserStart(message: ModelMessage): boolean {
+    return message.role === "user";
 }
 
 /**
  * Group rows (oldest-first) into turns at genuine-user-start boundaries.
- * Generic over the row shape so both the token-windowed read (`MessageRow`,
- * content under `content_jsonb`) and the display read (`StoredMessage`, content
- * under `content`) share it, each supplying its own start predicate.
+ * Generic over the row shape so the token-windowed read (`loadRecent`) and
+ * the display read (`loadPage`) share it, each supplying its own start
+ * predicate.
  */
 function groupTurns<T>(rows: readonly T[], isStart: (row: T) => boolean): T[][] {
     const turns: T[][] = [];
@@ -156,7 +151,7 @@ export function __resetThreadHistoryMetricsForTest(): void {
  * provisioned by the project's state-init DDL.
  */
 export function createThreadHistory(pool: Pool): ThreadHistory {
-    function appendTurn(threadId: string, messages: readonly MessageParam[]): ResultAsync<void, DbError> {
+    function appendTurn(threadId: string, messages: readonly ModelMessage[]): ResultAsync<void, DbError> {
         if (messages.length === 0) return okVoid();
         return withTransaction(pool, "thread-history.appendTurn", (client) =>
             // Serialize concurrent appends on this thread — without the lock, two
@@ -182,9 +177,12 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
                             chain.andThen(() =>
                                 tryMutation("thread-history.appendTurn.insert", () =>
                                     client.query(
-                                        `INSERT INTO messages (thread_id, seq, role, content_jsonb, tokens)
-                     VALUES ($1, $2, $3, $4::jsonb, $5)`,
-                                        [threadId, startSeq + i, message.role, JSON.stringify(message.content), countTokens(message.content)],
+                                        `INSERT INTO messages (thread_id, seq, message_envelope, tokens)
+                     VALUES ($1, $2, $3::jsonb, $4)
+                     ON CONFLICT (thread_id, seq) DO UPDATE
+                       SET message_envelope = EXCLUDED.message_envelope,
+                           tokens = EXCLUDED.tokens`,
+                                        [threadId, startSeq + i, JSON.stringify(envelopeMessage(message)), countTokens(message.content)],
                                     ),
                                 ).map(() => undefined),
                             ),
@@ -194,15 +192,19 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
         );
     }
 
-    function loadRecent(threadId: string, tokenBudget: number): ResultAsync<MessageParam[], DbError> {
+    function loadRecent(threadId: string, tokenBudget: number): ResultAsync<ModelMessage[], DbError> {
         return tryQuery("thread-history.loadRecent", async () => {
             const { rows } = await pool.query<MessageRow>(
-                `SELECT role, content_jsonb, tokens
+                `SELECT seq::text AS seq, message_envelope, tokens
          FROM messages WHERE thread_id = $1 ORDER BY seq ASC`,
                 [threadId],
             );
+            const parsed = rows.map((row) => ({
+                message: parseStoredMessageEnvelope(row.message_envelope, `${threadId}/${row.seq}`).message,
+                tokens: row.tokens,
+            }));
 
-            const turns = groupTurns(rows, (row) => isGenuineUserStart(row.role, row.content_jsonb));
+            const turns = groupTurns(parsed, (row) => isGenuineUserStart(row.message));
             const turnTokens = turns.map((turn) => turn.reduce((sum, row) => sum + row.tokens, 0));
             const threadTotal = turnTokens.reduce((sum, n) => sum + n, 0);
 
@@ -226,10 +228,7 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
             return turns
                 .slice(turns.length - included)
                 .flat()
-                .map((row) => ({
-                    role: row.role as MessageParam["role"],
-                    content: row.content_jsonb,
-                }));
+                .map((row) => row.message);
         });
     }
 
@@ -247,26 +246,24 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
             // matches `loadRecent`'s existing whole-thread read.
             const { rows } = await pool.query<{
                 seq: string;
-                role: string;
-                content_jsonb: StoredContent;
+                message_envelope: unknown;
             }>(
                 // ORDER BY must qualify `messages.seq` — a bare `seq` would bind to the
                 // `seq::text AS seq` output alias (Postgres resolves an unqualified
                 // ORDER BY name to the output column), sorting the bigint as text:
                 // "10" before "2". The qualified name forces the bigint column.
-                `SELECT seq::text AS seq, role, content_jsonb
+                `SELECT seq::text AS seq, message_envelope
          FROM messages WHERE thread_id = $1
          ORDER BY messages.seq ASC`,
                 [threadId],
             );
 
-            const stored: StoredMessage[] = rows.map((r) => ({
-                seq: Number(r.seq),
-                role: r.role,
-                content: r.content_jsonb,
-            }));
+            const stored: StoredMessage[] = rows.map((r) => {
+                const envelope = parseStoredMessageEnvelope(r.message_envelope, `${threadId}/${r.seq}`);
+                return { seq: Number(r.seq), envelope, message: envelope.message };
+            });
 
-            const turns = groupTurns(stored, (row) => isGenuineUserStart(row.role, row.content));
+            const turns = groupTurns(stored, (row) => isGenuineUserStart(row.message));
             const total = turns.length;
             const offset = safePage * safePerPage;
             const pageTurns = turns.slice(offset, offset + safePerPage);

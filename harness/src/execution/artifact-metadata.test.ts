@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
 import { okAsync } from "neverthrow";
 
-import type { ChatProvider, ChatRequest, Message } from "../providers/types.js";
+import type { ChatProvider, ChatRequest, ChatResponse } from "../providers/types.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
+import { makeMessage, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
 import { createWorkspaceFilesystem } from "../workspace/filesystem.js";
 
 import { generateFileMetadata, type ArtifactForMetadata } from "./artifact-metadata.js";
@@ -20,15 +21,17 @@ interface RecordedCall {
  * `provider.chat` once per loop iteration. The script returns one Message per
  * call in order; `chatStream` is never exercised.
  */
-function makeProvider(responses: readonly Message[]): {
+function makeProvider(responses: readonly ChatResponse[]): {
     provider: ChatProvider;
     calls: RecordedCall[];
 } {
     const calls: RecordedCall[] = [];
     let i = 0;
     const provider: ChatProvider = {
+        capabilities: { toolCalling: true },
         chat(req) {
-            calls.push({ req });
+            // Snapshot messages: the loop mutates its working array in place.
+            calls.push({ req: { ...req, messages: [...req.messages] } });
             const r = responses[i++];
             if (!r) throw new Error(`scripted provider exhausted at call ${i}`);
             return okAsync(r);
@@ -40,39 +43,19 @@ function makeProvider(responses: readonly Message[]): {
     return { provider, calls };
 }
 
-function asMessage(content: unknown[], stopReason: string): Message {
-    // Cast through `unknown` — the SDK's `Message` type keeps adding fields we
-    // don't exercise; the runtime only reads `content` and `stop_reason`.
-    return {
-        id: "msg-1",
-        type: "message",
-        role: "assistant",
-        model: "claude-opus-4-7",
-        content,
-        stop_reason: stopReason,
-        stop_sequence: null,
-        usage: {
-            input_tokens: 10,
-            output_tokens: 10,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-        },
-    } as unknown as Message;
-}
-
 /** An assistant turn that calls `submit_file_metadata` with `files`. */
-function submitCall(id: string, files: unknown[]): Message {
-    return asMessage([{ type: "tool_use", id, name: "submit_file_metadata", input: { files } }], "tool_use");
+function submitCall(id: string, files: unknown[]): ChatResponse {
+    return makeMessage([toolUseBlock(id, "submit_file_metadata", { files })], "tool_use");
 }
 
 /** A terminal assistant text turn (the model stops calling tools). */
-function stopTurn(text = "done"): Message {
-    return asMessage([{ type: "text", text }], "end_turn");
+function stopTurn(text = "done"): ChatResponse {
+    return makeMessage([textBlock(text)], "end_turn");
 }
 
 /** An assistant turn that calls `read_file` on a path. */
-function readFileCall(id: string, path: string): Message {
-    return asMessage([{ type: "tool_use", id, name: "read_file", input: { path } }], "tool_use");
+function readFileCall(id: string, path: string): ChatResponse {
+    return makeMessage([toolUseBlock(id, "read_file", { path })], "tool_use");
 }
 
 function desc(path: string, over: Record<string, unknown> = {}) {

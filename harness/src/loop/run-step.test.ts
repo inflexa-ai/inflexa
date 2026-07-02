@@ -9,14 +9,36 @@
  * durable workflow tests.
  */
 
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { err, ok } from "neverthrow";
 
 import { ResultError } from "../lib/result.js";
 import { durableStep, passthroughStep, resultStep } from "./run-step.js";
 
+/**
+ * `DBOS.runStep` is stubbed by DIRECT property assignment, which
+ * `mock.restore()` does NOT undo — capture the original once and put it
+ * back in `afterAll` so the stub cannot leak into later test files that
+ * drive a real DBOS engine.
+ */
+let originalRunStep: unknown;
+
+async function stubRunStep() {
+    const dbos = await import("@dbos-inc/dbos-sdk");
+    originalRunStep ??= dbos.DBOS.runStep;
+    const stub = mock(async (fn: () => Promise<unknown>, _config?: { name?: string }) => fn());
+    (dbos.DBOS.runStep as unknown) = stub;
+    return stub;
+}
+
 afterEach(() => {
     mock.restore();
+});
+
+afterAll(async () => {
+    if (originalRunStep === undefined) return;
+    const dbos = await import("@dbos-inc/dbos-sdk");
+    (dbos.DBOS.runStep as unknown) = originalRunStep;
 });
 
 describe("passthroughStep", () => {
@@ -36,9 +58,7 @@ describe("passthroughStep", () => {
 
 describe("durableStep", () => {
     it("forwards to DBOS.runStep with the supplied name", async () => {
-        const dbos = await import("@dbos-inc/dbos-sdk");
-        const stub = mock(async (fn: () => Promise<unknown>, _config?: { name?: string }) => fn());
-        (dbos.DBOS.runStep as unknown) = stub;
+        const stub = await stubRunStep();
 
         const result = await durableStep("llm-3", async () => "ok");
 
@@ -49,9 +69,7 @@ describe("durableStep", () => {
     });
 
     it("preserves the step-naming contract for tool calls", async () => {
-        const dbos = await import("@dbos-inc/dbos-sdk");
-        const stub = mock(async (fn: () => Promise<unknown>, _config?: { name?: string }) => fn());
-        (dbos.DBOS.runStep as unknown) = stub;
+        const stub = await stubRunStep();
 
         await durableStep("tool-add-toolu_abc123", async () => "1");
 
