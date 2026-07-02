@@ -2,6 +2,7 @@ import { intro, log, outro, spinner } from "@clack/prompts";
 import {
     loadDataProfileStatus,
     makeLocalAuth,
+    reconcileOrphanedDataProfile,
     runDataProfile,
     triggerDataProfile,
     tryRetryDataProfile,
@@ -63,6 +64,8 @@ function resolveProfileAnalysis(flags: ContextFlags): Analysis {
 /** Each boot error variant, as one actionable line naming the remedy. */
 function describeBootError(e: HarnessBootError): string {
     switch (e.type) {
+        case "harness_config_invalid":
+            return `Your \`harness\` config has an invalid field — ${e.issues}. Fix it in config.json and re-run.`;
         case "embedding_unconfigured":
             return [
                 "No embedding endpoint configured — profiling's vector indexing requires one. Embeddings are their own endpoint (separate from the chat proxy, which serves none).",
@@ -74,6 +77,11 @@ function describeBootError(e: HarnessBootError): string {
                 "Either configure an embeddings-capable provider in the proxy, or set `harness.embedding` in config.json:",
                 '{ "baseURL": "<OpenAI-compatible /v1>", "token": "<key>", "model": "text-embedding-3-small" }.',
             ].join("\n");
+        case "embedding_dimension_mismatch":
+            return [
+                `The embedding model at ${e.baseURL} returns ${e.actual}-dimensional vectors, but the profile's vector index is fixed at ${e.expected} dimensions.`,
+                `Set \`harness.embedding.model\` in config.json to a ${e.expected}-dim model (e.g. text-embedding-3-small).`,
+            ].join("\n");
         case "skills_dir_missing":
             return `Skills directory not found${e.path ? ` at ${e.path}` : ""}. Set \`harness.skillsDir\` in config.json (a checkout's \`skills/\` tree).`;
         case "proxy_key_missing":
@@ -82,10 +90,17 @@ function describeBootError(e: HarnessBootError): string {
             return e.cause.type === "no_models"
                 ? "The proxy lists no models — authenticate a provider via `inflexa setup`, or set `harness.model` in config.json."
                 : `The proxy is unreachable (${e.cause.type === "proxy_unreachable" ? e.cause.detail : e.cause.type}) — is the container running? Try \`inflexa setup\`.`;
+        case "model_not_claude":
+            return [
+                `The proxy's default model "${e.model}" is not a Claude model, but data profiling drives the proxy over the Anthropic protocol.`,
+                "Authenticate a Claude provider via `inflexa setup`, or set `harness.model` in config.json to a Claude model the proxy serves.",
+            ].join("\n");
         case "postgres_unavailable":
             return e.cause.message;
         case "ingress_failed":
             return "Could not bind the local callback listener (loopback, ephemeral port) — check for exhausted ports or a restrictive firewall.";
+        case "runtime_already_active":
+            return `Another \`inflexa\` process (pid ${e.holderPid}) is already running the harness runtime. Only one profile run per machine at a time — wait for it to finish or stop that process.`;
         case "runtime_boot_failed":
             return `Harness runtime failed to boot: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`;
         default: {
@@ -130,6 +145,17 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
         },
     );
     s.stop(`Runtime ready — model ${runtime.model}`);
+
+    // A prior run that died between claiming the ledger and creating its DBOS
+    // workflow leaves the row wedged at `running` with nothing for recovery to
+    // resume. Boot has now run DBOS recovery, so any row still `running` with no
+    // active workflow is genuinely orphaned — reset it so the trigger below can
+    // re-profile instead of reporting `already_running` forever. Best-effort: a
+    // reconcile hiccup must not abort the command.
+    (await reconcileOrphanedDataProfile(runtime.pool, analysis.id)).match(
+        () => {},
+        (e) => getLogger("harness").warn({ analysisId: analysis.id, err: e }, "orphaned-profile reconcile failed"),
+    );
 
     s.start("Staging inputs");
     const staged = (await stageInputs(analysis.id, sessionTreeDataDir(analysis.id))).match(

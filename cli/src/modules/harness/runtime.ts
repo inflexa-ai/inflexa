@@ -12,6 +12,7 @@ import {
     launchDbos,
     registerDataProfileWorkflow,
     shutdownDbos,
+    SEARCH_INDEX_DIMENSION,
     type DataProfileDeps,
     type DataProfileTriggerDeps,
     type DataProfileWorkflowInput,
@@ -20,6 +21,7 @@ import {
 } from "@inflexa-ai/harness";
 
 import { env } from "../../lib/env.ts";
+import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
 import { getLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
@@ -34,10 +36,10 @@ import { startExecIngress, type ExecIngress, type IngressError } from "./ingress
 // re-registering a name, so there is exactly one runtime per process, one
 // `sessionsBasePath`, one registration cohort.
 //
-// Registration happens BEFORE `launchDbos`, following `assembleCoreRuntime`'s
-// documented contract (the harness's own `register-workflows.ts` docstring says
-// the opposite; see the flag added there — assemble.ts is the declared source
-// of truth, and recovery must resolve workflows by name at launch).
+// Registration happens BEFORE `launchDbos`: `DBOS.launch()` runs recovery
+// synchronously and resolves in-flight workflows by their registered name, so a
+// workflow not registered at launch cannot be reclaimed. This matches
+// `assembleCoreRuntime`, the declared source of truth for wiring order.
 
 /** The booted runtime — everything the launch command needs to trigger and observe runs. */
 export type HarnessRuntime = {
@@ -52,25 +54,35 @@ export type HarnessRuntime = {
 
 /** Why the runtime could not boot — each variant maps to one actionable user message. */
 export type HarnessBootError =
+    | { type: "harness_config_invalid"; issues: string }
     | { type: "embedding_unconfigured" }
     | { type: "embedding_unreachable"; baseURL: string; detail: string }
+    | { type: "embedding_dimension_mismatch"; baseURL: string; expected: number; actual: number }
     | { type: "skills_dir_missing"; path: string | null }
     | { type: "proxy_key_missing"; cause: ChatSetupError }
     | { type: "model_unresolved"; cause: ChatSetupError }
+    | { type: "model_not_claude"; model: string }
     | { type: "postgres_unavailable"; cause: PostgresError }
     | { type: "ingress_failed"; cause: IngressError }
+    | { type: "runtime_already_active"; holderPid: number }
     | { type: "runtime_boot_failed"; cause: unknown };
 
+/** Why the embedding probe failed — reachability vs. a servable-but-wrong-width model. */
+export type EmbeddingProbeError =
+    { kind: "unreachable"; baseURL: string; detail: string } | { kind: "dimension_mismatch"; baseURL: string; expected: number; actual: number };
+
 /**
- * Boot-time reachability probe for the embedding endpoint. Embeddings are
- * consumed LATE in the profile workflow — after the sandbox agent already
- * spent its LLM budget — and an unreachable endpoint is fatal there
- * (`createEmbedder` throws pre-`completeDataProfile`), so one cheap real
- * embedding up front converts an expensive late failure into a free early one.
+ * Boot-time probe for the embedding endpoint. Embeddings are consumed LATE in
+ * the profile workflow — after the sandbox agent already spent its LLM budget —
+ * and both an unreachable endpoint AND a wrong-width model are fatal there: the
+ * per-analysis pgvector index is pinned to {@link SEARCH_INDEX_DIMENSION}, so a
+ * model of any other width is rejected at the vector upsert. One cheap real
+ * embedding up front converts both expensive late failures into free early ones.
  * A real POST rather than an OPTIONS/HEAD sniff: OpenAI-compatible servers
- * disagree on everything except the actual call.
+ * disagree on everything except the actual call, and only the actual response
+ * carries the vector length we need to check.
  */
-async function probeEmbeddingEndpoint(embedding: HarnessEmbeddingConfig): Promise<Result<void, { baseURL: string; detail: string }>> {
+async function probeEmbeddingEndpoint(embedding: HarnessEmbeddingConfig): Promise<Result<void, EmbeddingProbeError>> {
     try {
         const res = await fetch(`${embedding.baseURL.replace(/\/$/, "")}/embeddings`, {
             method: "POST",
@@ -79,13 +91,32 @@ async function probeEmbeddingEndpoint(embedding: HarnessEmbeddingConfig): Promis
             signal: AbortSignal.timeout(15_000),
         });
         if (!res.ok) {
-            return err({ baseURL: embedding.baseURL, detail: `HTTP ${res.status}` });
+            return err({ kind: "unreachable", baseURL: embedding.baseURL, detail: `HTTP ${res.status}` });
         }
-        await res.arrayBuffer();
+        // Verify the model's dimension against the pinned index width. Parse
+        // defensively: on any nonstandard-but-200 shape we can't read a length
+        // from, accept reachability rather than false-block a working endpoint —
+        // the dimension check is a best-effort early warning, not a gate.
+        const body: unknown = await res.json(); // external response; shape narrowed below before use
+        const actual = extractEmbeddingLength(body);
+        if (actual !== null && actual !== SEARCH_INDEX_DIMENSION) {
+            return err({ kind: "dimension_mismatch", baseURL: embedding.baseURL, expected: SEARCH_INDEX_DIMENSION, actual });
+        }
         return ok(undefined);
     } catch (cause) {
-        return err({ baseURL: embedding.baseURL, detail: cause instanceof Error ? cause.message : String(cause) });
+        return err({ kind: "unreachable", baseURL: embedding.baseURL, detail: cause instanceof Error ? cause.message : String(cause) });
     }
+}
+
+/** Pull `data[0].embedding.length` from an OpenAI-compatible embeddings response, or null if the shape isn't the expected `{ data: [{ embedding: number[] }] }`. */
+function extractEmbeddingLength(body: unknown): number | null {
+    if (typeof body !== "object" || body === null || !("data" in body)) return null;
+    const data = (body as { data: unknown }).data;
+    if (!Array.isArray(data) || data.length === 0) return null;
+    const first = data[0];
+    if (typeof first !== "object" || first === null || !("embedding" in first)) return null;
+    const vec = (first as { embedding: unknown }).embedding;
+    return Array.isArray(vec) ? vec.length : null;
 }
 
 /**
@@ -114,6 +145,14 @@ const realSeams: BootSeams = {
     probeEmbedding: probeEmbeddingEndpoint,
 };
 
+/**
+ * Advisory-lock key for the embedded runtime (see `lib/lock.ts`). A fixed
+ * sentinel — not an analysis id — because the lock guards the single per-machine
+ * DBOS engine (executor "local"), not any one analysis. Never collides with an
+ * analysis lock: analysis ids are UUIDv7.
+ */
+const RUNTIME_LOCK_KEY = "harness-runtime";
+
 let active: HarnessRuntime | null = null;
 
 /** The booted runtime, if any — passive callers (status views) may read, never boot. */
@@ -140,6 +179,11 @@ export async function bootHarnessRuntime(
     const cfg = options.config ?? resolveHarnessConfig();
     const logger = getLogger("harness");
 
+    // A `harness` config block that was present but failed validation: report the
+    // offending fields, not a misleading downstream error. Checked first so a bad
+    // `adminPort` type never surfaces as "embedding not configured".
+    if (cfg.configError) return err({ type: "harness_config_invalid", issues: cfg.configError.issues });
+
     // Prerequisites that no amount of booting can heal — checked before any
     // side effect so a misconfigured run costs nothing. Embeddings are their
     // own endpoint (baseURL + API key), deliberately a separate path from the
@@ -160,14 +204,28 @@ export async function bootHarnessRuntime(
     // is verified while failure is still free.
     const probeResult = await seams.probeEmbedding(cfg.embedding);
     if (probeResult.isErr()) {
-        return err({ type: "embedding_unreachable", baseURL: probeResult.error.baseURL, detail: probeResult.error.detail });
+        const e = probeResult.error;
+        return e.kind === "dimension_mismatch"
+            ? err({ type: "embedding_dimension_mismatch", baseURL: e.baseURL, expected: e.expected, actual: e.actual })
+            : err({ type: "embedding_unreachable", baseURL: e.baseURL, detail: e.detail });
     }
 
+    const autoResolvedModel = cfg.model === null;
     let model = cfg.model;
     if (model === null) {
         const modelResult = await seams.resolveModel(apiKey);
         if (modelResult.isErr()) return err({ type: "model_unresolved", cause: modelResult.error });
         model = modelResult.value;
+    }
+    // The data-profile agent reaches the proxy over the Anthropic Messages
+    // protocol (`createAnthropicProvider` below). When no Claude model is
+    // authenticated, the auto-resolver falls through to whatever family the proxy
+    // advertises (gpt/gemini/qwen); wiring a non-Claude id into the Anthropic
+    // route fails only at the first model round, after the sandbox has spun up.
+    // Reject it at boot. An explicitly-configured `harness.model` is trusted (it
+    // may be a proxy alias that resolves to Claude), so this guards the auto path.
+    if (autoResolvedModel && !model.toLowerCase().includes("claude")) {
+        return err({ type: "model_not_claude", model });
     }
 
     const pgResult = await seams.ensurePostgres();
@@ -178,8 +236,21 @@ export async function bootHarnessRuntime(
     if (ingressResult.isErr()) return err({ type: "ingress_failed", cause: ingressResult.error });
     const ingress = ingressResult.value;
 
+    // Serialize the DBOS-owning section: every process launches DBOS as executor
+    // "local", so a second concurrent boot's launch-time recovery would adopt and
+    // re-run this one's in-flight workflows. A stable executor id is required for
+    // crash recovery (a killed run resumes on the next boot), so we exclude
+    // concurrent runtimes with an advisory lock rather than randomizing the id; a
+    // hard-killed prior holder's lock is reclaimed by pid, so it never wedges boot.
+    const lock = acquireInstanceLock(RUNTIME_LOCK_KEY);
+    if (!lock.acquired) {
+        ingress.stop();
+        return err({ type: "runtime_already_active", holderPid: lock.holderPid });
+    }
+
     // Registration + launch throw on failure (DBOS SDK contract) — bridge to
-    // Result and release the ingress so a failed boot leaves nothing bound.
+    // Result and release the ingress + runtime lock so a failed boot leaves
+    // nothing bound.
     let pool: Pool | null = null;
     try {
         pool = createPool({
@@ -245,12 +316,14 @@ export async function bootHarnessRuntime(
 
         onShutdown(async () => {
             // DBOS first (it never throws and needs the DB), then the listener,
-            // then the pool the harness queries with.
+            // then the pool the harness queries with, then the runtime lock so the
+            // next boot can acquire it.
             await shutdownDbos({ logger });
             ingress.stop();
             await runtime.pool.end().catch(() => {
                 // The process is exiting; a pool that won't drain must not block it.
             });
+            releaseInstanceLock(RUNTIME_LOCK_KEY);
             active = null;
         });
 
@@ -262,6 +335,7 @@ export async function bootHarnessRuntime(
                 // Already failing boot; pool-drain noise would mask the real cause.
             });
         }
+        releaseInstanceLock(RUNTIME_LOCK_KEY);
         return err({ type: "runtime_boot_failed", cause });
     }
 }

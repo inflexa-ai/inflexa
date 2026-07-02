@@ -14,6 +14,16 @@ import { createEmbeddingProvider } from "../providers/embedding.js";
 import type { ResolveBilling } from "../billing/resolver.js";
 import type { AgentSession } from "../auth/types.js";
 
+/**
+ * Embedding vector width every per-analysis pgvector index is created with
+ * (`text-embedding-3-small`). The single source of the pin: `ensureSearchIndex`
+ * builds the column at this width, so an embedder must supply a model that
+ * emits exactly this many dimensions or the vector upsert rejects at write
+ * time. Exported so a host can verify its configured embedding model up front
+ * instead of failing deep in the profile workflow.
+ */
+export const SEARCH_INDEX_DIMENSION = 1536;
+
 /** Derive the vector index name for an analysis. */
 export function searchIndexName(resourceId: string): string {
     return `search_${resourceId.replace(/-/g, "_")}`;
@@ -61,7 +71,7 @@ export async function ensureSearchIndex(pool: Pool, resourceId: string): Promise
     unwrapOrThrow(
         await store.createIndex({
             indexName: name,
-            dimension: 1536,
+            dimension: SEARCH_INDEX_DIMENSION,
             metric: "cosine",
         }),
     );

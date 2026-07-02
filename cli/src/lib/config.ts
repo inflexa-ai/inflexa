@@ -34,43 +34,25 @@ const configSchema = z.object({
         })
         .catch({})
         .optional(),
-    // The embedded harness runtime (data-profile runs). Optional — per-field defaults
-    // resolve in modules/harness/config.ts, mirroring the postgres key's pattern.
-    // `embedding` has no defaults: the local proxy serves no embeddings endpoint
-    // (Anthropic auth), so a user-supplied OpenAI-compatible endpoint is a launch
-    // prerequisite. The catch salvages a corrupt `harness` value to all-defaults.
-    harness: z
-        .object({
-            model: z.string().optional(),
-            embedding: z
-                .object({
-                    baseURL: z.string(),
-                    token: z.string(),
-                    model: z.string().optional(),
-                })
-                .optional(),
-            bioKeys: z
-                .object({
-                    drugbank: z.string().optional(),
-                    disgenet: z.string().optional(),
-                    epaCcte: z.string().optional(),
-                    ncbi: z.string().optional(),
-                    github: z.string().optional(),
-                })
-                .optional(),
-            sandboxImage: z.string().optional(),
-            resourceLimits: z
-                .object({
-                    maxCpu: z.number().positive().optional(),
-                    maxMemoryGb: z.number().positive().optional(),
-                    maxGpuCount: z.number().int().nonnegative().optional(),
-                })
-                .optional(),
-            adminPort: z.number().int().positive().optional(),
-            skillsDir: z.string().optional(),
-        })
-        .catch({})
-        .optional(),
+    // The embedded harness runtime's settings (data-profile runs). Declared as opaque `unknown` and
+    // validated downstream in modules/harness/config.ts (`resolveHarnessConfig`), NOT shaped inline:
+    //
+    //   - There is no harness-package schema to import. The `harness.*` shape (embedding/model/bioKeys/
+    //     sandboxImage/adminPort/skillsDir) is THIS cli's user-facing config contract — the knobs the
+    //     cli chooses to expose and map onto the harness's runtime deps — not something the harness
+    //     package defines. `@inflexa-ai/harness` exports only `ResourceLimitsSchema`, for one sub-field.
+    //   - The schema lives in the harness feature slice (modules/harness/config.ts), which owns this
+    //     contract. lib/ (infra) must never import a module (see CLAUDE.md dependency rules), so this
+    //     file cannot reference that schema — the value crosses the boundary opaque.
+    //   - Inline validation here can't satisfy all three needs at once: a strict `z.object({...})` fails
+    //     the WHOLE config parse on one bad harness field, dropping siblings (telemetry/theme/postgres)
+    //     with it; a block-level `.catch({})` instead SILENTLY discards the harness key, surfacing e.g.
+    //     a mistyped `adminPort` as a misleading "embedding not configured". Deferring validation to the
+    //     owner reports the exact offending field AND leaves siblings intact.
+    //
+    // `unknown` (never `any`) forces the owner to parse before use; and the key MUST be declared, because
+    // zod strips unrecognized keys — without this line `readConfig().harness` would always be undefined.
+    harness: z.unknown().optional(),
 });
 export type Config = z.infer<typeof configSchema>;
 

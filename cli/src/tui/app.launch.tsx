@@ -4,7 +4,7 @@ import { ConsolePosition } from "@opentui/core";
 import { warmGrammars } from "./grammars/register.ts";
 import { ensureProxyReadyOrExit } from "../modules/infra/setup.ts";
 import { resolveNewTarget, resolveResumeTarget, resolveDefaultTarget, type ChatTarget } from "../modules/analysis/launch.ts";
-import { acquireAnalysisLock } from "../modules/analysis/lock.ts";
+import { acquireInstanceLock } from "../lib/lock.ts";
 import type { ContextFlags } from "../modules/analysis/context.ts";
 import { readConfig } from "../lib/config.ts";
 import { shutdown } from "../lib/shutdown.ts";
@@ -30,7 +30,7 @@ async function renderChat(target: ChatTarget): Promise<void> {
     // stderr line and a clean exit — no flash of TUI. Acquiring here (not in the headless resolvers)
     // keeps the lock off the bare-`inflexa`-resolves-to-nothing path: that path returns null and never
     // reaches renderChat, so it writes no lock (no-litter policy).
-    const lock = acquireAnalysisLock(target.analysis.id);
+    const lock = acquireInstanceLock(target.analysis.id);
     if (!lock.acquired) {
         console.error(`"${target.analysis.name}" is already open in another instance. Open or resume a different analysis.`);
         await shutdown(1);

@@ -121,6 +121,44 @@ export function expireStaleDataProfile(pool: Querier, analysisId: string, timeou
     });
 }
 
+/**
+ * Reset a ledger row wedged at `running` with no workflow behind it back to
+ * `failed`, so the normal retry path can re-profile it.
+ *
+ * A start that rejects after the CAS already flipped the row to `running`
+ * compensates itself (`triggerDataProfile`/`runDataProfile` fail the ledger in
+ * their catch). This covers the residual case that compensation cannot: a host
+ * that dies in the window between the CAS and the `DBOS.startWorkflow` insert
+ * leaves a `running` row with no workflow for recovery to resume — nothing
+ * would ever move it off `running`, and every later trigger reports
+ * `already_running` forever.
+ *
+ * The `NOT EXISTS` guard keys off the DBOS workflow ledger directly (the same
+ * `dataprofile:{analysisId}:{nonce}` id space this module's trigger mints) so a
+ * genuinely in-flight or recovery-requeued run — whose `dbos.workflow_status`
+ * row is PENDING/ENQUEUED/DELAYED — is never disturbed: only a row with no
+ * active workflow is reset. Call it AFTER `DBOS.launch()` has run recovery, so
+ * a resumable run has already been re-queued and is visible to the guard.
+ */
+export function reconcileOrphanedDataProfile(pool: Querier, analysisId: string): ResultAsync<boolean, DbError> {
+    const now = new Date().toISOString();
+    return tryMutation("dataProfile.reconcileOrphanedDataProfile", async () => {
+        const result = await pool.query({
+            text: `UPDATE cortex_analysis_state
+            SET data_profile_status = 'failed',
+                data_profile_error = 'Profiling never started (no backing workflow); reset for retry',
+                data_profile_completed_at = $1
+            WHERE analysis_id = $2 AND data_profile_status = 'running'
+              AND NOT EXISTS (
+                  SELECT 1 FROM dbos.workflow_status
+                  WHERE workflow_uuid LIKE 'dataprofile:' || $2 || ':%'
+                    AND status IN ('PENDING', 'ENQUEUED', 'DELAYED'))`,
+            values: [now, analysisId],
+        });
+        return (result.rowCount ?? 0) > 0;
+    });
+}
+
 export function loadDataProfileStatus(pool: Querier, analysisId: string): ResultAsync<DataProfileStatus | null, DbError> {
     return tryQuery("dataProfile.loadDataProfileStatus", async () => {
         const result = await pool.query<{

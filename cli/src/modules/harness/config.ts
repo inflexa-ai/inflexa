@@ -1,7 +1,44 @@
 import { join } from "node:path";
+import { z } from "zod";
 import type { ResourceLimits } from "@inflexa-ai/harness";
 import { readConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
+
+/**
+ * Shape of the `harness` config key. Lives here (not in lib/config.ts) so the harness feature owns
+ * its own config contract, and — crucially — so validation is NOT swallowed by a block-level
+ * `.catch`: lib/config.ts passes the raw value through as `unknown` and this resolver validates it,
+ * turning a single bad field into a precise error instead of silently discarding the whole block.
+ */
+const harnessConfigSchema = z.object({
+    model: z.string().optional(),
+    embedding: z
+        .object({
+            baseURL: z.string(),
+            token: z.string(),
+            model: z.string().optional(),
+        })
+        .optional(),
+    bioKeys: z
+        .object({
+            drugbank: z.string().optional(),
+            disgenet: z.string().optional(),
+            epaCcte: z.string().optional(),
+            ncbi: z.string().optional(),
+            github: z.string().optional(),
+        })
+        .optional(),
+    sandboxImage: z.string().optional(),
+    resourceLimits: z
+        .object({
+            maxCpu: z.number().positive().optional(),
+            maxMemoryGb: z.number().positive().optional(),
+            maxGpuCount: z.number().int().nonnegative().optional(),
+        })
+        .optional(),
+    adminPort: z.number().int().positive().optional(),
+    skillsDir: z.string().optional(),
+});
 
 /** Fully-resolved embedding endpoint — the profile's vector indexing cannot run without one. */
 export type HarnessEmbeddingConfig = {
@@ -37,6 +74,12 @@ export type ResolvedHarnessConfig = {
     /** DBOS admin port. */
     readonly adminPort: number;
     readonly skillsDir: string | null;
+    /**
+     * Set when the `harness` config key was present but failed validation (e.g. a field of the wrong
+     * type). Carries the offending field paths so boot can report the real problem instead of a
+     * misleading downstream error. The other fields are defaults here and must not be relied on.
+     */
+    readonly configError?: { issues: string };
 };
 
 /**
@@ -69,9 +112,8 @@ const DEFAULT_RESOURCE_LIMITS: ResourceLimits = { maxCpu: 4, maxMemoryGb: 8, max
  */
 const DEFAULT_ADMIN_PORT = 8433;
 
-/** Resolve the `harness` config key, filling every defaultable field per-field. */
-export function resolveHarnessConfig(): ResolvedHarnessConfig {
-    const cfg = readConfig().harness;
+/** All-defaults resolved config, used when the `harness` key is absent or when it failed validation. */
+function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, configError?: { issues: string }): ResolvedHarnessConfig {
     return {
         model: cfg?.model ?? null,
         embedding: cfg?.embedding
@@ -96,5 +138,22 @@ export function resolveHarnessConfig(): ResolvedHarnessConfig {
         },
         adminPort: cfg?.adminPort ?? DEFAULT_ADMIN_PORT,
         skillsDir: cfg?.skillsDir ?? (env.isDev ? devSkillsDir : null),
+        configError,
     };
+}
+
+/**
+ * Resolve the `harness` config key, filling every defaultable field per-field. The raw value comes
+ * through lib/config.ts as `unknown` and is validated here: an absent key resolves to all-defaults,
+ * while a present-but-invalid key resolves to all-defaults carrying a `configError` that names the
+ * offending fields, so boot reports the real problem instead of a misleading "embedding not
+ * configured" error.
+ */
+export function resolveHarnessConfig(): ResolvedHarnessConfig {
+    const raw = readConfig().harness;
+    if (raw === undefined) return defaultsWith(undefined);
+    const parsed = harnessConfigSchema.safeParse(raw);
+    if (parsed.success) return defaultsWith(parsed.data);
+    const issues = parsed.error.issues.map((i) => `harness.${i.path.join(".")}: ${i.message}`).join("; ");
+    return defaultsWith(undefined, { issues });
 }

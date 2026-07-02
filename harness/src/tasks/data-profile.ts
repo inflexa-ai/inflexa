@@ -459,16 +459,12 @@ export async function triggerDataProfile(deps: DataProfileTriggerDeps, params: D
     try {
         const started = unwrapOrThrow(await tryStartDataProfile(deps.pool, analysisId));
         if (started) {
-            startDataProfileWorkflow(deps, params).catch((err) => {
-                console.error(`[data-profile] Run error for ${analysisId}:`, err);
-            });
+            startDataProfileWorkflow(deps, params).catch((err) => compensateStartFailure(deps, analysisId, "Run", err));
             return "started";
         }
         const restarted = unwrapOrThrow(await tryRerunDataProfile(deps.pool, analysisId));
         if (restarted) {
-            startDataProfileWorkflow(deps, params).catch((err) => {
-                console.error(`[data-profile] Re-run error for ${analysisId}:`, err);
-            });
+            startDataProfileWorkflow(deps, params).catch((err) => compensateStartFailure(deps, analysisId, "Re-run", err));
             return "restarted";
         }
         const status = unwrapOrThrow(await loadDataProfileStatus(deps.pool, analysisId));
@@ -481,12 +477,36 @@ export async function triggerDataProfile(deps: DataProfileTriggerDeps, params: D
 }
 
 /**
- * Start the data-profile workflow for an already-claimed analysis (the retry
- * route claims via `tryRetryDataProfile`, then calls this). Fire-and-forget;
- * mirrors `triggerDataProfile`'s start path without re-claiming the ledger.
+ * Compensate a fire-and-forget start that rejected. The ledger CAS in
+ * `tryStart`/`tryRerun`/`tryRetry` already flipped the row to `running`; if the
+ * dispatch never landed a workflow, DBOS has nothing to recover, so without
+ * this the row would sit at `running` forever and every later trigger would
+ * report `already_running`. Failing the ledger lets the retry path recover.
+ * Best-effort — a compensation write that itself fails is only logged, since
+ * there is no further channel to report it on.
  */
-export function runDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): Promise<void> {
-    return startDataProfileWorkflow(deps, params);
+async function compensateStartFailure(deps: DataProfileTriggerDeps, analysisId: string, phase: string, err: unknown): Promise<void> {
+    console.error(`[data-profile] ${phase} error for ${analysisId}:`, err);
+    const failed = await failDataProfile(deps.pool, analysisId, profileFailureReason(err));
+    if (failed.isErr()) {
+        console.error(`[data-profile] Failed to mark ${analysisId} failed after a start error:`, failed.error);
+    }
+}
+
+/**
+ * Start the data-profile workflow for an already-claimed analysis (the retry
+ * route claims via `tryRetryDataProfile`, then calls this). The caller does not
+ * await the workflow's completion, but a start that rejects compensates the
+ * ledger (see {@link compensateStartFailure}) before re-throwing, so a caller's
+ * own `.catch` still observes the error and the row never wedges at `running`.
+ */
+export async function runDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): Promise<void> {
+    try {
+        await startDataProfileWorkflow(deps, params);
+    } catch (err) {
+        await compensateStartFailure(deps, params.analysisId, "Retry", err);
+        throw err;
+    }
 }
 
 /**
