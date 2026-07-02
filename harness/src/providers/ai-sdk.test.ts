@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV4, LanguageModelV4CallOptions, LanguageModelV4GenerateResult, LanguageModelV4Usage } from "@ai-sdk/provider";
+import type { LanguageModelV4, LanguageModelV4CallOptions, LanguageModelV4GenerateResult, LanguageModelV4StreamResult, LanguageModelV4Usage } from "@ai-sdk/provider";
 
 import { makeSession } from "./__fixtures__/session.js";
 import { createAiSdkProvider, createConfiguredAiSdkProvider } from "./ai-sdk.js";
@@ -19,16 +19,36 @@ function okResult(text = "ok"): LanguageModelV4GenerateResult {
     };
 }
 
-function fakeModel(impl: (options: LanguageModelV4CallOptions) => Promise<LanguageModelV4GenerateResult>): LanguageModelV4 {
+function streamResult(deltas: readonly string[]): LanguageModelV4StreamResult {
+    return {
+        stream: new ReadableStream({
+            start(controller) {
+                controller.enqueue({ type: "stream-start", warnings: [] });
+                controller.enqueue({ type: "text-start", id: "txt-1" });
+                for (const delta of deltas) {
+                    controller.enqueue({ type: "text-delta", id: "txt-1", delta });
+                }
+                controller.enqueue({ type: "text-end", id: "txt-1" });
+                controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage });
+                controller.close();
+            },
+        }),
+    };
+}
+
+function fakeModel(
+    impl: (options: LanguageModelV4CallOptions) => Promise<LanguageModelV4GenerateResult>,
+    streamImpl?: (options: LanguageModelV4CallOptions) => Promise<LanguageModelV4StreamResult>,
+): LanguageModelV4 {
     return {
         specificationVersion: "v4",
         provider: "fake-provider",
         modelId: "fake-model",
         supportedUrls: {},
         doGenerate: impl,
-        doStream: async () => {
+        doStream: streamImpl ?? (async () => {
             throw new Error("streaming is not used in these tests");
-        },
+        }),
     };
 }
 
@@ -109,6 +129,45 @@ describe("createAiSdkProvider", () => {
             expect(err).toBeInstanceOf(DOMException);
             expect((err as DOMException).name).toBe("AbortError");
         }
+    });
+
+    it("streams deltas through the AI SDK streaming primitive", async () => {
+        const generateCalls: LanguageModelV4CallOptions[] = [];
+        const streamCalls: LanguageModelV4CallOptions[] = [];
+        const provider = createAiSdkProvider({
+            model: fakeModel(
+                async (options) => {
+                    generateCalls.push(options);
+                    return okResult("should not be used");
+                },
+                async (options) => {
+                    streamCalls.push(options);
+                    return streamResult(["he", "llo"]);
+                },
+            ),
+            resolveBilling: async () => ({ "X-Billing-Context": "bc-test" }),
+        });
+
+        const events = [];
+        for await (const event of provider.chatStream(request, makeSession())) {
+            events.push(event);
+        }
+
+        expect(generateCalls).toHaveLength(0);
+        expect(streamCalls).toHaveLength(1);
+        expect(streamCalls[0]!.headers).toMatchObject({ "X-Billing-Context": "bc-test" });
+        expect(events).toEqual([
+            { type: "text-delta", text: "he" },
+            { type: "text-delta", text: "llo" },
+            {
+                type: "done",
+                response: {
+                    message: { role: "assistant", content: [{ type: "text", text: "hello" }] },
+                    finishReason: "stop",
+                    rawFinishReason: "stop",
+                },
+            },
+        ]);
     });
 
     it("rejects tool-required agents before the first model call when tool calling is disabled", async () => {
