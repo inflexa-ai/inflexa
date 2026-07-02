@@ -1,8 +1,8 @@
 // Non-domain fuzzy primitive: the subsequence scorer that ranks searchable lists. It lives in
-// `lib/` (not beside its `SelectList` caller) so the scoring math is testable in isolation,
-// without dragging the Solid/opentui rendering stack into a test. The `SelectItem`-aware
-// `rankItems` glue stays in `select_list.tsx` — moving it here would make `lib/` import a
-// `tui/` type, inverting the infra→presentation dependency direction.
+// `lib/` (not beside its list-primitive callers in `tui/components/`) so the scoring math is
+// testable in isolation, without dragging the Solid/opentui rendering stack into a test. The
+// `SelectItem`-aware field weighting stays in `list_core.tsx` — moving it here would make `lib/`
+// import a `tui/` type, inverting the infra→presentation dependency direction.
 
 /**
  * Score a subsequence match of `query` against `target`: `-1` when `query` is not a
@@ -48,7 +48,7 @@ export type RankField<T> = {
  * order (e.g. category grouping) survives. An empty or whitespace-only `query` returns `items`
  * unchanged.
  */
-export function rankBy<T>(items: T[], query: string, fields: RankField<T>[]): T[] {
+export function rankBy<T>(items: readonly T[], query: string, fields: RankField<T>[]): readonly T[] {
     const q = query.trim();
     if (q === "") return items;
     const scored: Array<{ item: T; score: number; i: number }> = [];

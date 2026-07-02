@@ -71,7 +71,7 @@ When the underlying scrollbox has `stickyScroll` with `stickyStart="bottom"`, th
 
 ### Requirement: ScrollPane is the single scrollbox composer
 
-`ScrollPane` SHALL be the ONLY place `<scrollbox>` is composed in the TUI. Free-scroll surfaces — the chat stream (`chat.tsx`), `ResultsDialog`, and `DesignGallery` — render through it with its keys live via focus; no hand-rolled scroll binding layers or reliance on opentui's native focused-scrollbox key handling SHALL remain at those hosts. Cursor-driven hosts (`SelectList`, the config screen's section navigation), where keys move a selection cursor and `scrollChildIntoView` follows, SHALL compose `ScrollPane` too — with `focusOnMount={false}` and nothing ever focusing the pane, so the internal key layer never engages and cursor semantics are untouched; they reach `scrollChildIntoView` through `onRef`. The behavioral test coverage for scrolling SHALL live at the component (`ScrollPane` driven via the headless `testRender` harness), not per-host.
+`ScrollPane` SHALL be the ONLY place `<scrollbox>` is composed in the TUI. Free-scroll surfaces — the chat stream (`chat.tsx`), `ResultsDialog`, and `DesignGallery` — render through it with its keys live via focus; no hand-rolled scroll binding layers or reliance on opentui's native focused-scrollbox key handling SHALL remain at those hosts. Cursor-driven hosts (the `FixedList`/`DynamicList` primitives, the config screen's section navigation), where keys move a selection cursor and `scrollChildIntoView` follows, SHALL compose `ScrollPane` too — with `focusOnMount={false}` and nothing ever focusing the pane, so the internal key layer never engages and cursor semantics are untouched; they reach `scrollChildIntoView` through `onRef`. The behavioral test coverage for scrolling SHALL live at the component (`ScrollPane` driven via the headless `testRender` harness), not per-host.
 
 #### Scenario: No raw scrollbox outside the component
 
@@ -85,7 +85,7 @@ When the underlying scrollbox has `stickyScroll` with `stickyStart="bottom"`, th
 
 #### Scenario: Cursor-driven hosts compose it without key ownership
 
-- **WHEN** `SelectList` or the config screen renders its list through `ScrollPane`
+- **WHEN** `FixedList`/`DynamicList` or the config screen renders its rows through `ScrollPane`
 - **THEN** the pane is never focused, its scroll keys never fire, and `scrollChildIntoView`-based cursor following works unchanged via the `onRef` renderable
 
 #### Scenario: Component-level test coverage

@@ -349,6 +349,16 @@ export function DialogOverlay(): JSX.Element {
         savedAppFocus = null;
         // Defer so the unmounting dialog's cleanup runs first.
         setTimeout(() => {
+            // A dialog opened during the deferred gap — the close-then-open command chain (the
+            // palette closes, then the selected command pushes its own dialog in the same tick).
+            // That dialog's initial focus wins; restoring here would steal it 1ms after it landed.
+            // Re-park the target as the saved app focus (captureFocusForPush saw an empty focus
+            // during the gap, so the 0→1 save was null) so the eventual real N→0 close still
+            // restores the app.
+            if (stack.length > 0) {
+                if (savedAppFocus === null) savedAppFocus = target;
+                return;
+            }
             if (target.isDestroyed) return;
             // Verify the renderable is still in the tree before refocusing.
             if (renderer.root.findDescendantById(target.id) === undefined) return;

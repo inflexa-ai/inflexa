@@ -22,6 +22,9 @@ import { Bold, Italic, Underline, Dim, Reverse, Fg } from "../components/emphasi
 import { TextArea } from "../components/text_area.tsx";
 import { TextInput } from "../components/text_input.tsx";
 import { ScrollPane } from "../components/scroll_pane.tsx";
+import { FixedList } from "../components/fixed_list.tsx";
+import { SelectDialog } from "../components/dialog/select_dialog.tsx";
+import { FilePicker } from "../components/dialog/file_picker.tsx";
 import { mockUserText, mockAssistantText, mockThinking, mockToolCall, mockFileEdit, mockRun } from "../../lib/mock_fixtures.ts";
 
 // Nothing streams in the gallery — MessageBlock's streaming accessors are constant stubs.
@@ -169,7 +172,75 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         />
                     </DialogShowcase>
                 </State>
-                <State n="12" label="type & emphasis">
+                <State n="12" label="select lists — FixedList / DynamicList / SelectDialog (inert exhibits)">
+                    <text fg={theme().fgMuted}>single mode — {GLYPHS.chevronRight} chevron cursor, headers group by category:</text>
+                    <DialogShowcase>
+                        <box height={7} width="100%">
+                            <FixedList
+                                items={[
+                                    { value: "tn", title: "Tokyo Night", category: "Dark", description: "the default" },
+                                    { value: "cat", title: "Catppuccin Mocha", category: "Dark" },
+                                    { value: "lat", title: "Latte", category: "Light" },
+                                ]}
+                                emptyText="No themes"
+                            />
+                        </box>
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>single mode, filtered (query "la") — a surviving item keeps its category header:</text>
+                    <DialogShowcase>
+                        <box height={4} width="100%">
+                            <FixedList
+                                items={[
+                                    { value: "tn", title: "Tokyo Night", category: "Dark" },
+                                    { value: "lat", title: "Latte", category: "Light" },
+                                ]}
+                                query="la"
+                                emptyText="No themes"
+                            />
+                        </box>
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>
+                        multi mode — {GLYPHS.circle}/{GLYPHS.circleHollow} gutter, space toggles, enter confirms the batch:
+                    </text>
+                    <DialogShowcase>
+                        <box height={5} width="100%">
+                            <FixedList
+                                items={[
+                                    { value: "a", title: "data/counts.tsv" },
+                                    { value: "b", title: "data/meta.csv" },
+                                    { value: "c", title: "scripts/" },
+                                ]}
+                                mode="multi"
+                                initialSelected={new Set(["a", "c"])}
+                                emptyText="No files"
+                            />
+                        </box>
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>empty state:</text>
+                    <DialogShowcase>
+                        <box height={3} width="100%">
+                            <FixedList items={[]} emptyText="No matching commands" />
+                        </box>
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>SelectDialog — the picker dialog composing panel + filter + FixedList:</text>
+                    <DialogShowcase>
+                        <SelectDialog
+                            title="Switch analysis"
+                            items={[
+                                { value: "1", title: "rna-seq-2026", description: "differential expression" },
+                                { value: "2", title: "scrna-atlas" },
+                            ]}
+                            emptyText="No analyses"
+                            onSelect={noop}
+                            onCancel={noop}
+                        />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>FilePicker — multi-select browser on DynamicList (lists the live cwd, inert keys):</text>
+                    <DialogShowcase>
+                        <FilePicker rootPath={process.cwd()} selectedPaths={new Set()} confirmLabel="Add" onConfirm={noop} onCancel={noop} />
+                    </DialogShowcase>
+                </State>
+                <State n="13" label="type & emphasis">
                     <text>
                         <Bold>bold</Bold> <Fg role="fgMuted">— names, active items</Fg>
                     </text>

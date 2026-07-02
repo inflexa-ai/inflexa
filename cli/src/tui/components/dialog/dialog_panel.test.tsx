@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { renderFrame } from "../../../test_support/tui.ts";
 import { DialogPanel } from "./dialog_panel.tsx";
 import { ResultsDialog } from "./results_dialog.tsx";
-import { SelectList } from "../select_list.tsx";
+import { SelectDialog } from "./select_dialog.tsx";
 
 // Renders the dialog chrome headlessly across terminal sizes. Sweeping sizes is the guard against
 // the size-dependent layout artifacts CLAUDE.md documents (a single size hides them). The sizing
@@ -87,10 +87,10 @@ describe("lg consumers hold a stable height", () => {
         expect(many).toContain("close");
     });
 
-    test("SelectList is the same height as filtering shrinks the row set", async () => {
+    test("SelectDialog is the same height as filtering shrinks the row set", async () => {
         const items = Array.from({ length: 30 }, (_, i) => ({ value: i, title: `item ${i}` }));
         const render = (subset: typeof items) =>
-            renderFrame(() => <SelectList title="Pick" items={subset} emptyText="none" onSelect={() => {}} onCancel={() => {}} />, {
+            renderFrame(() => <SelectDialog title="Pick" items={subset} emptyText="none" onSelect={() => {}} onCancel={() => {}} />, {
                 width: 100,
                 height: 40,
             });
@@ -102,9 +102,9 @@ describe("lg consumers hold a stable height", () => {
         expect(full).toContain("select");
     });
 
-    test("SelectList stays usable on a short terminal (clamped, chrome intact)", async () => {
+    test("SelectDialog stays usable on a short terminal (clamped, chrome intact)", async () => {
         const items = Array.from({ length: 30 }, (_, i) => ({ value: i, title: `item ${i}` }));
-        const frame = await renderFrame(() => <SelectList title="Pick" items={items} emptyText="none" onSelect={() => {}} onCancel={() => {}} />, {
+        const frame = await renderFrame(() => <SelectDialog title="Pick" items={items} emptyText="none" onSelect={() => {}} onCancel={() => {}} />, {
             width: 100,
             height: 12,
         });

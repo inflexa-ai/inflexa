@@ -58,7 +58,8 @@ export type ScrollPaneProps = {
  * zero keymap wiring. Keys are live exactly while the pane (or a descendant) is focused, so with
  * several panes mounted, focus picks which one scrolls.
  *
- * Cursor-driven hosts (`SelectList`, the config screen's section nav) — where keys move a
+ * Cursor-driven hosts (the `FixedList`/`DynamicList` primitives, the config screen's section
+ * nav) — where keys move a
  * selection cursor and `scrollChildIntoView` follows — compose it too, but with
  * `focusOnMount={false}` and nothing ever focusing the pane: the key layer never engages, so
  * their cursor semantics are untouched and they still get the one scrollbox wrapper.

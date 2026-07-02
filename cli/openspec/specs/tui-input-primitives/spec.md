@@ -126,7 +126,7 @@ The design gallery (`src/tui/layout/design_gallery.tsx`) SHALL include entries s
 
 ### Requirement: TextInput enter-submit callback
 
-`TextInput` SHALL accept an optional `onSubmit?: (value: string) => void`, invoked with the input's current text when the user presses enter, mirroring `TextArea`'s submit contract at the renderable level. When `onSubmit` is omitted, enter SHALL remain a no-op for the input (existing callers — e.g. `SelectList`'s filter, whose enter is handled by its keymap layer — are unaffected). `TextInput` SHALL NOT gain a newline mechanism; it remains strictly single-line.
+`TextInput` SHALL accept an optional `onSubmit?: (value: string) => void`, invoked with the input's current text when the user presses enter, mirroring `TextArea`'s submit contract at the renderable level. When `onSubmit` is omitted, enter SHALL remain a no-op for the input (existing callers — e.g. `SelectDialog`'s filter, whose enter is handled by its list's keymap layer — are unaffected). `TextInput` SHALL NOT gain a newline mechanism; it remains strictly single-line.
 
 #### Scenario: Enter submits the value
 

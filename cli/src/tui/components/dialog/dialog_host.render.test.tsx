@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 import { testRender } from "@opentui/solid";
 import { createMockMouse } from "@opentui/core/testing";
-import type { TextareaRenderable } from "@opentui/core";
+import type { InputRenderable, TextareaRenderable } from "@opentui/core";
 
 import { useKeymapRoot } from "../../keymap.ts";
-import { DialogOverlay, dialogPush, dialogClose, dialogClear, dialogIsOpen, useDialogBindings, type CloseReason } from "./dialog_host.tsx";
+import { GLYPHS } from "../../../lib/design_system.ts";
+import { TextInput } from "../text_input.tsx";
+import { DialogOverlay, dialogPush, dialogClose, dialogClear, dialogIsOpen, useDialogBindings, useDialogEntry, type CloseReason } from "./dialog_host.tsx";
 import { PromptDialog } from "./prompt_dialog.tsx";
-import { SelectList } from "../select_list.tsx";
+import { SelectDialog } from "./select_dialog.tsx";
 import { ConfigApp } from "../../app_config.tsx";
 
 // End-to-end verification of the dialog host STATE MACHINE through the real keyboard bus: close
@@ -221,9 +224,9 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
         }
     });
 
-    test("grouped SelectList: scrolling back to the top reveals the first group header again", async () => {
-        // The palette shape: the header is a row the cursor never lands on, so cursor-driven
-        // scroll must pull it into view when the cursor returns to a group's first item.
+    test("grouped SelectDialog: scrolling back to the top reveals the first group header again", async () => {
+        // The palette shape: the header renders inside its group-starting row's box, so cursor-
+        // driven scroll must bring it back into view when the cursor returns to that first item.
         const items = [
             ...Array.from({ length: 14 }, (_, i) => ({ value: `a${i}`, title: `alpha item ${i}`, category: "Alpha" })),
             ...Array.from({ length: 14 }, (_, i) => ({ value: `b${i}`, title: `beta item ${i}`, category: "Beta" })),
@@ -233,7 +236,7 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
         const frame = () => setup.captureCharFrame();
         try {
             await settle();
-            dialogPush(() => <SelectList title="Pick" items={items} emptyText="none" grouped onSelect={() => {}} onCancel={() => {}} />);
+            dialogPush(() => <SelectDialog title="Pick" items={items} emptyText="none" onSelect={() => {}} onCancel={() => {}} />);
             await settle();
             expect(frame()).toContain("Alpha");
 
@@ -249,6 +252,113 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
             await settle();
             expect(frame()).toContain("alpha item 0");
             expect(frame()).toContain("Alpha");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("close-then-open keeps the next dialog's initial focus and the app restore chain", async () => {
+        // The palette pattern: onSelect closes the palette, then the command pushes its own
+        // dialog in the same tick. The overlay's deferred app-focus restore (scheduled at N→0)
+        // must NOT fire into the newly opened dialog — and the saved app focus must survive for
+        // the eventual real N→0 close.
+        function Probe(props: { onRef: (r: InputRenderable) => void }): JSX.Element {
+            const dialog = useDialogEntry();
+            return (
+                <box>
+                    <TextInput
+                        chrome="bare"
+                        autoFocus={false}
+                        onRef={(r: InputRenderable) => {
+                            props.onRef(r);
+                            dialog?.setInitialFocus(r);
+                        }}
+                    />
+                </box>
+            );
+        }
+        let ta: TextareaRenderable | null = null;
+        let probeInput: InputRenderable | null = null;
+        const setup = await testRender(() => <Harness onTa={(r) => (ta = r)} />, { width: 60, height: 20 });
+        const settle = makeSettle(setup);
+        try {
+            await settle();
+            expect(setup.renderer.currentFocusedRenderable?.id).toBe(ta!.id); // app focus = chat textarea
+
+            dialogPush(() => (
+                <box>
+                    <text>palette stand-in</text>
+                </box>
+            ));
+            await settle();
+
+            // Same tick: close the "palette", push the command's dialog (the NewAnalysisDialog shape).
+            dialogClose();
+            dialogPush(() => <Probe onRef={(r) => (probeInput = r)} />);
+            await settle(); // > the 1ms restore timer
+
+            const focusedId = setup.renderer.currentFocusedRenderable?.id;
+            expect(focusedId).toBe(probeInput!.id); // the dialog keeps its focus
+            expect(focusedId).not.toBe(ta!.id);
+
+            dialogClose(); // real N→0: the app focus restore chain must still work
+            await settle();
+            expect(setup.renderer.currentFocusedRenderable?.id).toBe(ta!.id);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("multi SelectDialog: space types while filtering, esc unlocks list keys, space toggles, enter confirms", async () => {
+        // The INSERT/NORMAL-lite seam: with the filter focused, space MUST reach the input as a
+        // character (bare-printable rule); the first esc is consumed by the close-guard veto
+        // (blur, dialog stays open), unlocking space-to-toggle.
+        const items = [
+            { value: "a", title: "alpha" },
+            { value: "b", title: "beta" },
+            { value: "c", title: "gamma" },
+        ];
+        const confirmed: string[][] = [];
+        const setup = await testRender(() => <Harness />, { width: 80, height: 20 });
+        const settle = makeSettle(setup);
+        const frame = () => setup.captureCharFrame();
+        try {
+            await settle();
+            dialogPush(() => (
+                <SelectDialog
+                    title="Pick many"
+                    items={items}
+                    emptyText="none"
+                    mode="multi"
+                    initialSelected={new Set(["c"])}
+                    onConfirm={(vs) => confirmed.push(vs)}
+                    onCancel={() => {}}
+                />
+            ));
+            await settle();
+            expect(frame()).toContain(`${GLYPHS.circle} gamma`); // seed renders filled
+            expect(frame()).toContain("1 selected");
+
+            await setup.mockInput.typeText("al");
+            setup.mockInput.pressKey(" "); // INSERT: types into the filter, must NOT toggle
+            await settle();
+            expect(frame()).toContain("alpha");
+            expect(frame()).not.toContain("beta"); // "al " trims to "al" for ranking
+            expect(frame()).toContain("1 selected"); // ...so the count is untouched
+
+            setup.mockInput.pressEscape(); // guard veto: blur to list keys, dialog stays open
+            await settle();
+            expect(frame()).toContain("Pick many");
+
+            setup.mockInput.pressKey(" "); // NORMAL: toggles the cursor row (alpha)
+            await settle();
+            expect(frame()).toContain(`${GLYPHS.circle} alpha`);
+            expect(frame()).toContain("2 selected");
+
+            setup.mockInput.pressEnter();
+            await settle();
+            expect(confirmed.length).toBe(1);
+            expect([...confirmed[0]!].sort()).toEqual(["a", "c"]);
         } finally {
             setup.renderer.destroy();
         }

@@ -21,6 +21,11 @@ export type TextInputProps = {
      * fires `onSubmit`; hosts like PromptDialog gate it on their busy state).
      */
     busy?: boolean;
+    /**
+     * Grab focus on mount (default true — the filter-first dialogs). List-first hosts like the
+     * file picker pass false so the widget mounts in their NORMAL mode with the input blurred.
+     */
+    autoFocus?: boolean;
     /** Called when the input gains or loses focus. The component tracks focus internally. */
     onFocusChange?: (focused: boolean) => void;
     /** Receives the input renderable on mount (the host owns focus). */
@@ -30,7 +35,7 @@ export type TextInputProps = {
     /**
      * Invoked with the current text when the user presses enter, mirroring TextArea's submit
      * contract at the renderable level. Omit it and enter stays a no-op for the input itself —
-     * hosts like SelectList handle enter in their own keymap layer instead.
+     * hosts like SelectDialog let their list's keymap layer handle enter instead.
      */
     onSubmit?: (value: string) => void;
 };
@@ -75,7 +80,7 @@ export function TextInput(props: TextInputProps): JSX.Element {
     const input = (
         <input
             ref={handleRef}
-            focused
+            focused={props.autoFocus ?? true}
             width="100%"
             value={props.initialValue}
             placeholder={props.placeholder ?? ""}

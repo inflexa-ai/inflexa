@@ -1,4 +1,4 @@
-import { createMemo, For, Show } from "solid-js";
+import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 
 import { theme } from "../theme.ts";
@@ -7,6 +7,8 @@ import { Bold, Fg } from "../components/emphasis.tsx";
 import { mockContext, mockRuns } from "../../lib/mock_fixtures.ts";
 import { getSession, getAnchor, listAnalysisInputs } from "../../db/primary_query.ts";
 import { useWorkspace } from "../contexts/workspace.ts";
+import { Bus } from "../../lib/bus.ts";
+import type { StampedEvent } from "../../types/events.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { Session } from "../../types/session.ts";
 import type { Anchor } from "../../types/anchor.ts";
@@ -60,7 +62,21 @@ export function Sidebar(props: SidebarProps) {
             () => null,
         );
     });
+    // The input count is a DB read with no reactive dependency of its own, so input-change bus
+    // events tick a version signal the memo reads — the picker (and any future writer) updates
+    // the sidebar live without a session swap. Filtered to THIS analysis: provenance events for
+    // other analyses must not trigger re-reads.
+    const [inputsVersion, setInputsVersion] = createSignal(0);
+    const onInputEvent = (e: StampedEvent): void => {
+        if (e.type !== "prov.input_added" && e.type !== "prov.input_removed") return;
+        if (ws.analysis?.id !== e.analysisId) return;
+        setInputsVersion((v) => v + 1);
+    };
+    Bus.on("inflexa", onInputEvent);
+    onCleanup(() => Bus.off("inflexa", onInputEvent));
+
     const inputCount = createMemo(() => {
+        inputsVersion();
         const a = ws.analysis;
         if (!a) return 0;
         return listAnalysisInputs(a.id).match(
