@@ -209,13 +209,18 @@ export const KEYS = {
     nextAlt: { key: "n", ctrl: true },
 } as const satisfies Record<string, Chord>;
 
-/** Submit the chat message (textarea-level; see input_bar's `keyBindings`). */
+/** Submit the chat message (textarea-level; see TextArea's `keyBindings`). */
 export const SUBMIT_CHORD: Chord = { key: "return" };
 /**
- * Insert a newline instead of submitting. The lone Alt opt-in: it is input editing, not
- * navigation, so the Alt-unreliability trade-off is acceptable (and opentui delivers it as Meta).
+ * Insert a newline instead of submitting. Ctrl+J — the ASCII linefeed character (0x0A), always
+ * distinct from Enter (0x0D) in every terminal, including through tmux. Alt+Enter and Shift+Enter
+ * both fail under macOS/tmux (Option is a compose key; tmux strips shift from Enter without kitty
+ * protocol). The textarea also binds Shift+Enter as a silent bonus for kitty-capable terminals.
  */
-export const NEWLINE_CHORD: Chord = { key: "return", alt: true };
+export const NEWLINE_CHORD: Chord = { key: "j", ctrl: true };
+
+/** Pre-derived display label for the newline chord — single source for every footer/hint that shows it. */
+export const NEWLINE_LABEL: string = chordLabel(NEWLINE_CHORD);
 
 // --- remappable app keybindings -------------------------------------------------------------
 
@@ -380,6 +385,15 @@ function seqOf(b: BoundBinding): Sequence {
  * (it relies on `onCleanup` to deregister). The `config` thunk is re-read on each keystroke, so it
  * may freely read signals to drive `enabled`/`mode`/`target` — the declarative replacement for a
  * hand-branched `useKeyboard` handler.
+ *
+ * **Bare-printable-key rule**: a layer that can be active while a text input/textarea is focused
+ * MUST NOT bind unmodified printable keys (bare letters, digits, space) — the engine dispatches
+ * BEFORE the focused editor and `preventDefault`s matches, so such a binding steals typed
+ * characters from the input. Bare printables are fine in layers that can never coexist with a
+ * focused editor: read-only dialogs (`q` to close), focus-`target`-gated NORMAL-mode keys, or
+ * dialog-entry-gated screen layers that suspend while a prompt is stacked above
+ * (`useDialogBindings`). Layers inside dialogs SHOULD register via `useDialogBindings`
+ * (dialog_host.tsx), not this function, so a stacked dialog suspends them.
  */
 export function useBindings(config: () => LayerConfig): void {
     const token = randomUUIDv7();

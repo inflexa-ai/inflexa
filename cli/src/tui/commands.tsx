@@ -5,9 +5,10 @@ import { join } from "node:path";
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import type { VerifyResult } from "../types/prov.ts";
 
-import { PromptDialog } from "./components/prompt_dialog.tsx";
-import { ResultsDialog } from "./components/results_dialog.tsx";
-import { SelectList } from "./components/select_list.tsx";
+import { PromptDialog } from "./components/dialog/prompt_dialog.tsx";
+import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
+import { SelectDialog } from "./components/dialog/select_dialog.tsx";
+import { FilePicker } from "./components/dialog/file_picker.tsx";
 import { ConfigApp } from "./app_config.tsx";
 import { DesignGallery } from "./layout/design_gallery.tsx";
 import { setTheme } from "./theme.ts";
@@ -17,11 +18,13 @@ import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
 import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
 import { mkdirResult, writeFileResult } from "../lib/fs.ts";
-import { str256 } from "../lib/types.ts";
-import { createAnalysis, listRecentAnalyses, uniqueSlugForAnchor, addInputs, removeInput, matchAnalysis } from "../modules/analysis/analysis.ts";
+import { str256, type Str256 } from "../lib/types.ts";
+import { createAnalysis, listRecentAnalyses, uniqueSlugForAnchor, applyInputsDiff, removeInput, matchAnalysis } from "../modules/analysis/analysis.ts";
+import { resolveInputPath } from "../modules/analysis/input.ts";
 import { resolveContext, describeContext } from "../modules/analysis/context.ts";
 import { openOutputDir } from "../modules/analysis/open.ts";
 import { resolveAnchor, resolvedPathOrCached } from "../modules/anchor/anchor.ts";
+import { canonicalPath } from "../modules/anchor/marker.ts";
 import { loadAuth, describeAuthError } from "../modules/auth/auth.ts";
 import { decodeIdTokenClaims } from "../modules/auth/whoami.ts";
 import {
@@ -119,7 +122,7 @@ function ThemePicker(): JSX.Element {
     const current = readConfig().theme;
     const items = themeIds.map((id) => ({ value: id, title: themes[id].name, hint: id === current ? "current" : undefined }));
     return (
-        <SelectList
+        <SelectDialog
             title="Change theme"
             placeholder={`Search themes${GLYPHS.ellipsis}`}
             items={items}
@@ -173,18 +176,40 @@ function NewAnalysisDialog(): JSX.Element {
             onSubmit={(raw) => {
                 ws.closeDialog();
                 str256(raw).match(
-                    (name) =>
-                        // A deliberate action, so minting the anchor marker here is allowed (no-litter policy).
-                        createAnalysis({ cwd: ws.workingDir, name }).match(
-                            (a) => {
-                                openAnalysis(ws, a);
-                                notify({ kind: "info", text: `Created analysis "${a.name}"` });
-                            },
-                            (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
-                        ),
+                    // An analysis is born with an EXPLICIT input set — the picker exists to break
+                    // the old silent whole-cwd default — so creation waits for the picker chained
+                    // after the name prompt.
+                    (name) => ws.openDialog(() => <NewAnalysisInputsDialog name={name} />),
                     (err) => notify({ kind: "warn", text: err === "empty" ? "A name is required." : "Keep the name to 256 characters or fewer." }),
                 );
             }}
+        />
+    );
+}
+
+function NewAnalysisInputsDialog(props: { name: Str256 }): JSX.Element {
+    const ws = useWorkspace();
+    return (
+        <FilePicker
+            rootPath={ws.workingDir}
+            selectedPaths={new Set<string>()}
+            confirmLabel="Create"
+            requireSelection
+            onConfirm={(paths) => {
+                ws.closeDialog();
+                // A deliberate action, so minting the anchor marker here is allowed (no-litter policy).
+                // The picker's selection MUST ride in as `inputPaths`: createAnalysis falls back to
+                // the whole anchor path when given none, and a separate addInputs call after the
+                // fact would stack the picked files ON TOP of that silent default.
+                createAnalysis({ cwd: ws.workingDir, name: props.name, inputPaths: paths }).match(
+                    (a) => {
+                        openAnalysis(ws, a);
+                        notify({ kind: "info", text: `Created analysis "${a.name}"` });
+                    },
+                    (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
+                );
+            }}
+            onCancel={() => ws.closeDialog()}
         />
     );
 }
@@ -197,7 +222,7 @@ function SwitchAnalysisDialog(): JSX.Element {
     );
     const items = analyses.map((a) => ({ value: a, title: a.name, description: a.slug }));
     return (
-        <SelectList
+        <SelectDialog
             title="Switch analysis"
             placeholder={`Search analyses${GLYPHS.ellipsis}`}
             items={items}
@@ -223,7 +248,7 @@ function SwitchSessionDialog(): JSX.Element {
     sessions.sort((x, y) => y.updatedAt - x.updatedAt);
     const items = sessions.map((s) => ({ value: s, title: s.title, description: new Date(s.updatedAt).toLocaleString() }));
     return (
-        <SelectList
+        <SelectDialog
             title="Switch session"
             placeholder={`Search sessions${GLYPHS.ellipsis}`}
             items={items}
@@ -267,6 +292,7 @@ function ConfirmDeleteDialog(props: { entityLabel: string; entityName: string; o
     return (
         <PromptDialog
             title={`Delete ${props.entityLabel}?`}
+            tone="danger"
             placeholder={`Type "${props.entityName}" to confirm`}
             onCancel={() => ws.closeDialog()}
             onSubmit={(raw) => {
@@ -329,7 +355,7 @@ function SetProjectDialog(): JSX.Element {
         ...projects.map((p: Project) => ({ value: p.id as string | null, title: p.name, description: p.description ?? undefined })),
     ];
     return (
-        <SelectList
+        <SelectDialog
             title="Set project"
             placeholder={`Search projects${GLYPHS.ellipsis}`}
             items={items}
@@ -352,20 +378,45 @@ function SetProjectDialog(): JSX.Element {
 
 function AddInputDialog(): JSX.Element {
     const ws = useWorkspace();
+    const a = ws.analysis;
+    // Existing inputs resolved to the picker's value space (canonical absolute paths). An input
+    // whose anchor can't be located resolves to null and stays OUT of the seed — it can't render
+    // as a row, and the confirm diff below deliberately never removes what it never showed.
+    const existing = a
+        ? listAnalysisInputs(a.id).match(
+              (xs) => xs,
+              () => [],
+          )
+        : [];
+    const resolved: { input: AnalysisInput; abs: string }[] = [];
+    for (const input of existing) {
+        const abs = resolveInputPath(input).match(
+            (p) => p,
+            () => null,
+        );
+        if (abs !== null) resolved.push({ input, abs: canonicalPath(abs) });
+    }
+    const seed = new Set(resolved.map((r) => r.abs));
     return (
-        <PromptDialog
-            title="Add input"
-            placeholder="File or directory path (relative to analysis root)"
-            onCancel={() => ws.closeDialog()}
-            onSubmit={(raw) => {
+        <FilePicker
+            rootPath={ws.workingDir}
+            selectedPaths={seed}
+            confirmLabel="Apply"
+            onConfirm={(paths) => {
                 ws.closeDialog();
-                const a = ws.analysis;
-                if (!a || !raw.trim()) return;
-                addInputs(a.id, [raw.trim()], ws.workingDir).match(
-                    () => notify({ kind: "info", text: `Added input: ${raw.trim()}` }),
-                    (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
-                );
+                if (!a) return;
+                // Apply the picker's final set as a diff against what was seeded: paths the user
+                // added, and previously-recorded inputs whose row came back unchecked. Clearing
+                // everything is a legitimate outcome here (unlike new-analysis).
+                const confirmed = new Set(paths);
+                const toAdd = paths.filter((p) => !seed.has(p));
+                const toRemove = resolved.filter((r) => !confirmed.has(r.abs)).map((r) => r.input);
+                const firstFailure = applyInputsDiff(a.id, toAdd, toRemove, ws.workingDir)[0];
+                if (firstFailure) notify({ kind: "error", text: `Input update failed (${firstFailure.op}: ${firstFailure.error.type})` });
+                else if (toAdd.length === 0 && toRemove.length === 0) notify({ kind: "info", text: "Inputs unchanged" });
+                else notify({ kind: "info", text: `Inputs updated: +${toAdd.length} -${toRemove.length}` });
             }}
+            onCancel={() => ws.closeDialog()}
         />
     );
 }
@@ -385,7 +436,7 @@ function RemoveInputDialog(): JSX.Element {
         description: input.isDir ? "directory" : "file",
     }));
     return (
-        <SelectList
+        <SelectDialog
             title="Remove input"
             placeholder={`Search inputs${GLYPHS.ellipsis}`}
             items={items}
@@ -555,8 +606,8 @@ export const commands: Command[] = [
     },
     {
         id: "analysis.add-input",
-        title: "Add input",
-        description: "Add a file or directory as an input to this analysis",
+        title: "Manage inputs",
+        description: "Add or remove this analysis's input files and folders",
         category: "Analysis",
         enabled: (ctx) => ctx.analysis !== null,
         run: (ctx) => ctx.openDialog(() => <AddInputDialog />),
@@ -790,7 +841,7 @@ export const commands: Command[] = [
                 () => [],
             );
             ctx.openDialog(() => (
-                <SelectList
+                <SelectDialog
                     title="Delete project"
                     placeholder={`Select project to delete${GLYPHS.ellipsis}`}
                     items={projects.map((p: Project) => ({ value: p, title: p.name, description: p.description ?? undefined }))}

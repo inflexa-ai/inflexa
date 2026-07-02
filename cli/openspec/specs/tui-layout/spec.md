@@ -5,11 +5,11 @@ TBD - created by archiving change standardize-tui-layout. Update Purpose after a
 ## Requirements
 ### Requirement: Layout composition kit directory
 
-The system SHALL house the chat TUI's Direction-B app-shell composition kit under `src/tui/layout/`, one component per file with no barrel/index re-exports — today `status_bar.tsx`, `message_block.tsx`, `input_bar.tsx`, and `sidebar.tsx`. (The gutter marker set is NOT a shell-composition part; it is design-system vocabulary and lives in `src/lib/design_system.ts` so the `components/` block widgets may import it — see the "Shared gutter marker set" requirement.) A `layout/` part MAY be single-caller and MAY import domain types/queries (`src/types/`, `src/db/`, `src/modules/`), because it is structural app-shell composition rather than a reusable domain-agnostic widget. This is a deliberate, scoped exception to the "don't extract single-caller sub-components" rule, and `CLAUDE.md`'s Project-structure section SHALL document `src/tui/layout/` and this exception. `layout/` components MUST NOT be imported by `src/modules/` (presentation depends on logic, never the reverse).
+The system SHALL house the chat TUI's app-shell composition kit under `src/tui/layout/`, one component per file with no barrel/index re-exports — today `status_bar.tsx`, `message_block.tsx`, `chat_bar.tsx` (renamed from `input_bar.tsx`), `sidebar.tsx`, and `design_gallery.tsx`. (The gutter marker set is NOT a shell-composition part; it is design-system vocabulary and lives in `src/lib/design_system.ts` so the `components/` block widgets may import it — see the "Shared gutter marker set" requirement.) A `layout/` part MAY be single-caller and MAY import domain types/queries (`src/types/`, `src/db/`, `src/modules/`), because it is structural app-shell composition rather than a reusable domain-agnostic widget. This is a deliberate, scoped exception to the "don't extract single-caller sub-components" rule, and `CLAUDE.md`'s Project-structure section SHALL document `src/tui/layout/` and this exception. `layout/` components MUST NOT be imported by `src/modules/` (presentation depends on logic, never the reverse).
 
 #### Scenario: Kit part lives in layout/
 
-- **WHEN** a part composes the chat shell (status bar, message block, input bar, or sidebar)
+- **WHEN** a part composes the chat shell (status bar, message block, chat bar, or sidebar)
 - **THEN** it resides in `src/tui/layout/` as its own file, imported directly by its caller
 
 #### Scenario: Single-caller, domain-coupled part is allowed
@@ -19,7 +19,7 @@ The system SHALL house the chat TUI's Direction-B app-shell composition kit unde
 
 ### Requirement: Direction-B chat shell composition
 
-`app.tsx` SHALL compose the chat screen as: a persistent `StatusBar` across the full width at the top; below it a main row split into a chat column (the message stream, the error banner, the transient notice, and the `InputBar`, stacked) and, beside it, an optional full-height `Sidebar`. The `Sidebar` SHALL span the full height of that row — alongside BOTH the stream and the input — so when it is shown the chat column (stream and input together) shrinks horizontally to make room (the opencode layout). When the sidebar is hidden the chat column spans the full width. The existing overlay dialog host, keyboard gating, streaming-delta flush, abort, and focus-on-dialog-close behavior SHALL be preserved unchanged.
+`app.tsx` SHALL compose the chat screen as: a persistent `StatusBar` across the full width at the top; below it a main row split into a chat column (the message stream, the error banner, the transient notice, and the `ChatBar`, stacked) and, beside it, an optional full-height `Sidebar`. The `Sidebar` SHALL span the full height of that row — alongside BOTH the stream and the input — so when it is shown the chat column (stream and input together) shrinks horizontally to make room (the opencode layout). When the sidebar is hidden the chat column spans the full width. The message stream SHALL render inside a `ScrollPane` (see the `scroll-pane` capability) with `stickyScroll`/`stickyStart="bottom"`; the chat SHALL declare no scroll bindings of its own. The existing overlay dialog host, keyboard gating, streaming-delta flush, and abort behavior SHALL be preserved; dialog-close focus restore follows the "Chat focus is always on a widget" requirement.
 
 #### Scenario: Sidebar is full height and shrinks the chat column
 
@@ -30,6 +30,42 @@ The system SHALL house the chat TUI's Direction-B app-shell composition kit unde
 
 - **WHEN** the sidebar is toggled off
 - **THEN** the chat column spans the full width and only the status bar, stream, and input remain
+
+#### Scenario: Stream scrolls via ScrollPane
+
+- **WHEN** the chat column renders the message stream
+- **THEN** the stream is a `ScrollPane` (sticky-bottom), and no scroll chord is declared in `app.tsx` or `chat.tsx`
+
+### Requirement: Chat focus is always on a widget
+
+The chat's INSERT/NORMAL modality SHALL be modeled purely by focus — there SHALL be no state in which no widget is focused. In INSERT mode the `ChatBar` textarea is focused; `esc` SHALL move focus to the stream's `ScrollPane` (NORMAL mode — the pane's scroll keys become live via its focus-target gating). In NORMAL mode, `i` and enter SHALL refocus the textarea (a chat-side layer gated by `target:` the scroll pane); `esc` while the pane is focused SHALL be a no-op (it MUST NOT blur into a nothing-focused state). The `ChatBar` footer's mode word continues to derive from the textarea's own focused/blurred events and needs no extra wiring.
+
+Because focus is always on some widget, the dialog host's focus save/restore SHALL be uniform: capture the focused renderable when the first dialog opens, restore it (verifying it is still in the tree) when the last closes. The `fallbackFocus` prop and its null-restore branch SHALL NOT exist — there is no nothing-focused case to fall back from.
+
+#### Scenario: Esc enters NORMAL by focusing the pane
+
+- **WHEN** the textarea is focused and the user presses `esc`
+- **THEN** the scroll pane receives focus, the ChatBar footer shows `NORMAL`, and vim scroll keys drive the stream
+
+#### Scenario: i and enter return to INSERT
+
+- **WHEN** the scroll pane is focused and the user presses `i` (or enter)
+- **THEN** the textarea regains focus, the footer shows `INSERT`, and typed letters insert text again
+
+#### Scenario: Esc in NORMAL is a no-op
+
+- **WHEN** the scroll pane is focused and the user presses `esc`
+- **THEN** focus stays on the pane; no widget is blurred into a nothing-focused state
+
+#### Scenario: Dialog restore returns focus to the NORMAL-mode pane
+
+- **WHEN** a dialog opens while the scroll pane is focused and is later closed
+- **THEN** the dialog host restores focus to the scroll pane (no fallback branch involved), and scroll keys are live again
+
+#### Scenario: No fallbackFocus machinery
+
+- **WHEN** `dialog_host.tsx` is read
+- **THEN** it exposes no `fallbackFocus` prop and contains no null-saved-focus fallback path
 
 ### Requirement: Persistent status bar
 
@@ -123,17 +159,27 @@ The chat's live status (`idle`/`busy`/`error`) SHALL be held in a shared reactiv
 
 ### Requirement: Input bar footer shows session/mode info, not keybinds
 
-The input bar SHALL render the textarea plus a single footer row of session/mode info — left `INSERT`, right `xhigh /effort` — hardcoded for now (those capabilities are not yet integrated). Global keybind hints SHALL NOT be duplicated in this footer: the command-palette, sidebar-toggle, and abort key hints live ONLY in the status bar, so the header and the input footer never repeat the same keys.
+`ChatBar` (renamed from `InputBar`, in `layout/chat_bar.tsx`) SHALL compose the shared `TextArea` component with `chrome="full"` and the `Type a message…` placeholder (via `GLYPHS.ellipsis`), and render a single external footer row below the bordered textarea. The footer row SHALL show the mode word on the left (`INSERT` when the textarea is focused, `NORMAL` when blurred — with `NORMAL` rendered in bold with the accent color and the row given a `bgActive` background) and the newline chord hint on the right (`ctrl+j newline`). Global keybind hints SHALL NOT be duplicated in this footer: the command-palette, sidebar-toggle, and abort key hints live ONLY in the status bar, so the header and the input footer never repeat the same keys.
+
+#### Scenario: ChatBar composes TextArea
+
+- **WHEN** the chat renders the input area
+- **THEN** `ChatBar` renders a `TextArea` with `chrome="full"` for the bordered textarea, plus its own external footer row
 
 #### Scenario: Footer is session/mode info
 
 - **WHEN** the chat renders
-- **THEN** the input footer shows `INSERT` (left) and `xhigh /effort` (right), and does NOT show the palette/sidebar/abort key hints
+- **THEN** the input footer shows the mode word (left) and newline hint (right), and does NOT show the palette/sidebar/abort key hints
 
 #### Scenario: Global keys live in the header only
 
 - **WHEN** the user looks for the command-palette / sidebar / abort shortcuts
 - **THEN** they appear in the status bar, not duplicated in the input footer
+
+#### Scenario: NORMAL mode has distinct visual treatment
+
+- **WHEN** the textarea is blurred (NORMAL mode)
+- **THEN** the footer row shows `NORMAL` in bold accent color with `bgActive` background, signaling that vim scroll keys are live
 
 ### Requirement: Shared gutter marker set
 

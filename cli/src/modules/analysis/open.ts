@@ -1,4 +1,4 @@
-import type { Result } from "neverthrow";
+import { ok, err, type Result } from "neverthrow";
 import { findAnalysis } from "./analysis.ts";
 import { ensureOutputDir } from "./output.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
@@ -19,6 +19,20 @@ export function openerArgv(dir: string, platform: NodeJS.Platform = process.plat
             return ["cmd", "/c", "start", "", dir];
         default:
             return ["xdg-open", dir];
+    }
+}
+
+/**
+ * Spawn the OS opener for `dir`, Result-wrapped: `Bun.spawn` throws synchronously when the
+ * opener binary is missing (ENOENT — e.g. a headless Linux box without xdg-open), and callers
+ * inside key handlers must surface that as a notice, never a crash.
+ */
+export function openInFileBrowser(dir: string): Result<void, Error> {
+    try {
+        Bun.spawn(openerArgv(dir), { stdout: "ignore", stderr: "ignore" });
+        return ok(undefined);
+    } catch (cause) {
+        return err(cause instanceof Error ? cause : new Error(String(cause)));
     }
 }
 

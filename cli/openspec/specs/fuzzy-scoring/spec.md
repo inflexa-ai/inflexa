@@ -5,7 +5,7 @@ TBD - created by archiving change extract-fuzzy-scorer. Update Purpose after arc
 ## Requirements
 ### Requirement: Shared, dependency-free subsequence scorer
 
-The system SHALL provide `subsequenceScore(query: string, target: string): number` in `src/lib/fuzzy.ts` as pure, non-domain infrastructure. It SHALL import nothing from `src/tui/`, `src/modules/`, or `src/db/`, and SHALL be the single scoring primitive that `SelectList`'s row ranking calls. Introducing it SHALL add no new runtime dependency — no fuzzy-search library.
+The system SHALL provide `subsequenceScore(query: string, target: string): number` in `src/lib/fuzzy.ts` as pure, non-domain infrastructure. It SHALL import nothing from `src/tui/`, `src/modules/`, or `src/db/`, and SHALL be the single scoring primitive that the list primitives' (`FixedList`/`DynamicList`) row ranking calls via `rankBy`. Introducing it SHALL add no new runtime dependency — no fuzzy-search library.
 
 #### Scenario: Lives in lib as pure infrastructure
 

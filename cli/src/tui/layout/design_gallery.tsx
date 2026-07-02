@@ -1,11 +1,17 @@
-import { onMount } from "solid-js";
 import type { JSX } from "solid-js";
-import type { ScrollBoxRenderable } from "@opentui/core";
+import { TextareaRenderable } from "@opentui/core";
+import { useRenderer } from "@opentui/solid";
 
 import { GLYPHS, space } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
-import { useBindings, KEYS, chordLabel } from "../keymap.ts";
-import { DialogPanel } from "../components/dialog_panel.tsx";
+import { KEYS, chordLabel } from "../keymap.ts";
+import { useDialogBindings, useDialogCancel, useDialogEntry, DialogShowcase } from "../components/dialog/dialog_host.tsx";
+import { DialogPanel } from "../components/dialog/dialog_panel.tsx";
+import { PromptDialog } from "../components/dialog/prompt_dialog.tsx";
+import { ConfirmDialog } from "../components/dialog/confirm_dialog.tsx";
+import { AlertDialog } from "../components/dialog/alert_dialog.tsx";
+import { ResultsDialog } from "../components/dialog/results_dialog.tsx";
+import { ExportOptionsDialog } from "../components/dialog/export_options_dialog.tsx";
 import { Welcome } from "../components/welcome.tsx";
 import { ThinkingBlock } from "../components/thinking_block.tsx";
 import { ThinkingIndicator } from "../components/thinking_indicator.tsx";
@@ -15,11 +21,21 @@ import { RunBlock } from "../components/run_block.tsx";
 import { ErrorBlock } from "../components/error_block.tsx";
 import { MessageBlock } from "./message_block.tsx";
 import { Bold, Italic, Underline, Dim, Reverse, Fg } from "../components/emphasis.tsx";
+import { TextArea } from "../components/text_area.tsx";
+import { TextInput } from "../components/text_input.tsx";
+import { ScrollPane } from "../components/scroll_pane.tsx";
+import { FixedList } from "../components/fixed_list.tsx";
+import { SelectDialog } from "../components/dialog/select_dialog.tsx";
+import { FilePicker } from "../components/dialog/file_picker.tsx";
 import { mockUserText, mockAssistantText, mockThinking, mockToolCall, mockFileEdit, mockRun } from "../../lib/mock_fixtures.ts";
 
 // Nothing streams in the gallery — MessageBlock's streaming accessors are constant stubs.
 const noStreamId = (): string | null => null;
 const noStreamText = (): string => "";
+
+const noop = (): void => {
+    /* gallery showcase: submit is a no-op since inputs are non-interactive */
+};
 
 function State(props: { n: string; label: string; children: JSX.Element }): JSX.Element {
     return (
@@ -39,26 +55,26 @@ function State(props: { n: string; label: string; children: JSX.Element }): JSX.
  * mock data ever leaks into a real session. Esc/q close.
  */
 export function DesignGallery(props: { onClose: () => void }): JSX.Element {
-    let scrollRef: ScrollBoxRenderable | null = null;
-    onMount(() => queueMicrotask(() => scrollRef?.focus()));
-    useBindings(() => ({
-        bindings: [
-            { chord: KEYS.escape, run: () => props.onClose() },
-            { chord: KEYS.q, run: () => props.onClose() },
-        ],
+    const dialog = useDialogEntry();
+    const renderer = useRenderer();
+
+    useDialogCancel(() => props.onClose());
+
+    // Scroll keys (and focus-on-mount) come from ScrollPane; esc/cancel is the host's. `q` is a
+    // bare printable, and the exhibits include CLICKABLE editors (the TextArea/TextInput states
+    // invite focusing them), so the layer gates itself off while any editor holds focus — the
+    // keymap dispatches before the focused editor and would otherwise eat the typed character
+    // (the bare-printable-key rule). InputRenderable extends TextareaRenderable, so one
+    // instanceof covers both primitives. Read at dispatch time (the config thunk re-runs per
+    // keystroke), so no reactive focus mirror is needed.
+    useDialogBindings(() => ({
+        enabled: !(renderer.currentFocusedRenderable instanceof TextareaRenderable),
+        bindings: [{ chord: KEYS.q, run: () => props.onClose() }],
     }));
     const runSteps = mockRun.steps.map((s) => ({ label: s.label, state: s.state }));
     return (
-        <DialogPanel title="Design system — stream blocks" width="80%" height="80%" footer={`${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}>
-            <scrollbox
-                ref={(r: ScrollBoxRenderable) => {
-                    scrollRef = r;
-                }}
-                focused
-                flexGrow={1}
-                width="100%"
-                paddingTop={space.sm}
-            >
+        <DialogPanel title="Design system — stream blocks" size="xl" footer={`${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}>
+            <ScrollPane focusOnMount={false} onRef={(r) => dialog?.setInitialFocus(r)} flexGrow={1} width="100%" paddingTop={space.sm}>
                 <State n="1" label="welcome / startup">
                     <Welcome greeting="welcome to inflexa" anchorPath="~/inflexa-tests" markerWritten={true} hints={["run /init", "ctrl+k for commands"]} />
                 </State>
@@ -107,7 +123,142 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         Press {GLYPHS.middot} ctrl+k {GLYPHS.middot} in the chat to open the live command palette overlay.
                     </text>
                 </State>
-                <State n="9" label="type & emphasis">
+                {/* Exhibits mount blurred (autoFocus={false}): a focused-at-mount editor would
+                    steal the gallery pane's focus, surviving only by microtask ordering. */}
+                <State n="9" label="TextArea — full / compact / bare chrome">
+                    <text fg={theme().fgMuted}>click a textarea to focus it and see the NORMAL {GLYPHS.arrowRight} INSERT mode shift</text>
+                    <text fg={theme().fgMuted}>full (border signals focus, host adds footer):</text>
+                    <TextArea chrome="full" autoFocus={false} placeholder={`Type a message${GLYPHS.ellipsis}`} onSubmit={noop} />
+                    <text fg={theme().fgMuted}>compact (mode word in border title):</text>
+                    <TextArea chrome="compact" autoFocus={false} placeholder={`Enter a name${GLYPHS.ellipsis}`} onSubmit={noop} />
+                    <text fg={theme().fgMuted}>bare (background shift only):</text>
+                    <TextArea chrome="bare" autoFocus={false} placeholder={`Bare textarea${GLYPHS.ellipsis}`} onSubmit={noop} />
+                </State>
+                <State n="10" label="TextInput — compact / bare chrome">
+                    <text fg={theme().fgMuted}>compact (bordered, focus shifts border):</text>
+                    <TextInput chrome="compact" autoFocus={false} placeholder={`Filter${GLYPHS.ellipsis}`} />
+                    <text fg={theme().fgMuted}>bare (no border):</text>
+                    <TextInput chrome="bare" autoFocus={false} placeholder={`Type to filter${GLYPHS.ellipsis}`} />
+                </State>
+                <State n="11" label="dialogs — sizes, tones, and the content family (inert exhibits)">
+                    <text fg={theme().fgMuted}>PromptDialog — single-line (md, TextInput, no mode word):</text>
+                    <DialogShowcase>
+                        <PromptDialog title="New project" placeholder="Project name" onSubmit={noop} onCancel={noop} />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>PromptDialog — multiline (TextArea, ctrl+j newline):</text>
+                    <DialogShowcase>
+                        <PromptDialog
+                            title="Description"
+                            multiline
+                            height={3}
+                            placeholder={`A longer text${GLYPHS.ellipsis}`}
+                            onSubmit={noop}
+                            onCancel={noop}
+                        />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>PromptDialog — busy (spinner in footer, dismissal vetoed):</text>
+                    <DialogShowcase>
+                        <PromptDialog title="Rename" value="analysis-1" busy busyText={`Renaming${GLYPHS.ellipsis}`} onSubmit={noop} onCancel={noop} />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>danger tone (double border — destructive confirms):</text>
+                    <DialogShowcase>
+                        <PromptDialog title="Delete project?" tone="danger" placeholder={`Type "acme" to confirm`} onSubmit={noop} onCancel={noop} />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>ConfirmDialog — binary choice, cancel is the safe default:</text>
+                    <DialogShowcase>
+                        <ConfirmDialog title="Discard changes?" message="Unsaved edits will be lost." onConfirm={noop} onCancel={noop} />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>AlertDialog — single acknowledgement:</text>
+                    <DialogShowcase>
+                        <AlertDialog title="Heads up" message="The proxy restarted." onClose={noop} />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>ResultsDialog — read-only scrollable lines (lg, fixed height):</text>
+                    <DialogShowcase>
+                        <ResultsDialog title="Projects" lines={["acme — 3 analyses", "demo — 1 analysis"]} emptyText="No projects yet" onClose={noop} />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>ExportOptionsDialog — text field + checkbox options:</text>
+                    <DialogShowcase>
+                        <ExportOptionsDialog
+                            title="Export report"
+                            textField={{ label: "Filename", defaultValue: "report.html", placeholder: "report.html" }}
+                            items={[
+                                { key: "figures", label: "Include figures", defaultValue: true },
+                                { key: "raw", label: "Include raw data", defaultValue: false },
+                            ]}
+                            onConfirm={noop}
+                            onCancel={noop}
+                        />
+                    </DialogShowcase>
+                </State>
+                <State n="12" label="select lists — FixedList / DynamicList / SelectDialog (inert exhibits)">
+                    <text fg={theme().fgMuted}>single mode — {GLYPHS.chevronRight} chevron cursor, headers group by category:</text>
+                    <DialogShowcase>
+                        <box height={7} width="100%">
+                            <FixedList
+                                items={[
+                                    { value: "tn", title: "Tokyo Night", category: "Dark", description: "the default" },
+                                    { value: "cat", title: "Catppuccin Mocha", category: "Dark" },
+                                    { value: "lat", title: "Latte", category: "Light" },
+                                ]}
+                                emptyText="No themes"
+                            />
+                        </box>
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>single mode, filtered (query "la") — a surviving item keeps its category header:</text>
+                    <DialogShowcase>
+                        <box height={4} width="100%">
+                            <FixedList
+                                items={[
+                                    { value: "tn", title: "Tokyo Night", category: "Dark" },
+                                    { value: "lat", title: "Latte", category: "Light" },
+                                ]}
+                                query="la"
+                                emptyText="No themes"
+                            />
+                        </box>
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>
+                        multi mode — {GLYPHS.circle}/{GLYPHS.circleHollow} gutter, space toggles, enter confirms the batch:
+                    </text>
+                    <DialogShowcase>
+                        <box height={5} width="100%">
+                            <FixedList
+                                items={[
+                                    { value: "a", title: "data/counts.tsv" },
+                                    { value: "b", title: "data/meta.csv" },
+                                    { value: "c", title: "scripts/" },
+                                ]}
+                                mode="multi"
+                                initialSelected={new Set(["a", "c"])}
+                                emptyText="No files"
+                            />
+                        </box>
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>empty state:</text>
+                    <DialogShowcase>
+                        <box height={3} width="100%">
+                            <FixedList items={[]} emptyText="No matching commands" />
+                        </box>
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>SelectDialog — the picker dialog composing panel + filter + FixedList:</text>
+                    <DialogShowcase>
+                        <SelectDialog
+                            title="Switch analysis"
+                            items={[
+                                { value: "1", title: "rna-seq-2026", description: "differential expression" },
+                                { value: "2", title: "scrna-atlas" },
+                            ]}
+                            emptyText="No analyses"
+                            onSelect={noop}
+                            onCancel={noop}
+                        />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>FilePicker — multi-select browser on DynamicList (lists the live cwd, inert keys):</text>
+                    <DialogShowcase>
+                        <FilePicker rootPath={process.cwd()} selectedPaths={new Set()} confirmLabel="Add" onConfirm={noop} onCancel={noop} />
+                    </DialogShowcase>
+                </State>
+                <State n="13" label="type & emphasis">
                     <text>
                         <Bold>bold</Bold> <Fg role="fgMuted">— names, active items</Fg>
                     </text>
@@ -127,7 +278,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         <Reverse> reverse </Reverse> <Fg role="fgMuted">— selection / cursor row</Fg>
                     </text>
                 </State>
-            </scrollbox>
+            </ScrollPane>
         </DialogPanel>
     );
 }

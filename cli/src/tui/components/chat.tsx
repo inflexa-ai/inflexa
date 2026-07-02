@@ -6,6 +6,7 @@ import { theme } from "../theme.ts";
 import { MessageBlock } from "../layout/message_block.tsx";
 import { Welcome } from "./welcome.tsx";
 import { ThinkingIndicator } from "./thinking_indicator.tsx";
+import { ScrollPane } from "./scroll_pane.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { getAnchor } from "../../db/primary_query.ts";
 import { chatStatus } from "../hooks/status.ts";
@@ -19,8 +20,12 @@ import type { BusEvent } from "../../types/events.ts";
  * reads the same store's `messageCount`, so the store is shared rather than private here.
  */
 export type ChatProps = {
-    /** Receives the scrollbox renderable on mount, so App's scroll keybinds can drive it. */
-    onScrollboxRef: (r: ScrollBoxRenderable) => void;
+    /**
+     * Receives the stream's scroll pane on mount. Scroll keys live inside `ScrollPane`; App needs
+     * the ref only as a focus target — `esc` focuses it (NORMAL mode) and the `i`/enter layer is
+     * gated on it.
+     */
+    onScrollPaneRef: (r: ScrollBoxRenderable) => void;
 };
 
 export function Chat(props: ChatProps) {
@@ -60,8 +65,11 @@ export function Chat(props: ChatProps) {
 
     return (
         <box flexDirection="column" flexGrow={1} minHeight={0}>
-            <scrollbox
-                ref={(r: ScrollBoxRenderable) => props.onScrollboxRef(r)}
+            {/* focusOnMount=false: the ChatBar textarea owns focus at startup (INSERT); esc hands
+            focus to this pane, which is when its scroll keys go live. */}
+            <ScrollPane
+                onRef={(r: ScrollBoxRenderable) => props.onScrollPaneRef(r)}
+                focusOnMount={false}
                 flexGrow={1}
                 stickyScroll
                 stickyStart="bottom"
@@ -74,7 +82,7 @@ export function Chat(props: ChatProps) {
                         greeting="welcome to inflexa"
                         anchorPath={anchor()?.cachedPath}
                         markerWritten={anchor()?.markerWritten}
-                        hints={["ctrl+k commands", "ctrl+x leader", "esc scroll mode"]}
+                        hints={["ctrl+k commands", "ctrl+j newline", "ctrl+x leader", "esc scroll mode"]}
                     />
                 </Show>
                 {/* index() is the 1-based position within the mounted window (capped at MESSAGE_CAP);
@@ -99,7 +107,7 @@ export function Chat(props: ChatProps) {
                 <Show when={chatStatus() === "busy"}>
                     <ThinkingIndicator />
                 </Show>
-            </scrollbox>
+            </ScrollPane>
 
             {/* Error banner: onAccent is the readable foreground on the filled error background
                 (replaces the prior bg-reuse hack of painting fg with the app background). */}

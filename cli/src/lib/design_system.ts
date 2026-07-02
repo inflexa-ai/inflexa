@@ -665,6 +665,45 @@ export type Space = keyof typeof space;
 /** A border-role key (`panel` | `overlay` | `focus` | `danger`). */
 export type Stroke = keyof typeof stroke;
 
+/**
+ * Named dialog size presets — the single source of truth for dialog panel dimensions,
+ * the way `space` is for padding and `stroke` is for borders. Widths are FIXED column
+ * counts (OpenCode's proven 60-ish/88/116 tiers) clamped by a percentage: a panel's
+ * readable line length doesn't scale with monitor size, so a percentage is only right
+ * as the small-terminal escape hatch, never as the dimension itself. Heights follow the
+ * same fixed+clamp shape for the tiers whose content CHANGES while open (`lg` pickers
+ * filter, `xl` showcases scroll) — a panel that resizes as its list filters is worse UX
+ * than trailing empty rows, so those tiers hold their defined height. Only `md` is
+ * content-height: its content (a prompt line, a confirm message) is static for the
+ * dialog's lifetime, so nothing can shrink mid-interaction. Never pair percentage width
+ * with percentage height: terminal cells are ~2× taller than wide, so equal-ish
+ * percentages render square/portrait panels whose proportions track the terminal's
+ * instead of the content's.
+ */
+export const dialogSize = {
+    /** Short prompts, confirms, alerts — static content, content height. */
+    md: { width: 64, maxWidth: "90%", height: undefined, maxHeight: "80%" },
+    /** Pickers, lists, results — fixed rows so filtering never resizes the panel. */
+    lg: { width: 88, maxWidth: "90%", height: 20, maxHeight: "80%" },
+    /** Full showcases, galleries, large forms — near-full-screen. */
+    xl: { width: 116, maxWidth: "90%", height: "85%", maxHeight: undefined },
+} as const satisfies Record<string, DialogDims>;
+
+/** The dimension set a dialog preset carries — consumed by `DialogPanel`, never raw call sites. */
+export type DialogDims = {
+    /** Fixed panel width in columns (readable line length, not terminal-relative). */
+    width: number;
+    /** Small-terminal clamp so the fixed width never overflows. */
+    maxWidth: `${number}%`;
+    /** Fixed panel height (rows or terminal fraction); `undefined` = content-height (`md` only). */
+    height: number | `${number}%` | undefined;
+    /** Small-terminal clamp for fixed-row heights / scroll cap for the content-height tier. */
+    maxHeight: `${number}%` | undefined;
+};
+
+/** A dialog size preset key. */
+export type DialogSize = keyof typeof dialogSize;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Stacking order (z-index ladder)
 // ─────────────────────────────────────────────────────────────────────────────

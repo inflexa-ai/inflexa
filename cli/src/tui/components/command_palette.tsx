@@ -2,7 +2,8 @@ import { createMemo } from "solid-js";
 import type { JSX } from "solid-js";
 
 import { GLYPHS } from "../../lib/design_system.ts";
-import { SelectList, type SelectItem } from "./select_list.tsx";
+import { SelectDialog } from "./dialog/select_dialog.tsx";
+import type { SelectItem } from "./list_core.tsx";
 import { useWorkspace, type Workspace } from "../contexts/workspace.ts";
 import type { Command } from "../commands.tsx";
 
@@ -18,7 +19,7 @@ export async function runCommand(cmd: Command, ws: Workspace): Promise<void> {
     await cmd.run(ws);
 }
 
-/** The command palette: a thin adapter mapping commands to {@link SelectList} rows + dispatch. */
+/** The command palette: a thin adapter mapping commands to {@link SelectDialog} rows + dispatch. */
 export function CommandPalette(props: { commands: Command[] }): JSX.Element {
     const ws = useWorkspace();
     const items = createMemo<SelectItem<Command>[]>(() =>
@@ -27,12 +28,11 @@ export function CommandPalette(props: { commands: Command[] }): JSX.Element {
             .map((c) => ({ value: c, title: c.title, description: c.description, hint: c.keybind, category: c.category })),
     );
     return (
-        <SelectList
+        <SelectDialog
             title="Commands"
             placeholder={`Search commands${GLYPHS.ellipsis}`}
             items={items()}
             emptyText="No matching commands"
-            grouped
             onCancel={() => ws.closeDialog()}
             onSelect={(cmd) => {
                 // Close the palette BEFORE running, so a command that opens its own dialog
