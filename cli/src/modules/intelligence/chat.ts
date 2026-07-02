@@ -197,7 +197,7 @@ export function toModelMessages(stored: StoredMessage[]): ModelMessage[] {
 }
 
 /** The proxy requires the client API key we generated into its config at setup. */
-async function readApiKey(): Promise<Result<string, ChatSetupError>> {
+export async function readApiKey(): Promise<Result<string, ChatSetupError>> {
     const text = await Bun.file(env.cliproxyConfigPath)
         .text()
         .catch(() => "");
@@ -206,7 +206,8 @@ async function readApiKey(): Promise<Result<string, ChatSetupError>> {
     return ok(key);
 }
 
-async function resolveModelId(apiKey: string): Promise<Result<string, ChatSetupError>> {
+/** Resolve the default chat model from the proxy's `/models`, cached per process. */
+export async function resolveModelId(apiKey: string): Promise<Result<string, ChatSetupError>> {
     if (cachedModelId) return ok(cachedModelId);
     let res: Response;
     try {
