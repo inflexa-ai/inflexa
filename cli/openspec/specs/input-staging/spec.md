@@ -1,4 +1,8 @@
-## ADDED Requirements
+# input-staging Specification
+
+## Purpose
+Materialize an analysis's selected inputs into the harness session tree (`{sessionsDir}/{analysisId}/data/inputs/local/…`) as the `StagedInput[]` manifest the embedded harness consumes verbatim — hardlink-first placement, noise-dir-aware directory walks, deterministic file identity, and staging-time mirroring so the tree always reflects the current inputs. Lives in `src/modules/staging/`; the session-tree base contract is owned by `harness-runtime`.
+## Requirements
 
 ### Requirement: Stage an analysis's inputs into the session tree
 
@@ -11,7 +15,15 @@ The system SHALL provide `stageInputs(analysisId, targetDir)` in
 `relativePath` is `inputs/local/{key}` — field-for-field compatible with the harness
 `StagedInput` contract, passed to the harness verbatim with no transform. Directory
 inputs SHALL be walked into one entry per contained file, with `key` preserving the
-input's relative structure.
+input's relative structure. Anchored inputs use their anchor-relative path as the
+key; anchorless inputs (absolute host paths) SHALL use `{fileId}/{basename}` instead
+— the host filesystem layout must never leak into the sandbox tree or the manifest,
+and keys MUST equal the staged file's path relative to `inputs/local` exactly.
+
+#### Scenario: Anchorless input keys carry no host path
+
+- **WHEN** an input stored as an absolute path (no anchor) is staged
+- **THEN** its key is `{fileId}/{basename}`, the file exists at `inputs/local/{key}`, and no host directory segment appears in the manifest
 
 #### Scenario: Single-file input staged at the contract path
 
@@ -63,6 +75,38 @@ the walk.
 
 - **WHEN** a directory input contains a symlink whose target no longer exists
 - **THEN** the walk completes without error and no manifest entry is produced for it
+
+### Requirement: Noise directories are never staged
+
+Directory-input walks SHALL skip directories whose name identifies tool or
+source-control noise rather than data: the harness's ignored set (`node_modules`,
+`__pycache__`, `.cache`, `.ruff_cache`, `.ipynb_checkpoints`, `.Rproj.user`) plus the
+cli-specific `.git` and `.inflexa` (the anchor-marker directory). Skipping SHALL apply
+to the whole subtree, including directories reached through symlinks.
+
+#### Scenario: Project root selected as a directory input
+
+- **WHEN** a directory input contains `node_modules/`, `.git/`, and a data file
+- **THEN** only the data file is staged and the noise directories appear neither in the manifest nor on disk
+
+### Requirement: The staged tree mirrors the current inputs
+
+`stageInputs` SHALL reconcile the `inputs/local` tree against the manifest it just
+produced: staged files no current input produced SHALL be deleted, and directories
+emptied by those deletions SHALL be pruned. Reconciliation happens at staging time —
+not at input-removal time — because the expected manifest only exists here, removal
+of the database row leaves nothing to key file cleanup on, and removal-time deletion
+could race a run holding the tree in a read-only mount.
+
+#### Scenario: Removed input's files disappear on the next staging
+
+- **WHEN** an input is removed from the analysis and `stageInputs` runs again
+- **THEN** that input's staged files are deleted, its emptied directories pruned, and the remaining inputs' files untouched
+
+#### Scenario: Newly ignored subtrees are cleaned up
+
+- **WHEN** the staged tree contains files under a directory name the walk now ignores
+- **THEN** the next staging deletes them even though the staging walk itself skips that name
 
 ### Requirement: Deterministic file identity
 

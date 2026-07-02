@@ -52,39 +52,54 @@ export async function upsertArtifact(pool: Querier, entry: RegisterArtifactInput
     });
 }
 
+const COLS_PER_ROW = 10;
+
 /**
- * Batched upsert — writes every entry in a single round-trip via a
- * multi-row `INSERT ... VALUES (...), (...), ...`. `registerStepArtifacts`
- * hands us the full artifact manifest per step (tens of files), so the
- * one-query-per-entry pattern was the dominant cost of step teardown.
+ * Rows per INSERT statement. The Postgres extended protocol carries the Bind
+ * message's parameter count as an Int16, so a statement is capped at 65,535
+ * bind parameters — beyond that the count silently wraps and the server
+ * rejects with 08P01 ("bind message has N parameter formats but 0
+ * parameters"). 1,000 rows × 10 columns stays an order of magnitude under the
+ * cap while keeping round-trips negligible even for huge input manifests.
+ */
+const ROWS_PER_STATEMENT = 1_000;
+
+/**
+ * Batched upsert — writes entries in multi-row `INSERT ... VALUES` statements
+ * of at most {@link ROWS_PER_STATEMENT} rows. Callers range from per-step
+ * manifests (tens of files) to a data-profile's full staged-input manifest
+ * (unbounded — directory inputs can reach tens of thousands of files).
+ * Chunks run sequentially without a wrapping transaction: the upsert is
+ * idempotent per row (`ON CONFLICT ... DO UPDATE`), so a failure between
+ * chunks is healed by the caller's retry re-upserting the same manifest.
  */
 export async function upsertArtifacts(pool: Querier, entries: RegisterArtifactInput[]): Promise<void> {
-    if (entries.length === 0) return;
     const now = new Date().toISOString();
-    const COLS_PER_ROW = 10;
-    const placeholders = entries
-        .map((_, i) => {
-            const base = i * COLS_PER_ROW;
-            return (
-                `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, ` +
-                `$${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10})`
-            );
-        })
-        .join(", ");
-    const values = entries.flatMap((e) => [
-        e.resourceId,
-        e.path,
-        e.hash,
-        e.size,
-        e.role,
-        e.sourceStep ?? null,
-        e.sourceRun ?? null,
-        e.fileType ?? null,
-        e.fileId ?? null,
-        now,
-    ]);
-    await pool.query({
-        text: `INSERT INTO cortex_artifacts
+    for (let start = 0; start < entries.length; start += ROWS_PER_STATEMENT) {
+        const chunk = entries.slice(start, start + ROWS_PER_STATEMENT);
+        const placeholders = chunk
+            .map((_, i) => {
+                const base = i * COLS_PER_ROW;
+                return (
+                    `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, ` +
+                    `$${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10})`
+                );
+            })
+            .join(", ");
+        const values = chunk.flatMap((e) => [
+            e.resourceId,
+            e.path,
+            e.hash,
+            e.size,
+            e.role,
+            e.sourceStep ?? null,
+            e.sourceRun ?? null,
+            e.fileType ?? null,
+            e.fileId ?? null,
+            now,
+        ]);
+        await pool.query({
+            text: `INSERT INTO cortex_artifacts
           (analysis_id, path, hash, size, role, source_step, source_run, file_type, file_id, created_at)
           VALUES ${placeholders}
           ON CONFLICT (analysis_id, path) DO UPDATE SET
@@ -95,8 +110,9 @@ export async function upsertArtifacts(pool: Querier, entries: RegisterArtifactIn
             source_run = EXCLUDED.source_run,
             file_type = COALESCE(EXCLUDED.file_type, cortex_artifacts.file_type),
             file_id = COALESCE(EXCLUDED.file_id, cortex_artifacts.file_id)`,
-        values,
-    });
+            values,
+        });
+    }
 }
 
 /** Result type for input artifact metadata lookups. */

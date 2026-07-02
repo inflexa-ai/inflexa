@@ -1,4 +1,4 @@
-import { linkSync, copyFileSync, readdirSync, rmSync } from "node:fs";
+import { linkSync, copyFileSync, readdirSync, rmSync, rmdirSync, existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { ok, err, Result } from "neverthrow";
 import type { AnalysisInput } from "../../types/analysis.ts";
@@ -76,14 +76,40 @@ function stageFile(src: string, dest: string): Result<void, FsError> {
 }
 
 /**
+ * Directory names a directory-input walk never descends into. The first group
+ * mirrors the harness's sandbox-side `IGNORED_DIRS` (`sandbox/ignored-dirs.ts`)
+ * so what staging materializes matches what the harness's own walks treat as
+ * data. The second group is cli-specific: source control and the anchor-marker
+ * dir show up whenever a user selects a project root as a directory input, and
+ * are never analysis data. Kept as a cli-owned constant (not imported from the
+ * harness) because the two lists answer different questions — runtime tool
+ * noise vs. what counts as user data — and only happen to overlap today.
+ */
+const IGNORED_WALK_DIRS: ReadonlySet<string> = new Set([
+    ".ruff_cache",
+    "__pycache__",
+    ".cache",
+    ".ipynb_checkpoints",
+    "node_modules",
+    ".Rproj.user",
+    ".git",
+    ".inflexa",
+]);
+
+const WALK_EVERYTHING: ReadonlySet<string> = new Set();
+
+/**
  * Recursively enumerate all files under `dir`, returning paths relative to `dir`.
- * Directories are traversed, not yielded. Dirent kind checks answer false for
+ * Directories are traversed, not yielded; directories named in `ignoredDirs` are
+ * skipped whole (staging passes {@link IGNORED_WALK_DIRS}; the reconcile pass
+ * passes an empty set — it must see files staged under names that are ignored
+ * NOW but were not when they were staged). Dirent kind checks answer false for
  * symlinks on both `isFile()` and `isDirectory()`, so symlink entries are
  * stat-resolved explicitly: a link to a file is yielded, a link to a directory is
  * traversed, and a dangling link is skipped — an unreadable target is a property
  * of the user's source tree, not a staging failure.
  */
-function walkFiles(dir: string): Result<string[], FsError> {
+function walkFiles(dir: string, ignoredDirs: ReadonlySet<string>): Result<string[], FsError> {
     try {
         const results: string[] = [];
         const entries = readdirSync(dir, { withFileTypes: true });
@@ -98,7 +124,8 @@ function walkFiles(dir: string): Result<string[], FsError> {
                 isFile = target.value.isFile();
             }
             if (isDirectory) {
-                const subResult = walkFiles(full);
+                if (ignoredDirs.has(entry.name)) continue;
+                const subResult = walkFiles(full, ignoredDirs);
                 if (subResult.isErr()) return subResult;
                 for (const sub of subResult.value) {
                     results.push(join(entry.name, sub));
@@ -142,6 +169,57 @@ async function stageSingleFile(absPath: string, key: string, fileId: string, tar
 /** Staging-layer error: wraps I/O failures from the filesystem operations during staging. */
 export type StagingError = { type: "staging_failed"; cause: unknown };
 
+/** Remove now-empty directories under `dir` (bottom-up), leaving `dir` itself in place. */
+function pruneEmptyDirs(dir: string): Result<void, FsError> {
+    try {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+            if (!entry.isDirectory()) continue;
+            const full = join(dir, entry.name);
+            const sub = pruneEmptyDirs(full);
+            if (sub.isErr()) return sub;
+            if (readdirSync(full).length === 0) rmdirSync(full);
+        }
+        return ok(undefined);
+    } catch (cause) {
+        return err({ type: "io_failed", op: "pruneEmptyDirs", cause });
+    }
+}
+
+/**
+ * The un-staging half of the contract: delete staged files no current input
+ * produced, then prune the directories emptied by those deletions. Runs at
+ * staging time — the one moment the full expected manifest is in hand —
+ * because inputs can disappear underneath the tree in ways removal-time
+ * cleanup can never key on (the input row is deleted, an anchor stops
+ * resolving, an ignore rule newly excludes a subtree). The walk here passes no
+ * ignore set: it must see files staged under names the staging walk now
+ * skips, or they would linger forever.
+ */
+function reconcileStagedTree(targetDir: string, staged: StagedInput[]): Result<void, FsError> {
+    const localRoot = join(targetDir, "inputs", "local");
+    if (!existsSync(localRoot)) return ok(undefined);
+
+    const existingResult = walkFiles(localRoot, WALK_EVERYTHING);
+    if (existingResult.isErr()) return err(existingResult.error);
+
+    // Compare absolute path to absolute path — `join` normalizes both sides.
+    // Comparing the walk's relative paths against manifest KEYS is wrong the
+    // moment a key isn't a clean relative path (join collapses a leading slash
+    // when writing, so key and on-disk path diverge and reconcile would delete
+    // freshly staged files).
+    const expected = new Set(staged.map((s) => join(targetDir, s.relativePath)));
+    for (const rel of existingResult.value) {
+        const abs = join(localRoot, rel);
+        if (expected.has(abs)) continue;
+        try {
+            rmSync(abs, { force: true });
+        } catch (cause) {
+            return err({ type: "io_failed", op: "reconcileStagedTree:rm", cause });
+        }
+    }
+    return pruneEmptyDirs(localRoot);
+}
+
 /**
  * Resolve an analysis's inputs to absolute paths, copy/link them into a staging tree,
  * compute content hashes, and return the `StagedInput[]` manifest the harness consumes.
@@ -153,6 +231,10 @@ export type StagingError = { type: "staging_failed"; cause: unknown };
  * @returns The staged manifest, or a `DbError`/`StagingError` if resolution or I/O fails.
  *   Inputs that can't be resolved to an absolute path (e.g. orphaned anchor) are skipped
  *   with a warning — partial staging is better than total failure for best-effort scenarios.
+ *
+ * The staged tree MIRRORS the current inputs: files under `inputs/local` that no
+ * current input produced are deleted and emptied directories pruned, so removing
+ * an input (or an ignore rule newly excluding a subtree) cleans up on the next run.
  */
 export async function stageInputs(analysisId: string, targetDir: string): Promise<Result<StagedInput[], DbError | StagingError>> {
     const inputsResult = listAnalysisInputs(analysisId);
@@ -165,24 +247,35 @@ export async function stageInputs(analysisId: string, targetDir: string): Promis
 
     const staged: StagedInput[] = [];
     for (const { input, absPath } of resolvedInputs) {
+        // Anchored inputs keep their human-readable anchor-relative path as the
+        // key. Anchorless inputs carry an ABSOLUTE host path — used verbatim it
+        // leaks the host filesystem into the sandbox layout and the agent
+        // prompt, and `join` silently collapses its leading slash so the
+        // on-disk path no longer matches the key. They stage under a stable
+        // fileId-prefixed basename instead (collision-free across same-named
+        // files from different locations, deterministic across runs).
+        const keyRoot = input.anchorId === null ? join(deriveFileId(input), basename(input.path)) : input.path;
         if (input.isDir) {
-            const filesResult = walkFiles(absPath);
+            const filesResult = walkFiles(absPath, IGNORED_WALK_DIRS);
             if (filesResult.isErr()) return err({ type: "staging_failed", cause: filesResult.error });
             for (const subpath of filesResult.value) {
                 const fullPath = join(absPath, subpath);
-                const key = join(input.path, subpath);
+                const key = join(keyRoot, subpath);
                 const fileId = deriveFileId(input, subpath);
                 const result = await stageSingleFile(fullPath, key, fileId, targetDir);
                 if (result.isErr()) return err({ type: "staging_failed", cause: result.error });
                 staged.push(result.value);
             }
         } else {
-            const key = input.path;
             const fileId = deriveFileId(input);
-            const result = await stageSingleFile(absPath, key, fileId, targetDir);
+            const result = await stageSingleFile(absPath, keyRoot, fileId, targetDir);
             if (result.isErr()) return err({ type: "staging_failed", cause: result.error });
             staged.push(result.value);
         }
     }
+
+    const reconcileResult = reconcileStagedTree(targetDir, staged);
+    if (reconcileResult.isErr()) return err({ type: "staging_failed", cause: reconcileResult.error });
+
     return ok(staged);
 }

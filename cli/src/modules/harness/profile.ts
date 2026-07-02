@@ -1,3 +1,4 @@
+import { intro, log, outro, spinner } from "@clack/prompts";
 import {
     loadDataProfileStatus,
     makeLocalAuth,
@@ -13,6 +14,7 @@ import { fail, dieOn } from "../../lib/cli.ts";
 import { activeRuntime, resolvePostgresConfig } from "../../lib/config.ts";
 import { capture } from "../../lib/container.ts";
 import { getLogger } from "../../lib/log.ts";
+import { shutdown } from "../../lib/shutdown.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { resolveContext, type ContextFlags } from "../analysis/context.ts";
 import { sessionTreeDataDir } from "../staging/paths.ts";
@@ -23,7 +25,10 @@ import { bootHarnessRuntime, activeHarnessRuntime, type HarnessBootError } from 
 // `inflexa profile` — the ONE deliberate action that stages files and boots the
 // embedded harness (no-litter: passive flows never reach any of this). Flow:
 // resolve analysis → pre-flight → boot → stage → seed ledger → trigger.
-// The workflow itself is fire-and-forget; `--status` reads the harness ledger.
+// Presentation is clack (the text-command layer's prompt kit — never opentui
+// here); the workflow itself is fire-and-forget and `--status` reads the ledger.
+
+type Spinner = ReturnType<typeof spinner>;
 
 /** Resolve the one analysis this run operates on, or die with a way forward. */
 function resolveProfileAnalysis(flags: ContextFlags): Analysis {
@@ -60,8 +65,14 @@ function describeBootError(e: HarnessBootError): string {
     switch (e.type) {
         case "embedding_unconfigured":
             return [
-                "No embedding endpoint configured — profiling's vector indexing requires one, and the local proxy serves none (Anthropic auth has no embeddings API).",
+                "No embedding endpoint configured — profiling's vector indexing requires one. Embeddings are their own endpoint (separate from the chat proxy, which serves none).",
                 'Set `harness.embedding` in config.json: { "baseURL": "<OpenAI-compatible /v1>", "token": "<key>", "model": "text-embedding-3-small" }.',
+            ].join("\n");
+        case "embedding_unreachable":
+            return [
+                `The embedding endpoint ${e.baseURL} did not accept an embeddings request (${e.detail}) — profiling's vector indexing requires one and would otherwise fail after the sandbox run already spent its work.`,
+                "Either configure an embeddings-capable provider in the proxy, or set `harness.embedding` in config.json:",
+                '{ "baseURL": "<OpenAI-compatible /v1>", "token": "<key>", "model": "text-embedding-3-small" }.',
             ].join("\n");
         case "skills_dir_missing":
             return `Skills directory not found${e.path ? ` at ${e.path}` : ""}. Set \`harness.skillsDir\` in config.json (a checkout's \`skills/\` tree).`;
@@ -104,24 +115,35 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
     const analysis = resolveProfileAnalysis(flags);
     const cfg = resolveHarnessConfig();
 
+    intro(`inflexa profile — ${analysis.name}`);
+
     await ensureSandboxImage(cfg.sandboxImage);
 
-    console.log(`  Booting the harness runtime…`);
+    const s = spinner();
+    s.start("Booting the harness runtime (Postgres, callback listener, DBOS)");
     const bootResult = await bootHarnessRuntime({ config: cfg });
     const runtime = bootResult.match(
         (r) => r,
-        (e) => fail(describeBootError(e)),
+        (e) => {
+            s.error("Harness runtime boot failed");
+            return fail(describeBootError(e));
+        },
     );
+    s.stop(`Runtime ready — model ${runtime.model}`);
 
-    console.log(`  Staging inputs for "${analysis.name}"…`);
+    s.start("Staging inputs");
     const staged = (await stageInputs(analysis.id, sessionTreeDataDir(analysis.id))).match(
-        (s) => s,
-        (e) => fail("Failed to stage inputs", e),
+        (files) => files,
+        (e) => {
+            s.error("Staging failed");
+            return fail("Failed to stage inputs", e);
+        },
     );
     if (staged.length === 0) {
+        s.error("Nothing to stage");
         fail(`"${analysis.name}" has no resolvable inputs — add input files in the chat first, then re-run \`inflexa profile\`.`);
     }
-    console.log(`  Staged ${staged.length} file(s).`);
+    s.stop(`Staged ${staged.length} file(s)`);
 
     // Seed the harness ledger row the trigger's CAS transitions — without it
     // every trigger reports "failed". Context stays null: the cli has no goal
@@ -143,13 +165,13 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
     const outcome = await triggerDataProfile(runtime.triggerDeps, params);
     switch (outcome) {
         case "started":
-            console.log(`  Data profiling started.`);
+            log.step("Data profiling started");
             break;
         case "restarted":
-            console.log(`  Re-profiling started (the previous profile is superseded).`);
+            log.step("Re-profiling started (the previous profile is superseded)");
             break;
         case "already_running":
-            console.log(`  A profile run is already in progress for "${analysis.name}" — watching it.`);
+            log.info("A profile run is already in progress — watching it");
             break;
         case "failed": {
             // The trigger claims pending/completed rows only; a failed row needs
@@ -160,7 +182,7 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
             );
             if (!retried) {
                 const status = (await loadDataProfileStatus(runtime.pool, analysis.id)).match(
-                    (s) => s,
+                    (st) => st,
                     () => null,
                 );
                 fail(`Could not start profiling${status?.error ? ` — last error: ${status.error}` : ""}. See the logs for details.`);
@@ -171,7 +193,7 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
                     "profile retry failed to start",
                 );
             });
-            console.log(`  Previous profile failed — retrying.`);
+            log.step("Previous profile failed — retrying");
             break;
         }
         default: {
@@ -184,34 +206,99 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
     // orphan it until some future boot adopts it. Block until a terminal state;
     // Ctrl+C is safe (DBOS marks the run recoverable and the next `inflexa
     // profile` boot resumes it).
-    console.log(`  Waiting for the profile to finish (Ctrl+C detaches; the run resumes on the next profile boot)…`);
-    const final = await waitForTerminalStatus(runtime.pool, analysis.id);
+    log.info("Ctrl+C detaches; the run resumes on the next profile boot");
+    s.start("Profiling");
+    const final = await waitForTerminalStatus(runtime.pool, analysis.id, s);
     if (final.status === "completed") {
-        console.log(`  Profile completed. Inspect details with \`inflexa profile --status\`.`);
-        return;
+        s.stop("Profile completed");
+        outro("Done — inspect details with `inflexa profile --status`");
+        // Explicit drain-and-exit: the runtime's live handles (ingress listener,
+        // pg pools, DBOS admin server) keep the event loop busy, so the entry
+        // point's beforeExit → shutdown() path would never fire on its own.
+        return shutdown(0);
     }
+    s.error(`Profile ${final.status}`);
     fail(`Profile ${final.status}${final.error ? `: ${final.error}` : ""}.`);
 }
 
-/** Poll the ledger until the run leaves `running`, echoing state changes. */
-async function waitForTerminalStatus(pool: Pool, analysisId: string): Promise<{ status: string; error: string | null }> {
-    let lastShown: string | null = null;
+/**
+ * Human label for a DBOS step name from the profile workflow's step record —
+ * the progress channel's vocabulary. Best-effort: unknown names pass through
+ * verbatim so new step kinds surface instead of hiding behind a generic label.
+ */
+export function friendlyStepLabel(functionName: string): string {
+    const llm = functionName.match(/^llm-(\d+)$/);
+    if (llm) return `model round ${Number(llm[1]) + 1}`;
+    if (functionName.startsWith("tool-")) {
+        const rest = functionName.slice("tool-".length);
+        // Step names are `tool-{toolName}-{toolCallId}` with toolCallId minted
+        // as `toolu_…`; tool names themselves may contain hyphens/underscores.
+        const cut = rest.lastIndexOf("-toolu");
+        return `tool ${cut === -1 ? rest : rest.slice(0, cut)}`;
+    }
+    if (functionName.includes("submit-exec")) return "dispatching sandbox command";
+    if (functionName === "DBOS.recv" || functionName === "DBOS.sleep" || functionName === "DBOS.now") return "sandbox executing";
+    return functionName;
+}
+
+/**
+ * Latest step of the newest profile workflow for this analysis, read from the
+ * DBOS step record. Returns `null` on any miss or error: progress is a
+ * cosmetic channel, and a hiccup here must never abort a live run's wait.
+ */
+async function readRunProgress(pool: Pool, analysisId: string): Promise<{ step: number; label: string } | null> {
+    try {
+        const result = await pool.query<{ function_id: number; function_name: string }>({
+            text: `SELECT oo.function_id, oo.function_name
+             FROM dbos.operation_outputs oo
+             WHERE oo.workflow_uuid = (
+                 SELECT workflow_uuid FROM dbos.workflow_status
+                 WHERE workflow_uuid LIKE 'dataprofile:' || $1 || ':%'
+                 ORDER BY created_at DESC LIMIT 1)
+             ORDER BY oo.function_id DESC LIMIT 1`,
+            values: [analysisId],
+        });
+        const row = result.rows[0];
+        if (!row) return null;
+        return { step: Number(row.function_id) + 1, label: friendlyStepLabel(row.function_name) };
+    } catch {
+        return null;
+    }
+}
+
+function formatElapsed(sinceMs: number): string {
+    const total = Math.floor((Date.now() - sinceMs) / 1000);
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return minutes > 0 ? `${minutes}m${String(seconds).padStart(2, "0")}s` : `${seconds}s`;
+}
+
+/** Poll the ledger until the run leaves `running`, narrating progress on the spinner. */
+async function waitForTerminalStatus(pool: Pool, analysisId: string, s: Spinner): Promise<{ status: string; error: string | null }> {
+    const startedAt = Date.now();
     for (;;) {
         const status = (await loadDataProfileStatus(pool, analysisId)).match(
-            (s) => s,
-            (e) => fail("Lost the ledger connection while waiting", e),
+            (st) => st,
+            (e) => {
+                s.error("Lost the ledger connection");
+                return fail("Lost the ledger connection while waiting", e);
+            },
         );
         // The row was seeded before triggering, so null here means it was
         // deleted underneath us — treat as failure rather than spinning.
         if (status === null) return { status: "failed", error: "ledger row disappeared" };
-        if (status.status !== lastShown) {
-            console.log(`    status: ${status.status}`);
-            lastShown = status.status;
-        }
         if (status.status !== "running" && status.status !== "pending") {
             return { status: status.status, error: status.error };
         }
-        await Promise.sleep(3000);
+        if (status.status === "pending") {
+            s.message(`Profiling — waiting for the run to start · ${formatElapsed(startedAt)}`);
+        } else {
+            const progress = await readRunProgress(pool, analysisId);
+            s.message(
+                progress ? `Profiling — ${progress.label} · step ${progress.step} · ${formatElapsed(startedAt)}` : `Profiling · ${formatElapsed(startedAt)}`,
+            );
+        }
+        await Promise.sleep(2000);
     }
 }
 

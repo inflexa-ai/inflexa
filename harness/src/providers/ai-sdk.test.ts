@@ -186,6 +186,52 @@ describe("createAiSdkProvider", () => {
     });
 });
 
+describe("empty text block sanitization", () => {
+    // The Anthropic API 400s on any request containing an empty text block, and
+    // the SDK's response assembly produces one whenever a turn goes straight to
+    // tool calls — the loop then echoes that assistant message back as history.
+    it("strips empty text parts from echoed history before the wire call", async () => {
+        const calls: LanguageModelV4CallOptions[] = [];
+        const provider = createAiSdkProvider({
+            model: fakeModel(async (options) => {
+                calls.push(options);
+                return okResult("done");
+            }),
+            resolveBilling: async () => ({}),
+        });
+
+        const result = await provider.chat(
+            {
+                system: "You are a test model.",
+                messages: [
+                    { role: "user", content: "profile the files" },
+                    {
+                        role: "assistant",
+                        content: [
+                            { type: "text", text: "" },
+                            { type: "tool-call", toolCallId: "tc-1", toolName: "execute_command", input: { command: "ls" } },
+                        ],
+                    },
+                    { role: "tool", content: [{ type: "tool-result", toolCallId: "tc-1", toolName: "execute_command", output: { type: "text", value: "ok" } }] },
+                    { role: "assistant", content: "" },
+                ],
+                tools: {},
+            },
+            makeSession(),
+        );
+
+        expect(result.isOk()).toBe(true);
+        const textParts = calls[0]!.prompt.flatMap((m) => (Array.isArray(m.content) ? m.content.filter((p) => p.type === "text") : []));
+        for (const part of textParts) {
+            expect(part.text).not.toBe("");
+        }
+        // The tool call survives the strip; the all-empty assistant message is dropped whole.
+        const json = JSON.stringify(calls[0]!.prompt);
+        expect(json).toContain("tc-1");
+        expect(json).not.toContain('"text":""');
+    });
+});
+
 describe("createConfiguredAiSdkProvider", () => {
     it("constructs an OpenAI-compatible provider from endpoint/key/model configuration", () => {
         const provider = createConfiguredAiSdkProvider({

@@ -25,7 +25,7 @@ import { onShutdown } from "../../lib/shutdown.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
 import { readApiKey, resolveModelId, type ChatSetupError } from "../intelligence/chat.ts";
-import { resolveHarnessConfig, type ResolvedHarnessConfig } from "./config.ts";
+import { resolveHarnessConfig, type HarnessEmbeddingConfig, type ResolvedHarnessConfig } from "./config.ts";
 import { startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
 
 // The embedded-harness composition root. Boots lazily on the first profile
@@ -53,12 +53,40 @@ export type HarnessRuntime = {
 /** Why the runtime could not boot — each variant maps to one actionable user message. */
 export type HarnessBootError =
     | { type: "embedding_unconfigured" }
+    | { type: "embedding_unreachable"; baseURL: string; detail: string }
     | { type: "skills_dir_missing"; path: string | null }
     | { type: "proxy_key_missing"; cause: ChatSetupError }
     | { type: "model_unresolved"; cause: ChatSetupError }
     | { type: "postgres_unavailable"; cause: PostgresError }
     | { type: "ingress_failed"; cause: IngressError }
     | { type: "runtime_boot_failed"; cause: unknown };
+
+/**
+ * Boot-time reachability probe for the embedding endpoint. Embeddings are
+ * consumed LATE in the profile workflow — after the sandbox agent already
+ * spent its LLM budget — and an unreachable endpoint is fatal there
+ * (`createEmbedder` throws pre-`completeDataProfile`), so one cheap real
+ * embedding up front converts an expensive late failure into a free early one.
+ * A real POST rather than an OPTIONS/HEAD sniff: OpenAI-compatible servers
+ * disagree on everything except the actual call.
+ */
+async function probeEmbeddingEndpoint(embedding: HarnessEmbeddingConfig): Promise<Result<void, { baseURL: string; detail: string }>> {
+    try {
+        const res = await fetch(`${embedding.baseURL.replace(/\/$/, "")}/embeddings`, {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${embedding.token}` },
+            body: JSON.stringify({ model: embedding.model, input: ["ping"], encoding_format: "float" }),
+            signal: AbortSignal.timeout(15_000),
+        });
+        if (!res.ok) {
+            return err({ baseURL: embedding.baseURL, detail: `HTTP ${res.status}` });
+        }
+        await res.arrayBuffer();
+        return ok(undefined);
+    } catch (cause) {
+        return err({ baseURL: embedding.baseURL, detail: cause instanceof Error ? cause.message : String(cause) });
+    }
+}
 
 /**
  * The boot sequence's effectful seams, injectable so the sequencing test runs
@@ -72,6 +100,7 @@ export type BootSeams = {
     readonly register: (deps: DataProfileDeps) => (input: DataProfileWorkflowInput) => Promise<void>;
     readonly initState: (pool: Pool) => Promise<void>;
     readonly launch: (args: { config: DbosConfig; logger: pino.Logger }) => Promise<void>;
+    readonly probeEmbedding: typeof probeEmbeddingEndpoint;
 };
 
 const realSeams: BootSeams = {
@@ -82,6 +111,7 @@ const realSeams: BootSeams = {
     register: registerDataProfileWorkflow,
     initState: initCortexState,
     launch: launchDbos,
+    probeEmbedding: probeEmbeddingEndpoint,
 };
 
 let active: HarnessRuntime | null = null;
@@ -111,7 +141,10 @@ export async function bootHarnessRuntime(
     const logger = getLogger("harness");
 
     // Prerequisites that no amount of booting can heal — checked before any
-    // side effect so a misconfigured run costs nothing.
+    // side effect so a misconfigured run costs nothing. Embeddings are their
+    // own endpoint (baseURL + API key), deliberately a separate path from the
+    // chat proxy: the proxy fronts OAuth chat providers and serves no
+    // embeddings route, so there is nothing to default to.
     if (cfg.embedding === null) return err({ type: "embedding_unconfigured" });
     if (cfg.skillsDir === null || !existsSync(cfg.skillsDir)) {
         return err({ type: "skills_dir_missing", path: cfg.skillsDir });
@@ -120,6 +153,15 @@ export async function bootHarnessRuntime(
     const keyResult = await seams.readKey();
     if (keyResult.isErr()) return err({ type: "proxy_key_missing", cause: keyResult.error });
     const apiKey = keyResult.value;
+
+    // Probe the configured endpoint before anything expensive: embeddings are
+    // consumed LATE in the profile workflow (after the sandbox agent spent its
+    // LLM budget) and an unreachable endpoint is fatal there, so reachability
+    // is verified while failure is still free.
+    const probeResult = await seams.probeEmbedding(cfg.embedding);
+    if (probeResult.isErr()) {
+        return err({ type: "embedding_unreachable", baseURL: probeResult.error.baseURL, detail: probeResult.error.detail });
+    }
 
     let model = cfg.model;
     if (model === null) {
@@ -186,6 +228,9 @@ export async function bootHarnessRuntime(
                 appName: "inflexa",
                 adminPort: String(cfg.adminPort),
                 executorId: "local",
+                // The SDK's info-level launch banner would interleave with the
+                // profile command's clack output; warnings still surface.
+                logLevel: "warn",
             },
             logger,
         });

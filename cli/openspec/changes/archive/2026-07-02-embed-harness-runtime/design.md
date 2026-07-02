@@ -182,6 +182,17 @@ resolves the analysis, runs staging, boots the runtime, triggers, and reports th
   pre-flight treats absent embedding config as a missing prerequisite with actionable
   guidance. Follow-up (separate harness change): make vector indexing optional so a
   proxy-only setup can profile without external keys.
+  *Post-rebase addenda (origin/main @ 141bcc6):* the AI SDK migration turned
+  `createAnthropicProvider` into a compatibility wrapper with the same deps shape —
+  the S1-verified wiring stands; and an `openai-compatible` provider kind now exists
+  (`providers/ai-sdk.ts`) as a ready fallback for non-Anthropic proxies. The
+  unmerged `origin/feat/local-embeddings` branch (in-process bge-small via
+  node-llama-cpp, `resolveEmbedder()` with `local|api-key|off` modes) is the
+  intended resolution of this prerequisite — but its instance-shaped provider needs
+  the harness's config-shaped `DataProfileDeps.embedding` seam made injectable, and
+  the 1536-dim `ensureSearchIndex` hardcode parameterized, before it can serve
+  profiling. See `docs/harness_integration-new/06-change-graph.md` (upstream
+  contributions section) for the full reconciliation map.
 - **[Linux container→host reachability]** `host.docker.internal` is native on
   Docker Desktop (macOS); the harness docker client sets no `--add-host`
   (grep: no ExtraHosts in `docker-client.ts`). → Skeleton targets macOS (the dev

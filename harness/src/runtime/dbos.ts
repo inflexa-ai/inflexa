@@ -35,6 +35,13 @@ export interface DbosConfig {
     readonly adminPort: string;
     /** Stable per-pod executor id (e.g. `process.env.HOSTNAME ?? "local-dev"`). */
     readonly executorId: string;
+    /**
+     * SDK log verbosity (winston levels; the SDK's own default is `info`).
+     * Interactive embedders pass `warn` so the launch banner and migration
+     * chatter don't interleave with their own command output; the server root
+     * omits it and keeps the informative default.
+     */
+    readonly logLevel?: string;
 }
 
 interface State {
@@ -95,6 +102,7 @@ export async function launchDbos({ config, logger }: { config: DbosConfig; logge
         executorID,
         applicationVersion: config.applicationVersion,
         adminPort,
+        logLevel: config.logLevel,
     });
 
     const start = performance.now();

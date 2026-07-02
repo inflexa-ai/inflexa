@@ -51,10 +51,11 @@ The command SHALL fail with an error that names the missing prerequisite and its
 remedial action whenever a prerequisite is unavailable. Covered prerequisites:
 Postgres not provisioned or not running (remedy: the setup flow), the sandbox image
 absent (remedy: build or pull the image), the local proxy unreachable (remedy: start
-or configure the proxy), the embedding endpoint unconfigured (remedy: set the
-embedding config key — the profile's vector indexing cannot run without it and would
-fail after the sandbox run already spent its work). Raw connection errors SHALL NOT
-be the surfaced form. Prerequisite checks SHALL run before staging and triggering.
+or configure the proxy), the embedding endpoint unconfigured or unreachable (remedy:
+set the embedding config key — its own baseURL + API key, separate from the chat
+proxy; the profile's vector indexing cannot run without one and would fail after the
+sandbox run already spent its work). Raw connection errors SHALL NOT be the surfaced
+form. Prerequisite checks SHALL run before staging and triggering.
 
 #### Scenario: Unprovisioned Postgres
 
@@ -66,10 +67,29 @@ be the surfaced form. Prerequisite checks SHALL run before staging and triggerin
 - **WHEN** the Docker daemon has no sandbox-base image
 - **THEN** the error names the image and how to obtain it
 
-#### Scenario: Unconfigured embedding endpoint blocks before any work
+#### Scenario: Unconfigured or unreachable embedding endpoint blocks before any work
 
-- **WHEN** the profile command runs with no embedding endpoint configured
-- **THEN** the command fails naming the embedding config key before staging or triggering anything
+- **WHEN** the profile command runs with no embedding endpoint configured, or with one that does not answer embeddings requests
+- **THEN** the command fails naming the config key (and the endpoint, when probing failed) before staging or triggering anything
+
+### Requirement: The command narrates progress and exits at the terminal state
+
+While waiting for the run, the command SHALL show live progress (at minimum the
+current workflow step translated to a human label, plus elapsed time), sourced
+best-effort from the durable step record — a progress-read failure SHALL never abort
+the wait. When the run reaches a terminal state the command SHALL report it and exit
+on its own, draining the runtime (DBOS shutdown, listener close, pool end) — the
+runtime's live handles otherwise keep the process alive indefinitely.
+
+#### Scenario: Completed run ends the command
+
+- **WHEN** the profile reaches `completed` while the command is waiting
+- **THEN** the command reports completion and the process exits without user input
+
+#### Scenario: Progress reads never kill the wait
+
+- **WHEN** a progress query against the step record fails mid-run
+- **THEN** the wait continues and only the progress detail degrades
 
 ### Requirement: Profile run state is observable
 
