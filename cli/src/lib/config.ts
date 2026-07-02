@@ -53,6 +53,16 @@ const configSchema = z.object({
     // `unknown` (never `any`) forces the owner to parse before use; and the key MUST be declared, because
     // zod strips unrecognized keys — without this line `readConfig().harness` would always be undefined.
     harness: z.unknown().optional(),
+    // Embedding backend selection. `off` until the user runs `inflexa setup --embeddings`.
+    // `modelPath` is set when `mode === "local"` (path to the GGUF); `apiKey` when `api-key`.
+    embedding: z
+        .object({
+            mode: z.enum(["local", "api-key", "off"]).catch("off").default("off"),
+            modelPath: z.string().optional(),
+            apiKey: z.string().optional(),
+        })
+        .catch({ mode: "off" })
+        .default({ mode: "off" }),
 });
 export type Config = z.infer<typeof configSchema>;
 
@@ -66,7 +76,7 @@ export function readConfig(): Config {
     } catch {
         // Missing or unreadable config fails closed: consent not granted.
     }
-    return { telemetry: false, theme: DEFAULT_THEME_ID, runtime: "docker", leaderTimeout: 2000 };
+    return { telemetry: false, theme: DEFAULT_THEME_ID, runtime: "docker", leaderTimeout: 2000, embedding: { mode: "off" } };
 }
 
 /**

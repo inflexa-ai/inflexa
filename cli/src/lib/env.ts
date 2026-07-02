@@ -61,6 +61,14 @@ export const env = Object.freeze({
      */
     sessionsDir: join(dataDir(), "inflexa", "sessions"),
     /**
+     * Local embedding model storage: `<dataDir>/inflexa/models/`. The GGUF for
+     * `bge-small-en-v1.5` (q8_0, 384-dim) is downloaded here on `inflexa setup --embeddings`
+     * opt-in. See src/modules/embedding/setup.ts.
+     */
+    modelDir: join(dataDir(), "inflexa", "models"),
+    /** The local embedding GGUF path — `<modelDir>/bge-small-en-v1.5-q8_0.gguf`. */
+    embeddingModelPath: join(dataDir(), "inflexa", "models", "bge-small-en-v1.5-q8_0.gguf"),
+    /**
      * CLIProxyAPI runs in a container (Docker or Podman, see
      * src/modules/infra/setup.ts). The config and the provider-credential dir are
      * state we own, so they live under our data dir and are bind-mounted into the
@@ -151,6 +159,8 @@ export const envDoc: Readonly<
     outputFallbackDir: { kind: "path", label: "outputs", description: "analysis outputs when the anchor folder isn't writable", baseVar: dataVar },
     locksDir: { kind: "path", label: "locks", description: "advisory per-analysis instance locks", baseVar: dataVar },
     sessionsDir: { kind: "path", label: "sessions", description: "harness session trees: staged inputs and sandbox run outputs", baseVar: dataVar },
+    modelDir: { kind: "path", label: "models", description: "local embedding GGUF models, downloaded by `inflexa setup --embeddings`", baseVar: dataVar },
+    embeddingModelPath: { kind: "path", label: "embedding model", description: "the bge-small-en-v1.5 GGUF used by the local embedding provider", baseVar: dataVar },
     cliproxyConfigPath: { kind: "path", label: "proxy config", description: "CLIProxyAPI config, mounted into the proxy container", baseVar: dataVar },
     cliproxyAuthDir: { kind: "path", label: "proxy auth", description: "CLIProxyAPI provider credentials, created by `inflexa setup`", baseVar: dataVar },
     postgresDataDir: {
