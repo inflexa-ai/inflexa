@@ -8,11 +8,9 @@
  * raw markdown into a valid envelope; on hard failure an `extraction-failed`
  * error envelope surfaces — the frontend never has to render raw prose.
  *
- * One provider serves both the research agent and the conversion retry.
- * The harness Anthropic provider silently drops `temperature` on 4.7+
- * models (`gatePerCallOverrides`), so a Sonnet-vs-Opus split for the
- * conversion path is unnecessary here — the wrapper's parse + validate +
- * error-envelope cascade is the real correctness guarantee.
+ * One provider serves both the research agent and the conversion retry; the
+ * wrapper's parse + validate + error-envelope cascade is the correctness
+ * boundary.
  */
 
 import { ok } from "neverthrow";

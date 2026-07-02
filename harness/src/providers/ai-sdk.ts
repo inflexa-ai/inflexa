@@ -1,4 +1,4 @@
-import { generateText, type LanguageModel } from "ai";
+import { generateText, streamText, type FinishReason, type LanguageModel, type ModelMessage } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
@@ -7,6 +7,8 @@ import { scopeWorkloadId, type AgentSession } from "../auth/types.js";
 import type { ResolveBilling } from "../billing/resolver.js";
 import { type ProviderError, toProviderError } from "./errors.js";
 import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, FetchLike, ProviderCapabilities } from "./types.js";
+
+const DEFAULT_MAX_RETRIES = 2;
 
 export interface AiSdkProviderDeps {
     readonly model: LanguageModel;
@@ -48,16 +50,25 @@ function isAbortError(value: unknown): boolean {
     return false;
 }
 
-function responseFromGenerate(result: Awaited<ReturnType<typeof generateText>>): ChatResponse {
-    const message = [...result.responseMessages].reverse().find((m): m is Extract<(typeof result.responseMessages)[number], { role: "assistant" }> => m.role === "assistant");
+function responseFromMessages(
+    messages: readonly ModelMessage[],
+    fallbackText: string,
+    finishReason: FinishReason,
+    rawFinishReason?: string,
+): ChatResponse {
+    const message = [...messages].reverse().find((m): m is Extract<ModelMessage, { role: "assistant" }> => m.role === "assistant");
     if (message === undefined) {
         return {
-            message: { role: "assistant", content: result.text },
-            finishReason: result.finishReason,
-            rawFinishReason: result.rawFinishReason,
+            message: { role: "assistant", content: fallbackText },
+            finishReason,
+            rawFinishReason,
         };
     }
-    return { message, finishReason: result.finishReason, rawFinishReason: result.rawFinishReason };
+    return { message, finishReason, rawFinishReason };
+}
+
+function responseFromGenerate(result: Awaited<ReturnType<typeof generateText>>): ChatResponse {
+    return responseFromMessages(result.responseMessages, result.text, result.finishReason, result.rawFinishReason);
 }
 
 export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
@@ -74,7 +85,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                     tools: req.tools,
                     toolChoice: req.toolChoice ?? "auto",
                     stopWhen: [],
-                    maxRetries: 0,
+                    maxRetries: DEFAULT_MAX_RETRIES,
                     headers,
                     abortSignal: signal,
                     providerOptions: req.providerOptions,
@@ -89,17 +100,31 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     }
 
     async function* chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent> {
-        const response = await chat(req, session, signal);
-        if (response.isErr()) throw response.error;
-        const content = response.value.message.content;
-        if (typeof content === "string") {
-            yield { type: "text-delta", text: content };
-        } else {
-            for (const part of content) {
-                if (part.type === "text") yield { type: "text-delta", text: part.text };
+        try {
+            const headers = await deps.resolveBilling(session);
+            const result = streamText({
+                model: deps.model,
+                system: req.system,
+                messages: [...req.messages],
+                tools: req.tools,
+                toolChoice: req.toolChoice ?? "auto",
+                stopWhen: [],
+                maxRetries: DEFAULT_MAX_RETRIES,
+                headers,
+                abortSignal: signal,
+                providerOptions: req.providerOptions,
+            });
+            let text = "";
+            for await (const delta of result.textStream) {
+                text += delta;
+                yield { type: "text-delta", text: delta };
             }
+            const response = responseFromMessages(await result.responseMessages, text, await result.finishReason, await result.rawFinishReason);
+            yield { type: "done", response };
+        } catch (e) {
+            if (isAbortError(e) || signal?.aborted) throw e;
+            throw toProviderError(e, workloadOf(session));
         }
-        yield { type: "done", response: response.value };
     }
 
     return { capabilities, chat, chatStream };
@@ -111,7 +136,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         const provider = createAnthropic({
             baseURL: config.baseURL,
             apiKey: config.apiKey,
-            fetch: config.fetch,
+            fetch: config.fetch as typeof fetch | undefined,
         });
         return createAiSdkProvider({ model: provider.chat(config.model), resolveBilling: deps.resolveBilling, capabilities: config.capabilities });
     }
@@ -120,7 +145,7 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         name: config.name,
         baseURL: config.baseURL,
         apiKey: config.apiKey,
-        fetch: config.fetch,
+        fetch: config.fetch as typeof fetch | undefined,
     });
     return createAiSdkProvider({ model: provider.chatModel(config.model), resolveBilling: deps.resolveBilling, capabilities: config.capabilities });
 }

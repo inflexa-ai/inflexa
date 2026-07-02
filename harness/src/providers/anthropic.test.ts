@@ -25,12 +25,46 @@ function anthropicJson(text: string): Response {
     );
 }
 
+function anthropicStream(deltas: readonly string[]): Response {
+    const events = [
+        {
+            type: "message_start",
+            message: {
+                id: "msg_test_1",
+                type: "message",
+                role: "assistant",
+                model: "claude-opus-4-7",
+                content: [],
+                stop_reason: null,
+                stop_sequence: null,
+                usage: {
+                    input_tokens: 12,
+                    output_tokens: 0,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                },
+            },
+        },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        ...deltas.map((text) => ({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } })),
+        { type: "content_block_stop", index: 0 },
+        { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 3 } },
+        { type: "message_stop" },
+    ];
+    const body = events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+    return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
 function capturingFetch(): { fetch: FetchLike; bodies: unknown[]; headers: Headers[] } {
     const bodies: unknown[] = [];
     const headers: Headers[] = [];
     const fetch: FetchLike = async (_input, init) => {
-        bodies.push(init?.body ? JSON.parse(String(init.body)) : undefined);
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        bodies.push(body);
         headers.push(new Headers(init?.headers));
+        if (body?.stream === true) {
+            return anthropicStream(["Hello, ", "world"]);
+        }
         return anthropicJson("Hello, world");
     };
     return { fetch, bodies, headers };
@@ -80,7 +114,8 @@ describe("createAnthropicProvider", () => {
         }
 
         expect(events).toEqual([
-            { type: "text-delta", text: "Hello, world" },
+            { type: "text-delta", text: "Hello, " },
+            { type: "text-delta", text: "world" },
             {
                 type: "done",
                 response: {
