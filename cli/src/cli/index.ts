@@ -118,6 +118,20 @@ cli.command("status")
         runStatus({ analysis: options.analysis, project: options.project });
     });
 
+// The deliberate harness entry point: stages files and boots the embedded
+// runtime, which no passive flow may do (no-litter policy).
+cli.command("profile")
+    .description("Stage the analysis's inputs and run a data profile in the harness sandbox")
+    .option("--analysis <id|name>", "Operate on a specific analysis")
+    .option("--project <name>", "Scope to a project")
+    .option("--status", "Show the profile run state instead of starting a run")
+    .action(async (options: { analysis?: string; project?: string; status?: boolean }) => {
+        const { runProfile, runProfileStatus } = await import("../modules/harness/profile.ts");
+        const flags = { analysis: options.analysis, project: options.project };
+        if (options.status) await runProfileStatus(flags);
+        else await runProfile(flags);
+    });
+
 const analysisCmd = cli.command("analysis").description("Manage analyses (grouping)");
 
 analysisCmd

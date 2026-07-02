@@ -34,6 +34,43 @@ const configSchema = z.object({
         })
         .catch({})
         .optional(),
+    // The embedded harness runtime (data-profile runs). Optional — per-field defaults
+    // resolve in modules/harness/config.ts, mirroring the postgres key's pattern.
+    // `embedding` has no defaults: the local proxy serves no embeddings endpoint
+    // (Anthropic auth), so a user-supplied OpenAI-compatible endpoint is a launch
+    // prerequisite. The catch salvages a corrupt `harness` value to all-defaults.
+    harness: z
+        .object({
+            model: z.string().optional(),
+            embedding: z
+                .object({
+                    baseURL: z.string(),
+                    token: z.string(),
+                    model: z.string().optional(),
+                })
+                .optional(),
+            bioKeys: z
+                .object({
+                    drugbank: z.string().optional(),
+                    disgenet: z.string().optional(),
+                    epaCcte: z.string().optional(),
+                    ncbi: z.string().optional(),
+                    github: z.string().optional(),
+                })
+                .optional(),
+            sandboxImage: z.string().optional(),
+            resourceLimits: z
+                .object({
+                    maxCpu: z.number().positive().optional(),
+                    maxMemoryGb: z.number().positive().optional(),
+                    maxGpuCount: z.number().int().nonnegative().optional(),
+                })
+                .optional(),
+            adminPort: z.number().int().positive().optional(),
+            skillsDir: z.string().optional(),
+        })
+        .catch({})
+        .optional(),
 });
 export type Config = z.infer<typeof configSchema>;
 

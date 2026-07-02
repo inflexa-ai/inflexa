@@ -51,6 +51,15 @@ export const env = Object.freeze({
      */
     locksDir: join(dataDir(), "inflexa", "locks"),
     /**
+     * Harness session trees: `<sessionsDir>/<analysisId>/…` holds an analysis's staged
+     * inputs (`data/inputs/…`) and its sandbox run outputs (`runs/<runId>/<stepId>/…`).
+     * Deliberately ONE global base rather than per-analysis (e.g. under the analysis's
+     * output dir): the embedded harness closes over a single `sessionsBasePath` when its
+     * workflows are registered, once per process, so the base cannot vary by analysis.
+     * See openspec/changes/embed-harness-runtime (design decision D2).
+     */
+    sessionsDir: join(dataDir(), "inflexa", "sessions"),
+    /**
      * CLIProxyAPI runs in a container (Docker or Podman, see
      * src/modules/infra/setup.ts). The config and the provider-credential dir are
      * state we own, so they live under our data dir and are bind-mounted into the
@@ -140,6 +149,7 @@ export const envDoc: Readonly<
     logDir: { kind: "path", label: "logs", description: "log files, rotated daily, 7-day retention", baseVar: dataVar },
     outputFallbackDir: { kind: "path", label: "outputs", description: "analysis outputs when the anchor folder isn't writable", baseVar: dataVar },
     locksDir: { kind: "path", label: "locks", description: "advisory per-analysis instance locks", baseVar: dataVar },
+    sessionsDir: { kind: "path", label: "sessions", description: "harness session trees: staged inputs and sandbox run outputs", baseVar: dataVar },
     cliproxyConfigPath: { kind: "path", label: "proxy config", description: "CLIProxyAPI config, mounted into the proxy container", baseVar: dataVar },
     cliproxyAuthDir: { kind: "path", label: "proxy auth", description: "CLIProxyAPI provider credentials, created by `inflexa setup`", baseVar: dataVar },
     postgresDataDir: {
