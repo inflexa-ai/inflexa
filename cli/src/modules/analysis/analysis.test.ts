@@ -1,11 +1,14 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
-import { makeBaseSlug, matchOutputPrefix, detectSourceAnalysis } from "./analysis.ts";
+import { makeBaseSlug, matchOutputPrefix, detectSourceAnalysis, createAnalysis, applyInputsDiff } from "./analysis.ts";
 import { defaultOutputSubdir } from "./output.ts";
 import { freshDb } from "../../test_support/db.ts";
 import { insertAnchor, insertAnalysis } from "../../db/primary_mutation.ts";
-import { asStr256 } from "../../lib/types.ts";
+import { listAnalysisInputs } from "../../db/primary_query.ts";
+import { asStr256, str256 } from "../../lib/types.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { AnalysisInput } from "../../types/analysis.ts";
 
@@ -82,5 +85,45 @@ describe("detectSourceAnalysis", () => {
         const dst = insertAnalysis(row("DST", "dst", "anc"))._unsafeUnwrap();
         const i = input({ path: join("some", "other", "file.csv"), analysisId: dst.id, anchorId: "anc" });
         expect(detectSourceAnalysis(i, dst.id)._unsafeUnwrap()).toBeNull();
+    });
+});
+
+describe("applyInputsDiff", () => {
+    let dir = "";
+
+    beforeEach(() => {
+        freshDb();
+        // realpath so the analysis's stored paths match macOS's canonical /private/var.
+        dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-diff-")));
+    });
+
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("a failed add batch skips the removals — the diff lands as a unit or not at all", () => {
+        writeFileSync(join(dir, "keep.txt"), "x");
+        const a = createAnalysis({ cwd: dir, name: str256("diff-a")._unsafeUnwrap(), inputPaths: [join(dir, "keep.txt")] })._unsafeUnwrap();
+        const existing = listAnalysisInputs(a.id)._unsafeUnwrap();
+        expect(existing).toHaveLength(1);
+
+        // The add batch is all-or-nothing (classification short-circuits on the vanished path);
+        // the recorded input must survive because the removals never ran.
+        const failures = applyInputsDiff(a.id, [join(dir, "vanished.txt")], existing, dir);
+        expect(failures.map((f) => f.op)).toEqual(["add"]);
+        expect(listAnalysisInputs(a.id)._unsafeUnwrap()).toHaveLength(1);
+    });
+
+    test("adds then removals apply when the add batch succeeds", () => {
+        writeFileSync(join(dir, "old.txt"), "x");
+        writeFileSync(join(dir, "new.txt"), "x");
+        const a = createAnalysis({ cwd: dir, name: str256("diff-b")._unsafeUnwrap(), inputPaths: [join(dir, "old.txt")] })._unsafeUnwrap();
+        const existing = listAnalysisInputs(a.id)._unsafeUnwrap();
+
+        const failures = applyInputsDiff(a.id, [join(dir, "new.txt")], existing, dir);
+        expect(failures).toEqual([]);
+        const after = listAnalysisInputs(a.id)._unsafeUnwrap();
+        expect(after).toHaveLength(1);
+        expect(after[0]?.path).toContain("new.txt");
     });
 });

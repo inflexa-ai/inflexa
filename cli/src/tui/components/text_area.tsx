@@ -28,6 +28,12 @@ export type TextAreaProps = {
      */
     busy?: boolean;
     /**
+     * Grab focus on mount (default true — prompts exist to be typed into). Hosts rendering the
+     * textarea as a non-primary widget (gallery exhibits, showcased dialogs) pass false so it
+     * mounts blurred, in NORMAL chrome, without stealing the surface's focus.
+     */
+    autoFocus?: boolean;
+    /**
      * Called when the textarea gains or loses focus. The component tracks focus internally via
      * renderable events — this is a notification, not a control prop. Hosts that gate behavior on
      * focus state (e.g. scroll-mode keys, INSERT/NORMAL display) observe it through this callback.
@@ -60,7 +66,10 @@ const keyBindings: KeyBinding[] = [
  * - **bare** — no border, no mode text; mode signal is background color shift only.
  */
 export function TextArea(props: TextAreaProps): JSX.Element {
-    const [focused, setFocused] = createSignal(true);
+    // Seeded from autoFocus so a widget mounted blurred renders NORMAL chrome from the first
+    // frame — the renderable emits no `blurred` event at mount to correct a wrong seed.
+    // eslint-disable-next-line solid/reactivity -- seed-once: autoFocus is a mount-time contract
+    const [focused, setFocused] = createSignal(props.autoFocus ?? true);
     let ref: TextareaRenderable | null = null;
 
     const modeWord = () => (focused() ? "INSERT" : "NORMAL");
@@ -87,7 +96,7 @@ export function TextArea(props: TextAreaProps): JSX.Element {
     const textarea = (
         <textarea
             ref={handleRef}
-            focused
+            focused={props.autoFocus ?? true}
             width="100%"
             height={props.height}
             initialValue={props.initialValue}

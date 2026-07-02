@@ -1,5 +1,6 @@
-import { readdirSync, statSync, type Dirent } from "node:fs";
+import { readdirSync, type Dirent } from "node:fs";
 import { dirname, isAbsolute, resolve, sep } from "node:path";
+import { ok, err, type Result } from "neverthrow";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type { InputRenderable } from "@opentui/core";
@@ -7,8 +8,9 @@ import type { InputRenderable } from "@opentui/core";
 import { GLYPHS, space } from "../../../lib/design_system.ts";
 import { theme } from "../../theme.ts";
 import { KEYS, chordLabel, type Chord } from "../../keymap.ts";
+import { statResult } from "../../../lib/fs.ts";
 import { canonicalPath } from "../../../modules/anchor/marker.ts";
-import { openerArgv } from "../../../modules/analysis/open.ts";
+import { openInFileBrowser } from "../../../modules/analysis/open.ts";
 import { notify } from "../../hooks/notice.ts";
 import { useDialogBindings, useDialogCancel, useDialogCloseGuard } from "./dialog_host.tsx";
 import { DialogPanel } from "./dialog_panel.tsx";
@@ -34,8 +36,9 @@ import type { SelectItem } from "../list_core.tsx";
 //     cursor and enter still descends/confirms (no collision with typing); esc BLURS to NORMAL —
 //     via the dialog close-guard veto, since content dialogs never bind esc themselves.
 //   NORMAL (input blurred — the mount default): space toggles, enter descends into a dir or
-//     confirms the batch, ←/→ ascend/descend, `i` filter, `a` hidden files, `s` review the
-//     selection, `o` open in the OS explorer, esc cancels the picker.
+//     confirms the batch from a file row, `c` confirms regardless of the cursor (the only
+//     confirm reachable when every visible row is a directory), ←/→ ascend/descend, `i` filter,
+//     `a` hidden files, `s` review the selection, `o` open in the OS explorer, esc cancels.
 //   REVIEW (`s`): the browse view swaps for a list of the selected paths; enter removes one,
 //     esc returns to browsing. The swap unmounts the browse list, so on return it remounts
 //     seeded from the picker's selection mirror — that remount is what lets review edit a
@@ -51,6 +54,9 @@ const PICKER_KEYS = {
     hidden: { key: "a" },
     review: { key: "s" },
     explorer: { key: "o" },
+    // Confirm regardless of the cursor row: enter is overloaded (a dir row descends), so a
+    // listing whose every row is a directory would otherwise offer no way to hand the batch back.
+    confirm: { key: "c" },
 } as const satisfies Record<string, Chord>;
 
 /** A disk row. `..` is synthesized upstream of these so it never collides with a real entry. */
@@ -77,39 +83,42 @@ export type FilePickerProps = {
 };
 
 /**
- * The current dir, dirs-first then files, each group alphabetical (case-insensitive). A non-null
- * `error` means `dir` was unreadable (permission, broken mount): the caller renders it and the
- * user ascends — a single unreadable folder must not abort the whole picker.
+ * The current dir, dirs-first then files, each group alphabetical (case-insensitive). The err
+ * channel is the human-readable message (permission, broken mount): the caller renders it as the
+ * list's error line and the user ascends — a single unreadable folder must not abort the picker.
  */
-function listDir(dir: string, hideHidden: boolean): { rows: Row[]; error: string | null } {
+function listDir(dir: string, hideHidden: boolean): Result<Row[], string> {
     let entries: Dirent[];
     try {
-        entries = readdirSync(dir, { withFileTypes: true }) as Dirent[];
+        entries = readdirSync(dir, { withFileTypes: true });
     } catch (cause) {
-        return { rows: [], error: (cause as NodeJS.ErrnoException).message };
+        return err(cause instanceof Error ? cause.message : String(cause));
     }
     const rows: Row[] = [];
     for (const e of entries) {
         if (hideHidden && e.name.startsWith(".")) continue;
         // `withFileTypes` carries the classification straight off the dirent — one readdir, not
-        // N stats. A symlink-to-dir browses as a folder (node_modules/* is often a symlink);
-        // resolution goes through `canonicalPath` on descent so the breadcrumb shows where the
-        // user actually is.
-        const isDir = e.isDirectory() || (e.isSymbolicLink() && safeSymlinkIsDir(resolve(dir, e.name)));
-        rows.push({ name: e.name, isDir, abs: resolve(dir, e.name) });
+        // N stats. A symlink-to-dir browses as a folder (node_modules/* is often a symlink).
+        // Symlink rows carry their CANONICAL target as the value: the selection space is
+        // canonical (classifyInputPath stores realpaths, the seed re-canonicalizes), so an
+        // uncanonical row would render a recorded input unchecked. canonicalPath degrades to
+        // the textual path for broken links, which then classify as file rows.
+        const raw = resolve(dir, e.name);
+        const abs = e.isSymbolicLink() ? canonicalPath(raw) : raw;
+        const isDir = e.isDirectory() || (e.isSymbolicLink() && safeSymlinkIsDir(abs));
+        rows.push({ name: e.name, isDir, abs });
     }
     rows.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) : a.isDir ? -1 : 1));
-    return { rows, error: null };
+    return ok(rows);
 }
 
 // Best-effort: a broken symlink (target gone) must not crash the listing — it degrades to a file
-// row, the safe non-browsable choice.
+// row, the safe non-browsable choice. `abs` is already canonical (listDir resolved it).
 function safeSymlinkIsDir(abs: string): boolean {
-    try {
-        return statSync(canonicalPath(abs)).isDirectory();
-    } catch {
-        return false;
-    }
+    return statResult(abs, "filePicker:symlinkStat").match(
+        (s) => s.isDirectory(),
+        () => false,
+    );
 }
 
 /** The cwd tail, segment-collapsed when deep — head + tail always shown, mid-segments ellipsized. */
@@ -141,6 +150,12 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
     let inputRef: InputRenderable | null = null;
 
     const listed = createMemo(() => listDir(cwd(), hideHidden()));
+    const rows = (): Row[] => listed().unwrapOr([]);
+    const listError = (): string | null =>
+        listed().match(
+            () => null,
+            (e) => e,
+        );
     const parentAbs = (): string => dirname(cwd());
 
     // `..` is synthesized ahead of the rows (never read from disk, so it can't collide with a
@@ -148,15 +163,14 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
     // it, and an unreadable dir drops it so the error surfaces as the list's empty state (← still
     // ascends). Dir titles carry a trailing `/` — the type marker that needs no color.
     const items = createMemo<SelectItem<string>[]>(() => {
-        const { rows, error } = listed();
         const out: SelectItem<string>[] = [];
-        if (query().trim() === "" && !error) out.push({ value: parentAbs(), title: ".." });
-        for (const r of rows) out.push({ value: r.abs, title: r.isDir ? `${r.name}/` : r.name });
+        if (query().trim() === "" && listError() === null) out.push({ value: parentAbs(), title: ".." });
+        for (const r of rows()) out.push({ value: r.abs, title: r.isDir ? `${r.name}/` : r.name });
         return out;
     });
 
     function isDirRow(abs: string): boolean {
-        return abs === parentAbs() || (listed().rows.find((r) => r.abs === abs)?.isDir ?? false);
+        return abs === parentAbs() || (rows().find((r) => r.abs === abs)?.isDir ?? false);
     }
     function intoDir(abs: string): void {
         setCwd(canonicalPath(abs));
@@ -185,8 +199,10 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
     function openExplorer(): void {
         const abs = cursorAbs();
         const dir = abs === undefined ? cwd() : isDirRow(abs) ? abs : dirname(abs);
-        Bun.spawn(openerArgv(dir), { stdout: "ignore", stderr: "ignore" });
-        notify({ kind: "info", text: `Opened ${dir}` });
+        openInFileBrowser(dir).match(
+            () => notify({ kind: "info", text: `Opened ${dir}` }),
+            () => notify({ kind: "error", text: "No system file browser available." }),
+        );
     }
 
     // Review rows: root-relative when inside the picker's root so paths from different subdirs
@@ -254,6 +270,12 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
                 group: "File picker",
             },
             { chord: PICKER_KEYS.explorer, run: openExplorer, desc: "Open in explorer", group: "File picker" },
+            {
+                chord: PICKER_KEYS.confirm,
+                run: () => handleConfirm([...selected()]),
+                desc: "Confirm selection",
+                group: "File picker",
+            },
         ],
     }));
 
@@ -266,7 +288,8 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
         return [
             "NORMAL",
             `${chordLabel(KEYS.space)} toggle`,
-            `${chordLabel(KEYS.enter)} open/${props.confirmLabel.toLowerCase()}`,
+            `${chordLabel(KEYS.enter)} open`,
+            `${chordLabel(PICKER_KEYS.confirm)} ${props.confirmLabel.toLowerCase()}`,
             `${chordLabel(PICKER_KEYS.hidden)} ${hideHidden() ? "show" : "hide"} hidden`,
             `${chordLabel(PICKER_KEYS.review)} review`,
             `${chordLabel(PICKER_KEYS.explorer)} explorer`,
@@ -321,7 +344,7 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
                     items={items()}
                     query={query()}
                     emptyText={query().trim() === "" ? "Empty folder" : "No matches"}
-                    errorText={listed().error}
+                    errorText={listError()}
                     mode="multi"
                     initialSelected={selected()}
                     canToggle={(abs) => abs !== parentAbs()}

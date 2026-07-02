@@ -1,4 +1,6 @@
 import type { JSX } from "solid-js";
+import { TextareaRenderable } from "@opentui/core";
+import { useRenderer } from "@opentui/solid";
 
 import { GLYPHS, space } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
@@ -54,12 +56,19 @@ function State(props: { n: string; label: string; children: JSX.Element }): JSX.
  */
 export function DesignGallery(props: { onClose: () => void }): JSX.Element {
     const dialog = useDialogEntry();
+    const renderer = useRenderer();
 
     useDialogCancel(() => props.onClose());
 
     // Scroll keys (and focus-on-mount) come from ScrollPane; esc/cancel is the host's. `q` is a
-    // bare printable but compliant: no text input coexists with it in this read-only showcase.
+    // bare printable, and the exhibits include CLICKABLE editors (the TextArea/TextInput states
+    // invite focusing them), so the layer gates itself off while any editor holds focus — the
+    // keymap dispatches before the focused editor and would otherwise eat the typed character
+    // (the bare-printable-key rule). InputRenderable extends TextareaRenderable, so one
+    // instanceof covers both primitives. Read at dispatch time (the config thunk re-runs per
+    // keystroke), so no reactive focus mirror is needed.
     useDialogBindings(() => ({
+        enabled: !(renderer.currentFocusedRenderable instanceof TextareaRenderable),
         bindings: [{ chord: KEYS.q, run: () => props.onClose() }],
     }));
     const runSteps = mockRun.steps.map((s) => ({ label: s.label, state: s.state }));
@@ -114,20 +123,22 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         Press {GLYPHS.middot} ctrl+k {GLYPHS.middot} in the chat to open the live command palette overlay.
                     </text>
                 </State>
+                {/* Exhibits mount blurred (autoFocus={false}): a focused-at-mount editor would
+                    steal the gallery pane's focus, surviving only by microtask ordering. */}
                 <State n="9" label="TextArea — full / compact / bare chrome">
-                    <text fg={theme().fgMuted}>click a textarea to see INSERT {GLYPHS.arrowRight} NORMAL mode shift</text>
+                    <text fg={theme().fgMuted}>click a textarea to focus it and see the NORMAL {GLYPHS.arrowRight} INSERT mode shift</text>
                     <text fg={theme().fgMuted}>full (border signals focus, host adds footer):</text>
-                    <TextArea chrome="full" placeholder="Type a message…" onSubmit={noop} />
+                    <TextArea chrome="full" autoFocus={false} placeholder={`Type a message${GLYPHS.ellipsis}`} onSubmit={noop} />
                     <text fg={theme().fgMuted}>compact (mode word in border title):</text>
-                    <TextArea chrome="compact" placeholder="Enter a name…" onSubmit={noop} />
+                    <TextArea chrome="compact" autoFocus={false} placeholder={`Enter a name${GLYPHS.ellipsis}`} onSubmit={noop} />
                     <text fg={theme().fgMuted}>bare (background shift only):</text>
-                    <TextArea chrome="bare" placeholder="Bare textarea…" onSubmit={noop} />
+                    <TextArea chrome="bare" autoFocus={false} placeholder={`Bare textarea${GLYPHS.ellipsis}`} onSubmit={noop} />
                 </State>
                 <State n="10" label="TextInput — compact / bare chrome">
                     <text fg={theme().fgMuted}>compact (bordered, focus shifts border):</text>
-                    <TextInput chrome="compact" placeholder="Filter…" />
+                    <TextInput chrome="compact" autoFocus={false} placeholder={`Filter${GLYPHS.ellipsis}`} />
                     <text fg={theme().fgMuted}>bare (no border):</text>
-                    <TextInput chrome="bare" placeholder="Type to filter…" />
+                    <TextInput chrome="bare" autoFocus={false} placeholder={`Type to filter${GLYPHS.ellipsis}`} />
                 </State>
                 <State n="11" label="dialogs — sizes, tones, and the content family (inert exhibits)">
                     <text fg={theme().fgMuted}>PromptDialog — single-line (md, TextInput, no mode word):</text>
@@ -136,11 +147,18 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     </DialogShowcase>
                     <text fg={theme().fgMuted}>PromptDialog — multiline (TextArea, ctrl+j newline):</text>
                     <DialogShowcase>
-                        <PromptDialog title="Description" multiline height={3} placeholder="A longer text…" onSubmit={noop} onCancel={noop} />
+                        <PromptDialog
+                            title="Description"
+                            multiline
+                            height={3}
+                            placeholder={`A longer text${GLYPHS.ellipsis}`}
+                            onSubmit={noop}
+                            onCancel={noop}
+                        />
                     </DialogShowcase>
                     <text fg={theme().fgMuted}>PromptDialog — busy (spinner in footer, dismissal vetoed):</text>
                     <DialogShowcase>
-                        <PromptDialog title="Rename" value="analysis-1" busy busyText="Renaming…" onSubmit={noop} onCancel={noop} />
+                        <PromptDialog title="Rename" value="analysis-1" busy busyText={`Renaming${GLYPHS.ellipsis}`} onSubmit={noop} onCancel={noop} />
                     </DialogShowcase>
                     <text fg={theme().fgMuted}>danger tone (double border — destructive confirms):</text>
                     <DialogShowcase>

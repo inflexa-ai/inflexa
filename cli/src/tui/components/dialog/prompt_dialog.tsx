@@ -46,6 +46,9 @@ export function PromptDialog(props: {
     onCancel: () => void;
 }): JSX.Element {
     const dialog = useDialogEntry();
+    // Showcased exhibits must not grab focus at mount: the editor's `focused` prop acts below
+    // the inert handle's reach, so autoFocus is threaded off explicitly.
+    const autoFocus = !(dialog?.inert ?? false);
     // Input extends Textarea in opentui, so one ref type covers both primitives.
     let editRef: TextareaRenderable | undefined;
     const [spinFrame, setSpinFrame] = createSignal(0);
@@ -102,6 +105,7 @@ export function PromptDialog(props: {
                     fallback={
                         <TextInput
                             chrome="bare"
+                            autoFocus={autoFocus}
                             placeholder={props.placeholder}
                             initialValue={props.value}
                             busy={props.busy}
@@ -112,6 +116,7 @@ export function PromptDialog(props: {
                 >
                     <TextArea
                         chrome="bare"
+                        autoFocus={autoFocus}
                         height={props.height ?? 3}
                         placeholder={props.placeholder}
                         initialValue={props.value}

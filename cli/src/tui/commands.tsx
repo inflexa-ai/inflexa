@@ -19,7 +19,7 @@ import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts"
 import { readConfig, writeConfig } from "../lib/config.ts";
 import { mkdirResult, writeFileResult } from "../lib/fs.ts";
 import { str256, type Str256 } from "../lib/types.ts";
-import { createAnalysis, listRecentAnalyses, uniqueSlugForAnchor, addInputs, removeInput, matchAnalysis } from "../modules/analysis/analysis.ts";
+import { createAnalysis, listRecentAnalyses, uniqueSlugForAnchor, applyInputsDiff, removeInput, matchAnalysis } from "../modules/analysis/analysis.ts";
 import { resolveInputPath } from "../modules/analysis/input.ts";
 import { resolveContext, describeContext } from "../modules/analysis/context.ts";
 import { openOutputDir } from "../modules/analysis/open.ts";
@@ -411,20 +411,8 @@ function AddInputDialog(): JSX.Element {
                 const confirmed = new Set(paths);
                 const toAdd = paths.filter((p) => !seed.has(p));
                 const toRemove = resolved.filter((r) => !confirmed.has(r.abs)).map((r) => r.input);
-                const failures: string[] = [];
-                if (toAdd.length > 0) {
-                    addInputs(a.id, toAdd, ws.workingDir).match(
-                        () => {},
-                        (e) => failures.push(`add: ${e.type}`),
-                    );
-                }
-                for (const input of toRemove) {
-                    removeInput(input).match(
-                        () => {},
-                        (e) => failures.push(`remove: ${e.type}`),
-                    );
-                }
-                if (failures.length > 0) notify({ kind: "error", text: `Input update failed (${failures[0]})` });
+                const firstFailure = applyInputsDiff(a.id, toAdd, toRemove, ws.workingDir)[0];
+                if (firstFailure) notify({ kind: "error", text: `Input update failed (${firstFailure.op}: ${firstFailure.error.type})` });
                 else if (toAdd.length === 0 && toRemove.length === 0) notify({ kind: "info", text: "Inputs unchanged" });
                 else notify({ kind: "info", text: `Inputs updated: +${toAdd.length} -${toRemove.length}` });
             }}

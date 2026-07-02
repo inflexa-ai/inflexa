@@ -95,3 +95,17 @@ Each dialog entry SHALL declare its initial focus target through the host (via t
 
 - **WHEN** a form dialog's tab cycle moves the visual active indicator from its text field to an option row
 - **THEN** the text field's renderable is blurred, so unbound printable keys no longer insert into it
+
+### Requirement: Showcased dialogs are inert, including focus
+
+`DialogShowcase` SHALL render dialog components as static exhibits: children receive a never-top handle whose `inert` flag is true, so their key layers stay suspended and their close hooks attach to nothing. Because an editor's renderable-level `focused` prop grabs focus below the handle's reach, input-bearing dialogs SHALL thread `inert` into their editors' `autoFocus` — a showcased dialog mounts every editor blurred and SHALL NOT steal the surrounding surface's focus (not even transiently at mount).
+
+#### Scenario: Showcased prompt grabs no focus
+
+- **WHEN** the design gallery renders a `PromptDialog` inside `DialogShowcase`
+- **THEN** the gallery's scroll pane keeps renderer focus; the exhibit's input mounts blurred
+
+#### Scenario: Real dialogs still autofocus
+
+- **WHEN** the same dialog is pushed onto the real dialog stack
+- **THEN** its editor mounts focused as before (`inert` is false on real entry handles)

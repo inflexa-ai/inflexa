@@ -159,7 +159,7 @@ The chat's live status (`idle`/`busy`/`error`) SHALL be held in a shared reactiv
 
 ### Requirement: Input bar footer shows session/mode info, not keybinds
 
-`ChatBar` (renamed from `InputBar`, in `layout/chat_bar.tsx`) SHALL compose the shared `TextArea` component with `chrome="full"` and render a single external footer row below the bordered textarea. The footer row SHALL show the mode word on the left (`INSERT` when the textarea is focused, `NORMAL` when blurred — with `NORMAL` rendered in bold with the accent color and the row given a `bgActive` background) and the newline chord hint on the right (`ctrl+j newline`). Global keybind hints SHALL NOT be duplicated in this footer: the command-palette, sidebar-toggle, and abort key hints live ONLY in the status bar, so the header and the input footer never repeat the same keys.
+`ChatBar` (renamed from `InputBar`, in `layout/chat_bar.tsx`) SHALL compose the shared `TextArea` component with `chrome="full"` and the `Type a message…` placeholder (via `GLYPHS.ellipsis`), and render a single external footer row below the bordered textarea. The footer row SHALL show the mode word on the left (`INSERT` when the textarea is focused, `NORMAL` when blurred — with `NORMAL` rendered in bold with the accent color and the row given a `bgActive` background) and the newline chord hint on the right (`ctrl+j newline`). Global keybind hints SHALL NOT be duplicated in this footer: the command-palette, sidebar-toggle, and abort key hints live ONLY in the status bar, so the header and the input footer never repeat the same keys.
 
 #### Scenario: ChatBar composes TextArea
 

@@ -189,7 +189,14 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
     }
     function submit(): void {
         const it = flat()[cursor()];
-        if (!it) return;
+        // Multi mode confirms the accumulated BATCH, which outlives the visible rows (a filter
+        // matching nothing, an empty/unreadable folder) — enter must still hand it back rather
+        // than stranding a selection made elsewhere. Single mode has nothing to submit without
+        // a cursor row.
+        if (!it) {
+            if (mode() === "multi") props.onConfirm?.([...selected()]);
+            return;
+        }
         if (props.onAction?.(it.value)) return;
         if (mode() === "single") props.onSelect?.(it.value);
         else props.onConfirm?.([...selected()]);
@@ -234,6 +241,10 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
         const rowMeta = (): RowMeta | undefined => meta().get(item());
         const isCursor = (): boolean => rowMeta()?.index === cursor();
         const isSel = (): boolean => mode() === "multi" && selected().has(item().value);
+        // A row canToggle refuses gets NO gutter (blank keeps column alignment): its value may
+        // coincidentally sit in the selection (`..` shares the parent dir's path), and painting
+        // ● on a row space refuses to clear would lie about what confirm hands back.
+        const gutter = (): string => ((props.canToggle?.(item().value) ?? true) ? `${isSel() ? GLYPHS.circle : GLYPHS.circleHollow} ` : "  ");
         return (
             <box id={id()} width="100%" flexDirection="column">
                 <Show when={rowMeta()?.header}>
@@ -243,7 +254,7 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
                 </Show>
                 <box width="100%" flexDirection="row" backgroundColor={isCursor() ? theme().bgActive : undefined}>
                     <Show when={mode() === "multi"}>
-                        <text fg={isSel() ? theme().success : theme().fgSubtle}>{`${isSel() ? GLYPHS.circle : GLYPHS.circleHollow} `}</text>
+                        <text fg={isSel() ? theme().success : theme().fgSubtle}>{gutter()}</text>
                     </Show>
                     <text fg={isCursor() ? theme().secondary : theme().fg}>
                         {mode() === "single" ? (isCursor() ? `${GLYPHS.chevronRight} ` : "  ") : ""}

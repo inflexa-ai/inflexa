@@ -93,6 +93,8 @@ export function SelectDialog<T>(props: SelectDialogProps<T>): JSX.Element {
         <DialogPanel title={props.title} size="lg" footer={footer()}>
             <TextInput
                 chrome="bare"
+                /* Showcased exhibits must not grab focus at mount — see DialogEntryHandle.inert. */
+                autoFocus={!(dialog?.inert ?? false)}
                 placeholder={props.placeholder ?? `Type to filter${GLYPHS.ellipsis}`}
                 onRef={(r: InputRenderable) => {
                     inputRef = r;

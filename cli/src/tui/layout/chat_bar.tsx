@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 import type { TextareaRenderable } from "@opentui/core";
 
+import { GLYPHS } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
 import { NEWLINE_LABEL } from "../keymap.ts";
 import { TextArea } from "../components/text_area.tsx";
@@ -40,6 +41,7 @@ export function ChatBar(props: ChatBarProps) {
                 chrome="full"
                 minHeight={3}
                 maxHeight={8}
+                placeholder={`Type a message${GLYPHS.ellipsis}`}
                 onRef={(r) => props.onTextareaRef(r)}
                 onSubmit={() => props.onSubmit()}
                 onFocusChange={(f) => {

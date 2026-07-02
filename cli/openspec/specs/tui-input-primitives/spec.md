@@ -91,6 +91,20 @@ The system SHALL provide a `TextInput` component in `src/tui/components/text_inp
 - **WHEN** a `TextInput` is rendered
 - **THEN** there is no INSERT/NORMAL mode tracking, no submit chord, and no newline chord
 
+### Requirement: Editors control mount focus via autoFocus
+
+Both `TextArea` and `TextInput` SHALL accept `autoFocus?: boolean` (default `true`): it drives the renderable-level `focused` prop, so `autoFocus={false}` mounts the editor blurred without grabbing the surface's focus (list-first dialogs, gallery exhibits, showcased dialogs). The internal focus signal SHALL be seeded from `autoFocus` so a blurred mount renders blurred/NORMAL chrome from the first frame — the renderable emits no `blurred` event at mount to correct a wrong seed.
+
+#### Scenario: Blurred mount renders truthful chrome
+
+- **WHEN** a compact-chrome editor mounts with `autoFocus={false}`
+- **THEN** it renders the blurred border color (and, for TextArea, the NORMAL title) without any focus event having fired
+
+#### Scenario: Default grabs focus
+
+- **WHEN** an editor mounts without `autoFocus`
+- **THEN** it mounts focused (the prompt/filter-first default)
+
 ### Requirement: TextInput chrome tiers
 
 `TextInput` SHALL accept a `chrome` prop with two tiers: `"compact"` and `"bare"`.

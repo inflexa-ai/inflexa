@@ -149,6 +149,8 @@ export function ExportOptionsDialog(props: {
                         </text>
                         <TextArea
                             chrome="bare"
+                            /* Showcased exhibits must not grab focus at mount — see DialogEntryHandle.inert. */
+                            autoFocus={!(dialog?.inert ?? false)}
                             height={3}
                             placeholder={field.placeholder}
                             initialValue={field.defaultValue}

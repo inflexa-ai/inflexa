@@ -244,6 +244,58 @@ describe("selection and submit", () => {
         }
     });
 
+    test("multi mode: enter confirms the batch even when no rows survive the filter", async () => {
+        const confirmed: string[][] = [];
+        const [query, setQuery] = createSignal("");
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList
+                        items={FRUIT}
+                        query={query()}
+                        emptyText="none"
+                        mode="multi"
+                        initialSelected={new Set(["carrot"])}
+                        onConfirm={(vs) => confirmed.push(vs)}
+                    />
+                </Harness>
+            ),
+            { width: 40, height: 14 },
+        );
+        try {
+            setQuery("zzz"); // nothing matches — the accumulated batch must still hand back
+            const frame = await settle(setup);
+            expect(frame).toContain("none");
+
+            setup.mockInput.pressEnter();
+            await settle(setup);
+            expect(confirmed).toEqual([["carrot"]]);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("multi mode: a canToggle-refused row renders no gutter", async () => {
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={FRUIT} emptyText="none" mode="multi" initialSelected={new Set(["apple"])} canToggle={(v) => v !== "apple"} />
+                </Harness>
+            ),
+            { width: 40, height: 14 },
+        );
+        try {
+            // apple is IN the selection but not toggleable here (the `..` shape: a value that
+            // doubles as something else) — painting ● on it would advertise a lie.
+            const frame = await settle(setup);
+            expect(frame).not.toContain(`${GLYPHS.circle} apple`);
+            expect(frame).not.toContain(`${GLYPHS.circleHollow} apple`);
+            expect(frame).toContain(`${GLYPHS.circleHollow} banana`);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
     test("onAction intercepts enter in both modes", async () => {
         const picked: string[] = [];
         const actions: string[] = [];

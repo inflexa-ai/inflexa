@@ -48,7 +48,10 @@ export type TextInputProps = {
  * on focus) and `"bare"` (no border).
  */
 export function TextInput(props: TextInputProps): JSX.Element {
-    const [focused, setFocused] = createSignal(true);
+    // Seeded from autoFocus so a widget mounted blurred renders blurred chrome from the first
+    // frame — the renderable emits no `blurred` event at mount to correct a wrong seed.
+    // eslint-disable-next-line solid/reactivity -- seed-once: autoFocus is a mount-time contract
+    const [focused, setFocused] = createSignal(props.autoFocus ?? true);
     let ref: InputRenderable | null = null;
 
     const isBare = () => props.chrome === "bare";

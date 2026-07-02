@@ -162,6 +162,36 @@ export function removeInput(input: AnalysisInput): Result<AnalysisInput | null, 
     });
 }
 
+/** One failed leg of {@link applyInputsDiff} — which operation failed and the underlying error. */
+export type InputsDiffFailure = { op: "add" | "remove"; error: DbError };
+
+/**
+ * Apply a picker-style set diff to an analysis's inputs. The adds land first as one
+ * all-or-nothing batch ({@link addInputs} short-circuits on the first bad path), and the
+ * removals run ONLY when that batch succeeded — otherwise a single vanished pick would
+ * reject every add while the removals still stripped the unchecked rows, leaving the
+ * analysis with fewer inputs than either the before or the after state. Removal failures
+ * are collected rather than short-circuited: each removal is independent, so the
+ * survivors should still land. Returns the failures (empty = the whole diff applied).
+ */
+export function applyInputsDiff(analysisId: string, toAdd: string[], toRemove: AnalysisInput[], cwd: string): InputsDiffFailure[] {
+    const failures: InputsDiffFailure[] = [];
+    if (toAdd.length > 0) {
+        addInputs(analysisId, toAdd, cwd).match(
+            () => {},
+            (error) => failures.push({ op: "add", error }),
+        );
+    }
+    if (failures.length > 0) return failures;
+    for (const input of toRemove) {
+        removeInput(input).match(
+            () => {},
+            (error) => failures.push({ op: "remove", error }),
+        );
+    }
+    return failures;
+}
+
 /**
  * Orchestrate analysis creation: anchor → unique slug → insert → inputs → output-dir
  * resolution + fallback persist. Output-dir *creation* is deferred to first chat / `inflexa open`;

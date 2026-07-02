@@ -182,6 +182,13 @@ export type DialogEntryHandle = {
     /** True while this entry is the top of the stack. Reactive. */
     isTop: () => boolean;
     /**
+     * True for showcase handles ({@link DialogShowcase}): the dialog renders as a static exhibit.
+     * Input-bearing dialogs thread this into their editors' `autoFocus` — the `focused` renderable
+     * prop grabs focus at mount below the handle's reach, so inertness must be opted into where
+     * the editor is rendered, not just where keys and close hooks register.
+     */
+    inert: boolean;
+    /**
      * Declare the renderable the host focuses when this entry is (or becomes) top. Replaces
      * per-dialog mount-time focus microtasks — the host owns when focus lands.
      */
@@ -255,6 +262,7 @@ function makeHandle(id: string): DialogEntryHandle {
     const isTop = (): boolean => stack.length > 0 && stack[stack.length - 1]!.id === id;
     return {
         isTop,
+        inert: false,
         setInitialFocus(r: Renderable | null): void {
             const i = index();
             if (i < 0) return;
@@ -278,6 +286,7 @@ function makeHandle(id: string): DialogEntryHandle {
 // Never-top, all-noop handle: showcased dialogs read it instead of the surrounding entry's.
 const INERT_HANDLE: DialogEntryHandle = {
     isTop: () => false,
+    inert: true,
     setInitialFocus: () => {},
     setRequestClose: () => {},
     setOnClose: () => {},

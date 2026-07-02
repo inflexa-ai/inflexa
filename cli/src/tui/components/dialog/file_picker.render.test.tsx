@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { testRender } from "@opentui/solid";
@@ -220,6 +220,91 @@ describe("FilePicker", () => {
             expect(frame).toContain("NORMAL");
             expect(frame).toContain("1 selected");
             expect(frame).toContain(`${GLYPHS.circleHollow} alpha.txt`); // removed in review → unchecked here
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("c confirms the batch even when the cursor sits on a directory row", async () => {
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const confirmed: string[][] = [];
+        try {
+            await settle(setup);
+            await openPicker(setup, { onConfirm: (p) => confirmed.push(p) });
+            setup.mockInput.pressArrow("down"); // .. → beta/ (a directory row: enter would descend)
+            setup.mockInput.pressKey(" ");
+            let frame = await settle(setup);
+            expect(frame).toContain("1 selected");
+
+            setup.mockInput.pressKey("c");
+            frame = await settle(setup);
+            expect(confirmed).toEqual([[join(root, "beta")]]);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("enter confirms the accumulated batch when a filter matches nothing", async () => {
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        const confirmed: string[][] = [];
+        try {
+            await settle(setup);
+            await openPicker(setup, { onConfirm: (p) => confirmed.push(p) });
+            setup.mockInput.pressArrow("down");
+            setup.mockInput.pressArrow("down"); // beta/ → alpha.txt
+            setup.mockInput.pressKey(" ");
+            await settle(setup);
+
+            setup.mockInput.pressKey("i");
+            await setup.mockInput.typeText("zzz"); // no rows survive; the batch must still confirm
+            let frame = await settle(setup);
+            expect(frame).toContain("No matches");
+
+            setup.mockInput.pressEnter();
+            frame = await settle(setup);
+            expect(confirmed).toEqual([[join(root, "alpha.txt")]]);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("a symlink row keys on its canonical target, so a canonical seed renders it checked", async () => {
+        const outside = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-picker-ext-")));
+        writeFileSync(join(outside, "payload.txt"), "x");
+        symlinkSync(outside, join(root, "ext"));
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        try {
+            await settle(setup);
+            // The seed is what classifyInputPath records: the symlink's canonical TARGET.
+            const frame = await openPicker(setup, { seed: [outside] });
+            expect(frame).toContain(`${GLYPHS.circle} ext/`);
+            expect(frame).toContain("1 selected");
+        } finally {
+            setup.renderer.destroy();
+            rmSync(outside, { recursive: true, force: true });
+        }
+    });
+
+    test(".. renders no selection gutter even when the parent dir is selected", async () => {
+        mkdirSync(join(root, "beta", "ml"));
+        const setup = await testRender(() => <Harness />, { width: 90, height: 26 });
+        try {
+            await settle(setup);
+            await openPicker(setup);
+            setup.mockInput.pressArrow("down"); // beta/
+            setup.mockInput.pressKey(" "); // select beta
+            setup.mockInput.pressEnter(); // descend into beta
+            let frame = await settle(setup);
+            expect(frame).toContain("1 selected");
+
+            setup.mockInput.pressArrow("down"); // .. → ml/
+            setup.mockInput.pressEnter(); // descend into beta/ml — `..` now points at selected beta
+            frame = await settle(setup);
+            expect(frame).toContain("..");
+            expect(frame).toContain("1 selected");
+            // Navigation-only row: neither checked nor uncheckable-looking.
+            expect(frame).not.toContain(`${GLYPHS.circle} ..`);
+            expect(frame).not.toContain(`${GLYPHS.circleHollow} ..`);
         } finally {
             setup.renderer.destroy();
         }

@@ -119,7 +119,7 @@ The list SHALL compose `ScrollPane` with `focusOnMount={false}` (the pane is nev
 Both lists SHALL accept `mode?: "single" | "multi"` (default `"single"`).
 
 - **single**: enter SHALL call `onSelect(value)` for the cursor row — select-and-submit in one stroke. No gutter, no selection state. The cursor row SHALL render the `>` chevron indicator (`GLYPHS.chevronRight`) with the `bgActive` row background.
-- **multi**: each row SHALL render a gutter of `GLYPHS.circle` (●, selected) / `GLYPHS.circleHollow` (○, unselected); space SHALL toggle the cursor row; enter SHALL call `onConfirm(values)` with the selected values. An optional `initialSelected: ReadonlySet<T>` SHALL seed the selection. An optional `onAction?: (value: T) => boolean` SHALL run before the default enter behavior — returning `true` suppresses it (e.g. directory navigation). An optional `canToggle?: (value: T) => boolean` SHALL veto toggling a specific value (a navigation-only row like `..`), and an optional `onCursorChange?: (value: T | undefined) => void` SHALL notify hosts of the cursor row so host-side keys (open-in-explorer) can act on it.
+- **multi**: each row SHALL render a gutter of `GLYPHS.circle` (●, selected) / `GLYPHS.circleHollow` (○, unselected); space SHALL toggle the cursor row; enter SHALL call `onConfirm(values)` with the selected values — including when no rows are visible (an empty filter result or listing must not strand a batch accumulated elsewhere). An optional `initialSelected: ReadonlySet<T>` SHALL seed the selection. An optional `onAction?: (value: T) => boolean` SHALL run before the default enter behavior — returning `true` suppresses it (e.g. directory navigation). An optional `canToggle?: (value: T) => boolean` SHALL veto toggling a specific value (a navigation-only row like `..`); a row it refuses SHALL render a blank gutter (neither ● nor ○) even when its value sits in the selection set, since a selected-looking row that space refuses to clear would misreport what confirm hands back. An optional `onCursorChange?: (value: T | undefined) => void` SHALL notify hosts of the cursor row so host-side keys (open-in-explorer) can act on it.
 
 There SHALL be no `radio` mode.
 
@@ -142,6 +142,16 @@ There SHALL be no `radio` mode.
 
 - **WHEN** `onAction` returns `true` for the cursor row
 - **THEN** neither `onSelect` nor `onConfirm` fires for that press
+
+#### Scenario: Empty listing still confirms the batch
+
+- **WHEN** two rows are selected, a filter then matches nothing, and the user presses enter
+- **THEN** `onConfirm` receives both selected values
+
+#### Scenario: A non-toggleable row shows no gutter
+
+- **WHEN** `canToggle` refuses a row whose value happens to be in the selection set
+- **THEN** the row renders a blank gutter — not ●, not ○
 
 ### Requirement: Empty state and detail line
 
