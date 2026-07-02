@@ -45,9 +45,10 @@ export const env = Object.freeze({
      */
     outputFallbackDir: join(dataDir(), "inflexa", "analyses"),
     /**
-     * Advisory per-analysis instance locks: `<dataDir>/inflexa/locks/<analysisId>.lock`. One inflexa
-     * process may have an analysis open at a time; the lock files coordinate that across instances.
-     * See src/modules/analysis/lock.ts.
+     * Advisory instance locks: `<dataDir>/inflexa/locks/<key>.lock`, keyed by an analysis id (one
+     * inflexa process may have an analysis open at a time) or a fixed sentinel for the embedded harness
+     * runtime (one DBOS engine per machine). The lock files coordinate that across instances.
+     * See src/lib/lock.ts.
      */
     locksDir: join(dataDir(), "inflexa", "locks"),
     /**

@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
 import { ok, err } from "neverthrow";
 
 import { env } from "../../lib/env.ts";
+import { instanceLockPath } from "../../lib/lock.ts";
 import { bootHarnessRuntime, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
 import type { ResolvedHarnessConfig } from "./config.ts";
 import type { ExecIngress } from "./ingress.ts";
@@ -143,13 +144,62 @@ describe("bootHarnessRuntime", () => {
             ...recordingSeams(calls),
             probeEmbedding: async () => {
                 calls.push("probeEmbedding");
-                return err({ baseURL: "http://embeddings.test/v1", detail: "HTTP 404" });
+                return err({ kind: "unreachable", baseURL: "http://embeddings.test/v1", detail: "HTTP 404" });
             },
         };
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
         expect(result._unsafeUnwrapErr()).toMatchObject({ type: "embedding_unreachable", detail: "HTTP 404" });
         expect(calls).toEqual(["readKey", "probeEmbedding"]);
+    });
+
+    test("a wrong-dimension embedding model blocks before postgres/ingress/launch", async () => {
+        const calls: string[] = [];
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            probeEmbedding: async () => {
+                calls.push("probeEmbedding");
+                return err({ kind: "dimension_mismatch", baseURL: "http://embeddings.test/v1", expected: 1536, actual: 768 });
+            },
+        };
+        const result = await bootHarnessRuntime({ seams, config: testConfig() });
+
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "embedding_dimension_mismatch", expected: 1536, actual: 768 });
+        expect(calls).toEqual(["readKey", "probeEmbedding"]);
+    });
+
+    test("an invalid harness config block fails before any side effect", async () => {
+        const calls: string[] = [];
+        const result = await bootHarnessRuntime({
+            seams: recordingSeams(calls),
+            config: testConfig({ configError: { issues: "harness.adminPort: expected number" } }),
+        });
+
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "harness_config_invalid", issues: "harness.adminPort: expected number" });
+        expect(calls).toEqual([]);
+    });
+
+    test("a non-Claude auto-resolved model is rejected at boot (Anthropic route)", async () => {
+        const calls: string[] = [];
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            resolveModel: async () => {
+                calls.push("resolveModel");
+                return ok("gemini-2.5-pro");
+            },
+        };
+        const result = await bootHarnessRuntime({ seams, config: testConfig({ model: null }) });
+
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_not_claude", model: "gemini-2.5-pro" });
+        expect(calls).not.toContain("postgres");
+    });
+
+    test("an explicitly-configured non-Claude model is trusted (no family guard)", async () => {
+        const calls: string[] = [];
+        const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig({ model: "gpt-4o" }) });
+
+        expect(result._unsafeUnwrap().model).toBe("gpt-4o");
+        expect(calls).toContain("launch");
     });
 
     test("missing skills dir fails before any side effect", async () => {
@@ -175,5 +225,25 @@ describe("bootHarnessRuntime", () => {
 
         expect(result._unsafeUnwrapErr()).toMatchObject({ type: "runtime_boot_failed" });
         expect(calls).toContain("ingress.stop");
+    });
+
+    test("a runtime lock held by a live foreign process blocks the boot and releases the ingress", async () => {
+        const calls: string[] = [];
+        // Fake another live inflexa process holding the machine-wide runtime lock.
+        const holder = Bun.spawn(["sleep", "60"]);
+        const lockPath = instanceLockPath("harness-runtime");
+        mkdirSync(dirname(lockPath), { recursive: true });
+        writeFileSync(lockPath, String(holder.pid));
+        try {
+            const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
+            expect(result._unsafeUnwrapErr()).toMatchObject({ type: "runtime_already_active", holderPid: holder.pid });
+            // The ingress bound just before the lock check must be torn down.
+            expect(calls).toContain("ingress.stop");
+            expect(calls).not.toContain("launch");
+        } finally {
+            rmSync(lockPath, { force: true });
+            holder.kill();
+            await holder.exited;
+        }
     });
 });

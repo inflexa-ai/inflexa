@@ -3,7 +3,7 @@ import { createStore } from "solid-js/store";
 import type { JSX } from "solid-js";
 
 import { projectForAnalysis } from "../../modules/project/project.ts";
-import { acquireAnalysisLock, releaseAnalysisLock } from "../../modules/analysis/lock.ts";
+import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
 import { notify } from "../hooks/notice.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { Project } from "../../types/project.ts";
@@ -81,11 +81,11 @@ export function createWorkspace(init: WorkspaceInit): Workspace {
             // hold this analysis's lock (acquire would re-entrantly succeed, release would drop the
             // lock we still want), so skip it entirely and just swap the session.
             if (!prev || prev.id !== analysis.id) {
-                if (!acquireAnalysisLock(analysis.id).acquired) {
+                if (!acquireInstanceLock(analysis.id).acquired) {
                     notify({ kind: "warn", text: `"${analysis.name}" is already open in another instance.` });
                     return; // keep the current analysis open and its lock held; abort the swap
                 }
-                if (prev) releaseAnalysisLock(prev.id);
+                if (prev) releaseInstanceLock(prev.id);
             }
             setStore({ analysis, sessionId, workingDir, project: projectForAnalysis(analysis) });
         },

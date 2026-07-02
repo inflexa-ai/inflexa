@@ -32,13 +32,11 @@ export interface RegisteredAnalysisWorkflows {
 /**
  * Register the parent + child workflows with the running DBOS engine.
  *
- * Call this AFTER `launchDbos` has resolved (so `applicationVersion` is
- * already on the engine) and BEFORE any HTTP route dispatches a workflow.
- * CAUTION: `runtime/assemble.ts` — which declares its wiring order "the single
- * source of truth" — documents the OPPOSITE order (register everything, then
- * launch, so recovery can resolve every workflow by name). The two contracts
- * contradict; resolve which is right before relying on this one from a new
- * call site.
+ * Call this BEFORE `launchDbos`: `DBOS.launch()` runs recovery synchronously and
+ * resolves in-flight workflows by their registered name, so a workflow that is
+ * not registered at launch cannot be reclaimed. `runtime/assemble.ts` — the
+ * declared source of truth for wiring order — registers every workflow before
+ * launch for exactly this reason, and the embedded runtime does the same.
  * Idempotency is owned by the SDK — calling twice with the same name is a
  * `DBOS.registerWorkflow` invariant violation, not something this module
  * guards against.

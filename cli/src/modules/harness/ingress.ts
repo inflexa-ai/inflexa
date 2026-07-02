@@ -16,8 +16,16 @@ export type ExecIngress = {
     readonly port: number;
     /**
      * `CORTEX_BASE_URL` for sandbox containers. `host.docker.internal` resolves
-     * to the host on Docker Desktop even for loopback-bound listeners; Linux
-     * engines need a host-gateway alias (recorded follow-up in the change design).
+     * to the host on Docker Desktop even for loopback-bound listeners.
+     *
+     * TODO(robustness): native Linux Docker Engine has no `host.docker.internal`
+     * and cannot reach a host loopback listener from a container. The SECURE fix
+     * is to bind the ingress to the docker bridge gateway (reachable from the
+     * bridge network + host, but NOT the external LAN) and advertise that IP —
+     * NOT to bind `0.0.0.0`, which would expose the callback endpoint to every
+     * host on the network. Deferred because it needs runtime-aware bridge-address
+     * discovery (docker vs podman, custom `bip`) and Linux testing. Tracked in
+     * inflexa-ai/inf-cli#27.
      */
     readonly cortexBaseUrl: string;
     /** Close the listener, dropping in-flight connections. */
@@ -81,8 +89,14 @@ export async function handleExecCallback(req: Request, deliver: DeliverFn): Prom
 }
 
 /**
- * Bind the loopback listener on an ephemeral port. Loopback-only: nothing but
- * local containers (via the Docker host gateway) should ever reach this.
+ * Bind the callback listener on an ephemeral loopback port. Loopback-only
+ * (`127.0.0.1`) so the endpoint is reachable ONLY from this host — never the
+ * LAN — which matters because the route is intentionally secret-less and defers
+ * HMAC verification to the recv loop. Docker Desktop forwards containers to a
+ * loopback listener via `host.docker.internal`; the native-Linux path (which
+ * cannot reach host loopback) is the deferred follow-up documented on
+ * {@link ExecIngress.cortexBaseUrl}, and MUST bind the bridge gateway rather
+ * than widen to all interfaces.
  */
 export function startExecIngress(deliver: DeliverFn = deliverExecEvent): Result<ExecIngress, IngressError> {
     try {

@@ -8,6 +8,7 @@ import { resolveInputPath } from "../analysis/input.ts";
 import { sha256File } from "../../lib/hash.ts";
 import { mkdirResult, statResult } from "../../lib/fs.ts";
 import type { FsError } from "../../lib/fs.ts";
+import { getLogger } from "../../lib/log.ts";
 
 /**
  * One input file staged under the analysis data dir, with its content hash.
@@ -274,8 +275,30 @@ export async function stageInputs(analysisId: string, targetDir: string): Promis
         }
     }
 
-    const reconcileResult = reconcileStagedTree(targetDir, staged);
+    // Overlapping inputs stage to the SAME dest path: a directory input plus a
+    // file input inside it, or two anchors whose subtrees share a relative path.
+    // Sequential linking leaves the last writer's bytes on disk, and two manifest
+    // entries with one `relativePath` would break the harness's multi-row artifact
+    // upsert — Postgres rejects two rows that hit the same ON CONFLICT key in a
+    // single statement. Dedup by `relativePath`, keeping the LAST entry so the
+    // manifest matches what is actually on disk; warn only when the dropped entry
+    // held DIFFERENT content (a genuine input clash, not the benign dir-holds-file
+    // overlap where both resolve to the same source).
+    const byPath = new Map<string, StagedInput>();
+    for (const entry of staged) {
+        const prior = byPath.get(entry.relativePath);
+        if (prior && prior.hash !== entry.hash) {
+            getLogger("staging").warn(
+                { relativePath: entry.relativePath, droppedKey: prior.key, keptKey: entry.key },
+                "two inputs stage to the same path with different content — keeping the last-staged file",
+            );
+        }
+        byPath.set(entry.relativePath, entry);
+    }
+    const uniqueStaged = [...byPath.values()];
+
+    const reconcileResult = reconcileStagedTree(targetDir, uniqueStaged);
     if (reconcileResult.isErr()) return err({ type: "staging_failed", cause: reconcileResult.error });
 
-    return ok(staged);
+    return ok(uniqueStaged);
 }
