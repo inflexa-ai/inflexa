@@ -6,7 +6,7 @@ import { randomUUIDv7 } from "bun";
 import { createHash } from "node:crypto";
 
 import { freshDb } from "../../test_support/db.ts";
-import { insertAnchor, insertAnalysis, insertAnalysisInput } from "../../db/primary_mutation.ts";
+import { insertAnchor, insertAnalysis, insertAnalysisInput, deleteAnalysisInput } from "../../db/primary_mutation.ts";
 import { asStr256 } from "../../lib/types.ts";
 import type { Analysis, AnalysisInput } from "../../types/analysis.ts";
 import { stageInputs } from "./staging.ts";
@@ -178,6 +178,103 @@ describe("stageInputs", () => {
         const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
 
         expect(staged.map((s) => s.key)).toEqual([join("partial", "kept.txt")]);
+    });
+
+    test("anchorless absolute-path input stages under fileId/basename and survives reconciliation", async () => {
+        // The live-run regression: an anchorless input's key was the absolute
+        // host path, which staged to a different on-disk path than the key —
+        // reconciliation then deleted the freshly staged file.
+        const looseDir = join(testDir, "downloads");
+        mkdirSync(looseDir, { recursive: true });
+        const loosePath = join(looseDir, "GSE78220.csv");
+        writeFileSync(loosePath, "sample,value\n");
+
+        insertAnalysisInput({ path: loosePath, isDir: false, analysisId, anchorId: null })._unsafeUnwrap();
+
+        const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+
+        expect(staged).toHaveLength(1);
+        const s = staged[0]!;
+        const expectedFileId = Bun.hash(`|${loosePath}`).toString(36);
+        expect(s.key).toBe(join(expectedFileId, "GSE78220.csv"));
+        expect(s.key.includes("Users")).toBe(false);
+        // The manifest path and the on-disk path agree, and the file is still
+        // there AFTER stageInputs returned (reconciliation ran).
+        expect(existsSync(join(targetDir, s.relativePath))).toBe(true);
+    });
+
+    test("two anchorless inputs with the same basename do not collide", async () => {
+        const dirA = join(testDir, "a");
+        const dirB = join(testDir, "b");
+        mkdirSync(dirA, { recursive: true });
+        mkdirSync(dirB, { recursive: true });
+        writeFileSync(join(dirA, "data.csv"), "from-a");
+        writeFileSync(join(dirB, "data.csv"), "from-b");
+
+        insertAnalysisInput({ path: join(dirA, "data.csv"), isDir: false, analysisId, anchorId: null })._unsafeUnwrap();
+        insertAnalysisInput({ path: join(dirB, "data.csv"), isDir: false, analysisId, anchorId: null })._unsafeUnwrap();
+
+        const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+
+        expect(staged).toHaveLength(2);
+        const contents = staged.map((s) => readFileSync(join(targetDir, s.relativePath), "utf-8")).sort();
+        expect(contents).toEqual(["from-a", "from-b"]);
+    });
+
+    test("noise directories are never staged from a directory input", async () => {
+        const dirPath = join(anchorDir, "project");
+        mkdirSync(join(dirPath, "node_modules", "pkg"), { recursive: true });
+        mkdirSync(join(dirPath, ".git"), { recursive: true });
+        mkdirSync(join(dirPath, ".inflexa"), { recursive: true });
+        mkdirSync(join(dirPath, "data"), { recursive: true });
+        writeFileSync(join(dirPath, "node_modules", "pkg", "index.js"), "dep");
+        writeFileSync(join(dirPath, ".git", "HEAD"), "ref");
+        writeFileSync(join(dirPath, ".inflexa", "id"), "{}");
+        writeFileSync(join(dirPath, "data", "counts.csv"), "1,2,3");
+
+        insertAnalysisInput({ path: "project", isDir: true, analysisId, anchorId })._unsafeUnwrap();
+
+        const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+
+        expect(staged.map((s) => s.key)).toEqual([join("project", "data", "counts.csv")]);
+        expect(existsSync(join(targetDir, "inputs", "local", "project", "node_modules"))).toBe(false);
+        expect(existsSync(join(targetDir, "inputs", "local", "project", ".git"))).toBe(false);
+    });
+
+    test("removing an input unlinks its staged files on the next run and prunes empty dirs", async () => {
+        const dirPath = join(anchorDir, "bulk");
+        mkdirSync(join(dirPath, "sub"), { recursive: true });
+        writeFileSync(join(dirPath, "sub", "big.bin"), "payload");
+        writeFileSync(join(anchorDir, "keep.csv"), "kept");
+
+        const dirInput: AnalysisInput = { path: "bulk", isDir: true, analysisId, anchorId };
+        insertAnalysisInput(dirInput)._unsafeUnwrap();
+        insertAnalysisInput({ path: "keep.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+
+        (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        expect(existsSync(join(targetDir, "inputs", "local", "bulk", "sub", "big.bin"))).toBe(true);
+
+        deleteAnalysisInput(dirInput)._unsafeUnwrap();
+        const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+
+        expect(staged.map((s) => s.key)).toEqual(["keep.csv"]);
+        expect(existsSync(join(targetDir, "inputs", "local", "keep.csv"))).toBe(true);
+        expect(existsSync(join(targetDir, "inputs", "local", "bulk"))).toBe(false);
+    });
+
+    test("reconciliation also removes files an ignore rule now excludes", async () => {
+        // Simulate a tree staged before the ignore rules existed: plant a
+        // node_modules file directly in the staged tree, then re-stage.
+        const plantedDir = join(targetDir, "inputs", "local", "old", "node_modules");
+        mkdirSync(plantedDir, { recursive: true });
+        writeFileSync(join(plantedDir, "stale.js"), "stale");
+        writeFileSync(join(anchorDir, "fresh.csv"), "fresh");
+        insertAnalysisInput({ path: "fresh.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+
+        const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+
+        expect(staged.map((s) => s.key)).toEqual(["fresh.csv"]);
+        expect(existsSync(join(targetDir, "inputs", "local", "old"))).toBe(false);
     });
 
     test("re-staging yields identical fileIds and refreshed content", async () => {

@@ -13,9 +13,12 @@ export type HarnessEmbeddingConfig = {
 /**
  * The `harness` config key resolved to concrete values. `null` fields are the
  * two genuine launch prerequisites the cli cannot default: the embedding
- * endpoint (the local proxy serves none — S1 in the embed-harness-runtime
- * design) and, outside a dev checkout, the skills tree. The pre-flight in the
- * launch command turns each `null` into an actionable error.
+ * endpoint — its own baseURL + API key, deliberately a SEPARATE path from the
+ * chat proxy, which fronts OAuth chat providers and serves no embeddings
+ * route — and, outside a dev checkout, the skills tree. The pre-flight turns
+ * each `null` into an actionable error, and a configured embedding endpoint
+ * is additionally probed at boot (config presence can't prove reachability,
+ * and embeddings fail late in the profile workflow).
  */
 export type ResolvedHarnessConfig = {
     /** Chat model id; `null` means resolve the default from the proxy's `/models` at boot. */

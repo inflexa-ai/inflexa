@@ -1,4 +1,8 @@
-## ADDED Requirements
+# harness-runtime Specification
+
+## Purpose
+The embedding seam between the cli and `@inflexa-ai/harness`: a lazy, process-singleton composition root that provisions/boots the runtime (Postgres readiness, exec-callback ingress, cortex schema, workflow registration, DBOS launch), realizes every `DataProfileDeps` seam locally, and tears down gracefully on exit. Owns the single global session-tree base and the loopback HTTP ingress that bridges sandbox-server callbacks onto DBOS topics. Lives in `src/modules/harness/`.
+## Requirements
 
 ### Requirement: On-demand composition of the embedded harness runtime
 
@@ -30,9 +34,13 @@ re-registering or re-launching.
 The composition SHALL realize `DataProfileDeps` from deliberate local wiring: the
 `pg.Pool` built from the infra module's resolved `PostgresConnection`; the harness's
 local run authorizer and no-op billing resolver; the chat provider pointed at the local
-proxy's Anthropic-shaped Messages endpoint; the embedding configuration taken from a
-cli config key naming a user-supplied OpenAI-compatible embeddings endpoint (the local
-proxy serves none); a workspace filesystem and sandbox client (Docker backend) sharing
+proxy's Anthropic-shaped Messages endpoint; the embedding configuration taken from its
+own cli config key (baseURL + API key + model — deliberately a separate path from the
+chat proxy, which serves no embeddings route), with the configured endpoint's
+reachability verified by a boot-time probe BEFORE any provisioning or registration —
+embeddings are consumed late in the profile workflow, so a dead endpoint must fail
+while failure is still free; a workspace filesystem and sandbox client (Docker
+backend) sharing
 the runtime's single session-tree base; bio-tool keys from cli config with absent keys
 passed as empty; and the shared skills directory. No dependency SHALL be realized as a
 fake that fabricates success — a locally unrealizable capability must fail visibly at
@@ -47,6 +55,11 @@ the point of use.
 
 - **WHEN** no bio/chem API keys are configured
 - **THEN** the runtime boots and profiles run; only the affected tools surface auth errors when invoked
+
+#### Scenario: Unreachable embedding endpoint blocks boot before side effects
+
+- **WHEN** the effective embedding endpoint rejects or cannot answer an embeddings request
+- **THEN** boot fails naming the endpoint and remedies, before Postgres provisioning, listener start, registration, or launch
 
 ### Requirement: Single global session-tree base
 

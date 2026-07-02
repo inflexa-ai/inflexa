@@ -71,6 +71,32 @@ function responseFromGenerate(result: Awaited<ReturnType<typeof generateText>>):
     return responseFromMessages(result.responseMessages, result.text, result.finishReason, result.rawFinishReason);
 }
 
+/**
+ * Drop empty text parts — and messages left with no content at all — before
+ * the wire call. The Anthropic Messages API rejects any request containing an
+ * empty text block, and the SDK's own response assembly legitimately produces
+ * them: a turn that goes straight to tool calls yields an assistant message
+ * carrying a ""-text part, which the agent loop then echoes back as history
+ * on its next request. Filtering once at the outbound boundary covers every
+ * source at once — loop echo, stored thread history, legacy backfill, and the
+ * empty-string fallback in `responseFromMessages`.
+ */
+function sanitizeMessages(messages: readonly ModelMessage[]): ModelMessage[] {
+    const out: ModelMessage[] = [];
+    for (const m of messages) {
+        if (typeof m.content === "string") {
+            if (m.content !== "") out.push(m);
+            continue;
+        }
+        const parts = m.content.filter((p) => p.type !== "text" || p.text !== "");
+        // The filtered parts are a subset of this message's own content, so the
+        // message remains valid for its role — the cast only re-associates the
+        // narrowed array with the union member TS can no longer correlate.
+        if (parts.length > 0) out.push({ ...m, content: parts } as ModelMessage);
+    }
+    return out;
+}
+
 export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const capabilities: ProviderCapabilities = { toolCalling: deps.capabilities?.toolCalling ?? true };
 
@@ -81,7 +107,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 const result = await generateText({
                     model: deps.model,
                     system: req.system,
-                    messages: [...req.messages],
+                    messages: sanitizeMessages(req.messages),
                     tools: req.tools,
                     toolChoice: req.toolChoice ?? "auto",
                     stopWhen: [],
@@ -105,7 +131,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
             const result = streamText({
                 model: deps.model,
                 system: req.system,
-                messages: [...req.messages],
+                messages: sanitizeMessages(req.messages),
                 tools: req.tools,
                 toolChoice: req.toolChoice ?? "auto",
                 stopWhen: [],

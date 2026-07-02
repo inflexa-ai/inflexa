@@ -72,6 +72,10 @@ function recordingSeams(calls: string[]): BootSeams {
         launch: async () => {
             calls.push("launch");
         },
+        probeEmbedding: async () => {
+            calls.push("probeEmbedding");
+            return ok(undefined);
+        },
     };
 }
 
@@ -86,7 +90,7 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
 
         const runtime = result._unsafeUnwrap();
-        expect(calls).toEqual(["readKey", "postgres", "ingress", "initState", "register", "launch"]);
+        expect(calls).toEqual(["readKey", "probeEmbedding", "postgres", "ingress", "initState", "register", "launch"]);
         expect(runtime.model).toBe("claude-test-model");
         expect(runtime.triggerDeps.workflow).toBeInstanceOf(Function);
     });
@@ -122,7 +126,7 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
         expect(result._unsafeUnwrapErr()).toMatchObject({ type: "postgres_unavailable" });
-        expect(calls).toEqual(["readKey", "postgres"]);
+        expect(calls).toEqual(["readKey", "probeEmbedding", "postgres"]);
     });
 
     test("missing embedding config fails before any side effect", async () => {
@@ -131,6 +135,21 @@ describe("bootHarnessRuntime", () => {
 
         expect(result._unsafeUnwrapErr()).toMatchObject({ type: "embedding_unconfigured" });
         expect(calls).toEqual([]);
+    });
+
+    test("an unreachable embedding endpoint blocks before postgres/ingress/launch", async () => {
+        const calls: string[] = [];
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            probeEmbedding: async () => {
+                calls.push("probeEmbedding");
+                return err({ baseURL: "http://embeddings.test/v1", detail: "HTTP 404" });
+            },
+        };
+        const result = await bootHarnessRuntime({ seams, config: testConfig() });
+
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "embedding_unreachable", detail: "HTTP 404" });
+        expect(calls).toEqual(["readKey", "probeEmbedding"]);
     });
 
     test("missing skills dir fails before any side effect", async () => {
