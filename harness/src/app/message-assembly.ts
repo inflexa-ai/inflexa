@@ -23,7 +23,7 @@
  * thread store.
  */
 
-import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ModelMessage } from "ai";
 
 import { unwrapOrThrow } from "../lib/result.js";
 import type { LoopMessage } from "../loop/types.js";
@@ -63,7 +63,7 @@ export interface AssembledMessages {
      * The route persists this plus the loop's output; the tail injections are
      * not persisted.
      */
-    readonly userMessage: MessageParam;
+    readonly userMessage: ModelMessage;
 }
 
 /**
@@ -76,7 +76,7 @@ export async function assembleMessages(args: AssembleMessagesArgs): Promise<Asse
     const history = unwrapOrThrow(await args.history.loadRecent(args.threadId, budget));
 
     // Sanitization — applied once, here, to the new user input only.
-    const userMessage: MessageParam = {
+    const userMessage: ModelMessage = {
         role: "user",
         content: normalizeUnicode(redactSecrets(args.userInput)),
     };

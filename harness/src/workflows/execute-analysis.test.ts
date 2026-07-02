@@ -23,7 +23,7 @@
  * 10.12 synthesis) need a real DBOS context and live outside this file.
  */
 
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { Pool } from "pg";
 import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
 
@@ -55,8 +55,26 @@ interface FakeDbosState {
 
 let dbosState: FakeDbosState;
 
+/**
+ * The mocks below are installed by DIRECT property assignment on the DBOS
+ * class, which `mock.restore()` does NOT undo — without an explicit restore
+ * the fakes would leak into every later test file in the same bun process
+ * (e.g. the DBOS testcontainer smoke tests). Capture the originals once,
+ * put them back in `afterAll`.
+ */
+let originalDbosFns: Record<string, unknown> | undefined;
+
 async function mockDbos(): Promise<void> {
     const dbos = await import("@dbos-inc/dbos-sdk");
+
+    originalDbosFns ??= {
+        runStep: dbos.DBOS.runStep,
+        startWorkflow: dbos.DBOS.startWorkflow,
+        writeStream: dbos.DBOS.writeStream,
+        cancelWorkflow: dbos.DBOS.cancelWorkflow,
+        waitFirst: dbos.DBOS.waitFirst,
+        recv: dbos.DBOS.recv,
+    };
 
     // `DBOS.runStep` — execute the wrapped fn immediately, unless the step name
     // is registered to throw (the synthesis-failure path injects a throw at the
@@ -107,6 +125,14 @@ async function mockDbos(): Promise<void> {
 
 afterEach(() => {
     mock.restore();
+});
+
+afterAll(async () => {
+    if (!originalDbosFns) return;
+    const dbos = await import("@dbos-inc/dbos-sdk");
+    for (const [name, fn] of Object.entries(originalDbosFns)) {
+        (dbos.DBOS as unknown as Record<string, unknown>)[name] = fn;
+    }
 });
 
 beforeEach(async () => {

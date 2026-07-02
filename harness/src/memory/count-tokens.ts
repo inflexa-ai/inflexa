@@ -5,13 +5,13 @@
  * windows by token budget without tokenizing on the read path. Counted once
  * at write, applied at load.
  *
- * Anthropic does not publish an offline tokenizer for the Claude 3/4 family,
+ * Providers do not publish one shared offline tokenizer,
  * so this uses `js-tiktoken`'s `cl100k_base` BPE. It is an approximation:
  * callers treat the budget as a soft target with a safety margin below the
  * true context limit.
  */
 
-import type { ContentBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ModelMessage } from "ai";
 import { getEncoding, type Tiktoken } from "js-tiktoken";
 
 let encoder: Tiktoken | undefined;
@@ -27,25 +27,26 @@ function enc(): Tiktoken {
  * payload) are JSON-stringified. A signed `thinking` block counts only its
  * reasoning text — the opaque `signature` is metadata, not prompt tokens.
  */
-function tokenizableText(block: ContentBlockParam): string {
-    switch (block.type) {
+function tokenizableText(block: unknown): string {
+    if (typeof block === "string") return block;
+    if (typeof block !== "object" || block === null) return JSON.stringify(block);
+    const part = block as Record<string, unknown>;
+    switch (part.type) {
         case "text":
-            return block.text;
-        case "thinking":
-            return block.thinking;
-        case "redacted_thinking":
+            return typeof part.text === "string" ? part.text : "";
+        case "reasoning":
+            return typeof part.text === "string" ? part.text : "";
+        case "reasoning-file":
+        case "custom":
+        case "file":
             return "";
-        case "tool_use":
-        case "server_tool_use":
-            return `${block.name} ${JSON.stringify(block.input)}`;
-        case "tool_result": {
-            const content = block.content;
-            if (content === undefined) return "";
-            if (typeof content === "string") return content;
-            return content.map((part) => (part.type === "text" ? part.text : JSON.stringify(part))).join(" ");
+        case "tool-call":
+            return `${String(part.toolName ?? "")} ${JSON.stringify(part.input ?? {})}`;
+        case "tool-result": {
+            return `${String(part.toolName ?? "")} ${JSON.stringify(part.output ?? {})}`;
         }
         default:
-            return JSON.stringify(block);
+            return JSON.stringify(part);
     }
 }
 
@@ -53,7 +54,7 @@ function tokenizableText(block: ContentBlockParam): string {
  * Token count of a message's content. Used only at write time. Empty
  * content (an empty array or empty string) counts as `0`.
  */
-export function countTokens(content: string | readonly ContentBlockParam[]): number {
+export function countTokens(content: ModelMessage["content"]): number {
     if (typeof content === "string") {
         return content.length === 0 ? 0 : enc().encode(content).length;
     }

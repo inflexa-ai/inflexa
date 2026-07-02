@@ -27,13 +27,13 @@ describe("createRegistry", () => {
         expect(registry.get("missing")).toBeUndefined();
     });
 
-    it("returns one Anthropic definition per tool", () => {
+    it("returns one AI SDK definition per tool", () => {
         const registry = createRegistry([alpha, beta]);
         const defs = registry.definitions();
-        expect(defs).toHaveLength(2);
-        expect(defs.map((d) => d.name)).toEqual(["alpha", "beta"]);
-        expect(defs[0]!.input_schema.type).toBe("object");
-        expect(defs[0]!.description).toBe("The alpha tool.");
+        expect(Object.keys(defs)).toEqual(["alpha", "beta"]);
+        expect(defs.alpha).toBeDefined();
+        expect(defs.alpha!.description).toBe("The alpha tool.");
+        expect(defs.alpha!.inputSchema.jsonSchema.type).toBe("object");
     });
 
     it("rejects duplicate tool ids", () => {

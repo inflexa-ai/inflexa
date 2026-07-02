@@ -23,7 +23,6 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
-import type { Message } from "@anthropic-ai/sdk/resources/messages";
 import { ResultAsync, err, ok } from "neverthrow";
 
 import { toProviderError } from "../../../providers/errors.js";
@@ -32,7 +31,8 @@ import { unwrapOrThrow } from "../../../lib/result.js";
 import { insertAssessment, getAssessment } from "../../../state/target-assessments.js";
 import { BUDGET_EXCEEDED_SENTINEL, BUDGET_EXCEEDED_TOPIC, runLlmStep, type BudgetExceededMarker } from "../../target-assessment/lib/llm-step.js";
 import { emitProgress } from "../../target-assessment/progress.js";
-import type { AgentChat, ChatRequest } from "../../../providers/types.js";
+import type { AgentChat, ChatRequest, ChatResponse } from "../../../providers/types.js";
+import { makeMessage, textBlock } from "../../../loop/__fixtures__/scripted-provider.js";
 import { makeLocalAuth } from "../../../auth/local-auth-context.js";
 import type { AgentSession, RunSession } from "../../../auth/types.js";
 
@@ -44,12 +44,13 @@ interface ProviderCall {
     readonly signal?: AbortSignal;
 }
 
-function makeProvider(behavior: () => Promise<Message>): {
+function makeProvider(behavior: () => Promise<ChatResponse>): {
     provider: AgentChat;
     calls: ProviderCall[];
 } {
     const calls: ProviderCall[] = [];
     const provider: AgentChat = {
+        capabilities: { toolCalling: true },
         chat(req, session, signal) {
             calls.push({ req, session, signal });
             // Mirror the real provider: a thrown SDK failure becomes
@@ -58,7 +59,7 @@ function makeProvider(behavior: () => Promise<Message>): {
             // chain still reaches the status-402 signal `isBudgetExceeded` walks.
             return new ResultAsync(
                 behavior().then(
-                    (message) => ok(message),
+                    (response) => ok(response),
                     (e) => err(toProviderError(e, "test")),
                 ),
             );
@@ -83,28 +84,10 @@ function fakeSession(): RunSession {
 
 function fakeChatRequest(): ChatRequest {
     return {
+        system: "You are a test agent.",
         messages: [{ role: "user", content: "ping" }],
+        tools: {},
     };
-}
-
-function fakeMessage(text: string): Message {
-    return {
-        id: "msg_test",
-        type: "message",
-        role: "assistant",
-        model: "claude-test",
-        content: [{ type: "text", text, citations: null }],
-        stop_reason: "end_turn",
-        stop_sequence: null,
-        usage: {
-            input_tokens: 1,
-            output_tokens: 1,
-            cache_creation_input_tokens: null,
-            cache_read_input_tokens: null,
-            server_tool_use: null,
-            service_tier: null,
-        },
-    } as unknown as Message;
 }
 
 class FakeBillingError extends Error {
@@ -122,6 +105,18 @@ class FakeBillingError extends Error {
 // workflow body — they use `DBOS.runStep` / `DBOS.writeStream` and read
 // `DBOS.workflowID`. The harnesses below are tiny workflows that drive one
 // invocation each and surface the result back to the test caller.
+//
+// The shared rig launches DBOS at most once per bun process and never stops
+// it between files, so when another DBOS test file has already launched the
+// engine by the time this module loads, the registrations below would be
+// rejected (`DBOSConflictingRegistrationError`). Bounce the engine: a plain
+// `shutdown()` (no `deregister`) keeps every prior registration and reopens
+// the registration window; `beforeAll` relaunches via `DBOS.launch()`, which
+// reuses the config the rig set and is a no-op when the engine is running.
+
+if (DBOS.isInitialized()) {
+    await DBOS.shutdown();
+}
 
 interface LlmStepHarnessInput {
     readonly mode: "ok" | "402-status" | "402-message" | "503";
@@ -140,7 +135,7 @@ function installProviderForBehavior(mode: LlmStepHarnessInput["mode"]): void {
     currentProviderCallCount = 0;
     const { provider } = makeProvider(async () => {
         currentProviderCallCount += 1;
-        if (mode === "ok") return fakeMessage("hello");
+        if (mode === "ok") return makeMessage([textBlock("hello")], "stop");
         if (mode === "402-status") {
             throw new FakeBillingError(402, "billing gateway: payment required");
         }
@@ -208,11 +203,14 @@ describe("target-assessment internals (DBOS)", () => {
 
     beforeAll(async () => {
         rig = await setupDbosForTests("ta_internals");
+        // Relaunch when the module-top registration-window bounce stopped the
+        // engine; a no-op when the rig's lazy launch above did the launching.
+        if (!DBOS.isInitialized()) await DBOS.launch();
         currentPool = rig.pool;
     });
 
     afterAll(async () => {
-        await rig.drop();
+        await rig?.drop();
     });
 
     describe("runLlmStep", () => {

@@ -61,6 +61,14 @@ import { runExecuteAnalysisBody, type ExecuteAnalysisDeps } from "../../execute-
 import { MissingRunError, prepareExecuteAnalysisResume } from "../../resume-execute-analysis.js";
 import { BUDGET_EXCEEDED_TOPIC, type BudgetExceededNotification, type SandboxStepInput, type SandboxStepResult } from "../../sandbox-step.js";
 
+// Reopen the registration window if an earlier test file already launched
+// the shared DBOS engine: a plain shutdown (no `deregister`) keeps every
+// prior registration and lets this module's top-level `registerWorkflow`
+// calls through; `beforeAll` relaunches via `DBOS.launch()`.
+if (DBOS.isInitialized()) {
+    await DBOS.shutdown();
+}
+
 // ── Module-level state mirroring real LLM call counters + budget toggle ──
 //
 // `bExecutionCount` increments only when child B's LLM-shaped step actually
@@ -293,6 +301,9 @@ let rig: DbosTestRig;
 
 beforeAll(async () => {
     rig = await setupDbosForTests("budget_cascade");
+    // Relaunch when the module-top registration-window bounce stopped the
+    // engine; a no-op when the rig's lazy launch above did the launching.
+    if (!DBOS.isInitialized()) await DBOS.launch();
 });
 
 afterAll(async () => {

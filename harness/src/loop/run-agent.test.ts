@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { ContentBlock, ContentBlockParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ModelMessage, ToolResultPart } from "ai";
 import { err, ok } from "neverthrow";
 import { z } from "zod";
 
@@ -44,6 +44,21 @@ function recordingStep(): { runStep: RunStep; names: string[] } {
     return { runStep, names };
 }
 
+function toolResultParts(message: ModelMessage | undefined): ToolResultPart[] {
+    expect(message).toBeDefined();
+    expect(message!.role).toBe("tool");
+    expect(Array.isArray(message!.content)).toBe(true);
+    return message!.content as ToolResultPart[];
+}
+
+function outputValue(result: ToolResultPart): unknown {
+    return result.output.type === "json" || result.output.type === "text" || result.output.type === "error-text" ? result.output.value : result.output;
+}
+
+function isErrorResult(result: ToolResultPart): boolean {
+    return result.output.type === "error-text" || result.output.type === "error-json" || result.output.type === "execution-denied";
+}
+
 /** An `echo` tool whose `execute` optionally waits `ms` then returns the label. */
 function echoTool(): Tool {
     return defineTool({
@@ -60,30 +75,30 @@ function echoTool(): Tool {
     });
 }
 
-// ── 5.1 — signed thinking round-trip (invariant 1) ──────────────────
+// ── 5.1 — signed provider metadata round-trip (invariant 1) ──────────
 
-describe("runAgent — invariant 1: verbatim assistant content", () => {
-    it("round-trips a signed thinking block byte-for-byte", async () => {
+describe("runAgent — invariant 1: provider metadata", () => {
+    it("round-trips signed reasoning provider metadata byte-for-byte", async () => {
         const provider = scriptedProvider([makeMessage([thinkingBlock("let me reason", "SIG-abc-123"), textBlock("answer")], "end_turn")]);
 
         const { messages } = await runAgent(agentDef([]), GO, makeSession(), opts(provider));
 
         const assistant = messages.at(-1)!;
         expect(assistant.role).toBe("assistant");
-        const content = assistant.content as ContentBlock[];
-        const thinking = content.find((b) => b.type === "thinking");
-        expect(thinking).toMatchObject({
-            type: "thinking",
-            thinking: "let me reason",
-            signature: "SIG-abc-123",
+        const content = assistant.content as Exclude<Extract<ModelMessage, { role: "assistant" }>["content"], string>;
+        const reasoning = content.find((b) => b.type === "reasoning");
+        expect(reasoning).toMatchObject({
+            type: "reasoning",
+            text: "let me reason",
+            providerOptions: { anthropic: { signature: "SIG-abc-123" } },
         });
     });
 });
 
-// ── 5.2 — tool_result placement (invariant 2) ───────────────────────
+// ── 5.2 — tool-result placement (invariant 2) ───────────────────────
 
-describe("runAgent — invariant 2: tool_results in one user message", () => {
-    it("places N tool_results in exactly one user message, no interleaved text", async () => {
+describe("runAgent — invariant 2: tool-results in one tool message", () => {
+    it("places N tool-result parts in exactly one tool message", async () => {
         const provider = scriptedProvider([
             makeMessage(
                 [toolUseBlock("tu-1", "echo", { label: "a" }), toolUseBlock("tu-2", "echo", { label: "b" }), toolUseBlock("tu-3", "echo", { label: "c" })],
@@ -94,19 +109,17 @@ describe("runAgent — invariant 2: tool_results in one user message", () => {
 
         const { messages } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider));
 
-        // [user, assistant(3 tool_use), user(3 tool_result), assistant(text)]
+        // [user, assistant(3 tool-call), tool(3 tool-result), assistant(text)]
         expect(messages).toHaveLength(4);
-        const resultMsg = messages[2]!;
-        expect(resultMsg.role).toBe("user");
-        const blocks = resultMsg.content as ContentBlockParam[];
+        const blocks = toolResultParts(messages[2]);
         expect(blocks).toHaveLength(3);
-        expect(blocks.every((b) => b.type === "tool_result")).toBe(true);
+        expect(blocks.every((b) => b.type === "tool-result")).toBe(true);
     });
 });
 
-// ── 5.3 — parallel order (invariant 3) ──────────────────────────────
+// ── 5.3 — parallel association (invariant 3) ────────────────────────
 
-describe("runAgent — invariant 3: array-order tool_results", () => {
+describe("runAgent — invariant 3: tool-result association", () => {
     it("assembles results in [A,B,C] even when they resolve C,B,A", async () => {
         const provider = scriptedProvider([
             makeMessage(
@@ -122,8 +135,8 @@ describe("runAgent — invariant 3: array-order tool_results", () => {
 
         const { messages } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider));
 
-        const blocks = messages[2]!.content as ToolResultBlockParam[];
-        expect(blocks.map((b) => b.tool_use_id)).toEqual(["tu-A", "tu-B", "tu-C"]);
+        const blocks = toolResultParts(messages[2]);
+        expect(blocks.map((b) => b.toolCallId)).toEqual(["tu-A", "tu-B", "tu-C"]);
     });
 });
 
@@ -168,37 +181,46 @@ describe("runAgent — deterministic step names", () => {
     });
 });
 
-// ── bodyContext partition (see the harness-tools spec) ────────────────────────────────
+describe("runAgent — provider capability gate", () => {
+    it("rejects tool-required agents before the first model call when tool calling is unavailable", async () => {
+        const provider: ScriptedProvider = {
+            ...scriptedProvider([makeMessage([textBlock("should not be called")], "end_turn")]),
+            capabilities: { toolCalling: false },
+        };
 
-describe("runAgent — bodyContext tools run unwrapped, in order", () => {
-    /** A `bodyContext` tool — must NOT be wrapped in `runStep` by the loop. */
-    function bodyTool(): Tool {
+        await expect(runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider))).rejects.toThrow(/cannot run tool-required agent/);
+        expect(provider.calls).toHaveLength(0);
+    });
+});
+
+// ── executionMode partition (see the harness-tools spec) ─────────────
+
+describe("runAgent — workflow tools run unwrapped, in order", () => {
+    function workflowTool(): Tool {
         return defineTool({
-            id: "body",
-            description: "A body-context tool.",
-            bodyContext: true,
+            id: "workflow",
+            description: "A workflow-backed tool.",
+            executionMode: "workflow",
             inputSchema: z.object({ label: z.string() }),
             execute: async ({ label }) => ok({ label }),
         });
     }
 
-    it("dispatches a bodyContext tool without a runStep wrap; wrapped tools still wrapped", async () => {
+    it("dispatches a workflow tool without a runStep wrap; step tools still wrapped", async () => {
         const provider = scriptedProvider([
-            makeMessage([toolUseBlock("tu-w", "echo", { label: "w" }), toolUseBlock("tu-b", "body", { label: "b" })], "tool_use"),
+            makeMessage([toolUseBlock("tu-w", "echo", { label: "w" }), toolUseBlock("tu-b", "workflow", { label: "b" })], "tool_use"),
             makeMessage([textBlock("done")], "end_turn"),
         ]);
 
         const rec = recordingStep();
-        const { messages } = await runAgent(agentDef([echoTool(), bodyTool()]), GO, makeSession(), opts(provider, { runStep: rec.runStep }));
+        const { messages } = await runAgent(agentDef([echoTool(), workflowTool()]), GO, makeSession(), opts(provider, { runStep: rec.runStep }));
 
-        // The wrapped `echo` reserves a `tool-...` step; the `bodyContext` `body`
-        // tool runs unwrapped — no `tool-body-*` name is ever handed to `runStep`.
         expect(rec.names).toEqual(["llm-0", "tool-echo-tu-w", "llm-1"]);
 
         // Results are assembled by original index regardless of execution order.
-        const blocks = messages[2]!.content as ToolResultBlockParam[];
-        expect(blocks.map((b) => b.tool_use_id)).toEqual(["tu-w", "tu-b"]);
-        expect(String(blocks[1]!.content)).toContain("b");
+        const blocks = toolResultParts(messages[2]);
+        expect(blocks.map((b) => b.toolCallId)).toEqual(["tu-w", "tu-b"]);
+        expect(outputValue(blocks[1]!)).toEqual({ label: "b" });
     });
 });
 
@@ -209,7 +231,7 @@ describe("runAgent — max-iteration wrap-up", () => {
         // The provider never stops asking for tools — except when handed an
         // empty tool list, which forces the wrap-up text reply.
         const provider = scriptedProvider((callIndex, request) =>
-            request.tools !== undefined && request.tools.length === 0
+            request.tools !== undefined && Object.keys(request.tools).length === 0
                 ? makeMessage([textBlock("here is where I reached")], "end_turn")
                 : makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use"),
         );
@@ -218,11 +240,11 @@ describe("runAgent — max-iteration wrap-up", () => {
 
         // 3 capped iterations + 1 forced wrap-up call.
         expect(provider.calls).toHaveLength(4);
-        expect(provider.calls[3]!.tools).toEqual([]);
+        expect(provider.calls[3]!.tools).toEqual({});
 
         const last = messages.at(-1)!;
         expect(last.role).toBe("assistant");
-        const content = last.content as ContentBlock[];
+        const content = last.content as Exclude<Extract<ModelMessage, { role: "assistant" }>["content"], string>;
         expect(content.some((b) => b.type === "text" && b.text === "here is where I reached")).toBe(true);
     });
 });
@@ -243,9 +265,9 @@ describe("runAgent — tool-error boundary", () => {
 
         const { messages } = await runAgent(agentDef([boom]), GO, makeSession(), opts(provider));
 
-        const result = (messages[2]!.content as ToolResultBlockParam[])[0]!;
-        expect(result.is_error).toBe(true);
-        expect(String(result.content)).toContain("kaboom");
+        const result = toolResultParts(messages[2])[0]!;
+        expect(isErrorResult(result)).toBe(true);
+        expect(String(outputValue(result))).toContain("kaboom");
         expect(messages.at(-1)!.role).toBe("assistant");
     });
 
@@ -260,9 +282,9 @@ describe("runAgent — tool-error boundary", () => {
 
         const { messages } = await runAgent(agentDef([okTool]), GO, makeSession(), opts(provider));
 
-        const result = (messages[2]!.content as ToolResultBlockParam[])[0]!;
-        expect(result.is_error).not.toBe(true);
-        expect(JSON.parse(String(result.content))).toEqual({ answer: 42 });
+        const result = toolResultParts(messages[2])[0]!;
+        expect(isErrorResult(result)).toBe(false);
+        expect(outputValue(result)).toEqual({ answer: 42 });
     });
 
     it("maps an err(ToolError) Result to an is_error tool_result verbatim", async () => {
@@ -276,9 +298,9 @@ describe("runAgent — tool-error boundary", () => {
 
         const { messages } = await runAgent(agentDef([errTool]), GO, makeSession(), opts(provider));
 
-        const result = (messages[2]!.content as ToolResultBlockParam[])[0]!;
-        expect(result.is_error).toBe(true);
-        expect(JSON.parse(String(result.content))).toEqual({
+        const result = toolResultParts(messages[2])[0]!;
+        expect(isErrorResult(result)).toBe(true);
+        expect(JSON.parse(String(outputValue(result)))).toEqual({
             error: "upstream down",
             retryable: true,
         });
@@ -303,9 +325,34 @@ describe("runAgent — tool-error boundary", () => {
         const { messages } = await runAgent(agentDef([strict]), GO, makeSession(), opts(provider));
 
         expect(executed).toBe(false);
-        const result = (messages[2]!.content as ToolResultBlockParam[])[0]!;
-        expect(result.is_error).toBe(true);
-        expect(String(result.content)).toContain("input validation failed");
+        const result = toolResultParts(messages[2])[0]!;
+        expect(isErrorResult(result)).toBe(true);
+        expect(String(outputValue(result))).toContain("input validation failed");
+    });
+
+    it("re-raises fatal workflow-backed errors instead of returning an error tool result", async () => {
+        const fatal = new Error("workflow cancelled");
+        const workflow = defineTool({
+            id: "workflow_fatal",
+            description: "Throws a fatal workflow error.",
+            executionMode: "workflow",
+            inputSchema: z.object({}),
+            execute: async () => {
+                throw fatal;
+            },
+        });
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "workflow_fatal", {})], "tool_use")]);
+
+        await expect(
+            runAgent(
+                agentDef([workflow]),
+                GO,
+                makeSession(),
+                opts(provider, {
+                    isFatalLoopError: (err) => err === fatal,
+                }),
+            ),
+        ).rejects.toBe(fatal);
     });
 });
 
@@ -336,14 +383,14 @@ describe("runAgent — max_tokens recovery", () => {
 
         // A retryable is_error tool_result was synthesized for it, preserving the
         // tool_use↔tool_result pairing.
-        const result = (messages[2]!.content as ToolResultBlockParam[])[0]!;
-        expect(result.type).toBe("tool_result");
-        expect(result.tool_use_id).toBe("tu-cut");
-        expect(result.is_error).toBe(true);
-        expect(String(result.content)).toContain("cut off");
+        const result = toolResultParts(messages[2])[0]!;
+        expect(result.type).toBe("tool-result");
+        expect(result.toolCallId).toBe("tu-cut");
+        expect(isErrorResult(result)).toBe(true);
+        expect(String(outputValue(result))).toContain("cut off");
 
         // The loop continued to a clean terminal reply and counted the recovery.
-        expect(finish.reason).toBe("end_turn");
+        expect(finish.reason).toBe("stop");
         expect(finish.truncationRecoveries).toBe(1);
         expect(messages.at(-1)!.role).toBe("assistant");
     });
@@ -356,11 +403,11 @@ describe("runAgent — max_tokens recovery", () => {
 
         const { messages } = await runAgent(agentDef([echoTool()]), GO, makeSession(), opts(provider));
 
-        const blocks = messages[2]!.content as ToolResultBlockParam[];
-        expect(blocks.map((b) => b.tool_use_id)).toEqual(["tu-A", "tu-B"]);
+        const blocks = toolResultParts(messages[2]);
+        expect(blocks.map((b) => b.toolCallId)).toEqual(["tu-A", "tu-B"]);
         // The earlier tool ran (no error); the trailing one was refused.
-        expect(blocks[0]!.is_error).not.toBe(true);
-        expect(blocks[1]!.is_error).toBe(true);
+        expect(isErrorResult(blocks[0]!)).toBe(false);
+        expect(isErrorResult(blocks[1]!)).toBe(true);
     });
 
     it("steers and continues on truncated prose (no tool_use)", async () => {
@@ -376,7 +423,7 @@ describe("runAgent — max_tokens recovery", () => {
         const steer = messages[2]!;
         expect(steer.role).toBe("user");
         expect(String(steer.content)).toContain("cut off");
-        expect(finish.reason).toBe("end_turn");
+        expect(finish.reason).toBe("stop");
         expect(finish.truncationRecoveries).toBe(1);
     });
 });
@@ -390,7 +437,7 @@ describe("runAgent — finish signal", () => {
         const { finish } = await runAgent(agentDef([]), GO, makeSession(), opts(provider));
 
         expect(finish).toEqual({
-            reason: "end_turn",
+            reason: "stop",
             cappedOut: false,
             truncationRecoveries: 0,
         });
@@ -398,7 +445,7 @@ describe("runAgent — finish signal", () => {
 
     it("reports cappedOut with reason max_iterations on the wrap-up path", async () => {
         const provider = scriptedProvider((callIndex, request) =>
-            request.tools !== undefined && request.tools.length === 0
+            request.tools !== undefined && Object.keys(request.tools).length === 0
                 ? makeMessage([textBlock("reached")], "end_turn")
                 : makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use"),
         );

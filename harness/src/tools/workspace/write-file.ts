@@ -33,7 +33,7 @@ export function createWriteFileTool(deps: WriteFileDeps) {
     return defineTool({
         id: "write_file",
         // Body-only `awaitExec`-recv → runs unwrapped in the workflow body (see the harness-tools spec).
-        bodyContext: true,
+        executionMode: "workflow",
         description:
             "Write a UTF-8 text file in your working directory. Relative paths " +
             "resolve against it; a path outside it returns an `out_of_prefix` data " +

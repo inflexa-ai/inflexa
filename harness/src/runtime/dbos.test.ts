@@ -7,7 +7,7 @@
  * with the durable workflow tests (change 8).
  */
 
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import pino from "pino";
 
 import { __resetDbosStateForTest, __setDbosStateForTest, dbosState, type DbosConfig } from "./dbos.js";
@@ -15,12 +15,26 @@ import { __resetDbosStateForTest, __setDbosStateForTest, dbosState, type DbosCon
 const silentLogger = pino({ level: "silent" });
 const stubConfig = {} as DbosConfig;
 
+/**
+ * `DBOS.shutdown` is stubbed by DIRECT property assignment, which
+ * `mock.restore()` does NOT undo — capture the original and put it back in
+ * `afterAll` so later test files (the registration-window bounce in the
+ * DBOS integration files, the rig's exit hook) call the real shutdown.
+ */
+let originalShutdown: unknown;
+
 beforeEach(() => {
     __resetDbosStateForTest();
 });
 
 afterEach(() => {
     mock.restore();
+});
+
+afterAll(async () => {
+    if (originalShutdown === undefined) return;
+    const dbos = await import("@dbos-inc/dbos-sdk");
+    (dbos.DBOS.shutdown as unknown) = originalShutdown;
 });
 
 describe("dbosState", () => {
@@ -66,6 +80,7 @@ describe("launchDbos / shutdownDbos", () => {
     it("shutdownDbos swallows errors and resets state", async () => {
         __setDbosStateForTest({ launched: true, recoveryStarted: true });
         const dbos = await import("@dbos-inc/dbos-sdk");
+        originalShutdown ??= dbos.DBOS.shutdown;
         const stub = mock(() => Promise.reject(new Error("boom")));
         (dbos.DBOS.shutdown as unknown) = stub;
 

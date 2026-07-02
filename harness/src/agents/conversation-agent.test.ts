@@ -81,17 +81,17 @@ describe("createConversationAgent", () => {
         }
     });
 
-    test("tool ids are unique and definitions() emits valid Anthropic schemas", () => {
+    test("tool ids are unique and definitions() emits valid AI SDK schemas", () => {
         const agent = buildAgent();
         // createRegistry throws on a duplicate id.
         const registry = createRegistry(agent.tools);
         const defs = registry.definitions();
-        expect(defs.length).toBe(agent.tools.length);
-        for (const def of defs) {
-            expect(typeof def.name).toBe("string");
-            expect(def.name.length).toBeGreaterThan(0);
+        expect(Object.keys(defs)).toHaveLength(agent.tools.length);
+        for (const [name, def] of Object.entries(defs)) {
+            expect(typeof name).toBe("string");
+            expect(name.length).toBeGreaterThan(0);
             expect(typeof def.description).toBe("string");
-            expect((def.input_schema as { type?: unknown }).type).toBe("object");
+            expect(def.inputSchema.jsonSchema.type).toBe("object");
         }
     });
 });

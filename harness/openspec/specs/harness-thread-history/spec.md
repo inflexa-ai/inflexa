@@ -1,25 +1,25 @@
 # harness-thread-history Specification
 
 ## Purpose
-Defines the harness `messages` table — the single source of truth for conversation turns — and the `appendTurn` / `loadRecent` API on top of it. Turns are persisted atomically with a monotonic per-thread `seq`, content is Anthropic-shaped `ContentBlockParam[]` JSONB, and `loadRecent` walks newest-first to a token budget snapping the window to valid turn boundaries (no orphan `tool_result`). Stored content blocks convert to `CortexMessage` parts for the wire.
+Defines the harness `messages` table — the single source of truth for conversation turns — and the `appendTurn` / `loadRecent` API on top of it. Turns are persisted atomically with a monotonic per-thread `seq`, content is stored as AI SDK model-message envelopes (see the ai-sdk-message-storage spec), and `loadRecent` walks newest-first to a token budget snapping the window to valid turn boundaries (no orphan tool result). Stored AI SDK messages convert to `CortexMessage` parts for the wire.
 
 ## Requirements
 
 ### Requirement: A turn is appended atomically with monotonic sequence
 
-`appendTurn(threadId, messages)` SHALL write all messages of a turn in one transaction, assigning each a `seq` that is monotonically increasing per thread. Each row SHALL store its `content` as Anthropic-shaped JSONB and a `tokens` count computed at write time.
+`appendTurn(threadId, messages)` SHALL write all messages of a turn in one transaction, assigning each a `seq` that is monotonically increasing per thread. Each row SHALL store its model content as an AI SDK model-message envelope and a `tokens` count computed at write time.
 
 #### Scenario: A turn round-trips
 
-- **GIVEN** a turn of messages appended to a thread
+- **GIVEN** a turn of AI SDK model messages appended to a thread
 - **WHEN** the thread is read back
 - **THEN** the messages return oldest-first with strictly increasing `seq`
 
-#### Scenario: A thinking signature survives persistence
+#### Scenario: Provider metadata survives persistence
 
-- **GIVEN** a message containing a `thinking` block with a signature is appended
+- **GIVEN** a message containing provider metadata required for continuation is appended
 - **WHEN** it is read back
-- **THEN** the `signature` is byte-identical
+- **THEN** the provider metadata is byte-identical where AI SDK represents it
 
 ### Requirement: loadRecent windows by token budget
 
@@ -31,15 +31,15 @@ Defines the harness `messages` table — the single source of truth for conversa
 - **WHEN** `loadRecent` is called
 - **THEN** it returns only the most recent turns whose cumulative tokens fit the budget
 
-### Requirement: loadRecent returns a valid Anthropic message sequence
+### Requirement: loadRecent returns a valid AI SDK model-message sequence
 
-The window returned by `loadRecent` SHALL always begin on a `user` message that is genuine user input — not a `tool_result` continuation — and SHALL never split a `tool_use`/`tool_result` pair. The turn is the atomic unit; a turn is never half-loaded. If the most recent complete turn alone exceeds the budget, it SHALL be returned in full.
+The window returned by `loadRecent` SHALL always begin on a genuine user-input turn and SHALL never split an AI SDK tool-call/tool-result continuation. The turn is the atomic unit; a turn is never half-loaded. If the most recent complete turn alone exceeds the budget, it SHALL be returned in full.
 
-#### Scenario: The window is snapped past an orphan tool_result
+#### Scenario: The window is snapped past an orphan tool result
 
-- **GIVEN** a token cut that would start the window on a `user` message containing only `tool_result` blocks
+- **GIVEN** a token cut that would start the window on a tool-result continuation
 - **WHEN** `loadRecent` snaps the boundary
-- **THEN** the returned window starts on a genuine user-input message and contains no orphan `tool_result`
+- **THEN** the returned window starts on a genuine user-input turn and contains no orphan tool result
 
 #### Scenario: An oversized turn is returned whole
 
@@ -59,7 +59,7 @@ Every `loadRecent` call SHALL emit an OTel metric recording the thread's total t
 
 ### Requirement: Thread history is conversation-scoped
 
-The `messages` table and `ThreadHistory` SHALL serve conversation threads only. Workflow and sandbox agent loops SHALL NOT write to it; their message durability is the DBOS step cache.
+The `messages` table and `ThreadHistory` SHALL serve conversation threads only. Workflow and sandbox agent loops SHALL NOT write to it; their message durability is the DBOS step cache and is not migrated by the AI SDK thread-history backfill.
 
 #### Scenario: The interface offers no generic message insert
 
@@ -69,7 +69,7 @@ The `messages` table and `ThreadHistory` SHALL serve conversation threads only. 
 
 ### Requirement: A paginated message read backs the messages endpoint
 
-`ThreadHistory` SHALL provide a thread-scoped, paginated read (`loadPage(threadId, page, perPage)`) of the `messages` table for serving the thread messages endpoint, returning a page of messages (oldest-first) together with `total`, `page`, `perPage`, and `hasMore`. Pagination SHALL be by whole turns — `page`, `perPage`, and `total` count turns, not rows — so a multi-row turn always reloads intact. This read SHALL be distinct from `loadRecent` (which windows by token budget for the LLM) — it serves UI display, not the agent loop, and SHALL NOT apply token-budget eviction.
+`ThreadHistory` SHALL provide a thread-scoped, paginated read (`loadPage(threadId, page, perPage)`) of the `messages` table for serving the thread messages endpoint, returning a page of AI SDK model-message envelopes (oldest-first) together with `total`, `page`, `perPage`, and `hasMore`. Pagination SHALL be by whole turns — `page`, `perPage`, and `total` count turns, not rows — so a multi-row turn always reloads intact. This read SHALL be distinct from `loadRecent` (which windows by token budget for the LLM) — it serves UI display, not the agent loop, and SHALL NOT apply token-budget eviction.
 
 #### Scenario: A page of messages is returned with totals
 
@@ -83,18 +83,18 @@ The `messages` table and `ThreadHistory` SHALL serve conversation threads only. 
 - **WHEN** the paginated read is called
 - **THEN** it returns messages by page boundaries, not by token budget, and evicts nothing
 
-### Requirement: Stored content blocks convert to CortexMessage
+### Requirement: Stored AI SDK messages convert to CortexMessage
 
-A converter SHALL map a stored message's Anthropic `ContentBlockParam[]` (the `content_jsonb` shape) to `CortexMessage` parts for the wire. Text blocks SHALL become text parts and tool-use blocks SHALL become tool-call parts; blocks the UI does not render (e.g. thinking) SHALL be dropped without mutating the stored row. The converter operates on the harness `messages` content shape.
+A converter SHALL map stored AI SDK model-message envelopes to `CortexMessage` parts for the wire. Text content SHALL become text parts and tool calls SHALL become tool-call parts. Provider metadata or reasoning blocks the UI does not render SHALL be omitted from the display value without mutating the stored row.
 
 #### Scenario: A tool-using turn converts to CortexMessage
 
-- **GIVEN** a stored assistant message containing text and a tool-use block
+- **GIVEN** a stored assistant AI SDK message containing text and a tool call
 - **WHEN** the converter runs
 - **THEN** it yields a `CortexMessage` with a text part and a tool-call part
 
-#### Scenario: A thinking block is dropped without mutating storage
+#### Scenario: Provider metadata is dropped from display without mutating storage
 
-- **GIVEN** a stored message containing a thinking block
+- **GIVEN** a stored message containing provider metadata not rendered by the UI
 - **WHEN** the converter runs
-- **THEN** the thinking block is omitted from the `CortexMessage` and the stored row is unchanged
+- **THEN** the metadata is omitted from the `CortexMessage` and the stored row is unchanged

@@ -28,7 +28,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import { unwrapOrThrow } from "../../../lib/result.js";
 import { isBudgetExceeded } from "../../../loop/budget-exceeded.js";
-import type { AgentChat, ChatRequest, Message } from "../../../providers/types.js";
+import type { AgentChat, ChatRequest, ChatResponse } from "../../../providers/types.js";
 import type { AgentSession } from "../../../auth/types.js";
 
 /**
@@ -66,7 +66,7 @@ export interface RunLlmStepOptions {
 export const BUDGET_EXCEEDED_SENTINEL = Symbol.for("ta.budget-exceeded");
 
 export type RunLlmStepResult =
-    | { readonly kind: "ok"; readonly message: Message }
+    | { readonly kind: "ok"; readonly response: ChatResponse }
     | { readonly kind: "budget-exceeded"; readonly sentinel: typeof BUDGET_EXCEEDED_SENTINEL };
 
 /**
@@ -78,8 +78,8 @@ export async function runLlmStep(opts: RunLlmStepOptions): Promise<RunLlmStepRes
     const { stepName, agentId, provider, req, session, signal } = opts;
 
     try {
-        const message = await DBOS.runStep(async () => unwrapOrThrow(await provider.chat(req, session, signal)), { name: stepName });
-        return { kind: "ok", message };
+        const response = await DBOS.runStep(async () => unwrapOrThrow(await provider.chat(req, session, signal)), { name: stepName });
+        return { kind: "ok", response };
     } catch (err) {
         if (!isBudgetExceeded(err)) {
             throw err;

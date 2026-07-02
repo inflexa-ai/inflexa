@@ -1,53 +1,53 @@
 /**
- * Converter: stored harness `messages` content → wire `CortexMessage[]`.
+ * Converter: stored AI SDK model messages → wire `CortexMessage[]`.
  *
  * The display read (`ThreadHistory.loadPage`) returns rows whose `content`
- * is the Anthropic `ContentBlockParam[]` (or a bare string) that `appendTurn`
- * persisted. This maps each row to a `CortexMessage` for the chat wire:
+ * is the AI SDK `ModelMessage` that `appendTurn` persisted. This maps each
+ * row to a `CortexMessage` for the chat wire:
  *
- *   - text block        → text part
- *   - tool_use block    → a reconstructed display card (`data-plan`,
+ *   - text part         → text part
+ *   - tool-call part    → a reconstructed display card (`data-plan`,
  *                         `data-presentation`) when `resolveCard` recognises
  *                         the tool, else a generic tool-call part
- *   - everything else   → dropped (thinking, tool_result, etc.) — the UI
+ *   - everything else   → dropped (reasoning, tool-result, etc.) — the UI
  *                         does not render them
  *
  * Display cards are emitted live over the chat SSE stream but never persisted
- * (storage holds only the Anthropic transcript). `resolveCard` rebuilds them
- * from the persisted `tool_use` block so they reappear on reload.
+ * (storage holds only the AI SDK model-message transcript). `resolveCard`
+ * rebuilds them from the persisted tool-call part so they reappear on reload.
  *
- * A row that yields no renderable parts (e.g. a `user` message carrying only
- * `tool_result` continuation blocks) is omitted entirely, so the rendered
+ * A row that yields no renderable parts (e.g. a `tool`-role message carrying
+ * only tool-result continuation parts) is omitted entirely, so the rendered
  * conversation has no empty bubbles. Storage is never mutated.
  */
 
-import type { ContentBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import type { ModelMessage } from "ai";
 import type { CortexMessage, CortexPart } from "@inflexa-ai/harness/contracts/message.js";
 
 import type { ToolCardResolver } from "./reconstruct-cards.js";
 import type { StoredMessage } from "./thread-history.js";
 
-function genericToolCall(block: ContentBlockParam): CortexPart | null {
-    if (block.type !== "tool_use") return null;
+function genericToolCall(block: Extract<Exclude<Extract<ModelMessage, { role: "assistant" }>["content"], string>[number], { type: "tool-call" }>): CortexPart {
     return {
         type: "tool-call",
-        toolCallId: block.id,
-        toolName: block.name,
+        toolCallId: block.toolCallId,
+        toolName: block.toolName,
         status: "finished",
     };
 }
 
-async function blockToPart(block: ContentBlockParam, resolveCard?: ToolCardResolver): Promise<CortexPart | null> {
+async function blockToPart(block: Exclude<ModelMessage["content"], string>[number], resolveCard?: ToolCardResolver): Promise<CortexPart | null> {
     if (block.type === "text") return { type: "text", text: block.text };
-    if (block.type === "tool_use") {
-        const card = resolveCard ? await resolveCard(block) : null;
+    if (block.type === "tool-call") {
+        const card = resolveCard ? await resolveCard({ type: "tool_use", id: block.toolCallId, name: block.toolName, input: block.input } as never) : null;
         return card ?? genericToolCall(block);
     }
-    // thinking, tool_result, image, and any other block — not rendered.
+    // reasoning, tool_result, file, and any other block — not rendered.
     return null;
 }
 
-async function rowToParts(content: StoredMessage["content"], resolveCard?: ToolCardResolver): Promise<CortexPart[]> {
+async function rowToParts(message: StoredMessage["message"], resolveCard?: ToolCardResolver): Promise<CortexPart[]> {
+    const content = message.content;
     if (typeof content === "string") {
         return content.length > 0 ? [{ type: "text", text: content }] : [];
     }
@@ -78,9 +78,9 @@ async function rowToParts(content: StoredMessage["content"], resolveCard?: ToolC
 export async function contentToCortexMessages(messages: readonly StoredMessage[], resolveCard?: ToolCardResolver): Promise<CortexMessage[]> {
     const out: CortexMessage[] = [];
     for (const message of messages) {
-        const parts = await rowToParts(message.content, resolveCard);
+        const parts = await rowToParts(message.message, resolveCard);
         if (parts.length === 0) continue;
-        const role = message.role as CortexMessage["role"];
+        const role = message.message.role === "tool" ? "assistant" : (message.message.role as CortexMessage["role"]);
 
         const prev = out[out.length - 1];
         if (prev && prev.role === role) {

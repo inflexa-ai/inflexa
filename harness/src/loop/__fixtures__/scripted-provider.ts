@@ -1,78 +1,59 @@
-/**
- * Test-only `ChatProvider` that replays scripted `Message` replies, plus
- * content-block builders. Not a `*.test.ts` file, so the runner ignores
- * it; imported by the loop unit tests.
- */
-
-import type { ContentBlock, Message, TextBlock, ThinkingBlock, ToolUseBlock } from "@anthropic-ai/sdk/resources/messages";
+import type { ChatResponse, ChatProvider, ChatRequest, ChatStreamEvent } from "../../providers/types.js";
 import { type ResultAsync, okAsync } from "neverthrow";
-
-import type { AgentSession as Session } from "../../auth/types.js";
 import type { ProviderError } from "../../providers/errors.js";
-import type { ChatProvider, ChatRequest, ChatStreamEvent } from "../../providers/types.js";
+import type { AgentSession as Session } from "../../auth/types.js";
 
-const ZERO_USAGE: Message["usage"] = {
-    cache_creation: null,
-    cache_creation_input_tokens: null,
-    cache_read_input_tokens: null,
-    inference_geo: null,
-    input_tokens: 0,
-    output_tokens: 0,
-    output_tokens_details: null,
-    server_tool_use: null,
-    service_tier: null,
-};
+export type TextBlock = { type: "text"; text: string };
+export type ThinkingBlock = { type: "reasoning"; text: string; providerOptions?: { anthropic: { signature: string } } };
+export type ToolUseBlock = { type: "tool-call"; toolCallId: string; toolName: string; input: unknown };
+export type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock;
 
-let msgCounter = 0;
+function mapFinishReason(finishReason: ChatResponse["finishReason"] | "tool_use" | "end_turn" | "max_tokens" | "refusal"): ChatResponse["finishReason"] {
+    switch (finishReason) {
+        case "tool_use":
+            return "tool-calls";
+        case "end_turn":
+            return "stop";
+        case "max_tokens":
+            return "length";
+        case "refusal":
+            return "content-filter";
+        default:
+            return finishReason;
+    }
+}
 
-/** Build an assistant `Message` carrying the given content blocks. */
-export function makeMessage(content: ContentBlock[], stopReason: Message["stop_reason"]): Message {
+export function makeMessage(content: ContentBlock[], finishReason: ChatResponse["finishReason"] | "tool_use" | "end_turn" | "max_tokens" | "refusal"): ChatResponse {
     return {
-        id: `msg_${++msgCounter}`,
-        type: "message",
-        role: "assistant",
-        model: "claude-test",
-        content,
-        stop_reason: stopReason,
-        stop_sequence: null,
-        stop_details: null,
-        container: null,
-        usage: ZERO_USAGE,
+        message: { role: "assistant", content },
+        finishReason: mapFinishReason(finishReason),
     };
 }
 
 export function textBlock(text: string): TextBlock {
-    return { type: "text", text, citations: null };
+    return { type: "text", text };
 }
 
 export function thinkingBlock(thinking: string, signature: string): ThinkingBlock {
-    return { type: "thinking", thinking, signature };
+    return { type: "reasoning", text: thinking, providerOptions: { anthropic: { signature } } };
 }
 
 export function toolUseBlock(id: string, name: string, input: unknown): ToolUseBlock {
-    return { type: "tool_use", id, name, input, caller: { type: "direct" } };
+    return { type: "tool-call", toolCallId: id, toolName: name, input };
 }
 
-/** A `ChatProvider` whose `chat` replays a script and records its inputs. */
 export interface ScriptedProvider extends ChatProvider {
-    /** Every `chat` request, in call order. */
     readonly calls: ChatRequest[];
-    /** The `Session` passed to each `chat` call, in call order. */
     readonly sessions: Session[];
 }
 
-/**
- * Build a scripted provider. `script` is either a fixed list of replies
- * (indexed by call number) or a function of `(callIndex, request)` —
- * the latter drives non-terminating scenarios (always `tool_use`).
- */
-export function scriptedProvider(script: Message[] | ((callIndex: number, request: ChatRequest) => Message)): ScriptedProvider {
+export function scriptedProvider(script: ChatResponse[] | ((callIndex: number, request: ChatRequest) => ChatResponse)): ScriptedProvider {
     const calls: ChatRequest[] = [];
     const sessions: Session[] = [];
     const reply =
         typeof script === "function"
             ? script
-            : (i: number): Message => {
+            : (i: number): ChatResponse => {
                   const r = script[i];
                   if (r === undefined) {
                       throw new Error(`scriptedProvider: no scripted reply for call ${i}`);
@@ -81,15 +62,15 @@ export function scriptedProvider(script: Message[] | ((callIndex: number, reques
               };
 
     return {
+        capabilities: { toolCalling: true },
         calls,
         sessions,
-        chat(request: ChatRequest, session: Session): ResultAsync<Message, ProviderError> {
+        chat(request: ChatRequest, session: Session): ResultAsync<ChatResponse, ProviderError> {
             const i = calls.length;
             calls.push(request);
             sessions.push(session);
             return okAsync(reply(i, request));
         },
-        // eslint-disable-next-line require-yield
         async *chatStream(): AsyncIterable<ChatStreamEvent> {
             throw new Error("scriptedProvider: chatStream is not used by runAgent");
         },

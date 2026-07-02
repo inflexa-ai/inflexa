@@ -3,23 +3,28 @@
  *
  * `show_plan` / `show_user` / `execute_plan` / `iterate_report` emit
  * `data-plan` / `data-presentation` / `data-run-card` / `data-preview` cards
- * live over the chat SSE stream, but only the Anthropic transcript is
- * persisted. On reload, `content-to-cortex` calls this resolver for each
- * `tool_use` block: a recognised display tool yields its card (rebuilt via the
+ * live over the chat SSE stream. On reload, `content-to-cortex` calls this
+ * resolver for each AI SDK tool-call part: a recognised display tool yields its card (rebuilt via the
  * shared `card-builders`); anything else yields `null` and falls back to a
  * generic `tool-call` chip. Keyed by the analysis `Pool` + id (plan / run) or
  * the `sessionsBasePath` (preview, filesystem-backed) so the card can be
  * re-loaded.
  */
 
-import type { ContentBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import type { CortexPart } from "@inflexa-ai/harness/contracts/message.js";
 import type { Pool } from "pg";
 
 import { unwrapOrThrow } from "../lib/result.js";
 import { buildPlanCardData, buildPresentationCardData, buildPreviewCardData, buildRunCardData } from "./card-builders.js";
 
-export type ToolCardResolver = (block: ContentBlockParam) => Promise<CortexPart | null>;
+export interface StoredToolCallForCard {
+    readonly type: "tool_use";
+    readonly id: string;
+    readonly name: string;
+    readonly input: unknown;
+}
+
+export type ToolCardResolver = (block: StoredToolCallForCard) => Promise<CortexPart | null>;
 
 export function createCardResolver(pool: Pool, analysisId: string, sessionsBasePath: string): ToolCardResolver {
     return async (block) => {

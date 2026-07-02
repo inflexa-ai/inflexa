@@ -1,17 +1,17 @@
 /**
  * Tool registry — a name→`Tool` map.
  *
- * `definitions()` emits the Anthropic `Tool[]` sent on the wire; `get(name)`
+ * `definitions()` emits AI SDK-compatible tool definitions; `get(name)`
  * resolves a tool by name for the loop's dispatch boundary (change 3).
  */
 
-import type { Tool as AnthropicTool } from "@anthropic-ai/sdk/resources/messages";
+import { jsonSchema, tool as aiTool, type ToolSet } from "ai";
 
 import type { Tool } from "./define-tool.js";
 
 export interface Registry {
-    /** The Anthropic tool definitions to send with a chat request. */
-    definitions(): AnthropicTool[];
+    /** The AI SDK tool definitions to send with a chat request. */
+    definitions(): ToolSet;
     /** Resolve a tool by name for dispatch; `undefined` if unknown. */
     get(name: string): Tool | undefined;
 }
@@ -27,11 +27,15 @@ export function createRegistry(tools: readonly Tool[]): Registry {
 
     return {
         definitions: () =>
-            tools.map((t) => ({
-                name: t.id,
-                description: t.description,
-                input_schema: t.jsonSchema as AnthropicTool["input_schema"],
-            })),
+            Object.fromEntries(
+                tools.map((t) => [
+                    t.id,
+                    aiTool({
+                        description: t.description,
+                        inputSchema: jsonSchema(t.jsonSchema),
+                    }),
+                ]),
+            ),
         get: (name) => byName.get(name),
     };
 }

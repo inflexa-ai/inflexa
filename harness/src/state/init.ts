@@ -8,6 +8,7 @@
  */
 
 import type { Pool } from "pg";
+import { backfillAiSdkMessageEnvelopes } from "../memory/message-backfill.js";
 
 const DDL = `
 -- Analysis-level state (status, context, data-profile tracking, billing identity).
@@ -191,17 +192,20 @@ CREATE INDEX IF NOT EXISTS idx_cortex_regulatory_chunks_metadata
   ON cortex_regulatory_chunks USING gin (metadata);
 
 -- Conversation message store — the harness ThreadHistory module's table.
--- One row per message, with seq monotonic per thread. content_jsonb holds
--- Anthropic-shaped ContentBlock[] verbatim and tokens is counted at write
--- time, so the read path never tokenizes. Conversation-scoped only —
+-- One row per message, with seq monotonic per thread. message_envelope holds
+-- AI SDK ModelMessage envelopes and tokens is counted at write time, so the
+-- read path never tokenizes. Legacy role/content_jsonb columns are nullable
+-- and write-frozen — they exist only for startup backfill/inspection and
+-- should be dropped after the migration window. Conversation-scoped only —
 -- workflow and sandbox agent loops use the DBOS step cache, never this
 -- table (see the harness-thread-store spec). The (thread_id, seq) primary key already serves
 -- (thread_id, seq DESC) reads, so no separate index is needed.
 CREATE TABLE IF NOT EXISTS messages (
   thread_id     TEXT NOT NULL,
   seq           BIGINT NOT NULL,
-  role          TEXT NOT NULL,
-  content_jsonb JSONB NOT NULL,
+  role          TEXT,
+  content_jsonb JSONB,
+  message_envelope JSONB,
   tokens        INTEGER NOT NULL,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (thread_id, seq)
@@ -306,6 +310,12 @@ export async function initCortexState(pool: Pool): Promise<void> {
             // Safe no-op when already nullable.
             await client.query("ALTER TABLE cortex_runs ALTER COLUMN thread_id DROP NOT NULL");
 
+            // Legacy Anthropic message columns are write-frozen: runtime writes
+            // only message_envelope, so new rows must not require them. The
+            // columns should be dropped entirely after the migration window.
+            await client.query("ALTER TABLE messages ALTER COLUMN role DROP NOT NULL");
+            await client.query("ALTER TABLE messages ALTER COLUMN content_jsonb DROP NOT NULL");
+
             // Additive migrations — columns that may not exist on older DBs.
             const addMigrations = [
                 "ALTER TABLE cortex_runs ADD COLUMN IF NOT EXISTS thread_id TEXT",
@@ -355,10 +365,12 @@ export async function initCortexState(pool: Pool): Promise<void> {
                 // and re-opens the charge closed on the 402 pause path.
                 "ALTER TABLE cortex_runs ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE cortex_analysis_state ADD COLUMN IF NOT EXISTS seed_input_file_ids JSONB",
+                "ALTER TABLE messages ADD COLUMN IF NOT EXISTS message_envelope JSONB",
             ];
             for (const sql of addMigrations) {
                 await client.query(sql);
             }
+            await backfillAiSdkMessageEnvelopes(client);
 
             // HNSW ANN index on cortex_regulatory_chunks.embedding. HNSW gives
             // higher recall than ivfflat at the same latency and needs no

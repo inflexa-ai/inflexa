@@ -4,18 +4,19 @@ import { okAsync } from "neverthrow";
 import { makeSession } from "./__fixtures__/session.js";
 import { makeMessage, textBlock } from "../loop/__fixtures__/scripted-provider.js";
 import { createStreamingChat } from "./streaming-chat.js";
-import type { ChatProvider, ChatRequest, ChatStreamEvent, Message } from "./types.js";
+import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent } from "./types.js";
 
-const REQUEST: ChatRequest = { messages: [] };
+const REQUEST: ChatRequest = { system: "test", messages: [], tools: {} };
 
 /** A `ChatProvider` whose `chatStream` yields the given deltas, then `done`. */
-function streamingFake(deltas: readonly string[], final: Message, options: { omitDone?: boolean } = {}): ChatProvider {
+function streamingFake(deltas: readonly string[], final: ChatResponse, options: { omitDone?: boolean } = {}): ChatProvider {
     return {
+        capabilities: { toolCalling: true },
         chat: () => okAsync(final),
         // eslint-disable-next-line @typescript-eslint/require-await
         chatStream: async function* (): AsyncIterable<ChatStreamEvent> {
             for (const text of deltas) yield { type: "text-delta", text };
-            if (!options.omitDone) yield { type: "done", message: final };
+            if (!options.omitDone) yield { type: "done", response: final };
         },
     };
 }
