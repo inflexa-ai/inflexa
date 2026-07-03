@@ -132,6 +132,14 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
 
     intro(`inflexa profile — ${analysis.name}`);
 
+    // Surface an invalid `harness` config block before the image check. On a
+    // config error resolveHarnessConfig collapses EVERY field to its default
+    // (including a valid `harness.sandboxImage`), so ensureSandboxImage would
+    // inspect the wrong tag and could fail with a misleading "image not found"
+    // that buries the real problem (e.g. a mistyped `adminPort`). boot reports
+    // the same error, but only after the image check it never reaches.
+    if (cfg.configError) fail(describeBootError({ type: "harness_config_invalid", issues: cfg.configError.issues }));
+
     await ensureSandboxImage(cfg.sandboxImage);
 
     const s = spinner();
