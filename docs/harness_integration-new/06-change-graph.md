@@ -138,7 +138,12 @@ A. add-input-staging (cli)          B. port-prov-run-events (cli)
         ▼                                   │
 C. embed-harness-runtime (cli + harness barrel)
    pkg dep, composition root, Postgres+DBOS launch,
-   trigger dataProfile on staged inputs   ◀── the walking skeleton
+   trigger dataProfile on staged inputs   ◀── walking skeleton #1
+        │                                   │
+        ▼                                   │
+F. embed-execute-analysis (cli + harness barrel)   ◀── walking skeleton #2
+   run engine: registerSandboxStep+registerExecuteAnalysis cohort,
+   plan intake (dev surface), stub ArtifactRegistry, `inflexa run`
         │                                   │
         └────────────┬──────────────────────┘
                      ▼
@@ -156,11 +161,76 @@ E. remove-custom-provenance-persistence (harness)
 | A — add-input-staging | cli | `04` §3–§5, `05` §3 (module verdict + 2 fixes) | none |
 | B — port-prov-run-events | cli | `03` §4 (schema + 7 fixes), `05` §2 (port plan) | none |
 | C — embed-harness-runtime | cli + harness barrel | `04` §1–§3, old `04-composition-wiring.md` | A (`DataProfileWorkflowInput.stagedInputs` is required, `data-profile.ts:86-95`) |
-| D — bridge-harness-provenance | cli + harness (Option A only) | `03` §2–§3, §5.3–5.4 | B and C |
+| F — embed-execute-analysis | cli + harness barrel | this doc, `cli/openspec/changes/embed-execute-analysis/` | C (reuses the booted runtime, seams, command pattern) |
+| D — bridge-harness-provenance | cli + harness (Option A only) | `03` §2–§3, §5.3–5.4 | B and F (F gives observed run boundaries + a live `ArtifactRegistry` call site) |
 | E — remove-custom-prov-persistence | harness | `03` §1 GOES table | none technically; sequenced after D to keep a fallback visible |
 
-Parallelism: B is independent of A/C (pure cli, blueprint-complete from the stash) but
+Parallelism: B is independent of A/C/F (pure cli, blueprint-complete from the stash) but
 its events have no emitter until C lands — it can proceed any time motion is wanted.
+
+## Change F — embed-execute-analysis (walking skeleton #2)
+
+**Status (2026-07-03):** specced AND implemented, 19/19 tasks, live E2E green. The
+run engine — `executeAnalysis` parent + `sandbox-step` children — now has its first
+caller anywhere. The change graph originally routed C→D; grounding D against the code
+during F's exploration showed the gap: the `ArtifactRegistry` seam and the run
+boundaries D hangs events on fire ONLY inside `executeAnalysis`, which nothing could
+trigger (its sole caller is the conversation agent's `executePlan` tool, and the cli
+runs no conversation agent). So F was inserted as C's successor: build and prove the
+run engine before speccing provenance against a runtime whose shape had never been
+observed — the same risk logic that put C first.
+
+What F landed (all in `cli/src/modules/harness/`, plus additive harness barrel
+growth + one additive `upsertPlan` state fn):
+
+- **Registration cohort grew from one workflow to three + scheduled hygiene
+  workflows**: `registerSandboxStep` → `registerExecuteAnalysis` (child before
+  parent — the parent's deps close over the registered child callable, mirroring
+  `assemble.ts:75-76`) → the existing data-profile registration →
+  `registerSandboxReaper`/`registerWatchdog`/`registerNotificationSweep`, all before
+  the single `launchDbos`. `assembleCoreRuntime` stays deferred (it also builds the
+  conversation agent + target-assessment + ephemeral, none exercised here) — C's D1
+  debt is restated, not discharged: move to the full root at conversation-agent
+  adoption.
+- **`SandboxStepDeps`/`ExecuteAnalysisDeps` realizations**: catalog-backed
+  `buildAgent` (`createSandboxAgents(deps)[agentId]`), `resolveWritePrefix` via the
+  harness's own `runStepDir`, a real `EmbeddingProvider` instance, no-op `RunCharge`,
+  `synthesisEnabled` left true, and a **stub `ArtifactRegistry`** (registers nothing,
+  `failedCount: 0`, no-op sync). The stub is contract-honest: the post-step pipeline
+  fails a step only on `failedCount > 0`, and registry impls must not touch
+  `cortex_artifacts` (the harness writes the local ledger around the seam). Run
+  outputs are ledgered + on disk with NO external provenance yet — the change-D gap,
+  carried in the stub's `TODO(extend)`.
+- **Plan intake — a deliberately temporary dev surface** (`plan_intake.ts`): file →
+  `AnalysisPlanSchema` → `validatePlan` → deterministic `pln-` id (sha256 over
+  analysisId + file bytes; stable id ⇒ re-run dedups) → `upsertPlan`. Under a
+  `TODO(extend)` clearing contract with the `plan-intake` spec: retired at
+  conversation-agent/planner adoption, together with the replicated trigger flow.
+- **`inflexa run <analysis> --plan <file>`** (`run.ts`): the deliberate action, a
+  faithful replica of `executePlan`'s dedup→reserve→authorize→build→launch flow
+  (same `TODO(extend)`), blocking to a terminal `RunStatus` with live per-step
+  progress, `--status` read-only view, Ctrl+C detach with DBOS-recoverable semantics.
+
+Findings verified during F (feed the later changes / upstream):
+
+- **`registerAnalysisWorkflows` is unusable by an embedder** — it takes a
+  fully-formed `ExecuteAnalysisDeps` (with `sandboxStepCallable`), which only exists
+  after `registerSandboxStep` runs, and registering the child itself would
+  double-register. Flagged in its JSDoc; embedders register directly in
+  assemble-order (as F and `assemble.ts` do).
+- **`executeAnalysis` does NOT materialize inputs** — its docstring claimed it did;
+  `validateAndInit` only mkdirs the run dir + opens the charge. Corrected upstream.
+  The embedder must stage `data/` before triggering (F does, same as profile).
+- **`ExecuteAnalysisInput.steps` uses the scheduler's minimal `PlanStep`**
+  (`{id, depends_on}`), not the richer schema type; a parsed `AnalysisStep[]` is
+  structurally assignable, no cast.
+
+What D now inherits from F: observed `executeAnalysis` run boundaries to hang
+`prov.run_started`/`prov.run_completed` on, and a live `ArtifactRegistry` call site —
+D shrinks to swapping the stub for the bus adapter + adding run-lifecycle events.
+Note the new fact strengthening 03 §3 Option B: `inflexa run` already BLOCKS to a
+terminal ledger status, so cli-side run-lifecycle emission has authoritative status
+without a harness change.
 
 ## Why C first (A folded in as its first slice)
 

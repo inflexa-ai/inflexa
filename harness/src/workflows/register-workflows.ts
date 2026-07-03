@@ -40,6 +40,17 @@ export interface RegisteredAnalysisWorkflows {
  * Idempotency is owned by the SDK — calling twice with the same name is a
  * `DBOS.registerWorkflow` invariant violation, not something this module
  * guards against.
+ *
+ * Scope: this helper takes a fully-formed `AnalysisWorkflowDeps`, so it fits
+ * only a caller that already holds a registered sandbox-step callable —
+ * `ExecuteAnalysisDeps.sandboxStepCallable` (inside `deps.executeAnalysis`)
+ * exists only after `registerSandboxStep` has run. A caller that still needs
+ * that child callable must instead register the two workflows directly in
+ * assemble-order — register the child first, then feed its callable into the
+ * parent's deps — the way `runtime/assemble.ts` does; registering the child
+ * here as well would make its `registerSandboxStep` a second registration under
+ * the same name, which the SDK rejects. No in-tree caller holds a
+ * pre-registered child callable, so this helper is currently uncalled.
  */
 export function registerAnalysisWorkflows(deps: AnalysisWorkflowDeps): RegisteredAnalysisWorkflows {
     return {

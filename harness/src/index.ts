@@ -123,3 +123,57 @@ export { workflowIdFromExec } from "./sandbox/exec-id.js";
 export { deliverExecEvent, execEventTopic } from "./sandbox/deliver-exec-event.js";
 export { ExecEventMessageSchema } from "./sandbox/types.js";
 export type { ExecEventMessage, DoneMarker } from "./sandbox/types.js";
+
+// Run engine — the analysis + sandbox-step durable workflows an embedder
+// registers itself (in child-before-parent assemble-order: the parent's deps
+// close over the registered child callable). `assembleCoreRuntime` also wires
+// these, but an embedder running only the run engine registers them directly.
+export { registerExecuteAnalysis } from "./workflows/execute-analysis.js";
+export type { ExecuteAnalysisDeps, ExecuteAnalysisInput, ExecuteAnalysisResult } from "./workflows/execute-analysis.js";
+export { registerSandboxStep } from "./workflows/sandbox-step.js";
+export type { SandboxStepDeps, SandboxStepInput, SandboxStepResult, SandboxAgentBuildContext } from "./workflows/sandbox-step.js";
+
+// Sandbox-agent catalog. `buildAgent` maps a `SandboxAgentBuildContext` onto
+// `SandboxAgentDeps`, then selects the per-step agent by id from this record;
+// `SANDBOX_AGENT_META` is the planner-facing meta the same ids key.
+export { createSandboxAgents, SANDBOX_AGENT_META } from "./agents/sandbox/index.js";
+export type { SandboxAgentDeps, SandboxStepCoords, AgentMeta } from "./agents/sandbox/index.js";
+
+// Plan schema, structural validation, and per-step prompt rendering — the gates
+// a plan passes before it can trigger a run, plus the prompt each step's agent
+// receives. `PlanStep` is the minimal `{ id, depends_on }` element type that
+// `ExecuteAnalysisInput.steps` is typed against; a parsed `AnalysisPlan`'s
+// richer `AnalysisStep[]` is assignable to it.
+export { AnalysisPlanSchema } from "./schemas/workflow-state.js";
+export type { AnalysisPlan, AnalysisStep } from "./schemas/workflow-state.js";
+export type { PlanStep } from "./workflows/execute-analysis-scheduler.js";
+export { validatePlan } from "./schemas/validate-plan.js";
+export type { ValidationResult } from "./schemas/validate-plan.js";
+export { renderStepPrompt } from "./schemas/render-step-prompt.js";
+
+// Plan + run + step ledgers around a trigger. `upsertPlan` takes a
+// caller-derived id and inserts-if-absent (the deterministic-id intake path);
+// the run-state calls mirror the chat trigger's reserve → dedup → status flow.
+export { upsertPlan, loadPlan } from "./state/plans.js";
+export type { UpsertPlanInput } from "./state/plans.js";
+export { insertRun, queryActiveRun, updateRunStatus, queryRun, queryRunsByAnalysis, RunDedupCollisionError } from "./state/runs.js";
+export type { InsertRunInput } from "./state/runs.js";
+export { queryStepsByRun } from "./state/step-executions.js";
+export type { CortexRunRow, StepExecutionRow, RunStatus } from "./state/schema.js";
+// Backs `WatchdogDeps.queryActiveSandboxes` when the embedder wires the watchdog.
+export { queryActiveSandboxes } from "./state/active-sandboxes.js";
+
+// Session-tree path convention — the absolute write prefix each sandbox step
+// confines its artifact writes to.
+export { runStepDir } from "./workspace/paths.js";
+
+// Sandbox-hygiene scheduled workflows. Reaper reclaims a dead host's orphaned
+// containers; watchdog converts a dead sandbox into a prompt step failure
+// instead of a deadline-long `DBOS.recv` hang; the sweep prunes stale
+// notifications. Each is a `@DBOS.scheduled` no-op on an idle system.
+export { registerSandboxReaper } from "./sandbox/reaper.js";
+export type { RegisterReaperDeps } from "./sandbox/reaper.js";
+export { registerWatchdog } from "./sandbox/watchdog.js";
+export type { WatchdogDeps } from "./sandbox/watchdog.js";
+export { registerNotificationSweep } from "./sandbox/notification-sweep.js";
+export type { RegisterNotificationSweepDeps } from "./sandbox/notification-sweep.js";

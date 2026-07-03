@@ -61,8 +61,12 @@ function resolveProfileAnalysis(flags: ContextFlags): Analysis {
     }
 }
 
-/** Each boot error variant, as one actionable line naming the remedy. */
-function describeBootError(e: HarnessBootError): string {
+/**
+ * Each boot error variant, as one actionable line naming the remedy. Exported so
+ * `inflexa run` reuses the exact same mapping — the boot prerequisites are
+ * identical for both deliberate harness entry points (task 4.2).
+ */
+export function describeBootError(e: HarnessBootError): string {
     switch (e.type) {
         case "harness_config_invalid":
             return `Your \`harness\` config has an invalid field — ${e.issues}. Fix it in config.json and re-run.`;
@@ -98,7 +102,9 @@ function describeBootError(e: HarnessBootError): string {
         case "ingress_failed":
             return "Could not bind the local callback listener (loopback, ephemeral port) — check for exhausted ports or a restrictive firewall.";
         case "runtime_already_active":
-            return `Another \`inflexa\` process (pid ${e.holderPid}) is already running the harness runtime. Only one profile run per machine at a time — wait for it to finish or stop that process.`;
+            // TODO(slop): We need to discuss this together, and create an issue. This is a limitation I am not willing to accept, but we can defer the fix.
+            // We should make a github issue that captures the entire context, when we will discuss the matter
+            return `Another \`inflexa\` process (pid ${e.holderPid}) is already running the harness runtime. Only one harness runtime per machine at a time — wait for it to finish or stop that process.`;
         case "runtime_boot_failed":
             return `Harness runtime failed to boot: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`;
         default: {
@@ -108,8 +114,11 @@ function describeBootError(e: HarnessBootError): string {
     }
 }
 
-/** Pre-flight: the sandbox image must exist locally — after staging it is too late to find out. */
-async function ensureSandboxImage(image: string): Promise<void> {
+/**
+ * Pre-flight: the sandbox image must exist locally — after staging it is too late
+ * to find out. Exported so `inflexa run` reuses profile's identical image check.
+ */
+export async function ensureSandboxImage(image: string): Promise<void> {
     const rt = activeRuntime();
     const result = await capture(rt, ["image", "inspect", image]);
     if (result.code !== 0) {
@@ -274,21 +283,25 @@ export function friendlyStepLabel(functionName: string): string {
 }
 
 /**
- * Latest step of the newest profile workflow for this analysis, read from the
- * DBOS step record. Returns `null` on any miss or error: progress is a
- * cosmetic channel, and a hiccup here must never abort a live run's wait.
+ * Latest DBOS step of the NEWEST workflow selected by `selectNewestWorkflowUuid`,
+ * read from `dbos.operation_outputs`. Generalized so both the profile wait (below)
+ * and the run wait (`run.ts`) share one reader: the caller supplies a scalar
+ * subquery resolving to the target `workflow_uuid` (its `$N` params bind against
+ * `values`), and this wraps it in the fixed newest-step projection. Returns `null`
+ * on any miss or error — progress is a cosmetic channel and a hiccup here must
+ * never abort a live wait.
  */
-async function readRunProgress(pool: Pool, analysisId: string): Promise<{ step: number; label: string } | null> {
+export async function readNewestWorkflowStep(
+    pool: Pool,
+    selectNewestWorkflowUuid: { text: string; values: unknown[] },
+): Promise<{ step: number; label: string } | null> {
     try {
         const result = await pool.query<{ function_id: number; function_name: string }>({
             text: `SELECT oo.function_id, oo.function_name
              FROM dbos.operation_outputs oo
-             WHERE oo.workflow_uuid = (
-                 SELECT workflow_uuid FROM dbos.workflow_status
-                 WHERE workflow_uuid LIKE 'dataprofile:' || $1 || ':%'
-                 ORDER BY created_at DESC LIMIT 1)
+             WHERE oo.workflow_uuid = (${selectNewestWorkflowUuid.text})
              ORDER BY oo.function_id DESC LIMIT 1`,
-            values: [analysisId],
+            values: selectNewestWorkflowUuid.values,
         });
         const row = result.rows[0];
         if (!row) return null;
@@ -298,7 +311,22 @@ async function readRunProgress(pool: Pool, analysisId: string): Promise<{ step: 
     }
 }
 
-function formatElapsed(sinceMs: number): string {
+/**
+ * Latest step of the newest profile workflow for this analysis, read from the
+ * DBOS step record. Returns `null` on any miss or error: progress is a
+ * cosmetic channel, and a hiccup here must never abort a live run's wait.
+ */
+async function readRunProgress(pool: Pool, analysisId: string): Promise<{ step: number; label: string } | null> {
+    return readNewestWorkflowStep(pool, {
+        text: `SELECT workflow_uuid FROM dbos.workflow_status
+                 WHERE workflow_uuid LIKE 'dataprofile:' || $1 || ':%'
+                 ORDER BY created_at DESC LIMIT 1`,
+        values: [analysisId],
+    });
+}
+
+/** Human-readable elapsed time since `sinceMs`, e.g. `2m05s` or `42s`. Shared with the run wait. */
+export function formatElapsed(sinceMs: number): string {
     const total = Math.floor((Date.now() - sinceMs) / 1000);
     const minutes = Math.floor(total / 60);
     const seconds = total % 60;
