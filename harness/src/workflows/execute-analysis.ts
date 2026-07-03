@@ -303,7 +303,9 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     validatePlanDag(input.steps);
     const levels = computeTopologicalLevels(input.steps);
 
-    // (1) validateAndInit — filesystem + materialize + open charge. The
+    // (1) validateAndInit — create the run dir + open the charge. Inputs are
+    // NOT materialized here: the embedder must have populated the session tree's
+    // `data/` before triggering (the workflow neither downloads nor stages). The
     // `cortex_runs` row was inserted by `executePlan` at the async edge;
     // the run authorization is already minted and rides in `input.runSession`.
     const runId = input.runSession.runFrame.runId;

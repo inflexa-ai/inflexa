@@ -31,8 +31,13 @@ import { bootHarnessRuntime, activeHarnessRuntime, type HarnessBootError } from 
 
 type Spinner = ReturnType<typeof spinner>;
 
-/** Resolve the one analysis this run operates on, or die with a way forward. */
-function resolveProfileAnalysis(flags: ContextFlags): Analysis {
+/**
+ * Resolve the single analysis a deliberate harness command operates on, or die
+ * with a way forward. Shared by `inflexa profile` and `inflexa run` — every
+ * branch is identical between the two except the `empty`-context message, which
+ * each command passes as `emptyHint` (its own "how to get started" line).
+ */
+export function resolveSingleAnalysis(flags: ContextFlags, emptyHint: string): Analysis {
     const ctx = resolveContext(process.cwd(), flags).match((c) => c, dieOn("Failed to resolve context"));
     const listCandidates = (analyses: Analysis[]): string => analyses.map((a) => `  - ${a.id}  ${a.name}`).join("\n");
     switch (ctx.kind) {
@@ -49,7 +54,7 @@ function resolveProfileAnalysis(flags: ContextFlags): Analysis {
             fail(`Ambiguous context — pick one with --analysis <id|name>:\n${listCandidates(ctx.analyses)}`);
             break;
         case "empty":
-            fail("No analysis here. Run `inflexa` to start one, add inputs, then profile.");
+            fail(emptyHint);
             break;
         case "copy":
             fail("This folder is a copied anchor — run `inflexa repair` or `inflexa relocate` first.");
@@ -134,7 +139,7 @@ export async function ensureSandboxImage(image: string): Promise<void> {
 
 /** `inflexa profile` — stage the analysis's inputs and run a data profile on them. */
 export async function runProfile(flags: ContextFlags): Promise<void> {
-    const analysis = resolveProfileAnalysis(flags);
+    const analysis = resolveSingleAnalysis(flags, "No analysis here. Run `inflexa` to start one, add inputs, then profile.");
     const cfg = resolveHarnessConfig();
 
     intro(`inflexa profile — ${analysis.name}`);
@@ -368,7 +373,7 @@ async function waitForTerminalStatus(pool: Pool, analysisId: string, s: Spinner)
  * present, else opens a throwaway connection to an already-running Postgres.
  */
 export async function runProfileStatus(flags: ContextFlags): Promise<void> {
-    const analysis = resolveProfileAnalysis(flags);
+    const analysis = resolveSingleAnalysis(flags, "No analysis here. Run `inflexa` to start one, add inputs, then profile.");
 
     const runtime = activeHarnessRuntime();
     let pool: Pool | null = runtime?.pool ?? null;

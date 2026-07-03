@@ -142,6 +142,13 @@ function validatePlanFile(analysisId: string, path: string): Result<PlanIntake, 
                 return parsed.success ? ok(parsed.data) : err({ type: "schema_invalid", path, issues: parsed.error.issues });
             })
             .andThen((plan): Result<AnalysisPlan, PlanIntakeError> => {
+                // `validatePlan` deliberately treats an empty `steps` array as
+                // valid (a no-op run — harness `validate-plan.ts`). The cli refuses
+                // it: a zero-step run only reserves a ledger row and resolves to an
+                // empty `completed`, never what a hand-authored plan file intends.
+                if (plan.steps.length === 0) {
+                    return err({ type: "plan_invalid", path, errors: ["Plan has no steps — add at least one analysis step to run."] });
+                }
                 const structural = validatePlan(plan);
                 return structural.valid ? ok(plan) : err({ type: "plan_invalid", path, errors: structural.errors });
             })
