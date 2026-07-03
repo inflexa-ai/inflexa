@@ -82,6 +82,34 @@ function recordingSeams(calls: string[]): BootSeams {
             expect(deps.embedding.embed).toBeInstanceOf(Function);
             return async () => {};
         },
+        registerSandboxStep: (deps) => {
+            calls.push("registerSandboxStep");
+            // The boot must wire the run-engine realizations onto the child deps:
+            // the catalog-backed builder and a real embedding-provider instance.
+            expect(deps.buildAgent).toBeInstanceOf(Function);
+            expect(deps.artifactRegistry).toBeDefined();
+            expect(deps.embedding).toBeDefined();
+            return async () => ({ status: "complete", durationMs: 0, finishReason: null, error: null });
+        },
+        registerExecuteAnalysis: (deps) => {
+            calls.push("registerExecuteAnalysis");
+            // The parent's dispatch closes over the registered child callable, so
+            // the child must already be registered by now (design D1).
+            expect(deps.sandboxStepCallable).toBeInstanceOf(Function);
+            return async () => ({ runId: "", workflowId: "", status: "completed", completedSteps: [], failedSteps: [], canceledSteps: [] });
+        },
+        registerReaper: () => {
+            calls.push("registerReaper");
+        },
+        registerWatchdog: (deps) => {
+            calls.push("registerWatchdog");
+            // The watchdog reads the active-sandbox registry through a thunk over
+            // the shared pool; a `ResultAsync` is returned, never awaited here.
+            expect(deps.queryActiveSandboxes).toBeInstanceOf(Function);
+        },
+        registerNotificationSweep: () => {
+            calls.push("registerNotificationSweep");
+        },
         initState: async () => {
             calls.push("initState");
         },
@@ -101,14 +129,100 @@ afterEach(() => {
 });
 
 describe("bootHarnessRuntime", () => {
-    test("boots in the contract order: postgres → ingress → schema init → register → launch", async () => {
+    test("boots in the contract order: prereqs → postgres → ingress → schema init → registration cohort → launch", async () => {
         const calls: string[] = [];
         const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
 
         const runtime = result._unsafeUnwrap();
-        expect(calls).toEqual(["resolveEmbedding", "readKey", "probeEmbedding", "postgres", "ingress", "initState", "register", "launch"]);
+        // The embedding provider resolves first (design: local-embeddings boots
+        // ahead of the proxy key), then the whole registration cohort lands
+        // between schema init and the single launch, child (sandbox-step) before
+        // parent (execute-analysis), then the profile workflow, then the three
+        // sandbox-hygiene crons (design D1/D5).
+        expect(calls).toEqual([
+            "resolveEmbedding",
+            "readKey",
+            "probeEmbedding",
+            "postgres",
+            "ingress",
+            "initState",
+            "registerSandboxStep",
+            "registerExecuteAnalysis",
+            "register",
+            "registerReaper",
+            "registerWatchdog",
+            "registerNotificationSweep",
+            "launch",
+        ]);
         expect(runtime.model).toBe("claude-test-model");
         expect(runtime.triggerDeps.workflow).toBeInstanceOf(Function);
+    });
+
+    test("exposes run-trigger deps: the parent callable, a run launcher, and the run authorizer", async () => {
+        const calls: string[] = [];
+        const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() }))._unsafeUnwrap();
+
+        expect(runtime.runTriggerDeps.executeAnalysis).toBeInstanceOf(Function);
+        expect(runtime.runTriggerDeps.runLauncher.launch).toBeInstanceOf(Function);
+        expect(runtime.runTriggerDeps.runAuthorizer.authorize).toBeInstanceOf(Function);
+        // Same pool the ledger queries run against — mirrors triggerDeps.
+        expect(runtime.runTriggerDeps.pool).toBe(runtime.pool);
+    });
+
+    test("registers the child sandbox-step before the execute-analysis parent, and every workflow before the single launch", async () => {
+        const calls: string[] = [];
+        await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
+
+        const child = calls.indexOf("registerSandboxStep");
+        const parent = calls.indexOf("registerExecuteAnalysis");
+        const launch = calls.indexOf("launch");
+        expect(child).toBeGreaterThanOrEqual(0);
+        expect(child).toBeLessThan(parent);
+        // Every registration precedes the one launch (recovery finds workflows by
+        // registered name at launch; nothing may register after).
+        const registrations = ["registerSandboxStep", "registerExecuteAnalysis", "register", "registerReaper", "registerWatchdog", "registerNotificationSweep"];
+        for (const name of registrations) {
+            expect(calls.indexOf(name)).toBeLessThan(launch);
+        }
+        expect(calls.filter((c) => c === "launch")).toHaveLength(1);
+    });
+
+    test("registers all three sandbox-hygiene scheduled workflows before launch", async () => {
+        const calls: string[] = [];
+        await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
+
+        expect(calls).toContain("registerReaper");
+        expect(calls).toContain("registerWatchdog");
+        expect(calls).toContain("registerNotificationSweep");
+        const launch = calls.indexOf("launch");
+        for (const name of ["registerReaper", "registerWatchdog", "registerNotificationSweep"]) {
+            expect(calls.indexOf(name)).toBeLessThan(launch);
+        }
+    });
+
+    test("a failed prereq fires no workflow or scheduled registration", async () => {
+        const calls: string[] = [];
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            ensurePostgres: async () => {
+                calls.push("postgres");
+                return err({ type: "ready_timeout", message: "pg_isready timed out" });
+            },
+        };
+        const result = await bootHarnessRuntime({ seams, config: testConfig() });
+
+        expect(result.isErr()).toBe(true);
+        for (const name of [
+            "registerSandboxStep",
+            "registerExecuteAnalysis",
+            "register",
+            "registerReaper",
+            "registerWatchdog",
+            "registerNotificationSweep",
+            "launch",
+        ]) {
+            expect(calls).not.toContain(name);
+        }
     });
 
     test("resolves the model from the proxy only when config has none", async () => {

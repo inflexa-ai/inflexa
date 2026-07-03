@@ -6,10 +6,12 @@
  *
  *  1. `validateAndInit`
  *     - validate the plan DAG (cycle / missing-dep / dup-id)
- *     - create the run dir + `meta.json`
- *     - materialize input data from the managed root
+ *     - create the run dir
  *     - open the running charge
  *     - emit `data-run-started`
+ *     Inputs are NOT materialized here: the session tree's `data/` inputs must
+ *     already be populated by the embedder before the run is triggered — the
+ *     workflow neither downloads nor stages input data.
  *     The run authorization is minted at the async edge (`executePlan` / TA
  *     trigger / `runDataProfile`) and rides in `input.runSession` — the
  *     workflow body never mints, never reads the JWT back from `cortex_runs`.

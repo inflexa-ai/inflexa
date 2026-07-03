@@ -1,5 +1,6 @@
 /**
- * `cortex_plans` operations — plan insert + analysis-scoped lookup.
+ * `cortex_plans` operations — plan insert (minted id), upsert (caller id),
+ * and analysis-scoped lookup.
  */
 
 import { randomUUID } from "node:crypto";
@@ -8,6 +9,14 @@ import type { ResultAsync } from "neverthrow";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
+
+/**
+ * `cortex_plans.plan_id` shape contract — `pln-` followed by 8 lowercase hex
+ * chars. The chat trigger (`tools/execute-plan.ts`) enforces the same regex on
+ * its tool input; `upsertPlan` re-asserts it because it accepts a caller-derived
+ * id rather than minting one.
+ */
+const PLAN_ID_PATTERN = /^pln-[a-f0-9]{8}$/;
 
 export interface InsertPlanInput {
     analysisId: string;
@@ -56,6 +65,67 @@ export function insertPlan(pool: Querier, input: InsertPlanInput): ResultAsync<s
             throw new Error(`parent plan ${parentPlanId} belongs to a different analysis`);
         }
         return insert();
+    });
+}
+
+export interface UpsertPlanInput {
+    /** Caller-derived id — must match the `pln-<8hex>` contract. */
+    planId: string;
+    analysisId: string;
+    plan: unknown;
+    parentPlanId?: string | null;
+}
+
+/**
+ * Insert a plan under a caller-supplied id, or no-op if that id already exists
+ * (`ON CONFLICT (plan_id) DO NOTHING`). Unlike {@link insertPlan}, the id is
+ * given by the caller — used when the id is derived deterministically (e.g. a
+ * content hash) so that re-running the same plan is idempotent rather than
+ * minting a fresh row every time.
+ *
+ * Re-upserting an existing planId is a success no-op: exactly one row survives.
+ * The same parent-scope check as `insertPlan` applies (parent must belong to
+ * the same analysis) and is a control-flow throw, not a `DbError`.
+ *
+ * An id off the `pln-<8hex>` shape is a caller/contract error, not a storage
+ * failure: it throws synchronously before any driver call, surfacing verbatim
+ * above the Result boundary rather than riding the err channel as a `DbError`
+ * (mirroring the parent-scope violations, which throw before the INSERT).
+ */
+export function upsertPlan(pool: Querier, input: UpsertPlanInput): ResultAsync<void, DbError> {
+    if (!PLAN_ID_PATTERN.test(input.planId)) {
+        throw new Error(`upsertPlan: invalid plan id "${input.planId}" — expected the pln-<8hex> shape`);
+    }
+
+    const upsert = (): ResultAsync<void, DbError> => {
+        const now = new Date().toISOString();
+        return tryMutation("plans.upsertPlan", async () => {
+            await pool.query({
+                text: `INSERT INTO cortex_plans
+              (plan_id, analysis_id, plan, parent_plan_id, created_at)
+              VALUES ($1, $2, $3, $4, $5)
+              ON CONFLICT (plan_id) DO NOTHING`,
+                values: [input.planId, input.analysisId, JSON.stringify(input.plan), input.parentPlanId ?? null, now],
+            });
+        });
+    };
+
+    if (!input.parentPlanId) return upsert();
+
+    const parentPlanId = input.parentPlanId;
+    return tryQuery("plans.upsertPlan.parentScope", () =>
+        pool.query<{ analysis_id: string }>({
+            text: "SELECT analysis_id FROM cortex_plans WHERE plan_id = $1",
+            values: [parentPlanId],
+        }),
+    ).andThen((parent) => {
+        if ((parent.rowCount ?? 0) === 0) {
+            throw new Error(`parent plan ${parentPlanId} not found`);
+        }
+        if (parent.rows[0].analysis_id !== input.analysisId) {
+            throw new Error(`parent plan ${parentPlanId} belongs to a different analysis`);
+        }
+        return upsert();
     });
 }
 

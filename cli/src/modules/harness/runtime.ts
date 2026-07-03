@@ -3,6 +3,7 @@ import type pino from "pino";
 import { ok, err, type Result } from "neverthrow";
 import {
     createAnthropicProvider,
+    createDbosRunLauncher,
     createLocalRunAuthorizer,
     createNoopBillingResolver,
     createPool,
@@ -11,7 +12,13 @@ import {
     initCortexState,
     launchDbos,
     makeLocalAuth,
+    queryActiveSandboxes,
     registerDataProfileWorkflow,
+    registerExecuteAnalysis,
+    registerNotificationSweep,
+    registerSandboxReaper,
+    registerSandboxStep,
+    registerWatchdog,
     shutdownDbos,
     type AgentSession,
     type DataProfileDeps,
@@ -19,7 +26,18 @@ import {
     type DataProfileWorkflowInput,
     type DbosConfig,
     type EmbeddingProvider,
+    type ExecuteAnalysisDeps,
+    type ExecuteAnalysisInput,
+    type ExecuteAnalysisResult,
     type Pool,
+    type RegisterNotificationSweepDeps,
+    type RegisterReaperDeps,
+    type RunAuthorizer,
+    type RunLauncher,
+    type SandboxStepDeps,
+    type SandboxStepInput,
+    type SandboxStepResult,
+    type WatchdogDeps,
 } from "@inflexa-ai/harness";
 
 import { readConfig } from "../../lib/config.ts";
@@ -33,6 +51,7 @@ import type { PostgresConnection, PostgresError } from "../infra/postgres_types.
 import { readApiKey, resolveModelId, type ChatSetupError } from "../intelligence/chat.ts";
 import { resolveHarnessConfig, type ResolvedHarnessConfig } from "./config.ts";
 import { startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
+import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition } from "./run_deps.ts";
 
 // The embedded-harness composition root. Boots lazily on the first profile
 // trigger (never from a passive flow — no-litter policy) and holds a process
@@ -45,6 +64,25 @@ import { startExecIngress, type ExecIngress, type IngressError } from "./ingress
 // workflow not registered at launch cannot be reclaimed. This matches
 // `assembleCoreRuntime`, the declared source of truth for wiring order.
 
+/**
+ * Ready-to-use deps for the analysis-run trigger flow (`inflexa run`). Mirrors
+ * {@link DataProfileTriggerDeps}: it carries the pool (dedup pre-check, run
+ * reservation, and status ledger reads), the registered parent workflow, the
+ * DBOS launch seam, and the run-authorization seam — everything the replicated
+ * `executePlan` flow needs, and nothing that would require it to reach into the
+ * durability engine directly.
+ */
+export type RunTriggerDeps = {
+    /** App pool — dedup pre-check, run reservation, status/step ledger reads. */
+    readonly pool: Pool;
+    /** The registered `executeAnalysis` parent workflow — launched under `workflowId = runId`. */
+    readonly executeAnalysis: (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
+    /** DBOS launch seam — starts `executeAnalysis` fire-and-forget under the caller-chosen run id. */
+    readonly runLauncher: RunLauncher;
+    /** Local run-authorization seam — mints/revokes the durable `RunSession` at the async edge. */
+    readonly runAuthorizer: RunAuthorizer;
+};
+
 /** The booted runtime — everything the launch command needs to trigger and observe runs. */
 export type HarnessRuntime = {
     /** Chat model id in use (config override or the proxy's default). */
@@ -53,6 +91,8 @@ export type HarnessRuntime = {
     readonly pool: Pool;
     /** Ready-to-use deps for `triggerDataProfile`. */
     readonly triggerDeps: DataProfileTriggerDeps;
+    /** Ready-to-use deps for the analysis-run trigger flow. */
+    readonly runTriggerDeps: RunTriggerDeps;
     readonly ingress: ExecIngress;
 };
 
@@ -133,6 +173,16 @@ export type BootSeams = {
     readonly resolveModel: (apiKey: string) => Promise<Result<string, ChatSetupError>>;
     readonly resolveEmbedding: () => Result<EmbeddingProvider, EmbeddingResolveError>;
     readonly register: (deps: DataProfileDeps) => (input: DataProfileWorkflowInput) => Promise<void>;
+    /** Register the sandbox-step CHILD workflow — must run before {@link BootSeams.registerExecuteAnalysis}. */
+    readonly registerSandboxStep: (deps: SandboxStepDeps) => (input: SandboxStepInput) => Promise<SandboxStepResult>;
+    /** Register the execute-analysis PARENT workflow — its deps close over the child callable. */
+    readonly registerExecuteAnalysis: (deps: ExecuteAnalysisDeps) => (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
+    /** Register the orphaned-container reaper scheduled workflow (design D5). */
+    readonly registerReaper: (deps: RegisterReaperDeps) => void;
+    /** Register the dead-sandbox liveness watchdog scheduled workflow (design D5). */
+    readonly registerWatchdog: (deps: WatchdogDeps) => void;
+    /** Register the stale-notification sweep scheduled workflow (design D5). */
+    readonly registerNotificationSweep: (deps: RegisterNotificationSweepDeps) => void;
     readonly initState: (pool: Pool) => Promise<void>;
     readonly launch: (args: { config: DbosConfig; logger: pino.Logger }) => Promise<void>;
     readonly probeEmbedding: typeof probeEmbeddingProvider;
@@ -145,6 +195,11 @@ const realSeams: BootSeams = {
     resolveModel: resolveModelId,
     resolveEmbedding: () => resolveEmbedder(readConfig()),
     register: registerDataProfileWorkflow,
+    registerSandboxStep,
+    registerExecuteAnalysis,
+    registerReaper: registerSandboxReaper,
+    registerWatchdog,
+    registerNotificationSweep,
     initState: initCortexState,
     launch: launchDbos,
     probeEmbedding: probeEmbeddingProvider,
@@ -274,25 +329,81 @@ export async function bootHarnessRuntime(
         await seams.initState(pool);
 
         const resolveBilling = createNoopBillingResolver();
-        const workflow = seams.register({
-            provider: createAnthropicProvider({ baseURL: env.cliproxyApiUrl, token: apiKey, model, resolveBilling }),
+
+        // Shared backends built ONCE so the profile workflow, the sandbox-step
+        // child, and the execute-analysis parent all close over the SAME
+        // instances. `provider` is a `ChatProvider` (it satisfies the
+        // sandbox-step's `AgentChat` seam too). The embedding provider is NOT
+        // built here — it was resolved up-front (`embedding`, via the
+        // resolveEmbedding seam) and is threaded through unchanged, so the profile
+        // path and the run engine share the one resolved instance. `cfg.skillsDir`
+        // is non-null here — the pre-flight above returned if it was null.
+        const provider = createAnthropicProvider({ baseURL: env.cliproxyApiUrl, token: apiKey, model, resolveBilling });
+        const sandboxClient = createSandboxClient({
             pool,
-            sandboxClient: createSandboxClient({
-                pool,
-                env: { backend: "docker", namespace: "" },
-                cortexBaseUrl: ingress.cortexBaseUrl,
-                image: cfg.sandboxImage,
-                resourceLimits: cfg.resourceLimits,
-                sessionsBasePath: env.sessionsDir,
-            }),
-            workspaceFs: createWorkspaceFilesystem({ sessionsBasePath: env.sessionsDir }),
+            env: { backend: "docker", namespace: "" },
+            cortexBaseUrl: ingress.cortexBaseUrl,
+            image: cfg.sandboxImage,
+            resourceLimits: cfg.resourceLimits,
+            sessionsBasePath: env.sessionsDir,
+        });
+        const workspaceFs = createWorkspaceFilesystem({ sessionsBasePath: env.sessionsDir });
+        // One authorizer instance, shared by the parent workflow's terminal
+        // revoke and the run-trigger flow's async-edge authorize (the local
+        // realization is stateless, so sharing is purely to avoid duplication).
+        const runAuthorizer = createLocalRunAuthorizer();
+
+        const composition: RunEngineComposition = {
+            pool,
+            provider,
+            embedding,
+            sandboxClient,
+            workspaceFs,
             sessionsBasePath: env.sessionsDir,
             model,
-            runAuthorizer: createLocalRunAuthorizer(),
+            skillsDir: cfg.skillsDir,
+            bioKeys: cfg.bioKeys,
+        };
+
+        // Registration cohort — ONE pre-launch batch (design D1/D5). Child before
+        // parent: the parent's dispatch closes over the registered child callable,
+        // so `registerSandboxStep` must precede `registerExecuteAnalysis` (mirrors
+        // `assemble.ts:75-76`). The three sandbox-hygiene scheduled workflows join
+        // the same batch. All of it lands before `launch`, which is the invariant
+        // that matters: DBOS recovery at launch resolves in-flight workflows by
+        // their registered name, so nothing the cli can trigger may register after.
+        //
+        // TODO(robustness): live kill/resume is verified for the analysis-run path
+        // (executeAnalysis parent/child) but NOT separately for the data-profile
+        // workflow registered just below — both share this single recovery path
+        // (one runtime, executor "local", reclaimed at launch by registered name),
+        // so the run-path proof exercises the identical mechanism, but the
+        // data-profile path has not been exercised live. Tracked in issue #28.
+        const sandboxStepCallable = seams.registerSandboxStep(buildSandboxStepDeps(composition));
+        const executeAnalysis = seams.registerExecuteAnalysis(buildExecuteAnalysisDeps(composition, sandboxStepCallable, runAuthorizer));
+
+        const workflow = seams.register({
+            provider,
+            pool,
+            sandboxClient,
+            workspaceFs,
+            sessionsBasePath: env.sessionsDir,
+            model,
+            runAuthorizer,
             bioKeys: cfg.bioKeys,
             embedding,
             skillsDir: cfg.skillsDir,
         });
+
+        // Sandbox-hygiene crons: reaper tears down orphaned containers a killed
+        // host left behind; the watchdog converts a dead sandbox into a prompt
+        // step failure instead of a deadline-long hang; the sweep clears stale
+        // notification rows. They act only on rows/containers the harness created.
+        seams.registerReaper({ pool, sandboxClient, logger });
+        // `composition.pool` (typed `Pool`) rather than the `Pool | null`-typed
+        // `pool` local, whose narrowing a deferred closure does not preserve.
+        seams.registerWatchdog({ queryActiveSandboxes: () => queryActiveSandboxes(composition.pool), sandboxClient, logger });
+        seams.registerNotificationSweep({ pool, logger });
 
         await seams.launch({
             config: {
@@ -315,7 +426,8 @@ export async function bootHarnessRuntime(
         const runtime: HarnessRuntime = {
             model,
             pool,
-            triggerDeps: { pool, runAuthorizer: createLocalRunAuthorizer(), workflow },
+            triggerDeps: { pool, runAuthorizer, workflow },
+            runTriggerDeps: { pool, executeAnalysis, runLauncher: createDbosRunLauncher(), runAuthorizer },
             ingress,
         };
         active = runtime;

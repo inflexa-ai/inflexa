@@ -143,6 +143,20 @@ cli.command("profile")
         else await runProfile(flags);
     });
 
+// The other deliberate harness entry point: launches a full `executeAnalysis` run
+// from a validated plan file (boots the embedded runtime — no passive flow may).
+cli.command("run [analysis]")
+    .description("Launch an analysis run from a validated plan file in the harness sandbox")
+    .option("--plan <file>", "Path to the JSON analysis plan to execute")
+    .option("--project <name>", "Scope to a project") // TODO(slop): Why `--project` option needed. What is this going to do?
+    .option("--status", "Show this analysis's run history instead of launching a run")
+    .action(async (analysis: string | undefined, options: { plan?: string; project?: string; status?: boolean }) => {
+        const { runAnalysis, runAnalysisStatus } = await import("../modules/harness/run.ts");
+        const flags = { analysis, project: options.project };
+        if (options.status) await runAnalysisStatus(flags);
+        else await runAnalysis(flags, options.plan);
+    });
+
 const analysisCmd = cli.command("analysis").description("Manage analyses (grouping)");
 
 analysisCmd
