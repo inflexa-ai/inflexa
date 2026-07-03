@@ -368,13 +368,18 @@ async function waitForTerminalStatus(pool: Pool, analysisId: string, s: Spinner)
 }
 
 /**
- * `inflexa profile --status` — read-only ledger view. Deliberately never boots
- * the runtime or provisions anything: it reuses the booted runtime's pool when
- * present, else opens a throwaway connection to an already-running Postgres.
+ * Run `fn` against the harness ledger pool for a read-only `--status` view, then
+ * clean up. Reuses the booted runtime's pool when THIS process owns one, else
+ * opens a throwaway connection to an already-running Postgres and drains it after.
+ * Never boots or provisions — a status view is pure observation. `hasRuntime`
+ * tells `fn` whether a runtime is live here, which the views use to annotate a
+ * `running` row (a row with no local runtime is owned elsewhere or recovering).
+ *
+ * Shared by `inflexa profile --status` and `inflexa run --status` — the acquire
+ * and throwaway-drain are identical, so they live here once rather than once per
+ * command.
  */
-export async function runProfileStatus(flags: ContextFlags): Promise<void> {
-    const analysis = resolveSingleAnalysis(flags, "No analysis here. Run `inflexa` to start one, add inputs, then profile.");
-
+export async function withStatusPool<T>(fn: (pool: Pool, hasRuntime: boolean) => Promise<T>): Promise<T> {
     const runtime = activeHarnessRuntime();
     let pool: Pool | null = runtime?.pool ?? null;
     let throwaway = false;
@@ -385,6 +390,25 @@ export async function runProfileStatus(flags: ContextFlags): Promise<void> {
     }
 
     try {
+        return await fn(pool, runtime !== null);
+    } finally {
+        if (throwaway && pool) {
+            await pool.end().catch(() => {
+                // Read-only convenience connection; a failed drain must not fail the command.
+            });
+        }
+    }
+}
+
+/**
+ * `inflexa profile --status` — read-only ledger view. Deliberately never boots
+ * the runtime or provisions anything: it reuses the booted runtime's pool when
+ * present, else opens a throwaway connection to an already-running Postgres.
+ */
+export async function runProfileStatus(flags: ContextFlags): Promise<void> {
+    const analysis = resolveSingleAnalysis(flags, "No analysis here. Run `inflexa` to start one, add inputs, then profile.");
+
+    await withStatusPool(async (pool, hasRuntime) => {
         const status = (await loadDataProfileStatus(pool, analysis.id)).match(
             (s) => s,
             (e) => fail("Postgres is not reachable — profile state lives there. Start it with `inflexa setup` (or run a profile first).", e),
@@ -398,17 +422,11 @@ export async function runProfileStatus(flags: ContextFlags): Promise<void> {
         if (status.startedAt) console.log(`    started:    ${status.startedAt}`);
         if (status.completedAt) console.log(`    completed:  ${status.completedAt}`);
         if (status.error) console.log(`    error:      ${status.error}`);
-        if (status.status === "running" && !runtime) {
+        if (status.status === "running" && !hasRuntime) {
             // Running row + no runtime in THIS process: either another inflexa
             // process owns it, or a previous session died and DBOS will resume
             // the workflow on the next boot. Both are normal — say so.
             console.log(`    note:       run owned by another/previous session; a crashed run resumes on the next \`inflexa profile\` boot`);
         }
-    } finally {
-        if (throwaway && pool) {
-            await pool.end().catch(() => {
-                // Read-only convenience connection; a failed drain must not fail the command.
-            });
-        }
-    }
+    });
 }

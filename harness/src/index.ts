@@ -160,6 +160,10 @@ export { insertRun, queryActiveRun, updateRunStatus, queryRun, queryRunsByAnalys
 export type { InsertRunInput } from "./state/runs.js";
 export { queryStepsByRun } from "./state/step-executions.js";
 export type { CortexRunRow, StepExecutionRow, RunStatus } from "./state/schema.js";
+// The storage-layer error every `state/` Result fails with. Embedders that
+// surface a trigger or ledger failure need it by name to map the `cause`;
+// without it they must re-derive it from a function signature.
+export type { DbError } from "./lib/db-result.js";
 // Backs `WatchdogDeps.queryActiveSandboxes` when the embedder wires the watchdog.
 export { queryActiveSandboxes } from "./state/active-sandboxes.js";
 

@@ -12,20 +12,14 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { ok, err, type Result, type ResultAsync } from "neverthrow";
-import { AnalysisPlanSchema, validatePlan, upsertPlan, type AnalysisPlan, type UpsertPlanInput } from "@inflexa-ai/harness";
+import { AnalysisPlanSchema, validatePlan, upsertPlan, type AnalysisPlan, type DbError, type UpsertPlanInput } from "@inflexa-ai/harness";
 
 /**
- * The real `upsertPlan(pool, input)` return, captured by derivation so the seam
- * and its error variant track the harness's `DbError` exactly. `DbError` is not
- * exported from the `@inflexa-ai/harness` barrel, and reaching into a
- * harness-internal deep subpath to name it would smuggle a private type across
- * the package boundary — deriving it from the public `upsertPlan` signature
- * cannot drift and needs no maintenance.
+ * The real `upsertPlan(pool, input)` return, captured by `ReturnType` so the
+ * injected seam's signature tracks the harness function exactly — a change to
+ * its return shape flows here rather than drifting a hand-copied type.
  */
 type UpsertPlanResult = ReturnType<typeof upsertPlan>;
-
-/** The harness storage-layer error the persistence seam fails with (its `DbError`). */
-type UpsertPlanError = Awaited<UpsertPlanResult> extends Result<unknown, infer E> ? E : never;
 
 /**
  * The verbatim zod issues from a failed `AnalysisPlanSchema.safeParse`. Typed by
@@ -58,7 +52,7 @@ export type PlanIntakeError =
     | { readonly type: "invalid_json"; readonly path: string; readonly cause: unknown }
     | { readonly type: "schema_invalid"; readonly path: string; readonly issues: readonly PlanSchemaIssue[] }
     | { readonly type: "plan_invalid"; readonly path: string; readonly errors: readonly string[] }
-    | { readonly type: "persist_failed"; readonly path: string; readonly cause: UpsertPlanError };
+    | { readonly type: "persist_failed"; readonly path: string; readonly cause: DbError };
 
 /**
  * A plan taken in successfully: the deterministic id it was persisted under, the
