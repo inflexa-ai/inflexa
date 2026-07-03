@@ -25,6 +25,33 @@ export interface InsertPlanInput {
 }
 
 /**
+ * Enforce tenant scope for a `parentPlanId`: the parent row must exist AND belong
+ * to `analysisId`. Shared by {@link insertPlan} and {@link upsertPlan} — the
+ * `cortex_plans` FK enforces existence only, not tenant scope, so without this a
+ * plan could be parented under another analysis's plan.
+ *
+ * Both violations (parent missing / parent in another analysis) are control-flow
+ * throws, NOT `DbError`: they short-circuit before the child INSERT, so the throw
+ * surfaces verbatim above the Result boundary rather than riding the err channel
+ * as a query failure. `label` scopes the driver-call telemetry to the caller.
+ */
+function checkParentScope(pool: Querier, parentPlanId: string, analysisId: string, label: string): ResultAsync<void, DbError> {
+    return tryQuery(label, () =>
+        pool.query<{ analysis_id: string }>({
+            text: "SELECT analysis_id FROM cortex_plans WHERE plan_id = $1",
+            values: [parentPlanId],
+        }),
+    ).map((parent) => {
+        if ((parent.rowCount ?? 0) === 0) {
+            throw new Error(`parent plan ${parentPlanId} not found`);
+        }
+        if (parent.rows[0].analysis_id !== analysisId) {
+            throw new Error(`parent plan ${parentPlanId} belongs to a different analysis`);
+        }
+    });
+}
+
+/**
  * Insert a plan and return the generated planId.
  * Validates that parentPlanId (if set) belongs to the same analysis —
  * the FK alone only enforces existence, not tenant scope.
@@ -50,22 +77,7 @@ export function insertPlan(pool: Querier, input: InsertPlanInput): ResultAsync<s
     };
 
     if (!input.parentPlanId) return insert();
-
-    const parentPlanId = input.parentPlanId;
-    return tryQuery("plans.insertPlan.parentScope", () =>
-        pool.query<{ analysis_id: string }>({
-            text: "SELECT analysis_id FROM cortex_plans WHERE plan_id = $1",
-            values: [parentPlanId],
-        }),
-    ).andThen((parent) => {
-        if ((parent.rowCount ?? 0) === 0) {
-            throw new Error(`parent plan ${parentPlanId} not found`);
-        }
-        if (parent.rows[0].analysis_id !== input.analysisId) {
-            throw new Error(`parent plan ${parentPlanId} belongs to a different analysis`);
-        }
-        return insert();
-    });
+    return checkParentScope(pool, input.parentPlanId, input.analysisId, "plans.insertPlan.parentScope").andThen(insert);
 }
 
 export interface UpsertPlanInput {
@@ -111,22 +123,7 @@ export function upsertPlan(pool: Querier, input: UpsertPlanInput): ResultAsync<v
     };
 
     if (!input.parentPlanId) return upsert();
-
-    const parentPlanId = input.parentPlanId;
-    return tryQuery("plans.upsertPlan.parentScope", () =>
-        pool.query<{ analysis_id: string }>({
-            text: "SELECT analysis_id FROM cortex_plans WHERE plan_id = $1",
-            values: [parentPlanId],
-        }),
-    ).andThen((parent) => {
-        if ((parent.rowCount ?? 0) === 0) {
-            throw new Error(`parent plan ${parentPlanId} not found`);
-        }
-        if (parent.rows[0].analysis_id !== input.analysisId) {
-            throw new Error(`parent plan ${parentPlanId} belongs to a different analysis`);
-        }
-        return upsert();
-    });
+    return checkParentScope(pool, input.parentPlanId, input.analysisId, "plans.upsertPlan.parentScope").andThen(upsert);
 }
 
 /**

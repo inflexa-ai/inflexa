@@ -49,13 +49,12 @@ import { fail, dieOn } from "../../lib/cli.ts";
 import { resolvePostgresConfig } from "../../lib/config.ts";
 import { shutdown } from "../../lib/shutdown.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
-import type { Analysis } from "../../types/analysis.ts";
-import { resolveContext, type ContextFlags } from "../analysis/context.ts";
+import type { ContextFlags } from "../analysis/context.ts";
 import { sessionTreeDataDir } from "../staging/paths.ts";
 import { stageInputs } from "../staging/staging.ts";
 import { resolveHarnessConfig } from "./config.ts";
 import { intakePlan, type PlanIntakeError } from "./plan_intake.ts";
-import { describeBootError, ensureSandboxImage, formatElapsed, readNewestWorkflowStep } from "./profile.ts";
+import { describeBootError, ensureSandboxImage, formatElapsed, readNewestWorkflowStep, resolveSingleAnalysis } from "./profile.ts";
 import { activeHarnessRuntime, bootHarnessRuntime, type RunTriggerDeps } from "./runtime.ts";
 
 type Spinner = ReturnType<typeof spinner>;
@@ -272,35 +271,8 @@ export async function triggerAnalysisRun(
 
 // ── The `inflexa run` command (tasks 4.2 / 4.3 / 4.4) ────────────────────────
 
-/** Resolve the one analysis this run operates on, or die with a run-specific way forward. */
-function resolveRunAnalysis(flags: ContextFlags): Analysis {
-    const ctx = resolveContext(process.cwd(), flags).match((c) => c, dieOn("Failed to resolve context"));
-    const listCandidates = (analyses: Analysis[]): string => analyses.map((a) => `  - ${a.id}  ${a.name}`).join("\n");
-    switch (ctx.kind) {
-        case "analysis":
-            return ctx.analysis;
-        case "anchor": {
-            const [only, ...rest] = ctx.analyses;
-            if (only && rest.length === 0) return only;
-            if (!only) fail("No analyses on this anchor yet. Run `inflexa new` to create one first.");
-            fail(`Multiple analyses here — pick one with --analysis <id|name>:\n${listCandidates(ctx.analyses)}`);
-            break;
-        }
-        case "pick":
-            fail(`Ambiguous context — pick one with --analysis <id|name>:\n${listCandidates(ctx.analyses)}`);
-            break;
-        case "empty":
-            fail("No analysis here. Run `inflexa` to start one, add inputs, then `inflexa run`.");
-            break;
-        case "copy":
-            fail("This folder is a copied anchor — run `inflexa repair` or `inflexa relocate` first.");
-            break;
-        default: {
-            const exhaustive: never = ctx;
-            throw new Error(`unhandled context kind: ${JSON.stringify(exhaustive)}`);
-        }
-    }
-}
+/** The `empty`-context hint specific to `inflexa run` (see {@link resolveSingleAnalysis}). */
+const RUN_EMPTY_HINT = "No analysis here. Run `inflexa` to start one, add inputs, then `inflexa run`.";
 
 /** Each plan-intake rejection, as one actionable line naming the offending file and the verbatim errors. */
 function describePlanIntakeError(e: PlanIntakeError): string {
@@ -349,7 +321,7 @@ function describeTriggerError(e: TriggerAnalysisRunError): string {
  * ledger → plan intake → trigger → block to terminal.
  */
 export async function runAnalysis(flags: ContextFlags, planPath: string | undefined): Promise<void> {
-    const analysis = resolveRunAnalysis(flags);
+    const analysis = resolveSingleAnalysis(flags, RUN_EMPTY_HINT);
     if (!planPath) {
         fail("Provide a plan file with `--plan <file>` (a JSON analysis plan to execute). Use `inflexa run --status` to view existing runs.");
     }
@@ -559,8 +531,11 @@ async function reportTerminal(pool: Pool, final: CortexRunRow, s: Spinner): Prom
             s.error("Run suspended");
             return fail(`Run suspended for insufficient funds. Top up, then re-run to resume.${errTail}`);
         case "running":
-            // Unreachable: `waitForRunTerminal` returns only on a non-running status.
-            throw new Error("reportTerminal reached with a running row");
+            // Unreachable: `waitForRunTerminal` returns only on a non-running
+            // status. `running` is a member of `RunStatus`, so the switch must
+            // still handle it to stay exhaustive; if we ever get here it is a
+            // logic fault — bail at the CLI boundary rather than looping.
+            return fail("Internal error: reached the terminal report with a still-running row — please report this.");
         default: {
             const exhaustive: never = final.status;
             throw new Error(`unhandled terminal status: ${JSON.stringify(exhaustive)}`);
@@ -575,7 +550,7 @@ async function reportTerminal(pool: Pool, final: CortexRunRow, s: Spinner): Prom
  * (the same pattern as `inflexa profile --status`).
  */
 export async function runAnalysisStatus(flags: ContextFlags): Promise<void> {
-    const analysis = resolveRunAnalysis(flags);
+    const analysis = resolveSingleAnalysis(flags, RUN_EMPTY_HINT);
 
     const runtime = activeHarnessRuntime();
     let pool: Pool | null = runtime?.pool ?? null;

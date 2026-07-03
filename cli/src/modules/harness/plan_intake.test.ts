@@ -261,6 +261,23 @@ describe("intakePlan — rejections persist nothing", () => {
         }
         expect(calls.length).toBe(0);
     });
+
+    test("empty steps array → plan_invalid, seam never called (a zero-step run is refused)", async () => {
+        const { deps, calls } = recordingSeam();
+        // Schema-valid but no steps: the harness's `validatePlan` deliberately
+        // treats this as valid, so this pins the cli's OWN stricter intake guard,
+        // not the harness gate — a zero-step run would only reserve a ledger row
+        // and resolve to an empty `completed`.
+        const doc = validPlan({ steps: [] });
+
+        const e = await intakeErr("a1", writePlanJson("plan.json", doc), deps);
+
+        expect(e.type).toBe("plan_invalid");
+        if (e.type === "plan_invalid") {
+            expect(e.errors.some((m) => m.includes("no steps"))).toBe(true);
+        }
+        expect(calls.length).toBe(0);
+    });
 });
 
 describe("intakePlan — persistence failure", () => {
