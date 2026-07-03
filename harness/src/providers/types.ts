@@ -47,6 +47,14 @@ export interface ChatProvider extends AgentChat {
 }
 
 export interface EmbeddingProvider {
+    /**
+     * Width of every vector `embed` returns. The write-side index paths create
+     * each per-analysis pgvector index at exactly this width (`ensureSearchIndex`),
+     * so the provider — not a harness constant — is the single source of the
+     * dimension. A provider advertising a width its model does not emit fails at
+     * the vector upsert, not here.
+     */
+    readonly dimensions: number;
     embed(texts: readonly string[], session: AgentSession): ResultAsync<number[][], ProviderError>;
 }
 

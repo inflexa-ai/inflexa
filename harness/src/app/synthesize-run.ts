@@ -6,9 +6,9 @@
  * and reports progress phases — returning the quick-display findings for the
  * run-completed card.
  *
- * Owns the ability end-to-end; owns no transport. The injected `embedder`
- * carries the embedder's own billing (a no-op locally); `emit` is the
- * loop/chat-part sink the caller binds to its stream; `onProgress`
+ * Owns the ability end-to-end; owns no transport. The injected `embedding`
+ * provider carries the host's own billing choice (a no-op locally); `emit` is
+ * the loop/chat-part sink the caller binds to its stream; `onProgress`
  * is the domain progress callback the caller serializes to the wire. A genuine
  * synthesis failure re-throws (D10) so the caller fails the run loudly; the
  * honest non-fatal outcomes (no summaries, blocker) return empty findings after
@@ -19,10 +19,10 @@ import type { Pool } from "pg";
 
 import type { SynthesisPhase } from "@inflexa-ai/harness/contracts/chat-parts.js";
 
-import type { AgentSession, RunSession } from "../auth/types.js";
+import type { RunSession } from "../auth/types.js";
 import { forSubAgent } from "../auth/types.js";
 import type { EmitFn } from "../loop/types.js";
-import type { ChatProvider } from "../providers/types.js";
+import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
 import type { RunFinding } from "../workflows/execute-analysis.js";
 import {
@@ -37,14 +37,11 @@ import { createVectorStore } from "../state/vector-store.js";
 import { loadPlan, queryRun } from "../state/index.js";
 import { unwrapOrThrow } from "../lib/result.js";
 
-/** Session-bound text→vector embedder (the `createEmbedder` return shape). */
-export type SynthesisEmbedder = (text: string, session: AgentSession) => Promise<number[]>;
-
 export interface SynthesizeRunDeps {
     readonly pool: Pool;
     readonly provider: ChatProvider;
-    /** Injected embedder — carries the embedder's own billing choice. */
-    readonly embedder: SynthesisEmbedder;
+    /** Write-side embedder — its `dimensions` sizes the per-analysis index. */
+    readonly embedding: EmbeddingProvider;
     readonly sessionsBasePath: string;
     /** Model id for the synthesizer agent loop. */
     readonly synthesisModel: string;
@@ -76,7 +73,7 @@ export interface SynthesizeRunResult {
 }
 
 export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeRunParams): Promise<SynthesizeRunResult> {
-    const { pool, provider, embedder, sessionsBasePath, synthesisModel, bioKeys } = deps;
+    const { pool, provider, embedding, sessionsBasePath, synthesisModel, bioKeys } = deps;
     const { analysisId, runId, completedSteps, session, emit, onProgress } = params;
 
     await onProgress("starting", "Beginning literature-grounded synthesis");
@@ -118,15 +115,16 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
 
         await onProgress("indexing", "Indexing synthesis for search");
         try {
-            await ensureSearchIndex(pool, analysisId);
+            await ensureSearchIndex(pool, analysisId, embedding.dimensions);
             const vectorStore = createVectorStore(pool);
             const indexName = searchIndexName(analysisId);
             const synthesisText = formatSynthesisEmbeddingText(synthesis);
-            const embedding = await embedder(synthesisText, synthesizerSession);
+            const [vector] = unwrapOrThrow(await embedding.embed([synthesisText], synthesizerSession));
+            if (!vector) throw new Error("synthesize-run: empty embedding response");
             unwrapOrThrow(
                 await vectorStore.upsert({
                     indexName,
-                    vectors: [embedding],
+                    vectors: [vector],
                     metadata: [{ text: synthesisText, type: "synthesis", runId }],
                     ids: [`/${analysisId}/runs/${runId}/synthesis.json`],
                 }),

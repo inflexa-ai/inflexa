@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Local, in-process text embeddings for the cli: a `node-llama-cpp`-backed realization of the harness `EmbeddingProvider` seam (bge-small GGUF, no API key), the mode-based `embedding` config key that selects between it and a direct OpenAI-compatible endpoint, and the setup flow that downloads, verifies, and records the choice.
+
+## Requirements
 
 ### Requirement: Local embedding provider realizes the harness EmbeddingProvider seam
 
@@ -71,7 +75,7 @@ The provider SHALL embed multiple texts concurrently via `Promise.all` over indi
 
 ### Requirement: Embedding mode is config-driven
 
-`cli/src/lib/config.ts` SHALL extend the config schema with an `embedding` object: `{ mode: "local" | "api-key" | "off", modelPath?: string, apiKey?: string }`. The default SHALL be `{ mode: "off" }`. `resolveEmbedder(config)` in `src/modules/embedding/resolve.ts` SHALL return a `ResultAsync<number[][], ProviderError>`-producing `EmbeddingProvider` based on `mode`: `local` → `createLocalEmbeddingProvider`, `api-key` → the harness `createEmbeddingProvider`, `off` → an error indicating embeddings are not configured.
+`cli/src/lib/config.ts` SHALL extend the config schema with an `embedding` object: `{ mode: "local" | "api-key" | "off", modelPath?: string, apiKey?: string, baseURL?: string, model?: string, dimensions?: number }` — the ONE config surface for embeddings (there is no separate `harness.embedding` key). The default SHALL be `{ mode: "off" }`. `resolveEmbedder(config)` in `src/modules/embedding/resolve.ts` SHALL return a `ResultAsync<number[][], ProviderError>`-producing `EmbeddingProvider` based on `mode`: `local` → `createLocalEmbeddingProvider` (384-dim), `api-key` → the harness `createEmbeddingProvider` connecting DIRECTLY to the configured OpenAI-compatible endpoint (default `https://api.openai.com/v1` + `text-embedding-3-small` + 1536 — never through the chat proxy, which serves no embeddings route), `off` → an error indicating embeddings are not configured. The provider SHALL advertise its vector width via `dimensions`, which the harness uses to size each per-analysis search index.
 
 #### Scenario: Default config has embeddings off
 
@@ -87,6 +91,11 @@ The provider SHALL embed multiple texts concurrently via `Promise.all` over indi
 
 - **WHEN** `resolveEmbedder` is called with a config where `embedding.mode === "off"`
 - **THEN** it SHALL return `err` indicating embeddings are not configured
+
+#### Scenario: Switching backends warns about stranded indexes
+
+- **WHEN** setup is asked to select an embedding mode while `embedding.mode` is already a different non-`off` mode
+- **THEN** it SHALL warn loudly that existing analyses' search indexes keep the previous backend's vector width and fail for search and further indexing until re-profiled (automatic re-embedding is deliberately unsupported for now)
 
 ### Requirement: Embedding setup downloads and verifies the model on opt-in
 

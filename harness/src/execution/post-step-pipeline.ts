@@ -184,7 +184,7 @@ export async function vectorIndexStepOutputs(deps: PostStepPipelineDeps, postCtx
     const { metadataEntries, summary, reconciledManifest } = artifacts;
 
     try {
-        await ensureSearchIndex(deps.pool, input.analysisId);
+        await ensureSearchIndex(deps.pool, input.analysisId, deps.embedding.dimensions);
         const vectorStore = createVectorStore(deps.pool);
         const indexName = searchIndexName(input.analysisId);
 

@@ -3,7 +3,8 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
-import { ok, err } from "neverthrow";
+import { ok, okAsync, err } from "neverthrow";
+import type { EmbeddingProvider } from "@inflexa-ai/harness";
 
 import { env } from "../../lib/env.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
@@ -18,13 +19,20 @@ function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHar
     mkdirSync(skillsDir, { recursive: true });
     return {
         model: "claude-test-model",
-        embedding: { baseURL: "http://embeddings.test/v1", token: "tok", model: "text-embedding-3-small" },
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         sandboxImage: "sandbox-base:latest",
         resourceLimits: { maxCpu: 1, maxMemoryGb: 1, maxGpuCount: 0 },
         adminPort: 8433,
         skillsDir,
         ...overrides,
+    };
+}
+
+/** A resolved-embedder stand-in with the api-key default width; never actually embeds in these offline tests. */
+function fakeEmbedding(): EmbeddingProvider {
+    return {
+        dimensions: 1536,
+        embed: (texts) => okAsync(texts.map(() => new Array(1536).fill(0))),
     };
 }
 
@@ -59,12 +67,19 @@ function recordingSeams(calls: string[]): BootSeams {
             calls.push("resolveModel");
             return ok("claude-from-proxy");
         },
+        resolveEmbedding: () => {
+            calls.push("resolveEmbedding");
+            return ok(fakeEmbedding());
+        },
         register: (deps) => {
             calls.push("register");
             // The one base every consumer must share (design D2).
             expect(deps.sessionsBasePath).toBe(env.sessionsDir);
             expect(deps.skillsDir).toBe(skillsDir);
-            expect(deps.embedding.baseURL).toBe("http://embeddings.test/v1");
+            // The register deps carry the RESOLVED provider instance advertising
+            // its width — the seam the per-analysis index is sized from.
+            expect(deps.embedding.dimensions).toBe(1536);
+            expect(deps.embedding.embed).toBeInstanceOf(Function);
             return async () => {};
         },
         initState: async () => {
@@ -91,7 +106,7 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
 
         const runtime = result._unsafeUnwrap();
-        expect(calls).toEqual(["readKey", "probeEmbedding", "postgres", "ingress", "initState", "register", "launch"]);
+        expect(calls).toEqual(["resolveEmbedding", "readKey", "probeEmbedding", "postgres", "ingress", "initState", "register", "launch"]);
         expect(runtime.model).toBe("claude-test-model");
         expect(runtime.triggerDeps.workflow).toBeInstanceOf(Function);
     });
@@ -127,30 +142,37 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
         expect(result._unsafeUnwrapErr()).toMatchObject({ type: "postgres_unavailable" });
-        expect(calls).toEqual(["readKey", "probeEmbedding", "postgres"]);
+        expect(calls).toEqual(["resolveEmbedding", "readKey", "probeEmbedding", "postgres"]);
     });
 
-    test("missing embedding config fails before any side effect", async () => {
+    test("an unresolved embedder fails before any side effect past resolution", async () => {
         const calls: string[] = [];
-        const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig({ embedding: null }) });
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            resolveEmbedding: () => {
+                calls.push("resolveEmbedding");
+                return err({ type: "embeddings_not_configured", message: "Embeddings are not configured." });
+            },
+        };
+        const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
-        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "embedding_unconfigured" });
-        expect(calls).toEqual([]);
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "embedding_unresolved", cause: { type: "embeddings_not_configured" } });
+        expect(calls).toEqual(["resolveEmbedding"]);
     });
 
-    test("an unreachable embedding endpoint blocks before postgres/ingress/launch", async () => {
+    test("a failing embedder probe blocks before postgres/ingress/launch", async () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
             probeEmbedding: async () => {
                 calls.push("probeEmbedding");
-                return err({ kind: "unreachable", baseURL: "http://embeddings.test/v1", detail: "HTTP 404" });
+                return err({ kind: "embed_failed", detail: "HTTP 404" });
             },
         };
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
-        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "embedding_unreachable", detail: "HTTP 404" });
-        expect(calls).toEqual(["readKey", "probeEmbedding"]);
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "embedding_probe_failed", detail: "HTTP 404" });
+        expect(calls).toEqual(["resolveEmbedding", "readKey", "probeEmbedding"]);
     });
 
     test("a wrong-dimension embedding model blocks before postgres/ingress/launch", async () => {
@@ -159,13 +181,13 @@ describe("bootHarnessRuntime", () => {
             ...recordingSeams(calls),
             probeEmbedding: async () => {
                 calls.push("probeEmbedding");
-                return err({ kind: "dimension_mismatch", baseURL: "http://embeddings.test/v1", expected: 1536, actual: 768 });
+                return err({ kind: "dimension_mismatch", expected: 1536, actual: 768 });
             },
         };
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
         expect(result._unsafeUnwrapErr()).toMatchObject({ type: "embedding_dimension_mismatch", expected: 1536, actual: 768 });
-        expect(calls).toEqual(["readKey", "probeEmbedding"]);
+        expect(calls).toEqual(["resolveEmbedding", "readKey", "probeEmbedding"]);
     });
 
     test("an invalid harness config block fails before any side effect", async () => {

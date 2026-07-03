@@ -34,12 +34,14 @@ re-registering or re-launching.
 The composition SHALL realize `DataProfileDeps` from deliberate local wiring: the
 `pg.Pool` built from the infra module's resolved `PostgresConnection`; the harness's
 local run authorizer and no-op billing resolver; the chat provider pointed at the local
-proxy's Anthropic-shaped Messages endpoint; the embedding configuration taken from its
-own cli config key (baseURL + API key + model — deliberately a separate path from the
-chat proxy, which serves no embeddings route), with the configured endpoint's
-reachability verified by a boot-time probe BEFORE any provisioning or registration —
-embeddings are consumed late in the profile workflow, so a dead endpoint must fail
-while failure is still free; a workspace filesystem and sandbox client (Docker
+proxy's Anthropic-shaped Messages endpoint; the embedding provider resolved from the
+top-level `embedding` config key via `resolveEmbedder` (mode-based: in-process local
+model or a DIRECT OpenAI-compatible endpoint — never through the chat proxy, which
+serves no embeddings route), verified with one real probe embedding through that very
+provider instance BEFORE any provisioning or registration — embeddings are consumed
+late in the profile workflow, so a broken embedder must fail while failure is still
+free, and the probe vector's width must match the provider's advertised `dimensions`,
+which sizes the per-analysis search index; a workspace filesystem and sandbox client (Docker
 backend) sharing
 the runtime's single session-tree base; bio-tool keys from cli config with absent keys
 passed as empty; and the shared skills directory. No dependency SHALL be realized as a
@@ -49,17 +51,17 @@ the point of use.
 #### Scenario: Deps resolve to their designated backends
 
 - **WHEN** the runtime composes the data-profile deps bundle
-- **THEN** chat traffic targets the local proxy, embedding traffic targets the configured embeddings endpoint, and everything else requires only the local Postgres and the Docker daemon
+- **THEN** chat traffic targets the local proxy, embeddings go through the resolved provider (in-process model, or directly to the configured endpoint), and everything else requires only the local Postgres and the Docker daemon
 
 #### Scenario: Unconfigured bio keys degrade per-tool, not at boot
 
 - **WHEN** no bio/chem API keys are configured
 - **THEN** the runtime boots and profiles run; only the affected tools surface auth errors when invoked
 
-#### Scenario: Unreachable embedding endpoint blocks boot before side effects
+#### Scenario: Broken embedder blocks boot before side effects
 
-- **WHEN** the effective embedding endpoint rejects or cannot answer an embeddings request
-- **THEN** boot fails naming the endpoint and remedies, before Postgres provisioning, listener start, registration, or launch
+- **WHEN** the resolved embedder cannot be built from config, fails or times out on the probe embedding, or emits vectors of a width other than it advertises
+- **THEN** boot fails naming the remedy, before Postgres provisioning, listener start, registration, or launch
 
 ### Requirement: Single global session-tree base
 

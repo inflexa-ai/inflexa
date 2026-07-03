@@ -10,6 +10,7 @@ import { showUserTool } from "../display/show-user.js";
 import { createWorkspaceSearchTool } from "./workspace-search.js";
 
 const fakeEmbedding: EmbeddingProvider = {
+    dimensions: 3,
     embed: (texts) => okAsync(texts.map(() => [0.1, 0.2, 0.3])),
 };
 

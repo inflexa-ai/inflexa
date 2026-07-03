@@ -104,11 +104,6 @@ export { upsertAnalysis } from "./state/analyses.js";
 export { loadDataProfileStatus, tryRetryDataProfile, reconcileOrphanedDataProfile } from "./state/data-profile.js";
 export type { DataProfileStatus } from "./state/data-profile.js";
 
-// Embedding vector width the per-analysis pgvector index is pinned to; a host
-// verifies its configured embedding model emits this many dimensions before a
-// run rather than failing at the vector upsert after the sandbox spend.
-export { SEARCH_INDEX_DIMENSION } from "./workspace/search-config.js";
-
 // Staged-input manifest contract (the embedder stages; the harness only reads).
 export type { StagedInput } from "./execution/staged-input.js";
 

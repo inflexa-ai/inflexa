@@ -2,14 +2,15 @@
  * Config-driven embedding-mode resolution: pick the right {@link EmbeddingProvider}
  * realization for the current `config.embedding.mode`, or fail with a precise,
  * user-actionable error. Mirrors the proxy setup's "config decides which backend"
- * pattern — the caller (a future `assembleCoreRuntime` wiring) gets a ready-to-
- * inject provider or a reason to surface to the user.
+ * pattern — the caller (`bootHarnessRuntime`, the harness composition root) gets a
+ * ready-to-inject provider or a reason to surface to the user.
  *
  * Modes:
  * - `local`   → {@link createLocalEmbeddingProvider} (in-process bge-small GGUF).
- * - `api-key` → harness `createEmbeddingProvider` (OpenAI-shaped, routed through
- *   the local CLIProxyAPI gateway at `env.cliproxyApiUrl` with the noop billing
- *   resolver — the CLI's local mode does no attribution).
+ * - `api-key` → harness `createEmbeddingProvider` (OpenAI-shaped), connecting
+ *   DIRECTLY to the configured endpoint — never through the chat proxy, which
+ *   fronts OAuth chat providers and serves no embeddings route. The noop billing
+ *   resolver applies: the CLI's local mode does no attribution.
  * - `off`     → error: embeddings are not configured (the default until setup).
  */
 
@@ -18,8 +19,14 @@ import { err, ok, type Result } from "neverthrow";
 import { createEmbeddingProvider, createNoopBillingResolver, type EmbeddingProvider } from "@inflexa-ai/harness";
 
 import type { Config } from "../../lib/config.ts";
-import { env } from "../../lib/env.ts";
 import { createLocalEmbeddingProvider } from "./local-provider.ts";
+
+/**
+ * Where `api-key` mode connects when `embedding.baseURL` is unset. OpenAI's own
+ * endpoint, because the mode's model default (`text-embedding-3-small`, via the
+ * harness provider) is an OpenAI model — the two defaults only make sense together.
+ */
+const DEFAULT_API_BASE_URL = "https://api.openai.com/v1";
 
 export type EmbeddingResolveError =
     | { readonly type: "embeddings_not_configured"; readonly message: string }
@@ -54,9 +61,11 @@ export function resolveEmbedder(config: Config): Result<EmbeddingProvider, Embed
         return ok(createLocalEmbeddingProvider({ modelPath }));
     }
 
-    // `api-key`: route through the local CLIProxyAPI gateway using the user's
-    // configured key. The CLI's local mode does no billing attribution, so the
-    // noop resolver is the correct `ResolveBilling` realization here.
+    // `api-key`: connect directly to the configured OpenAI-compatible endpoint.
+    // The CLI's local mode does no billing attribution, so the noop resolver is
+    // the correct `ResolveBilling` realization here. `model`/`dimensions` fall
+    // through to the harness defaults (text-embedding-3-small / 1536) when unset;
+    // a custom `model` needs a matching `dimensions` or the boot probe rejects it.
     const apiKey = config.embedding.apiKey;
     if (!apiKey) {
         return err({
@@ -66,8 +75,10 @@ export function resolveEmbedder(config: Config): Result<EmbeddingProvider, Embed
     }
     return ok(
         createEmbeddingProvider({
-            baseURL: env.cliproxyApiUrl,
+            baseURL: config.embedding.baseURL ?? DEFAULT_API_BASE_URL,
             token: apiKey,
+            model: config.embedding.model,
+            dimensions: config.embedding.dimensions,
             resolveBilling: createNoopBillingResolver(),
         }),
     );

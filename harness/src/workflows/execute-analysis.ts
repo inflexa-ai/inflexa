@@ -73,7 +73,7 @@ import type { EmitFn } from "../loop/types.js";
 import type { RunCharge } from "../billing/run-charge.js";
 import { runDir } from "../workspace/paths.js";
 import { isChatDataPart } from "../sandbox/sandbox-step-translate.js";
-import { synthesizeRun, type SynthesisEmbedder } from "../app/synthesize-run.js";
+import { synthesizeRun } from "../app/synthesize-run.js";
 import { type PlanStep, computeTopologicalLevels, scheduleReady, validatePlanDag } from "./execute-analysis-scheduler.js";
 import { recordCancelledChild } from "./metrics.js";
 import { BUDGET_EXCEEDED_TOPIC, type BudgetExceededNotification, type SandboxStepInput, type SandboxStepResult } from "./sandbox-step.js";
@@ -237,7 +237,6 @@ export function synthesizeFindings(args: {
     deps: ExecuteAnalysisDeps;
 }): Promise<{ findings: readonly RunFinding[] }> {
     const { analysisId, runId, completedSteps, session, deps } = args;
-    const embedder: SynthesisEmbedder = async (text, embedSession) => unwrapOrThrow(await deps.embedding.embed([text], embedSession))[0];
     const emit: EmitFn = (event) => {
         const part = isChatDataPart(event)
             ? event
@@ -251,7 +250,7 @@ export function synthesizeFindings(args: {
         {
             pool: deps.pool,
             provider: deps.provider,
-            embedder,
+            embedding: deps.embedding,
             sessionsBasePath: deps.sessionsBasePath,
             synthesisModel: deps.synthesisModel,
             bioKeys: deps.bioKeys,

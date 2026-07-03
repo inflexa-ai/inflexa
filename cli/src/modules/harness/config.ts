@@ -12,13 +12,6 @@ import { env } from "../../lib/env.ts";
  */
 const harnessConfigSchema = z.object({
     model: z.string().optional(),
-    embedding: z
-        .object({
-            baseURL: z.string(),
-            token: z.string(),
-            model: z.string().optional(),
-        })
-        .optional(),
     bioKeys: z
         .object({
             drugbank: z.string().optional(),
@@ -40,27 +33,16 @@ const harnessConfigSchema = z.object({
     skillsDir: z.string().optional(),
 });
 
-/** Fully-resolved embedding endpoint — the profile's vector indexing cannot run without one. */
-export type HarnessEmbeddingConfig = {
-    readonly baseURL: string;
-    readonly token: string;
-    readonly model: string;
-};
-
 /**
- * The `harness` config key resolved to concrete values. `null` fields are the
- * two genuine launch prerequisites the cli cannot default: the embedding
- * endpoint — its own baseURL + API key, deliberately a SEPARATE path from the
- * chat proxy, which fronts OAuth chat providers and serves no embeddings
- * route — and, outside a dev checkout, the skills tree. The pre-flight turns
- * each `null` into an actionable error, and a configured embedding endpoint
- * is additionally probed at boot (config presence can't prove reachability,
- * and embeddings fail late in the profile workflow).
+ * The `harness` config key resolved to concrete values. The embedder is NOT
+ * configured here: it comes from the top-level `embedding` config key, resolved
+ * by `modules/embedding/resolve.ts` at boot. The one genuine launch prerequisite
+ * this config cannot default is the skills tree (outside a dev checkout); the
+ * pre-flight turns its `null` into an actionable error.
  */
 export type ResolvedHarnessConfig = {
     /** Chat model id; `null` means resolve the default from the proxy's `/models` at boot. */
     readonly model: string | null;
-    readonly embedding: HarnessEmbeddingConfig | null;
     /** Absent keys pass as empty strings — the affected tools surface auth errors per-call. */
     readonly bioKeys: {
         readonly drugbank: string;
@@ -90,13 +72,6 @@ export type ResolvedHarnessConfig = {
  */
 const devSkillsDir = join(import.meta.dir, "../../../../skills");
 
-/**
- * Matches the harness's own embedding default (`providers/embedding.ts`) so an
- * endpoint configured without a model gets the model that endpoint most likely
- * serves under the OpenAI-compatible contract.
- */
-const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
-
 /** Locally-built image tag (`docker build` per images/sandbox-base/README.md). */
 const DEFAULT_SANDBOX_IMAGE = "sandbox-base:latest";
 
@@ -116,13 +91,6 @@ const DEFAULT_ADMIN_PORT = 8433;
 function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, configError?: { issues: string }): ResolvedHarnessConfig {
     return {
         model: cfg?.model ?? null,
-        embedding: cfg?.embedding
-            ? {
-                  baseURL: cfg.embedding.baseURL,
-                  token: cfg.embedding.token,
-                  model: cfg.embedding.model ?? DEFAULT_EMBEDDING_MODEL,
-              }
-            : null,
         bioKeys: {
             drugbank: cfg?.bioKeys?.drugbank ?? "",
             disgenet: cfg?.bioKeys?.disgenet ?? "",

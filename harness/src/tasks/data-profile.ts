@@ -28,13 +28,11 @@ import type { StagedInput } from "../execution/staged-input.js";
 import { createDataProfilerAgent } from "../agents/sandbox/data-profiler.js";
 import type { SandboxAgentDeps } from "../agents/sandbox/shared.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
-import type { ResolveBilling } from "../billing/resolver.js";
 import { runToTerminal } from "../loop/run-to-terminal.js";
 import { durableStep } from "../loop/run-step.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { defineTool } from "../tools/define-tool.js";
-import type { ChatProvider } from "../providers/types.js";
-import { createEmbeddingProvider } from "../providers/embedding.js";
+import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 
@@ -44,7 +42,7 @@ import { mintSandboxIdentity } from "../sandbox/identity.js";
 import { createVectorStore } from "../state/vector-store.js";
 import { ProfilerOutputSchema, type ProfilerOutput } from "../schemas/data-profile-schemas.js";
 import { completeDataProfile, failDataProfile, loadDataProfileStatus, tryRerunDataProfile, tryStartDataProfile, upsertArtifacts } from "../state/index.js";
-import { createEmbedder, ensureSearchIndex, searchIndexName } from "../workspace/search-config.js";
+import { ensureSearchIndex, searchIndexName } from "../workspace/search-config.js";
 
 /** Synthetic run/step literal for the data-profile workflow. */
 const DATA_PROFILE_RUN_LITERAL = "data-profile" as const;
@@ -66,14 +64,13 @@ export interface DataProfileDeps {
     readonly runAuthorizer: RunAuthorizer;
     /** API keys for the bio/chem tools the profiler sandbox agent may use. */
     readonly bioKeys: BioToolKeys;
-    /** Billing resolver threaded into the write-side embedder. */
-    readonly resolveBilling: ResolveBilling;
-    /** Embedding-provider config for the write-side vector indexer. */
-    readonly embedding: {
-        readonly model: string;
-        readonly baseURL: string;
-        readonly token: string;
-    };
+    /**
+     * Write-side embedder for the vector indexer. An instance, not endpoint
+     * config: the host composes its own realization (cloud endpoint, local
+     * in-process model, …) and the provider's `dimensions` sizes the
+     * per-analysis index — matching every other write-side workflow dep.
+     */
+    readonly embedding: EmbeddingProvider;
     /** Absolute path to the skills tree (one subdirectory per skill). */
     readonly skillsDir: string;
 }
@@ -209,12 +206,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 pool: deps.pool,
                 sandboxClient: deps.sandboxClient,
                 workspaceFs: deps.workspaceFs,
-                embedding: createEmbeddingProvider({
-                    baseURL: deps.embedding.baseURL,
-                    token: deps.embedding.token,
-                    model: deps.embedding.model,
-                    resolveBilling: deps.resolveBilling,
-                }),
+                embedding: deps.embedding,
                 model: deps.model,
                 skillsDir: deps.skillsDir,
                 bioKeys: deps.bioKeys,
@@ -283,14 +275,13 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     .replace(/^\/|\/$/g, "")
                     .trim();
             const profilerByNorm = new Map(profilerData.files.map((f) => [normPath(f.path), f]));
-            await ensureSearchIndex(deps.pool, analysisId);
+            await ensureSearchIndex(deps.pool, analysisId, deps.embedding.dimensions);
             const vectorStore = createVectorStore(deps.pool);
-            const embedder = createEmbedder({
-                embeddingModel: deps.embedding.model,
-                baseURL: deps.embedding.baseURL,
-                token: deps.embedding.token,
-                resolveBilling: deps.resolveBilling,
-            });
+            const embedOne = async (text: string, session: RunSession): Promise<number[]> => {
+                const [vec] = unwrapOrThrow(await deps.embedding.embed([text], session));
+                if (!vec) throw new Error("data-profile: empty embedding response");
+                return vec;
+            };
             const indexName = searchIndexName(analysisId);
             let indexed = 0;
             let fallbackCount = 0;
@@ -318,7 +309,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                       };
                 if (!desc) fallbackCount++;
 
-                const embedding = await embedder(searchMeta.text as string, runSession);
+                const embedding = await embedOne(searchMeta.text as string, runSession);
                 unwrapOrThrow(
                     await vectorStore.upsert({
                         indexName,

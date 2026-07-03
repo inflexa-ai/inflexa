@@ -28,6 +28,7 @@ describe("resolveEmbedder", () => {
         );
         expect(provider).not.toBeNull();
         expect(typeof provider!.embed).toBe("function");
+        expect(provider!.dimensions).toBe(384);
     });
 
     test("local mode without modelPath → err local_model_missing", () => {
@@ -38,13 +39,22 @@ describe("resolveEmbedder", () => {
         expect(outcome).toBe("local_model_missing");
     });
 
-    test("api-key mode with apiKey → ok provider", () => {
+    test("api-key mode with apiKey → ok provider at the text-embedding-3-small default width", () => {
         const provider = resolveEmbedder(baseConfig({ mode: "api-key", apiKey: "sk-test" })).match(
             (p) => p,
             () => null,
         );
         expect(provider).not.toBeNull();
         expect(typeof provider!.embed).toBe("function");
+        expect(provider!.dimensions).toBe(1536);
+    });
+
+    test("api-key mode passes a configured dimensions through to the provider", () => {
+        const provider = resolveEmbedder(baseConfig({ mode: "api-key", apiKey: "sk-test", model: "custom-embedder", dimensions: 768 })).match(
+            (p) => p,
+            () => null,
+        );
+        expect(provider!.dimensions).toBe(768);
     });
 
     test("api-key mode without apiKey → err api_key_missing", () => {
