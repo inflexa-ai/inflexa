@@ -134,11 +134,10 @@ cli.command("status")
 cli.command("profile")
     .description("Stage the analysis's inputs and run a data profile in the harness sandbox")
     .option("--analysis <id|name>", "Operate on a specific analysis")
-    .option("--project <name>", "Scope to a project")
     .option("--status", "Show the profile run state instead of starting a run")
-    .action(async (options: { analysis?: string; project?: string; status?: boolean }) => {
+    .action(async (options: { analysis?: string; status?: boolean }) => {
         const { runProfile, runProfileStatus } = await import("../modules/harness/profile.ts");
-        const flags = { analysis: options.analysis, project: options.project };
+        const flags = { analysis: options.analysis };
         if (options.status) await runProfileStatus(flags);
         else await runProfile(flags);
     });
@@ -148,11 +147,10 @@ cli.command("profile")
 cli.command("run [analysis]")
     .description("Launch an analysis run from a validated plan file in the harness sandbox")
     .option("--plan <file>", "Path to the JSON analysis plan to execute")
-    .option("--project <name>", "Scope to a project") // TODO(slop): Why `--project` option needed. What is this going to do?
     .option("--status", "Show this analysis's run history instead of launching a run")
-    .action(async (analysis: string | undefined, options: { plan?: string; project?: string; status?: boolean }) => {
+    .action(async (analysis: string | undefined, options: { plan?: string; status?: boolean }) => {
         const { runAnalysis, runAnalysisStatus } = await import("../modules/harness/run.ts");
-        const flags = { analysis, project: options.project };
+        const flags = { analysis };
         if (options.status) await runAnalysisStatus(flags);
         else await runAnalysis(flags, options.plan);
     });
