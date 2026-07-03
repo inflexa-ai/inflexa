@@ -66,21 +66,19 @@ function describeBootError(e: HarnessBootError): string {
     switch (e.type) {
         case "harness_config_invalid":
             return `Your \`harness\` config has an invalid field — ${e.issues}. Fix it in config.json and re-run.`;
-        case "embedding_unconfigured":
+        case "embedding_unresolved":
+            return ["Profiling's vector indexing requires an embedder, and none could be resolved from the `embedding` config key.", e.cause.message].join(
+                "\n",
+            );
+        case "embedding_probe_failed":
             return [
-                "No embedding endpoint configured — profiling's vector indexing requires one. Embeddings are their own endpoint (separate from the chat proxy, which serves none).",
-                'Set `harness.embedding` in config.json: { "baseURL": "<OpenAI-compatible /v1>", "token": "<key>", "model": "text-embedding-3-small" }.',
-            ].join("\n");
-        case "embedding_unreachable":
-            return [
-                `The embedding endpoint ${e.baseURL} did not accept an embeddings request (${e.detail}) — profiling's vector indexing requires one and would otherwise fail after the sandbox run already spent its work.`,
-                "Either configure an embeddings-capable provider in the proxy, or set `harness.embedding` in config.json:",
-                '{ "baseURL": "<OpenAI-compatible /v1>", "token": "<key>", "model": "text-embedding-3-small" }.',
+                `The configured embedder failed a probe embedding (${e.detail}) — profiling would otherwise fail after the sandbox run already spent its work.`,
+                "For `local` mode, re-run `inflexa setup --embeddings local`; for `api-key` mode, check `embedding.apiKey` and `embedding.baseURL` in config.json.",
             ].join("\n");
         case "embedding_dimension_mismatch":
             return [
-                `The embedding model at ${e.baseURL} returns ${e.actual}-dimensional vectors, but the profile's vector index is fixed at ${e.expected} dimensions.`,
-                `Set \`harness.embedding.model\` in config.json to a ${e.expected}-dim model (e.g. text-embedding-3-small).`,
+                `The configured embedding model returns ${e.actual}-dimensional vectors, but the embedder is declared as ${e.expected}-dimensional (\`embedding.dimensions\`).`,
+                `Set \`embedding.dimensions\` to ${e.actual} in config.json so the vector indexes are sized to what the model actually emits.`,
             ].join("\n");
         case "skills_dir_missing":
             return `Skills directory not found${e.path ? ` at ${e.path}` : ""}. Set \`harness.skillsDir\` in config.json (a checkout's \`skills/\` tree).`;

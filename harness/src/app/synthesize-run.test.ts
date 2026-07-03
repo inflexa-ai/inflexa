@@ -14,12 +14,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Pool } from "pg";
 
+import { okAsync } from "neverthrow";
+
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 import type { RunSession } from "../auth/types.js";
 import type { EmitFn } from "../loop/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
-import { synthesizeRun, type SynthesisEmbedder, type SynthesizeRunDeps } from "./synthesize-run.js";
+import { synthesizeRun, type SynthesizeRunDeps } from "./synthesize-run.js";
 
 const ANALYSIS_ID = "analysis-001";
 const RUN_ID = "run-001";
@@ -99,15 +101,18 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
         await writeFile(join(outDir, "summary.md"), "## results\n\nFOXP3 up.");
     }
     let embedderCalls = 0;
-    const embedder: SynthesisEmbedder = async () => {
-        embedderCalls++;
-        return new Array(1536).fill(0.01);
+    const embedding: SynthesizeRunDeps["embedding"] = {
+        dimensions: 1536,
+        embed: (texts) => {
+            embedderCalls++;
+            return okAsync(texts.map(() => new Array(1536).fill(0.01)));
+        },
     };
     return {
         deps: {
             pool: emptyPool(),
             provider,
-            embedder,
+            embedding,
             sessionsBasePath: base,
             synthesisModel: "claude-test",
             bioKeys: BIO_KEYS,

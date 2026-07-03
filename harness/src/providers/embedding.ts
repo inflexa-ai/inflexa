@@ -16,6 +16,8 @@ import type { EmbeddingProvider, FetchLike } from "./types.js";
 import type { AgentSession } from "../auth/types.js";
 
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
+/** Vector width of the default model — `text-embedding-3-small` emits 1536-dim vectors. */
+const DEFAULT_EMBEDDING_DIMENSIONS = 1536;
 
 export interface EmbeddingProviderDeps {
     /** Billing-gateway base URL — all embedding traffic is routed through it. */
@@ -24,6 +26,13 @@ export interface EmbeddingProviderDeps {
     readonly token: string;
     /** Embedding model id. Defaults to `text-embedding-3-small`. */
     readonly model?: string;
+    /**
+     * Vector width the configured model emits, advertised on the returned
+     * provider (see {@link EmbeddingProvider.dimensions}). Defaults to the
+     * default model's 1536 — a host wiring a non-default `model` must supply
+     * the matching width or the per-analysis index is created at the wrong size.
+     */
+    readonly dimensions?: number;
     /** Resolves the billing attribution map at the call site. */
     readonly resolveBilling: ResolveBilling;
     /**
@@ -40,6 +49,7 @@ export function createEmbeddingProvider(deps: EmbeddingProviderDeps): EmbeddingP
         ...(deps.fetch ? { fetch: deps.fetch } : {}),
     });
     const model = deps.model ?? DEFAULT_EMBEDDING_MODEL;
+    const dimensions = deps.dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
 
     function embed(texts: readonly string[], session: AgentSession): ResultAsync<number[][], ProviderError> {
         if (texts.length === 0) return okAsync([]);
@@ -59,5 +69,5 @@ export function createEmbeddingProvider(deps: EmbeddingProviderDeps): EmbeddingP
         return new ResultAsync(run());
     }
 
-    return { embed };
+    return { embed, dimensions };
 }

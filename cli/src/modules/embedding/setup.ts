@@ -12,7 +12,7 @@
  * `embed()` call.
  */
 
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, rename, stat, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { log, spinner as clackSpinner } from "@clack/prompts";
@@ -21,6 +21,7 @@ import { err, ok, type Result } from "neverthrow";
 import { readConfig, writeConfig } from "../../lib/config.ts";
 import { select } from "../../lib/cli.ts";
 import { env } from "../../lib/env.ts";
+import { LOCAL_EMBEDDING_DIMENSIONS } from "./local-provider.ts";
 
 export type EmbeddingSetupError =
     | { readonly type: "download_failed"; readonly message: string; readonly cause?: unknown }
@@ -28,16 +29,30 @@ export type EmbeddingSetupError =
     | { readonly type: "dimension_mismatch"; readonly message: string; readonly expected: number; readonly actual: number }
     | { readonly type: "not_configured"; readonly message: string };
 
-const MODEL_URL = "https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/main/bge-small-en-v1.5-q8_0.gguf";
-const EXPECTED_DIM = 384;
+/**
+ * Pinned to the repo revision current as of 2026-07 (last modified 2024-02-17),
+ * not `main`: an unpinned ref would let a repo update (or a MITM on the ref)
+ * silently swap the model, with only the dimension probe standing between a
+ * different model and the vector store. The sha256 below is the file's LFS
+ * object id at this revision, verified against the download stream.
+ */
+const MODEL_URL = "https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/d32f8c040ea3b516330eeb75b72bcc2d3a780ab7/bge-small-en-v1.5-q8_0.gguf";
+const MODEL_SHA256 = "ec38e8da142596baa913124ae50550de284b6916bf59577ef2f0cb9660c2f514";
 
 /**
  * Download the GGUF model to {@link env.embeddingModelPath}, skipping if it is
  * already present. Streams the response to disk under a clack spinner so the
  * ~36 MB download is visible. A network/HTTP failure surfaces as
  * `download_failed` — never thrown.
+ *
+ * The stream lands in a `.part` sidecar that is renamed into place only after a
+ * complete flush: the "already present" check above trusts bare existence, so a
+ * mid-stream failure must never leave bytes at the final path — a truncated
+ * file there would be skipped as "already present" on retry and only caught by
+ * `verifyModel`, with no hint that deleting it fixes things.
  */
 export async function downloadModel(): Promise<Result<void, EmbeddingSetupError>> {
+    const partPath = `${env.embeddingModelPath}.part`;
     try {
         if (await Bun.file(env.embeddingModelPath).exists()) {
             log.info(`Embedding model already present at ${env.embeddingModelPath}`);
@@ -58,20 +73,36 @@ export async function downloadModel(): Promise<Result<void, EmbeddingSetupError>
             });
         }
 
-        const file = Bun.file(env.embeddingModelPath);
+        const file = Bun.file(partPath);
         const writer = file.writer();
         const reader = response.body.getReader();
+        const hasher = new Bun.CryptoHasher("sha256");
         for (;;) {
             const { done, value } = await reader.read();
             if (done) break;
+            hasher.update(value);
             await writer.write(value);
         }
         await writer.flush();
+
+        const digest = hasher.digest("hex");
+        if (digest !== MODEL_SHA256) {
+            s.error("Checksum mismatch");
+            await unlink(partPath).catch(() => {});
+            return err({
+                type: "download_failed",
+                message: `Downloaded file's sha256 (${digest}) does not match the pinned model checksum. Retry, or check your network path to huggingface.co.`,
+            });
+        }
+        await rename(partPath, env.embeddingModelPath);
 
         const written = (await stat(env.embeddingModelPath)).size;
         s.stop(`Downloaded ${(written / 1024 / 1024).toFixed(1)} MB`);
         return ok(undefined);
     } catch (cause) {
+        // Best-effort cleanup; a `.part` leftover is harmless (never mistaken
+        // for the model) but would confuse a du/ls of the model dir.
+        await unlink(partPath).catch(() => {});
         return err({
             type: "download_failed",
             message: `Download failed: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -98,16 +129,16 @@ export async function verifyModel(modelPath: string): Promise<Result<void, Embed
         const probe = await context.getEmbeddingFor("inflexa embedding verification probe");
         const dim = probe.vector.length;
         await llama.dispose();
-        if (dim !== EXPECTED_DIM) {
+        if (dim !== LOCAL_EMBEDDING_DIMENSIONS) {
             s.error("Dimension mismatch");
             return err({
                 type: "dimension_mismatch",
-                message: `Model produced ${dim}-dim vectors, expected ${EXPECTED_DIM}. The GGUF may be the wrong model.`,
-                expected: EXPECTED_DIM,
+                message: `Model produced ${dim}-dim vectors, expected ${LOCAL_EMBEDDING_DIMENSIONS}. The GGUF may be the wrong model.`,
+                expected: LOCAL_EMBEDDING_DIMENSIONS,
                 actual: dim,
             });
         }
-        s.stop(`Verified: ${EXPECTED_DIM}-dim vectors`);
+        s.stop(`Verified: ${LOCAL_EMBEDDING_DIMENSIONS}-dim vectors`);
         return ok(undefined);
     } catch (cause) {
         s.error("Verification failed");
@@ -159,8 +190,9 @@ export async function runEmbeddingSetup(interactive: boolean, preselected?: "loc
     if (preselected !== undefined) {
         if (preselected === "off") return ok(undefined);
         if (preselected === "api-key") {
-            // API-key mode setup is deferred to the harness-wiring change; only
-            // local setup is implemented here. Decline cleanly rather than half-doing it.
+            warnOnModeSwitch(config.embedding.mode, "api-key");
+            // API-key mode setup is deferred; only local setup is implemented
+            // here. Decline cleanly rather than half-doing it.
             log.warn("API-key embedding mode is selected but not yet configured by setup. Set `embedding.apiKey` in config manually.");
             return ok(undefined);
         }
@@ -182,6 +214,7 @@ export async function runEmbeddingSetup(interactive: boolean, preselected?: "loc
         return ok(undefined);
     }
     if (choice === "api-key") {
+        warnOnModeSwitch(config.embedding.mode, "api-key");
         log.warn("API-key embedding mode is not yet configured by setup. Set `embedding.apiKey` in config manually.");
         return ok(undefined);
     }
@@ -189,8 +222,34 @@ export async function runEmbeddingSetup(interactive: boolean, preselected?: "loc
     return runLocalSetup(config);
 }
 
+/**
+ * Loudly warn when the user is about to change an already-chosen embedding
+ * backend. Vector widths differ per backend (local = 384; api-key defaults to
+ * 1536), and each analysis's search index keeps the width it was created with —
+ * switching strands every existing index at the old width, so search and
+ * further indexing on those analyses fail until they are re-profiled.
+ * Automatic re-embedding is a deliberate non-feature for now (see the
+ * local-embeddings design doc); the warning is the mitigation.
+ */
+function warnOnModeSwitch(current: "local" | "api-key" | "off", next: "local" | "api-key"): void {
+    if (current === "off" || current === next) return;
+    log.warn(
+        [
+            `SWITCHING EMBEDDING BACKEND (${current} → ${next})`,
+            "",
+            "Embedding models emit different vector widths, and every existing analysis's",
+            "search index keeps the width it was created with. After this switch:",
+            "  - semantic search on existing analyses will return errors or nothing,",
+            "  - further indexing into them (new runs, re-profiles) will fail,",
+            "until each analysis is re-profiled under the new backend.",
+            "Automatic re-embedding is not supported yet.",
+        ].join("\n"),
+    );
+}
+
 /** The local-embeddings opt-in branch: trust runtime, download, verify, write config. */
 async function runLocalSetup(config: ReturnType<typeof readConfig>): Promise<Result<void, EmbeddingSetupError>> {
+    warnOnModeSwitch(config.embedding.mode, "local");
     log.message("Setting up local embeddings (bge-small-en-v1.5, in-process, no API key needed)");
 
     await trustNativeRuntime();
@@ -220,7 +279,7 @@ async function runLocalSetup(config: ReturnType<typeof readConfig>): Promise<Res
 async function promptEmbeddingMode(): Promise<"local" | "api-key" | "off"> {
     const chosen = await select("Embedding mode", [
         { value: "local", label: "Local (in-process, downloads a 36 MB model, no API key)" },
-        { value: "api-key", label: "API key (route through the proxy)" },
+        { value: "api-key", label: "API key (direct to an OpenAI-compatible endpoint)" },
         { value: "off", label: "Off / skip" },
     ]);
     return chosen as "local" | "api-key" | "off";

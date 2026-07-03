@@ -10,24 +10,28 @@ import {
     createWorkspaceFilesystem,
     initCortexState,
     launchDbos,
+    makeLocalAuth,
     registerDataProfileWorkflow,
     shutdownDbos,
-    SEARCH_INDEX_DIMENSION,
+    type AgentSession,
     type DataProfileDeps,
     type DataProfileTriggerDeps,
     type DataProfileWorkflowInput,
     type DbosConfig,
+    type EmbeddingProvider,
     type Pool,
 } from "@inflexa-ai/harness";
 
+import { readConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
 import { getLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
+import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
 import { readApiKey, resolveModelId, type ChatSetupError } from "../intelligence/chat.ts";
-import { resolveHarnessConfig, type HarnessEmbeddingConfig, type ResolvedHarnessConfig } from "./config.ts";
+import { resolveHarnessConfig, type ResolvedHarnessConfig } from "./config.ts";
 import { startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
 
 // The embedded-harness composition root. Boots lazily on the first profile
@@ -55,9 +59,9 @@ export type HarnessRuntime = {
 /** Why the runtime could not boot — each variant maps to one actionable user message. */
 export type HarnessBootError =
     | { type: "harness_config_invalid"; issues: string }
-    | { type: "embedding_unconfigured" }
-    | { type: "embedding_unreachable"; baseURL: string; detail: string }
-    | { type: "embedding_dimension_mismatch"; baseURL: string; expected: number; actual: number }
+    | { type: "embedding_unresolved"; cause: EmbeddingResolveError }
+    | { type: "embedding_probe_failed"; detail: string }
+    | { type: "embedding_dimension_mismatch"; expected: number; actual: number }
     | { type: "skills_dir_missing"; path: string | null }
     | { type: "proxy_key_missing"; cause: ChatSetupError }
     | { type: "model_unresolved"; cause: ChatSetupError }
@@ -67,56 +71,55 @@ export type HarnessBootError =
     | { type: "runtime_already_active"; holderPid: number }
     | { type: "runtime_boot_failed"; cause: unknown };
 
-/** Why the embedding probe failed — reachability vs. a servable-but-wrong-width model. */
-export type EmbeddingProbeError =
-    { kind: "unreachable"; baseURL: string; detail: string } | { kind: "dimension_mismatch"; baseURL: string; expected: number; actual: number };
+/** Why the embedding probe failed — a failed/hung embed call vs. a working-but-wrong-width model. */
+export type EmbeddingProbeError = { kind: "embed_failed"; detail: string } | { kind: "dimension_mismatch"; expected: number; actual: number };
+
+/** Ceiling on the probe embed. Generous for both realizations: an endpoint round-trip and the local GGUF's one-time model load. */
+const PROBE_TIMEOUT_MS = 15_000;
 
 /**
- * Boot-time probe for the embedding endpoint. Embeddings are consumed LATE in
+ * Boot-time probe of the resolved embedder. Embeddings are consumed LATE in
  * the profile workflow — after the sandbox agent already spent its LLM budget —
- * and both an unreachable endpoint AND a wrong-width model are fatal there: the
- * per-analysis pgvector index is pinned to {@link SEARCH_INDEX_DIMENSION}, so a
- * model of any other width is rejected at the vector upsert. One cheap real
- * embedding up front converts both expensive late failures into free early ones.
- * A real POST rather than an OPTIONS/HEAD sniff: OpenAI-compatible servers
- * disagree on everything except the actual call, and only the actual response
- * carries the vector length we need to check.
+ * and a broken embedder AND a wrong-width model are both fatal there: the
+ * per-analysis pgvector index is sized to `provider.dimensions`, so vectors of
+ * any other width are rejected at the upsert. One real embed up front converts
+ * both expensive late failures into free early ones.
+ *
+ * The probe goes through the very provider instance the workflow will use —
+ * mode-agnostic by construction: for `api-key` it is the real endpoint
+ * round-trip; for `local` it loads the GGUF and warms the provider's cached
+ * runtime (same process), so the cost is not wasted.
  */
-async function probeEmbeddingEndpoint(embedding: HarnessEmbeddingConfig): Promise<Result<void, EmbeddingProbeError>> {
-    try {
-        const res = await fetch(`${embedding.baseURL.replace(/\/$/, "")}/embeddings`, {
-            method: "POST",
-            headers: { "content-type": "application/json", authorization: `Bearer ${embedding.token}` },
-            body: JSON.stringify({ model: embedding.model, input: ["ping"], encoding_format: "float" }),
-            signal: AbortSignal.timeout(15_000),
-        });
-        if (!res.ok) {
-            return err({ kind: "unreachable", baseURL: embedding.baseURL, detail: `HTTP ${res.status}` });
-        }
-        // Verify the model's dimension against the pinned index width. Parse
-        // defensively: on any nonstandard-but-200 shape we can't read a length
-        // from, accept reachability rather than false-block a working endpoint —
-        // the dimension check is a best-effort early warning, not a gate.
-        const body: unknown = await res.json(); // external response; shape narrowed below before use
-        const actual = extractEmbeddingLength(body);
-        if (actual !== null && actual !== SEARCH_INDEX_DIMENSION) {
-            return err({ kind: "dimension_mismatch", baseURL: embedding.baseURL, expected: SEARCH_INDEX_DIMENSION, actual });
-        }
-        return ok(undefined);
-    } catch (cause) {
-        return err({ kind: "unreachable", baseURL: embedding.baseURL, detail: cause instanceof Error ? cause.message : String(cause) });
+async function probeEmbeddingProvider(provider: EmbeddingProvider): Promise<Result<void, EmbeddingProbeError>> {
+    // A minimal local session: the probe is identity-less work and the wired
+    // billing resolver is the noop one, but the seam (correctly) refuses calls
+    // without a session.
+    const probeSession: AgentSession = {
+        identity: { user: "local" },
+        scope: { kind: "analysis", analysisId: "embedding-boot-probe" },
+        provenance: { agentId: "embedding-boot-probe", callPath: ["embedding-boot-probe"] },
+        auth: makeLocalAuth(),
+    };
+    const checked: Promise<Result<void, EmbeddingProbeError>> = provider.embed(["ping"], probeSession).match(
+        (vectors): Result<void, EmbeddingProbeError> => {
+            const actual = vectors[0]?.length ?? 0;
+            return actual === provider.dimensions ? ok(undefined) : err({ kind: "dimension_mismatch", expected: provider.dimensions, actual });
+        },
+        (e): Result<void, EmbeddingProbeError> => err({ kind: "embed_failed", detail: e.message }),
+    );
+    // `EmbeddingProvider.embed` takes no AbortSignal, so a hung call can only be
+    // raced, not cancelled — the loser is abandoned, which is fine at boot: on
+    // timeout we fail the boot, and on success the process runs long past it.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), PROBE_TIMEOUT_MS);
+    });
+    const outcome = await Promise.race([checked, timeout]);
+    clearTimeout(timer);
+    if (outcome === "timeout") {
+        return err({ kind: "embed_failed", detail: `no embedding after ${PROBE_TIMEOUT_MS / 1000}s` });
     }
-}
-
-/** Pull `data[0].embedding.length` from an OpenAI-compatible embeddings response, or null if the shape isn't the expected `{ data: [{ embedding: number[] }] }`. */
-function extractEmbeddingLength(body: unknown): number | null {
-    if (typeof body !== "object" || body === null || !("data" in body)) return null;
-    const data = (body as { data: unknown }).data;
-    if (!Array.isArray(data) || data.length === 0) return null;
-    const first = data[0];
-    if (typeof first !== "object" || first === null || !("embedding" in first)) return null;
-    const vec = (first as { embedding: unknown }).embedding;
-    return Array.isArray(vec) ? vec.length : null;
+    return outcome;
 }
 
 /**
@@ -128,10 +131,11 @@ export type BootSeams = {
     readonly startIngress: () => Result<ExecIngress, IngressError>;
     readonly readKey: () => Promise<Result<string, ChatSetupError>>;
     readonly resolveModel: (apiKey: string) => Promise<Result<string, ChatSetupError>>;
+    readonly resolveEmbedding: () => Result<EmbeddingProvider, EmbeddingResolveError>;
     readonly register: (deps: DataProfileDeps) => (input: DataProfileWorkflowInput) => Promise<void>;
     readonly initState: (pool: Pool) => Promise<void>;
     readonly launch: (args: { config: DbosConfig; logger: pino.Logger }) => Promise<void>;
-    readonly probeEmbedding: typeof probeEmbeddingEndpoint;
+    readonly probeEmbedding: typeof probeEmbeddingProvider;
 };
 
 const realSeams: BootSeams = {
@@ -139,10 +143,11 @@ const realSeams: BootSeams = {
     startIngress: () => startExecIngress(),
     readKey: readApiKey,
     resolveModel: resolveModelId,
+    resolveEmbedding: () => resolveEmbedder(readConfig()),
     register: registerDataProfileWorkflow,
     initState: initCortexState,
     launch: launchDbos,
-    probeEmbedding: probeEmbeddingEndpoint,
+    probeEmbedding: probeEmbeddingProvider,
 };
 
 /**
@@ -185,29 +190,31 @@ export async function bootHarnessRuntime(
     if (cfg.configError) return err({ type: "harness_config_invalid", issues: cfg.configError.issues });
 
     // Prerequisites that no amount of booting can heal — checked before any
-    // side effect so a misconfigured run costs nothing. Embeddings are their
-    // own endpoint (baseURL + API key), deliberately a separate path from the
-    // chat proxy: the proxy fronts OAuth chat providers and serves no
-    // embeddings route, so there is nothing to default to.
-    if (cfg.embedding === null) return err({ type: "embedding_unconfigured" });
+    // side effect so a misconfigured run costs nothing. The embedder comes from
+    // the top-level `embedding` config key (the single embedding surface,
+    // written by `inflexa setup --embeddings`), never from the chat proxy: the
+    // proxy fronts OAuth chat providers and serves no embeddings route.
     if (cfg.skillsDir === null || !existsSync(cfg.skillsDir)) {
         return err({ type: "skills_dir_missing", path: cfg.skillsDir });
     }
+    const embedderResult = seams.resolveEmbedding();
+    if (embedderResult.isErr()) return err({ type: "embedding_unresolved", cause: embedderResult.error });
+    const embedding = embedderResult.value;
 
     const keyResult = await seams.readKey();
     if (keyResult.isErr()) return err({ type: "proxy_key_missing", cause: keyResult.error });
     const apiKey = keyResult.value;
 
-    // Probe the configured endpoint before anything expensive: embeddings are
+    // Probe the resolved embedder before anything expensive: embeddings are
     // consumed LATE in the profile workflow (after the sandbox agent spent its
-    // LLM budget) and an unreachable endpoint is fatal there, so reachability
-    // is verified while failure is still free.
-    const probeResult = await seams.probeEmbedding(cfg.embedding);
+    // LLM budget) and a broken embedder is fatal there, so one real embed is
+    // verified while failure is still free.
+    const probeResult = await seams.probeEmbedding(embedding);
     if (probeResult.isErr()) {
         const e = probeResult.error;
         return e.kind === "dimension_mismatch"
-            ? err({ type: "embedding_dimension_mismatch", baseURL: e.baseURL, expected: e.expected, actual: e.actual })
-            : err({ type: "embedding_unreachable", baseURL: e.baseURL, detail: e.detail });
+            ? err({ type: "embedding_dimension_mismatch", expected: e.expected, actual: e.actual })
+            : err({ type: "embedding_probe_failed", detail: e.detail });
     }
 
     const autoResolvedModel = cfg.model === null;
@@ -283,8 +290,7 @@ export async function bootHarnessRuntime(
             model,
             runAuthorizer: createLocalRunAuthorizer(),
             bioKeys: cfg.bioKeys,
-            resolveBilling,
-            embedding: cfg.embedding,
+            embedding,
             skillsDir: cfg.skillsDir,
         });
 

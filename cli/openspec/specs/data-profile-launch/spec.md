@@ -55,9 +55,10 @@ The command SHALL fail with an error that names the missing prerequisite and its
 remedial action whenever a prerequisite is unavailable. Covered prerequisites:
 Postgres not provisioned or not running (remedy: the setup flow), the sandbox image
 absent (remedy: build or pull the image), the local proxy unreachable (remedy: start
-or configure the proxy), the embedding endpoint unconfigured or unreachable (remedy:
-set the embedding config key — its own baseURL + API key, separate from the chat
-proxy; the profile's vector indexing cannot run without one and would fail after the
+or configure the proxy), the embedder unresolved or failing its boot probe (remedy:
+`inflexa setup --embeddings`, or the top-level `embedding` config key — api-key mode
+connects directly to an OpenAI-compatible endpoint, separate from the chat proxy; the
+profile's vector indexing cannot run without an embedder and would fail after the
 sandbox run already spent its work). Raw connection errors SHALL NOT be the surfaced
 form. Prerequisite checks SHALL run before staging and triggering.
 
@@ -71,10 +72,10 @@ form. Prerequisite checks SHALL run before staging and triggering.
 - **WHEN** the Docker daemon has no sandbox-base image
 - **THEN** the error names the image and how to obtain it
 
-#### Scenario: Unconfigured or unreachable embedding endpoint blocks before any work
+#### Scenario: Unconfigured or broken embedder blocks before any work
 
-- **WHEN** the profile command runs with no embedding endpoint configured, or with one that does not answer embeddings requests
-- **THEN** the command fails naming the config key (and the endpoint, when probing failed) before staging or triggering anything
+- **WHEN** the profile command runs with `embedding.mode = "off"`, an incomplete embedding config, or an embedder that fails its probe embedding
+- **THEN** the command fails naming the `embedding` config key and the remedial setup command before staging or triggering anything
 
 ### Requirement: The command narrates progress and exits at the terminal state
 

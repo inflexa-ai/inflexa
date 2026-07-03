@@ -34,6 +34,14 @@ export interface LocalEmbeddingProviderDeps {
 }
 
 /**
+ * Vector width `bge-small-en-v1.5` emits. Advertised on the provider
+ * (`EmbeddingProvider.dimensions`) so the harness sizes each per-analysis
+ * pgvector index to it, and used by setup's post-download verification
+ * (`setup.ts`) to detect a wrong-model GGUF.
+ */
+export const LOCAL_EMBEDDING_DIMENSIONS = 384;
+
+/**
  * Lazily-initialized native runtime state. Created once on the first `embed()`
  * call and reused for every subsequent call. Cached as a promise so concurrent
  * first calls coalesce on the same load (the one-time init cost — ~1s runtime
@@ -157,5 +165,5 @@ export function createLocalEmbeddingProvider(deps: LocalEmbeddingProviderDeps): 
         return new ResultAsync(result);
     }
 
-    return { embed };
+    return { embed, dimensions: LOCAL_EMBEDDING_DIMENSIONS };
 }

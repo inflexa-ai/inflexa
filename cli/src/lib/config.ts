@@ -37,7 +37,7 @@ const configSchema = z.object({
     // The embedded harness runtime's settings (data-profile runs). Declared as opaque `unknown` and
     // validated downstream in modules/harness/config.ts (`resolveHarnessConfig`), NOT shaped inline:
     //
-    //   - There is no harness-package schema to import. The `harness.*` shape (embedding/model/bioKeys/
+    //   - There is no harness-package schema to import. The `harness.*` shape (model/bioKeys/
     //     sandboxImage/adminPort/skillsDir) is THIS cli's user-facing config contract — the knobs the
     //     cli chooses to expose and map onto the harness's runtime deps — not something the harness
     //     package defines. `@inflexa-ai/harness` exports only `ResourceLimitsSchema`, for one sub-field.
@@ -53,13 +53,22 @@ const configSchema = z.object({
     // `unknown` (never `any`) forces the owner to parse before use; and the key MUST be declared, because
     // zod strips unrecognized keys — without this line `readConfig().harness` would always be undefined.
     harness: z.unknown().optional(),
-    // Embedding backend selection. `off` until the user runs `inflexa setup --embeddings`.
-    // `modelPath` is set when `mode === "local"` (path to the GGUF); `apiKey` when `api-key`.
+    // Embedding backend selection — the ONE config surface for embeddings; the harness
+    // runtime consumes it through `resolveEmbedder` (modules/embedding/resolve.ts).
+    // `off` until the user runs `inflexa setup --embeddings`. `modelPath` is set when
+    // `mode === "local"` (path to the GGUF). `api-key` mode connects DIRECTLY to an
+    // OpenAI-compatible endpoint (never through the chat proxy, which serves no
+    // embeddings route): `apiKey` is required; `baseURL`/`model`/`dimensions` default
+    // to api.openai.com + text-embedding-3-small + 1536. `dimensions` must match what
+    // `model` emits — it sizes each per-analysis vector index.
     embedding: z
         .object({
             mode: z.enum(["local", "api-key", "off"]).catch("off").default("off"),
             modelPath: z.string().optional(),
             apiKey: z.string().optional(),
+            baseURL: z.string().optional(),
+            model: z.string().optional(),
+            dimensions: z.number().int().positive().optional(),
         })
         .catch({ mode: "off" })
         .default({ mode: "off" }),
