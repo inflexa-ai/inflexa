@@ -36,6 +36,15 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> .npmrc
 
+      # cli depends on @inflexa-ai/harness via file:../harness, whose exports
+      # resolve to harness/dist/ — not checked in, and bun blocks the package's
+      # own `prepare` (untrusted lifecycle scripts), so build it explicitly.
+      - name: Build harness (file:../harness dependency)
+        working-directory: harness
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
