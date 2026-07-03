@@ -18,7 +18,6 @@ import { randomUUID } from "node:crypto";
 import { intro, log, outro, spinner } from "@clack/prompts";
 import { ok, err, type Result } from "neverthrow";
 import {
-    createPool,
     insertRun,
     loadDataProfileStatus,
     makeLocalAuth,
@@ -35,6 +34,7 @@ import {
     type AnalysisStep,
     type AuthContext,
     type CortexRunRow,
+    type DbError,
     type ExecuteAnalysisInput,
     type InsertRunInput,
     type Pool,
@@ -46,7 +46,6 @@ import {
 } from "@inflexa-ai/harness";
 
 import { fail, dieOn } from "../../lib/cli.ts";
-import { resolvePostgresConfig } from "../../lib/config.ts";
 import { shutdown } from "../../lib/shutdown.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
 import type { ContextFlags } from "../analysis/context.ts";
@@ -54,20 +53,12 @@ import { sessionTreeDataDir } from "../staging/paths.ts";
 import { stageInputs } from "../staging/staging.ts";
 import { resolveHarnessConfig } from "./config.ts";
 import { intakePlan, type PlanIntakeError } from "./plan_intake.ts";
-import { describeBootError, ensureSandboxImage, formatElapsed, readNewestWorkflowStep, resolveSingleAnalysis } from "./profile.ts";
-import { activeHarnessRuntime, bootHarnessRuntime, type RunTriggerDeps } from "./runtime.ts";
+import { describeBootError, ensureSandboxImage, formatElapsed, readNewestWorkflowStep, resolveSingleAnalysis, withStatusPool } from "./profile.ts";
+import { bootHarnessRuntime, type RunTriggerDeps } from "./runtime.ts";
 
 type Spinner = ReturnType<typeof spinner>;
 
 // ── The replicated trigger flow (task 4.1 / design D2) ───────────────────────
-
-/**
- * The `DbError` the run-state seams fail with, derived from the harness's own
- * `queryActiveRun` signature — the barrel does not export `DbError` by name and
- * reaching a deep subpath to reference it would smuggle a private type across the
- * package boundary. Deriving it cannot drift with the harness.
- */
-type RunStateError = Awaited<ReturnType<typeof queryActiveRun>> extends Result<unknown, infer E> ? E : never;
 
 /**
  * The harness calls the trigger flow makes, injected as one seams object so the
@@ -136,7 +127,7 @@ export type TriggerAnalysisRunResult =
  * (authorize / launch) that leave the row marked `failed` so a retry can re-run.
  */
 export type TriggerAnalysisRunError =
-    | { readonly type: "dedup_failed"; readonly cause: RunStateError }
+    | { readonly type: "dedup_failed"; readonly cause: DbError }
     | { readonly type: "reserve_failed"; readonly cause: unknown }
     | { readonly type: "authorize_failed"; readonly runId: string; readonly cause: unknown }
     | { readonly type: "launch_failed"; readonly runId: string; readonly cause: unknown };
@@ -214,6 +205,17 @@ export async function triggerAnalysisRun(
     // partial-unique index is the race backstop: a collision means a concurrent
     // caller won, and we recover its runId via `queryActiveRun` (nothing to revoke
     // — we never authorized).
+    //
+    // TODO(robustness): a HARD kill (SIGKILL/OOM/power-loss) in the window between
+    // this reserve and `seams.launch` persisting the DBOS workflow leaves the row
+    // wedged at `running` with no `dbos.workflow_status` row, so recovery has
+    // nothing to reclaim. Every later re-run of the byte-identical plan then dedups
+    // onto the orphan (`already_active`) and `waitForRunTerminal` polls a row that
+    // will never transition. An ordinary throw on either post-reserve path IS
+    // compensated below (the row is marked `failed`); only the hard-kill window is
+    // exposed. The profile path heals its identical window post-boot via the
+    // harness's `reconcileOrphanedDataProfile`; the run engine has no exported
+    // `reconcileOrphanedRun` yet — that shared recovery path is deferred to #28.
     const runId = seams.newRunId();
     try {
         const inserted = await seams.insertRun({ runId, analysisId, threadId: null, workflowName: "executeAnalysis", planId });
@@ -529,7 +531,14 @@ async function reportTerminal(pool: Pool, final: CortexRunRow, s: Spinner): Prom
             return fail(`Run canceled — canceled step(s): ${fmtSteps(canceled)}.${errTail}`);
         case "suspended_insufficient_funds":
             s.error("Run suspended");
-            return fail(`Run suspended for insufficient funds. Top up, then re-run to resume.${errTail}`);
+            // Do NOT promise "re-run to resume": resuming a suspended run needs the
+            // resume entry-point that change 9 owns (`resume-execute-analysis.ts`),
+            // not wired here yet. `queryActiveRun` counts this row as active, so a
+            // re-run of the same plan dedups onto it and re-reports suspended rather
+            // than resuming — the message must not imply otherwise.
+            return fail(
+                `Run suspended for insufficient funds — add funds, then resume it once run resume lands (track it with \`inflexa run --status\`).${errTail}`,
+            );
         case "running":
             // Unreachable: `waitForRunTerminal` returns only on a non-running
             // status. `running` is a member of `RunStatus`, so the switch must
@@ -545,23 +554,13 @@ async function reportTerminal(pool: Pool, final: CortexRunRow, s: Spinner): Prom
 
 /**
  * `inflexa run --status <analysis>` — read-only ledger view. Deliberately never
- * boots the runtime or provisions anything: it reuses the booted runtime's pool
- * when present, else opens a throwaway connection to an already-running Postgres
- * (the same pattern as `inflexa profile --status`).
+ * boots the runtime or provisions anything; the pool acquire/drain (shared with
+ * `inflexa profile --status`) lives in {@link withStatusPool}.
  */
 export async function runAnalysisStatus(flags: ContextFlags): Promise<void> {
     const analysis = resolveSingleAnalysis(flags, RUN_EMPTY_HINT);
 
-    const runtime = activeHarnessRuntime();
-    let pool: Pool | null = runtime?.pool ?? null;
-    let throwaway = false;
-    if (!pool) {
-        const conn = resolvePostgresConfig();
-        pool = createPool({ host: conn.host, port: String(conn.port), database: conn.database, user: conn.user, password: conn.password, sslMode: "disable" });
-        throwaway = true;
-    }
-
-    try {
+    await withStatusPool(async (pool, hasRuntime) => {
         const runs = (await queryRunsByAnalysis(pool, analysis.id)).match(
             (r) => r,
             (e) => fail("Postgres is not reachable — run state lives there. Start it with `inflexa setup` (or launch a run first).", e),
@@ -578,11 +577,14 @@ export async function runAnalysisStatus(flags: ContextFlags): Promise<void> {
             console.log(`    started:    ${run.startedAt}`);
             if (run.completedAt) console.log(`    completed:  ${run.completedAt}`);
             if (run.error) console.log(`    error:      ${run.error}`);
-            if (run.status === "running" && !runtime) {
-                // A `running` row with no runtime in THIS process: either another
-                // inflexa process owns it, or a previous session died and DBOS
-                // resumes the workflow on the next boot. Both are normal.
-                console.log("    note:       no runtime in this process — a crashed run resumes on the next `inflexa run`/`inflexa profile` boot");
+            if (run.status === "running" && !hasRuntime) {
+                // A `running` row with no runtime in THIS process is usually normal:
+                // another inflexa process owns it, or a previous session died mid-run
+                // and DBOS resumes the workflow on the next boot. The exception is a
+                // row orphaned BEFORE its workflow was launched (the hard-kill window
+                // in `triggerAnalysisRun`) — that one has nothing to resume and stays
+                // wedged until the #28 run-recovery path lands.
+                console.log("    note:       no runtime here — a launched run resumes on the next `inflexa run`/`inflexa profile` boot");
             }
             const steps = (await queryStepsByRun(pool, run.runId)).unwrapOr([]);
             for (const st of steps) {
@@ -591,11 +593,5 @@ export async function runAnalysisStatus(flags: ContextFlags): Promise<void> {
                 console.log(`      - ${st.stepId}  ${st.status}  [${st.agentId}]${dur}${stepErr}`);
             }
         }
-    } finally {
-        if (throwaway && pool) {
-            await pool.end().catch(() => {
-                // Read-only convenience connection; a failed drain must not fail the command.
-            });
-        }
-    }
+    });
 }

@@ -119,6 +119,14 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
         },
     };
 
+    // TODO(perf): `createSandboxAgents` builds the entire ~22-agent catalog
+    // (prompt composition + per-tool `z.toJSONSchema()` wiring) and we keep one,
+    // per step and again on every workflow replay. The cost is in-memory CPU with
+    // no I/O against a multi-minute sandboxed step, so it is acceptable today; the
+    // real fix is a harness-side per-id selector (e.g. `createSandboxAgent(deps,
+    // id)`) since the deps are per-`ctx` and cannot be hoisted to boot. Mirrors the
+    // harness's own data-profile construction, which selects the same way.
+    // Tracked in https://github.com/inflexa-ai/inf-cli/issues/30.
     const agent = createSandboxAgents(deps)[ctx.input.agentId];
     if (agent === undefined) {
         const known = Object.keys(SANDBOX_AGENT_META).join(", ");
