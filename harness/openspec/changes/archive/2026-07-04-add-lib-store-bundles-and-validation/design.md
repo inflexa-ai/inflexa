@@ -2,7 +2,7 @@
 
 ## Context
 
-The library store carries all R/Python/Node/CLI analysis packages, mounted read-only into every sandbox at `/mnt/libs/current`. The `harness` `lib-store` spec covers only the **runtime mount contract**; how the store is *built and published* is explicitly out of scope there. This change owns that build+publish+validate pipeline. Its code lives at the repo root (`images/lib-store-builder/`, `scripts/`, `.github/`), but its **contract** is colocated with the runtime spec it feeds (decision A), because the load-bearing invariant — *the advertised `packages.txt` equals the actually-loadable set* — is a contract between the build and the harness runtime.
+The library store carries all R/Python/Node/CLI analysis packages, mounted read-only into every sandbox at `/mnt/libs/current`. The `harness` `lib-store` spec covers only the **runtime mount contract**; how the store is *built and published* is explicitly out of scope there. This change owns that build+publish+validate pipeline. Its code lives at the repo root (`images/lib-store-builder/`, `scripts/`, `.github/`), but its **contract** is colocated with the runtime spec it feeds (decision A), because the load-bearing invariant — *every package `packages.txt` advertises is actually loadable* (advertised ⊆ loadable: the file must not LIE; extra loadable-but-unadvertised packages are tolerated, not flagged) — is a contract between the build and the harness runtime.
 
 ## Decisions
 
@@ -32,7 +32,25 @@ The workflow and local script never build the Dockerfile's `final`/`export` stag
         …/<version>/linux-arm64/python.tar.zst        ← no R tarballs on arm64
                               conda.tar.zst
                               node.tar.zst
+
+ # tarballs are ARCH-scoped and SHARED across bundles; the manifest is the
+ # per-BUNDLE lockfile and lives under its own <bundle>/ segment:
+        …/<version>/<bundle>/linux-<arch>/manifest.json   ← immutable per-version lockfile
+        …/latest/<bundle>/linux-<arch>/manifest.json      ← the one mutable promoted pointer
 ```
+
+**Manifest layout (as implemented).** The manifest is keyed by *bundle*, not arch,
+so it sits under its own `<bundle>/` path segment — `<version>/<bundle>/linux-<arch>/manifest.json`,
+promoted to `latest/<bundle>/linux-<arch>/manifest.json` — while the track tarballs
+it pins stay at the arch root `<version>/linux-<arch>/<track>.tar.zst` (one physical
+tarball serves every bundle that selects that track, straight out of decision B).
+This supersedes an earlier sketch that colocated a `<bundle>.manifest.json` beside the
+tarballs under `<version>/linux-<arch>/`: two bundles share the same tarballs but pin
+different track *sets*, so the manifest belongs on a bundle path, not the shared arch
+path. The CLI resolver (`cli/src/modules/libs/manifest.ts` `manifestUrl`) and the
+publish workflow (`.github/workflows/lib-store.yml`) are the source of truth for these
+paths; the per-bundle manifest directory (`<bundle>/`) also cleanly separates the
+mutable `latest` pointer from the immutable tarball tree.
 
 The R triple is **not independently selectable** — cran/bioc/github share one `.libPaths()` (`R_LIBS_SITE = github:bioc:cran`) and form a dependency chain (a github pkg imports a bioc pkg imports a cran pkg). So per-track *tarballs* are fine for transfer, but a valid *selection* travels the R triple as a unit:
 

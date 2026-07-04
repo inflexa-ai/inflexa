@@ -63,8 +63,11 @@ package that failed to load.
 Each build SHALL publish its track tarballs to a write-once, versioned path
 (`<version>/linux-<arch>/<track>.tar.zst`) that SHALL never be rewritten. For
 each bundle × arch the build SHALL write a **manifest** pinning each track's
-tarball and its content digest. Clients SHALL resolve a bundle through its
-manifest and MAY skip re-pulling any track whose digest they already hold.
+tarball — by a store-relative `path` (so a client joins it onto its own resolved
+base and a mirror redirects payload downloads, not only the manifest) plus an
+absolute `url` for compatibility — and its content digest. Clients SHALL resolve
+a bundle through its manifest and MAY skip re-pulling any track whose digest they
+already hold.
 
 #### Scenario: A published version is never mutated
 

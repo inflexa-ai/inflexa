@@ -43,8 +43,10 @@ docker build -f images/sandbox-base/Dockerfile \
   -t inflexa-sandbox-base .
 ```
 
-`BASE_IMAGE` is an `ARG` and must match `lib-store-manifest.yaml`. **No CI job
-builds this image** — build and push it by hand.
+`BASE_IMAGE` is an `ARG` and must match `base_image` in
+[`../lib-store-builder/lib-store-manifest.yaml`](../lib-store-builder/lib-store-manifest.yaml)
+— the sandbox runtime and the library store are built against the same R/Python.
+**No CI job builds this image** — build and push it by hand.
 
 ## Contributing
 

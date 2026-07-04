@@ -12,6 +12,7 @@
  * client can sign and POST events back.
  */
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import Docker from "dockerode";
 import { ResultAsync, err, ok } from "neverthrow";
@@ -105,8 +106,18 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                 (async () => {
                     const { sandboxId, callbackSecret } = identity;
 
+                    // Re-check the lib store's `current` pointer AT sandbox-creation time,
+                    // not just at composition. `config.libStorePath` was fixed when this
+                    // client was built (at CLI boot); if the store was deleted since (a
+                    // concurrent prune, a manual `rm`), binding a now-missing host source
+                    // would make Docker auto-create it as a root-owned empty dir — which
+                    // then bricks every later `libs pull` on the root-owned debris. When
+                    // `current` has vanished we skip the mount entirely (the sandbox degrades
+                    // to `available:false`), exactly as if no store were configured.
+                    const libsMounted = !!config.libStorePath && existsSync(join(config.libStorePath, "current"));
+
                     const plan = buildMountPlan(meta, {
-                        libs: !!config.libStorePath,
+                        libs: libsMounted,
                         refs: !!config.refStorePath,
                     });
 
@@ -115,7 +126,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     const binds = [
                         `${hostTreePath}:${plan.readonlyTreePath}:ro`,
                         ...(plan.writableStepPath ? [`${hostStepPath}:${plan.writableStepPath}:rw`] : []),
-                        ...(config.libStorePath ? [`${config.libStorePath}:${plan.libsPath}:ro`] : []),
+                        ...(libsMounted && config.libStorePath ? [`${config.libStorePath}:${plan.libsPath}:ro`] : []),
                         ...(config.refStorePath ? [`${config.refStorePath}:${plan.refsPath}:ro`] : []),
                     ];
 

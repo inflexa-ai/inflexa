@@ -156,6 +156,12 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
 
     await ensureSandboxImage(cfg.sandboxImage);
 
+    // Lazy library-store offer: a missing store degrades gracefully
+    // (`list_available_packages` returns `available:false`), so this is a
+    // one-line OFFER, never a blocker — the run proceeds either way.
+    const { offerLibStoreIfMissing } = await import("../libs/pull.ts");
+    await offerLibStoreIfMissing();
+
     const s = spinner();
     s.start("Booting the harness runtime (Postgres, callback listener, DBOS)");
     const bootResult = await bootHarnessRuntime({ config: cfg });

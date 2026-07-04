@@ -1,0 +1,379 @@
+name: Build Library Store
+
+# Builds the shared library store (R / Python / Node / bioconda tools) from
+# images/lib-store-builder/lib-store-manifest.yaml and publishes ONE
+# content-addressed tarball PER TRACK to object storage. A bundle is a
+# client-side selection of tracks resolved at download time (see
+# scripts/lib-store-common.sh); sandboxes mount the assembled result read-only
+# at /mnt/libs.
+#
+# This is the MANAGED build path. amd64 runs on a self-hosted 64 GB runner
+# because the full R + Bioconductor compile does not fit a GitHub-hosted runner;
+# the three non-R tracks also build on a free hosted arm64 runner. To build the
+# store on your own machine instead, use scripts/build-libs-local.sh.
+#
+# Gate 1 (fail-loud build-time load test) runs inside each track stage: a load
+# failure fails that track's build. This workflow keeps per-track
+# `continue-on-error` so a single track failure yields a partial build rather
+# than sinking the whole run.
+#
+# Publish is OPT-IN via repo/org configuration; without it the workflow still
+# builds and validates but skips the S3 upload:
+#   - vars.LIB_STORE_S3_BUCKET        target bucket (e.g. inflexa-lib-store-<acct>)
+#   - vars.LIB_STORE_PUBLISH_ROLE_ARN OIDC role to assume for the upload
+#   - vars.AWS_REGION                 optional; defaults to us-east-1
+# The role's trust policy must authorize repo:<owner>/<repo>:ref:refs/heads/main
+# (see platform-infra modules/internal/github-oidc.tf), and the self-hosted
+# runner group must grant this repository access to the `inflexa-builder` label.
+#
+# PUBLISH MODEL (immutable versions, no latest promotion here):
+#   - Each track tarball is written write-once to <version>/linux-<arch>/<track>.tar.zst.
+#   - For each bundle x arch a CANDIDATE manifest (the lockfile) pinning each
+#     track's tarball + sha256 is written under <version>/linux-<arch>/.
+#   - This workflow NEVER moves latest/<bundle>/<arch>. Promotion happens only
+#     after Gate 2 goes green — see .github/workflows/validate-lib-store.yml.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - images/lib-store-builder/lib-store-manifest.yaml
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  BUILDER_NAME: lib-store-builder
+  DOCKERFILE: images/lib-store-builder/Dockerfile
+  CONTEXT: images/lib-store-builder
+  MANIFEST: images/lib-store-builder/lib-store-manifest.yaml
+
+jobs:
+  # A single coherent version + shared manifest metadata for every arch.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      base_image: ${{ steps.meta.outputs.base_image }}
+      r_version: ${{ steps.meta.outputs.r_version }}
+      python_version: ${{ steps.meta.outputs.python_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute version + parse manifest
+        id: meta
+        run: |
+          BASE_IMAGE=$(grep '^base_image:' "$MANIFEST" | awk '{print $2}' | tr -d '"')
+          R_VERSION=$(grep '^r_version:' "$MANIFEST" | awk '{print $2}' | tr -d '"')
+          PYTHON_VERSION=$(grep '^python_version:' "$MANIFEST" | awk '{print $2}' | tr -d '"')
+          VERSION=$(date +%Y%m%d)-$(echo "${{ github.sha }}" | head -c 7)
+          {
+            echo "version=$VERSION"
+            echo "base_image=$BASE_IMAGE"
+            echo "r_version=$R_VERSION"
+            echo "python_version=$PYTHON_VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # amd64: self-hosted m6i.4xlarge (16 vCPU / 64 GB) from platform-infra
+          # modules/internal/builder-ec2.tf. Builds all six tracks. `bundles`
+          # lists the bundles resolvable on this arch.
+          - arch: amd64
+            platform: linux/amd64
+            runner: '["self-hosted", "inflexa-builder"]'
+            build_r: true
+            bundles: python-conda python-r-conda
+          # arm64: free GitHub-hosted arm64 runner. No R compile (r2u is
+          # amd64-only; bioconda aarch64 is patchy) — only the three non-R
+          # tracks, so only python-conda is resolvable here.
+          - arch: arm64
+            platform: linux/arm64
+            runner: '"ubuntu-24.04-arm"'
+            build_r: false
+            bundles: python-conda
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    env:
+      PLATFORM: ${{ matrix.platform }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          name: ${{ env.BUILDER_NAME }}
+          cleanup: false
+
+      - name: Free disk space (hosted arm64 runner)
+        if: matrix.arch == 'arm64'
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost 2>/dev/null || true
+          echo "Disk after cleanup:"; df -h /
+
+      - name: Recover stale builder state
+        if: matrix.arch == 'amd64'
+        # cleanup:false reuses the BuildKit container across runs on the
+        # persistent self-hosted builder. A cancelled prior run can leave
+        # orphaned sub-container network state behind — every subsequent build
+        # then sees "Connection refused" against public mirrors. Probe egress;
+        # recreate the builder only if broken.
+        run: |
+          set -eu
+          PROBE=$(mktemp -d) && trap 'rm -rf "$PROBE"' EXIT
+          cat > "$PROBE/Dockerfile" <<'EOF'
+          FROM alpine:3
+          RUN wget -q --spider --timeout=15 http://archive.ubuntu.com/ubuntu/dists/noble/InRelease
+          EOF
+          if ! docker buildx build --builder "$BUILDER_NAME" --platform "$PLATFORM" --no-cache "$PROBE" >/tmp/probe.log 2>&1; then
+            echo "::warning::Builder $BUILDER_NAME failed egress probe; recreating to clear stale state"
+            sed 's/^/probe: /' /tmp/probe.log || true
+            docker buildx rm --force "$BUILDER_NAME" || true
+            docker buildx create --driver docker-container --name "$BUILDER_NAME" --bootstrap >/dev/null
+          fi
+
+      - name: Ensure zstd
+        run: command -v zstd >/dev/null || sudo apt-get install -y -qq zstd
+
+      - name: Warm base stage cache
+        run: |
+          docker buildx build \
+            --file ${{ env.DOCKERFILE }} \
+            --build-arg BASE_IMAGE=${{ needs.prepare.outputs.base_image }} \
+            --platform ${{ env.PLATFORM }} \
+            --target base \
+            --builder ${{ env.BUILDER_NAME }} \
+            ${{ env.CONTEXT }}
+
+      # =====================================================================
+      # R track (amd64 only): CRAN (binary .deb) -> Bioconductor (source) ->
+      # GitHub. Each track stage runs Gate 1 and writes its packages.txt
+      # fragment; we extract the subtree + fragment into ./staging.
+      # =====================================================================
+
+      - name: "Build: CRAN"
+        id: cran
+        if: matrix.build_r
+        continue-on-error: true
+        run: |
+          docker buildx build \
+            --file ${{ env.DOCKERFILE }} \
+            --build-arg BASE_IMAGE=${{ needs.prepare.outputs.base_image }} \
+            --platform ${{ env.PLATFORM }} \
+            --target cran \
+            --builder ${{ env.BUILDER_NAME }} \
+            --load -t lib-store-cran ${{ env.CONTEXT }}
+          mkdir -p staging/r/cran
+          docker run --rm lib-store-cran tar -chf - -C /staging/r/cran . | tar -xf - -C ./staging/r/cran
+          docker run --rm lib-store-cran cat /staging/cran.packages.txt > ./staging/cran.packages.txt
+          echo "CRAN packages: $(ls staging/r/cran | wc -l)"
+
+      - name: "Build: Bioconductor"
+        id: bioc
+        if: matrix.build_r && steps.cran.outcome == 'success'
+        continue-on-error: true
+        run: |
+          docker buildx build \
+            --file ${{ env.DOCKERFILE }} \
+            --build-arg BASE_IMAGE=${{ needs.prepare.outputs.base_image }} \
+            --platform ${{ env.PLATFORM }} \
+            --target bioconductor \
+            --builder ${{ env.BUILDER_NAME }} \
+            --load -t lib-store-bioc ${{ env.CONTEXT }}
+          mkdir -p staging/r/bioconductor
+          docker run --rm lib-store-bioc tar -chf - -C /staging/r/bioconductor . | tar -xf - -C ./staging/r/bioconductor
+          docker run --rm lib-store-bioc cat /staging/bioconductor.packages.txt > ./staging/bioconductor.packages.txt
+          echo "Bioconductor packages: $(ls staging/r/bioconductor | wc -l)"
+
+      - name: "Build: GitHub R packages"
+        id: github
+        if: matrix.build_r && steps.bioc.outcome == 'success'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          docker buildx build \
+            --file ${{ env.DOCKERFILE }} \
+            --build-arg BASE_IMAGE=${{ needs.prepare.outputs.base_image }} \
+            --platform ${{ env.PLATFORM }} \
+            --target github \
+            --builder ${{ env.BUILDER_NAME }} \
+            --secret id=github_token,env=GITHUB_TOKEN \
+            --load -t lib-store-github ${{ env.CONTEXT }}
+          mkdir -p staging/r/github
+          docker run --rm lib-store-github tar -chf - -C /staging/r/github . | tar -xf - -C ./staging/r/github
+          docker run --rm lib-store-github cat /staging/github.packages.txt > ./staging/github.packages.txt
+          echo "GitHub R packages: $(ls staging/r/github | wc -l)"
+
+      # =====================================================================
+      # Non-R tracks (both arches).
+      # =====================================================================
+
+      - name: "Build: Python"
+        id: python
+        continue-on-error: true
+        run: |
+          docker buildx build \
+            --file ${{ env.DOCKERFILE }} \
+            --build-arg BASE_IMAGE=${{ needs.prepare.outputs.base_image }} \
+            --platform ${{ env.PLATFORM }} \
+            --target python \
+            --builder ${{ env.BUILDER_NAME }} \
+            --load -t lib-store-python ${{ env.CONTEXT }}
+          mkdir -p staging/python
+          docker run --rm lib-store-python tar -chf - -C /staging/python . | tar -xf - -C ./staging/python
+          docker run --rm lib-store-python cat /staging/python.packages.txt > ./staging/python.packages.txt
+
+      - name: "Build: System tools"
+        id: tools
+        continue-on-error: true
+        run: |
+          docker buildx build \
+            --file ${{ env.DOCKERFILE }} \
+            --build-arg BASE_IMAGE=${{ needs.prepare.outputs.base_image }} \
+            --platform ${{ env.PLATFORM }} \
+            --target system-tools \
+            --builder ${{ env.BUILDER_NAME }} \
+            --load -t lib-store-tools ${{ env.CONTEXT }}
+          mkdir -p staging/conda
+          docker run --rm lib-store-tools tar -chf - -C /mnt/libs/current/conda . | tar -xf - -C ./staging/conda
+          docker run --rm lib-store-tools cat /mnt/libs/current/conda.packages.txt > ./staging/conda.packages.txt
+
+      - name: "Build: Node"
+        id: node
+        continue-on-error: true
+        run: |
+          docker buildx build \
+            --file ${{ env.DOCKERFILE }} \
+            --build-arg BASE_IMAGE=${{ needs.prepare.outputs.base_image }} \
+            --platform ${{ env.PLATFORM }} \
+            --target node \
+            --builder ${{ env.BUILDER_NAME }} \
+            --load -t lib-store-node ${{ env.CONTEXT }}
+          mkdir -p staging/node
+          docker run --rm lib-store-node tar -chf - -C /staging/node . | tar -xf - -C ./staging/node
+          docker run --rm lib-store-node cat /staging/node.packages.txt > ./staging/node.packages.txt
+
+      # =====================================================================
+      # Pack one content-addressed tarball per built track.
+      # =====================================================================
+
+      - name: Pack per-track tarballs
+        id: pack
+        run: |
+          bash scripts/lib-store-pack.sh staging dist
+          echo "## Build Results ($ARCH)" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Track | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-|-|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| CRAN | ${{ steps.cran.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Bioconductor | ${{ steps.bioc.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| GitHub R | ${{ steps.github.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Python | ${{ steps.python.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| System tools | ${{ steps.tools.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Node | ${{ steps.node.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "Packed tracks: $(tr '\n' ' ' < dist/tracks.txt)" >> "$GITHUB_STEP_SUMMARY"
+
+      # =====================================================================
+      # Publish — opt-in, immutable, candidate-only (no latest promotion).
+      # =====================================================================
+
+      - name: Publish configuration
+        id: publish
+        run: |
+          if [ -n "${{ vars.LIB_STORE_S3_BUCKET }}" ] && [ -n "${{ vars.LIB_STORE_PUBLISH_ROLE_ARN }}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Publish skipped — set repo variables LIB_STORE_S3_BUCKET and LIB_STORE_PUBLISH_ROLE_ARN to enable S3 upload. Per-track tarballs were produced but not published."
+          fi
+
+      - name: Configure AWS credentials
+        if: steps.publish.outputs.enabled == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.LIB_STORE_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Publish track tarballs + candidate manifests
+        if: steps.publish.outputs.enabled == 'true'
+        env:
+          S3_BUCKET: ${{ vars.LIB_STORE_S3_BUCKET }}
+          # The public base URL the CLI fetches from (embedded into manifest
+          # track URLs). Defaults to the CLI's compiled default.
+          PUBLIC_URL: ${{ vars.LIB_STORE_PUBLIC_URL || 'https://lib-store.inflexa.ai' }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          BASE_IMAGE: ${{ needs.prepare.outputs.base_image }}
+          R_VERSION: ${{ needs.prepare.outputs.r_version }}
+          PYTHON_VERSION: ${{ needs.prepare.outputs.python_version }}
+          GIT_SHA: ${{ github.sha }}
+          BUNDLES: ${{ matrix.bundles }}
+        run: |
+          set -euo pipefail
+          ARCH_DIR="linux-$ARCH"
+
+          # Immutable: upload each built track tarball write-once, laid out at
+          # <version>/<arch>/<track>.tar.zst (the path the manifest URLs point
+          # at). A version is never rewritten; skip an object that already exists.
+          while read -r track; do
+            [ -n "$track" ] || continue
+            KEY="$VERSION/$ARCH_DIR/$track.tar.zst"
+            if aws s3api head-object --bucket "$S3_BUCKET" --key "$KEY" >/dev/null 2>&1; then
+              echo "immutable: s3://$S3_BUCKET/$KEY already exists — skipping"
+            else
+              aws s3 cp "dist/$track.tar.zst" "s3://$S3_BUCKET/$KEY"
+            fi
+          done < dist/tracks.txt
+
+          # Candidate manifest per resolvable bundle whose tracks all built, at
+          # <version>/<bundle>/<arch>/manifest.json (the CLI's manifestUrl path).
+          for bundle in $BUNDLES; do
+            complete=true
+            for t in $(bash -c "source scripts/lib-store-common.sh; lib_store_bundle_tracks $bundle"); do
+              grep -qx "$t" dist/tracks.txt || complete=false
+            done
+            if [ "$complete" != true ]; then
+              echo "::warning::Bundle $bundle incomplete on $ARCH — no candidate manifest written"
+              continue
+            fi
+            bash scripts/lib-store-write-manifest.sh "$bundle" "$ARCH" "$VERSION" dist > "$bundle.manifest.json"
+            aws s3 cp "$bundle.manifest.json" "s3://$S3_BUCKET/$VERSION/$bundle/$ARCH_DIR/manifest.json"
+          done
+
+          # Candidate pointer (mutable, but NOT latest): the version awaiting Gate 2.
+          echo "$VERSION" | aws s3 cp - "s3://$S3_BUCKET/candidate/$ARCH_DIR.txt"
+          echo "Published candidate $VERSION for $ARCH_DIR (latest NOT moved — awaits Gate 2)"
+
+      - name: Record candidate metadata
+        run: |
+          mkdir -p candidate
+          cat > "candidate/linux-${ARCH}.json" <<EOF
+          {"version":"${{ needs.prepare.outputs.version }}","arch":"linux-${ARCH}","bundles":"${{ matrix.bundles }}","publish":"${{ steps.publish.outputs.enabled }}"}
+          EOF
+          cat "candidate/linux-${ARCH}.json"
+
+      - name: Upload candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib-store-candidate-${{ matrix.arch }}
+          path: candidate/
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rmi lib-store-cran lib-store-bioc lib-store-github lib-store-python lib-store-tools lib-store-node 2>/dev/null || true
+          rm -rf staging dist ./*.manifest.json candidate
+          docker image prune -f 2>/dev/null || true
+          docker container prune -f 2>/dev/null || true

@@ -5,8 +5,17 @@ import { z } from "zod";
 
 import { DEFAULT_THEME_ID, themeIds } from "./design_system.ts";
 import { runtimeIds, runtimes, type ContainerRuntime } from "./container.ts";
-import { env } from "./env.ts";
+import { blankToUndefined, env } from "./env.ts";
 import { DEFAULT_DATABASE, DEFAULT_PASSWORD, DEFAULT_PORT, DEFAULT_USER, type PostgresConnection } from "../modules/infra/postgres_types.ts";
+
+/**
+ * An optional string field where a blank/whitespace-only value parses to `undefined`
+ * (unset), not `""`. The trailing `.catch(undefined)` salvages a malformed value
+ * (e.g. `libStoreUrl: null`) to unset PER FIELD, so one bad field cannot fail the
+ * whole config parse and drop its siblings (telemetry consent, postgres, …) — the
+ * same fail-closed-per-field discipline every other field already has.
+ */
+const blankableString = z.preprocess((v) => (typeof v === "string" ? blankToUndefined(v) : v), z.string().optional()).catch(undefined);
 
 const configSchema = z.object({
     telemetry: z.boolean(),
@@ -53,6 +62,15 @@ const configSchema = z.object({
     // `unknown` (never `any`) forces the owner to parse before use; and the key MUST be declared, because
     // zod strips unrecognized keys — without this line `readConfig().harness` would always be undefined.
     harness: z.unknown().optional(),
+    // Library-store provisioning knobs (see modules/libs/). `libStorePath` overrides the
+    // on-disk store root (default: env.libStorePath = `<dataDir>/inflexa/libs`); the harness
+    // config builder mounts it read-only at `/mnt/libs` ONLY when its `current` symlink exists.
+    // `libStoreUrl` overrides the published-store base URL (env `INFLEXA_LIB_STORE_URL` wins over
+    // this, which wins over the compiled default) — see modules/libs/manifest.ts.
+    // A blank/whitespace-only value is coerced to unset so it does not defeat the `??`
+    // fallback (an empty override would otherwise root the store at the process CWD).
+    libStorePath: blankableString,
+    libStoreUrl: blankableString,
     // Embedding backend selection — the ONE config surface for embeddings; the harness
     // runtime consumes it through `resolveEmbedder` (modules/embedding/resolve.ts).
     // `off` until the user runs `inflexa setup --embeddings`. `modelPath` is set when

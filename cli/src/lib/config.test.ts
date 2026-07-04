@@ -55,6 +55,16 @@ describe("readConfig — fail-closed", () => {
         rmSync(env.configPath, { force: true });
         expect(readConfig().telemetry).toBe(false);
     });
+
+    // finding 7: libStorePath/libStoreUrl must self-heal PER FIELD like their siblings —
+    // a malformed value (e.g. null) must NOT nuke the whole parse and drop telemetry consent.
+    test("a malformed libStoreUrl is salvaged per-field, keeping siblings intact", () => {
+        writeRawConfig(JSON.stringify({ telemetry: true, libStoreUrl: null, libStorePath: "/tmp/store" }));
+        const cfg = readConfig();
+        expect(cfg.telemetry).toBe(true); // sibling survived — no whole-config fail-closed
+        expect(cfg.libStoreUrl).toBeUndefined(); // the bad field salvaged to unset
+        expect(cfg.libStorePath).toBe("/tmp/store"); // the good sibling field intact
+    });
 });
 
 describe("writeConfig / readConfig round-trip", () => {

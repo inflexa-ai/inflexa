@@ -3,11 +3,27 @@
  * Docker client. Covers the contract the SandboxClient factory wraps.
  */
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import Docker from "dockerode";
 
 import { createDockerSandboxOps } from "./docker-client.js";
 import { mintSandboxIdentity } from "./identity.js";
+
+// A real on-disk lib store (a `current` symlink to a version dir): the Docker client
+// re-checks `<libStorePath>/current` AT createSandbox time (finding 4), so tests that
+// expect the /mnt/libs mount must point at a store that actually exists.
+let libRoot: string;
+beforeEach(async () => {
+    libRoot = await mkdtemp(join(tmpdir(), "harness-libstore-"));
+    await mkdir(join(libRoot, "2026.07.04-abc"), { recursive: true });
+    await symlink("2026.07.04-abc", join(libRoot, "current"));
+});
+afterEach(async () => {
+    await rm(libRoot, { recursive: true, force: true });
+});
 
 interface StubContainer {
     id: string;
@@ -91,7 +107,7 @@ describe("docker createSandbox / teardown / isAlive", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://cortex.example.com:443",
             sessionsBasePath: "/sessions",
-            libStorePath: "/host/libs",
+            libStorePath: libRoot,
             refStorePath: "/host/refs",
             docker,
             fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
@@ -138,7 +154,7 @@ describe("docker createSandbox / teardown / isAlive", () => {
         expect(created[0]!.binds).toEqual([
             "/sessions/an-1:/an-1:ro",
             "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw",
-            "/host/libs:/mnt/libs:ro",
+            `${libRoot}:/mnt/libs:ro`,
             "/host/refs:/mnt/refs:ro",
         ]);
 
@@ -188,7 +204,7 @@ describe("docker createSandbox / teardown / isAlive", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             sessionsBasePath: "/sessions",
-            libStorePath: "/host/libs",
+            libStorePath: libRoot,
             docker,
             fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
             registerSandbox: async () => {},
@@ -209,10 +225,45 @@ describe("docker createSandbox / teardown / isAlive", () => {
         )._unsafeUnwrap();
 
         // Only the RO tree + lib store mount — no rw step bind.
-        expect(created[0]!.binds).toEqual(["/sessions/an-1:/an-1:ro", "/host/libs:/mnt/libs:ro"]);
+        expect(created[0]!.binds).toEqual(["/sessions/an-1:/an-1:ro", `${libRoot}:/mnt/libs:ro`]);
         expect(created[0]!.binds.some((b) => b.endsWith(":rw"))).toBe(false);
         // WorkingDir falls back to the RO tree root.
         expect(created[0]!.workingDir).toBe("/an-1");
+    });
+
+    test("skips the /mnt/libs mount when the store's current pointer has vanished since boot (finding 4)", async () => {
+        const { docker, created } = stubDocker();
+        // libStorePath is set (baked at boot) but `current` is gone (a mid-session prune or
+        // rm). Binding the missing source would make Docker auto-create a root-owned dir, so
+        // the client must re-check at creation and skip the mount + lib-store env instead.
+        await rm(join(libRoot, "current"), { force: true });
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            sessionsBasePath: "/sessions",
+            libStorePath: libRoot,
+            docker,
+            fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        const envMap = Object.fromEntries(
+            created[0]!.env.map((e) => {
+                const idx = e.indexOf("=");
+                return [e.slice(0, idx), e.slice(idx + 1)];
+            }),
+        );
+        expect(created[0]!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+        expect(envMap.R_LIBS_SITE).toBeUndefined();
+        expect(envMap.NODE_PATH).toBeUndefined();
     });
 
     test("teardown of an already-gone container is a no-op success", async () => {
