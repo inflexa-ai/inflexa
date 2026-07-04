@@ -1,5 +1,6 @@
+import { existsSync, lstatSync, readlinkSync } from "node:fs";
 import { availableParallelism, totalmem } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { z } from "zod";
 import type { MachineBudget, ResourceLimits, ResourcePolicy } from "@inflexa-ai/harness";
 import { readConfig } from "../../lib/config.ts";
@@ -76,6 +77,15 @@ export type ResolvedHarnessConfig = {
     /** DBOS admin port. */
     readonly adminPort: number;
     readonly skillsDir: string | null;
+    /**
+     * Host dir to bind-mount read-only at `/mnt/libs`, or `null` when no store is
+     * provisioned. Set to the store root ONLY when its `current` symlink exists:
+     * Docker auto-creates a missing bind source as a root-owned empty dir, which
+     * would silently mount an empty store, so the mount is coupled to the store's
+     * actual presence (`inflexa libs pull` creates `current` → the harness starts
+     * mounting it). See modules/libs/ and the design's "coupling guard".
+     */
+    readonly libStorePath: string | null;
     /**
      * Set when the `harness` config key was present but failed validation (e.g. a field of the wrong
      * type). Carries the offending field paths so boot can report the real problem instead of a
@@ -161,8 +171,52 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
         resourcePolicy,
         adminPort: cfg?.adminPort ?? DEFAULT_ADMIN_PORT,
         skillsDir: cfg?.skillsDir ?? (env.isDev ? devSkillsDir : null),
+        libStorePath: resolveLibStoreMount(),
         configError,
     };
+}
+
+/**
+ * The coupling guard: return the store root to mount ONLY when its `current`
+ * pointer exists, else `null` (no mount). Reads the top-level `libStorePath`
+ * config override (not a `harness.*` field), defaulting to `env.libStorePath`.
+ */
+function resolveLibStoreMount(): string | null {
+    return libStoreMount(readConfig().libStorePath ?? env.libStorePath);
+}
+
+/**
+ * Pure coupling-guard predicate: the store root iff `current` is a live store
+ * pointer, else `null`. Kept separate (and exported) from {@link resolveLibStoreMount}
+ * so the invariant — no live `current`, no mount — is unit-testable against a temp dir.
+ *
+ * This mirrors `readActive` (modules/libs/store.ts) rather than a bare `existsSync`:
+ * `existsSync` FOLLOWS the link, so a `current` that is a real directory (a
+ * symlink-dereferencing restore) or a symlink whose target escapes the root would
+ * pass the guard while `readActive` reports "no store" — the sandbox would then
+ * advertise `/mnt/libs` it does not actually have. The predicate therefore requires
+ * `current` to be a symlink whose target resolves, within the root, to an existing
+ * version directory (`basename` strips any path components, so an out-of-root target
+ * can never name a dir under the root).
+ */
+export function libStoreMount(root: string): string | null {
+    const current = join(root, "current");
+    let isSymlink: boolean;
+    try {
+        isSymlink = lstatSync(current).isSymbolicLink();
+    } catch {
+        return null; // no `current` entry at all
+    }
+    if (!isSymlink) return null; // a real dir/file (deref restore) is not a provisioned store
+    let target: string;
+    try {
+        target = readlinkSync(current);
+    } catch {
+        return null;
+    }
+    const version = basename(target);
+    if (version === "" || version === "." || version === "..") return null; // degenerate pointer → no store
+    return existsSync(join(root, version)) ? root : null; // dangling → no store
 }
 
 /**

@@ -303,4 +303,55 @@ cli.command("setup")
         });
     });
 
+// The sandbox library store: obtain, inspect, and list the R/Python/conda/node
+// package bundles mounted read-only into sandboxes at `/mnt/libs`. Nested
+// subcommands (à la `project`), each lazy-importing the handler.
+const libs = cli.command("libs").description("Manage the sandbox library store (R/Python/conda/node packages)");
+
+libs.command("pull [bundle]")
+    .description("Download and activate a library-store bundle (full | core; defaults per architecture)")
+    .option("--core", "Force the core (Python + conda) bundle")
+    .option("--full", "Force the full (Python + R + conda) bundle")
+    .option("--pin <version>", "Pull a specific published version instead of latest")
+    .option("--yes", "Skip the download-size confirmation")
+    .action(async (bundle: string | undefined, options: { core?: boolean; full?: boolean; pin?: string; yes?: boolean }) => {
+        if (bundle !== undefined && bundle !== "full" && bundle !== "core") {
+            console.error("\n  bundle must be one of: full, core.\n");
+            process.exitCode = 1;
+            return;
+        }
+        const { libsPull } = await import("../modules/libs/pull.ts");
+        const result = await libsPull(bundle, { core: options.core, full: options.full, version: options.pin, yes: options.yes });
+        result.match(
+            (outcome) => {
+                if (outcome.type === "up_to_date") console.log(`Library store is up to date (${outcome.bundle} @ ${outcome.version}).`);
+                else if (outcome.type === "declined") console.log("Cancelled — nothing downloaded.");
+            },
+            (error) => {
+                // A concurrent pull already owns the store lock — not a failure: the other
+                // process is provisioning it. Report plainly and exit 0.
+                if (error.type === "pull_in_progress") {
+                    console.log(`\n  ${error.message}\n`);
+                    return;
+                }
+                console.error(`\n  Library store pull failed: ${error.message}\n`);
+                process.exitCode = 1;
+            },
+        );
+    });
+
+libs.command("status")
+    .description("Show the active library-store bundle, version, tracks, and whether it is up to date")
+    .action(async () => {
+        const { libsStatus } = await import("../modules/libs/pull.ts");
+        await libsStatus();
+    });
+
+libs.command("list")
+    .description("List the library-store bundles resolvable for this machine's architecture")
+    .action(async () => {
+        const { libsList } = await import("../modules/libs/pull.ts");
+        libsList();
+    });
+
 cli.addHelpText("after", renderEnvHelp);

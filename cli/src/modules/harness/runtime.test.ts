@@ -24,6 +24,7 @@ function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHar
         resourcePolicy: { perStep: { maxCpu: 1, maxMemoryGb: 1, maxGpuCount: 0 }, budget: { cpu: 1, memoryGb: 1 } },
         adminPort: 8433,
         skillsDir,
+        libStorePath: null,
         ...overrides,
     };
 }

@@ -353,6 +353,9 @@ export async function bootHarnessRuntime(
             image: cfg.sandboxImage,
             resourceLimits: cfg.resourcePolicy.perStep,
             sessionsBasePath: env.sessionsDir,
+            // Coupling guard: `null` (no `current` on disk) leaves this
+            // undefined so no `/mnt/libs` bind mount is created.
+            libStorePath: cfg.libStorePath ?? undefined,
         });
         const workspaceFs = createWorkspaceFilesystem({ sessionsBasePath: env.sessionsDir });
         // One authorizer instance, shared by the parent workflow's terminal

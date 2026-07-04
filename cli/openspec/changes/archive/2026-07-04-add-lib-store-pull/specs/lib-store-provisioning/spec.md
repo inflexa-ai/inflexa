@@ -28,17 +28,26 @@ immutable.
 - **WHEN** the process exits
 - **THEN** `current` still points at the previously-active version and the staging directory is discarded on the next pull
 
+#### Scenario: A concurrent pull is refused, not run in parallel
+
+- **GIVEN** a pull is already provisioning the store (holding the machine-wide pull lock)
+- **WHEN** a second `inflexa libs pull` runs
+- **THEN** the second pull mutates nothing; it reports that a pull is already in progress (with the holder's pid) and leaves `current` untouched
+
 ### Requirement: `inflexa libs pull` resolves a bundle to a manifest and dedup-downloads its tracks
 
 The CLI SHALL provide `inflexa libs pull [bundle]` that: detects the host
 architecture via `uname -m` (mapping to `linux-amd64` / `linux-arm64`); resolves
-the bundle to a per-bundle-per-arch **manifest** pinning each track's URL,
-sha256, and size; computes a plan that SKIPS any track whose content digest is
-already held; downloads the remaining tracks in parallel to `.part` files;
-verifies each track's sha256 before use; and assembles the version. Re-running
-`pull` when already current SHALL be a no-op that reports "up to date". The
-command SHALL accept `--core` / `--full` to override the bundle and `--version`
-to target a specific published version instead of `latest`.
+the bundle to a per-bundle-per-arch **manifest** pinning each track's
+store-relative `path` (plus an absolute `url` for compatibility), sha256, and
+size; computes a plan that SKIPS any track whose content digest is already held;
+downloads the remaining tracks in parallel to `.part` files — resolving each
+track's download URL from the manifest `path` joined onto the configured base so
+an `INFLEXA_LIB_STORE_URL`/`libStoreUrl` mirror redirects the payloads too, not
+only the manifest; verifies each track's sha256 before use; and assembles the
+version. Re-running `pull` when already current SHALL be a no-op that reports "up
+to date". The command SHALL accept `--core` / `--full` to override the bundle and
+`--pin <version>` to target a specific published version instead of `latest`.
 
 #### Scenario: Arch is detected, never prompted
 
@@ -65,21 +74,23 @@ to target a specific published version instead of `latest`.
 
 #### Scenario: A specific version can be targeted
 
-- **WHEN** `inflexa libs pull --version <V>` runs
+- **WHEN** `inflexa libs pull --pin <V>` runs
 - **THEN** the CLI resolves `<V>`'s manifest rather than `latest` and activates that version
 
 ### Requirement: packages.txt is assembled from exactly the pulled tracks
 
 The CLI SHALL produce `/mnt/libs/current/packages.txt` by concatenating the
 `packages.txt` fragments carried inside exactly the tracks that were pulled for
-the selected bundle. The CLI SHALL NOT synthesize the package list from any
-manifest wishlist. The assembled file SHALL be written into the staging version
-before activation so it is never observed partially written.
+the selected bundle, beneath a fixed advisory header (identical to the one the
+local/offline assembler emits, so both producers write the same file). The CLI
+SHALL NOT synthesize the package list from any manifest wishlist. The assembled
+file SHALL be written into the staging version before activation so it is never
+observed partially written.
 
 #### Scenario: The mounted list matches the pulled tracks
 
 - **WHEN** a bundle is pulled and activated
-- **THEN** `/mnt/libs/current/packages.txt` equals the concatenation of the pulled tracks' fragments and nothing else
+- **THEN** `/mnt/libs/current/packages.txt` equals the fixed advisory header followed by the concatenation of the pulled tracks' fragments and nothing else
 
 #### Scenario: A core bundle advertises no R packages
 
@@ -112,20 +123,27 @@ the CLI SHALL default to the full bundle on amd64 and the core bundle on arm64.
 
 `inflexa setup` SHALL offer a single `@clack/prompts` choice between the full and
 core stacks (core-only on arm64, with a `note()` explaining R's absence there),
-then run the provisioning inside a `spinner()`. The setup flow SHALL invoke the
-same pull handler that `inflexa libs pull` uses — it SHALL NOT implement a
-separate download path. On a non-interactive terminal the setup flow SHALL use
-the architecture-appropriate default bundle without prompting.
+then hand off to the same pull handler that `inflexa libs pull` uses — it SHALL
+NOT implement a separate download path — which confirms the planned download size
+before transferring and runs the provisioning inside a `spinner()`. Cancelling the
+stack prompt SHALL skip the store and continue setup, never abort it. On a
+non-interactive terminal the setup flow SHALL NOT auto-download the store; it SHALL
+print a hint to run `inflexa libs pull --yes` and continue setup successfully.
 
 #### Scenario: Setup reuses the pull handler
 
 - **WHEN** the user selects a stack during `inflexa setup`
-- **THEN** provisioning calls the same handler as `inflexa libs pull`, wrapped in a spinner
+- **THEN** provisioning calls the same handler as `inflexa libs pull`, which confirms the download size and runs inside a spinner
 
-#### Scenario: Non-interactive setup uses the default
+#### Scenario: Cancelling the stack prompt skips the store
+
+- **WHEN** the user cancels the stack choice during `inflexa setup`
+- **THEN** the library store is skipped and setup continues to completion rather than aborting
+
+#### Scenario: Non-interactive setup does not auto-download
 
 - **WHEN** `inflexa setup` runs on a non-interactive terminal
-- **THEN** the architecture-appropriate default bundle is provisioned without a prompt
+- **THEN** the library store is not downloaded; the CLI prints a hint to run `inflexa libs pull --yes` and setup continues
 
 ### Requirement: A missing store is offered, never fatal
 
