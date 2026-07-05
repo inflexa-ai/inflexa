@@ -40,5 +40,6 @@ if [ -z "$packed" ]; then
   exit 1
 fi
 
+# shellcheck disable=SC2086 # packed is an intentional word list, one per line
 printf '%s\n' $packed > "$OUT/tracks.txt"
 echo "Packed tracks:$packed"

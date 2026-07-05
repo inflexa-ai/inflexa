@@ -305,15 +305,13 @@ RUN GH_PKGS=$(ls /staging/r/github 2>/dev/null | tr '\n' ' ') \
 FROM base AS python
 
 # --python pins uv to system Python so .so suffixes match the sandbox runtime.
-# On arm64, strip [extras] from liana — pyscipopt needs the SCIP C library
-# which has no arm64 .deb. Core liana functionality is unaffected.
+# The pip set is `common + <arch>` — the manifest decides the arch split (e.g.
+# liana[extras] on amd64 vs core liana on arm64); the builder just applies it.
 ARG TARGETARCH
 RUN python3 -c "\
-import yaml, re, os; \
-m = yaml.safe_load(open('/tmp/manifest.yaml')); \
-pkgs = m.get('python',{}).get('pip',[]); \
-arch = os.environ.get('TARGETARCH', 'amd64'); \
-pkgs = [re.sub(r'\[extras\]', '', p) if 'liana' in p and arch != 'amd64' else p for p in pkgs]; \
+import yaml, os; \
+pip = yaml.safe_load(open('/tmp/manifest.yaml'))['python']['pip']; \
+pkgs = pip['common'] + pip.get(os.environ.get('TARGETARCH', 'amd64'), []); \
 print('\n'.join(pkgs))" > /tmp/requirements.txt 2>/dev/null || true \
     && if [ -s /tmp/requirements.txt ]; then \
        uv pip install --python /usr/bin/python3 --break-system-packages --no-cache \
@@ -358,6 +356,7 @@ RUN <<'PYEOF' cat > /usr/local/bin/lib-store-py-loadtest.py
 write /staging/python.packages.txt from the set that imported."""
 import importlib
 import importlib.metadata as im
+import os
 import re
 import sys
 
@@ -391,8 +390,10 @@ def modules_for(dist: str) -> list[str]:
     return mods
 
 
-manifest = yaml.safe_load(open("/tmp/manifest.yaml"))
-specs = manifest.get("python", {}).get("pip", [])
+# Resolve the same `common + <arch>` set the installer used, so Gate 1 tests
+# exactly what was installed for this architecture.
+pip = yaml.safe_load(open("/tmp/manifest.yaml"))["python"]["pip"]
+specs = pip["common"] + pip.get(os.environ.get("TARGETARCH", "amd64"), [])
 loaded: list[str] = []
 failed: list[str] = []
 for spec in specs:
@@ -434,19 +435,22 @@ RUN PYTHONPATH=/staging/python/site-packages \
 # Stage: system-tools — all bioinformatics CLI tools via bioconda
 # =============================================================================
 FROM base AS system-tools
+ARG TARGETARCH
 
 # micromamba for bioconda (deterministic binary from official image)
 # Installed here (not in base) to avoid busting the R/Python/Node stage caches.
 COPY --from=mambaorg/micromamba:2.5.0 /bin/micromamba /usr/local/bin/micromamba
 
-# Install all system_tools from the manifest into a single conda prefix.
+# Install system_tools (`common + <arch>`) into a single conda prefix. The
+# manifest decides the arch split (amd64-only tools have no linux-aarch64
+# bioconda build); the builder just applies common + the target arch.
 # Strict channel priority prevents mixed conda-forge/bioconda dependency conflicts.
 # Install directly at the runtime mount path (/mnt/libs/current/conda) so conda
 # writes correct absolute shebangs and paths — no post-build rewriting needed.
 RUN TOOLS=$(python3 -c "\
-import yaml; \
-m = yaml.safe_load(open('/tmp/manifest.yaml')); \
-print(' '.join(m.get('system_tools',[])))" 2>/dev/null || true) \
+import yaml, os; \
+g = yaml.safe_load(open('/tmp/manifest.yaml'))['system_tools']; \
+print(' '.join(g['common'] + g.get(os.environ.get('TARGETARCH', 'amd64'), [])))" 2>/dev/null || true) \
     && if [ -n "$TOOLS" ]; then \
        micromamba create -y -p /mnt/libs/current/conda \
          --channel-priority strict \
@@ -461,9 +465,9 @@ print(' '.join(m.get('system_tools',[])))" 2>/dev/null || true) \
 # conda bin so tools like fastqc can find their bundled java.
 ENV PATH="/mnt/libs/current/conda/bin:${PATH}"
 RUN TOOLS=$(python3 -c "\
-import yaml; \
-m = yaml.safe_load(open('/tmp/manifest.yaml')); \
-print('\n'.join(m.get('system_tools',[])))" 2>/dev/null) \
+import yaml, os; \
+g = yaml.safe_load(open('/tmp/manifest.yaml'))['system_tools']; \
+print('\n'.join(g['common'] + g.get(os.environ.get('TARGETARCH', 'amd64'), [])))" 2>/dev/null) \
     && ok=""; failed=""; \
     for tool in $TOOLS; do \
       if command -v "$tool" >/dev/null 2>&1; then \

@@ -195,16 +195,18 @@ jobs:
         id: pack
         run: |
           bash scripts/lib-store-pack.sh staging dist
-          echo "## Build Results ($ARCH)" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Track | Status |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|-|-|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| CRAN | ${{ steps.cran.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Bioconductor | ${{ steps.bioc.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| GitHub R | ${{ steps.github.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Python | ${{ steps.python.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| System tools | ${{ steps.conda.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Node | ${{ steps.node.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "Packed tracks: $(tr '\n' ' ' < dist/tracks.txt)" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Build Results ($ARCH)"
+            echo "| Track | Status |"
+            echo "|-|-|"
+            echo "| CRAN | ${{ steps.cran.outcome }} |"
+            echo "| Bioconductor | ${{ steps.bioc.outcome }} |"
+            echo "| GitHub R | ${{ steps.github.outcome }} |"
+            echo "| Python | ${{ steps.python.outcome }} |"
+            echo "| System tools | ${{ steps.conda.outcome }} |"
+            echo "| Node | ${{ steps.node.outcome }} |"
+            echo "Packed tracks: $(tr '\n' ' ' < dist/tracks.txt)"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish configuration
         id: publish

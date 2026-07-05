@@ -12,9 +12,11 @@
 #   packages.txt                  (the concatenation the harness reads)
 
 # All tracks, in canonical order.
+# shellcheck disable=SC2034 # consumed by the scripts that source this file
 LIB_STORE_ALL_TRACKS="cran bioconductor github python conda node"
 
 # packages.txt fragment concat order (R sections, then python, tools, node).
+# shellcheck disable=SC2034 # consumed by the scripts that source this file
 LIB_STORE_CONCAT_ORDER="cran bioconductor github python conda node"
 
 # The tracks each architecture's published store carries. The R triple travels

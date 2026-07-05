@@ -32,7 +32,7 @@ esac
 IMAGE="lib-store-$TRACK"
 SECRET_ARGS=()
 if [ "$TRACK" = github ] && [ -n "${GITHUB_TOKEN:-}" ]; then
-  SECRET_ARGS=(--secret id=github_token,env=GITHUB_TOKEN)
+  SECRET_ARGS=(--secret "id=github_token,env=GITHUB_TOKEN")
 fi
 
 docker buildx build \

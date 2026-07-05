@@ -159,7 +159,7 @@ extract_stage() {
     fi
   fi
   local count
-  count=$(ls "$dest_dir" 2>/dev/null | wc -l | tr -d ' ')
+  count=$(find "$dest_dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
   info "Extracted $count entries to $dest_dir"
 }
 
@@ -351,7 +351,7 @@ if [ ${#OLD_BUILDS[@]} -gt 0 ]; then
   fi
   if [[ "$answer" =~ ^[Yy]$ ]]; then
     for old in "${OLD_BUILDS[@]}"; do
-      rm -rf "$DEST/$old"
+      rm -rf "${DEST:?}/$old"
       info "Removed $old"
     done
   fi
