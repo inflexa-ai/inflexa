@@ -1,12 +1,12 @@
 /**
- * The `inflexa libs` command actions — pull, status, list — plus the pre-launch
+ * The `inflexa libs` command actions — pull, status — plus the pre-launch
  * lazy offer. `libsPull` is the ONE dogfooded provisioning path: the `libs pull`
  * command, the `inflexa setup` wizard, and the build change's Gate 2 validator
- * (`--version <candidate>`) all funnel through it. There is no second download
+ * (`--pin <candidate>`) all funnel through it. There is no second download
  * code path (design.md "Three entry points, one handler").
  *
  * The algorithm (design.md "The pull algorithm"):
- *   arch → bundle → manifest → plan(skip held digests) → confirm →
+ *   arch → manifest → plan(skip held digests) → confirm →
  *   parallel download+verify → extract → assemble packages.txt → sanity →
  *   atomic activate → prune.
  */
@@ -22,7 +22,7 @@ import { readConfig } from "../../lib/config.ts";
 import { confirm } from "../../lib/cli.ts";
 import { env } from "../../lib/env.ts";
 import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
-import { ARM64_NO_R_REASON, detectArch, resolvableBundles, selectBundle, TRACK_SUBTREE, type Track, type UserBundle } from "./bundles.ts";
+import { ARM64_NO_R_REASON, detectArch, TRACK_SUBTREE, type Track } from "./arch.ts";
 import { fetchManifest, manifestUrl, resolveBaseUrl, type Manifest, type TrackEntry } from "./manifest.ts";
 import { activate, blobPath, cacheDir, discardStaging, ensureStoreDirs, hasBlob, newStagingDir, prune, readActive, writeMeta } from "./store.ts";
 
@@ -69,6 +69,22 @@ function trackFragmentFile(track: Track): string {
     return `${track}.packages.txt`;
 }
 
+/** Whether a manifest track name is one this CLI knows where to place. */
+function isKnownTrack(track: string): track is Track {
+    // Object.hasOwn, NOT `in`: `in` walks the prototype chain, so a manifest naming
+    // a track "toString" would pass and TRACK_SUBTREE["toString"] is a function.
+    return Object.hasOwn(TRACK_SUBTREE, track);
+}
+
+/** Sort track names into {@link PACKAGES_TXT_CONCAT_ORDER}; names not listed sort last, never dropped. */
+function canonicalTrackOrder(tracks: readonly string[]): string[] {
+    const rank = (t: string): number => {
+        const i = PACKAGES_TXT_CONCAT_ORDER.indexOf(t as Track);
+        return i === -1 ? PACKAGES_TXT_CONCAT_ORDER.length : i;
+    };
+    return [...tracks].sort((a, b) => rank(a) - rank(b));
+}
+
 /** The store root: the `libStorePath` config override, else the data-dir default. */
 function libStoreRoot(): string {
     return readConfig().libStorePath ?? env.libStorePath;
@@ -108,10 +124,6 @@ function trackUrl(base: string, entry: TrackEntry): string {
 
 /** Flags accepted by `inflexa libs pull` (and reused by setup). */
 export type PullOptions = {
-    /** Force the core bundle. */
-    readonly core?: boolean;
-    /** Force the full bundle. */
-    readonly full?: boolean;
     /** Target a specific published version instead of `latest`. */
     readonly version?: string;
     /** Skip the size confirmation (also implied non-interactively). */
@@ -122,11 +134,10 @@ export type PullOptions = {
 
 /** The result of a pull, for the caller to report. */
 export type PullOutcome =
-    | { readonly type: "up_to_date"; readonly version: string; readonly bundle: UserBundle }
+    | { readonly type: "up_to_date"; readonly version: string }
     | {
           readonly type: "activated";
           readonly version: string;
-          readonly bundle: UserBundle;
           readonly downloadedBytes: number;
           readonly reusedTracks: readonly Track[];
       }
@@ -140,7 +151,6 @@ export type PullOutcome =
 export type PullError =
     | { readonly type: "arch_unsupported"; readonly message: string }
     | { readonly type: "manifest_failed"; readonly message: string; readonly cause?: unknown }
-    | { readonly type: "track_missing"; readonly message: string }
     | { readonly type: "download_failed"; readonly message: string; readonly cause?: unknown }
     | { readonly type: "checksum_mismatch"; readonly message: string }
     | { readonly type: "extract_failed"; readonly message: string }
@@ -148,13 +158,6 @@ export type PullError =
     /** Another `inflexa` process holds the single-writer store lock; `holderPid` is that pull's pid. Not a fault — the other pull is provisioning the store. */
     | { readonly type: "pull_in_progress"; readonly message: string; readonly holderPid: number }
     | { readonly type: "io_failed"; readonly message: string; readonly cause?: unknown };
-
-/** Resolve a `--core`/`--full`/positional request into a user bundle (or undefined for the arch default). */
-function requestedBundle(bundle: UserBundle | undefined, opts: PullOptions): UserBundle | undefined {
-    if (opts.full) return "full";
-    if (opts.core) return "core";
-    return bundle;
-}
 
 function formatBytes(bytes: number): string {
     if (bytes <= 0) return "0 B";
@@ -164,48 +167,52 @@ function formatBytes(bytes: number): string {
 }
 
 /**
- * Provision the library store. Detects arch, resolves the bundle to a manifest,
+ * Provision the library store. Detects arch, fetches the arch's manifest,
  * plans the download (skipping track digests already held in the dedup cache),
  * confirms the size, downloads missing tracks in parallel with sha256
  * verification, assembles `packages.txt`, and activates atomically. Re-pulling
  * what is already active short-circuits to `up_to_date` with nothing on the wire.
  */
-export async function libsPull(bundle: UserBundle | undefined, opts: PullOptions = {}): Promise<Result<PullOutcome, PullError>> {
+export async function libsPull(opts: PullOptions = {}): Promise<Result<PullOutcome, PullError>> {
     const interactive = !opts.quiet && process.stdin.isTTY;
 
     const arch = detectArch();
     if (arch === null) {
         return err({ type: "arch_unsupported", message: "Could not map `uname -m` to a supported architecture (expected x86_64 or aarch64)." });
     }
-
-    const resolved = selectBundle(requestedBundle(bundle, opts), arch);
-    if (resolved.downgradeReason && !opts.quiet) log.warn(resolved.downgradeReason);
+    if (arch === "linux-arm64" && !opts.quiet) log.info(ARM64_NO_R_REASON);
 
     const base = resolveBaseUrl();
-    const url = manifestUrl(base, resolved.manifestBundle, arch, opts.version);
+    const url = manifestUrl(base, arch, opts.version);
     const manifestResult = await fetchManifest(url);
     if (manifestResult.isErr()) return err(manifestResult.error);
     const manifest = manifestResult.value;
     const version = manifest.version;
 
     // Re-pull short-circuit: the active store already equals the resolved
-    // manifest's version and bundle → nothing to do.
+    // manifest's version (for this arch) → nothing to do.
     const root = libStoreRoot();
     const active = (await readActive(root)).unwrapOr(null);
-    if (active && active.version === version && active.meta?.bundle === resolved.bundle) {
-        return ok({ type: "up_to_date", version, bundle: resolved.bundle });
+    if (active && active.version === version && active.meta?.arch === arch) {
+        return ok({ type: "up_to_date", version });
     }
 
-    // Plan: pin every resolved track from the manifest; split into
-    // already-held (dedup) vs needs-download.
+    // Plan: pin every track the manifest carries. Unknown track names fail loud —
+    // this CLI would not know where the subtree belongs (a newer store than the CLI).
     const plan: { track: Track; entry: TrackEntry }[] = [];
-    for (const track of resolved.tracks) {
-        const entry = manifest.tracks[track];
-        if (entry === undefined) {
-            return err({ type: "track_missing", message: `Manifest for ${resolved.manifestBundle}/${arch} is missing the "${track}" track.` });
+    for (const track of canonicalTrackOrder(Object.keys(manifest.tracks))) {
+        if (!isKnownTrack(track)) {
+            return err({
+                type: "manifest_failed",
+                message: `Manifest for ${arch} names a track this CLI does not know ("${track}") — update inflexa and retry.`,
+            });
         }
-        plan.push({ track, entry });
+        plan.push({ track, entry: manifest.tracks[track]! });
     }
+    if (plan.length === 0) {
+        return err({ type: "manifest_failed", message: `Manifest for ${arch} pins no tracks — nothing to pull.` });
+    }
+    const tracks = plan.map((p) => p.track);
     // Single partition pass: `hasBlob` stat()s the dedup cache, so split held vs
     // needed in one sweep rather than filtering the plan twice.
     const reused: Track[] = [];
@@ -217,7 +224,7 @@ export async function libsPull(bundle: UserBundle | undefined, opts: PullOptions
     const downloadBytes = toDownload.reduce((sum, p) => sum + p.entry.size, 0);
 
     if (interactive && !opts.yes && downloadBytes > 0) {
-        const proceed = await confirm(`Download ${formatBytes(downloadBytes)} for the ${resolved.bundle} library store (${resolved.arch})?`);
+        const proceed = await confirm(`Download ${formatBytes(downloadBytes)} for the sandbox library store (${arch})?`);
         if (!proceed) return ok({ type: "declined" });
     }
 
@@ -240,7 +247,7 @@ export async function libsPull(bundle: UserBundle | undefined, opts: PullOptions
     }
 
     const s = opts.quiet ? null : clackSpinner();
-    s?.start(`Provisioning the ${resolved.bundle} library store (${formatBytes(downloadBytes)} to download)`);
+    s?.start(`Provisioning the library store (${formatBytes(downloadBytes)} to download)`);
 
     // The finally reclaims the staging dir (a harmless no-op after `activate` consumed
     // it) and releases the lock on EVERY exit path, so a failed pull never leaks a
@@ -263,13 +270,13 @@ export async function libsPull(bundle: UserBundle | undefined, opts: PullOptions
             if (ext.isErr()) return finishErr(s, ext.error);
         }
 
-        const assembled = await assemblePackages(staging, resolved.tracks);
+        const assembled = await assemblePackages(staging, tracks);
         if (assembled.isErr()) return finishErr(s, assembled.error);
 
-        const metaResult = await writeMeta(staging, { version, bundle: resolved.bundle, arch, tracks: resolved.tracks });
+        const metaResult = await writeMeta(staging, { version, arch, tracks });
         if (metaResult.isErr()) return finishErr(s, { type: "io_failed", message: metaResult.error.message });
 
-        const sanity = sanityCheck(staging, resolved.tracks, assembled.value);
+        const sanity = sanityCheck(staging, tracks, assembled.value);
         if (sanity.isErr()) return finishErr(s, sanity.error);
 
         const activated = await activate(root, version, staging);
@@ -282,8 +289,8 @@ export async function libsPull(bundle: UserBundle | undefined, opts: PullOptions
             (e) => log.warn(`Could not prune old store versions: ${e.message}`),
         );
 
-        s?.stop(`Library store ready: ${resolved.bundle} @ ${version} (${resolved.arch})`);
-        return ok({ type: "activated", version, bundle: resolved.bundle, downloadedBytes: downloadBytes, reusedTracks: reused });
+        s?.stop(`Library store ready: ${version} (${arch})`);
+        return ok({ type: "activated", version, downloadedBytes: downloadBytes, reusedTracks: reused });
     } finally {
         if (staging !== null) await discardStaging(staging);
         releaseInstanceLock(LIB_STORE_LOCK_KEY);
@@ -389,7 +396,7 @@ async function extractTrack(staging: string, root: string, track: Track, entry: 
  * byte-for-byte what the local/offline shell assembler (`scripts/lib-store-assemble.sh`)
  * writes for the same fragments, so a store is identical however it was produced.
  * We NEVER synthesize the list from a manifest wishlist: the file must reflect what
- * was actually pulled (a core bundle therefore advertises no R packages). A pulled
+ * was actually pulled (an arm64 store therefore advertises no R packages). A pulled
  * track missing its fragment is `sanity_failed`, not skipped — silently dropping one
  * would let a full pull under-advertise (e.g. no R packages) while still passing the
  * non-empty check. Returns the assembled package count (header/section comment lines
@@ -397,12 +404,7 @@ async function extractTrack(staging: string, root: string, track: Track, entry: 
  */
 async function assemblePackages(staging: string, tracks: readonly Track[]): Promise<Result<number, PullError>> {
     try {
-        // Order the pulled tracks canonically (unknown tracks sort last, never dropped).
-        const rank = (t: Track): number => {
-            const i = PACKAGES_TXT_CONCAT_ORDER.indexOf(t);
-            return i === -1 ? PACKAGES_TXT_CONCAT_ORDER.length : i;
-        };
-        const ordered = [...tracks].sort((a, b) => rank(a) - rank(b));
+        const ordered = canonicalTrackOrder(tracks) as Track[];
 
         const fragments: string[] = [];
         for (const track of ordered) {
@@ -454,9 +456,9 @@ function sanityCheck(staging: string, tracks: readonly Track[], packageCount: nu
     return ok(undefined);
 }
 
-// --- status / list ---------------------------------------------------------
+// --- status ------------------------------------------------------------------
 
-/** `inflexa libs status` — location, active bundle/version/arch, present tracks, count, up-to-date. */
+/** `inflexa libs status` — location, active version/arch, present tracks, count, up-to-date. */
 export async function libsStatus(): Promise<void> {
     const root = libStoreRoot();
     const active = (await readActive(root)).unwrapOr(null);
@@ -470,7 +472,7 @@ export async function libsStatus(): Promise<void> {
 
     const meta = active.meta;
     if (meta) {
-        console.log(`  Active  ${meta.bundle} @ ${active.version}  (${meta.arch})`);
+        console.log(`  Active  ${active.version}  (${meta.arch})`);
         const present = meta.tracks.filter((t) => existsSync(join(active.versionDir, TRACK_SUBTREE[t])));
         console.log(`  Tracks  ${present.join(", ") || "(none present)"}`);
     } else {
@@ -486,10 +488,7 @@ export async function libsStatus(): Promise<void> {
     // Up-to-date check is best-effort — an offline machine still gets a status.
     if (meta) {
         const base = resolveBaseUrl();
-        const latest = await fetchManifest(
-            manifestUrl(base, selectBundle(meta.bundle, meta.arch).manifestBundle, meta.arch),
-            AbortSignal.timeout(MANIFEST_PROBE_TIMEOUT_MS),
-        );
+        const latest = await fetchManifest(manifestUrl(base, meta.arch), AbortSignal.timeout(MANIFEST_PROBE_TIMEOUT_MS));
         latest.match(
             (m) =>
                 console.log(
@@ -499,24 +498,6 @@ export async function libsStatus(): Promise<void> {
                 ),
             () => console.log("  Latest      (could not reach the store to check)"),
         );
-    }
-}
-
-/** `inflexa libs list` — the bundles resolvable for the detected architecture. */
-export function libsList(): void {
-    const arch = detectArch();
-    if (arch === null) {
-        console.log("  Could not detect a supported architecture (expected x86_64 or aarch64).");
-        return;
-    }
-    console.log(`  Architecture  ${arch}`);
-    console.log("  Bundles:");
-    for (const b of resolvableBundles(arch)) {
-        const tracks = selectBundle(b, arch).tracks;
-        console.log(`    ${b.padEnd(5)} ${b === "full" ? "Python + R + conda" : "Python + conda"}  [${tracks.join(", ")}]`);
-    }
-    if (arch === "linux-arm64") {
-        console.log(`  (${ARM64_NO_R_REASON})`);
     }
 }
 
@@ -543,18 +524,17 @@ export async function offerLibStoreIfMissing(): Promise<void> {
     let size = "";
     const arch = detectArch();
     if (arch !== null) {
-        const resolved = selectBundle(undefined, arch);
         const base = resolveBaseUrl();
-        const manifest = await fetchManifest(manifestUrl(base, resolved.manifestBundle, arch), AbortSignal.timeout(MANIFEST_PROBE_TIMEOUT_MS)).then(
+        const manifest = await fetchManifest(manifestUrl(base, arch), AbortSignal.timeout(MANIFEST_PROBE_TIMEOUT_MS)).then(
             (r) => r.unwrapOr(null),
             () => null,
         );
-        if (manifest) size = ` (~${formatBytes(estimateSize(manifest, resolved.tracks))})`;
+        if (manifest) size = ` (~${formatBytes(estimateSize(manifest))})`;
     }
     console.log(`\n  No library store installed${size}. Analysis code may not find R/Python packages.`);
     console.log("  Run `inflexa libs pull` to provision it (optional — the run continues without it).\n");
 }
 
-function estimateSize(manifest: Manifest, tracks: readonly Track[]): number {
-    return tracks.reduce((sum, t) => sum + (manifest.tracks[t]?.size ?? 0), 0);
+function estimateSize(manifest: Manifest): number {
+    return Object.values(manifest.tracks).reduce((sum, e) => sum + e.size, 0);
 }

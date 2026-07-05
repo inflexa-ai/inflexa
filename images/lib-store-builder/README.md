@@ -17,32 +17,27 @@ generates the `packages.txt` the agent reads to discover what is available at
 runtime (see the harness `list_available_packages` tool and the
 [`lib-store` spec](../../harness/openspec/specs/lib-store/spec.md)).
 
-## Per-track tarballs and bundles
+## Per-track tarballs, per-arch stores
 
 The store ships as **one content-addressed tarball per track** — `cran`,
-`bioconductor`, `github`, `python`, `conda`, `node` — each carrying its own
-`packages.txt` fragment. A **bundle** is a *client-side selection of tracks*
-resolved at download time (not a build artifact):
-
-|Bundle|Tracks|
-|-|-|
-|`python-conda` (CLI: `core`)|`python`, `conda`, `node`|
-|`python-r-conda` (CLI: `full`)|`python`, `conda`, `node`, `cran`, `bioconductor`, `github`|
+`bioconductor`, `github`, `python`, `conda`, `node` — plus **one manifest per
+architecture** pinning exactly the tracks built for that arch. There is no
+user-facing bundle choice: the detected arch says what a machine gets.
 
 The R triple (`cran`, `bioconductor`, `github`) travels **all-or-none** — the
 three share one `.libPaths()` (`R_LIBS_SITE = github:bioconductor:cran`) and form
-a dependency chain. The client assembles a bundle by extracting the selected
+a dependency chain. The client assembles the store by extracting the manifest's
 tarballs and concatenating their fragments into the single
 `/mnt/libs/current/packages.txt` — a step below the harness runtime contract
-(the mount is unchanged). Track/bundle metadata is centralized in
+(the mount is unchanged). Track/arch metadata is centralized in
 [`scripts/lib-store-common.sh`](../../scripts/lib-store-common.sh).
 
 ## Architectures
 
-|Arch|Tracks built|Bundles resolvable|
-|-|-|-|
-|`linux/amd64` (self-hosted 64 GB)|all six|`python-conda`, `python-r-conda`|
-|`linux/arm64` (free hosted runner)|`python`, `conda`, `node`|`python-conda`|
+|Arch|Tracks built|
+|-|-|
+|`linux/amd64` (self-hosted)|all six|
+|`linux/arm64` (hosted runner)|`python`, `conda`, `node`|
 
 r2u serves CRAN as fast `.deb` binaries on amd64 only, and bioconda's aarch64
 coverage is patchy, so **only the non-R tracks build on arm64** — which makes
@@ -81,10 +76,10 @@ The advertised set must equal the loadable set, proven on a fresh machine before
 The build publishes to a **write-once** tree and never rewrites a version:
 
 ```
- <version>/linux-<arch>/<track>.tar.zst          the tarballs
- <version>/<bundle>/linux-<arch>/manifest.json    the candidate lockfile
-                                                  (pins each track's url+sha256+size)
- latest/<bundle>/linux-<arch>/manifest.json       advanced ONLY by a GREEN Gate 2
+ <version>/linux-<arch>/<track>.tar.zst      the tarballs
+ <version>/linux-<arch>/manifest.json        the candidate lockfile
+                                             (pins each track's url+sha256+size)
+ latest/linux-<arch>/manifest.json           advanced ONLY by a GREEN Gate 2
 ```
 
 The build writes a **candidate** manifest and never touches `latest`; Gate 2
@@ -97,11 +92,14 @@ the same sha256 → already held → skipped).
 |-|-|
 |`Dockerfile`|Multi-stage builder. Tracks branch from `base`: `cran → bioconductor → github` (R, sequential) plus independent `python`, `system-tools` (conda), `node`. Each stage runs Gate 1 and emits its `packages.txt` fragment. No combined `final`/`export` stage — the workflow/scripts extract each track subtree + fragment.|
 |`lib-store-manifest.yaml`|The package set plus `base_image`, `r_version`, `python_version`.|
-|[`../../scripts/build-libs-local.sh`](../../scripts/build-libs-local.sh)|Build locally, pack per-track tarballs, assemble a bundle into the host lib-store dir.|
-|[`../../scripts/lib-store-common.sh`](../../scripts/lib-store-common.sh)|Shared track/bundle metadata (sourced by the scripts + CI).|
+|[`../../scripts/build-libs-local.sh`](../../scripts/build-libs-local.sh)|Build locally, pack per-track tarballs, assemble them into the host lib-store dir.|
+|[`../../scripts/lib-store-common.sh`](../../scripts/lib-store-common.sh)|Shared track/arch metadata (sourced by the scripts + CI).|
+|[`../../scripts/lib-store-build-track.sh`](../../scripts/lib-store-build-track.sh)|CI: build one track's Docker stage and extract its subtree + fragment into `./staging`.|
 |[`../../scripts/lib-store-pack.sh`](../../scripts/lib-store-pack.sh)|Pack a staging tree into per-track `<track>.tar.zst` + `.sha256`.|
-|[`../../scripts/lib-store-assemble.sh`](../../scripts/lib-store-assemble.sh)|Assemble a bundle from per-track tarballs into a mountable `current/`.|
-|[`../../scripts/lib-store-write-manifest.sh`](../../scripts/lib-store-write-manifest.sh)|Emit a per-bundle-per-arch manifest (the lockfile the CLI consumes).|
+|[`../../scripts/lib-store-assemble.sh`](../../scripts/lib-store-assemble.sh)|Assemble a track set from per-track tarballs into a mountable `current/`.|
+|[`../../scripts/lib-store-write-manifest.sh`](../../scripts/lib-store-write-manifest.sh)|Emit the per-arch manifest (the lockfile the CLI consumes).|
+|[`../../scripts/lib-store-publish.sh`](../../scripts/lib-store-publish.sh)|CI: upload tarballs write-once, publish the candidate manifest + pointer.|
+|[`../../scripts/lib-store-gate2.sh`](../../scripts/lib-store-gate2.sh)|CI: pull the candidate as a user, run the suite, promote `latest` on green.|
 |[`../../scripts/lib-store-validate/`](../../scripts/lib-store-validate/)|The Gate 2 suite (`run.sh` + `validate.py` + `anchors/` + `r_examples.R`).|
 |[`../../scripts/smoke-test-libs.sh`](../../scripts/smoke-test-libs.sh)|Back-compat wrapper over `lib-store-validate/run.sh`.|
 |[`../../.github/workflows/lib-store.yml`](../../.github/workflows/lib-store.yml)|The managed build + immutable publish workflow (amd64 self-hosted + arm64 hosted).|
@@ -110,16 +108,13 @@ the same sha256 → already held → skipped).
 ## Build
 
 The builder is **not a runtime image** — it exists only to produce the store.
-The managed build compiles on large runners and publishes prebuilt bundles; to
+The CI build compiles on large runners and publishes prebuilt stores; to
 build your own, from the **repo root**:
 
 ```sh
-# All tracks, native platform → assembles python-r-conda into ~/.local/share/inflexa/libs
+# All tracks, native platform → assembles into ~/.local/share/inflexa/libs
 # (override the destination with INFLEXA_LIB_STORE or --dest).
 scripts/build-libs-local.sh
-
-# A single bundle, e.g. core (python + conda + node):
-scripts/build-libs-local.sh --bundle python-conda
 
 # A single track, e.g. Python only:
 scripts/build-libs-local.sh --python-only
@@ -144,9 +139,9 @@ Notes:
 
 Recorded here so a future reader finds them (mirrors the change's design notes):
 
-- **Python + R + conda on arm64.** r2u is amd64-only and bioconda aarch64
-  coverage is patchy, so arm64 publishes no R tarballs and only `python-conda`
-  resolves there. Revisit when arm64 R binaries become viable.
+- **R on arm64.** r2u is amd64-only and bioconda aarch64 coverage is patchy,
+  so arm64 publishes no R tarballs — its store is the non-R tracks. Revisit
+  when arm64 R binaries become viable.
 - **Per-track versioning.** v1 treats a version as one coherent build (all
   tracks built together). The manifest pins each track independently, leaving
   room for a python-only change to bump `python`'s digest without rebuilding R —

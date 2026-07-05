@@ -25,6 +25,7 @@ function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHar
         adminPort: 8433,
         skillsDir,
         libStorePath: null,
+        sandboxPlatform: null,
         ...overrides,
     };
 }

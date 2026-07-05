@@ -1,10 +1,11 @@
-import { existsSync, lstatSync, readlinkSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { availableParallelism, totalmem } from "node:os";
 import { basename, join } from "node:path";
 import { z } from "zod";
 import type { MachineBudget, ResourceLimits, ResourcePolicy } from "@inflexa-ai/harness";
 import { readConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
+import { ARCHES, DOCKER_PLATFORM, type Arch } from "../libs/arch.ts";
 
 /**
  * Shape of the `harness` config key. Lives here (not in lib/config.ts) so the harness feature owns
@@ -86,6 +87,14 @@ export type ResolvedHarnessConfig = {
      * mounting it). See modules/libs/ and the design's "coupling guard".
      */
     readonly libStorePath: string | null;
+    /**
+     * Docker `--platform` value forcing sandbox containers onto the SAME
+     * architecture as the mounted store (the active store's `meta.json` arch —
+     * native binaries under `/mnt/libs` must never run in a mismatched-arch
+     * container). `null` when no store is mounted or its arch is unknown: the
+     * sandbox then runs at Docker's default platform.
+     */
+    readonly sandboxPlatform: string | null;
     /**
      * Set when the `harness` config key was present but failed validation (e.g. a field of the wrong
      * type). Carries the offending field paths so boot can report the real problem instead of a
@@ -171,18 +180,39 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
         resourcePolicy,
         adminPort: cfg?.adminPort ?? DEFAULT_ADMIN_PORT,
         skillsDir: cfg?.skillsDir ?? (env.isDev ? devSkillsDir : null),
-        libStorePath: resolveLibStoreMount(),
+        ...resolveLibStore(),
         configError,
     };
 }
 
 /**
  * The coupling guard: return the store root to mount ONLY when its `current`
- * pointer exists, else `null` (no mount). Reads the top-level `libStorePath`
+ * pointer exists, else `null` (no mount) — plus the Docker platform to force,
+ * read from the active version's `meta.json`. Reads the top-level `libStorePath`
  * config override (not a `harness.*` field), defaulting to `env.libStorePath`.
  */
-function resolveLibStoreMount(): string | null {
-    return libStoreMount(readConfig().libStorePath ?? env.libStorePath);
+function resolveLibStore(): { libStorePath: string | null; sandboxPlatform: string | null } {
+    const root = readConfig().libStorePath ?? env.libStorePath;
+    const libStorePath = libStoreMount(root);
+    return { libStorePath, sandboxPlatform: libStorePath === null ? null : libStorePlatform(root) };
+}
+
+/**
+ * The Docker `--platform` value matching the active store's arch, or `null`
+ * when the active version's `meta.json` is missing/corrupt or names an unknown
+ * arch (a foreign/local build — no platform is forced). Exported for tests.
+ */
+export function libStorePlatform(root: string): string | null {
+    try {
+        const version = basename(readlinkSync(join(root, "current")));
+        const raw: unknown = JSON.parse(readFileSync(join(root, version, "meta.json"), "utf8")); // on-disk JSON, arch checked below
+        if (typeof raw !== "object" || raw === null) return null;
+        const arch = (raw as Record<string, unknown>).arch;
+        if (typeof arch !== "string" || !(ARCHES as readonly string[]).includes(arch)) return null;
+        return DOCKER_PLATFORM[arch as Arch];
+    } catch {
+        return null;
+    }
 }
 
 /**

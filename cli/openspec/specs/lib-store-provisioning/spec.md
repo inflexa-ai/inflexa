@@ -37,20 +37,21 @@ immutable.
 - **WHEN** a second `inflexa libs pull` runs
 - **THEN** the second pull mutates nothing; it reports that a pull is already in progress (with the holder's pid) and leaves `current` untouched
 
-### Requirement: `inflexa libs pull` resolves a bundle to a manifest and dedup-downloads its tracks
+### Requirement: `inflexa libs pull` resolves the arch's manifest and dedup-downloads its tracks
 
-The CLI SHALL provide `inflexa libs pull [bundle]` that: detects the host
-architecture via `uname -m` (mapping to `linux-amd64` / `linux-arm64`); resolves
-the bundle to a per-bundle-per-arch **manifest** pinning each track's
-store-relative `path` (plus an absolute `url` for compatibility), sha256, and
-size; computes a plan that SKIPS any track whose content digest is already held;
+The CLI SHALL provide `inflexa libs pull` that: detects the host architecture
+via `uname -m` (mapping to `linux-amd64` / `linux-arm64`); fetches that arch's
+**manifest** pinning each track's store-relative `path` (plus an absolute `url`
+for compatibility), sha256, and size; pulls exactly the tracks the manifest
+pins (an unknown track name fails loud — the store is newer than the CLI);
+computes a plan that SKIPS any track whose content digest is already held;
 downloads the remaining tracks in parallel to `.part` files — resolving each
 track's download URL from the manifest `path` joined onto the configured base so
 an `INFLEXA_LIB_STORE_URL`/`libStoreUrl` mirror redirects the payloads too, not
 only the manifest; verifies each track's sha256 before use; and assembles the
 version. Re-running `pull` when already current SHALL be a no-op that reports "up
-to date". The command SHALL accept `--core` / `--full` to override the bundle and
-`--pin <version>` to target a specific published version instead of `latest`.
+to date". The command SHALL accept `--pin <version>` to target a specific
+published version instead of `latest`.
 
 #### Scenario: Arch is detected, never prompted
 
@@ -60,7 +61,7 @@ to date". The command SHALL accept `--core` / `--full` to override the bundle an
 #### Scenario: Unchanged tracks are not re-downloaded
 
 - **GIVEN** a client already holding a track whose digest matches the manifest
-- **WHEN** it pulls a bundle that pins that same digest
+- **WHEN** it pulls a version that pins that same digest
 - **THEN** that track is not downloaded again and only differing tracks transfer
 
 #### Scenario: A corrupt or mismatched track fails loud
@@ -83,64 +84,54 @@ to date". The command SHALL accept `--core` / `--full` to override the bundle an
 ### Requirement: packages.txt is assembled from exactly the pulled tracks
 
 The CLI SHALL produce `/mnt/libs/current/packages.txt` by concatenating the
-`packages.txt` fragments carried inside exactly the tracks that were pulled for
-the selected bundle, beneath a fixed advisory header (identical to the one the
-local/offline assembler emits, so both producers write the same file). The CLI
-SHALL NOT synthesize the package list from any manifest wishlist. The assembled
-file SHALL be written into the staging version before activation so it is never
+`packages.txt` fragments carried inside exactly the tracks that were pulled,
+beneath a fixed advisory header (identical to the one the local/offline
+assembler emits, so both producers write the same file). The CLI SHALL NOT
+synthesize the package list from any manifest wishlist. The assembled file
+SHALL be written into the staging version before activation so it is never
 observed partially written.
 
 #### Scenario: The mounted list matches the pulled tracks
 
-- **WHEN** a bundle is pulled and activated
+- **WHEN** a store is pulled and activated
 - **THEN** `/mnt/libs/current/packages.txt` equals the fixed advisory header followed by the concatenation of the pulled tracks' fragments and nothing else
 
-#### Scenario: A core bundle advertises no R packages
+#### Scenario: An arm64 store advertises no R packages
 
-- **GIVEN** the `core` bundle (`python`, `conda`, `node`) is pulled
+- **GIVEN** an arm64 pull (the arm64 manifest pins no R tracks)
 - **THEN** `packages.txt` contains no R packages, because no R track fragment was pulled
 
-### Requirement: Bundle and architecture are resolved for the user, not asked
+### Requirement: Architecture decides the store contents, the user is never asked
 
-The CLI SHALL expose exactly two user-facing bundles — a **full** stack
-(Python + R + conda) and a **core** stack (Python + conda) — and SHALL map the
-user's choice plus the detected architecture onto the underlying track set. On
-`linux-amd64` both bundles SHALL be resolvable; on `linux-arm64` only the core
-bundle SHALL be resolvable, and a request for the full bundle SHALL be rejected
-with an explanation that R libraries are not yet built for arm64 (not a bare
-error), falling back to core. With no bundle argument on a machine with no store,
-the CLI SHALL default to the full bundle on amd64 and the core bundle on arm64.
+The published store SHALL be per-architecture: the detected arch's manifest
+pins exactly the tracks that machine gets (all six on `linux-amd64`; the non-R
+tracks on `linux-arm64`, because R libraries are not yet built for arm64). The
+CLI SHALL NOT expose a bundle or stack choice. On arm64 the pull SHALL surface
+the R-unavailability rationale as an informational note, not an error.
 
-#### Scenario: arm64 offers only core
+#### Scenario: arm64 pull explains R's absence
 
-- **WHEN** bundle resolution runs on `linux-arm64`
-- **THEN** only the core bundle is offered and full is reported as unavailable-on-arm64 with a reason
-
-#### Scenario: Default bundle on a bare amd64 machine
-
-- **GIVEN** `linux-amd64` with no store present
-- **WHEN** `inflexa libs pull` runs with no bundle argument
-- **THEN** the full bundle is selected
+- **WHEN** `inflexa libs pull` runs on `linux-arm64`
+- **THEN** the pull proceeds with the manifest's non-R tracks and prints a note explaining that R libraries are not yet built for arm64
 
 ### Requirement: The setup flow provisions the store through the same pull handler
 
-`inflexa setup` SHALL offer a single `@clack/prompts` choice between the full and
-core stacks (core-only on arm64, with a `note()` explaining R's absence there),
-then hand off to the same pull handler that `inflexa libs pull` uses — it SHALL
-NOT implement a separate download path — which confirms the planned download size
-before transferring and runs the provisioning inside a `spinner()`. Cancelling the
-stack prompt SHALL skip the store and continue setup, never abort it. On a
-non-interactive terminal the setup flow SHALL NOT auto-download the store; it SHALL
-print a hint to run `inflexa libs pull --yes` and continue setup successfully.
+`inflexa setup` SHALL hand off to the same pull handler that `inflexa libs pull`
+uses — it SHALL NOT implement a separate download path — which confirms the
+planned download size before transferring and runs the provisioning inside a
+`spinner()`. Declining the download SHALL skip the store and continue setup,
+never abort it. On a non-interactive terminal the setup flow SHALL NOT
+auto-download the store; it SHALL print a hint to run `inflexa libs pull --yes`
+and continue setup successfully.
 
 #### Scenario: Setup reuses the pull handler
 
-- **WHEN** the user selects a stack during `inflexa setup`
+- **WHEN** setup reaches the library-store step interactively
 - **THEN** provisioning calls the same handler as `inflexa libs pull`, which confirms the download size and runs inside a spinner
 
-#### Scenario: Cancelling the stack prompt skips the store
+#### Scenario: Declining the download skips the store
 
-- **WHEN** the user cancels the stack choice during `inflexa setup`
+- **WHEN** the user declines the download-size confirmation during `inflexa setup`
 - **THEN** the library store is skipped and setup continues to completion rather than aborting
 
 #### Scenario: Non-interactive setup does not auto-download
@@ -183,20 +174,41 @@ runtime from auto-creating a missing bind source as a root-owned empty directory
 - **WHEN** the next sandbox configuration is built
 - **THEN** `libStorePath` is set and the store is bind-mounted read-only at `/mnt/libs`
 
-### Requirement: `inflexa libs status` and `inflexa libs list` report store state
+### Requirement: Sandboxes are forced onto the pulled store's architecture
+
+Each pulled version SHALL record its architecture in the version's `meta.json`.
+When a store is mounted, the harness-runtime composition SHALL derive the
+Docker platform (`linux/amd64` / `linux/arm64`) from the ACTIVE version's
+recorded arch and force sandbox containers onto it — the store's native
+binaries must never run in a mismatched-arch container. When no store is
+mounted, or the active version's arch is unreadable/unknown (e.g. a local
+build without metadata), no platform SHALL be forced.
+
+#### Scenario: The sandbox platform follows the store's recorded arch
+
+- **GIVEN** an active store whose `meta.json` records `linux-amd64`
+- **WHEN** the harness sandbox configuration is built
+- **THEN** sandbox containers are created with the `linux/amd64` platform
+
+#### Scenario: No store, no forced platform
+
+- **GIVEN** no mounted store (or an active version with no readable arch)
+- **WHEN** the harness sandbox configuration is built
+- **THEN** no container platform is forced and Docker's default applies
+
+### Requirement: `inflexa libs status` reports store state
 
 The CLI SHALL provide `inflexa libs status` reporting the store location, the
-active bundle + version + architecture, the present tracks, the advertised
-package count, and whether the active version is the latest resolvable one. The
-CLI SHALL provide `inflexa libs list` reporting the bundles resolvable for the
-detected architecture. When no store is present, `status` SHALL say so plainly
-and point at `inflexa libs pull`.
+active version + architecture, the present tracks, the advertised package
+count, and whether the active version is the latest resolvable one. When no
+store is present, `status` SHALL say so plainly and point at
+`inflexa libs pull`.
 
 #### Scenario: Status on a provisioned machine
 
 - **GIVEN** an active store
 - **WHEN** `inflexa libs status` runs
-- **THEN** it prints the active bundle, version, architecture, present tracks, and up-to-date state
+- **THEN** it prints the active version, architecture, present tracks, and up-to-date state
 
 #### Scenario: Status with no store
 

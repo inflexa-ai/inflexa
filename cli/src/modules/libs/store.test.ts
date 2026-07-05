@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { randomUUIDv7 } from "bun";
 
-import { TRACK_SUBTREE, type Track } from "./bundles.ts";
+import { TRACK_SUBTREE, type Track } from "./arch.ts";
 import {
     activate,
     blobPath,
@@ -37,14 +37,14 @@ const FULL: Track[] = ["python", "conda", "node", "cran", "bioconductor", "githu
 const CORE: Track[] = ["python", "conda", "node"];
 
 /** Build a plausible per-process-unique staging version (subtrees + packages.txt + meta) and return its path. */
-async function stageVersion(version: string, bundle: "full" | "core" = "core"): Promise<string> {
+async function stageVersion(version: string, tracks: readonly Track[] = CORE): Promise<string> {
     const staging = newStagingDir(root, version);
-    const tracks = bundle === "full" ? FULL : CORE;
     for (const track of tracks) {
         await mkdir(join(staging, TRACK_SUBTREE[track]), { recursive: true });
     }
-    await writeFile(join(staging, "packages.txt"), bundle === "full" ? "python:numpy\npython:pandas\nr:cran:dplyr\n" : "python:numpy\npython:pandas\n");
-    const meta: StoreMeta = { version, bundle, arch: "linux-amd64", tracks };
+    const hasR = tracks.includes("cran");
+    await writeFile(join(staging, "packages.txt"), hasR ? "python:numpy\npython:pandas\nr:cran:dplyr\n" : "python:numpy\npython:pandas\n");
+    const meta: StoreMeta = { version, arch: "linux-amd64", tracks: [...tracks] };
     (await writeMeta(staging, meta))._unsafeUnwrap();
     return staging;
 }
@@ -62,7 +62,7 @@ describe("atomic activation", () => {
         expect(await Bun.file(join(versionDir(root, "2026.07.04-aaa"), "packages.txt")).exists()).toBe(true);
         const active = (await readActive(root))._unsafeUnwrap();
         expect(active?.version).toBe("2026.07.04-aaa");
-        expect(active?.meta?.bundle).toBe("core");
+        expect(active?.meta?.tracks).toEqual(CORE);
         // staging is consumed by the rename
         expect(existsSync(staging)).toBe(false);
     });
@@ -103,18 +103,19 @@ describe("atomic activation", () => {
         expect(existsSync(again)).toBe(false);
     });
 
-    test("re-activating the same version with a DIFFERENT bundle replaces the stale tree (core→full)", async () => {
-        const coreStaging = await stageVersion("2026.07.04-aaa", "core");
+    test("re-activating the same version with a DIFFERENT track set replaces the stale tree", async () => {
+        const coreStaging = await stageVersion("2026.07.04-aaa", CORE);
         (await activate(root, "2026.07.04-aaa", coreStaging))._unsafeUnwrap();
 
-        // A core→full upgrade at the SAME published version: the staging tree carries
-        // the R subtrees the existing version dir lacks.
-        const fullStaging = await stageVersion("2026.07.04-aaa", "full");
+        // A wider track set at the SAME published version (e.g. a local rebuild that adds the
+        // R triple): the staging tree carries R subtrees the existing version dir lacks, so
+        // activate must replace the stale tree rather than keep it.
+        const fullStaging = await stageVersion("2026.07.04-aaa", FULL);
         (await activate(root, "2026.07.04-aaa", fullStaging))._unsafeUnwrap();
 
         const active = (await readActive(root))._unsafeUnwrap();
         expect(active?.version).toBe("2026.07.04-aaa");
-        expect(active?.meta?.bundle).toBe("full");
+        expect(active?.meta?.tracks).toEqual(FULL);
         expect(existsSync(join(versionDir(root, "2026.07.04-aaa"), TRACK_SUBTREE.cran))).toBe(true);
         expect(await Bun.file(join(versionDir(root, "2026.07.04-aaa"), "packages.txt")).text()).toContain("r:cran:dplyr");
         expect(existsSync(fullStaging)).toBe(false);
@@ -170,7 +171,7 @@ describe("atomic activation", () => {
     });
 
     test("activate with an unreadable staged meta does NOT replace the good existing version (data-loss guard)", async () => {
-        const coreStaging = await stageVersion("2026.07.04-aaa", "core");
+        const coreStaging = await stageVersion("2026.07.04-aaa", CORE);
         (await activate(root, "2026.07.04-aaa", coreStaging))._unsafeUnwrap();
 
         // A re-staged SAME version whose meta.json is gone: the replace branch must not
@@ -182,29 +183,29 @@ describe("atomic activation", () => {
         expect((await activate(root, "2026.07.04-aaa", staging)).isErr()).toBe(true);
         const active = (await readActive(root))._unsafeUnwrap();
         expect(active?.version).toBe("2026.07.04-aaa");
-        expect(active?.meta?.bundle).toBe("core"); // untouched, still the verified core tree
+        expect(active?.meta?.tracks).toEqual(CORE); // untouched, still the verified core tree
     });
 
     // finding 4: a promote-rename failure mid-replace must roll back so the old working
     // store survives. EXDEV (a staging dir on a different filesystem than the store root)
     // is the deterministic stand-in for ENOSPC/EIO during `rename(staging → version)`.
     test("activate rolls back and restores the old version when the promote rename fails (finding 4)", async () => {
-        const seam = await crossDeviceStaging("2026.07.04-aaa", "full");
+        const seam = await crossDeviceStaging("2026.07.04-aaa", FULL);
         if (seam === null) return; // cross-device staging unavailable on this host — skip
 
         try {
-            const coreStaging = await stageVersion("2026.07.04-aaa", "core");
+            const coreStaging = await stageVersion("2026.07.04-aaa", CORE);
             (await activate(root, "2026.07.04-aaa", coreStaging))._unsafeUnwrap();
 
-            // The cross-device staging carries a DIFFERENT bundle (full), so activate takes the
-            // replace branch: rename(vdir → .replaced-*) succeeds, rename(staging → vdir) fails
-            // with EXDEV → rollback restores vdir.
+            // The cross-device staging carries a DIFFERENT track set (the R triple), so activate
+            // takes the replace branch: rename(vdir → .replaced-*) succeeds, rename(staging → vdir)
+            // fails with EXDEV → rollback restores vdir.
             const res = await activate(root, "2026.07.04-aaa", seam.staging);
             expect(res.isErr()).toBe(true);
 
             const active = (await readActive(root))._unsafeUnwrap();
             expect(active?.version).toBe("2026.07.04-aaa"); // current never dangled
-            expect(active?.meta?.bundle).toBe("core"); // OLD working store restored intact
+            expect(active?.meta?.tracks).toEqual(CORE); // OLD working store restored intact
             expect(existsSync(join(versionDir(root, "2026.07.04-aaa"), TRACK_SUBTREE.cran))).toBe(false);
             // Rollback renamed the parked tree back — no reapable `.replaced-*` lifeboat is left dangling.
             expect(await replacedDirs()).toEqual([]);
@@ -340,7 +341,7 @@ describe("foreign meta.json degrades, never crashes", () => {
         // A hand-edited / restored-from-another-machine meta naming a track we don't know.
         await writeFile(
             join(versionDir(root, "2026.07.04-aaa"), "meta.json"),
-            JSON.stringify({ version: "2026.07.04-aaa", bundle: "core", arch: "linux-amd64", tracks: ["banana"] }),
+            JSON.stringify({ version: "2026.07.04-aaa", arch: "linux-amd64", tracks: ["banana"] }),
         );
 
         // The tightened guard rejects it → graceful meta:null (status still shows the
@@ -356,7 +357,7 @@ describe("foreign meta.json degrades, never crashes", () => {
         // then TRACK_SUBTREE["toString"] is a function that libsStatus joins and throws on.
         await writeFile(
             join(versionDir(root, "2026.07.06-ccc"), "meta.json"),
-            JSON.stringify({ version: "2026.07.06-ccc", bundle: "core", arch: "linux-amd64", tracks: ["toString"] }),
+            JSON.stringify({ version: "2026.07.06-ccc", arch: "linux-amd64", tracks: ["toString"] }),
         );
         expect((await readActive(root))._unsafeUnwrap()?.meta).toBeNull();
     });
@@ -365,10 +366,23 @@ describe("foreign meta.json degrades, never crashes", () => {
         (await activate(root, "2026.07.05-bbb", await stageVersion("2026.07.05-bbb")))._unsafeUnwrap();
         await writeFile(
             join(versionDir(root, "2026.07.05-bbb"), "meta.json"),
-            JSON.stringify({ version: "2026.07.05-bbb", bundle: "core", arch: "solaris", tracks: ["python"] }),
+            JSON.stringify({ version: "2026.07.05-bbb", arch: "solaris", tracks: ["python"] }),
         );
 
         expect((await readActive(root))._unsafeUnwrap()?.meta).toBeNull();
+    });
+
+    test("a meta.json with extra unknown fields still reads back as valid (extra fields ignored)", async () => {
+        (await activate(root, "2026.07.08-ddd", await stageVersion("2026.07.08-ddd")))._unsafeUnwrap();
+        // isStoreMeta guards only version/arch/tracks; a foreign/legacy `bundle` (and any other
+        // extra key) is ignored rather than rejected, so the store still resolves its meta.
+        await writeFile(
+            join(versionDir(root, "2026.07.08-ddd"), "meta.json"),
+            JSON.stringify({ version: "2026.07.08-ddd", arch: "linux-amd64", tracks: ["python", "conda", "node"], bundle: "legacy", extra: 1 }),
+        );
+        const active = (await readActive(root))._unsafeUnwrap();
+        expect(active?.meta?.version).toBe("2026.07.08-ddd");
+        expect(active?.meta?.tracks).toEqual(["python", "conda", "node"]);
     });
 });
 
@@ -397,7 +411,7 @@ describe("path builders refuse to escape the store root", () => {
  * `rename()` failure (ENOSPC/EIO). Returns null when a genuinely cross-device staging
  * cannot be arranged (non-Linux, no `/dev/shm`, or same underlying device).
  */
-async function crossDeviceStaging(version: string, bundle: "full" | "core"): Promise<{ staging: string; cleanup: () => Promise<void> } | null> {
+async function crossDeviceStaging(version: string, tracks: readonly Track[]): Promise<{ staging: string; cleanup: () => Promise<void> } | null> {
     let base: string;
     try {
         await mkdir("/dev/shm", { recursive: true });
@@ -418,9 +432,8 @@ async function crossDeviceStaging(version: string, bundle: "full" | "core"): Pro
         return null;
     }
     const staging = join(base, `.staging-${version}`);
-    const tracks = bundle === "full" ? FULL : CORE;
     for (const track of tracks) await mkdir(join(staging, TRACK_SUBTREE[track]), { recursive: true });
     await writeFile(join(staging, "packages.txt"), "python:numpy\nr:cran:dplyr\n");
-    (await writeMeta(staging, { version, bundle, arch: "linux-amd64", tracks }))._unsafeUnwrap();
+    (await writeMeta(staging, { version, arch: "linux-amd64", tracks: [...tracks] }))._unsafeUnwrap();
     return { staging, cleanup };
 }

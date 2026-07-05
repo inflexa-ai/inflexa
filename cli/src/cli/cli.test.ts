@@ -41,7 +41,7 @@ describe("inflexa help & usage (e2e)", () => {
         const prev = Bun.env.INFLEXA_LIB_STORE_URL;
         Bun.env.INFLEXA_LIB_STORE_URL = "http://127.0.0.1:1";
         try {
-            const result = runCli(["libs", "pull", "full", "--pin", "2026.07.04-nonexistent", "--yes"]);
+            const result = runCli(["libs", "pull", "--pin", "2026.07.04-nonexistent", "--yes"]);
             expect(result.exitCode).toBe(1);
             expect(result.stderr).toContain("Library store pull failed");
             // The root `--version` handler did NOT fire (it would print just the version).

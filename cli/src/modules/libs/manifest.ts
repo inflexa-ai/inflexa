@@ -1,12 +1,12 @@
 /**
  * Manifest resolution + content verification — the read side of the build
  * change's producer/consumer contract. The build change publishes an immutable
- * tree under a public bucket/CDN:
+ * tree under a public bucket/CDN, one manifest per architecture:
  *
  * ```
- *  <base>/latest/<manifestBundle>/<arch>/manifest.json     ← the latest pointer
- *  <base>/<version>/<manifestBundle>/<arch>/manifest.json  ← a pinned version
- *  <base>/<version>/<arch>/<track>.tar.zst                 ← the tarballs
+ *  <base>/latest/<arch>/manifest.json     ← the latest pointer
+ *  <base>/<version>/<arch>/manifest.json  ← a pinned version
+ *  <base>/<version>/<arch>/<track>.tar.zst   ← the tarballs
  * ```
  *
  * A manifest pins each track's `url`, `sha256`, and `size`. The pull is
@@ -22,7 +22,7 @@ import { z } from "zod";
 
 import { readConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
-import type { Arch } from "./bundles.ts";
+import type { Arch } from "./arch.ts";
 
 /**
  * Compiled default base URL for the published store. Overridden by
@@ -90,10 +90,10 @@ const manifestSchema = z.object({
  */
 export type ManifestError = { readonly type: "manifest_failed"; readonly message: string; readonly cause?: unknown };
 
-/** Build the manifest URL for a bundle/arch, targeting `latest` or a pinned version. */
-export function manifestUrl(base: string, manifestBundle: string, arch: Arch, version?: string): string {
+/** Build the manifest URL for an arch, targeting `latest` or a pinned version. */
+export function manifestUrl(base: string, arch: Arch, version?: string): string {
     const seg = version ?? "latest";
-    return `${base}/${seg}/${manifestBundle}/${arch}/manifest.json`;
+    return `${base}/${seg}/${arch}/manifest.json`;
 }
 
 /**

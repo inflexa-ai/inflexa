@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared metadata for the per-track library store: the track set, each track's
-# tarball members (subtree + packages.txt fragment), the bundle -> track-set
+# tarball members (subtree + packages.txt fragment), the arch -> track-set
 # map, and the canonical packages.txt concat order + header.
 #
 # Source this; do not execute it. Consumed by lib-store-pack.sh,
@@ -17,14 +17,14 @@ LIB_STORE_ALL_TRACKS="cran bioconductor github python conda node"
 # packages.txt fragment concat order (R sections, then python, tools, node).
 LIB_STORE_CONCAT_ORDER="cran bioconductor github python conda node"
 
-# The two named bundles (a bundle is a client-side selection of tracks). The R
-# triple travels all-or-none because cran/bioconductor/github share one
-# .libPaths() and form a dependency chain. arm64 publishes no R tarballs, so
-# only python-conda is resolvable there.
-lib_store_bundle_tracks() {
+# The tracks each architecture's published store carries. The R triple travels
+# all-or-none because cran/bioconductor/github share one .libPaths() and form a
+# dependency chain; arm64 builds no R tarballs (r2u is amd64-only), so its
+# store is the non-R tracks.
+lib_store_arch_tracks() {
   case "$1" in
-    python-conda)   echo "python conda node" ;;
-    python-r-conda) echo "cran bioconductor github python conda node" ;;
+    amd64) echo "cran bioconductor github python conda node" ;;
+    arm64) echo "python conda node" ;;
     *) return 1 ;;
   esac
 }

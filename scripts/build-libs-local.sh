@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Build the library store locally, pack per-track tarballs, and assemble a
-# bundle into the host lib-store dir (default: $XDG_DATA_HOME/inflexa/libs,
+# Build the library store locally, pack per-track tarballs, and assemble them
+# into the host lib-store dir (default: $XDG_DATA_HOME/inflexa/libs,
 # i.e. ~/.local/share/inflexa/libs).
 #
-# The managed build publishes per-track, content-addressed tarballs to object
+# The CI build publishes per-track, content-addressed tarballs to object
 # storage; this script reproduces the same multi-stage Docker build on your own
-# machine, packs the same per-track tarballs, and assembles a chosen bundle into
-# a host directory a sandbox can mount read-only at /mnt/libs.
+# machine, packs the same per-track tarballs, and assembles them into a host
+# directory a sandbox can mount read-only at /mnt/libs.
 #
 # Usage:
-#   ./scripts/build-libs-local.sh                            # Build all tracks, assemble python-r-conda
-#   ./scripts/build-libs-local.sh --bundle python-conda      # Build the python-conda track set only
+#   ./scripts/build-libs-local.sh                            # Build + assemble all tracks
 #   ./scripts/build-libs-local.sh --python-only              # Python track only
 #   ./scripts/build-libs-local.sh --r-only                   # R tracks only (CRAN + Bioc + GitHub)
 #   ./scripts/build-libs-local.sh --tools-only               # System tools (conda) only
@@ -18,10 +17,6 @@
 #   ./scripts/build-libs-local.sh --resume                   # Skip tracks with existing images
 #   ./scripts/build-libs-local.sh --platform linux/amd64     # Force amd64 (default: native)
 #   ./scripts/build-libs-local.sh --dest /path/to/libs       # Custom output dir
-#
-# Bundles (a bundle is a client-side selection of tracks):
-#   python-conda   = { python, conda, node }
-#   python-r-conda = { python, conda, node, cran, bioconductor, github }
 #
 # After building, run scripts/lib-store-validate/run.sh (or the back-compat
 # scripts/smoke-test-libs.sh) to validate the assembled store.
@@ -68,7 +63,6 @@ BUILD_PYTHON=true
 BUILD_TOOLS=true
 BUILD_NODE=true
 RESUME=false
-BUNDLE=""   # explicit bundle override; empty => infer from built tracks
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -76,18 +70,6 @@ while [[ $# -gt 0 ]]; do
     --r-only)      BUILD_PYTHON=false; BUILD_TOOLS=false; BUILD_NODE=false; shift ;;
     --tools-only)  BUILD_CRAN=false; BUILD_BIOC=false; BUILD_GITHUB=false; BUILD_PYTHON=false; BUILD_NODE=false; shift ;;
     --node-only)   BUILD_CRAN=false; BUILD_BIOC=false; BUILD_GITHUB=false; BUILD_PYTHON=false; BUILD_TOOLS=false; shift ;;
-    --bundle)
-      BUNDLE="$2"
-      lib_store_bundle_tracks "$BUNDLE" >/dev/null || { error "Unknown bundle: $BUNDLE (python-conda|python-r-conda)"; exit 1; }
-      # Restrict the build to the bundle's track set.
-      BUILD_CRAN=false; BUILD_BIOC=false; BUILD_GITHUB=false; BUILD_PYTHON=false; BUILD_TOOLS=false; BUILD_NODE=false
-      for t in $(lib_store_bundle_tracks "$BUNDLE"); do
-        case "$t" in
-          cran) BUILD_CRAN=true ;; bioconductor) BUILD_BIOC=true ;; github) BUILD_GITHUB=true ;;
-          python) BUILD_PYTHON=true ;; conda) BUILD_TOOLS=true ;; node) BUILD_NODE=true ;;
-        esac
-      done
-      shift 2 ;;
     --resume)      RESUME=true; shift ;;
     --platform)    PLATFORM="$2"; shift 2 ;;
     --dest)        DEST="$2"; shift 2 ;;
@@ -281,23 +263,10 @@ fi
 BUILT_TRACKS="$(tr '\n' ' ' < "$DIST/tracks.txt")"
 info "Built tracks:$BUILT_TRACKS"
 
-# -- Decide the bundle / track set to assemble ---------------------------------
-# --bundle wins; otherwise assemble exactly the tracks that built (dev builds
-# may be partial). A full six-track build reports as python-r-conda.
-ASSEMBLE_MODE="--tracks"
-ASSEMBLE_SEL="$BUILT_TRACKS"
-if [ -n "$BUNDLE" ]; then
-  ASSEMBLE_MODE="--bundle"
-  ASSEMBLE_SEL="$BUNDLE"
-  for t in $(lib_store_bundle_tracks "$BUNDLE"); do
-    lib_store_list_has "$BUILT_TRACKS" "$t" || { error "Bundle $BUNDLE needs track '$t' which did not build"; exit 1; }
-  done
-fi
-
 # -- Install to host directory -------------------------------------------------
 step "Installing to $DEST"
 
-# Detect partial build (any --*-only flag or an explicit sub-bundle build).
+# Detect partial build (any --*-only flag).
 PARTIAL_BUILD=false
 if ! ($BUILD_CRAN && $BUILD_BIOC && $BUILD_GITHUB && $BUILD_PYTHON && $BUILD_TOOLS && $BUILD_NODE); then
   PARTIAL_BUILD=true
@@ -314,7 +283,7 @@ if [[ "$PARTIAL_BUILD" == true ]] && [ -L "$DEST/current" ]; then
   # the store silently and permanently. Only local-* builds (no meta.json) are mergeable.
   if [ -f "$TARGET_DIR/meta.json" ]; then
     error "Refusing to merge a partial build into '$CURRENT_TARGET' — it is a CLI-pulled version (has meta.json)."
-    error "Run a full local build (no --*-only / --bundle flags) to create a fresh local-* version instead."
+    error "Run a full local build (no --*-only flags) to create a fresh local-* version instead."
     exit 1
   fi
   info "Partial build — merging tracks [$BUILT_TRACKS] into existing $CURRENT_TARGET"
@@ -332,8 +301,9 @@ if [[ "$PARTIAL_BUILD" == true ]] && [ -L "$DEST/current" ]; then
   chmod -R a+rX "$TARGET_DIR"
   info "Merged into $TARGET_DIR"
 else
-  # Fresh assembly into a new version directory.
-  "$SCRIPT_DIR/lib-store-assemble.sh" "$ASSEMBLE_MODE" "$ASSEMBLE_SEL" "$DIST" "$DEST/$VERSION"
+  # Fresh assembly into a new version directory — exactly the tracks that built
+  # (dev builds may be partial).
+  "$SCRIPT_DIR/lib-store-assemble.sh" "$BUILT_TRACKS" "$DIST" "$DEST/$VERSION"
   chmod -R a+rX "$DEST/$VERSION"
   ln -sfn "./$VERSION" "$DEST/current"
   info "Installed as $DEST/$VERSION"
