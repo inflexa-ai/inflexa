@@ -356,6 +356,9 @@ export async function bootHarnessRuntime(
             // Coupling guard: `null` (no `current` on disk) leaves this
             // undefined so no `/mnt/libs` bind mount is created.
             libStorePath: cfg.libStorePath ?? undefined,
+            // Sandboxes must run at the pulled store's architecture — the
+            // mounted binaries are native code.
+            platform: cfg.sandboxPlatform ?? undefined,
         });
         const workspaceFs = createWorkspaceFilesystem({ sessionsBasePath: env.sessionsDir });
         // One authorizer instance, shared by the parent workflow's terminal

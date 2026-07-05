@@ -8,10 +8,10 @@
  *  <libStorePath>/
  *  ├── current -> <version>            the ONE mutable pointer
  *  ├── <version>/                      immutable once activated
- *  │   ├── r/{cran,bioconductor,github}/   (full bundle only)
+ *  │   ├── r/{cran,bioconductor,github}/   (amd64 stores only)
  *  │   ├── python/  node/node_modules/  conda/bin/
  *  │   ├── packages.txt                    advisory header + concat of the pulled tracks' fragments
- *  │   └── meta.json                       {version,bundle,arch,tracks}
+ *  │   └── meta.json                       {version,arch,tracks}
  *  ├── .staging-<version>-<uuid>/      in-flight extract; renamed in on success
  *  └── .cache/blobs/<sha256>           content-addressed dedup substrate
  * ```
@@ -39,15 +39,14 @@ import { basename, isAbsolute, join, relative } from "node:path";
 import { randomUUIDv7 } from "bun";
 import { err, ok, type Result } from "neverthrow";
 
-import { ARCHES, TRACK_SUBTREE, type Arch, type Track, type UserBundle } from "./bundles.ts";
+import { ARCHES, TRACK_SUBTREE, type Arch, type Track } from "./arch.ts";
 
 /** Store IO that failed unexpectedly (a genuine fault, never a routine "no store"). */
 export type StoreError = { readonly type: "store_io_failed"; readonly message: string; readonly cause?: unknown };
 
-/** Metadata written into each version dir so `status` can name the active bundle/arch. */
+/** Metadata written into each version dir so `status` can name the active version/arch. */
 export type StoreMeta = {
     readonly version: string;
-    readonly bundle: UserBundle;
     readonly arch: Arch;
     readonly tracks: readonly Track[];
 };
@@ -184,7 +183,6 @@ function isStoreMeta(v: unknown): v is StoreMeta {
     const o = v as Record<string, unknown>; // narrowed field-by-field below
     return (
         typeof o.version === "string" &&
-        (o.bundle === "full" || o.bundle === "core") &&
         typeof o.arch === "string" &&
         (ARCHES as readonly string[]).includes(o.arch) &&
         Array.isArray(o.tracks) &&
@@ -207,11 +205,10 @@ export async function writeMeta(staging: string, meta: StoreMeta): Promise<Resul
  * it — the atomic activation. The staging→version `rename` is atomic on a shared
  * filesystem; the pointer swap renames a temp symlink over `current`, atomic on
  * POSIX with no window where `current` is absent. Idempotent: if the version dir
- * already exists with the SAME bundle + track set (a re-pull of the same
- * version), the staging dir is discarded and only the pointer is (re)affirmed.
- * When the metas differ (e.g. a core→full upgrade at an unchanged published
- * version), the existing tree is replaced — keeping it would re-point `current`
- * at stale content while claiming the new bundle.
+ * already exists with the SAME track set (a re-pull of the same version), the
+ * staging dir is discarded and only the pointer is (re)affirmed. When the metas
+ * differ (e.g. a local rebuild at an unchanged version name), the existing tree
+ * is replaced — keeping it would re-point `current` at stale content.
  */
 export async function activate(root: string, version: string, staging: string): Promise<Result<void, StoreError>> {
     // Guard BEFORE any promotion: never activate a staging tree whose own meta.json is
@@ -279,7 +276,7 @@ export async function activate(root: string, version: string, staging: string): 
 
 /**
  * Whether an existing version dir already carries what the (already-validated)
- * staged meta describes, judged by the bundle + track set. An unreadable meta on
+ * staged meta describes, judged by the arch + track set. An unreadable meta on
  * the EXISTING side counts as a mismatch: the staging tree just passed
  * verification, so replacing an unverifiable existing tree is the safe call. The
  * staged side is guaranteed non-null by {@link activate}'s pre-promotion guard.
@@ -287,7 +284,7 @@ export async function activate(root: string, version: string, staging: string): 
 async function sameStoreContent(staged: StoreMeta, vdir: string): Promise<boolean> {
     const existing = await readMeta(vdir);
     if (existing === null) return false;
-    return staged.bundle === existing.bundle && staged.tracks.length === existing.tracks.length && staged.tracks.every((t) => existing.tracks.includes(t));
+    return staged.arch === existing.arch && staged.tracks.length === existing.tracks.length && staged.tracks.every((t) => existing.tracks.includes(t));
 }
 
 /** Discard a staging dir (best-effort cleanup of a failed/cancelled pull, or the no-op after a successful activate consumed it). */

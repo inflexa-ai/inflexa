@@ -46,12 +46,11 @@ Analyses run against a shared, read-only **library store** (R / Python / conda /
 
 | Command | Does |
 |-|-|
-| `inflexa libs pull [full\|core]` | Download and atomically activate a bundle (defaults to `full` on amd64, `core` on arm64) |
-| `inflexa libs status` | Show the active bundle, version, architecture, present tracks, and whether an update is available |
-| `inflexa libs list` | List the bundles resolvable for this machine's architecture |
+| `inflexa libs pull` | Download and atomically activate the store for this machine's architecture (the full R stack on amd64; Python + conda on arm64, where R is not yet built) |
+| `inflexa libs status` | Show the active version, architecture, present tracks, and whether an update is available |
 
-`inflexa libs pull` also runs during `inflexa setup` (a full/core prompt), and a missing store is offered — never required — before a sandbox launch (the harness degrades to "packages not available"). Flags: `--core` / `--full` override the bundle, `--version <V>` targets a specific published version instead of `latest`, `--yes` skips the size confirmation.
+`inflexa libs pull` also runs during `inflexa setup`, and a missing store is offered — never required — before a sandbox launch (the harness degrades to "packages not available"). Flags: `--pin <V>` targets a specific published version instead of `latest`, `--yes` skips the size confirmation.
 
-- **Store location** — `<data dir>/inflexa/libs/` (e.g. `~/.local/share/inflexa/libs/`), a versioned tree with a `current` symlink; see the Paths table in `inflexa --help`. The harness bind-mounts it read-only only once `current` exists.
+- **Store location** — `<data dir>/inflexa/libs/` (e.g. `~/.local/share/inflexa/libs/`), a versioned tree with a `current` symlink; see the Paths table in `inflexa --help`. The harness bind-mounts it read-only only once `current` exists, and forces sandbox containers onto the store's recorded architecture.
 - **`INFLEXA_LIB_STORE_URL`** — overrides the published-store base URL (default: the public bucket; anonymous GET, no credentials).
-- The pull is content-addressed and dedup-aware: unchanged tracks transfer zero bytes. The build pipeline's release validation ("Gate 2") pulls a candidate version through this same handler via `--version` before promoting `latest`.
+- The pull is content-addressed and dedup-aware: unchanged tracks transfer zero bytes. The build pipeline's release validation ("Gate 2") pulls a candidate version through this same handler via `--pin` before promoting `latest`.

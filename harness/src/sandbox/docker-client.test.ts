@@ -41,6 +41,9 @@ interface CreatedContainer {
     env: string[];
     binds: string[];
     workingDir?: string;
+    platform?: string;
+    /** Whether the `platform` key was present at all on createOpts — the config-unset case must OMIT it, not pass undefined. */
+    hasPlatformKey: boolean;
 }
 
 function stubDocker(): {
@@ -83,12 +86,14 @@ function stubDocker(): {
     });
 
     const docker = {
-        createContainer: async (opts: { name: string; Env: string[]; WorkingDir?: string; HostConfig?: { Binds?: string[] } }) => {
+        createContainer: async (opts: { name: string; Env: string[]; WorkingDir?: string; platform?: string; HostConfig?: { Binds?: string[] } }) => {
             created.push({
                 name: opts.name,
                 env: opts.Env,
                 binds: opts.HostConfig?.Binds ?? [],
                 workingDir: opts.WorkingDir,
+                platform: opts.platform,
+                hasPlatformKey: Object.prototype.hasOwnProperty.call(opts, "platform"),
             });
             return makeContainer(opts.name);
         },
@@ -196,6 +201,53 @@ describe("docker createSandbox / teardown / isAlive", () => {
         expect(envMap.R_LIBS_SITE).toBeUndefined();
         expect(envMap.NODE_PATH).toBeUndefined();
         expect(envMap.PROVENANCE_WATCH_DIRS).toBe("/an-1");
+    });
+
+    test("forwards the configured platform into createContainer options", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            sessionsBasePath: "/sessions",
+            platform: "linux/arm64",
+            docker,
+            fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        expect(created[0]!.hasPlatformKey).toBe(true);
+        expect(created[0]!.platform).toBe("linux/arm64");
+    });
+
+    test("omits the platform key entirely when no platform is configured", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            sessionsBasePath: "/sessions",
+            docker,
+            fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        // Absent, not `platform: undefined` — the source spreads the key only when set, so a
+        // default-platform host lets dockerode/Docker pick the daemon's native arch.
+        expect(created[0]!.hasPlatformKey).toBe(false);
+        expect(created[0]!.platform).toBeUndefined();
     });
 
     test("readOnly omits the rw step bind and pins WorkingDir to the RO tree", async () => {

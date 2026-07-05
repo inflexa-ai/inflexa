@@ -11,7 +11,7 @@ It derives its work from the mounted packages.txt, not a hardcoded list:
                   loadable-but-unadvertised packages are tolerated, not flagged.
   2. anchors      a curated real operation for the compiled anchor packages
                   (registry: anchors.json + anchors/*), filtered to this arch and
-                  to the tracks actually present in the mounted bundle.
+                  to the tracks actually present in the mounted store.
   3. r-examples   (opt-in, --r-examples) each R package's own examples via
                   tools::testInstalledPackage, with a network/\\donttest denylist.
 
@@ -213,10 +213,10 @@ def run_anchors(advertised: set[str], this_arch: str) -> list[str]:
             print(f"  skip anchor {name}: not built for {this_arch}")
             continue
         if canonical(name) not in advertised_canon:
-            # Legitimately absent from this bundle (e.g. an R anchor under a core
-            # bundle): skip WITHOUT counting it — a not-run anchor is neither a
-            # pass nor a fail.
-            print(f"  skip anchor {name}: not advertised in this bundle")
+            # Legitimately absent from this store (e.g. an R anchor on arm64):
+            # skip WITHOUT counting it — a not-run anchor is neither a pass nor
+            # a fail.
+            print(f"  skip anchor {name}: not advertised in this store")
             continue
         ran += 1
         op = SUITE_DIR / "anchors" / a["op"]

@@ -7,7 +7,7 @@ TBD - created by archiving change add-lib-store-bundles-and-validation. Update P
 
 The build SHALL package the library store as one tarball per **track** —
 `cran`, `bioconductor`, `github`, `python`, `conda`, `node` — rather than one
-combined bundle. Each track tarball SHALL carry its own `packages.txt` fragment
+combined archive. Each track tarball SHALL carry its own `packages.txt` fragment
 listing that track's contents. The set of track tarballs produced SHALL depend
 on the target architecture: `linux/amd64` SHALL produce all six; `linux/arm64`
 SHALL produce only the non-R tracks (`python`, `conda`, `node`).
@@ -22,24 +22,23 @@ SHALL produce only the non-R tracks (`python`, `conda`, `node`).
 - **WHEN** the build runs for `linux/arm64`
 - **THEN** it produces only `python`, `conda`, and `node` track tarballs, and no `cran`/`bioconductor`/`github` tarballs exist for that arch
 
-### Requirement: A bundle is a named selection of tracks
+### Requirement: Each architecture publishes one fixed track set
 
-A **bundle** SHALL be a named set of tracks resolved at download time, not a
-build artifact. The system SHALL define `python-conda` = `{python, conda, node}`
-and `python-r-conda` = `{python, conda, node, cran, bioconductor, github}`. The
-R tracks (`cran`, `bioconductor`, `github`) SHALL be selected together or not at
-all, because they share one R library path and form a dependency chain. Because
-arm64 has no R tarballs, only `python-conda` SHALL be resolvable on arm64.
+The store SHALL be per-architecture: each arch's manifest SHALL pin exactly the
+tracks built for that arch — all six on `linux/amd64`; `python`, `conda`,
+`node` on `linux/arm64`. There SHALL be no client-selectable bundle. The R
+tracks (`cran`, `bioconductor`, `github`) SHALL travel together or not at all,
+because they share one R library path and form a dependency chain.
 
-#### Scenario: Full bundle pulls the R triple as a unit
+#### Scenario: The amd64 manifest pins the R triple as a unit
 
-- **WHEN** a client resolves `python-r-conda`
-- **THEN** it pulls `cran`, `bioconductor`, and `github` together with `python`, `conda`, and `node`
+- **WHEN** a client resolves the `linux/amd64` manifest
+- **THEN** it pins `cran`, `bioconductor`, and `github` together with `python`, `conda`, and `node`
 
-#### Scenario: Full bundle is unavailable on arm64
+#### Scenario: The arm64 manifest carries no R tracks
 
-- **WHEN** a client resolves `python-r-conda` for `linux/arm64`
-- **THEN** resolution fails (no R tarballs are published for arm64) and only `python-conda` is offered
+- **WHEN** a client resolves the `linux/arm64` manifest
+- **THEN** it pins only `python`, `conda`, and `node` (no R tarballs are published for arm64)
 
 ### Requirement: packages.txt derives from the verified-loadable set
 
@@ -58,19 +57,19 @@ package that failed to load.
 
 #### Scenario: The mounted packages.txt is the concatenation of pulled tracks
 
-- **WHEN** a client pulls a bundle and assembles the store
+- **WHEN** a client pulls a store and assembles it
 - **THEN** `/mnt/libs/current/packages.txt` is the concatenation of exactly the pulled tracks' fragments
 
 ### Requirement: Builds publish immutable versions selected by a manifest
 
 Each build SHALL publish its track tarballs to a write-once, versioned path
 (`<version>/linux-<arch>/<track>.tar.zst`) that SHALL never be rewritten. For
-each bundle × arch the build SHALL write a **manifest** pinning each track's
-tarball — by a store-relative `path` (so a client joins it onto its own resolved
-base and a mirror redirects payload downloads, not only the manifest) plus an
-absolute `url` for compatibility — and its content digest. Clients SHALL resolve
-a bundle through its manifest and MAY skip re-pulling any track whose digest they
-already hold.
+each arch the build SHALL write a **manifest** pinning each track's tarball —
+by a store-relative `path` (so a client joins it onto its own resolved base and
+a mirror redirects payload downloads, not only the manifest) plus an absolute
+`url` for compatibility — and its content digest. Clients SHALL resolve their
+arch's manifest and MAY skip re-pulling any track whose digest they already
+hold.
 
 #### Scenario: A published version is never mutated
 
@@ -113,20 +112,20 @@ end user runs, and SHALL run: `import`/`library()`/`require()` for **every**
 advertised package; a curated real operation for the compiled anchor packages; a
 network-filtered pass of R packages' own examples; and a check that the
 advertised `packages.txt` equals the actually-loadable set. Only when Gate 2 is
-green SHALL the `latest/<bundle>/<arch>` pointer be advanced to that version. A
-red Gate 2 SHALL leave `latest` unchanged and surface a failing status.
+green SHALL the `latest/<arch>` pointer be advanced to that version. A red
+Gate 2 SHALL leave `latest` unchanged and surface a failing status.
 
 #### Scenario: Green validation promotes latest
 
 - **GIVEN** a freshly published version whose Gate 2 run is green
 - **WHEN** validation completes
-- **THEN** `latest/<bundle>/<arch>` is advanced to that version
+- **THEN** `latest/<arch>` is advanced to that version
 
 #### Scenario: Red validation does not promote
 
 - **GIVEN** a freshly published version whose Gate 2 run is red
 - **WHEN** validation completes
-- **THEN** `latest/<bundle>/<arch>` still points at the previous validated version and the run reports failure
+- **THEN** `latest/<arch>` still points at the previous validated version and the run reports failure
 
 #### Scenario: The validator pulls as a user does
 

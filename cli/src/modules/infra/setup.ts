@@ -1,7 +1,7 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { intro, outro, isCancel, log, note, select as clackSelect, spinner as clackSpinner } from "@clack/prompts";
+import { intro, outro, log, note, spinner as clackSpinner } from "@clack/prompts";
 import { type Result, ok, err } from "neverthrow";
 import { activeRuntime, readConfig, resolvePostgresConfig, writeConfig } from "../../lib/config.ts";
 import { ensureReady, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
@@ -168,11 +168,9 @@ export async function setup(options: SetupOptions): Promise<void> {
 
         // --- library store ---
         // Provision the sandbox package store through the SAME handler as
-        // `inflexa libs pull` (design: one dogfooded path). One `select()`
-        // (full/core; core-only + a note on arm64), then the handler inside a
-        // spinner. Non-interactive → the arch-default bundle, no prompt. A pull
-        // failure warns and continues — the store is an offer, not a hard
-        // prerequisite (a missing store degrades to `available:false`).
+        // `inflexa libs pull` (design: one dogfooded path). A pull failure warns
+        // and continues — the store is an offer, not a hard prerequisite (a
+        // missing store degrades to `available:false`).
         await runLibStoreSetup();
 
         printNextSteps(options, pgConn);
@@ -185,19 +183,19 @@ export async function setup(options: SetupOptions): Promise<void> {
 
 /**
  * Provision the sandbox library store as part of `inflexa setup`. Reuses the
- * `libsPull` handler (never a second download path); on arm64 only the core stack
- * is offered, with a `note()` explaining R's absence. The store can be multiple
- * GB, so provisioning is gated on explicit consent:
- *   - Interactive: pick a stack, then hand off to `libsPull` LEFT interactive so it
- *     shows the planned download size, confirms before the transfer, and owns its
- *     own spinner (we do NOT re-implement the plan/size machinery here).
+ * `libsPull` handler (never a second download path); the store is per-arch —
+ * there is nothing to choose. The store can be multiple GB, so provisioning is
+ * gated on explicit consent:
+ *   - Interactive: hand off to `libsPull` LEFT interactive so it shows the
+ *     planned download size, confirms before the transfer, and owns its own
+ *     spinner (we do NOT re-implement the plan/size machinery here).
  *   - Non-interactive: do NOT auto-download — a headless run must never silently
  *     pull GBs. Print a hint to the explicit command and continue.
- * Every branch is non-fatal (cancel, decline, failure, unknown arch): the store is
- * an offer, not a prerequisite — a missing store degrades to `available:false`.
+ * Every branch is non-fatal (decline, failure, unknown arch): the store is an
+ * offer, not a prerequisite — a missing store degrades to `available:false`.
  */
 async function runLibStoreSetup(): Promise<void> {
-    const { ARM64_NO_R_REASON, detectArch, resolvableBundles } = await import("../libs/bundles.ts");
+    const { ARM64_NO_R_REASON, detectArch } = await import("../libs/arch.ts");
     const arch = detectArch();
     if (arch === null) {
         log.warn("Skipping the library store — could not detect a supported architecture (expected x86_64 or aarch64).");
@@ -213,34 +211,12 @@ async function runLibStoreSetup(): Promise<void> {
 
     if (arch === "linux-arm64") note(ARM64_NO_R_REASON, "Library store");
 
-    let bundle: "full" | "core";
-    const available = resolvableBundles(arch);
-    if (available.length === 1) {
-        bundle = available[0]!;
-    } else {
-        // Cancel-tolerant: this is an OPTIONAL setup step. Esc/Ctrl-C skips the store
-        // and lets setup finish; it must NOT hard-exit the wizard the way lib/cli.ts's
-        // `select` does (that `fail()`s the whole process on cancel).
-        const chosen = await clackSelect({
-            message: "Library stack",
-            options: [
-                { value: "full", label: "Full (Python + R + conda, recommended)" },
-                { value: "core", label: "Core (Python + conda, smaller)" },
-            ],
-        });
-        if (isCancel(chosen)) {
-            note("Skipped the library store. Run `inflexa libs pull` later to provision it.", "Library store");
-            return;
-        }
-        bundle = chosen === "core" ? "core" : "full";
-    }
-
     // libsPull owns the size confirmation + spinner when left interactive.
     const { libsPull } = await import("../libs/pull.ts");
-    (await libsPull(bundle)).match(
+    (await libsPull()).match(
         (outcome) => {
             // `activated` already announced by libsPull's own spinner — no second message.
-            if (outcome.type === "up_to_date") log.success(`Library store already up to date (${outcome.bundle} @ ${outcome.version}).`);
+            if (outcome.type === "up_to_date") log.success(`Library store already up to date (${outcome.version}).`);
             else if (outcome.type === "declined") log.info("Library store skipped. Run `inflexa libs pull` later to provision it.");
         },
         (error) =>

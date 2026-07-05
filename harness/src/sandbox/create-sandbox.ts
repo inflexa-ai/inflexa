@@ -63,6 +63,8 @@ export interface CreateSandboxClientConfig {
     libStorePath?: string;
     /** Docker: host dir bind-mounted read-only at `/mnt/refs`. */
     refStorePath?: string;
+    /** Docker: force the container platform (e.g. `linux/amd64`) so the sandbox matches the mounted lib store's arch. */
+    platform?: string;
     /** K8s: PVC claim backing the session-tree volume. */
     sessionPvc?: string;
     /** K8s: PVC claim mounted read-only at `/mnt/libs`. */
@@ -109,6 +111,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   sessionsBasePath: config.sessionsBasePath,
                   libStorePath: config.libStorePath,
                   refStorePath: config.refStorePath,
+                  platform: config.platform,
                   registerSandbox,
               });
 

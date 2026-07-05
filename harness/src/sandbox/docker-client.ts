@@ -46,6 +46,13 @@ export interface DockerClientConfig {
     libStorePath?: string;
     /** Host ref store; bind-mounted read-only at `/mnt/refs` when set. */
     refStorePath?: string;
+    /**
+     * Force the container platform (e.g. `linux/amd64`). Set by hosts that mount
+     * a lib store so the container's arch always matches the store's native
+     * binaries; a local image built for a different arch then fails loudly at
+     * create rather than crashing inside the sandbox.
+     */
+    platform?: string;
     /** Injected for tests. */
     docker?: Docker;
     /** Injected for tests so `/health` polling can be stubbed. */
@@ -140,6 +147,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     const spec = meta.resources;
                     const createOpts: Docker.ContainerCreateOptions = {
                         name: sandboxId,
+                        ...(config.platform !== undefined && { platform: config.platform }),
                         Image: meta.image ?? config.image,
                         Env: env,
                         WorkingDir: plan.workingDir,

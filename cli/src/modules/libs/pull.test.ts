@@ -8,7 +8,7 @@ import { writeConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { sha256File } from "../../lib/hash.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
-import { detectArch, TRACK_SUBTREE, type Track } from "./bundles.ts";
+import { detectArch, TRACK_SUBTREE, type Track } from "./arch.ts";
 import { type TrackEntry } from "./manifest.ts";
 import { countPackages, libsPull } from "./pull.ts";
 import { readActive } from "./store.ts";
@@ -26,11 +26,14 @@ async function stagingLeftovers(root: string): Promise<string[]> {
 // failing the suite loudly rather than silently skipping it.
 const arch = detectArch() ?? "linux-amd64";
 
-/** Track sets mirroring bundles.ts (deliberately restated: the values are the contract under test). */
 const CORE_TRACKS: readonly Track[] = ["python", "conda", "node"];
 const FULL_TRACKS: readonly Track[] = ["python", "conda", "node", "cran", "bioconductor", "github"];
-/** User bundle → published manifest URL segment (the contract from design.md). */
-const MANIFEST_BUNDLE = { core: "python-conda", full: "python-r-conda" } as const;
+/**
+ * The tracks THIS host's published manifest pins: amd64 ships the full R + Python +
+ * conda stack, arm64 the non-R tracks only (mirrors lib_store_arch_tracks in the shell).
+ * The pull downloads exactly what the arch's manifest names, so the fixture pins these.
+ */
+const ARCH_TRACKS: readonly Track[] = arch === "linux-arm64" ? CORE_TRACKS : FULL_TRACKS;
 
 let server: ReturnType<typeof Bun.serve>;
 let baseUrl: string;
@@ -115,14 +118,14 @@ type PublishOptions = {
 };
 
 /**
- * Publish a fixture version to the local "bucket": one zstd tarball per track a
- * requested bundle needs, plus a `latest` manifest per bundle pinning url/sha256/size.
+ * Publish a fixture version to the local "bucket": one zstd tarball per track this
+ * arch's store carries, plus the arch's `latest` manifest pinning url/sha256/size.
+ * The published store is strictly per-architecture — one manifest per arch pins the
+ * tracks built there — so there is no bundle segment in the URL anymore.
  */
-async function publishVersion(version: string, bundles: readonly ("core" | "full")[], opts: PublishOptions = {}): Promise<void> {
-    const tracks = bundles.includes("full") ? FULL_TRACKS : CORE_TRACKS;
-
+async function publishVersion(version: string, opts: PublishOptions = {}): Promise<void> {
     const entries: Partial<Record<Track, TrackEntry>> = {};
-    for (const track of tracks) {
+    for (const track of ARCH_TRACKS) {
         // Mirror the PRODUCER tarball layout (scripts/lib-store-pack.sh, via
         // lib_store_track_members): each track packs its SUBTREE already prefixed
         // (e.g. `r/cran/…`) PLUS a ROOT-LEVEL `<track>.packages.txt` fragment — NOT a
@@ -156,43 +159,39 @@ async function publishVersion(version: string, bundles: readonly ("core" | "full
         entries[track] = { path, url, sha256, size: Bun.file(tarball).size };
     }
 
-    for (const bundle of bundles) {
-        const bundleTracks = bundle === "full" ? FULL_TRACKS : CORE_TRACKS;
-        const manifest = { version, tracks: Object.fromEntries(bundleTracks.map((t) => [t, entries[t]])) };
-        const manifestPath = join(publishDir, "latest", MANIFEST_BUNDLE[bundle], arch, "manifest.json");
-        await mkdir(join(publishDir, "latest", MANIFEST_BUNDLE[bundle], arch), { recursive: true });
-        await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
-    }
+    const manifest = { version, tracks: Object.fromEntries(ARCH_TRACKS.map((t) => [t, entries[t]])) };
+    await mkdir(join(publishDir, "latest", arch), { recursive: true });
+    await writeFile(join(publishDir, "latest", arch, "manifest.json"), JSON.stringify(manifest, null, 2));
 }
 
 describe("libsPull against a local published store", () => {
     test("assembled packages.txt is the advisory header plus the concatenation of the pulled tracks' fragments", async () => {
-        await publishVersion("2026.07.04-aaa", ["core"]);
+        await publishVersion("2026.07.04-aaa");
 
-        const outcome = (await libsPull("core", { quiet: true, yes: true }))._unsafeUnwrap();
+        const outcome = (await libsPull({ quiet: true, yes: true }))._unsafeUnwrap();
         expect(outcome.type).toBe("activated");
 
-        const expected = assembledPackages(CORE_TRACKS, "2026.07.04-aaa");
+        const expected = assembledPackages(ARCH_TRACKS, "2026.07.04-aaa");
         expect(await Bun.file(join(storeRoot, "current", "packages.txt")).text()).toBe(expected);
     }, 20_000);
 
     test("re-pull when already up to date is a no-op with nothing on the wire", async () => {
-        await publishVersion("2026.07.04-aaa", ["core"]);
-        expect((await libsPull("core", { quiet: true, yes: true }))._unsafeUnwrap().type).toBe("activated");
+        await publishVersion("2026.07.04-aaa");
+        expect((await libsPull({ quiet: true, yes: true }))._unsafeUnwrap().type).toBe("activated");
 
         requests = [];
-        const outcome = (await libsPull("core", { quiet: true, yes: true }))._unsafeUnwrap();
-        expect(outcome).toEqual({ type: "up_to_date", version: "2026.07.04-aaa", bundle: "core" });
+        const outcome = (await libsPull({ quiet: true, yes: true }))._unsafeUnwrap();
+        expect(outcome).toEqual({ type: "up_to_date", version: "2026.07.04-aaa" });
         // Only the manifest is consulted; no tarball transfers.
         expect(requests.filter((p) => p.endsWith(".tar.zst"))).toEqual([]);
     }, 20_000);
 
     test("a checksum mismatch fails loud and leaves current untouched", async () => {
-        await publishVersion("2026.07.04-aaa", ["core"]);
-        expect((await libsPull("core", { quiet: true, yes: true }))._unsafeUnwrap().type).toBe("activated");
+        await publishVersion("2026.07.04-aaa");
+        expect((await libsPull({ quiet: true, yes: true }))._unsafeUnwrap().type).toBe("activated");
 
-        await publishVersion("2026.07.05-bbb", ["core"], { tamperSha: "python" });
-        const error = (await libsPull("core", { quiet: true, yes: true }))._unsafeUnwrapErr();
+        await publishVersion("2026.07.05-bbb", { tamperSha: "python" });
+        const error = (await libsPull({ quiet: true, yes: true }))._unsafeUnwrapErr();
         expect(error.type).toBe("checksum_mismatch");
 
         const active = (await readActive(storeRoot))._unsafeUnwrap();
@@ -201,32 +200,10 @@ describe("libsPull against a local published store", () => {
         expect(await stagingLeftovers(storeRoot)).toEqual([]);
     }, 20_000);
 
-    // full is only resolvable on amd64 (arm64 downgrades it to core), so the
-    // upgrade scenario is exercised where it can actually occur.
-    test.if(arch === "linux-amd64")(
-        "upgrading core→full at the same published version replaces the stale core tree",
-        async () => {
-            await publishVersion("2026.07.04-aaa", ["core", "full"]);
-            expect((await libsPull("core", { quiet: true, yes: true }))._unsafeUnwrap().type).toBe("activated");
-            expect(existsSync(join(storeRoot, "current", TRACK_SUBTREE.cran))).toBe(false);
-
-            const outcome = (await libsPull("full", { quiet: true, yes: true }))._unsafeUnwrap();
-            expect(outcome.type).toBe("activated");
-
-            const active = (await readActive(storeRoot))._unsafeUnwrap();
-            expect(active?.version).toBe("2026.07.04-aaa");
-            expect(active?.meta?.bundle).toBe("full");
-            expect(existsSync(join(storeRoot, "current", TRACK_SUBTREE.cran))).toBe(true);
-            const expected = assembledPackages(FULL_TRACKS, "2026.07.04-aaa");
-            expect(await Bun.file(join(storeRoot, "current", "packages.txt")).text()).toBe(expected);
-        },
-        20_000,
-    );
-
     test("a pulled track missing its packages.txt fragment fails sanity, not silently", async () => {
-        await publishVersion("2026.07.04-aaa", ["core"], { omitFragment: "node" });
+        await publishVersion("2026.07.04-aaa", { omitFragment: "node" });
 
-        const error = (await libsPull("core", { quiet: true, yes: true }))._unsafeUnwrapErr();
+        const error = (await libsPull({ quiet: true, yes: true }))._unsafeUnwrapErr();
         expect(error.type).toBe("sanity_failed");
 
         expect((await readActive(storeRoot))._unsafeUnwrap()).toBeNull();
@@ -234,8 +211,8 @@ describe("libsPull against a local published store", () => {
     }, 20_000);
 
     test("the activated tree lands each track at its mount-plan subtree, un-nested, with the fragment at the root", async () => {
-        await publishVersion("2026.07.04-aaa", ["core"]);
-        expect((await libsPull("core", { quiet: true, yes: true }))._unsafeUnwrap().type).toBe("activated");
+        await publishVersion("2026.07.04-aaa");
+        expect((await libsPull({ quiet: true, yes: true }))._unsafeUnwrap().type).toBe("activated");
 
         const current = join(storeRoot, "current");
         // Subtree lands at exactly TRACK_SUBTREE[track] (what mount-plan.ts hard-codes),
@@ -254,15 +231,15 @@ describe("libsPull against a local published store", () => {
     test("payload downloads honor the mirror base via the manifest `path`, not the baked absolute url (finding 5)", async () => {
         // Absolute `url`s point at an unreachable host; only the relative `path` joined onto
         // the configured mirror base (libStoreUrl = baseUrl) can resolve the tarballs.
-        await publishVersion("2026.07.04-aaa", ["core"], { deadUrls: true });
+        await publishVersion("2026.07.04-aaa", { deadUrls: true });
 
-        const outcome = (await libsPull("core", { quiet: true, yes: true }))._unsafeUnwrap();
+        const outcome = (await libsPull({ quiet: true, yes: true }))._unsafeUnwrap();
         expect(outcome.type).toBe("activated");
         expect((await readActive(storeRoot))._unsafeUnwrap()?.version).toBe("2026.07.04-aaa");
     }, 20_000);
 
     test("a concurrent pull holding the pull lock is refused with pull_in_progress, mutating nothing", async () => {
-        await publishVersion("2026.07.04-aaa", ["core"]);
+        await publishVersion("2026.07.04-aaa");
 
         // Stand in for another `inflexa` process mid-pull: seed the machine-wide lock
         // (lib/lock.ts) with a live FOREIGN pid. Pid 1 probes as EPERM, which the lock
@@ -271,7 +248,7 @@ describe("libsPull against a local published store", () => {
         await mkdir(env.locksDir, { recursive: true });
         await writeFile(lockPath, "1");
         try {
-            const error = (await libsPull("core", { quiet: true, yes: true }))._unsafeUnwrapErr();
+            const error = (await libsPull({ quiet: true, yes: true }))._unsafeUnwrapErr();
             expect(error.type).toBe("pull_in_progress");
             // The store is untouched — no `current`, no staging debris, nothing on the wire.
             expect((await readActive(storeRoot))._unsafeUnwrap()).toBeNull();
@@ -282,7 +259,7 @@ describe("libsPull against a local published store", () => {
         }
 
         // Once the holder releases, a pull proceeds normally.
-        expect((await libsPull("core", { quiet: true, yes: true }))._unsafeUnwrap().type).toBe("activated");
+        expect((await libsPull({ quiet: true, yes: true }))._unsafeUnwrap().type).toBe("activated");
     }, 20_000);
 });
 
@@ -326,12 +303,13 @@ describe("packages.txt byte-identity with the shell assembler (scripts/lib-store
                 await writeFile(join(staging, `${track}.packages.txt`), fragText[track]!);
             }
 
-            // pack.sh → per-track tarballs; assemble.sh → the reference packages.txt.
+            // pack.sh → per-track tarballs; assemble.sh → the reference packages.txt. The
+            // assembler's interface is positional now: `"<t1 t2 ...>" <dist> <current>`.
             const dist = await mkdtemp(join(tmpdir(), "libshelldist-"));
             expect(await Bun.spawn(["bash", join(scriptsDir, "lib-store-pack.sh"), staging, dist], { stdout: "ignore", stderr: "inherit" }).exited).toBe(0);
             const shellCurrent = join(await mkdtemp(join(tmpdir(), "libshellcur-")), "current");
             expect(
-                await Bun.spawn(["bash", join(scriptsDir, "lib-store-assemble.sh"), "--tracks", shellTracks.join(" "), dist, shellCurrent], {
+                await Bun.spawn(["bash", join(scriptsDir, "lib-store-assemble.sh"), shellTracks.join(" "), dist, shellCurrent], {
                     stdout: "ignore",
                     stderr: "inherit",
                 }).exited,
@@ -351,10 +329,10 @@ describe("packages.txt byte-identity with the shell assembler (scripts/lib-store
                 };
             }
             const manifest = { version, tracks: Object.fromEntries(shellTracks.map((t) => [t, entries[t]])) };
-            await mkdir(join(publishDir, "latest", MANIFEST_BUNDLE.core, arch), { recursive: true });
-            await writeFile(join(publishDir, "latest", MANIFEST_BUNDLE.core, arch, "manifest.json"), JSON.stringify(manifest, null, 2));
+            await mkdir(join(publishDir, "latest", arch), { recursive: true });
+            await writeFile(join(publishDir, "latest", arch, "manifest.json"), JSON.stringify(manifest, null, 2));
 
-            expect((await libsPull("core", { quiet: true, yes: true }))._unsafeUnwrap().type).toBe("activated");
+            expect((await libsPull({ quiet: true, yes: true }))._unsafeUnwrap().type).toBe("activated");
             const pulled = await Bun.file(join(storeRoot, "current", "packages.txt")).text();
             expect(pulled).toBe(shellPackages);
             // Byte-identity extends to the WHOLE tree: no `.pull.pid` (or any dotfile) debris
