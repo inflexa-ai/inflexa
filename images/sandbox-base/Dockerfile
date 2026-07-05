@@ -48,6 +48,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pigz parallel p7zip-full \
     # SSL / networking / XML
     libffi8 libssl3t64 libxml2 libcurl4 libgit2-1.7 \
+    # Async event loop (r-cran-fs → libuv, pulls in usethis/devtools/…) + protobuf
+    # (r-cran-otelsdk OTLP export). r2u links these against the system libs, so the
+    # runtime must ship them or fs/otelsdk fail dyn.load and cascade to their dependents.
+    libuv1t64 libprotobuf32t64 \
     # HDF5 / array / scientific IO / linear programming
     libhdf5-103-1t64 libnetcdf19t64 libopenblas0 liblapack3 libfftw3-double3 \
     libglpk40 \

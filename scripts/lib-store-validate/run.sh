@@ -46,9 +46,15 @@ echo "Validating store at $LIB_PATH/current in $IMAGE ..."
 # R_LIBS_SITE / NODE_PATH / conda-bin PATH injected, PYTHONPATH ABSENT (system
 # Python resolves the store via sandbox-base's .pth file). A subset of R
 # subtrees present is harmless — nonexistent libpaths are ignored.
+#
+# A writable /mnt/refs stub stands in for the ref-store mount the runtime always
+# provides: some packages probe $CELLTYPIST_FOLDER=/mnt/refs/... at IMPORT
+# (celltypist mkdir(exist_ok=True)), so without the mountpoint import-all false-fails
+# on a ref-store dependency that has nothing to do with lib-store loadability.
 docker run --rm \
   -v "$LIB_PATH:/mnt/libs:ro" \
   -v "$SUITE_DIR:/opt/lib-store-validate:ro" \
+  --tmpfs /mnt/refs \
   -e R_LIBS_SITE="/mnt/libs/current/r/github:/mnt/libs/current/r/bioconductor:/mnt/libs/current/r/cran" \
   -e NODE_PATH="/mnt/libs/current/node/node_modules" \
   -e PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mnt/libs/current/conda/bin" \
