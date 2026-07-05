@@ -164,7 +164,10 @@ jobs:
             docker pull "${{ vars.SANDBOX_BASE_IMAGE }}"
             docker tag "${{ vars.SANDBOX_BASE_IMAGE }}" sandbox-base:latest
           elif ! docker image inspect sandbox-base:latest >/dev/null 2>&1; then
-            docker build --platform "linux/${ARCH}" -t sandbox-base:latest images/sandbox-base
+            # Context is the repo ROOT (with -f) — the Dockerfile's COPY sources are
+            # repo-root-relative (images/sandbox-base/server, images/sandbox-base/provenance),
+            # so a context of images/sandbox-base can't resolve them.
+            docker build --platform "linux/${ARCH}" -f images/sandbox-base/Dockerfile -t sandbox-base:latest .
           fi
 
       # --- Gate 2: pull as a user, mount, run the suite, promote on green ----
