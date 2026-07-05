@@ -63,13 +63,26 @@ def canonical(name: str) -> str:
 
 
 def parse_packages_txt(path: Path) -> dict[str, list[str]]:
-    """Return {ecosystem: [names]} parsed from the mounted packages.txt."""
+    """Return {ecosystem: [names]} parsed from the mounted packages.txt.
+
+    Raises ValueError on a ``## <title>`` header that maps to no known ecosystem.
+    Silently dropping such a section (the old behavior) would remove every package
+    under it from the ``advertised`` set — turning the advertised ⊆ loadable gate
+    into a no-op for that track whenever a producer header drifts from
+    SECTION_ECOSYSTEM. Fail loud so a header drift is caught, not ignored."""
     out: dict[str, list[str]] = {"r": [], "python": [], "node": [], "conda": []}
     eco: str | None = None
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if line.startswith("## "):
-            eco = SECTION_ECOSYSTEM.get(line[3:].strip())
+            title = line[3:].strip()
+            eco = SECTION_ECOSYSTEM.get(title)
+            if eco is None:
+                raise ValueError(
+                    f"unrecognized section header '## {title}' in packages.txt "
+                    f"(known: {sorted(SECTION_ECOSYSTEM)}). A producer header drifted "
+                    f"from SECTION_ECOSYSTEM — update the mapping or fix the header."
+                )
             continue
         if not line or line.startswith("#"):
             continue
@@ -268,7 +281,14 @@ def main() -> int:
         return 2
 
     this_arch = arch()
-    pkgs = parse_packages_txt(PACKAGES_TXT)
+    try:
+        pkgs = parse_packages_txt(PACKAGES_TXT)
+    except ValueError as e:
+        # A drifted/unrecognized section header is a hard config error, not a package
+        # failure — the gate cannot trust "advertised ⊆ loadable" when a whole section
+        # was unparseable. Block promotion loudly.
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
     advertised = {n for names in pkgs.values() for n in names}
     print(f"=== lib-store validation ({this_arch}) — {len(advertised)} advertised packages ===")
 

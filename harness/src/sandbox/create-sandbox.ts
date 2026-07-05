@@ -17,6 +17,7 @@ import { join } from "node:path";
 
 import type { V1Toleration } from "@kubernetes/client-node";
 import type { Pool } from "pg";
+import type pino from "pino";
 
 import { clampResources, type ResourceLimits } from "../config/resource-limits.js";
 import { tryMutation } from "../lib/db-result.js";
@@ -79,6 +80,12 @@ export interface CreateSandboxClientConfig {
     runtimeClassName?: string;
     /** Override the backend selection — defaults to `env.SANDBOX_BACKEND`. */
     backend?: "docker" | "k8s";
+    /**
+     * Optional logger forwarded to the Docker backend so a lib-store degradation
+     * (a configured store whose `current` vanished/went incomplete mid-session) is
+     * observable rather than a silent mount drop. No-op when unset.
+     */
+    logger?: Pick<pino.Logger, "info" | "warn" | "error">;
     /** Injectables for tests / non-production environments. */
     submitDeps?: SubmitExecDeps;
     awaitOptions?: AwaitExecOptions;
@@ -112,6 +119,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   libStorePath: config.libStorePath,
                   refStorePath: config.refStorePath,
                   platform: config.platform,
+                  logger: config.logger,
                   registerSandbox,
               });
 

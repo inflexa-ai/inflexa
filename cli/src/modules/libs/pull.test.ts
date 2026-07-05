@@ -261,6 +261,40 @@ describe("libsPull against a local published store", () => {
         // Once the holder releases, a pull proceeds normally.
         expect((await libsPull({ quiet: true, yes: true }))._unsafeUnwrap().type).toBe("activated");
     }, 20_000);
+
+    test("two tracks sharing a sha256 download the blob once, never racing the same .part (finding 2)", async () => {
+        // ONE tarball carrying both tracks' subtrees + fragments; both manifest entries
+        // pin the SAME content-addressed sha256/path, so the blob is byte-identical.
+        // Without digest dedup, both tracks download concurrently to the same `.part`.
+        const version = "2026.07.04-shared";
+        const src = await mkdtemp(join(tmpdir(), "libshared-"));
+        const shared: Track[] = ["python", "node"];
+        for (const t of shared) {
+            await mkdir(join(src, TRACK_SUBTREE[t]), { recursive: true });
+            await writeFile(join(src, TRACK_SUBTREE[t], "payload.bin"), `payload ${t}`);
+            await writeFile(join(src, `${t}.packages.txt`), fragment(t, version));
+        }
+        const members = [TRACK_SUBTREE.python, TRACK_SUBTREE.node, "python.packages.txt", "node.packages.txt"];
+        const tarPath = `${version}/${arch}/shared.tar.zst`;
+        await mkdir(join(publishDir, version, arch), { recursive: true });
+        const tarball = join(publishDir, tarPath);
+        expect(await Bun.spawn(["tar", "--zstd", "-cf", tarball, "-C", src, ...members], { stdout: "ignore", stderr: "inherit" }).exited).toBe(0);
+        await rm(src, { recursive: true, force: true });
+
+        const sha256 = (await sha256File(tarball))._unsafeUnwrap();
+        const entry: TrackEntry = { path: tarPath, url: `${baseUrl}/${tarPath}`, sha256, size: Bun.file(tarball).size };
+        const manifest = { version, tracks: { python: entry, node: { ...entry } } };
+        await mkdir(join(publishDir, "latest", arch), { recursive: true });
+        await writeFile(join(publishDir, "latest", arch, "manifest.json"), JSON.stringify(manifest, null, 2));
+
+        expect((await libsPull({ quiet: true, yes: true }))._unsafeUnwrap().type).toBe("activated");
+        // The shared blob is fetched exactly ONCE — the digest dedup collapses the two
+        // tracks to a single download instead of two writers racing the same `.part`.
+        expect(requests.filter((p) => p.endsWith("/shared.tar.zst")).length).toBe(1);
+        // Both tracks still land (the second extracts from the same cached blob).
+        expect(existsSync(join(storeRoot, "current", "python", "payload.bin"))).toBe(true);
+        expect(existsSync(join(storeRoot, "current", "node", "payload.bin"))).toBe(true);
+    }, 20_000);
 });
 
 describe("countPackages", () => {

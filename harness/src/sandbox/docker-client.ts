@@ -12,9 +12,10 @@
  * client can sign and POST events back.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import Docker from "dockerode";
+import type pino from "pino";
 import { ResultAsync, err, ok } from "neverthrow";
 
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
@@ -57,8 +58,38 @@ export interface DockerClientConfig {
     docker?: Docker;
     /** Injected for tests so `/health` polling can be stubbed. */
     fetch?: typeof fetch;
+    /**
+     * Optional logger so the lib-store degradation path (a configured store whose
+     * `current` has vanished or gone incomplete by sandbox-create time) is observable
+     * — otherwise every subsequent sandbox silently drops the libs mount with no
+     * operator-visible signal. Matches the `reaper`/`watchdog` logger seam.
+     */
+    logger?: Pick<pino.Logger, "info" | "warn" | "error">;
     /** Hook called after the registry row is written. */
     registerSandbox: (meta: CreateSandboxMeta, ref: SandboxRef) => Promise<void>;
+}
+
+/**
+ * Whether the lib store's `current` resolves to a COMPLETE, usable version — not
+ * merely a present symlink. `config.libStorePath` is fixed at CLI boot; by
+ * sandbox-create time `current` may be gone (a concurrent prune/`rm`), a DANGLING
+ * symlink (its target version was pruned), or a present-but-incomplete tree
+ * (missing `packages.txt`/`meta.json` — a partially-extracted or corrupt store).
+ * Binding a missing source would make Docker auto-create a root-owned dir (bricking
+ * later `libs pull`); binding a broken one would mount silently-broken content into
+ * the sandbox. Require the resolved target to be a directory carrying BOTH
+ * completeness markers `activate` writes before it flips the pointer.
+ */
+function libStoreUsable(libStorePath: string): boolean {
+    const current = join(libStorePath, "current");
+    try {
+        // statSync FOLLOWS the symlink, so a dangling `current` (pruned target) throws
+        // ENOENT here and is correctly rejected rather than mounted.
+        if (!statSync(current).isDirectory()) return false;
+    } catch {
+        return false;
+    }
+    return existsSync(join(current, "packages.txt")) && existsSync(join(current, "meta.json"));
 }
 
 async function pollHealth(fetchImpl: typeof fetch, url: string, timeoutMs: number): Promise<void> {
@@ -113,15 +144,24 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                 (async () => {
                     const { sandboxId, callbackSecret } = identity;
 
-                    // Re-check the lib store's `current` pointer AT sandbox-creation time,
-                    // not just at composition. `config.libStorePath` was fixed when this
-                    // client was built (at CLI boot); if the store was deleted since (a
-                    // concurrent prune, a manual `rm`), binding a now-missing host source
-                    // would make Docker auto-create it as a root-owned empty dir — which
-                    // then bricks every later `libs pull` on the root-owned debris. When
-                    // `current` has vanished we skip the mount entirely (the sandbox degrades
-                    // to `available:false`), exactly as if no store were configured.
-                    const libsMounted = !!config.libStorePath && existsSync(join(config.libStorePath, "current"));
+                    // Re-check the lib store AT sandbox-creation time, not just at
+                    // composition. `config.libStorePath` was fixed when this client was built
+                    // (at CLI boot); by now the store may be gone (a concurrent prune, a manual
+                    // `rm`), a dangling `current`, or an incomplete tree. Binding a missing
+                    // source would make Docker auto-create a root-owned empty dir — which then
+                    // bricks every later `libs pull` on the root-owned debris; binding a broken
+                    // one would mount silently-broken content. When the store is not usable we
+                    // skip the mount entirely (the sandbox degrades to `available:false`),
+                    // exactly as if no store were configured — and log it, since an otherwise
+                    // silent drop of the libs mount for every subsequent sandbox is invisible
+                    // to operators without a signal here.
+                    const libsMounted = !!config.libStorePath && libStoreUsable(config.libStorePath);
+                    if (config.libStorePath && !libsMounted) {
+                        config.logger?.warn(
+                            { libStorePath: config.libStorePath, sandboxId },
+                            "[docker-client] lib store configured but `current` is missing or incomplete at sandbox creation — mounting no library store (sandbox degrades to available:false)",
+                        );
+                    }
 
                     const plan = buildMountPlan(meta, {
                         libs: libsMounted,
