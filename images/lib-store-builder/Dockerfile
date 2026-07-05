@@ -407,6 +407,12 @@ def modules_for(dist: str) -> list[str]:
                 if top and not top.startswith("_") and not top.endswith((".dist-info", ".data")):
                     seen.add(top)
         mods = sorted(seen)
+    if not mods:
+        # Namespace/meta dist (e.g. rpy2, whose code lives in the rpy2-rinterface /
+        # rpy2-robjects sub-dists): no top_level.txt and no own top-level module files,
+        # but the dist name itself is the importable namespace. Fall back to it — a
+        # genuinely-missing package then fails at the real import, not here.
+        mods = [dist.replace("-", "_")]
     return mods
 
 
