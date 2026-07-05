@@ -213,14 +213,11 @@ export async function libsPull(opts: PullOptions = {}): Promise<Result<PullOutco
         return err({ type: "manifest_failed", message: `Manifest for ${arch} pins no tracks — nothing to pull.` });
     }
     const tracks = plan.map((p) => p.track);
-    // Single partition pass: `hasBlob` stat()s the dedup cache, so split held vs
-    // needed in one sweep rather than filtering the plan twice. The download set is
-    // deduped by DIGEST, not by track: the blob path is content-addressed, so two
-    // distinct tracks pinning the same sha256 (e.g. two placeholder/empty tarballs)
-    // are ONE blob. Queuing both would fire two concurrent `downloadTrack`s writing
-    // the same `.part` with independent writers — a verified-but-corrupt interleave.
-    // The single content-addressed download satisfies both; the second track still
-    // extracts from that blob below (extraction iterates the full plan).
+    // Single partition pass: `hasBlob` stat()s the dedup cache, so split held vs needed
+    // in one sweep. Dedup the download set by DIGEST, not track: the blob path is
+    // content-addressed, so two tracks sharing a sha256 are ONE blob — queuing both would
+    // race two writers on the same `.part`. Extraction below iterates the full plan, so
+    // the second track still lands from that one blob.
     const reused: Track[] = [];
     const toDownload: { track: Track; entry: TrackEntry }[] = [];
     const queuedDigests = new Set<string>();
@@ -283,9 +280,8 @@ export async function libsPull(opts: PullOptions = {}): Promise<Result<PullOutco
         const assembled = await assemblePackages(staging, tracks);
         if (assembled.isErr()) return finishErr(s, assembled.error);
 
-        // Record each track's source-tarball sha256 so activate compares CONTENT, not
-        // just track names: a same-version republish with different bytes then replaces
-        // the stale tree instead of silently keeping it (see store.ts sameStoreContent).
+        // Record each track's source sha256 so activate compares CONTENT, not just names
+        // (see store.ts sameStoreContent): a same-version republish then replaces stale bytes.
         const trackDigests: Record<string, string> = {};
         for (const p of plan) trackDigests[p.track] = p.entry.sha256;
 
