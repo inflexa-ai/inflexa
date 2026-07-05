@@ -477,7 +477,7 @@ print('\n'.join(g['common'] + g.get(os.environ.get('TARGETARCH', 'amd64'), [])))
         echo "LOAD-FAIL: $tool not found on PATH"; failed="$failed $tool"; \
       fi; \
     done; \
-    printf '## System tools (CLI)\n%s\n' "$(printf '%s\n' $ok | sort | paste -sd', ' -)" \
+    printf '## System tools (CLI)\n%s\n' "$(printf '%s\n' $ok | sort | paste -sd, - | sed 's/,/, /g')" \
       > /mnt/libs/current/conda.packages.txt; \
     if [ -n "$failed" ]; then echo "ERROR: system tool(s) failed Gate 1:$failed"; exit 1; fi; \
     echo "Gate 1 OK: system tools resolved"
