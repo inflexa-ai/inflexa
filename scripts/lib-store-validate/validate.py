@@ -65,11 +65,9 @@ def canonical(name: str) -> str:
 def parse_packages_txt(path: Path) -> dict[str, list[str]]:
     """Return {ecosystem: [names]} parsed from the mounted packages.txt.
 
-    Raises ValueError on a ``## <title>`` header that maps to no known ecosystem.
-    Silently dropping such a section (the old behavior) would remove every package
-    under it from the ``advertised`` set — turning the advertised ⊆ loadable gate
-    into a no-op for that track whenever a producer header drifts from
-    SECTION_ECOSYSTEM. Fail loud so a header drift is caught, not ignored."""
+    Raises ValueError on a ``## <title>`` header mapping to no known ecosystem: silently
+    dropping the section would remove its packages from ``advertised``, turning the
+    advertised ⊆ loadable gate into a no-op for that track. Fail loud on header drift."""
     out: dict[str, list[str]] = {"r": [], "python": [], "node": [], "conda": []}
     eco: str | None = None
     for raw in path.read_text(encoding="utf-8").splitlines():
@@ -284,9 +282,7 @@ def main() -> int:
     try:
         pkgs = parse_packages_txt(PACKAGES_TXT)
     except ValueError as e:
-        # A drifted/unrecognized section header is a hard config error, not a package
-        # failure — the gate cannot trust "advertised ⊆ loadable" when a whole section
-        # was unparseable. Block promotion loudly.
+        # A drifted header is a config error, not a package failure — block promotion.
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
     advertised = {n for names in pkgs.values() for n in names}

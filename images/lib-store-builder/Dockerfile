@@ -89,14 +89,11 @@ RUN mkdir -p /staging/r/cran /staging/r/bioconductor /staging/r/github /staging/
 
 COPY lib-store-manifest.yaml /tmp/manifest.yaml
 
-# Injection guard (defense-in-depth). The R track names (r.cran / r.bioconductor /
-# r.github) are later interpolated into R string literals — install.packages('<name>'),
-# install_github('<repo>') in the cran/github stages — where a name carrying a quote or
-# backslash could break out of the literal. Manifest entries land via review, so this is
-# belt-and-suspenders: reject any R name outside the safe identifier charset ONCE here in
-# `base` (every track stage branches from it) rather than at each call site. Python/conda
-# names are NOT interpolated into code literals (uv/pip/mamba take them as argv), and they
-# legitimately carry pip specifiers (<, >, =, [extras]), so they are out of scope here.
+# Injection guard (defense-in-depth). R names are later interpolated into R string
+# literals — install.packages('<name>'), install_github('<repo>') — where a quote or
+# backslash could break out. Reject any R name outside the safe charset ONCE here in
+# `base` (every track stage branches from it). Python/conda names take no code-literal
+# path (uv/pip/mamba get them as argv) and carry pip specifiers, so they're out of scope.
 RUN python3 - <<'PYEOF'
 import re, sys, yaml
 m = yaml.safe_load(open("/tmp/manifest.yaml")) or {}
