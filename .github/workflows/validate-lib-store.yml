@@ -166,9 +166,12 @@ jobs:
       - name: Pull, validate, and promote
         if: steps.candidate.outputs.present == 'true'
         run: |
-          scripts/lib-store-gate2.sh "$ARCH" "${{ steps.candidate.outputs.version }}" \
-            && echo "| linux-$ARCH | GREEN → promoted |" >> "$GITHUB_STEP_SUMMARY" \
-            || { echo "| linux-$ARCH | RED → latest unchanged |" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          if scripts/lib-store-gate2.sh "$ARCH" "${{ steps.candidate.outputs.version }}"; then
+            echo "| linux-$ARCH | GREEN → promoted |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| linux-$ARCH | RED → latest unchanged |" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       - name: Cleanup
         if: always()

@@ -248,144 +248,156 @@ r:
 
 python:
   pip:
-    # Core scientific / storage layer
-    - numpy
-    - pandas
-    - scipy
-    # Pin JAX <0.10: JAX 0.10.0 removed xla_pmap_p from jax.extend.core.primitives
-    # but numpyro (pertpy transitive dep) still imports it as of 0.20.1.
-    - "jax<0.10"
-    - pydantic
-    - pyyaml
-    - pyarrow
-    - h5py
-    - zarr
-    - "dask[array,dataframe]"
-    - fsspec
-    - joblib
-    - rpy2
-    # Floor grpcio-tools: orbax-checkpoint (transitive via pertpy → flax) is otherwise
-    # resolved to grpcio-tools 1.30.0, whose setup.py imports the now-unavailable
-    # pkg_resources and fails to build under modern setuptools.
-    - "grpcio-tools>=1.60"
+    common:
+      # Core scientific / storage layer
+      - numpy
+      - pandas
+      - scipy
+      # Pin JAX <0.10: JAX 0.10.0 removed xla_pmap_p from jax.extend.core.primitives
+      # but numpyro (pertpy transitive dep) still imports it as of 0.20.1.
+      - "jax<0.10"
+      - pydantic
+      - pyyaml
+      - pyarrow
+      - h5py
+      - zarr
+      - "dask[array,dataframe]"
+      - fsspec
+      - joblib
+      - rpy2
+      # Floor grpcio-tools: orbax-checkpoint (transitive via pertpy → flax) is otherwise
+      # resolved to grpcio-tools 1.30.0, whose setup.py imports the now-unavailable
+      # pkg_resources and fails to build under modern setuptools.
+      - "grpcio-tools>=1.60"
 
-    # Visualization
-    - matplotlib
-    - seaborn
-    - plotly
-    - kaleido
-    - nbformat
-    - Pillow
-    - upsetplot
+      # Visualization
+      - matplotlib
+      - seaborn
+      - plotly
+      - kaleido
+      - nbformat
+      - Pillow
+      - upsetplot
 
-    # ML / statistics
-    - scikit-learn
-    - "statsmodels>=0.14.5"
-    - formulaic
-    - pingouin
-    - lifelines
-    - scikit-survival
-    - scikit-posthocs
-    - xgboost
-    - shap
-    - optuna
-    - networkx
-    - PyWGCNA
+      # ML / statistics
+      - scikit-learn
+      - "statsmodels>=0.14.5"
+      - formulaic
+      - pingouin
+      - lifelines
+      - scikit-survival
+      - scikit-posthocs
+      - xgboost
+      - shap
+      - optuna
+      - networkx
+      - PyWGCNA
 
-    # Single-cell
-    - anndata
-    - mudata
-    - scanpy
-    - scvi-tools
-    - muon
-    - "decoupler[full]>=2.1.2"
-    - "pydeseq2>=0.5.3"
-    - "gseapy>=1.1.11"
-    - leidenalg
-    - louvain
-    - umap-learn
-    - scikit-misc
-    - pertpy
-    - palantir
-    - scvelo
-    - harmonypy
-    - celltypist
-    - symphonypy
-    - "liana[extras]"
-    - pyscenic
-    - "cellrank>=2"
-    - cell2location
-    - rpds-py
-    - scglue
-    - "snapatac2>=2.7"
+      # Single-cell
+      - anndata
+      - mudata
+      - scanpy
+      - scvi-tools
+      - muon
+      - "decoupler[full]>=2.1.2"
+      - "pydeseq2>=0.5.3"
+      - "gseapy>=1.1.11"
+      - leidenalg
+      - louvain
+      - umap-learn
+      - scikit-misc
+      - pertpy
+      - palantir
+      - scvelo
+      - harmonypy
+      - celltypist
+      - symphonypy
+      - pyscenic
+      - "cellrank>=2"
+      - cell2location
+      - rpds-py
+      - scglue
+      - "snapatac2>=2.7"
 
-    # Spatial
-    - spatialdata
-    - spatialdata-io
-    - spatialdata-plot
-    - squidpy
-    - xarray
-    - shapely
-    - geopandas
-    - rasterio
+      # Spatial
+      - spatialdata
+      - spatialdata-io
+      - spatialdata-plot
+      - squidpy
+      - xarray
+      - shapely
+      - geopandas
+      - rasterio
 
-    # Genomics
-    - biopython
-    - cyvcf2
-    - pyfaidx
-    - pyranges
-    - pybedtools
-    - pyBigWig
+      # Genomics
+      - biopython
+      - cyvcf2
+      - pyfaidx
+      - pyranges
+      - pybedtools
+      - pyBigWig
 
-    # Immune / flow / mass-spec
-    - scirpy
-    - pytometry
-    - pyteomics
-    - pymzml
-    - matchms
-    - spectrum-utils
-    - ms-deisotope
+      # Immune / flow / mass-spec
+      - scirpy
+      - pytometry
+      - pyteomics
+      - pymzml
+      - matchms
+      # Floor spectrum-utils: unconstrained, the resolver selects 0.4.2, which
+      # requires numba 0.53.1 — whose setup.py hard-rejects Python >=3.10 and so
+      # fails to build on the py3.12 base (both arches). 0.5.0 needs numba >=0.60,
+      # which ships py3.12 wheels.
+      - "spectrum-utils>=0.5"
+      - ms-deisotope
 
-    # Microbiome
-    - scikit-bio
-    - biom-format
+      # Microbiome
+      - scikit-bio
+      - biom-format
 
-    # 3D genomics
-    - cooler
-    - cooltools
-    - bioframe
+      # 3D genomics
+      - cooler
+      - cooltools
+      - bioframe
 
-    # Cheminformatics
-    - rdkit
-    - datamol
-    - mordred
-    - deepchem[jax]
+      # Cheminformatics
+      - rdkit
+      - datamol
+      - mordred
+      - deepchem[jax]
 
-    # Reporting / export
-    - weasyprint
-    - Jinja2
-    - python-pptx
-    - orjson
-    - conorm
-    - matplotlib-venn
-    - adjustText
-    - openpyxl
+      # Reporting / export
+      - weasyprint
+      - Jinja2
+      - python-pptx
+      - orjson
+      - conorm
+      - matplotlib-venn
+      - adjustText
+      - openpyxl
 
-    # Tools
-    - jupytext
-    - pypdf
-    - python-docx
-    - python-pptx
+      # Tools
+      - jupytext
+      - pypdf
+      - python-docx
+      - python-pptx
 
-    # Multi-omics integration (ensures MOFA+ works)
-    - mofapy2
-    - snfpy
+      # Multi-omics integration (ensures MOFA+ works)
+      - mofapy2
+      - snfpy
 
-    # Immune repertoire analysis
-    - immunarch
+      # Immune repertoire analysis
+      - immunarch
 
-    # Pharmacokinetics
-    - pharmpy-core # Population PK modeling utilities
+      # Pharmacokinetics
+      - pharmpy-core # Population PK modeling utilities
+
+    # liana is arch-split: amd64 installs liana[extras] (the extras pull
+    # pyscipopt/SCIP, which has no arm64 build); arm64 installs core liana.
+    # The builder installs common + the target arch and strips nothing itself.
+    amd64:
+      - "liana[extras]"
+    arm64:
+      - "liana"
 
 # Build-time dependencies are in images/lib-store-builder/Dockerfile (not listed here).
 # Runtime system libraries are in images/sandbox-base/Dockerfile (not listed here).
@@ -393,11 +405,17 @@ python:
 # This manifest only lists R, Python, Node packages and bioinformatics tools
 # that go on the shared library store.
 
+# Bioinformatics CLI tools from bioconda. `common` builds on every arch;
+# `amd64` holds tools with no linux-aarch64 bioconda package (the arm64 conda
+# solve fails on a missing package), so they are amd64-only — the same
+# treatment R gets upstream. The builder installs common + the target arch.
 system_tools:
-  - samtools
-  - bcftools
-  - tabix
-  - bedtools
-  - vcftools
-  - plink2
-  - mageck # CRISPR screen analysis (MAGeCK)
+  common:
+    - samtools
+    - bcftools
+    - tabix
+    - bedtools
+    - vcftools
+    - mageck # CRISPR screen analysis (MAGeCK)
+  amd64:
+    - plink2 # no linux-aarch64 bioconda build
