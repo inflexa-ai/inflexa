@@ -46,12 +46,14 @@ docker buildx build \
 
 DEST="staging/$(lib_store_track_dir "$TRACK")"
 mkdir -p "$DEST"
-# --ignore-failed-read: `-h` dereferences symlinks so the store is self-contained
-# (conda relies on this to inline its package-cache symlinks), but some Debian-packaged
-# R deps (e.g. r-cran-jquerylib) symlink bundled JS to system libjs-* packages absent
-# from the build image — dangling targets tar can't read. Skip those unreadable files
-# instead of failing the whole track (they are already broken symlinks either way).
-docker run --rm "$IMAGE" tar -chf - --ignore-failed-read -C "$SRC" . | tar -xf - -C "$DEST"
+# `-h` dereferences symlinks so the store is self-contained (conda relies on this to
+# inline its package-cache symlinks). But some Debian-packaged R deps (r-cran-jquerylib)
+# symlink bundled JS to system libjs-* packages absent from the build image; with -h
+# those dangling links make GNU tar exit 1 ("file removed before we read it") and, under
+# pipefail, sink the whole track. --ignore-failed-read does NOT cover that exit. They are
+# broken either way, so drop dangling symlinks before archiving — tar -h then exits clean
+# and the store ships no broken links.
+docker run --rm "$IMAGE" sh -c 'find "$1" -xtype l -delete 2>/dev/null; exec tar -chf - -C "$1" .' _ "$SRC" | tar -xf - -C "$DEST"
 docker run --rm "$IMAGE" cat "$FRAG" > "staging/$(lib_store_track_fragment "$TRACK")"
 
 echo "$TRACK: $(find "$DEST" -maxdepth 1 -mindepth 1 | wc -l) top-level entries"
