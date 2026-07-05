@@ -37,14 +37,18 @@ const FULL: Track[] = ["python", "conda", "node", "cran", "bioconductor", "githu
 const CORE: Track[] = ["python", "conda", "node"];
 
 /** Build a plausible per-process-unique staging version (subtrees + packages.txt + meta) and return its path. */
-async function stageVersion(version: string, tracks: readonly Track[] = CORE): Promise<string> {
+async function stageVersion(version: string, tracks: readonly Track[] = CORE, contentSalt = ""): Promise<string> {
     const staging = newStagingDir(root, version);
     for (const track of tracks) {
         await mkdir(join(staging, TRACK_SUBTREE[track]), { recursive: true });
     }
     const hasR = tracks.includes("cran");
     await writeFile(join(staging, "packages.txt"), hasR ? "python:numpy\npython:pandas\nr:cran:dplyr\n" : "python:numpy\npython:pandas\n");
-    const meta: StoreMeta = { version, arch: "linux-amd64", tracks: [...tracks] };
+    // Per-track digests key the store's identity. `contentSalt` lets a test stage the
+    // SAME version + track set with DIFFERENT content (different digests) to exercise
+    // the republish-replace path; default "" makes two calls byte-identical (idempotent).
+    const trackDigests = Object.fromEntries(tracks.map((t) => [t, `${t}:${contentSalt}`]));
+    const meta: StoreMeta = { version, arch: "linux-amd64", tracks: [...tracks], trackDigests };
     (await writeMeta(staging, meta))._unsafeUnwrap();
     return staging;
 }
@@ -121,6 +125,41 @@ describe("atomic activation", () => {
         expect(existsSync(fullStaging)).toBe(false);
         // A clean replace leaves no `.replaced-*` orphan (created, renamed onto, rm'd).
         expect(await replacedDirs()).toEqual([]);
+    });
+
+    test("re-activating the same version + same tracks but DIFFERENT content replaces the stale tree (finding 1)", async () => {
+        // First activation: the store at 2026.07.04-aaa built from one set of tarballs.
+        const first = await stageVersion("2026.07.04-aaa", CORE, "v1");
+        (await activate(root, "2026.07.04-aaa", first))._unsafeUnwrap();
+        await writeFile(join(versionDir(root, "2026.07.04-aaa"), "content.marker"), "old-bytes\n");
+
+        // A republish under the UNCHANGED version string whose tarballs resolved to
+        // different bytes (same track NAMES, different digests). Comparing names alone
+        // would judge these "same" and discard the freshly-verified staging, leaving the
+        // stale tree active. The digest compare must instead REPLACE it.
+        const second = await stageVersion("2026.07.04-aaa", CORE, "v2");
+        await writeFile(join(second, "content.marker"), "new-bytes\n");
+        (await activate(root, "2026.07.04-aaa", second))._unsafeUnwrap();
+
+        const active = (await readActive(root))._unsafeUnwrap();
+        expect(active?.version).toBe("2026.07.04-aaa");
+        expect(active?.meta?.trackDigests?.python).toBe("python:v2"); // the new content is live
+        expect(await Bun.file(join(versionDir(root, "2026.07.04-aaa"), "content.marker")).text()).toBe("new-bytes\n");
+        expect(existsSync(second)).toBe(false); // staging consumed by the replace
+    });
+
+    test("re-activating the same version with IDENTICAL content is idempotent (staging discarded, no replace)", async () => {
+        const first = await stageVersion("2026.07.04-aaa", CORE, "same");
+        (await activate(root, "2026.07.04-aaa", first))._unsafeUnwrap();
+
+        // Same version, same tracks, same digests → identical content → discard branch,
+        // NOT a replace (no `.replaced-*` orphan created).
+        const again = await stageVersion("2026.07.04-aaa", CORE, "same");
+        (await activate(root, "2026.07.04-aaa", again))._unsafeUnwrap();
+
+        expect((await readActive(root))._unsafeUnwrap()?.version).toBe("2026.07.04-aaa");
+        expect(existsSync(again)).toBe(false);
+        expect(await replacedDirs()).toEqual([]); // discarded, not replaced
     });
 
     test("the activated version tree carries no dotfile debris (bind-mounted into sandboxes)", async () => {
@@ -227,20 +266,39 @@ describe("dedup cache", () => {
 });
 
 describe("prune", () => {
-    test("keeps the newest N versions and never deletes the active one", async () => {
+    test("keeps the newest N versions when the active one is the newest", async () => {
         for (const v of ["2026.01.01-a", "2026.02.02-b", "2026.03.03-c", "2026.04.04-d"]) {
             (await activate(root, v, await stageVersion(v)))._unsafeUnwrap();
         }
-        // Point current back at an OLD version (outside the newest 2).
+        // current is at the newest (d) after the loop.
+        (await prune(root, 2))._unsafeUnwrap();
+
+        // newest 2 (c, d) kept; older a, b pruned.
+        expect(existsSync(versionDir(root, "2026.04.04-d"))).toBe(true);
+        expect(existsSync(versionDir(root, "2026.03.03-c"))).toBe(true);
+        expect(existsSync(versionDir(root, "2026.02.02-b"))).toBe(false);
+        expect(existsSync(versionDir(root, "2026.01.01-a"))).toBe(false);
+    });
+
+    test("caps retention at keepN total when the active version is older than the newest N (finding 3)", async () => {
+        for (const v of ["2026.01.01-a", "2026.02.02-b", "2026.03.03-c", "2026.04.04-d"]) {
+            (await activate(root, v, await stageVersion(v)))._unsafeUnwrap();
+        }
+        // Pin current back at an OLD version (b, outside the newest 2).
         (await activate(root, "2026.02.02-b", await stageVersion("2026.02.02-b")))._unsafeUnwrap();
 
         (await prune(root, 2))._unsafeUnwrap();
 
-        // newest 2 (c, d) kept; active b kept despite being older; oldest a pruned.
-        expect(existsSync(versionDir(root, "2026.04.04-d"))).toBe(true);
-        expect(existsSync(versionDir(root, "2026.03.03-c"))).toBe(true);
-        expect(existsSync(versionDir(root, "2026.02.02-b"))).toBe(true);
+        // keepN=2 TOTAL, always including the active one: active b + newest d kept; the
+        // middle c is displaced (NOT kept on top of the newest 2 — that would leave 3),
+        // and the oldest a is pruned. This is prune's "current + one rollback" contract.
+        expect(existsSync(versionDir(root, "2026.02.02-b"))).toBe(true); // active, never deleted
+        expect(existsSync(versionDir(root, "2026.04.04-d"))).toBe(true); // newest kept as the rollback slot
+        expect(existsSync(versionDir(root, "2026.03.03-c"))).toBe(false); // displaced by the cap
         expect(existsSync(versionDir(root, "2026.01.01-a"))).toBe(false);
+        // Exactly keepN CLI versions remain on disk.
+        const remaining = (await readdir(root)).filter((n) => !n.startsWith(".") && n !== "current");
+        expect(remaining.sort()).toEqual(["2026.02.02-b", "2026.04.04-d"]);
     });
 
     test("sweeps a leftover staging dir — under the pull lock any leftover is crash debris", async () => {
@@ -434,6 +492,7 @@ async function crossDeviceStaging(version: string, tracks: readonly Track[]): Pr
     const staging = join(base, `.staging-${version}`);
     for (const track of tracks) await mkdir(join(staging, TRACK_SUBTREE[track]), { recursive: true });
     await writeFile(join(staging, "packages.txt"), "python:numpy\nr:cran:dplyr\n");
-    (await writeMeta(staging, { version, arch: "linux-amd64", tracks: [...tracks] }))._unsafeUnwrap();
+    const trackDigests = Object.fromEntries(tracks.map((t) => [t, `${t}:xdev`]));
+    (await writeMeta(staging, { version, arch: "linux-amd64", tracks: [...tracks], trackDigests }))._unsafeUnwrap();
     return { staging, cleanup };
 }

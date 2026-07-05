@@ -49,6 +49,17 @@ export type StoreMeta = {
     readonly version: string;
     readonly arch: Arch;
     readonly tracks: readonly Track[];
+    /**
+     * Per-track sha256 of the source tarball each track was extracted from (the
+     * manifest digest). Ties the store's identity to its exact CONTENT, not just
+     * its track NAMES: {@link sameStoreContent} compares these so a same-version
+     * republish with different bytes but identical track names replaces the stale
+     * tree instead of silently keeping it. Optional — a pre-digest meta (written
+     * before this field existed) or a foreign one carries none, and
+     * {@link sameStoreContent} then treats identity as unprovable (a mismatch that
+     * replaces with the freshly-verified staging).
+     */
+    readonly trackDigests?: Readonly<Record<string, string>>;
 };
 
 /** The resolved active store: the version `current` points at, plus its metadata (if readable). */
@@ -189,8 +200,18 @@ function isStoreMeta(v: unknown): v is StoreMeta {
         // Object.hasOwn, NOT `t in TRACK_SUBTREE`: `in` walks the prototype chain, so a
         // foreign meta naming tracks:["toString"] would pass, then TRACK_SUBTREE["toString"]
         // is a function that libsStatus joins and throws on — the never-hard-fail status crash.
-        o.tracks.every((t): t is Track => typeof t === "string" && Object.hasOwn(TRACK_SUBTREE, t))
+        o.tracks.every((t): t is Track => typeof t === "string" && Object.hasOwn(TRACK_SUBTREE, t)) &&
+        // Optional field: absent is valid (pre-digest meta); present must be a plain
+        // string→string map. A malformed trackDigests degrades the whole meta to null
+        // rather than reaching sameStoreContent with a non-string digest to compare.
+        (o.trackDigests === undefined || isStringRecord(o.trackDigests))
     );
+}
+
+/** A plain object whose every own value is a string (rejects arrays and non-string values). */
+function isStringRecord(v: unknown): v is Record<string, string> {
+    if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+    return Object.values(v as Record<string, unknown>).every((x) => typeof x === "string");
 }
 
 /** Write the version metadata into a staging dir before activation (so it is never observed partial). */
@@ -205,10 +226,11 @@ export async function writeMeta(staging: string, meta: StoreMeta): Promise<Resul
  * it — the atomic activation. The staging→version `rename` is atomic on a shared
  * filesystem; the pointer swap renames a temp symlink over `current`, atomic on
  * POSIX with no window where `current` is absent. Idempotent: if the version dir
- * already exists with the SAME track set (a re-pull of the same version), the
- * staging dir is discarded and only the pointer is (re)affirmed. When the metas
- * differ (e.g. a local rebuild at an unchanged version name), the existing tree
- * is replaced — keeping it would re-point `current` at stale content.
+ * already exists with IDENTICAL content (same arch + per-track digests — a re-pull
+ * of the same version), the staging dir is discarded and only the pointer is
+ * (re)affirmed. When the content differs (e.g. a republish under an unchanged
+ * version name whose tarballs changed, or a local rebuild that adds tracks), the
+ * existing tree is replaced — keeping it would re-point `current` at stale content.
  */
 export async function activate(root: string, version: string, staging: string): Promise<Result<void, StoreError>> {
     // Guard BEFORE any promotion: never activate a staging tree whose own meta.json is
@@ -276,15 +298,26 @@ export async function activate(root: string, version: string, staging: string): 
 
 /**
  * Whether an existing version dir already carries what the (already-validated)
- * staged meta describes, judged by the arch + track set. An unreadable meta on
- * the EXISTING side counts as a mismatch: the staging tree just passed
- * verification, so replacing an unverifiable existing tree is the safe call. The
- * staged side is guaranteed non-null by {@link activate}'s pre-promotion guard.
+ * staged meta describes, judged by arch + per-track CONTENT (sha256), not merely
+ * the track NAMES. Comparing names alone would let a same-version republish with
+ * different bytes but identical track names be judged "same", silently discarding
+ * the freshly-downloaded, sha256-verified staging and leaving `current` on the
+ * stale on-disk tree. When EITHER side lacks digests — an unreadable existing meta,
+ * or a pre-digest meta on either side — identity is unprovable, so it counts as a
+ * mismatch: the staging tree just passed verification, so replacing an
+ * unverifiable/unprovable existing tree is the safe call. The staged side is
+ * guaranteed non-null by {@link activate}'s pre-promotion guard.
  */
 async function sameStoreContent(staged: StoreMeta, vdir: string): Promise<boolean> {
     const existing = await readMeta(vdir);
     if (existing === null) return false;
-    return staged.arch === existing.arch && staged.tracks.length === existing.tracks.length && staged.tracks.every((t) => existing.tracks.includes(t));
+    if (staged.arch !== existing.arch) return false;
+    const a = staged.trackDigests;
+    const b = existing.trackDigests;
+    if (a === undefined || b === undefined) return false;
+    const keys = Object.keys(a);
+    if (keys.length !== Object.keys(b).length) return false;
+    return keys.every((k) => a[k] === b[k]);
 }
 
 /** Discard a staging dir (best-effort cleanup of a failed/cancelled pull, or the no-op after a successful activate consumed it). */
@@ -343,8 +376,22 @@ export async function prune(root: string, keepN: number): Promise<Result<void, S
         }
         const versions = candidates.sort().reverse(); // date-prefixed → newest first
 
-        for (const v of versions.slice(keepN)) {
-            if (v === activeVersion) continue;
+        // Retain at most keepN CLI versions, ALWAYS including the active one. When the
+        // active version is a candidate older than the keepN newest (a `--pin` at an old
+        // version), it must occupy a retention slot rather than be kept ON TOP of the
+        // keepN newest — otherwise keepN+1 versions accumulate, contradicting prune's
+        // "current + one rollback" contract. A foreign active (no meta.json) is not a
+        // candidate and is not deletable here, so it consumes no slot.
+        const keep = new Set<string>();
+        if (activeVersion !== undefined && versions.includes(activeVersion)) keep.add(activeVersion);
+        for (const v of versions) {
+            if (keep.size >= keepN) break;
+            keep.add(v);
+        }
+        for (const v of versions) {
+            // The active-version guard is belt-and-suspenders: `keep` already includes a
+            // candidate active version, but never delete the live tree even if that slips.
+            if (v === activeVersion || keep.has(v)) continue;
             await rm(versionDir(root, v), { recursive: true, force: true });
         }
     }, "Failed to prune old store versions");

@@ -44,8 +44,34 @@ for t in $(lib_store_arch_tracks "$ARCH"); do
   fi
 done
 
+# manifest.json is immutable too — NOT just the tarballs. A version pins each
+# track's exact sha256/size, so a republish of the SAME version must yield the
+# same integrity metadata. But nothing pins upstream package versions, so a
+# same-day retry (VERSION = date+sha, reproducible) can rebuild different bytes:
+# the already-immutable tarballs stay old while a freshly-written manifest would
+# advertise new digests — a manifest a verifying client (cli sha256 check) can
+# never satisfy. So treat an existing manifest as immutable: compare and, on any
+# integrity drift, FAIL LOUD (cut a new version) rather than overwrite it.
 "$SCRIPT_DIR/lib-store-write-manifest.sh" "$ARCH" "$VERSION" "$DIST" > manifest.json
-aws s3 cp manifest.json "s3://$S3_BUCKET/$VERSION/$ARCH_DIR/manifest.json"
+MANIFEST_KEY="$VERSION/$ARCH_DIR/manifest.json"
+if aws s3api head-object --bucket "$S3_BUCKET" --key "$MANIFEST_KEY" >/dev/null 2>&1; then
+  aws s3 cp "s3://$S3_BUCKET/$MANIFEST_KEY" manifest.published.json
+  # Drop the one per-run field (buildTimestamp is `date`-stamped, so it differs on
+  # every re-run) before comparing — the check is about integrity (version/arch/
+  # tracks digests + the version-pinned build metadata), not the wall-clock of the
+  # publish. Everything else is deterministic for a given VERSION.
+  strip_ts() { sed 's/"buildTimestamp":"[^"]*",//' "$1"; }
+  if [ "$(strip_ts manifest.json)" = "$(strip_ts manifest.published.json)" ]; then
+    echo "immutable: s3://$S3_BUCKET/$MANIFEST_KEY already published and identical — skipping"
+  else
+    echo "::error::Manifest for $VERSION/$ARCH_DIR is already published with DIFFERENT content — the version was rebuilt with different bytes while its tarballs are immutable. Refusing to overwrite; cut a new version." >&2
+    rm -f manifest.json manifest.published.json
+    exit 1
+  fi
+  rm -f manifest.published.json
+else
+  aws s3 cp manifest.json "s3://$S3_BUCKET/$MANIFEST_KEY"
+fi
 rm -f manifest.json
 
 # Candidate pointer (mutable, but NOT latest): the version awaiting Gate 2.

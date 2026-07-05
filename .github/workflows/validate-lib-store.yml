@@ -58,6 +58,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Pin to the commit that produced the candidate build, not whatever main HEAD is
+          # now. This workflow builds + invokes the real `inflexa libs pull` handler and the
+          # validation suite from the checked-out tree; if main advanced between the build
+          # and this run, an unpinned checkout would validate the candidate with a DIFFERENT
+          # handler/suite than built it. `head_sha` is the build's commit on the
+          # workflow_run trigger; empty on workflow_dispatch → checkout falls back to the
+          # dispatched ref.
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Gate publish configuration
         id: cfg

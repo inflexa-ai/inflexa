@@ -4,7 +4,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Docker from "dockerode";
@@ -12,14 +12,21 @@ import Docker from "dockerode";
 import { createDockerSandboxOps } from "./docker-client.js";
 import { mintSandboxIdentity } from "./identity.js";
 
-// A real on-disk lib store (a `current` symlink to a version dir): the Docker client
-// re-checks `<libStorePath>/current` AT createSandbox time (finding 4), so tests that
-// expect the /mnt/libs mount must point at a store that actually exists.
+// A real, COMPLETE on-disk lib store: the Docker client re-checks `<libStorePath>/current`
+// AT createSandbox time and requires it to resolve to a directory carrying both
+// completeness markers (packages.txt + meta.json), not merely to exist (findings 4/5), so
+// tests that expect the /mnt/libs mount must point at a store that is actually usable.
 let libRoot: string;
+async function writeCompleteStore(root: string, version: string): Promise<void> {
+    const vdir = join(root, version);
+    await mkdir(vdir, { recursive: true });
+    await writeFile(join(vdir, "packages.txt"), "# packages\n");
+    await writeFile(join(vdir, "meta.json"), JSON.stringify({ version, arch: "linux-amd64", tracks: [] }));
+    await symlink(version, join(root, "current"));
+}
 beforeEach(async () => {
     libRoot = await mkdtemp(join(tmpdir(), "harness-libstore-"));
-    await mkdir(join(libRoot, "2026.07.04-abc"), { recursive: true });
-    await symlink("2026.07.04-abc", join(libRoot, "current"));
+    await writeCompleteStore(libRoot, "2026.07.04-abc");
 });
 afterEach(async () => {
     await rm(libRoot, { recursive: true, force: true });
@@ -316,6 +323,88 @@ describe("docker createSandbox / teardown / isAlive", () => {
         expect(created[0]!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
         expect(envMap.R_LIBS_SITE).toBeUndefined();
         expect(envMap.NODE_PATH).toBeUndefined();
+    });
+
+    test("logs a warning when a configured store is unusable at create time (finding 4 observability)", async () => {
+        const { docker } = stubDocker();
+        await rm(join(libRoot, "current"), { force: true }); // store degraded since boot
+        const warnings: Array<{ obj: unknown; msg: string }> = [];
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            sessionsBasePath: "/sessions",
+            libStorePath: libRoot,
+            docker,
+            fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
+            logger: { info: () => {}, error: () => {}, warn: (obj: unknown, msg?: string) => warnings.push({ obj, msg: msg ?? "" }) },
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        // The silent mount-drop now emits an operator-visible signal.
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]!.msg).toContain("lib store");
+        expect(warnings[0]!.obj).toMatchObject({ libStorePath: libRoot });
+    });
+
+    test("skips the /mnt/libs mount when `current` is a DANGLING symlink to a pruned version (finding 5)", async () => {
+        const { docker, created } = stubDocker();
+        // `current` points at a version dir that no longer exists (pruned mid-session).
+        await rm(join(libRoot, "2026.07.04-abc"), { recursive: true, force: true });
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            sessionsBasePath: "/sessions",
+            libStorePath: libRoot,
+            docker,
+            fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        expect(created[0]!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+    });
+
+    test("skips the /mnt/libs mount when `current` resolves to an INCOMPLETE store (missing markers) (finding 5)", async () => {
+        const { docker, created } = stubDocker();
+        // A present `current` → dir, but the tree is missing packages.txt/meta.json (a
+        // partially-extracted or corrupt store): existsSync(current) is true yet mounting
+        // it would feed silently-broken content into the sandbox.
+        await rm(join(libRoot, "2026.07.04-abc"), { recursive: true, force: true });
+        await mkdir(join(libRoot, "2026.07.04-abc"), { recursive: true }); // dir back, but empty
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            sessionsBasePath: "/sessions",
+            libStorePath: libRoot,
+            docker,
+            fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        expect(created[0]!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
     });
 
     test("teardown of an already-gone container is a no-op success", async () => {

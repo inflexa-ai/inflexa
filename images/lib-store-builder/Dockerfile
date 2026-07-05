@@ -89,6 +89,29 @@ RUN mkdir -p /staging/r/cran /staging/r/bioconductor /staging/r/github /staging/
 
 COPY lib-store-manifest.yaml /tmp/manifest.yaml
 
+# Injection guard (defense-in-depth). The R track names (r.cran / r.bioconductor /
+# r.github) are later interpolated into R string literals — install.packages('<name>'),
+# install_github('<repo>') in the cran/github stages — where a name carrying a quote or
+# backslash could break out of the literal. Manifest entries land via review, so this is
+# belt-and-suspenders: reject any R name outside the safe identifier charset ONCE here in
+# `base` (every track stage branches from it) rather than at each call site. Python/conda
+# names are NOT interpolated into code literals (uv/pip/mamba take them as argv), and they
+# legitimately carry pip specifiers (<, >, =, [extras]), so they are out of scope here.
+RUN python3 - <<'PYEOF'
+import re, sys, yaml
+m = yaml.safe_load(open("/tmp/manifest.yaml")) or {}
+r = m.get("r", {}) or {}
+# owner/repo[@ref][/subdir] for github; plain names for cran/bioconductor.
+safe = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@#-]*$")
+bad = [n for grp in ("cran", "bioconductor", "github") for n in (r.get(grp) or []) if not safe.match(str(n))]
+if bad:
+    print("ERROR: R package name(s) outside the safe charset (shell/R injection guard):", file=sys.stderr)
+    for b in bad:
+        print(f"  - {b!r}", file=sys.stderr)
+    sys.exit(1)
+print("manifest R-name injection guard: all cran/bioconductor/github names within the safe charset")
+PYEOF
+
 # Gate 1 helper — the shared R load test used by the cran/bioconductor/github
 # stages. Args: <section-title> <fragment-out> <pkg...>. It library()s each
 # package, writes the section header + the comma-joined loadable set to the
