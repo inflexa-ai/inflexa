@@ -34,6 +34,24 @@ is_denied <- function(pkgs) {
   pkgs %in% DENY | by_prefix
 }
 
+# Package names an example failure blames on a MISSING package: R's standard
+# "there is no package called '<X>'" (straight or curly quotes) and the common
+# package-custom "Requires <X>. Please run: ..." idiom. Used to tell "the example
+# needs a companion data/annotation package we deliberately do not bundle" (a SKIP,
+# same rationale as the network denylist) apart from a genuine example error (a FAIL).
+example_missing_pkgs <- function(txt) {
+  if (!nzchar(txt)) return(character(0))
+  lines <- strsplit(txt, "\n", fixed = TRUE)[[1]]
+  hits <- character(0)
+  for (ln in lines) {
+    m1 <- regmatches(ln, regexec("there is no package called .([A-Za-z0-9._]+)", ln))[[1]]
+    if (length(m1) == 2L) hits <- c(hits, m1[2])
+    m2 <- regmatches(ln, regexec("[Rr]equires ([A-Za-z0-9._]+)\\.? +Please", ln))[[1]]
+    if (length(m2) == 2L) hits <- c(hits, m2[2])
+  }
+  unique(hits)
+}
+
 # Discover installed packages on the mounted store's libpaths (R_LIBS_SITE is
 # set by run.sh). Base/recommended packages ship no meaningful examples here.
 libs <- .libPaths()
@@ -74,8 +92,21 @@ for (pkg in installed) {
       failed <- c(failed, pkg)
     }
   } else if (is.numeric(res) && res != 0L) {
-    cat(sprintf("  FAIL %s: testInstalledPackage returned %s\n", pkg, res))
-    failed <- c(failed, pkg)
+    # An example can fail only because it needs a companion data/annotation package
+    # we deliberately do not bundle (e.g. annotate's example loads hgu95av2.db;
+    # AnnotationHubData's needs GenomeInfoDbData). That is not a defect of OUR store,
+    # so SKIP when the failure names a package NOT installed here. Every other failure
+    # is a real error and fails the gate.
+    failfile <- file.path(outdir, paste0(pkg, "-Ex.Rout.fail"))
+    reason <- if (file.exists(failfile)) paste(readLines(failfile, warn = FALSE), collapse = "\n") else ""
+    missing <- setdiff(example_missing_pkgs(reason), installed)
+    if (length(missing) > 0) {
+      cat(sprintf("  SKIP %s: example needs unbundled package(s): %s\n", pkg, paste(missing, collapse = ", ")))
+      skipped <- c(skipped, pkg)
+    } else {
+      cat(sprintf("  FAIL %s: testInstalledPackage returned %s\n", pkg, res))
+      failed <- c(failed, pkg)
+    }
   } else {
     passed <- passed + 1L
   }
