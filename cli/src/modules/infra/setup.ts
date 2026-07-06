@@ -7,7 +7,7 @@ import { activeRuntime, readConfig, resolvePostgresConfig, writeConfig } from ".
 import { ensureReady, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { select, promptText } from "../../lib/cli.ts";
-import { detectedMachineBudget, resolveHarnessConfig } from "../harness/config.ts";
+import { detectedMachine, resolveHarnessConfig } from "../harness/config.ts";
 import { type PostgresConnection } from "./postgres_types.ts";
 import { writeComposeFile, composeUp, composePull, composePullIfMissing, composeAvailable } from "./compose.ts";
 
@@ -145,11 +145,12 @@ export async function setup(options: SetupOptions): Promise<void> {
             pgConn = resolvePostgresConfig();
         }
 
-        // --- analysis resource limits ---
-        // Collects the values for the harness's resource policy — per-step
-        // ceilings and the machine budget; their enforcement is the harness's
-        // contract. Non-TTY shells skip the prompt — the resolved defaults
-        // (half the detected machine) apply.
+        // --- analysis resource allowance ---
+        // Collects the machine budget for the harness's resource policy — the
+        // total share of this host analyses may use; per-step ceilings are
+        // derived from it, and enforcement is the harness's contract. Non-TTY
+        // shells skip the prompt — the resolved default (half the detected
+        // machine) applies.
         await promptResourceConfig();
 
         // --- embeddings ---
@@ -224,60 +225,54 @@ async function promptPostgresConfig(): Promise<PostgresConnection> {
 }
 
 /**
- * Prompt for the analysis resource limits and persist them under
- * `harness.resourceLimits`. Defaults come from the resolved config, whose
- * machine-budget fallback is half the detected host (shown in the prompt so the
- * suggestion is transparent). Non-interactive terminals skip the prompt — the
- * same resolved defaults apply at run time without a config entry.
+ * Prompt for the machine allowance — the total share of this host analyses may
+ * use — and persist it as absolute values under `harness.resourceLimits.budget`.
+ * One question: everything else about resource limits (per-step ceilings,
+ * ephemeral sizing) is derived from the allowance or expert config, not setup
+ * material. The default share reflects the currently-resolved budget (half the
+ * machine on a fresh config), so re-running setup shows what already applies.
+ * Non-interactive terminals skip the prompt — the same resolved defaults apply
+ * at run time without a config entry.
  */
 async function promptResourceConfig(): Promise<void> {
     if (!process.stdin.isTTY) return;
 
+    const machine = detectedMachine();
     const resolved = resolveHarnessConfig();
-    const detected = detectedMachineBudget();
-    log.message(
-        `Configure analysis resource limits — detected ${detected.cpu * 2} cores / ${detected.memoryGb * 2} GB, suggesting half (press Enter to accept)`,
-    );
+    const currentPct = Math.min(100, Math.max(1, Math.round((resolved.resourcePolicy.budget.cpu / machine.cpu) * 100)));
+    log.message(`Configure the analysis resource allowance — detected ${machine.cpu} cores / ${machine.memoryGb} GB`);
 
-    const positiveNumber = (v: string): string | undefined => {
+    const sharePct = (v: string): string | undefined => {
         if (v.trim() === "") return undefined;
         const n = Number(v.trim());
-        if (isNaN(n) || n <= 0) return "Must be a positive number.";
+        if (isNaN(n) || n <= 0 || n > 100) return "Must be a percentage between 1 and 100.";
         return undefined;
     };
-    const promptNumber = async (label: string, current: number): Promise<number> => {
-        const answer = await promptText(label, {
-            defaultValue: String(current),
-            placeholder: String(current),
-            validate: positiveNumber,
-        }).catch(() => String(current));
-        return Number(answer) > 0 ? Number(answer) : current;
+    const answer = await promptText("Max share of this machine analyses may use in total (%)", {
+        defaultValue: String(currentPct),
+        placeholder: String(currentPct),
+        validate: sharePct,
+    }).catch(() => String(currentPct));
+    const parsed = Number(answer);
+    const pct = parsed > 0 && parsed <= 100 ? parsed : currentPct;
+    const budget = {
+        cpu: Math.max(1, Math.floor((machine.cpu * pct) / 100)),
+        memoryGb: Math.max(1, Math.floor((machine.memoryGb * pct) / 100)),
     };
-
-    const maxCpu = await promptNumber("Max CPU cores per analysis step", resolved.resourceLimits.maxCpu);
-    const maxMemoryGb = await promptNumber("Max memory (GB) per analysis step", resolved.resourceLimits.maxMemoryGb);
-    const budgetCpu = await promptNumber("Total CPU cores for concurrently running steps", Math.max(resolved.resourcePolicy.budget.cpu, maxCpu));
-    const budgetMemoryGb = await promptNumber(
-        "Total memory (GB) for concurrently running steps",
-        Math.max(resolved.resourcePolicy.budget.memoryGb, maxMemoryGb),
-    );
+    log.message(`Analyses may use up to ${budget.cpu} cores / ${budget.memoryGb} GB in total`);
 
     const config = readConfig();
     // `config.harness` is deliberately `unknown` in lib/config.ts (the harness
     // module owns its validation) — spread it as a plain record so the fields
-    // this prompt does not manage (model, bioKeys, …) survive the rewrite.
+    // this prompt does not manage (model, bioKeys, per-step overrides, …)
+    // survive the rewrite.
     const harness = (config.harness ?? {}) as Record<string, unknown>;
     const resourceLimits = (harness.resourceLimits ?? {}) as Record<string, unknown>;
     writeConfig({
         ...config,
         harness: {
             ...harness,
-            resourceLimits: {
-                ...resourceLimits,
-                maxCpu,
-                maxMemoryGb,
-                budget: { cpu: budgetCpu, memoryGb: budgetMemoryGb },
-            },
+            resourceLimits: { ...resourceLimits, budget },
         },
     }).match(
         () => {},
