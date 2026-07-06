@@ -2,7 +2,7 @@
 # Build the three layered sandbox images locally and, optionally, extract the
 # per-track library-store tarballs OUT of them the way CI does. This reproduces
 # the CI pipeline on your own machine for testing — it does NOT assemble a host
-# store directory (the CLI no longer mounts a local store; it pulls an image).
+# store directory (the CLI pulls a published image rather than mounting a store).
 #
 # Usage:
 #   ./scripts/build-libs-local.sh                       # build base → python → python-r
@@ -10,10 +10,8 @@
 #   ./scripts/build-libs-local.sh --extract [--dest D]  # also extract tarballs to D (default: ./dist-libs)
 #   ./scripts/build-libs-local.sh --platform linux/amd64
 #
-# After building, validate a baked image directly:
+# After building, validate a baked image directly (the OSS user path):
 #   scripts/lib-store-validate/run.sh --image sandbox-python-r:local
-# or, if you extracted + assembled tarballs, mount them:
-#   scripts/lib-store-validate/run.sh --store <assembled-store-dir>
 
 set -euo pipefail
 

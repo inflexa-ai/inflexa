@@ -77,6 +77,10 @@ echo "Validating store at $LIB_PATH/current in $MOUNT_IMAGE ..."
 # provides: some packages probe $CELLTYPIST_FOLDER=/mnt/refs/... at IMPORT
 # (celltypist mkdir(exist_ok=True)), so without the mountpoint import-all
 # false-fails on a ref-store dependency unrelated to lib-store loadability.
+#
+# The /mnt/libs/current/... paths below are CONTAINER-INTERNAL: they name where
+# the store lives inside the image, independent of any host INFLEXA_LIB_ROOT, so
+# they are hardcoded rather than sourced from lib-store-common.sh's LIB_STORE_ROOT.
 docker run --rm \
   -v "$LIB_PATH:/mnt/libs:ro" \
   -v "$SUITE_DIR:/opt/lib-store-validate:ro" \

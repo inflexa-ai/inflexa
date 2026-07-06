@@ -36,34 +36,20 @@ FROM ${BASE_IMAGE} AS toolchain
 ARG INFLEXA_LIB_ROOT
 
 # Build toolchain + dev headers (Python C extensions, some conda-built wheels).
-# Retries/timeouts: archive.ubuntu.com is on flaky round-robin mirrors; the
-# default zero retries occasionally drops the whole apt invocation.
-RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
-      > /etc/apt/apt.conf.d/80-retries \
-    && apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake pkg-config gfortran make \
-    python3-dev python3-venv \
-    libbz2-dev liblzma-dev zlib1g-dev libzstd-dev libffi-dev \
-    libssl-dev libxml2-dev libcurl4-openssl-dev libgit2-dev \
-    libhdf5-dev libnetcdf-dev libopenblas-dev liblapack-dev \
-    libeigen3-dev libfftw3-dev \
-    libgdal-dev libgeos-dev libproj-dev libsqlite3-dev libudunits2-dev \
-    libtiff-dev libjpeg-dev libpng-dev libgl1 libglib2.0-0 \
-    libcairo2-dev libfreetype6-dev libfontconfig1-dev \
-    libharfbuzz-dev libfribidi-dev \
-    libpango1.0-dev libgdk-pixbuf-2.0-dev \
-    libmagick++-dev libgsl-dev \
-    swig \
-    curl wget git jq \
-    && rm -rf /var/lib/apt/lists/*
+# The apt build-dep set + retry config is shared with sandbox-python-r's R
+# toolchain stage; see the script header for the apt-retry rationale.
+COPY images/install-build-toolchain.sh /tmp/install-build-toolchain.sh
+RUN bash /tmp/install-build-toolchain.sh
 
 # Node.js 20 for npm packages
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# uv for fast pip installs (pinned to match sandbox-base)
-ENV UV_VERSION=0.7.12
+# uv for fast pip installs (pinned to match sandbox-base's uv so resolver/wheel
+# behavior is identical across the base and this builder). Build-only: never
+# reaches the runtime stage, so ARG rather than ENV.
+ARG UV_VERSION=0.7.12
 RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
     && cp /root/.local/bin/uv /usr/local/bin/uv
 
@@ -252,8 +238,10 @@ print(' '.join(g['common'] + g.get(os.environ.get('TARGETARCH', 'amd64'), [])))"
 # Best-effort load check — every manifest tool that resolves on PATH goes into
 # the fragment (a canned --version call is logged for visibility); missing tools
 # are dropped. Floor: zero resolved tools fails the build. PATH must include the
-# conda bin so tools like fastqc find their bundled java.
-ENV PATH="${INFLEXA_LIB_ROOT}/conda/bin:${PATH}"
+# conda bin so tools like fastqc find their bundled java — appended AFTER the
+# system dirs so the load check's `python3` below stays the system 3.12 (which
+# carries pyyaml), never conda's 3.11.
+ENV PATH="${PATH}:${INFLEXA_LIB_ROOT}/conda/bin"
 RUN TOOLS=$(python3 -c "\
 import yaml, os; \
 g = yaml.safe_load(open('/tmp/manifest.yaml'))['system_tools']; \
@@ -279,13 +267,22 @@ print('\n'.join(g['common'] + g.get(os.environ.get('TARGETARCH', 'amd64'), [])))
 FROM toolchain AS node-builder
 ARG INFLEXA_LIB_ROOT
 
-RUN cd ${INFLEXA_LIB_ROOT}/node && npm install echarts 2>&1 | tail -3
+# The node package set is the manifest's flat `node:` list — parsed the same way
+# the conda stage parses `system_tools`.
+RUN NODE_PKGS=$(python3 -c "\
+import yaml; \
+print(' '.join(yaml.safe_load(open('/tmp/manifest.yaml'))['node']))" 2>/dev/null || true) \
+    && cd ${INFLEXA_LIB_ROOT}/node && npm install $NODE_PKGS 2>&1 | tail -3
 
-# Best-effort load check — require() each direct dep; fragment from the set that
-# loaded; floor if zero. (node/ carries a single direct dep, echarts; its
+# Best-effort load check — require() each manifest node package; fragment from the
+# set that loaded; floor if zero. (node/ carries the manifest's direct deps; their
 # transitive deps live under node_modules but are not advertised.)
-RUN cd ${INFLEXA_LIB_ROOT}/node && FRAG="${INFLEXA_LIB_ROOT}/node.packages.txt" node -e '\
-const pkgs = ["echarts"]; \
+RUN NODE_PKGS=$(python3 -c "\
+import yaml; \
+print(' '.join(yaml.safe_load(open('/tmp/manifest.yaml'))['node']))" 2>/dev/null) \
+    && cd ${INFLEXA_LIB_ROOT}/node \
+    && FRAG="${INFLEXA_LIB_ROOT}/node.packages.txt" NODE_PKGS="$NODE_PKGS" node -e '\
+const pkgs = (process.env.NODE_PKGS || "").split(/\s+/).filter(Boolean); \
 const bad = []; \
 for (const p of pkgs) { \
   try { require(p); console.log("  OK: " + p); } \
@@ -332,9 +329,12 @@ RUN INFLEXA_LIB_ROOT=${INFLEXA_LIB_ROOT} inflexa-libs-refresh --from-fragments
 # the baked and mounted paths are identical, this is redundant with — never in
 # conflict with — the env the harness injects for the managed mount. The Python
 # .pth already ships in sandbox-base; R_LIBS_SITE/NODE_PATH/PATH are added here.
+# conda/bin goes LAST on PATH — matching the harness mount plan — so the system
+# python 3.12 (which reads the store .pth) stays the default `python3`, not
+# conda's 3.11, which cannot see the store's site-packages.
 ENV R_LIBS_SITE="${INFLEXA_LIB_ROOT}/r/github:${INFLEXA_LIB_ROOT}/r/bioconductor:${INFLEXA_LIB_ROOT}/r/cran"
 ENV NODE_PATH="${INFLEXA_LIB_ROOT}/node/node_modules"
-ENV PATH="${INFLEXA_LIB_ROOT}/conda/bin:${PATH}"
+ENV PATH="${PATH}:${INFLEXA_LIB_ROOT}/conda/bin"
 
 # --- FROM-extension: a single INFLEXA_LIB_ROOT plus per-installer target env so
 # a downstream image's default `pip install` / `install.packages()` / `npm

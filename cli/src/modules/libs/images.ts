@@ -4,7 +4,7 @@
  * (modules/libs/pull.ts) and the harness config default
  * (modules/harness/config.ts).
  *
- * The CLI no longer maps a host architecture onto a track set: the published
+ * The CLI does not map a host architecture onto a track set: the published
  * images are multi-arch manifests, so `docker pull` resolves the host
  * architecture automatically. The user chooses only the VARIANT; the store is
  * baked into the pulled image at `/mnt/libs/current`, so there is no local store
@@ -41,6 +41,9 @@ export const DEFAULT_SANDBOX_IMAGE = variantImage("python-r");
 
 /** Parse a user-supplied variant string; `null` if it is not a known variant. */
 export function parseVariant(value: string | undefined): SandboxVariant | null {
+    // `as readonly string[]` widens the literal tuple so `.includes` accepts an
+    // arbitrary string; `value as SandboxVariant` is then sound because the
+    // `.includes` guard has proven membership.
     return value !== undefined && (SANDBOX_VARIANTS as readonly string[]).includes(value) ? (value as SandboxVariant) : null;
 }
 

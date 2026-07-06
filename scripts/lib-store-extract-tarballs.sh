@@ -23,7 +23,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-store-common.sh"
 PLATFORM_ARGS=()
 [ -n "${PLATFORM:-}" ] && PLATFORM_ARGS=(--platform "$PLATFORM")
 
-ROOT=/mnt/libs/current
+ROOT="$LIB_STORE_ROOT"
 extracted=""
 
 for track in $LIB_STORE_ALL_TRACKS; do

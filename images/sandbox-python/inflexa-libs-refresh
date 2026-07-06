@@ -107,7 +107,7 @@ def concat() -> str:
 def main() -> int:
     args = sys.argv[1:]
     if args and args[0] not in ("--from-fragments", "--rederive"):
-        print(f"usage: inflexa-libs-refresh [--from-fragments|--rederive]", file=sys.stderr)
+        print("usage: inflexa-libs-refresh [--from-fragments|--rederive]", file=sys.stderr)
         return 2
     if not os.path.isdir(ROOT):
         print(f"inflexa-libs-refresh: store root {ROOT} does not exist", file=sys.stderr)

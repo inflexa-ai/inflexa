@@ -10,7 +10,7 @@
  * directory, no `/mnt/libs` bind mount, and no arch-forcing (a multi-arch manifest
  * resolves the host architecture automatically). The pre-flight `ensureSandboxImage`
  * (modules/harness/profile.ts) pulls the configured image on launch when it is
- * absent; the per-track tarballs are now managed-only (mounted by infra, not this
+ * absent; the per-track tarballs are managed-only (mounted by infra, not this
  * CLI).
  */
 
@@ -20,7 +20,7 @@ import { err, ok, type Result } from "neverthrow";
 import { confirm } from "../../lib/cli.ts";
 import { activeRuntime, readConfig, writeConfig } from "../../lib/config.ts";
 import { capture, ensureReady, inherit } from "../../lib/container.ts";
-import { DEFAULT_SANDBOX_IMAGE, SANDBOX_VARIANTS, VARIANT_DESCRIPTIONS, parseVariant, variantImage, variantOfImage, type SandboxVariant } from "./images.ts";
+import { DEFAULT_SANDBOX_IMAGE, SANDBOX_VARIANTS, VARIANT_DESCRIPTIONS, variantImage, variantOfImage, type SandboxVariant } from "./images.ts";
 
 /** Flags accepted by `inflexa sandbox pull` (and reused by setup). */
 export type PullOptions = {
@@ -167,7 +167,3 @@ export async function sandboxStatus(): Promise<void> {
         console.log(`  Run \`inflexa sandbox pull${variant ? ` ${variant}` : ""}\` to download it.`);
     }
 }
-
-// Re-exported so the config default and setup flow share one image-selection
-// contract without importing this module's docker logic directly.
-export { DEFAULT_SANDBOX_IMAGE, parseVariant, variantOfImage, type SandboxVariant };
