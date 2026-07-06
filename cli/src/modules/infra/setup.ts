@@ -146,10 +146,10 @@ export async function setup(options: SetupOptions): Promise<void> {
         }
 
         // --- analysis resource limits ---
-        // Bounds what analysis runs may take from this machine: per-step
-        // ceilings (hard container limits) and the machine budget the run
-        // scheduler admits concurrent steps against. Non-TTY shells skip the
-        // prompt — the resolved defaults (half the detected machine) apply.
+        // Collects the values for the harness's resource policy — per-step
+        // ceilings and the machine budget; their enforcement is the harness's
+        // contract. Non-TTY shells skip the prompt — the resolved defaults
+        // (half the detected machine) apply.
         await promptResourceConfig();
 
         // --- embeddings ---

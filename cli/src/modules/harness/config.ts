@@ -67,11 +67,13 @@ export type ResolvedHarnessConfig = {
     readonly sandboxImage: string;
     readonly resourceLimits: ResourceLimits;
     /**
-     * The full host resource policy the harness consumes: the per-step ceilings
-     * (`resourceLimits`, unchanged) plus the machine budget the run scheduler
-     * admits concurrent steps against, and the optional `run_ephemeral` sandbox
-     * size. The budget defaults to half the machine (raised to the per-step
-     * ceilings so a maximum-size step always remains schedulable).
+     * The harness's `ResourcePolicy`, resolved from `harness.resourceLimits`:
+     * the per-step ceilings (`resourceLimits`, unchanged) plus the machine
+     * budget and optional ephemeral sandbox size. What the fields mean and how
+     * they are enforced is the harness's contract — this module only resolves
+     * the values it supplies: an unset budget defaults to half the detected
+     * host, raised to the per-step ceilings so the resolved policy always
+     * satisfies the harness's load-time invariants.
      */
     readonly resourcePolicy: ResourcePolicy;
     /** DBOS admin port. */

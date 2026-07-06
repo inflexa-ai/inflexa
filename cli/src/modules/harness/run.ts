@@ -83,7 +83,7 @@ export type RunTriggerSeams = {
     readonly renderStepPrompt: (step: AnalysisStep) => string;
     /** Mint the run id — the bare UUID that IS the DBOS workflowId (see below). Injected so tests pin it. */
     readonly newRunId: () => string;
-    /** Machine budget snapshotted into the workflow input at launch — the scheduler admits steps against it. */
+    /** The harness machine budget to supply on `ExecuteAnalysisInput.budget`. */
     readonly budget: MachineBudget;
 };
 
