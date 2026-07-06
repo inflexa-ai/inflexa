@@ -351,7 +351,7 @@ export async function bootHarnessRuntime(
             env: { backend: "docker", namespace: "" },
             cortexBaseUrl: ingress.cortexBaseUrl,
             image: cfg.sandboxImage,
-            resourceLimits: cfg.resourceLimits,
+            resourceLimits: cfg.resourcePolicy.perStep,
             sessionsBasePath: env.sessionsDir,
         });
         const workspaceFs = createWorkspaceFilesystem({ sessionsBasePath: env.sessionsDir });

@@ -21,7 +21,6 @@ function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHar
         model: "claude-test-model",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         sandboxImage: "sandbox-base:latest",
-        resourceLimits: { maxCpu: 1, maxMemoryGb: 1, maxGpuCount: 0 },
         resourcePolicy: { perStep: { maxCpu: 1, maxMemoryGb: 1, maxGpuCount: 0 }, budget: { cpu: 1, memoryGb: 1 } },
         adminPort: 8433,
         skillsDir,

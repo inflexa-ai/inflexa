@@ -65,8 +65,6 @@ export type ResolvedHarnessConfig = {
         readonly github?: string;
     };
     readonly sandboxImage: string;
-    /** Per-step ceilings — identical to `resourcePolicy.perStep`; its own field for the sandbox-client seam. */
-    readonly resourceLimits: ResourceLimits;
     /**
      * The harness's `ResourcePolicy`, resolved from `harness.resourceLimits`:
      * the per-step ceilings plus the machine budget and optional ephemeral
@@ -160,7 +158,6 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
             github: cfg?.bioKeys?.github,
         },
         sandboxImage: cfg?.sandboxImage ?? DEFAULT_SANDBOX_IMAGE,
-        resourceLimits: resourcePolicy.perStep,
         resourcePolicy,
         adminPort: cfg?.adminPort ?? DEFAULT_ADMIN_PORT,
         skillsDir: cfg?.skillsDir ?? (env.isDev ? devSkillsDir : null),
