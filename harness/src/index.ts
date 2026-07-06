@@ -84,6 +84,15 @@ export type { ChatProvider, EmbeddingProvider, ChatRequest, ChatResponse, ChatSt
 // DBOS lifecycle.
 export { launchDbos, shutdownDbos } from "./runtime/dbos.js";
 export type { DbosConfig } from "./runtime/dbos.js";
+// DBOS workflow-status vocabulary. An embedder that reads its own
+// `dbos.workflow_status` rows must classify them against the SDK's status set,
+// but must never depend on `@dbos-inc/dbos-sdk` directly — the SDK is
+// module-singleton state, so a host's own copy is a different, un-launched
+// instance (same rationale as `deliverExecEvent` below). The barrel forwards the
+// status const + its union so the classification vocabulary comes from the one
+// launched SDK, not a drifting hand-kept string literal on the embedder side.
+export { StatusString } from "@dbos-inc/dbos-sdk";
+export type { WorkflowStatusString } from "@dbos-inc/dbos-sdk";
 
 // Application pool. Exported so an embedder never declares its own `pg`
 // dependency: the pool it hands to workflow deps is built by the same pg

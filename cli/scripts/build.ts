@@ -222,7 +222,6 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
     function readMatchingText(pkgDir: string, matcher: RegExp): string | null {
         let entries: string[];
         try {
-            // TODO(slop): neverthrow
             entries = readdirSync(pkgDir);
         } catch {
             return null;
@@ -234,7 +233,6 @@ function collectThirdPartyLicenses(rootDir: string): ThirdPartyPackage[] {
             .sort()
             .map((entry) => {
                 try {
-                    // TODO(slop): neverthrow
                     return readFileSync(join(pkgDir, entry), "utf8").trim();
                 } catch {
                     return "";

@@ -1,5 +1,7 @@
 import { confirm as clackConfirm, isCancel, select as clackSelect, text as clackText } from "@clack/prompts";
 
+import { shutdown } from "./shutdown.ts";
+
 // CLI-boundary helpers shared by the text command actions: print-and-exit on fatal errors,
 // and an interactive y/N confirm (via @clack/prompts). They live in lib/ (infrastructure)
 // rather than src/cli/ (the command registry) and stay decoupled from any domain — `dieOn`
@@ -10,6 +12,23 @@ import { confirm as clackConfirm, isCancel, select as clackSelect, text as clack
 export function fail(message: string, cause?: unknown): never {
     console.error(message, cause ?? "");
     process.exit(1);
+}
+
+/**
+ * POST-WORK failure exit: print `message` to stderr, then exit non-zero VIA the
+ * shutdown path so every registered `onShutdown` hook runs first. Its counterpart
+ * {@link fail} is the PRE-FLIGHT bail-out — a bare `process.exit(1)` for the boundary
+ * where nothing is pending yet, which by design SKIPS the shutdown hooks. Reach for
+ * this once work with pending effects has run: a failed analysis run must flush its
+ * signed provenance document (the `prov.run_completed`/`prov.file_written` events still
+ * in the recorder's pending flush, drained by `onShutdown(flushProvenanceAsync)`) before
+ * the process dies — exiting via `fail()` there would race or skip that flush and lose
+ * the very record the flush exists to guarantee. Mirrors `fail`'s stderr shape exactly
+ * (message + its empty cause slot) so the two exits read identically.
+ */
+export function failViaShutdown(message: string): Promise<never> {
+    console.error(message, "");
+    return shutdown(1);
 }
 
 /**
