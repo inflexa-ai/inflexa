@@ -1,22 +1,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-/**
- * A blank or whitespace-only string is treated as unset (`undefined`), so an
- * exported-but-empty env var (`INFLEXA_LIB_STORE_URL=`) or a blank config value
- * does NOT win over the next fallback in a `??` chain — an empty string is truthy
- * to `??` and would otherwise silently defeat the default. Shared by env reads
- * here and the config schema (lib/config.ts).
- */
-export function blankToUndefined(value: string | undefined): string | undefined {
-    return value !== undefined && value.trim() !== "" ? value : undefined;
-}
-
 const dataVar = process.platform === "win32" ? "LOCALAPPDATA" : "XDG_DATA_HOME";
 const configVar = process.platform === "win32" ? "APPDATA" : "XDG_CONFIG_HOME";
 const logLevelVar = "INFLEXA_LOG_LEVEL";
 const otelEndpointVar = "OTEL_EXPORTER_OTLP_ENDPOINT";
-const libStoreUrlVar = "INFLEXA_LIB_STORE_URL";
 
 function dataDir(): string {
     const base = process.env[dataVar];
@@ -80,14 +68,6 @@ export const env = Object.freeze({
     modelDir: join(dataDir(), "inflexa", "models"),
     /** The local embedding GGUF path — `<modelDir>/bge-small-en-v1.5-q8_0.gguf`. */
     embeddingModelPath: join(dataDir(), "inflexa", "models", "bge-small-en-v1.5-q8_0.gguf"),
-    /**
-     * Sandbox library store root: `<dataDir>/inflexa/libs/`. `inflexa libs pull`
-     * lays out `current -> <version>/` here; the harness binds this dir read-only
-     * at `/mnt/libs` (only once `current` exists). See src/modules/libs/.
-     */
-    libStorePath: join(dataDir(), "inflexa", "libs"),
-    /** Override for the published library-store base URL (anonymous public bucket/CDN). A blank export is treated as unset. */
-    libStoreUrl: blankToUndefined(process.env[libStoreUrlVar]),
     /**
      * CLIProxyAPI runs in a container (Docker or Podman, see
      * src/modules/infra/setup.ts). The config and the provider-credential dir are
@@ -186,13 +166,6 @@ export const envDoc: Readonly<
         description: "the bge-small-en-v1.5 GGUF used by the local embedding provider",
         baseVar: dataVar,
     },
-    libStorePath: {
-        kind: "path",
-        label: "lib store",
-        description: "sandbox library store (R/Python/conda/node packages), provisioned by `inflexa libs pull`",
-        baseVar: dataVar,
-    },
-    libStoreUrl: { kind: "var", name: libStoreUrlVar, description: "base URL of the published library store (default: the public bucket); anonymous GET" },
     cliproxyConfigPath: { kind: "path", label: "proxy config", description: "CLIProxyAPI config, mounted into the proxy container", baseVar: dataVar },
     cliproxyAuthDir: { kind: "path", label: "proxy auth", description: "CLIProxyAPI provider credentials, created by `inflexa setup`", baseVar: dataVar },
     postgresDataDir: {

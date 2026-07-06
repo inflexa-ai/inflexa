@@ -350,15 +350,14 @@ export async function bootHarnessRuntime(
             pool,
             env: { backend: "docker", namespace: "" },
             cortexBaseUrl: ingress.cortexBaseUrl,
+            // The sandbox image bakes the library store at /mnt/libs/current, so
+            // the local path creates no `/mnt/libs` bind mount and forces no
+            // container platform (the multi-arch image resolves the host arch at
+            // pull time). Managed still mounts the tarballs via its PVC — that
+            // lives in infra/harness config, not here.
             image: cfg.sandboxImage,
             resourceLimits: cfg.resourcePolicy.perStep,
             sessionsBasePath: env.sessionsDir,
-            // Coupling guard: `null` (no `current` on disk) leaves this
-            // undefined so no `/mnt/libs` bind mount is created.
-            libStorePath: cfg.libStorePath ?? undefined,
-            // Sandboxes must run at the pulled store's architecture — the
-            // mounted binaries are native code.
-            platform: cfg.sandboxPlatform ?? undefined,
         });
         const workspaceFs = createWorkspaceFilesystem({ sessionsBasePath: env.sessionsDir });
         // One authorizer instance, shared by the parent workflow's terminal

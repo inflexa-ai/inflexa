@@ -56,14 +56,14 @@ describe("readConfig — fail-closed", () => {
         expect(readConfig().telemetry).toBe(false);
     });
 
-    // finding 7: libStorePath/libStoreUrl must self-heal PER FIELD like their siblings —
-    // a malformed value (e.g. null) must NOT nuke the whole parse and drop telemetry consent.
-    test("a malformed libStoreUrl is salvaged per-field, keeping siblings intact", () => {
-        writeRawConfig(JSON.stringify({ telemetry: true, libStoreUrl: null, libStorePath: "/tmp/store" }));
+    // finding 7: a malformed field must self-heal PER FIELD like its siblings —
+    // a bad value must NOT nuke the whole parse and drop telemetry consent.
+    test("a malformed field is salvaged per-field, keeping siblings intact", () => {
+        writeRawConfig(JSON.stringify({ telemetry: true, theme: "not-a-real-theme", leaderTimeout: 500 }));
         const cfg = readConfig();
         expect(cfg.telemetry).toBe(true); // sibling survived — no whole-config fail-closed
-        expect(cfg.libStoreUrl).toBeUndefined(); // the bad field salvaged to unset
-        expect(cfg.libStorePath).toBe("/tmp/store"); // the good sibling field intact
+        expect(cfg.theme).toBe(DEFAULT_THEME_ID); // the bad field salvaged to the default
+        expect(cfg.leaderTimeout).toBe(500); // the good sibling field intact
     });
 });
 

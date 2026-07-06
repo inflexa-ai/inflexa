@@ -11,9 +11,10 @@ import {
     type Pool,
 } from "@inflexa-ai/harness";
 
-import { fail, dieOn } from "../../lib/cli.ts";
+import { confirm, fail, dieOn } from "../../lib/cli.ts";
 import { activeRuntime, resolvePostgresConfig } from "../../lib/config.ts";
-import { capture } from "../../lib/container.ts";
+import { capture, ensureReady, inherit } from "../../lib/container.ts";
+import { variantOfImage } from "../libs/images.ts";
 import { getLogger } from "../../lib/log.ts";
 import { shutdown } from "../../lib/shutdown.ts";
 import type { Analysis } from "../../types/analysis.ts";
@@ -122,21 +123,41 @@ export function describeBootError(e: HarnessBootError): string {
 }
 
 /**
- * Pre-flight: the sandbox image must exist locally — after staging it is too late
- * to find out. Exported so `inflexa run` reuses profile's identical image check.
+ * Pre-flight: the configured sandbox image must be present before staging — after
+ * staging it is too late to find out. A missing PUBLISHED variant image is pulled
+ * from GHCR (offered + confirmed on a TTY, pulled directly otherwise); a missing
+ * CUSTOM local tag can't be pulled, so we hint the build. Never a silent dead-end.
+ * Exported so `inflexa run` reuses profile's identical image check.
  */
 export async function ensureSandboxImage(image: string): Promise<void> {
     const rt = activeRuntime();
-    const result = await capture(rt, ["image", "inspect", image]);
-    if (result.code !== 0) {
+    const ready = await ensureReady(rt);
+    if (ready.isErr()) fail(ready.error.message);
+    if ((await capture(rt, ["image", "inspect", image])).code === 0) return;
+
+    const variant = variantOfImage(image);
+    if (variant === null) {
+        // A custom local tag (a user's `FROM` image) — we cannot pull it.
         fail(
             [
                 `Sandbox image "${image}" not found in ${rt.id}.`,
-                `Build it from the repo root: ${rt.id} build -f images/sandbox-base/Dockerfile -t ${image} .`,
-                "(or set `harness.sandboxImage` in config.json to an existing tag)",
+                `Build it locally (e.g. \`${rt.bin} build -f images/sandbox-python-r/Dockerfile -t ${image} .\`),`,
+                "or set `harness.sandboxImage` to a published `ghcr.io/inflexa-ai/inf-cli/sandbox-*` tag and run `inflexa sandbox pull`.",
             ].join("\n"),
         );
     }
+
+    // Published variant: offer + pull. The image is genuinely required to launch a
+    // sandbox, so a decline is an actionable stop, not a silent dead-end.
+    if (process.stdin.isTTY) {
+        console.log(`\n  Sandbox image "${image}" (${variant}) is not installed.`);
+        const proceed = await confirm("Pull it from GitHub Packages now? (may be a multi-GB download)");
+        if (!proceed) fail("A sandbox image is required to run a profile. Run `inflexa sandbox pull` and retry.");
+    } else {
+        console.log(`  Sandbox image "${image}" not present — pulling ${variant} from GitHub Packages…`);
+    }
+    const code = await inherit(rt, ["pull", image]);
+    if (code !== 0) fail(`Failed to pull ${image} (\`${rt.bin} pull\` exited ${code}). Check your network and that ghcr.io is reachable.`);
 }
 
 /** `inflexa profile` — stage the analysis's inputs and run a data profile on them. */
@@ -155,12 +176,6 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
     if (cfg.configError) fail(describeBootError({ type: "harness_config_invalid", issues: cfg.configError.issues }));
 
     await ensureSandboxImage(cfg.sandboxImage);
-
-    // Lazy library-store offer: a missing store degrades gracefully
-    // (`list_available_packages` returns `available:false`), so this is a
-    // one-line OFFER, never a blocker — the run proceeds either way.
-    const { offerLibStoreIfMissing } = await import("../libs/pull.ts");
-    await offerLibStoreIfMissing();
 
     const s = spinner();
     s.start("Booting the harness runtime (Postgres, callback listener, DBOS)");

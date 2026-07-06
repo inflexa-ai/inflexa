@@ -166,12 +166,12 @@ export async function setup(options: SetupOptions): Promise<void> {
             return;
         }
 
-        // --- library store ---
-        // Provision the sandbox package store through the SAME handler as
-        // `inflexa libs pull` (design: one dogfooded path). A pull failure warns
-        // and continues — the store is an offer, not a hard prerequisite (a
-        // missing store degrades to `available:false`).
-        await runLibStoreSetup();
+        // --- sandbox image ---
+        // Provision the sandbox image through the SAME handler as
+        // `inflexa sandbox pull` (design: one dogfooded path). A pull failure warns
+        // and continues — the image is an offer here, not a hard prerequisite
+        // (`inflexa profile` pulls it on demand if still missing).
+        await runSandboxImageSetup();
 
         printNextSteps(options, pgConn);
         outro("Setup complete");
@@ -182,48 +182,40 @@ export async function setup(options: SetupOptions): Promise<void> {
 }
 
 /**
- * Provision the sandbox library store as part of `inflexa setup`. Reuses the
- * `libsPull` handler (never a second download path); the store is per-arch —
- * there is nothing to choose. The store can be multiple GB, so provisioning is
- * gated on explicit consent:
- *   - Interactive: hand off to `libsPull` LEFT interactive so it shows the
- *     planned download size, confirms before the transfer, and owns its own
- *     spinner (we do NOT re-implement the plan/size machinery here).
+ * Provision the sandbox image as part of `inflexa setup`. Reuses the `sandboxPull`
+ * handler (never a second fetch path); the user picks a variant (`python` /
+ * `python-r`) and `docker pull` resolves the host arch from the multi-arch
+ * manifest. The image can be multiple GB, so pulling is gated on explicit consent:
+ *   - Interactive: hand off to `sandboxPull` so it prompts the variant, confirms
+ *     before the transfer, and streams progress.
  *   - Non-interactive: do NOT auto-download — a headless run must never silently
  *     pull GBs. Print a hint to the explicit command and continue.
- * Every branch is non-fatal (decline, failure, unknown arch): the store is an
- * offer, not a prerequisite — a missing store degrades to `available:false`.
+ * Every branch is non-fatal (decline, failure): the image is an offer here, not a
+ * prerequisite — `inflexa profile` pulls it on demand if still missing.
  */
-async function runLibStoreSetup(): Promise<void> {
-    const { ARM64_NO_R_REASON, detectArch } = await import("../libs/arch.ts");
-    const arch = detectArch();
-    if (arch === null) {
-        log.warn("Skipping the library store — could not detect a supported architecture (expected x86_64 or aarch64).");
-        return;
-    }
-
-    // Headless setup never auto-downloads (the store is multi-GB); point at the
+async function runSandboxImageSetup(): Promise<void> {
+    // Headless setup never auto-downloads (the image is multi-GB); point at the
     // explicit command and continue so the rest of setup still completes.
     if (!process.stdin.isTTY) {
-        note("Skipping the library store on a non-interactive terminal.\nRun `inflexa libs pull --yes` to provision it later.", "Library store");
+        note(
+            "Skipping the sandbox image on a non-interactive terminal.\nRun `inflexa sandbox pull <python|python-r> --yes` to install it later.",
+            "Sandbox image",
+        );
         return;
     }
 
-    if (arch === "linux-arm64") note(ARM64_NO_R_REASON, "Library store");
-
-    // libsPull owns the size confirmation + spinner when left interactive.
-    const { libsPull } = await import("../libs/pull.ts");
-    (await libsPull()).match(
+    // sandboxPull owns the variant prompt + size confirmation when left interactive.
+    const { sandboxPull } = await import("../libs/pull.ts");
+    (await sandboxPull()).match(
         (outcome) => {
-            // `activated` already announced by libsPull's own spinner — no second message.
-            if (outcome.type === "up_to_date") log.success(`Library store already up to date (${outcome.version}).`);
-            else if (outcome.type === "declined") log.info("Library store skipped. Run `inflexa libs pull` later to provision it.");
+            if (outcome.type === "up_to_date") log.success(`Sandbox image already installed (${outcome.image}).`);
+            else if (outcome.type === "pulled") log.success(`Sandbox image installed (${outcome.image}).`);
+            else if (outcome.type === "declined") log.info("Sandbox image skipped. Run `inflexa sandbox pull` later to install it.");
         },
         (error) =>
-            // A concurrent pull already owns the store lock — not a failure to warn about.
-            error.type === "pull_in_progress"
+            error.type === "no_variant"
                 ? log.info(error.message)
-                : log.warn(`Library store provisioning failed: ${error.message}\n  You can retry later with \`inflexa libs pull\`.`),
+                : log.warn(`Sandbox image install failed: ${error.message}\n  You can retry later with \`inflexa sandbox pull\`.`),
     );
 }
 

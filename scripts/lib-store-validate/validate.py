@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""Gate 2 validation suite — runs INSIDE a sandbox-base container with the
-library store mounted read-only at /mnt/libs (no network, runtime env only).
+"""Acceptance validation suite — runs INSIDE a sandbox image with the library
+store at /mnt/libs/current (no network, runtime env only). The store is there
+either because it is baked into the image (the OSS path — a published
+sandbox-python/-r booted directly) or mounted read-only at /mnt/libs (the managed
+path).
 
-It derives its work from the mounted packages.txt, not a hardcoded list:
+It derives its work from packages.txt, not a hardcoded list:
 
   1. import-all   import()/library()/require()/--version EVERY advertised package
-                  (the escaping-bug net). This IS the invariant check (task 7.4):
-                  every advertised package must be loadable (advertised ⊆ loadable).
+                  (the escaping-bug net). This IS the invariant check: every
+                  advertised package must be loadable (advertised ⊆ loadable).
                   The direction is deliberate — packages.txt must not LIE; extra
                   loadable-but-unadvertised packages are tolerated, not flagged.
   2. anchors      a curated real operation for the compiled anchor packages
                   (registry: anchors.json + anchors/*), filtered to this arch and
-                  to the tracks actually present in the mounted store.
+                  to the tracks actually present in the store.
   3. r-examples   (opt-in, --r-examples) each R package's own examples via
                   tools::testInstalledPackage, with a network/\\donttest denylist.
 
-Any failure exits non-zero (fail loud) so Gate 2 blocks promotion.
+Any failure exits non-zero (fail loud) so acceptance blocks promotion.
 """
 from __future__ import annotations
 
@@ -96,7 +99,7 @@ def parse_packages_txt(path: Path) -> dict[str, list[str]]:
     return out
 
 
-# --- Python import name derivation (mirrors Gate 1) --------------------------
+# --- Python import name derivation (mirrors the build's load check) ----------
 
 def modules_for(dist: str) -> list[str]:
     try:
@@ -201,7 +204,7 @@ def check_r(names: list[str]) -> list[str]:
         fpath.unlink()
     # A non-zero Rscript exit is a FAILURE regardless of the failure file — tryCatch cannot
     # catch a segfault, so a crash can produce a clean-looking (or empty) file. Surface a
-    # synthetic marker so the R track fails loud and Gate 2 blocks promotion. Mirrors
+    # synthetic marker so the R track fails loud and acceptance blocks promotion. Mirrors
     # check_node/check_conda, which already gate on subprocess return codes.
     if r.returncode != 0 and not failed:
         failed.append(f"<Rscript crashed: exit {r.returncode}>")
@@ -274,10 +277,10 @@ def run_r_examples(r_names: list[str]) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Gate 2 lib-store validation suite")
+    ap = argparse.ArgumentParser(description="lib-store acceptance validation suite")
     ap.add_argument("--anchors", dest="anchors", action="store_true", default=True)
     ap.add_argument("--no-anchors", dest="anchors", action="store_false")
-    ap.add_argument("--r-examples", action="store_true", help="also run R package examples (heavy; Gate 2 --full)")
+    ap.add_argument("--r-examples", action="store_true", help="also run R package examples (heavy; acceptance --full)")
     args = ap.parse_args()
 
     if not PACKAGES_TXT.exists():
@@ -296,9 +299,9 @@ def main() -> int:
 
     failures: dict[str, list[str]] = {}
 
-    # 1. import-all == the invariant (task 7.4): every advertised package must be
-    #    loadable. One-way on purpose — packages.txt must not LIE; extra loadable
-    #    packages it does not advertise are tolerated (advertised ⊆ loadable).
+    # 1. import-all == the invariant: every advertised package must be loadable.
+    #    One-way on purpose — packages.txt must not LIE; extra loadable packages
+    #    it does not advertise are tolerated (advertised ⊆ loadable).
     print("\n[1/3] import-all (the advertised == loadable invariant)")
     failures["python"] = check_python(pkgs["python"])
     failures["node"] = check_node(pkgs["node"])
@@ -318,7 +321,7 @@ def main() -> int:
         print("\n[3/3] R package examples (tools::testInstalledPackage, network-filtered)")
         rex_rc = run_r_examples(pkgs["r"])
     else:
-        print("\n[3/3] R examples skipped (pass --r-examples / Gate 2 --full to run)")
+        print("\n[3/3] R examples skipped (pass --r-examples / acceptance --full to run)")
 
     total_fail = sum(len(v) for v in failures.values()) + (1 if rex_rc else 0)
     print("\n=== summary ===")
@@ -328,9 +331,9 @@ def main() -> int:
     print(f"  r-examples: {'OK' if rex_rc == 0 else 'FAIL'}")
 
     if total_fail:
-        print(f"\nGate 2 RED — {total_fail} failing check group(s). latest MUST NOT advance.", file=sys.stderr)
+        print(f"\nAcceptance RED — {total_fail} failing check group(s). latest MUST NOT advance.", file=sys.stderr)
         return 1
-    print("\nGate 2 GREEN — advertised ⊆ loadable, anchors pass. Safe to promote latest.")
+    print("\nAcceptance GREEN — advertised ⊆ loadable, anchors pass. Safe to promote latest.")
     return 0
 
 

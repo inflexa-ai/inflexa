@@ -1,0 +1,150 @@
+name: Sandbox Image Acceptance
+
+# Acceptance — the after-build, "as a user" validation gate (see design.md). It
+# runs on a FRESH machine with none of the builder's affordances and obtains the
+# store the way it is actually consumed: it PULLS the just-published sandbox image
+# for this arch from GHCR and boots it directly (the store is baked at
+# /mnt/libs/current, no mount), then runs the extensive suite
+# (scripts/lib-store-validate). The extracted tarballs are cut from that same
+# image, so validating the image validates the managed mount's content too.
+#
+# Only a GREEN run promotes the candidate tarball manifest to latest/linux-<arch>;
+# a RED run leaves latest untouched and fails.
+#
+# Requires the same opt-in publish config as the build (LIB_STORE_S3_BUCKET,
+# LIB_STORE_PUBLISH_ROLE_ARN); without it there is nothing published to promote
+# and the run no-ops.
+
+on:
+  workflow_run:
+    workflows: ["Build Sandbox Images"]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+  packages: read
+
+jobs:
+  acceptance:
+    # Only when the build succeeded (a fully-failed build has nothing to check).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: '["self-hosted", "inflexa-builder"]'
+          - arch: arm64
+            runner: '"ubuntu-24.04-arm"'
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    env:
+      ARCH: ${{ matrix.arch }}
+      S3_BUCKET: ${{ vars.LIB_STORE_S3_BUCKET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Pin to the commit that produced the candidate build: this workflow
+          # runs the validation suite from the checked-out tree, so an unpinned
+          # checkout would validate against a DIFFERENT suite if main advanced.
+          # `head_sha` is empty on workflow_dispatch → checkout falls back to the
+          # dispatched ref.
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Gate publish configuration
+        id: cfg
+        run: |
+          if [ -n "$S3_BUCKET" ] && [ -n "${{ vars.LIB_STORE_PUBLISH_ROLE_ARN }}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Acceptance skipped — LIB_STORE_S3_BUCKET / LIB_STORE_PUBLISH_ROLE_ARN unset, so nothing was published to promote."
+          fi
+
+      # AWS credentials are configured BEFORE resolving the candidate: the
+      # workflow_dispatch path reads the candidate pointer from S3, and the
+      # promotion copy on green needs them too.
+      - name: Configure AWS credentials
+        if: steps.cfg.outputs.enabled == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.LIB_STORE_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Download candidate metadata (from the build run)
+        if: steps.cfg.outputs.enabled == 'true' && github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: lib-store-candidate-${{ matrix.arch }}
+          path: candidate
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve candidate version + image
+        id: candidate
+        if: steps.cfg.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          if [ -f "candidate/linux-${ARCH}.json" ]; then
+            VERSION=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json'))['version'])")
+            PUBLISHED=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json')).get('publish',''))")
+            IMAGE=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json')).get('image',''))")
+          else
+            # workflow_dispatch fallback: read the recorded candidate pointer.
+            PUBLISHED=true
+            IMAGE=""
+            if aws s3 cp "s3://$S3_BUCKET/candidate/linux-${ARCH}.txt" candidate.txt 2>aws-err.log; then
+              VERSION=$(cat candidate.txt)
+              IMAGE="ghcr.io/${{ github.repository }}/sandbox-python-r:${VERSION}-${ARCH}"
+            elif grep -Eqi 'Not Found|404|NoSuchKey|does not exist' aws-err.log; then
+              echo "::notice::No candidate pointer object for linux-${ARCH}; nothing to validate."
+              VERSION=""
+            else
+              echo "::error::Failed to read the candidate pointer for linux-${ARCH}:"
+              cat aws-err.log >&2
+              exit 1
+            fi
+          fi
+          if [ -z "$VERSION" ] || [ "$PUBLISHED" != "true" ]; then
+            echo "::notice::No published candidate for linux-${ARCH}; nothing to validate."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+            echo "Candidate for linux-${ARCH}: $VERSION ($IMAGE)"
+          fi
+
+      - name: Log in to GHCR
+        if: steps.candidate.outputs.present == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull the published sandbox image
+        if: steps.candidate.outputs.present == 'true'
+        run: docker pull "${{ steps.candidate.outputs.image }}"
+
+      # Boot the image (baked store, no mount), run the suite, promote on green.
+      - name: Validate + promote
+        if: steps.candidate.outputs.present == 'true'
+        env:
+          SANDBOX_IMAGE: ${{ steps.candidate.outputs.image }}
+        run: |
+          if scripts/lib-store-acceptance.sh "$ARCH" "${{ steps.candidate.outputs.version }}"; then
+            echo "| linux-$ARCH | GREEN → promoted |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| linux-$ARCH | RED → latest unchanged |" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi

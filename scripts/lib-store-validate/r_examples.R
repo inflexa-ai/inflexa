@@ -1,4 +1,4 @@
-# Gate 2 R-example pass: run each installed R package's OWN examples via
+# Acceptance R-example pass: run each installed R package's OWN examples via
 # tools::testInstalledPackage — near-maximum scrutiny, author-provided, zero
 # bespoke fixtures. R is the one ecosystem where "does real work" is auto-
 # discovered because we are not the author.
