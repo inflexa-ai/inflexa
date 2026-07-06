@@ -16,6 +16,10 @@ dist-ssr
 # TypeScript incremental build info
 *.tsbuildinfo
 
+# Python bytecode cache (e.g. from cli/scripts/lib-validator/*.py smoke tests)
+__pycache__/
+*.py[cod]
+
 # Guard against tsc emitting alongside source. the harness builds to harness/dist (ignored
 # above); these catch an accidental in-place emit. Scoped to core, NOT blanket
 # **/src — cli/src ships a hand-written assets.d.ts that must stay tracked.
