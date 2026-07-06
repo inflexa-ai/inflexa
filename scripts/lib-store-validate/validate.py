@@ -5,20 +5,21 @@ either because it is baked into the image (the OSS path — a published
 sandbox-python/-r booted directly) or mounted read-only at /mnt/libs (the managed
 path).
 
-It derives its work from packages.txt, not a hardcoded list:
+It derives its work from packages.txt, not a hardcoded list, and runs two phases:
 
-  1. import-all   import()/library()/require()/--version EVERY advertised package
-                  (the escaping-bug net). This IS the invariant check: every
-                  advertised package must be loadable (advertised ⊆ loadable).
-                  The direction is deliberate — packages.txt must not LIE; extra
-                  loadable-but-unadvertised packages are tolerated, not flagged.
-  2. anchors      a curated real operation for the compiled anchor packages
-                  (registry: anchors.json + anchors/*), filtered to this arch and
-                  to the tracks actually present in the store.
-  3. r-examples   (opt-in, --r-examples) each R package's own examples via
-                  tools::testInstalledPackage, with a network/\\donttest denylist.
+  1. import-all   import()/library()/require()/--version EVERY advertised package.
+                  The advertised == loadable invariant (advertised ⊆ loadable):
+                  packages.txt must not LIE. Extra loadable-but-unadvertised
+                  packages are tolerated, not flagged.
+  2. validators   the per-library smoke-test suite (lib-validator/run_all.py):
+                  each covered library runs a real operation on synthetic data.
+                  An installed-but-broken library is a failure; an absent one
+                  (its not-installed guard fires) is a skip.
 
-Any failure exits non-zero (fail loud) so acceptance blocks promotion.
+Acceptance is NON-GATING: it promotes nothing (the build already advanced
+`latest`). It reports a per-arch results table (written to $LIB_STORE_SUMMARY_MD
+when set) and exits non-zero if anything is broken — a green/red status a
+maintainer reviews.
 """
 from __future__ import annotations
 
@@ -28,7 +29,6 @@ import importlib.metadata as im
 import json
 import os
 import platform
-import re
 import shutil
 import subprocess
 import sys
@@ -38,7 +38,8 @@ from pathlib import Path
 # baked env var, defaulting to the mount contract.
 STORE = Path(os.environ.get("INFLEXA_LIB_ROOT", "/mnt/libs/current"))
 PACKAGES_TXT = STORE / "packages.txt"
-SUITE_DIR = Path(__file__).resolve().parent
+# Where run.sh mounts scripts/lib-validator inside the container.
+LIB_VALIDATOR_DIR = Path(os.environ.get("LIB_VALIDATOR_DIR", "/opt/lib-validator"))
 
 SECTION_ECOSYSTEM = {
     "R (CRAN)": "r",
@@ -49,6 +50,9 @@ SECTION_ECOSYSTEM = {
     "System tools (CLI)": "conda",
 }
 
+# Display order for the per-track tables/summary.
+TRACK_ORDER = ["python", "r", "conda", "node"]
+
 
 def arch() -> str:
     m = platform.machine().lower()
@@ -57,14 +61,6 @@ def arch() -> str:
     if m in ("aarch64", "arm64"):
         return "arm64"
     return m
-
-
-def canonical(name: str) -> str:
-    """PEP 503 canonical distribution name: case-folded, with runs of ``-``/``_``/``.``
-    collapsed to a single ``-``. Lets the anchor registry name a package by either its
-    import name or its distribution name and still match what packages.txt advertises
-    (so ``ms_deisotope`` ≡ ``ms-deisotope``)."""
-    return re.sub(r"[-_.]+", "-", name.strip()).lower()
 
 
 def parse_packages_txt(path: Path) -> dict[str, list[str]]:
@@ -223,76 +219,97 @@ def check_r(names: list[str]) -> list[str]:
     return failed
 
 
-# --- anchors -----------------------------------------------------------------
+# --- per-library validators (the behavioral pass) ----------------------------
 
-def run_anchors(advertised: set[str], this_arch: str) -> list[str]:
-    reg_path = SUITE_DIR / "anchors.json"
-    if not reg_path.exists():
-        print("anchors: registry not found, skipping")
-        return []
-    anchors = json.loads(reg_path.read_text())
-    # Compare PEP 503-canonically: the registry may name a package by its import
-    # name (underscores) while packages.txt advertises the hyphenated distribution
-    # name (ms_deisotope vs ms-deisotope). Passes are counted over the run set
-    # (arch-matched AND advertised), so without this canonicalization a mis-named
-    # anchor is dropped from the run set entirely rather than checked.
-    advertised_canon = {canonical(n) for n in advertised}
-    failed: list[str] = []
-    ran = 0
-    for a in anchors:
-        name = a["name"]
-        if this_arch not in a.get("arches", []):
-            print(f"  skip anchor {name}: not built for {this_arch}")
-            continue
-        if canonical(name) not in advertised_canon:
-            # Legitimately absent from this store (e.g. an R anchor on arm64):
-            # skip WITHOUT counting it — a not-run anchor is neither a pass nor
-            # a fail.
-            print(f"  skip anchor {name}: not advertised in this store")
-            continue
-        ran += 1
-        op = SUITE_DIR / "anchors" / a["op"]
-        runner = a["runner"]
-        if runner == "python":
-            cmd = ["python3", str(op)]
-        elif runner == "R":
-            cmd = ["Rscript", "--vanilla", str(op)]
-        elif runner == "shell":
-            cmd = ["bash", str(op)]
-        else:
-            print(f"  FAIL anchor {name}: unknown runner {runner}")
-            failed.append(name)
-            continue
-        r = subprocess.run(cmd, capture_output=True, text=True)
-        if r.returncode == 0:
-            print(f"  OK anchor {name} ({a['track']})")
-        else:
-            tail = (r.stderr or r.stdout).strip().splitlines()
-            print(f"  FAIL anchor {name}: {tail[-1] if tail else 'nonzero exit'}")
-            failed.append(name)
-    print(f"anchors: {ran - len(failed)}/{ran} passed")
-    return failed
+def run_validators() -> dict | None:
+    """Run the per-library smoke-test suite (lib-validator/run_all.py) and return
+    its parsed --json payload, or None if the suite could not run.
+
+    Scopes to Python validators when the image has no R runtime (``--lang py`` when
+    ``Rscript`` is absent), so R validators are not counted as unrunnable on a
+    python-only image — their absence there is expected, and the R track's presence
+    where advertised is enforced by import-all, not the smoke suite."""
+    runner = LIB_VALIDATOR_DIR / "run_all.py"
+    if not runner.exists():
+        print(f"  FAIL validators: runner not found at {runner} — is scripts/lib-validator mounted?",
+              file=sys.stderr)
+        return None
+    lang = "all" if shutil.which("Rscript") else "py"
+    proc = subprocess.run(
+        [sys.executable, str(runner), "--lang", lang, "--json"],
+        capture_output=True, text=True,
+    )
+    try:
+        return json.loads(proc.stdout)
+    except (json.JSONDecodeError, ValueError):
+        tail = (proc.stderr or proc.stdout).strip().splitlines()[-5:]
+        print("  FAIL validators: run_all.py did not emit JSON:\n    " + "\n    ".join(tail),
+              file=sys.stderr)
+        return None
 
 
-# --- R examples (opt-in) -----------------------------------------------------
+# --- results table (non-gating visibility) -----------------------------------
 
-def run_r_examples(r_names: list[str]) -> int:
-    if not r_names:
-        return 0
-    op = SUITE_DIR / "r_examples.R"
-    limit = os.environ.get("LIB_STORE_R_EXAMPLE_LIMIT", "")
-    cmd = ["Rscript", "--vanilla", str(op)]
-    if limit:
-        cmd.append(limit)
-    r = subprocess.run(cmd, text=True)
-    return r.returncode
+def _md_escape(s: str) -> str:
+    return (s or "").replace("|", "\\|").replace("\n", " ").strip()
+
+
+def write_summary_md(path: Path, this_arch: str, version: str,
+                     pkgs: dict[str, list[str]], failures: dict[str, list[str]],
+                     val_payload: dict | None, green: bool) -> None:
+    """Assemble the acceptance results table (GitHub-flavored markdown) for the
+    run summary: verdict header, import-all per track, per-library counts, and a
+    needs-attention list of failing/errored libraries."""
+    lines: list[str] = []
+    hdr = f"## Acceptance — linux-{this_arch}"
+    if version:
+        hdr += f"  ·  {version}"
+    lines += [hdr, ""]
+    lines += [f"**{'🟢 GREEN' if green else '🔴 RED'}** — acceptance is non-gating; "
+              f"`latest` was set by the build. This run reports what it verified.", ""]
+
+    lines += ["### Import-all (advertised ⊆ loadable)", "",
+              "| Track | Advertised | Loadable | Failing |", "|-|-|-|-|"]
+    for track in TRACK_ORDER:
+        adv = len(pkgs.get(track, []))
+        bad = failures.get(track, [])
+        fail_str = "—" if not bad else _md_escape(", ".join(bad[:8]) + ("…" if len(bad) > 8 else ""))
+        lines.append(f"| {track} | {adv} | {adv - len(bad)} | {fail_str} |")
+    lines.append("")
+
+    if val_payload is not None:
+        c = val_payload.get("counts", {})
+        lines += ["### Library validators (per-library smoke tests)", "",
+                  "| Result | Count |", "|-|-|",
+                  f"| ✅ pass | {c.get('PASS', 0)} |",
+                  f"| ❌ fail | {c.get('FAIL', 0)} |",
+                  f"| 💥 error | {c.get('ERROR', 0)} |",
+                  f"| ⏭ absent | {c.get('NOT_INSTALLED', 0)} |"]
+        if c.get("NO_INTERP", 0):
+            lines.append(f"| ⚠ no-interpreter | {c.get('NO_INTERP', 0)} |")
+        lines.append("")
+
+        actionable = [r for r in val_payload.get("results", [])
+                      if r.get("status") in ("FAIL", "ERROR", "NO_INTERP")]
+        if actionable:
+            lines += ["### Needs attention", "",
+                      "| Library | Lang | Status | Detail |", "|-|-|-|-|"]
+            for r in sorted(actionable, key=lambda r: (r.get("status", ""), r.get("name", ""))):
+                detail = _md_escape(r.get("detail", ""))
+                if len(detail) > 120:
+                    detail = detail[:117] + "…"
+                lines.append(f"| {r.get('name')} | {r.get('lang')} | {r.get('status')} | {detail} |")
+            lines.append("")
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="lib-store acceptance validation suite")
-    ap.add_argument("--anchors", dest="anchors", action="store_true", default=True)
-    ap.add_argument("--no-anchors", dest="anchors", action="store_false")
-    ap.add_argument("--r-examples", action="store_true", help="also run R package examples (heavy; acceptance --full)")
+    ap = argparse.ArgumentParser(description="lib-store acceptance validation suite (non-gating)")
+    ap.add_argument("--validators", dest="validators", action="store_true", default=True,
+                    help=argparse.SUPPRESS)
+    ap.add_argument("--no-validators", dest="validators", action="store_false",
+                    help="import-all only (skip the per-library smoke-test suite) — quick local check")
     args = ap.parse_args()
 
     if not PACKAGES_TXT.exists():
@@ -304,49 +321,69 @@ def main() -> int:
         pkgs = parse_packages_txt(PACKAGES_TXT)
     except ValueError as e:
         # A drifted header or an unreadable store is a config/store problem, not a
-        # package failure — block promotion.
+        # package failure — surface the store-error exit code.
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
     advertised = {n for names in pkgs.values() for n in names}
     print(f"=== lib-store validation ({this_arch}) — {len(advertised)} advertised packages ===")
 
-    failures: dict[str, list[str]] = {}
-
     # 1. import-all == the invariant: every advertised package must be loadable.
     #    One-way on purpose — packages.txt must not LIE; extra loadable packages
     #    it does not advertise are tolerated (advertised ⊆ loadable).
-    print("\n[1/3] import-all (the advertised == loadable invariant)")
+    print("\n[1/2] import-all (the advertised == loadable invariant)")
+    failures: dict[str, list[str]] = {}
     failures["python"] = check_python(pkgs["python"])
     failures["node"] = check_node(pkgs["node"])
     failures["conda"] = check_conda(pkgs["conda"])
     failures["r"] = check_r(pkgs["r"])
+    import_fail = sum(len(v) for v in failures.values())
 
-    # 2. anchors — curated real ops for compiled backends.
-    if args.anchors:
-        print("\n[2/3] anchors (curated real ops for compiled backends)")
-        failures["anchors"] = run_anchors(advertised, this_arch)
+    # 2. per-library validators — the behavioral pass.
+    val_payload: dict | None = None
+    if args.validators:
+        print("\n[2/2] library validators (per-library smoke tests)")
+        val_payload = run_validators()
+        if val_payload is None:
+            # A requested-but-unavailable suite is a setup error (suite not mounted /
+            # non-JSON) — fail loud rather than silently skipping the behavioral pass.
+            print("ERROR: validators requested but the suite could not run", file=sys.stderr)
+            return 2
     else:
-        print("\n[2/3] anchors skipped (--no-anchors)")
+        print("\n[2/2] validators skipped (--no-validators)")
 
-    # 3. R examples (opt-in).
-    rex_rc = 0
-    if args.r_examples:
-        print("\n[3/3] R package examples (tools::testInstalledPackage, network-filtered)")
-        rex_rc = run_r_examples(pkgs["r"])
-    else:
-        print("\n[3/3] R examples skipped (pass --r-examples / acceptance --full to run)")
+    val_counts = (val_payload or {}).get("counts", {})
+    val_results = (val_payload or {}).get("results", [])
+    val_broken = val_counts.get("FAIL", 0) + val_counts.get("ERROR", 0) + val_counts.get("NO_INTERP", 0)
+    green = (import_fail == 0) and (val_broken == 0)
 
-    total_fail = sum(len(v) for v in failures.values()) + (1 if rex_rc else 0)
     print("\n=== summary ===")
-    for k, v in failures.items():
-        status = "OK" if not v else f"FAIL ({', '.join(v)})"
-        print(f"  {k}: {status}")
-    print(f"  r-examples: {'OK' if rex_rc == 0 else 'FAIL'}")
+    for track in TRACK_ORDER:
+        adv = len(pkgs[track])
+        bad = failures.get(track, [])
+        status = "OK" if not bad else f"FAIL ({', '.join(bad)})"
+        print(f"  import-all {track}: {adv - len(bad)}/{adv} — {status}")
+    if val_payload is not None:
+        print(f"  validators: {val_counts.get('PASS', 0)} pass, {val_counts.get('FAIL', 0)} fail, "
+              f"{val_counts.get('ERROR', 0)} error, {val_counts.get('NOT_INSTALLED', 0)} absent"
+              + (f", {val_counts.get('NO_INTERP', 0)} no-interp" if val_counts.get("NO_INTERP", 0) else ""))
+        for r in val_results:
+            if r.get("status") in ("FAIL", "ERROR", "NO_INTERP"):
+                print(f"    {r['status']} {r['name']} ({r['lang']}): {r.get('detail', '')}")
 
-    if total_fail:
-        print(f"\nAcceptance RED — {total_fail} failing check group(s). latest MUST NOT advance.", file=sys.stderr)
+    summary_md = os.environ.get("LIB_STORE_SUMMARY_MD")
+    if summary_md:
+        try:
+            write_summary_md(Path(summary_md), this_arch, os.environ.get("LIB_STORE_VERSION", ""),
+                             pkgs, failures, val_payload, green)
+        except OSError as e:
+            print(f"  (could not write summary markdown to {summary_md}: {e})", file=sys.stderr)
+
+    if not green:
+        print(f"\nAcceptance RED (arch {this_arch}) — {import_fail} import failure(s), "
+              f"{val_broken} broken validator(s). Reported for review; `latest` was set by the build.",
+              file=sys.stderr)
         return 1
-    print("\nAcceptance GREEN — advertised ⊆ loadable, anchors pass. Safe to promote latest.")
+    print(f"\nAcceptance GREEN (arch {this_arch}) — advertised ⊆ loadable, validators healthy.")
     return 0
 
 

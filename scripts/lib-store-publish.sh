@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Publish a built library store to S3 — immutable versions, candidate-only
-# (this never moves `latest`; promotion happens after acceptance goes green, see
-# .github/workflows/lib-store-acceptance.yml):
+# Publish a built library store to S3 — immutable versions, and advance `latest`
+# for this arch (build-floor gated; acceptance is non-gating and moves nothing):
 #   1. Upload each packed track tarball write-once to <version>/linux-<arch>/<track>.tar.zst.
 #   2. If the arch's full track set built, write the per-arch manifest (the
 #      lockfile the CLI pulls) to <version>/linux-<arch>/manifest.json and
@@ -9,6 +8,10 @@
 #      candidate/linux-<arch>.json.
 #      An incomplete build uploads its tarballs (they are content-addressed and
 #      reusable) but publishes no manifest and no candidate.
+#   3. Advance latest/linux-<arch>/manifest.json to this version, mirroring the
+#      image :latest tag the build also advances. This is gated by the build's own
+#      load check + non-empty floor + coverage regression guard — the same gate
+#      that decides whether the build publishes at all.
 #
 # Usage: lib-store-publish.sh <amd64|arm64> <version> <dist_dir>
 # Env:   S3_BUCKET PUBLIC_URL TOP_IMAGE  (TOP_IMAGE is the extracted top image ref
@@ -70,10 +73,15 @@ else
   aws s3 cp "$WORK/manifest.json" "s3://$S3_BUCKET/$MANIFEST_KEY"
 fi
 
-# Candidate pointer (mutable, but NOT latest): the version awaiting acceptance,
-# carrying the exact top image ref for this arch (sandbox-python-r, or
-# sandbox-python where R did not build) so a dispatch-triggered acceptance
+# Advance latest for this arch to the just-published version (build-floor gated:
+# the load check + non-empty floor + coverage regression guard already decided
+# this build is publishable). Acceptance is non-gating and never moves latest;
+# the image :latest tag is advanced the same way by the build's manifest job.
+aws s3 cp "s3://$S3_BUCKET/$MANIFEST_KEY" "s3://$S3_BUCKET/latest/$ARCH_DIR/manifest.json"
+
+# Candidate pointer: records the exact top image ref for this arch (sandbox-python-r,
+# or sandbox-python where R did not build) so a dispatch-triggered acceptance
 # validates the real image rather than assuming the R variant.
 printf '{"version":"%s","image":"%s","publish":"true"}\n' "$VERSION" "$TOP_IMAGE" \
   | aws s3 cp - "s3://$S3_BUCKET/candidate/$ARCH_DIR.json"
-echo "Published candidate $VERSION ($TOP_IMAGE) for $ARCH_DIR (latest NOT moved — awaits acceptance)"
+echo "Published $VERSION ($TOP_IMAGE) for $ARCH_DIR and advanced latest/$ARCH_DIR"
