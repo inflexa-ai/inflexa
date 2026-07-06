@@ -85,6 +85,17 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
                 stepId: event.outcome.stepId,
                 status: event.outcome.status,
             };
+        case "prov.command_executed":
+            return {
+                analysisId: event.analysisId,
+                actorKind: event.actor.kind,
+                runId: event.step.runId,
+                stepId: event.step.stepId,
+                // The command line for a command execution, the tool name for a file-tool write — the
+                // one identifying string per producer kind, without carrying args into telemetry.
+                command: event.command.kind === "command" ? event.command.command : event.command.tool,
+                outputCount: event.command.outputs.length,
+            };
         case "prov.file_written":
             return { analysisId: event.analysisId, actorKind: event.actor.kind, filePath: event.file.path, producer: event.file.producer };
         case "prov.input_used":

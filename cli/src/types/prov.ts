@@ -142,6 +142,71 @@ export type ProvFileRef = {
 };
 
 /**
+ * The `(path, hash)` identity pick of {@link ProvFileRef} — the QName key space every file entity
+ * lives in. A command's outputs and its command-scoped reads carry only this pair (no size/producer),
+ * so an intra-step self-read or a cross-run prior read keys onto the very entity the producing write
+ * registered. Named (not an inline `Pick`) so the shared key space reads as one type at every use site.
+ */
+export type ProvFileKey = Pick<ProvFileRef, "path" | "hash">;
+
+/**
+ * A file a COMMAND read — the command-scoped analogue of {@link ProvUsedInputRef}, carried only inside
+ * {@link ProvCommandRef}. It widens the used-input source vocabulary with `"step"`: a resolved
+ * intra-step self-read (command B reading command A's output within one step) — a chain edge the
+ * step-level {@link ProvUsedInputRef} vocabulary never carries, because at STEP scope "the step read
+ * its own output" is noise (skipped), while at COMMAND scope it is exactly the intra-step lineage signal.
+ */
+export type ProvCommandInputRef = {
+    /** Analysis-relative path; with `hash`, keys the shared file QName so the read merges onto the producing write's entity. */
+    path: string;
+    /** Content hash attested from disk by the harness — the other half of the deterministic file QName. */
+    hash: string;
+    /** The read classification: staged data, an upstream sibling's output, a prior run's output, or `"step"` for a resolved intra-step self-read. */
+    source: "data" | "upstream" | "prior" | "step";
+    /** The staged-input file id, when the harness resolved one (data-mount reads carry it; command/prior reads may not). */
+    fileId?: string;
+};
+
+/**
+ * One execution inside a step that produced files — a discriminated union over the harness's two
+ * producer kinds, mirroring the collector's `Producer` shape. Carried by `prov.command_executed`; the
+ * `command` variant records as a PROV **activity** typed `inflexa:Command`, the `file_tool` variant as
+ * `inflexa:FileToolWrite`. One ref per surviving producer group: the collector is last-write-wins per
+ * output path, so after collapse a group is uniquely keyed by its OUTPUT SET (never the producer's
+ * object identity, which is meaningless across a DBOS workflow re-execution).
+ *
+ * NO timestamp field by design: the producer's observation timestamp is re-minted on every DBOS replay
+ * (replay-unstable), so it must never cross the bus into an identifier or a formal PROV position. The
+ * command activity therefore carries no formal start/end time at all — its ordering lives on the
+ * `wasInformedBy` edge to its step, and the step already carries replay-stable settlement times.
+ */
+export type ProvCommandRef =
+    | {
+          kind: "command";
+          /** The command line the sandbox executed. */
+          command: string;
+          /** The command's argument vector, when the collector captured one. */
+          args?: string[];
+          /** The process exit code. */
+          exitCode: number;
+          /** Execution duration in ms, when captured — a relative span (replay-stable), NOT an observation timestamp. */
+          durationMs?: number;
+          /** The script the command ran, when it read one; resolved to a registered entity via the group's own outputs/inputs by the builder (skipped if unresolvable — the ref carries no hash). */
+          scriptPath?: string;
+          /** The files this command wrote — its generation authority; each keys a file entity. */
+          outputs: ProvFileKey[];
+          /** The command's command-scoped reads: data/upstream/prior reads plus resolved intra-step self-reads (`source: "step"`). */
+          inputs: ProvCommandInputRef[];
+      }
+    | {
+          kind: "file_tool";
+          /** The agent file-tool that authored the content (e.g. `write_file`). */
+          tool: string;
+          /** The files the tool wrote; a file-tool write carries no inputs by construction (agent-authored content). */
+          outputs: ProvFileKey[];
+      };
+
+/**
  * The outcome of `inflexa prov verify`: one of several mutually exclusive states, each with enough
  * detail for the CLI/TUI to render a clear message.
  */
