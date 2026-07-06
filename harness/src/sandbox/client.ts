@@ -21,7 +21,7 @@
  * `DBOS.recv` and `DBOS.writeStream` are body-only.
  */
 
-import type { CreateSandboxMeta, ExecEmit, ExecResult, ManagedSandbox, SandboxIdentity, SandboxRef, SubmitExecBody } from "./types.js";
+import type { CreateSandboxMeta, ExecEmit, ExecResult, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SubmitExecBody } from "./types.js";
 
 export interface SandboxClient {
     /**
@@ -55,12 +55,13 @@ export interface SandboxClient {
     awaitExec(execId: string, callbackSecret: string, emit: ExecEmit, deadline: number): Promise<ExecResult>;
 
     /**
-     * Per-sandbox-machine liveness. `false` only when observably dead
-     * (terminal pod phase, missing container). Transient API errors throw,
-     * so callers can decide whether to retry — silently lying about dead
-     * sandboxes would race the synthetic-complete path.
+     * Per-sandbox-machine liveness. `alive: false` only when observably dead
+     * (terminal pod phase, missing container); `oomKilled` marks a death the
+     * backend attributes to the machine's memory limit. Transient API errors
+     * throw, so callers can decide whether to retry — silently lying about
+     * dead sandboxes would race the synthetic-complete path.
      */
-    isAlive(ref: SandboxRef): Promise<boolean>;
+    isAlive(ref: SandboxRef): Promise<SandboxLiveness>;
 
     /**
      * DBOS step (`sandbox.teardown`). Deletes the K8s Job / removes the

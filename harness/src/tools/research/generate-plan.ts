@@ -30,7 +30,7 @@ import { forSubAgent, scopeResource } from "../../auth/types.js";
 import { type ChatProvider } from "../../providers/types.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
-import { DEFAULT_SANDBOX_MAX_STEPS } from "../../config/resource-limits.js";
+import { DEFAULT_SANDBOX_MAX_STEPS, type ResourcePolicy } from "../../config/resource-limits.js";
 import { plannerPrompt } from "../../prompts/planner.js";
 import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
 import { validatePlan } from "../../schemas/validate-plan.js";
@@ -54,13 +54,10 @@ const PLAN_TIMEOUT_MS = 600_000;
 
 // ── Prompt / catalog ────────────────────────────────────────────────
 
-/** The planner system prompt is deterministic — build it once per process. */
-let cachedInstructions: string | undefined;
-function plannerInstructions(): string {
-    if (cachedInstructions === undefined) {
-        cachedInstructions = plannerPrompt(formatAgentCatalog());
-    }
-    return cachedInstructions;
+/** The planner system prompt is deterministic per policy — build it once per
+ *  factory (the policy is a construction-time dep, fixed for the process). */
+function plannerInstructions(resourcePolicy?: ResourcePolicy): string {
+    return plannerPrompt(formatAgentCatalog(), resourcePolicy);
 }
 
 // ── Shared types ────────────────────────────────────────────────────
@@ -165,7 +162,7 @@ function zodIssuesToValidationIssues(error: z.ZodError, rootPath = "plan"): Vali
  * Full validation: Zod schema + semantic checks. The plan is valid only if
  * BOTH pass.
  */
-function fullyValidate(candidate: unknown): { valid: true; plan: PlannerPlan } | { valid: false; issues: ValidationIssue[] } {
+function fullyValidate(candidate: unknown, resourcePolicy?: ResourcePolicy): { valid: true; plan: PlannerPlan } | { valid: false; issues: ValidationIssue[] } {
     const parsed = PlannerPlanSchema.safeParse(candidate);
     if (!parsed.success) {
         return { valid: false, issues: zodIssuesToValidationIssues(parsed.error) };
@@ -173,17 +170,20 @@ function fullyValidate(candidate: unknown): { valid: true; plan: PlannerPlan } |
 
     // Semantic checks operate on the AnalysisPlan shape — PlannerPlan omits
     // maxSteps, so inject the execution-time default to satisfy the validator.
-    const semantic = validatePlan({
-        analytical_narrative: parsed.data.analytical_narrative,
-        steps: parsed.data.steps.map((s) => ({
-            ...s,
-            status: "pending" as const,
-            maxSteps: DEFAULT_SANDBOX_MAX_STEPS,
-        })),
-        created_at: parsed.data.created_at,
-        omicsType: parsed.data.omicsType,
-        omicsSubtype: parsed.data.omicsSubtype,
-    });
+    const semantic = validatePlan(
+        {
+            analytical_narrative: parsed.data.analytical_narrative,
+            steps: parsed.data.steps.map((s) => ({
+                ...s,
+                status: "pending" as const,
+                maxSteps: DEFAULT_SANDBOX_MAX_STEPS,
+            })),
+            created_at: parsed.data.created_at,
+            omicsType: parsed.data.omicsType,
+            omicsSubtype: parsed.data.omicsSubtype,
+        },
+        { perStepCeiling: resourcePolicy?.perStep },
+    );
 
     if (!semantic.valid) {
         return {
@@ -218,7 +218,7 @@ interface InnerTools {
  * shared `holder` so the outer `execute` reads the terminal outcome after the
  * loop finishes.
  */
-function buildInnerTools(holder: OutcomeHolder, persistCtx: PersistContext, pool: Pool): InnerTools {
+function buildInnerTools(holder: OutcomeHolder, persistCtx: PersistContext, pool: Pool, resourcePolicy?: ResourcePolicy): InnerTools {
     const candidatePlan = z.object({ plan: z.unknown() });
 
     const validatePlanTool = defineTool({
@@ -230,7 +230,7 @@ function buildInnerTools(holder: OutcomeHolder, persistCtx: PersistContext, pool
             "times as needed to iterate toward a clean plan before submit_plan.",
         inputSchema: candidatePlan,
         execute: async (input) => {
-            const result = fullyValidate(input.plan);
+            const result = fullyValidate(input.plan, resourcePolicy);
             return ok(result.valid ? { valid: true as const, issues: [] as ValidationIssue[] } : { valid: false as const, issues: result.issues });
         },
     });
@@ -257,7 +257,7 @@ function buildInnerTools(holder: OutcomeHolder, persistCtx: PersistContext, pool
                 });
             }
 
-            const result = fullyValidate(input.plan);
+            const result = fullyValidate(input.plan, resourcePolicy);
             if (!result.valid) {
                 return ok({ accepted: false as const, issues: result.issues });
             }
@@ -391,6 +391,12 @@ export interface GeneratePlanDeps {
     readonly pool: Pool;
     /** Model id — provenance / metric label; the provider owns the wire model. */
     readonly model: string;
+    /**
+     * Host resource policy — stated to the planner as concrete per-step
+     * ceilings and enforced by `validate_plan`. Absent, the prompt keeps its
+     * default guidance and validation skips the ceiling check.
+     */
+    readonly resourcePolicy?: ResourcePolicy;
 }
 
 /** Build the `generate_plan` tool bound to its provider and pool. */
@@ -467,10 +473,10 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 analysisId,
                 parentPlanId: input.parentPlanId ?? null,
             };
-            const innerTools = buildInnerTools(holder, persistCtx, deps.pool);
+            const innerTools = buildInnerTools(holder, persistCtx, deps.pool, deps.resourcePolicy);
             const planner: AgentDefinition = {
                 id: PLANNER_AGENT_ID,
-                systemPrompt: plannerInstructions(),
+                systemPrompt: plannerInstructions(deps.resourcePolicy),
                 model: deps.model,
                 tools: innerTools.all,
                 maxIterations: PLANNER_MAX_ITERATIONS,

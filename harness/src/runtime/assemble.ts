@@ -16,6 +16,7 @@
  */
 
 import { createConversationAgent, type ConversationAgentDeps } from "../agents/conversation-agent.js";
+import type { ResourcePolicy } from "../config/resource-limits.js";
 import type { AgentDefinition } from "../loop/types.js";
 import { registerExecuteAnalysis, type ExecuteAnalysisDeps, type ExecuteAnalysisInput, type ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
 import { registerSandboxStep, type SandboxStepDeps, type SandboxStepInput, type SandboxStepResult } from "../workflows/sandbox-step.js";
@@ -41,7 +42,7 @@ export interface CoreWorkflowDeps {
     readonly buildExecuteAnalysis: (sandboxStep: SandboxStepCallable) => ExecuteAnalysisDeps;
     readonly executeTargetAssessment: ExecuteTargetAssessmentDeps;
     readonly dataProfile: DataProfileDeps;
-    readonly ephemeral: EphemeralDeps;
+    readonly ephemeral: Omit<EphemeralDeps, "resourcePolicy">;
 }
 
 /** The registered, callable workflow handles. */
@@ -54,14 +55,22 @@ export interface RegisteredWorkflows {
 }
 
 /**
- * Conversation-agent deps minus the two workflow callables — `assembleCoreRuntime`
- * supplies those from its own registration so a caller cannot wire a stale one.
+ * Conversation-agent deps minus the two workflow callables and the resource
+ * policy — `assembleCoreRuntime` supplies those itself so a caller cannot wire
+ * a stale callable or a policy that diverges from the one the workflows see.
  */
-export type ConversationAssemblyDeps = Omit<ConversationAgentDeps, "executeAnalysisWorkflow" | "ephemeralWorkflow">;
+export type ConversationAssemblyDeps = Omit<ConversationAgentDeps, "executeAnalysisWorkflow" | "ephemeralWorkflow" | "resourcePolicy">;
 
 export interface CoreRuntimeDeps {
     readonly conversation: ConversationAssemblyDeps;
     readonly workflows: CoreWorkflowDeps;
+    /**
+     * Host resource policy — per-step ceilings, machine budget, ephemeral
+     * sizing. One supply point: assembly distributes it to the planner tools,
+     * `execute_plan` (budget snapshot into workflow input), and the ephemeral
+     * runner. Absent, every consumer keeps its legacy behavior.
+     */
+    readonly resourcePolicy?: ResourcePolicy;
 }
 
 export interface CoreRuntime {
@@ -70,18 +79,19 @@ export interface CoreRuntime {
 }
 
 export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
-    const { conversation, workflows: wf } = deps;
+    const { conversation, workflows: wf, resourcePolicy } = deps;
 
     const sandboxStep = registerSandboxStep(wf.sandboxStep);
     const executeAnalysis = registerExecuteAnalysis(wf.buildExecuteAnalysis(sandboxStep));
     const executeTargetAssessment = registerExecuteTargetAssessment(wf.executeTargetAssessment);
     const dataProfile = registerDataProfileWorkflow(wf.dataProfile);
-    const ephemeral = registerEphemeralWorkflow(wf.ephemeral);
+    const ephemeral = registerEphemeralWorkflow({ ...wf.ephemeral, resourcePolicy });
 
     const conversationAgent = createConversationAgent({
         ...conversation,
         executeAnalysisWorkflow: executeAnalysis,
         ephemeralWorkflow: ephemeral,
+        resourcePolicy,
     });
 
     return {

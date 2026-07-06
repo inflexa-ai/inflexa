@@ -13,6 +13,7 @@
  */
 
 import { KNOWN_AGENT_IDS } from "../agents/sandbox-catalog.js";
+import type { ResourceLimits } from "../config/resource-limits.js";
 import { CycleError, DependencyError, topoSortIntoWaves } from "../execution/topo-sort.js";
 import { STEP_SUBDIRS } from "../workspace/paths.js";
 import type { AnalysisPlan } from "./workflow-state.js";
@@ -31,6 +32,18 @@ export interface ValidationResult {
     errors: string[];
 }
 
+export interface ValidatePlanOptions {
+    /**
+     * Host per-step resource ceilings. When present, a step whose declared
+     * `resources` exceed them is an error — the planner gets actionable
+     * feedback at plan time instead of a silent clamp at sandbox creation.
+     * The plan-generation path passes this; `execute_plan` deliberately does
+     * not, so stored plans that predate the policy keep running (the
+     * sandbox-creation clamp remains their backstop).
+     */
+    readonly perStepCeiling?: ResourceLimits;
+}
+
 /** Derive a filesystem-safe output prefix from a step ID. */
 export function deriveOutputPrefix(stepId: string): string {
     return stepId
@@ -45,7 +58,7 @@ export function deriveOutputPrefix(stepId: string): string {
  * Returns `valid: true` if the plan passes all checks, or `valid: false`
  * with a list of human-readable error strings.
  */
-export function validatePlan(plan: AnalysisPlan): ValidationResult {
+export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions): ValidationResult {
     const errors: string[] = [];
 
     if (plan.steps.length === 0) {
@@ -92,9 +105,24 @@ export function validatePlan(plan: AnalysisPlan): ValidationResult {
     }
 
     // 4. Resources validation
+    const ceiling = options?.perStepCeiling;
     for (const step of plan.steps) {
         if (!step.resources) {
             errors.push(`Step "${step.id}" has no resources defined — cpu and memoryGb are required`);
+            continue;
+        }
+        if (!ceiling) continue;
+        if (step.resources.cpu > ceiling.maxCpu) {
+            errors.push(
+                `Step "${step.id}" requests cpu: ${step.resources.cpu} but this host allows at most ` +
+                    `${ceiling.maxCpu} per step — reduce cpu or restructure the step`,
+            );
+        }
+        if (step.resources.memoryGb > ceiling.maxMemoryGb) {
+            errors.push(
+                `Step "${step.id}" requests memoryGb: ${step.resources.memoryGb} but this host allows at most ` +
+                    `${ceiling.maxMemoryGb} per step — reduce memoryGb or restructure the step`,
+            );
         }
     }
 

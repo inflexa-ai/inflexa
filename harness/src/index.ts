@@ -111,8 +111,8 @@ export type { StagedInput } from "./execution/staged-input.js";
 export { createSandboxClient } from "./sandbox/create-sandbox.js";
 export type { CreateSandboxClientConfig, SandboxBackendConfig } from "./sandbox/create-sandbox.js";
 export type { SandboxClient } from "./sandbox/client.js";
-export { ResourceLimitsSchema } from "./config/resource-limits.js";
-export type { ResourceLimits } from "./config/resource-limits.js";
+export { MachineBudgetSchema, ResourceLimitsSchema, ResourcePolicySchema, ResourceSpecSchema, parseResourcePolicy } from "./config/resource-limits.js";
+export type { MachineBudget, ResourceLimits, ResourcePolicy, ResourceSpec } from "./config/resource-limits.js";
 export { createWorkspaceFilesystem } from "./workspace/filesystem.js";
 export type { WorkspaceFilesystem, WorkspaceFilesystemDeps } from "./workspace/filesystem.js";
 
@@ -148,6 +148,7 @@ export { AnalysisPlanSchema } from "./schemas/workflow-state.js";
 export type { AnalysisPlan, AnalysisStep } from "./schemas/workflow-state.js";
 export type { PlanStep } from "./workflows/execute-analysis-scheduler.js";
 export { validatePlan } from "./schemas/validate-plan.js";
+export type { ValidatePlanOptions } from "./schemas/validate-plan.js";
 export type { ValidationResult } from "./schemas/validate-plan.js";
 export { renderStepPrompt } from "./schemas/render-step-prompt.js";
 

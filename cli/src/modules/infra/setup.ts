@@ -7,6 +7,7 @@ import { activeRuntime, readConfig, resolvePostgresConfig, writeConfig } from ".
 import { ensureReady, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { select, promptText } from "../../lib/cli.ts";
+import { detectedMachineBudget, resolveHarnessConfig } from "../harness/config.ts";
 import { type PostgresConnection } from "./postgres_types.ts";
 import { writeComposeFile, composeUp, composePull, composePullIfMissing, composeAvailable } from "./compose.ts";
 
@@ -144,6 +145,13 @@ export async function setup(options: SetupOptions): Promise<void> {
             pgConn = resolvePostgresConfig();
         }
 
+        // --- analysis resource limits ---
+        // Bounds what analysis runs may take from this machine: per-step
+        // ceilings (hard container limits) and the machine budget the run
+        // scheduler admits concurrent steps against. Non-TTY shells skip the
+        // prompt — the resolved defaults (half the detected machine) apply.
+        await promptResourceConfig();
+
         // --- embeddings ---
         // Runs after auth + postgres, before "Setup complete". The interactive
         // prompt (clack select) offers local / api-key / off; a non-TTY shell or
@@ -213,6 +221,68 @@ async function promptPostgresConfig(): Promise<PostgresConnection> {
     );
 
     return conn;
+}
+
+/**
+ * Prompt for the analysis resource limits and persist them under
+ * `harness.resourceLimits`. Defaults come from the resolved config, whose
+ * machine-budget fallback is half the detected host (shown in the prompt so the
+ * suggestion is transparent). Non-interactive terminals skip the prompt — the
+ * same resolved defaults apply at run time without a config entry.
+ */
+async function promptResourceConfig(): Promise<void> {
+    if (!process.stdin.isTTY) return;
+
+    const resolved = resolveHarnessConfig();
+    const detected = detectedMachineBudget();
+    log.message(
+        `Configure analysis resource limits — detected ${detected.cpu * 2} cores / ${detected.memoryGb * 2} GB, suggesting half (press Enter to accept)`,
+    );
+
+    const positiveNumber = (v: string): string | undefined => {
+        if (v.trim() === "") return undefined;
+        const n = Number(v.trim());
+        if (isNaN(n) || n <= 0) return "Must be a positive number.";
+        return undefined;
+    };
+    const promptNumber = async (label: string, current: number): Promise<number> => {
+        const answer = await promptText(label, {
+            defaultValue: String(current),
+            placeholder: String(current),
+            validate: positiveNumber,
+        }).catch(() => String(current));
+        return Number(answer) > 0 ? Number(answer) : current;
+    };
+
+    const maxCpu = await promptNumber("Max CPU cores per analysis step", resolved.resourceLimits.maxCpu);
+    const maxMemoryGb = await promptNumber("Max memory (GB) per analysis step", resolved.resourceLimits.maxMemoryGb);
+    const budgetCpu = await promptNumber("Total CPU cores for concurrently running steps", Math.max(resolved.resourcePolicy.budget.cpu, maxCpu));
+    const budgetMemoryGb = await promptNumber(
+        "Total memory (GB) for concurrently running steps",
+        Math.max(resolved.resourcePolicy.budget.memoryGb, maxMemoryGb),
+    );
+
+    const config = readConfig();
+    // `config.harness` is deliberately `unknown` in lib/config.ts (the harness
+    // module owns its validation) — spread it as a plain record so the fields
+    // this prompt does not manage (model, bioKeys, …) survive the rewrite.
+    const harness = (config.harness ?? {}) as Record<string, unknown>;
+    const resourceLimits = (harness.resourceLimits ?? {}) as Record<string, unknown>;
+    writeConfig({
+        ...config,
+        harness: {
+            ...harness,
+            resourceLimits: {
+                ...resourceLimits,
+                maxCpu,
+                maxMemoryGb,
+                budget: { cpu: budgetCpu, memoryGb: budgetMemoryGb },
+            },
+        },
+    }).match(
+        () => {},
+        (e) => log.warn(`Failed to save resource limits: ${e.type}`),
+    );
 }
 
 function resolveProvider(options: SetupOptions): Result<Provider | undefined, ProxyError> {

@@ -28,6 +28,7 @@
 import type { Pool } from "pg";
 
 import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
+import type { ResourcePolicy } from "../config/resource-limits.js";
 import type { ChromeConfig } from "../lib/chrome.js";
 import type { AgentDefinition } from "../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
@@ -139,6 +140,13 @@ export interface ConversationAgentDeps {
     readonly templatesDir: string;
     /** Headless-Chrome config for report snapshot/preview rendering. */
     readonly chrome: ChromeConfig;
+    /**
+     * Host resource policy — per-step ceilings + machine budget. `generate_plan`
+     * states the ceilings to the planner and validates against them;
+     * `execute_plan` snapshots the budget into the workflow input. Absent,
+     * planning guidance and scheduling keep their legacy behavior.
+     */
+    readonly resourcePolicy?: ResourcePolicy;
 }
 
 /** Build the conversation `AgentDefinition` with every tool fully dep-bound. */
@@ -158,6 +166,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         bioKeys,
         templatesDir,
         chrome,
+        resourcePolicy,
     } = deps;
     const workingMemory = createWorkingMemory(pool);
     const ncbi = createNcbiTools(bioKeys);
@@ -202,12 +211,13 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         chemDb.searchCtxExposure,
         // Execution.
         createInspectRunTool(pool),
-        createGeneratePlanTool({ provider, pool, model }),
+        createGeneratePlanTool({ provider, pool, model, resourcePolicy }),
         createExecutePlanTool({
             pool,
             executeAnalysisWorkflow,
             runAuthorizer,
             runLauncher,
+            resourcePolicy,
         }),
         createRunEphemeralTool({
             workflow: ephemeralWorkflow,

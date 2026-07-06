@@ -37,6 +37,7 @@ import {
     type DbError,
     type ExecuteAnalysisInput,
     type InsertRunInput,
+    type MachineBudget,
     type Pool,
     type Provenance,
     type RunAuthorization,
@@ -82,6 +83,8 @@ export type RunTriggerSeams = {
     readonly renderStepPrompt: (step: AnalysisStep) => string;
     /** Mint the run id — the bare UUID that IS the DBOS workflowId (see below). Injected so tests pin it. */
     readonly newRunId: () => string;
+    /** Machine budget snapshotted into the workflow input at launch — the scheduler admits steps against it. */
+    readonly budget: MachineBudget;
 };
 
 /**
@@ -101,6 +104,7 @@ export function defaultRunTriggerSeams(deps: RunTriggerDeps): RunTriggerSeams {
         launch: (input, runId) => deps.runLauncher.launch(deps.executeAnalysis, { workflowId: runId }, input),
         renderStepPrompt,
         newRunId: () => randomUUIDv7(),
+        budget: deps.budget,
     };
 }
 
@@ -177,6 +181,7 @@ function buildExecuteAnalysisInput(params: TriggerAnalysisRunParams, seams: RunT
         // `s.timeout` is defined for every element the filter kept, but TS cannot
         // narrow through `.filter`; the cast is sound by that filter.
         timeoutByStepId: Object.fromEntries(plan.steps.filter((s) => s.timeout !== undefined).map((s) => [s.id, s.timeout as number])),
+        budget: seams.budget,
         runSession: authorization.runSession,
         ownsMandate: authorization.ownsMandate,
     };
@@ -354,7 +359,7 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
     // post-boot `persistPlan` so the file is read exactly once and its deterministic
     // id cannot shift if the file is edited mid-run. (`planPath` is narrowed to a
     // string by the `!planPath` guard above, whose `fail` returns `never`.)
-    const intake = validatePlanFile(analysis.id, planPath).match(
+    const intake = validatePlanFile(analysis.id, planPath, cfg.resourceLimits).match(
         (i) => i,
         (e) => fail(describePlanIntakeError(e)),
     );

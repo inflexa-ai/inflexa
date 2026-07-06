@@ -18,6 +18,8 @@
  * same persisted child outcomes.
  */
 
+import type { MachineBudget, ResourceSpec } from "../config/resource-limits.js";
+
 /**
  * The minimum shape the scheduler needs from a plan step. Larger workflow-state
  * schemas are a superset of this, keeping the scheduler decoupled.
@@ -25,6 +27,24 @@
 export interface PlanStep {
     readonly id: string;
     readonly depends_on: readonly string[];
+}
+
+/** Budget-admission inputs — the snapshotted machine budget from the workflow
+ *  input plus each step's plan-declared resources. */
+export interface BudgetAdmission {
+    readonly budget: MachineBudget;
+    readonly resourcesByStepId: Readonly<Record<string, ResourceSpec>>;
+}
+
+/** Partition of the dependency-satisfied steps under budget admission. */
+export interface ScheduledSteps {
+    /** Steps to start now — they fit the remaining budget capacity. */
+    readonly admit: readonly string[];
+    /** Dependency-satisfied steps held until in-flight steps free capacity. */
+    readonly heldForCapacity: readonly string[];
+    /** Steps whose declared resources exceed the budget outright — they could
+     *  never be admitted even against an empty budget. */
+    readonly neverFits: readonly string[];
 }
 
 // ── Errors ───────────────────────────────────────────────────────────
@@ -134,12 +154,28 @@ function detectCycle<S extends PlanStep>(steps: readonly S[]): void {
  * completion (or on parent recovery) and dispatches each returned id via
  * `DBOS.startWorkflow`. Order in the returned array follows the plan's
  * declared order for deterministic dispatch.
+ *
+ * With `admission`, the dependency-satisfied steps are additionally gated on
+ * the machine budget and partitioned instead of returned flat: a step is
+ * admitted only while the declared resources of the in-flight steps
+ * (`startedSet`) plus every step admitted earlier in the round leave room for
+ * it. Admission is greedy in plan order with skip-over — a candidate that does
+ * not fit never blocks a later, smaller one. Determinism holds because every
+ * input derives from the workflow input and checkpointed completion state.
  */
+export function scheduleReady<S extends PlanStep>(steps: readonly S[], completedSet: ReadonlySet<string>, startedSet?: ReadonlySet<string>): string[];
+export function scheduleReady<S extends PlanStep>(
+    steps: readonly S[],
+    completedSet: ReadonlySet<string>,
+    startedSet: ReadonlySet<string>,
+    admission: BudgetAdmission,
+): ScheduledSteps;
 export function scheduleReady<S extends PlanStep>(
     steps: readonly S[],
     completedSet: ReadonlySet<string>,
     startedSet: ReadonlySet<string> = new Set(),
-): string[] {
+    admission?: BudgetAdmission,
+): string[] | ScheduledSteps {
     const ready: string[] = [];
     for (const step of steps) {
         if (startedSet.has(step.id) || completedSet.has(step.id)) continue;
@@ -147,7 +183,37 @@ export function scheduleReady<S extends PlanStep>(
             ready.push(step.id);
         }
     }
-    return ready;
+    if (!admission) return ready;
+
+    const { budget, resourcesByStepId } = admission;
+    // A step with no declared resources weighs nothing — it is never throttled,
+    // matching the unbudgeted legacy behavior for that step.
+    const weightOf = (id: string): { cpu: number; memoryGb: number } => resourcesByStepId[id] ?? { cpu: 0, memoryGb: 0 };
+
+    let usedCpu = 0;
+    let usedMemoryGb = 0;
+    for (const id of startedSet) {
+        const w = weightOf(id);
+        usedCpu += w.cpu;
+        usedMemoryGb += w.memoryGb;
+    }
+
+    const admit: string[] = [];
+    const heldForCapacity: string[] = [];
+    const neverFits: string[] = [];
+    for (const id of ready) {
+        const w = weightOf(id);
+        if (w.cpu > budget.cpu || w.memoryGb > budget.memoryGb) {
+            neverFits.push(id);
+        } else if (usedCpu + w.cpu <= budget.cpu && usedMemoryGb + w.memoryGb <= budget.memoryGb) {
+            admit.push(id);
+            usedCpu += w.cpu;
+            usedMemoryGb += w.memoryGb;
+        } else {
+            heldForCapacity.push(id);
+        }
+    }
+    return { admit, heldForCapacity, neverFits };
 }
 
 // ── Topological levels (UI layout) ───────────────────────────────────

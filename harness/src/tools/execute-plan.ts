@@ -32,6 +32,7 @@ import type { Pool } from "pg";
 import { z } from "zod";
 
 import { buildRunCardData } from "../memory/card-builders.js";
+import type { ResourcePolicy } from "../config/resource-limits.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../workflows/execute-analysis.js";
@@ -58,6 +59,12 @@ export interface ExecutePlanToolDeps {
     readonly runAuthorizer: RunAuthorizer;
     /** Starts the durable run — the durability engine stays behind this seam. */
     readonly runLauncher: RunLauncher;
+    /**
+     * Host resource policy. The machine budget is snapshotted into the workflow
+     * input here at the async edge — the workflow body never reads live config,
+     * so a mid-run config edit cannot change a running run's admission decisions.
+     */
+    readonly resourcePolicy?: ResourcePolicy;
 }
 
 export class PlanNotFoundError extends Error {
@@ -89,7 +96,7 @@ function isDedupCollision(err: unknown): boolean {
 }
 
 export function createExecutePlanTool(deps: ExecutePlanToolDeps) {
-    const { pool, executeAnalysisWorkflow, runAuthorizer, runLauncher } = deps;
+    const { pool, executeAnalysisWorkflow, runAuthorizer, runLauncher, resourcePolicy } = deps;
     return defineTool({
         id: "execute_plan",
         description:
@@ -224,6 +231,7 @@ export function createExecutePlanTool(deps: ExecutePlanToolDeps) {
                     }),
                 ),
                 timeoutByStepId: Object.fromEntries(plan.steps.filter((s) => s.timeout !== undefined).map((s) => [s.id, s.timeout as number])),
+                budget: resourcePolicy?.budget,
                 runSession,
                 ownsMandate: authorization.ownsMandate, // oss-core-managed-ok
             };

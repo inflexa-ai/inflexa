@@ -29,7 +29,7 @@ import { unwrapOrThrow } from "../lib/result.js";
 import type { ActiveSandboxRow } from "../state/index.js";
 import type { SandboxClient } from "./client.js";
 import { workflowIdFromExec } from "./exec-id.js";
-import type { ExecEventMessage, ExecResult, SandboxRef } from "./types.js";
+import type { ExecEventMessage, ExecResult, SandboxLiveness, SandboxRef } from "./types.js";
 
 export const SHARD_COUNT = 8;
 const WATCHDOG_CRON = "*/60 * * * * *";
@@ -51,7 +51,7 @@ export function shardActiveSandboxes(rows: ActiveSandboxRow[], shardCount = SHAR
 }
 
 export interface CheckShardDeps {
-    isAlive: (ref: SandboxRef) => Promise<boolean>;
+    isAlive: (ref: SandboxRef) => Promise<SandboxLiveness>;
     getStatus: (workflowId: string) => Promise<{ status: string } | null>;
     /**
      * Send a synthetic-failure marker on the per-exec topic. In production
@@ -91,9 +91,9 @@ export async function checkShard(rows: ActiveSandboxRow[], deps: CheckShardDeps)
             callbackSecret: "",
         };
 
-        let alive: boolean;
+        let liveness: SandboxLiveness;
         try {
-            alive = await deps.isAlive(ref);
+            liveness = await deps.isAlive(ref);
         } catch (err) {
             deps.logger?.warn(
                 { sandboxId: row.sandboxRef.sandboxId, err: err instanceof Error ? err.message : String(err) },
@@ -101,7 +101,7 @@ export async function checkShard(rows: ActiveSandboxRow[], deps: CheckShardDeps)
             );
             continue;
         }
-        if (alive) continue;
+        if (liveness.alive) continue;
         deadCount++;
 
         const workflowId = row.execId ? workflowIdFromExec(row.execId) : null;
@@ -117,6 +117,9 @@ export async function checkShard(rows: ActiveSandboxRow[], deps: CheckShardDeps)
             continue;
         }
 
+        // An OOM-killed machine gets a distinguishable reason so the step
+        // failure reads "exceeded its memory limit", not a mystery death.
+        const reason = liveness.oomKilled ? "sandbox-oom-killed" : "sandbox-dead";
         const failure: ExecResult = {
             execId: row.execId,
             exitCode: null,
@@ -124,9 +127,9 @@ export async function checkShard(rows: ActiveSandboxRow[], deps: CheckShardDeps)
             stderr: "",
             durationMs: null,
             timedOut: false,
-            syntheticFailure: { reason: "sandbox-dead" },
+            syntheticFailure: { reason },
         };
-        await deps.sendSynthetic(workflowId, row.execId, failure, "sandbox-dead");
+        await deps.sendSynthetic(workflowId, row.execId, failure, reason);
         syntheticSends++;
     }
 

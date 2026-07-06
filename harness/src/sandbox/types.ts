@@ -17,6 +17,18 @@ import { PersistedSandboxRefSchema } from "../state/schema.js";
 export const SandboxBackend = z.enum(["docker", "k8s"]);
 export type SandboxBackend = z.infer<typeof SandboxBackend>;
 
+/**
+ * Per-sandbox-machine liveness verdict. `oomKilled` is meaningful only when
+ * `alive` is false: true when the backend reports the machine was killed for
+ * exceeding its memory limit (Docker `State.OOMKilled`; K8s container
+ * terminated reason `OOMKilled`) — the watchdog surfaces it as the
+ * `sandbox-oom-killed` failure reason instead of the generic `sandbox-dead`.
+ */
+export interface SandboxLiveness {
+    readonly alive: boolean;
+    readonly oomKilled: boolean;
+}
+
 export const SandboxRefSchema = PersistedSandboxRefSchema.extend({
     /**
      * 32-byte high-entropy bytes, base64-encoded. Minted once at

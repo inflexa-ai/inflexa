@@ -38,7 +38,7 @@ export function makeFakeSandboxClient(): SandboxClient {
             };
         },
         async isAlive() {
-            return true;
+            return { alive: true, oomKilled: false };
         },
         async teardown() {},
         async teardownById() {},

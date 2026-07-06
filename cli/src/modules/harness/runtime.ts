@@ -29,6 +29,7 @@ import {
     type ExecuteAnalysisDeps,
     type ExecuteAnalysisInput,
     type ExecuteAnalysisResult,
+    type MachineBudget,
     type Pool,
     type RegisterNotificationSweepDeps,
     type RegisterReaperDeps,
@@ -81,6 +82,11 @@ export type RunTriggerDeps = {
     readonly runLauncher: RunLauncher;
     /** Local run-authorization seam — mints/revokes the durable `RunSession` at the async edge. */
     readonly runAuthorizer: RunAuthorizer;
+    /**
+     * Machine budget snapshotted into every launched run's workflow input — the
+     * scheduler admits concurrent steps against it. From `resourcePolicy.budget`.
+     */
+    readonly budget: MachineBudget;
 };
 
 /** The booted runtime — everything the launch command needs to trigger and observe runs. */
@@ -427,7 +433,7 @@ export async function bootHarnessRuntime(
             model,
             pool,
             triggerDeps: { pool, runAuthorizer, workflow },
-            runTriggerDeps: { pool, executeAnalysis, runLauncher: createDbosRunLauncher(), runAuthorizer },
+            runTriggerDeps: { pool, executeAnalysis, runLauncher: createDbosRunLauncher(), runAuthorizer, budget: cfg.resourcePolicy.budget },
             ingress,
         };
         active = runtime;

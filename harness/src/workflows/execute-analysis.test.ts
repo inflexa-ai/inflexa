@@ -247,7 +247,7 @@ function makeDeps(opts: { childResults: Map<string, SandboxStepResult | Error>; 
 
 // ── Test inputs ──────────────────────────────────────────────────────
 
-function input(steps: Array<{ id: string; depends_on?: readonly string[] }>): ExecuteAnalysisInput {
+function input(steps: Array<{ id: string; depends_on?: readonly string[] }>, budget?: { cpu: number; memoryGb: number }): ExecuteAnalysisInput {
     const ids = steps.map((s) => s.id);
     return {
         analysisId: "a1",
@@ -258,6 +258,7 @@ function input(steps: Array<{ id: string; depends_on?: readonly string[] }>): Ex
         promptByStepId: Object.fromEntries(ids.map((id) => [id, `prompt ${id}`])),
         agentByStepId: Object.fromEntries(ids.map((id) => [id, "agent-x"])),
         resourcesByStepId: Object.fromEntries(ids.map((id) => [id, { cpu: 2, memoryGb: 4 }])),
+        ...(budget && { budget }),
         runSession: {
             identity: { user: "u-1" },
             scope: { kind: "analysis", analysisId: "a1" },
@@ -375,6 +376,88 @@ describe("executeAnalysis body", () => {
         expect(result.failedSteps).toEqual([]);
         expect(result.canceledSteps).toEqual([]);
         expect(record.chargeCloseCalls).toEqual([{ reason: "ok" }]);
+    });
+
+    // ── Budget admission ────────────────────────────────────────────────
+
+    it("budget admission serializes dispatch, surfaces queued steps, and completes the run", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const { deps, record } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["C", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+            ]),
+        });
+
+        // Every step declares { cpu: 2, memoryGb: 4 }; the budget fits exactly
+        // one at a time, so B and C must pass through "queued" before running.
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }, { id: "C" }], { cpu: 2, memoryGb: 4 }), deps);
+
+        expect(result.status).toBe("completed");
+        expect([...result.completedSteps].sort()).toEqual(["A", "B", "C"]);
+        expect(result.failedSteps).toEqual([]);
+
+        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{ steps: Array<{ id: string; status: string }> }>;
+        const statusesOf = (id: string) => dagParts.map((p) => p.steps.find((s) => s.id === id)!.status);
+        // Held steps are visibly queued before they run; the admitted step never is.
+        expect(statusesOf("B")).toContain("queued");
+        expect(statusesOf("C")).toContain("queued");
+        expect(statusesOf("A")).not.toContain("queued");
+        // The final snapshot reconciles everything to completed.
+        const last = dagParts[dagParts.length - 1]!;
+        expect(last.steps.map((s) => s.status)).toEqual(["completed", "completed", "completed"]);
+        // One-at-a-time admission: each dag emit shows at most one running step.
+        for (const part of dagParts) {
+            expect(part.steps.filter((s) => s.status === "running").length).toBeLessThanOrEqual(1);
+        }
+    });
+
+    it("budget admission: a step that can never fit fails the run with a budget-naming error", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        // No childResults — nothing may be dispatched.
+        const { deps, record } = makeDeps({ pool, childResults: new Map() });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }], { cpu: 1, memoryGb: 1 }), deps);
+
+        expect(result.status).toBe("failed");
+        expect(result.failedSteps).toEqual(["A"]);
+        const terminal = record.emittedParts.find((p) => p.type === "data-run-failed") as { error?: string } | undefined;
+        expect(terminal?.error).toContain("budget");
+        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{ steps: Array<{ id: string; status: string; error?: string }> }>;
+        const last = dagParts[dagParts.length - 1]!;
+        expect(last.steps[0]!.status).toBe("failed");
+        expect(last.steps[0]!.error).toContain("machine budget");
+    });
+
+    it("no budget in the workflow input keeps the legacy full fan-out", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const { deps, record } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["C", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+            ]),
+        });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }, { id: "C" }]), deps);
+
+        expect(result.status).toBe("completed");
+        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{ steps: Array<{ id: string; status: string }> }>;
+        // First snapshot after dispatch: all three running at once, none queued.
+        const first = dagParts[0]!;
+        expect(first.steps.map((s) => s.status)).toEqual(["running", "running", "running"]);
+        for (const part of dagParts) {
+            expect(part.steps.some((s) => s.status === "queued")).toBe(false);
+        }
     });
 
     // ── 10.8 External cancel cascade ───────────────────────────────────
