@@ -109,6 +109,7 @@ export function describeBootError(e: HarnessBootError): string {
         case "runtime_already_active":
             // TODO(slop): We need to discuss this together, and create an issue. This is a limitation I am not willing to accept, but we can defer the fix.
             // We should make a github issue that captures the entire context, when we will discuss the matter
+            // We will need to split the harness into its own process - or a webserver
             return `Another \`inflexa\` process (pid ${e.holderPid}) is already running the harness runtime. Only one harness runtime per machine at a time — wait for it to finish or stop that process.`;
         case "runtime_boot_failed":
             return `Harness runtime failed to boot: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`;
