@@ -185,12 +185,14 @@ export function persistPlan(analysisId: string, path: string, intake: PlanIntake
  * gate failure rejects with the file path and the verbatim errors, having persisted
  * nothing. The run command splits these two halves across its runtime-boot boundary
  * (validate pre-boot, persist post-boot) to fail fast; this composed form is the
- * whole-intake contract for a caller that already holds a pool.
+ * whole-intake contract for a caller that already holds a pool. Pass the resolved
+ * policy's `perStep` as `perStepCeiling` to apply the same over-ceiling gate the
+ * split path applies — omitting it skips that check, nothing else.
  *
  * Idempotent by the id's determinism plus the seam's insert-if-absent semantics:
  * re-taking the same file under the same analysis re-derives the same id and the
  * seam no-ops, so a repeat intake reports success without a duplicate row.
  */
-export function intakePlan(analysisId: string, path: string, deps: PlanIntakeDeps): ResultAsync<PlanIntake, PlanIntakeError> {
-    return validatePlanFile(analysisId, path).asyncAndThen((intake) => persistPlan(analysisId, path, intake, deps));
+export function intakePlan(analysisId: string, path: string, deps: PlanIntakeDeps, perStepCeiling?: ResourceLimits): ResultAsync<PlanIntake, PlanIntakeError> {
+    return validatePlanFile(analysisId, path, perStepCeiling).asyncAndThen((intake) => persistPlan(analysisId, path, intake, deps));
 }
