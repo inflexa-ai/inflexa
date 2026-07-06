@@ -12,6 +12,12 @@
 #   <track>.packages.txt          (one fragment per track, at the root)
 #   packages.txt                  (the concatenation the harness reads)
 
+# The runtime mount contract path: where the assembled store lives inside a
+# sandbox image (baked or read-only-mounted). INFLEXA_LIB_ROOT overrides it to
+# match the image's baked env var; the default is the mount contract.
+# shellcheck disable=SC2034 # consumed by the scripts that source this file
+LIB_STORE_ROOT="${INFLEXA_LIB_ROOT:-/mnt/libs/current}"
+
 # All tracks, in canonical order.
 # shellcheck disable=SC2034 # consumed by the scripts that source this file
 LIB_STORE_ALL_TRACKS="cran bioconductor github python conda node"
@@ -20,9 +26,9 @@ LIB_STORE_ALL_TRACKS="cran bioconductor github python conda node"
 # shellcheck disable=SC2034 # consumed by the scripts that source this file
 LIB_STORE_CONCAT_ORDER="cran bioconductor github python conda node"
 
-# The per-arch published track set is now BEST-EFFORT, not a fixed list: each
-# arch publishes exactly the tracks its image build produced (extracted from the
-# published image, listed in <dist>/tracks.txt). Both arches attempt every track;
+# The per-arch published track set is best-effort: each arch publishes exactly
+# the tracks its image build produced (extracted from the published image and
+# listed in <dist>/tracks.txt). Both arches attempt every track;
 # arm64 MAY carry R when it builds. The R triple still travels all-or-none because
 # cran/bioconductor/github share one .libPaths() and form a dependency chain —
 # {@link lib_store_assert_r_triple} enforces that at manifest time.

@@ -59,7 +59,8 @@ def want_for(manifest: dict, arch: str) -> dict[str, list[str]]:
         "github": [g.split("/")[-1].split("@")[0] for g in (r.get("github", []) or [])],
         "python": [canon_pip(s) for s in (pip.get("common", []) or []) + (pip.get(arch, []) or [])],
         "conda": list((tools.get("common", []) or []) + (tools.get(arch, []) or [])),
-        "node": ["echarts"],
+        # node is a flat top-level list of package names in the manifest.
+        "node": list(manifest.get("node", []) or []),
     }
 
 
@@ -104,8 +105,9 @@ def main() -> int:
     args = ap.parse_args()
 
     try:
-        manifest = yaml.safe_load(open(args.manifest))
-    except OSError as e:
+        with open(args.manifest) as fh:
+            manifest = yaml.safe_load(fh)
+    except (OSError, yaml.YAMLError) as e:
         print(f"coverage: cannot read manifest: {e}", file=sys.stderr)
         return 2
 
@@ -148,8 +150,12 @@ def main() -> int:
         print(f"| {track} | {len(w)} | {len(got)} | {miss_str} | {reg_str} |")
 
     if args.out:
-        with open(args.out, "w") as fh:
-            json.dump({"arch": f"linux-{args.arch}", "tracks": coverage_tracks}, fh, indent=2)
+        try:
+            with open(args.out, "w") as fh:
+                json.dump({"arch": f"linux-{args.arch}", "tracks": coverage_tracks}, fh, indent=2)
+        except OSError as e:
+            print(f"coverage: cannot write --out {args.out}: {e}", file=sys.stderr)
+            return 2
         print(f"\nWrote coverage baseline to {args.out}")
 
     if regressions:

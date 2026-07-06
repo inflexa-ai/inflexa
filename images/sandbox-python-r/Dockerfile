@@ -35,25 +35,12 @@ ARG INFLEXA_LIB_ROOT=/mnt/libs/current
 FROM ${BASE_IMAGE} AS r-toolchain
 ARG INFLEXA_LIB_ROOT
 
-# Build toolchain + dev headers for Bioconductor source compilation.
-RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
-      > /etc/apt/apt.conf.d/80-retries \
-    && apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake pkg-config gfortran make \
-    python3-dev python3-venv python3-yaml \
-    libbz2-dev liblzma-dev zlib1g-dev libzstd-dev libffi-dev \
-    libssl-dev libxml2-dev libcurl4-openssl-dev libgit2-dev \
-    libhdf5-dev libnetcdf-dev libopenblas-dev liblapack-dev \
-    libeigen3-dev libfftw3-dev \
-    libgdal-dev libgeos-dev libproj-dev libsqlite3-dev libudunits2-dev \
-    libtiff-dev libjpeg-dev libpng-dev libgl1 libglib2.0-0 \
-    libcairo2-dev libfreetype6-dev libfontconfig1-dev \
-    libharfbuzz-dev libfribidi-dev \
-    libpango1.0-dev libgdk-pixbuf-2.0-dev \
-    libmagick++-dev libgsl-dev \
-    swig \
-    curl wget git jq \
-    && rm -rf /var/lib/apt/lists/*
+# Build toolchain + dev headers for Bioconductor source compilation. The apt
+# build-dep set + retry config is shared with sandbox-python; python3-yaml (the
+# system-python YAML the manifest parse reads) installs in the same apt
+# transaction as a stage-specific extra.
+COPY images/install-build-toolchain.sh /tmp/install-build-toolchain.sh
+RUN bash /tmp/install-build-toolchain.sh python3-yaml
 
 # r2u — CRAN packages as Ubuntu .deb binaries. Patch the keyserver to hkps:443
 # — the script's default (port 11371) times out regularly from CI runners.

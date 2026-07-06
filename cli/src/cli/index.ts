@@ -314,7 +314,8 @@ sandbox
     .description("Pull a sandbox image (python | python-r) from GitHub Packages and configure sandboxes to use it")
     .option("--yes", "Skip the download confirmation")
     .action(async (variant: string | undefined, options: { yes?: boolean }) => {
-        const { sandboxPull, parseVariant } = await import("../modules/libs/pull.ts");
+        const { sandboxPull } = await import("../modules/libs/pull.ts");
+        const { parseVariant } = await import("../modules/libs/images.ts");
         if (variant !== undefined && parseVariant(variant) === null) {
             console.error(`\n  Unknown variant "${variant}". Choose one of: python, python-r.\n`);
             process.exitCode = 1;

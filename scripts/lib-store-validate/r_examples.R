@@ -23,6 +23,13 @@ DENY <- c(
 )
 DENY_PREFIX <- c("org.", "EnsDb.", "BSgenome", "TxDb.")
 
+# Regex matched against an R error string to tell a setTimeLimit() abort apart
+# from a genuine example error. BRITTLE: it greps R's human-readable message
+# ("reached ... time limit" / "elapsed time limit"), which has no stable
+# machine-readable class and could change wording across R versions. Kept in one
+# place so the coupling is visible; do not change without re-checking detection.
+TIMEOUT_PATTERN <- "reached .* time limit|elapsed time limit"
+
 # Vectorized denylist test: returns a logical vector PARALLEL to `pkgs`. It must be
 # vectorized because it filters the whole installed vector at once — a scalar-style
 # `if (pkg %in% DENY)` on a length-N logical aborts under R >= 4.2 (and R 4.6, where
@@ -84,7 +91,7 @@ for (pkg in installed) {
 
   if (inherits(res, "error")) {
     msg <- conditionMessage(res)
-    if (grepl("reached .* time limit|elapsed time limit", msg)) {
+    if (grepl(TIMEOUT_PATTERN, msg)) {
       cat(sprintf("  SKIP %s: exceeded %ss time limit\n", pkg, per_pkg_seconds))
       skipped <- c(skipped, pkg)
     } else {

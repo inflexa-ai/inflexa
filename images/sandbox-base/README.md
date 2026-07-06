@@ -15,7 +15,7 @@ for the protocol.
 The analysis libraries are added by the two images that layer on top of it:
 
 - [`../sandbox-python`](../sandbox-python) — `FROM sandbox-base` + the Python
-  libraries, the bioconda CLI tools, and the Node packages.
+  libraries, the bioconda CLI tools, and the Node package(s) (echarts).
 - [`../sandbox-python-r`](../sandbox-python-r) — `FROM sandbox-python` + the R
   libraries.
 

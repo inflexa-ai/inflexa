@@ -3,7 +3,7 @@
 ## Overview
 
 [`sandbox-base`](../sandbox-base) + the **Python libraries**, the **bioconda CLI
-tools**, and the **Node packages**. Everything installs into `/mnt/libs/current/…`
+tools**, and the **Node package(s)** (echarts). Everything installs into `/mnt/libs/current/…`
 — the exact paths the managed read-only mount uses — so a baked image and a
 mounted store present a byte-identical runtime layout, and the harness `lib-store`
 runtime contract is unchanged.

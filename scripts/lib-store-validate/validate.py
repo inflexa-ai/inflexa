@@ -34,7 +34,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-STORE = Path("/mnt/libs/current")
+# Runtime mount contract path; INFLEXA_LIB_ROOT overrides to match the image's
+# baked env var, defaulting to the mount contract.
+STORE = Path(os.environ.get("INFLEXA_LIB_ROOT", "/mnt/libs/current"))
 PACKAGES_TXT = STORE / "packages.txt"
 SUITE_DIR = Path(__file__).resolve().parent
 
@@ -73,7 +75,13 @@ def parse_packages_txt(path: Path) -> dict[str, list[str]]:
     advertised ⊆ loadable gate into a no-op for that track. Fail loud on header drift."""
     out: dict[str, list[str]] = {"r": [], "python": [], "node": [], "conda": []}
     eco: str | None = None
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as e:
+        # A read that fails after .exists() (permission/IO) is a store problem, not
+        # a package failure — raise so main() signals the store-error exit code.
+        raise ValueError(f"cannot read {path}: {e}") from e
+    for raw in text.splitlines():
         line = raw.strip()
         if line.startswith("## "):
             title = line[3:].strip()
@@ -170,7 +178,11 @@ def check_conda(names: list[str]) -> list[str]:
             print(f"  FAIL conda {name}: not on PATH")
             failed.append(name)
             continue
-        subprocess.run([name, "--version"], capture_output=True, text=True)  # logged, not gated
+        # Version is logged, not gated: on PATH is the pass condition; a nonzero
+        # --version does not fail the check.
+        ver = subprocess.run([name, "--version"], capture_output=True, text=True)
+        out = (ver.stdout or ver.stderr).strip().splitlines()
+        print(f"  conda {name}: {out[0] if out else '(no --version output)'}")
     print(f"import-all conda: {len(names) - len(failed)}/{len(names)} OK")
     return failed
 
@@ -221,9 +233,9 @@ def run_anchors(advertised: set[str], this_arch: str) -> list[str]:
     anchors = json.loads(reg_path.read_text())
     # Compare PEP 503-canonically: the registry may name a package by its import
     # name (underscores) while packages.txt advertises the hyphenated distribution
-    # name (ms_deisotope vs ms-deisotope). Without this the anchor is silently
-    # skipped AND — because the old count derived passes from the arch-matched set
-    # rather than the run set — counted as passed.
+    # name (ms_deisotope vs ms-deisotope). Passes are counted over the run set
+    # (arch-matched AND advertised), so without this canonicalization a mis-named
+    # anchor is dropped from the run set entirely rather than checked.
     advertised_canon = {canonical(n) for n in advertised}
     failed: list[str] = []
     ran = 0
@@ -291,7 +303,8 @@ def main() -> int:
     try:
         pkgs = parse_packages_txt(PACKAGES_TXT)
     except ValueError as e:
-        # A drifted header is a config error, not a package failure — block promotion.
+        # A drifted header or an unreadable store is a config/store problem, not a
+        # package failure — block promotion.
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
     advertised = {n for names in pkgs.values() for n in names}

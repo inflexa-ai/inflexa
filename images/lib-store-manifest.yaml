@@ -399,6 +399,11 @@ python:
     arm64:
       - "liana"
 
+# Node packages installed into the store's node subtree (a flat list, not
+# arch-split). echarts backs the chart/report rendering path.
+node:
+  - echarts
+
 # Build-time dependencies (compilers, -dev headers) are in the builder stages of
 # images/sandbox-python/Dockerfile and images/sandbox-python-r/Dockerfile (not
 # listed here). Runtime system libraries are in images/sandbox-base/Dockerfile

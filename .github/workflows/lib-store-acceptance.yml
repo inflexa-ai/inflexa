@@ -39,6 +39,8 @@ jobs:
       github.event.workflow_run.conclusion == 'success'
     strategy:
       fail-fast: false
+      # Arch list — keep in lock-step with the build workflow matrix and its
+      # workflow-level ARCHES env (lib-store.yml).
       matrix:
         include:
           - arch: amd64
@@ -99,12 +101,16 @@ jobs:
             PUBLISHED=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json')).get('publish',''))")
             IMAGE=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json')).get('image',''))")
           else
-            # workflow_dispatch fallback: read the recorded candidate pointer.
+            # workflow_dispatch fallback: read the recorded candidate JSON pointer,
+            # which carries the exact top image ref for this arch (sandbox-python-r,
+            # or sandbox-python where R did not build) — validate that image rather
+            # than reconstructing a tag.
             PUBLISHED=true
             IMAGE=""
-            if aws s3 cp "s3://$S3_BUCKET/candidate/linux-${ARCH}.txt" candidate.txt 2>aws-err.log; then
-              VERSION=$(cat candidate.txt)
-              IMAGE="ghcr.io/${{ github.repository }}/sandbox-python-r:${VERSION}-${ARCH}"
+            if aws s3 cp "s3://$S3_BUCKET/candidate/linux-${ARCH}.json" candidate.json 2>aws-err.log; then
+              VERSION=$(python3 -c "import json;print(json.load(open('candidate.json'))['version'])")
+              PUBLISHED=$(python3 -c "import json;print(json.load(open('candidate.json')).get('publish',''))")
+              IMAGE=$(python3 -c "import json;print(json.load(open('candidate.json')).get('image',''))")
             elif grep -Eqi 'Not Found|404|NoSuchKey|does not exist' aws-err.log; then
               echo "::notice::No candidate pointer object for linux-${ARCH}; nothing to validate."
               VERSION=""

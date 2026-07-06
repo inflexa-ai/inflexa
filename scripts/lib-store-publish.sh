@@ -5,26 +5,33 @@
 #   1. Upload each packed track tarball write-once to <version>/linux-<arch>/<track>.tar.zst.
 #   2. If the arch's full track set built, write the per-arch manifest (the
 #      lockfile the CLI pulls) to <version>/linux-<arch>/manifest.json and
-#      record the candidate pointer at candidate/linux-<arch>.txt.
+#      record the candidate pointer — version plus the top image ref — at
+#      candidate/linux-<arch>.json.
 #      An incomplete build uploads its tarballs (they are content-addressed and
 #      reusable) but publishes no manifest and no candidate.
 #
 # Usage: lib-store-publish.sh <amd64|arm64> <version> <dist_dir>
-# Env:   S3_BUCKET PUBLIC_URL  (+ BASE_IMAGE R_VERSION PYTHON_VERSION GIT_SHA
-#        forwarded to lib-store-write-manifest.sh as manifest metadata)
+# Env:   S3_BUCKET PUBLIC_URL TOP_IMAGE  (TOP_IMAGE is the extracted top image ref
+#        recorded in the candidate pointer; BASE_IMAGE R_VERSION PYTHON_VERSION
+#        GIT_SHA are forwarded to lib-store-write-manifest.sh as manifest metadata)
 
 set -euo pipefail
 
 ARCH="${1:?usage: lib-store-publish.sh <amd64|arm64> <version> <dist_dir>}"
 VERSION="${2:?version}"
 DIST="${3:?dist_dir}"
-: "${S3_BUCKET:?}" "${PUBLIC_URL:?}"
+: "${S3_BUCKET:?}" "${PUBLIC_URL:?}" "${TOP_IMAGE:?}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib-store-common.sh
 source "$SCRIPT_DIR/lib-store-common.sh"
 
 ARCH_DIR="linux-$ARCH"
+
+# Scratch dir for the intermediate manifest.json / manifest.published.json — keep
+# them off CWD so a stray repo-root file is never clobbered.
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
 
 # Immutable: a version is never rewritten; skip an object that already exists.
 while read -r track; do
@@ -46,26 +53,27 @@ lib_store_assert_r_triple "$(tr '\n' ' ' < "$DIST/tracks.txt")" || exit 1
 # immutable tarballs stay old while a fresh manifest would advertise new digests — one a
 # verifying client can never satisfy. So treat an existing manifest as immutable: compare
 # and FAIL LOUD on drift (cut a new version) rather than overwrite.
-"$SCRIPT_DIR/lib-store-write-manifest.sh" "$ARCH" "$VERSION" "$DIST" > manifest.json
+"$SCRIPT_DIR/lib-store-write-manifest.sh" "$ARCH" "$VERSION" "$DIST" > "$WORK/manifest.json"
 MANIFEST_KEY="$VERSION/$ARCH_DIR/manifest.json"
 if aws s3api head-object --bucket "$S3_BUCKET" --key "$MANIFEST_KEY" >/dev/null 2>&1; then
-  aws s3 cp "s3://$S3_BUCKET/$MANIFEST_KEY" manifest.published.json
+  aws s3 cp "s3://$S3_BUCKET/$MANIFEST_KEY" "$WORK/manifest.published.json"
   # Drop buildTimestamp (per-run `date` stamp) before comparing — the check is about
   # integrity, not the publish wall-clock; everything else is deterministic per VERSION.
   strip_ts() { sed 's/"buildTimestamp":"[^"]*",//' "$1"; }
-  if [ "$(strip_ts manifest.json)" = "$(strip_ts manifest.published.json)" ]; then
+  if [ "$(strip_ts "$WORK/manifest.json")" = "$(strip_ts "$WORK/manifest.published.json")" ]; then
     echo "immutable: s3://$S3_BUCKET/$MANIFEST_KEY already published and identical — skipping"
   else
     echo "::error::Manifest for $VERSION/$ARCH_DIR is already published with DIFFERENT content — the version was rebuilt with different bytes while its tarballs are immutable. Refusing to overwrite; cut a new version." >&2
-    rm -f manifest.json manifest.published.json
     exit 1
   fi
-  rm -f manifest.published.json
 else
-  aws s3 cp manifest.json "s3://$S3_BUCKET/$MANIFEST_KEY"
+  aws s3 cp "$WORK/manifest.json" "s3://$S3_BUCKET/$MANIFEST_KEY"
 fi
-rm -f manifest.json
 
-# Candidate pointer (mutable, but NOT latest): the version awaiting acceptance.
-echo "$VERSION" | aws s3 cp - "s3://$S3_BUCKET/candidate/$ARCH_DIR.txt"
-echo "Published candidate $VERSION for $ARCH_DIR (latest NOT moved — awaits acceptance)"
+# Candidate pointer (mutable, but NOT latest): the version awaiting acceptance,
+# carrying the exact top image ref for this arch (sandbox-python-r, or
+# sandbox-python where R did not build) so a dispatch-triggered acceptance
+# validates the real image rather than assuming the R variant.
+printf '{"version":"%s","image":"%s","publish":"true"}\n' "$VERSION" "$TOP_IMAGE" \
+  | aws s3 cp - "s3://$S3_BUCKET/candidate/$ARCH_DIR.json"
+echo "Published candidate $VERSION ($TOP_IMAGE) for $ARCH_DIR (latest NOT moved — awaits acceptance)"

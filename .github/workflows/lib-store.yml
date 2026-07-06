@@ -56,6 +56,10 @@ env:
   IMAGE_BASE: ghcr.io/${{ github.repository }}/sandbox-base
   IMAGE_PYTHON: ghcr.io/${{ github.repository }}/sandbox-python
   IMAGE_PYTHON_R: ghcr.io/${{ github.repository }}/sandbox-python-r
+  # Single source for the arch list consumed by the manifest combine loop. The
+  # build and acceptance job matrices carry per-arch runner+platform, so they
+  # list the arches inline — keep all three in lock-step.
+  ARCHES: "amd64 arm64"
 
 jobs:
   # A single coherent version + shared manifest metadata for every arch.
@@ -86,6 +90,8 @@ jobs:
     needs: prepare
     strategy:
       fail-fast: false
+      # Arch list — keep in lock-step with the workflow-level ARCHES env (manifest
+      # combine loop) and the acceptance workflow matrix.
       matrix:
         include:
           - arch: amd64
@@ -266,6 +272,7 @@ jobs:
           R_VERSION: ${{ needs.prepare.outputs.r_version }}
           PYTHON_VERSION: ${{ needs.prepare.outputs.python_version }}
           GIT_SHA: ${{ github.sha }}
+          TOP_IMAGE: ${{ steps.extract.outputs.top_image }}
         run: |
           scripts/lib-store-publish.sh "$ARCH" "$VERSION" dist
           # The coverage baseline travels with the immutable version so the next
@@ -318,7 +325,8 @@ jobs:
           combine() {
             local image="$1"; shift
             local srcs=()
-            for a in amd64 arm64; do
+            # Arch list from the workflow-level ARCHES env (keep matrices in lock-step).
+            for a in $ARCHES; do
               tag="${image}:${VERSION}-${a}"
               if docker buildx imagetools inspect "$tag" >/dev/null 2>&1; then srcs+=("$tag"); fi
             done
