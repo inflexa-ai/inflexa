@@ -23,11 +23,16 @@
 
 # The published sandbox-python this image layers onto. CI overrides it with the
 # locally-built/loaded tag; the default is the GHCR-published image.
-ARG SANDBOX_PYTHON_IMAGE=ghcr.io/inflexa-ai/inf-cli/sandbox-python:latest
+ARG SANDBOX_PYTHON_IMAGE=ghcr.io/inflexa-ai/sandbox-python:latest
 # R builder base — MUST match sandbox-base's R runtime so the compiled R
 # packages' ABI matches (same R 4.6.0).
 ARG BASE_IMAGE=rocker/r-ver:4.6.0
 ARG INFLEXA_LIB_ROOT=/mnt/libs/current
+
+# Cap on parallel R package compiles (install.packages/BiocManager Ncpus). Empty
+# means auto (parallel::detectCores()). Set e.g. --build-arg R_NCPUS=4 on a
+# memory-constrained builder to keep concurrent source compiles from OOMing.
+ARG R_NCPUS=
 
 # =============================================================================
 # Stage: r-toolchain — R build deps, r2u, the manifest, the load-check helper.
@@ -106,6 +111,7 @@ RSCRIPT
 FROM r-toolchain AS cran
 ARG INFLEXA_LIB_ROOT
 ARG TARGETARCH
+ARG R_NCPUS
 
 RUN CRAN_PKGS=$(python3 -c "\
 import yaml; \
@@ -127,7 +133,7 @@ print('\n'.join(m.get('r',{}).get('cran',[])))" 2>/dev/null) \
            pkgs <- trimws(strsplit('$(echo "$CRAN_PKGS" | tr "\n" ",")', ',')[[1]]); \
            pkgs <- pkgs[nchar(pkgs) > 0]; \
            install.packages(pkgs, lib='${INFLEXA_LIB_ROOT}/r/cran', repos='https://cloud.r-project.org', \
-                            Ncpus=parallel::detectCores(), quiet=FALSE)" > /tmp/cran-install.log 2>&1 \
+                            Ncpus=${R_NCPUS:-parallel::detectCores()}, quiet=FALSE)" > /tmp/cran-install.log 2>&1 \
          && grep -E '^\* (installing|DONE)|^Error|^ERROR:|had non-zero|is not available' /tmp/cran-install.log || true; \
        fi \
     && test "$(ls ${INFLEXA_LIB_ROOT}/r/cran | wc -l)" -gt 0 || { echo "ERROR: no CRAN packages installed"; [ -f /tmp/cran-install.log ] && tail -n 200 /tmp/cran-install.log; [ -f /tmp/cran-apt.log ] && tail -n 200 /tmp/cran-apt.log; exit 1; }
@@ -145,6 +151,7 @@ print('\n'.join(m.get('r',{}).get('cran',[])))" 2>/dev/null) \
 # =============================================================================
 FROM cran AS bioconductor
 ARG INFLEXA_LIB_ROOT
+ARG R_NCPUS
 
 # Stream install output live through an allow-based filter that drops only
 # gcc/boost compile noise (RBGL's boost-template warnings alone blow past GHA's
@@ -179,7 +186,7 @@ print(','.join([\"'\" + p + \"'\" for p in m.get('r',{}).get('bioconductor',[]) 
        { R -e "\
          .libPaths(c('${INFLEXA_LIB_ROOT}/r/bioconductor', '${INFLEXA_LIB_ROOT}/r/cran', .libPaths())); \
          if (!requireNamespace('BiocManager', quietly=TRUE)) install.packages('BiocManager', lib='${INFLEXA_LIB_ROOT}/r/cran', repos='https://cloud.r-project.org/'); \
-         BiocManager::install(c($BIOC_PKGS), lib='${INFLEXA_LIB_ROOT}/r/bioconductor', ask=FALSE, update=FALSE, force=TRUE, Ncpus=parallel::detectCores())" 2>&1 \
+         BiocManager::install(c($BIOC_PKGS), lib='${INFLEXA_LIB_ROOT}/r/bioconductor', ask=FALSE, update=FALSE, force=TRUE, Ncpus=${R_NCPUS:-parallel::detectCores()})" 2>&1 \
          | tee /tmp/bioc-install.log \
          | grep --line-buffered -vE "$NOISE"; } || true; \
        echo "--- Installing ANCOMBC from r-universe (Bioc 3.22's 2.12.0 uses CVXR::solve which was removed in CVXR 1.8; r-universe serves patched 2.12.1) ---"; \
@@ -194,7 +201,7 @@ print(','.join([\"'\" + p + \"'\" for p in m.get('r',{}).get('bioconductor',[]) 
        mkdir -p ~/.R && echo 'CXX11STD = -std=gnu++14' > ~/.R/Makevars; \
        retry_install "MSstats/MSstatsTMT" /tmp/bioc-msstats.log R -e "\
          .libPaths(c('${INFLEXA_LIB_ROOT}/r/bioconductor', '${INFLEXA_LIB_ROOT}/r/cran', .libPaths())); \
-         BiocManager::install(c('MSstats','MSstatsTMT'), lib='${INFLEXA_LIB_ROOT}/r/bioconductor', ask=FALSE, update=FALSE, force=TRUE, Ncpus=parallel::detectCores())"; \
+         BiocManager::install(c('MSstats','MSstatsTMT'), lib='${INFLEXA_LIB_ROOT}/r/bioconductor', ask=FALSE, update=FALSE, force=TRUE, Ncpus=${R_NCPUS:-parallel::detectCores()})"; \
        rm -f ~/.R/Makevars; \
     fi \
     && echo "--- Capturing any bspm-apt-installed deps into the store bioconductor subtree ---" \
@@ -286,6 +293,10 @@ RUN GH_PKGS=$(ls ${INFLEXA_LIB_ROOT}/r/github 2>/dev/null | tr '\n' ' ') \
 # =============================================================================
 FROM ${SANDBOX_PYTHON_IMAGE} AS runtime
 ARG INFLEXA_LIB_ROOT
+
+# OCI metadata: link the package to its source repo and describe this layer.
+LABEL org.opencontainers.image.source="https://github.com/inflexa-ai/inf-cli"
+LABEL org.opencontainers.image.description="Inflexa sandbox with the full baked library store — Python + R 4.6 (CRAN, Bioconductor, GitHub) + Node — at /mnt/libs/current; the complete OSS/managed sandbox image."
 
 USER root
 

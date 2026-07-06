@@ -4,8 +4,8 @@ import { DEFAULT_SANDBOX_IMAGE, SANDBOX_VARIANTS, parseVariant, variantImage, va
 
 describe("variantImage", () => {
     test("builds the GHCR reference for each variant", () => {
-        expect(variantImage("python")).toBe("ghcr.io/inflexa-ai/inf-cli/sandbox-python:latest");
-        expect(variantImage("python-r")).toBe("ghcr.io/inflexa-ai/inf-cli/sandbox-python-r:latest");
+        expect(variantImage("python")).toBe("ghcr.io/inflexa-ai/sandbox-python:latest");
+        expect(variantImage("python-r")).toBe("ghcr.io/inflexa-ai/sandbox-python-r:latest");
     });
 
     test("DEFAULT_SANDBOX_IMAGE is the full python-r stack", () => {
@@ -32,16 +32,16 @@ describe("parseVariant", () => {
 
 describe("variantOfImage", () => {
     test("recognizes the published variant tags", () => {
-        expect(variantOfImage("ghcr.io/inflexa-ai/inf-cli/sandbox-python:latest")).toBe("python");
-        expect(variantOfImage("ghcr.io/inflexa-ai/inf-cli/sandbox-python-r:latest")).toBe("python-r");
+        expect(variantOfImage("ghcr.io/inflexa-ai/sandbox-python:latest")).toBe("python");
+        expect(variantOfImage("ghcr.io/inflexa-ai/sandbox-python-r:latest")).toBe("python-r");
     });
 
     test("does not misread sandbox-python-r as sandbox-python (longest match first)", () => {
-        expect(variantOfImage("ghcr.io/inflexa-ai/inf-cli/sandbox-python-r:20260706-abc")).toBe("python-r");
+        expect(variantOfImage("ghcr.io/inflexa-ai/sandbox-python-r:20260706-abc")).toBe("python-r");
     });
 
     test("matches a digest-pinned reference", () => {
-        expect(variantOfImage("ghcr.io/inflexa-ai/inf-cli/sandbox-python@sha256:deadbeef")).toBe("python");
+        expect(variantOfImage("ghcr.io/inflexa-ai/sandbox-python@sha256:deadbeef")).toBe("python");
     });
 
     test("returns null for a custom / non-published image", () => {

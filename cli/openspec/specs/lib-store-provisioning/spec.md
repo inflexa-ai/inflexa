@@ -47,7 +47,7 @@ required to launch the CLI SHALL pull it (or prompt to) rather than failing out.
 The CLI SHALL provide `inflexa sandbox pull` (the command noun is `sandbox`, not
 `libs`, because it fetches a sandbox image rather than a library store) that
 resolves a **sandbox image variant**, `docker pull`s that image from GitHub
-Packages (`ghcr.io/inflexa-ai/inf-cli/sandbox-<variant>`) using the active
+Packages (`ghcr.io/inflexa-ai/sandbox-<variant>`) using the active
 container runtime, and records the pulled image reference as the sandbox image the
 runtime launches (`harness.sandboxImage`). Pulling SHALL be idempotent: when the
 resolved image is already present locally at the requested tag, the command SHALL
@@ -57,7 +57,7 @@ report "up to date" and pull nothing. The command SHALL accept a variant argumen
 #### Scenario: A variant pull records the sandbox image
 
 - **WHEN** `inflexa sandbox pull python-r` runs
-- **THEN** the CLI pulls `ghcr.io/inflexa-ai/inf-cli/sandbox-python-r` and sets `harness.sandboxImage` to that reference
+- **THEN** the CLI pulls `ghcr.io/inflexa-ai/sandbox-python-r` and sets `harness.sandboxImage` to that reference
 
 #### Scenario: Re-pull when present is a no-op
 

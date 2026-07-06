@@ -20,13 +20,16 @@
 
 # The published lean runtime this image layers onto. CI overrides it with the
 # locally-built/loaded tag; the default is the GHCR-published base.
-ARG SANDBOX_BASE_IMAGE=ghcr.io/inflexa-ai/inf-cli/sandbox-base:latest
+ARG SANDBOX_BASE_IMAGE=ghcr.io/inflexa-ai/sandbox-base:latest
 # Builder base — MUST match sandbox-base's own base so the compiled Python
 # extensions and their .so ABI match the runtime (system Python 3.12).
 ARG BASE_IMAGE=rocker/r-ver:4.6.0
 
 # The store root every layer installs into and every resolver env derives from.
 ARG INFLEXA_LIB_ROOT=/mnt/libs/current
+
+# Target arch (auto-set by buildx). Used to arch-gate the runtime's numba target.
+ARG TARGETARCH
 
 # =============================================================================
 # Stage: toolchain — build deps, package managers, the manifest, the load-check
@@ -305,8 +308,20 @@ console.log("Load check OK: " + ok.length + "/" + pkgs.length + " Node package(s
 # subtrees + fragments in; bake the resolver env, the packages.txt, and the
 # FROM-extension install targets. No build toolchain reaches this layer.
 # =============================================================================
-FROM ${SANDBOX_BASE_IMAGE} AS runtime
+# arm64 gets a generic numba/LLVM CPU target baked in (see the warm-up note): the
+# host-CPU autodetect crashes LLVM codegen on newer arm64 cores, and this value
+# must match the build-time warm-up so the baked read-only JIT cache stays
+# hit-compatible. amd64 keeps host autodetect. Arch-specific pass-through stages
+# select the right one; only the stage for the target arch is built.
+FROM ${SANDBOX_BASE_IMAGE} AS runtime-amd64
+FROM ${SANDBOX_BASE_IMAGE} AS runtime-arm64
+ENV NUMBA_CPU_NAME=generic
+FROM runtime-${TARGETARCH} AS runtime
 ARG INFLEXA_LIB_ROOT
+
+# OCI metadata: link the package to its source repo and describe this layer.
+LABEL org.opencontainers.image.source="https://github.com/inflexa-ai/inf-cli"
+LABEL org.opencontainers.image.description="Inflexa sandbox with a baked Python 3.12 library store — pip packages, bioconda CLI tools, and Node — installed at /mnt/libs/current so a plain docker run resolves imports with no mount."
 
 USER root
 

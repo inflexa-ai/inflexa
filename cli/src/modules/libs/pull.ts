@@ -5,7 +5,7 @@
  * through it. There is no second image-fetch path.
  *
  * The model: the user picks an image VARIANT (`python` | `python-r`), the CLI
- * `docker pull`s `ghcr.io/inflexa-ai/inf-cli/sandbox-<variant>`, and records it as
+ * `docker pull`s `ghcr.io/inflexa-ai/sandbox-<variant>`, and records it as
  * `harness.sandboxImage` so sandboxes launch on the baked image — no local store
  * directory, no `/mnt/libs` bind mount, and no arch-forcing (a multi-arch manifest
  * resolves the host architecture automatically). The pre-flight `ensureSandboxImage`

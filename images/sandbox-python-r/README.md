@@ -11,7 +11,7 @@ mounted store present a byte-identical R library path.
 ## Run it
 
 ```sh
-docker run --rm ghcr.io/inflexa-ai/inf-cli/sandbox-python-r:latest \
+docker run --rm ghcr.io/inflexa-ai/sandbox-python-r:latest \
   Rscript -e 'library(Seurat); sessionInfo()'
 ```
 
@@ -39,7 +39,7 @@ writable `.libPaths()` entry, so a downstream `RUN Rscript -e
 'install.packages("mypkg")'` lands in the store:
 
 ```dockerfile
-FROM ghcr.io/inflexa-ai/inf-cli/sandbox-python-r:latest
+FROM ghcr.io/inflexa-ai/sandbox-python-r:latest
 RUN Rscript -e 'install.packages("mypkg", repos="https://cloud.r-project.org")'
 RUN inflexa-libs-refresh
 ```

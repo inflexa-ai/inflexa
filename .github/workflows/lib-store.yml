@@ -6,7 +6,7 @@ name: Build Sandbox Images
 # extracts per-track tarballs OUT of the published images and publishes the
 # content-addressed managed-mount artifacts to S3 — one build, two consumers:
 #
-#   * OSS user: `docker run ghcr.io/inflexa-ai/inf-cli/sandbox-python-r` — the
+#   * OSS user: `docker run ghcr.io/inflexa-ai/sandbox-python-r` — the
 #     store is baked, zero pull, zero mount. Or `FROM` it and add libs.
 #   * Managed: mounts the extracted tarballs read-only at /mnt/libs (cold-start
 #     friendly), unchanged from before — only the tarball SOURCE moved (an image
@@ -53,9 +53,9 @@ permissions:
 env:
   BUILDER_NAME: sandbox-image-builder
   MANIFEST: images/lib-store-manifest.yaml
-  IMAGE_BASE: ghcr.io/${{ github.repository }}/sandbox-base
-  IMAGE_PYTHON: ghcr.io/${{ github.repository }}/sandbox-python
-  IMAGE_PYTHON_R: ghcr.io/${{ github.repository }}/sandbox-python-r
+  IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/sandbox-base
+  IMAGE_PYTHON: ghcr.io/${{ github.repository_owner }}/sandbox-python
+  IMAGE_PYTHON_R: ghcr.io/${{ github.repository_owner }}/sandbox-python-r
   # Single source for the arch list consumed by the manifest combine loop. The
   # build and acceptance job matrices carry per-arch runner+platform, so they
   # list the arches inline — keep all three in lock-step.

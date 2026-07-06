@@ -142,7 +142,7 @@ export async function ensureSandboxImage(image: string): Promise<void> {
             [
                 `Sandbox image "${image}" not found in ${rt.id}.`,
                 `Build it locally (e.g. \`${rt.bin} build -f images/sandbox-python-r/Dockerfile -t ${image} .\`),`,
-                "or set `harness.sandboxImage` to a published `ghcr.io/inflexa-ai/inf-cli/sandbox-*` tag and run `inflexa sandbox pull`.",
+                "or set `harness.sandboxImage` to a published `ghcr.io/inflexa-ai/sandbox-*` tag and run `inflexa sandbox pull`.",
             ].join("\n"),
         );
     }

@@ -11,8 +11,8 @@
  * directory, no `/mnt/libs` bind mount, and no arch-forcing.
  */
 
-/** GHCR namespace: GitHub Packages on the inf-cli repository. */
-const GHCR_NAMESPACE = "ghcr.io/inflexa-ai/inf-cli";
+/** GHCR namespace: the inflexa-ai org's GitHub Packages (linked to the inf-cli repo via the image's source label). */
+const GHCR_NAMESPACE = "ghcr.io/inflexa-ai";
 
 /** The image variants a user can pull, in menu order (lightest first). */
 export const SANDBOX_VARIANTS = ["python", "python-r"] as const;
