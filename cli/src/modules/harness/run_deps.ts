@@ -5,7 +5,6 @@ import {
     runStepDir,
     SANDBOX_AGENT_META,
     type AgentDefinition,
-    type ArtifactRegistry,
     type ChatProvider,
     type EmbeddingProvider,
     type ExecuteAnalysisDeps,
@@ -20,6 +19,7 @@ import {
 } from "@inflexa-ai/harness";
 
 import type { ResolvedHarnessConfig } from "./config.ts";
+import { createBusArtifactRegistry, createRunProvenanceEmitter } from "./prov_bridge.ts";
 
 /**
  * The already-constructed backends both run-engine dep bundles draw from. The
@@ -48,36 +48,6 @@ export type RunEngineComposition = {
     /** Bio/chem API keys; absent keys pass as empty strings and surface per-call. */
     readonly bioKeys: ResolvedHarnessConfig["bioKeys"];
 };
-
-/**
- * The cli-side {@link ArtifactRegistry} — a deliberate no-op stub, not a
- * fake-success shortcut. `register` reports zero registrations and zero
- * failures; `sync` resolves. Two seam-contract facts make this HONEST rather
- * than a lie:
- *
- *  1. The harness's post-step pipeline fails a step ONLY when `failedCount > 0`
- *     (`execution/post-step-pipeline.ts:162-172`). A
- *     `{ registered: [], failed: [], failedCount: 0 }` result merely skips the
- *     external-id write-back and lets the step complete normally.
- *  2. `ArtifactRegistry` implementations MUST NOT touch `cortex_artifacts`
- *     (`execution/artifact-registry.ts:69-71`) — the harness owns that local
- *     ledger write AROUND this seam. So run outputs are still ledgered in
- *     `cortex_artifacts` and land on disk; they simply produce no EXTERNAL,
- *     signed provenance yet.
- *
- * TODO(extend): replace this stub with the bus-adapter provenance bridge —
- * change D (`bridge-harness-provenance`) of the harness-integration change graph
- * (`docs/harness_integration-new/06-change-graph.md`). That adapter translates
- * `register()` into `prov.step_completed` / `prov.file_written` bus events that
- * feed the cli's signed tsprov document. Until it lands, run outputs have no
- * external provenance — only the local ledger and the on-disk artifacts.
- */
-export function createStubArtifactRegistry(): ArtifactRegistry {
-    return {
-        register: async () => ({ registered: [], failed: [], failedCount: 0 }),
-        sync: async () => {},
-    };
-}
 
 /**
  * Resolve the step's agent from the harness sandbox catalog, wiring its deps
@@ -137,11 +107,17 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
 
 /**
  * Assemble the {@link SandboxStepDeps} the child workflow registers with. The
- * stub registry (above) and the catalog-backed `buildAgent` are the only
- * run-specific realizations; everything else is a straight pass-through of the
- * shared backends. `resolveWritePrefix` follows the harness's own path
- * convention (`workspace/paths.ts:206-211`) resolved to an ABSOLUTE path under
- * the session tree, matching how the profile path builds `allowedWritePrefix`.
+ * bus-adapter registry ({@link createBusArtifactRegistry}) and the catalog-backed
+ * `buildAgent` are the only run-specific realizations; everything else is a
+ * straight pass-through of the shared backends. `resolveWritePrefix` follows the
+ * harness's own path convention (`workspace/paths.ts:206-211`) resolved to an
+ * ABSOLUTE path under the session tree, matching how the profile path builds
+ * `allowedWritePrefix`.
+ *
+ * The registry realization emits `prov.step_completed` / `prov.file_written`
+ * events (never writes `cortex_artifacts` — the harness owns that ledger AROUND
+ * the seam, and writes the returned external id back onto its own row), so a
+ * registered step's outputs land in the analysis's signed tsprov document.
  */
 export function buildSandboxStepDeps(comp: RunEngineComposition): SandboxStepDeps {
     return {
@@ -149,7 +125,7 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): SandboxStepDep
         provider: comp.provider,
         embedding: comp.embedding,
         sandboxClient: comp.sandboxClient,
-        artifactRegistry: createStubArtifactRegistry(),
+        artifactRegistry: createBusArtifactRegistry(),
         workspaceFs: comp.workspaceFs,
         sessionsBasePath: comp.sessionsBasePath,
         model: comp.model,
@@ -166,6 +142,11 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): SandboxStepDep
  * concern), `runCharge` is the harness no-op bracket, and `synthesisEnabled` is
  * left unset so it defaults to `true` — the skeleton proves the whole body
  * including run-level synthesis (design D6).
+ *
+ * `emitProvenance` realizes the harness's optional run-lifecycle observer as bus
+ * emission ({@link createRunProvenanceEmitter}), so the run's start/terminal
+ * boundaries land as `prov.run_started` / `prov.run_completed` in the signed
+ * document — including on a DBOS recovery boot, where body re-execution re-fires it.
  */
 export function buildExecuteAnalysisDeps(
     comp: RunEngineComposition,
@@ -182,5 +163,6 @@ export function buildExecuteAnalysisDeps(
         bioKeys: comp.bioKeys,
         runCharge: createNoopRunCharge(),
         runAuthorizer,
+        emitProvenance: createRunProvenanceEmitter(),
     };
 }

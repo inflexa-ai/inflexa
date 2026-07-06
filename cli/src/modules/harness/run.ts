@@ -492,6 +492,7 @@ function renderRunProgress(steps: StepExecutionRow[], detail: { step: number; la
  * must break out of, not poll forever.
  */
 const DBOS_TERMINAL_STATUSES: ReadonlySet<string> = new Set(["SUCCESS", "ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED", "CANCELLED"]);
+// TODO(slop): ^^^ I think these should come from the harness lib, why are we defining consts for something we don't control?
 
 /**
  * The parent run workflow's DBOS status (`workflow_uuid = runId`, the PK), or `null`
@@ -589,6 +590,19 @@ async function reportTerminal(pool: Pool, final: CortexRunRow, s: Spinner): Prom
     const canceled = steps.filter((st) => st.status === "canceled").map((st) => st.stepId);
     const errTail = final.error ? ` (${final.error})` : "";
 
+    // TODO(slop): extract this to lib, near fail. It may be reused. Is the name appropriate? It shouldn't cause API confusion
+    // A terminal-FAILURE exit must route through `shutdown(1)`, not `fail()`. `fail()` is a bare
+    // `process.exit(1)` (`lib/cli.ts`) that skips the shutdown hooks — including
+    // `onShutdown(flushProvenanceAsync)`. The terminal `prov.run_completed`/`prov.file_written`
+    // events are still in the recorder's pending flush at this point, and a failed run's signed
+    // document is exactly the record this change exists to guarantee; exiting via `fail()` would
+    // race (or skip) that flush. Mirror `fail()`'s stderr print exactly (message + its empty cause
+    // slot), then exit via the flush-running shutdown path.
+    const failTerminal = (message: string): Promise<never> => {
+        console.error(message, "");
+        return shutdown(1);
+    };
+
     switch (final.status) {
         case "completed":
             s.stop(`Run completed — ${done.length} step(s)`);
@@ -596,15 +610,15 @@ async function reportTerminal(pool: Pool, final: CortexRunRow, s: Spinner): Prom
             return shutdown(0);
         case "partial":
             s.error("Run partially completed");
-            return fail(
+            return failTerminal(
                 `Run partial — completed: ${fmtSteps(done)}; failed: ${fmtSteps(failed)}${canceled.length > 0 ? `; canceled: ${fmtSteps(canceled)}` : ""}.${errTail}`,
             );
         case "failed":
             s.error("Run failed");
-            return fail(`Run failed — failed step(s): ${fmtSteps(failed)}${canceled.length > 0 ? `; canceled: ${fmtSteps(canceled)}` : ""}.${errTail}`);
+            return failTerminal(`Run failed — failed step(s): ${fmtSteps(failed)}${canceled.length > 0 ? `; canceled: ${fmtSteps(canceled)}` : ""}.${errTail}`);
         case "canceled":
             s.error("Run canceled");
-            return fail(`Run canceled — canceled step(s): ${fmtSteps(canceled)}.${errTail}`);
+            return failTerminal(`Run canceled — canceled step(s): ${fmtSteps(canceled)}.${errTail}`);
         case "suspended_insufficient_funds":
             s.error("Run suspended");
             // Do NOT promise "re-run to resume": resuming a suspended run needs the
@@ -612,7 +626,7 @@ async function reportTerminal(pool: Pool, final: CortexRunRow, s: Spinner): Prom
             // not wired here yet. `queryActiveRun` counts this row as active, so a
             // re-run of the same plan dedups onto it and re-reports suspended rather
             // than resuming — the message must not imply otherwise.
-            return fail(
+            return failTerminal(
                 `Run suspended for insufficient funds — add funds, then resume it once run resume lands (track it with \`inflexa run --status\`).${errTail}`,
             );
         case "running":

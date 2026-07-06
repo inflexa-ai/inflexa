@@ -30,7 +30,7 @@ import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 
 import { runExecuteAnalysisBody } from "./execute-analysis.js";
-import type { ExecuteAnalysisDeps, ExecuteAnalysisInput } from "./execute-analysis.js";
+import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunProvenanceEvent } from "./execute-analysis.js";
 import type { SandboxStepInput, SandboxStepResult } from "./sandbox-step.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 
@@ -41,6 +41,17 @@ interface FakeWorkflowHandle {
     getResult(): Promise<SandboxStepResult>;
 }
 
+/**
+ * Fake checkpointed clock. `DBOS.now()` returns the current value then advances
+ * by a fixed step, so every emitted `atMs` is a distinct, deterministic value
+ * that is unmistakably stub-sourced — the base is ~Jan 1970, far below any real
+ * `Date.now()`. Resetting `nowMs` back to the base and re-running the body
+ * reproduces the identical timestamp sequence, modelling how the real
+ * checkpointed `DBOS.now()` re-reads the same recorded values on replay.
+ */
+const FAKE_CLOCK_BASE_MS = 1_000_000;
+const FAKE_CLOCK_STEP_MS = 1_000;
+
 interface FakeDbosState {
     cancelled: Set<string>;
     pendingHandles: Map<string, FakeWorkflowHandle>;
@@ -50,6 +61,8 @@ interface FakeDbosState {
     emittedParts: Array<Record<string, unknown>>;
     /** Step-name → message: makes the matching `DBOS.runStep` throw. */
     throwOnStep: Map<string, string>;
+    /** Monotonic fake clock (ms); `DBOS.now()` reads it then advances by `FAKE_CLOCK_STEP_MS`. */
+    nowMs: number;
     workflowIdCounter: number;
 }
 
@@ -74,6 +87,7 @@ async function mockDbos(): Promise<void> {
         cancelWorkflow: dbos.DBOS.cancelWorkflow,
         waitFirst: dbos.DBOS.waitFirst,
         recv: dbos.DBOS.recv,
+        now: dbos.DBOS.now,
     };
 
     // `DBOS.runStep` — execute the wrapped fn immediately, unless the step name
@@ -121,6 +135,15 @@ async function mockDbos(): Promise<void> {
     // these body-level tests inject no notifications, so an empty channel
     // (`null`) lets `drainBudgetExceededNotifications` return immediately.
     (dbos.DBOS.recv as unknown) = mock(async () => null);
+
+    // `DBOS.now()` — a checkpointed clock in the real engine; here a deterministic
+    // monotonic fake so every emitted provenance `atMs`/`durationMs` is
+    // stub-sourced (never `Date.now()`) and reproducible across a re-run.
+    (dbos.DBOS.now as unknown) = mock(async () => {
+        const t = dbosState.nowMs;
+        dbosState.nowMs += FAKE_CLOCK_STEP_MS;
+        return t;
+    });
 }
 
 afterEach(() => {
@@ -142,6 +165,7 @@ beforeEach(async () => {
         childResults: new Map(),
         emittedParts: [],
         throwOnStep: new Map(),
+        nowMs: FAKE_CLOCK_BASE_MS,
         workflowIdCounter: 0,
     };
     await mockDbos();
@@ -202,7 +226,12 @@ interface FakeDepsRecord {
     readonly threadWrites: Array<{ kind: string }>;
 }
 
-function makeDeps(opts: { childResults: Map<string, SandboxStepResult | Error>; pool: FakePool; synthesisEnabled?: boolean }): {
+function makeDeps(opts: {
+    childResults: Map<string, SandboxStepResult | Error>;
+    pool: FakePool;
+    synthesisEnabled?: boolean;
+    emitProvenance?: (event: RunProvenanceEvent) => void;
+}): {
     deps: ExecuteAnalysisDeps;
     record: FakeDepsRecord;
 } {
@@ -240,6 +269,9 @@ function makeDeps(opts: { childResults: Map<string, SandboxStepResult | Error>; 
                 record.mandateRevokeCalls.push({ reason });
             },
         },
+        // Omitted entirely when absent so the "no emitProvenance" tests exercise
+        // a genuinely undefined dep, not a present-but-undefined field.
+        ...(opts.emitProvenance ? { emitProvenance: opts.emitProvenance } : {}),
     };
 
     return { deps, record };
@@ -697,5 +729,209 @@ describe("executeAnalysis body", () => {
         // The deps surface has no thread-write call. If a future change adds
         // one to collectAndComplete this assertion must fail.
         expect(record.threadWrites).toEqual([]);
+    });
+
+    // ── Run-lifecycle provenance callback ──────────────────────────────
+
+    it("without emitProvenance the run completes (absent callback changes nothing)", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const { deps } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+        });
+
+        expect(deps.emitProvenance).toBeUndefined();
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+        expect(result.status).toBe("completed");
+    });
+
+    it("emitProvenance collects run_started, step_completed, then run_completed on the success path with stub-sourced times", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const events: RunProvenanceEvent[] = [];
+        const { deps } = makeDeps({
+            pool,
+            emitProvenance: (e) => events.push(e),
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+        });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+
+        expect(result.status).toBe("completed");
+        // Clock reads, in body order: startedAtMs, step-A settlement, terminal.
+        // Every `atMs` is a stub value (far below any real `Date.now()`), and the
+        // run duration is the terminal read minus the start read.
+        expect(events).toEqual([
+            { type: "run_started", analysisId: "a1", runId: "run-test", planSummary: "test plan", stepCount: 1, atMs: FAKE_CLOCK_BASE_MS },
+            {
+                type: "step_completed",
+                analysisId: "a1",
+                runId: "run-test",
+                stepId: "A",
+                status: "completed",
+                durationMs: 1,
+                atMs: FAKE_CLOCK_BASE_MS + FAKE_CLOCK_STEP_MS,
+            },
+            {
+                type: "run_completed",
+                analysisId: "a1",
+                runId: "run-test",
+                status: "completed",
+                atMs: FAKE_CLOCK_BASE_MS + 2 * FAKE_CLOCK_STEP_MS,
+                durationMs: 2 * FAKE_CLOCK_STEP_MS,
+            },
+        ]);
+    });
+
+    it("emitProvenance emits step_completed(failed) and run_completed(failed) on the failed path", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const events: RunProvenanceEvent[] = [];
+        const { deps } = makeDeps({
+            pool,
+            emitProvenance: (e) => events.push(e),
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }]]),
+        });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+
+        expect(result.status).toBe("failed");
+        expect(events).toEqual([
+            { type: "run_started", analysisId: "a1", runId: "run-test", planSummary: "test plan", stepCount: 1, atMs: FAKE_CLOCK_BASE_MS },
+            {
+                type: "step_completed",
+                analysisId: "a1",
+                runId: "run-test",
+                stepId: "A",
+                status: "failed",
+                durationMs: 1,
+                atMs: FAKE_CLOCK_BASE_MS + FAKE_CLOCK_STEP_MS,
+            },
+            {
+                type: "run_completed",
+                analysisId: "a1",
+                runId: "run-test",
+                status: "failed",
+                atMs: FAKE_CLOCK_BASE_MS + 2 * FAKE_CLOCK_STEP_MS,
+                durationMs: 2 * FAKE_CLOCK_STEP_MS,
+            },
+        ]);
+    });
+
+    it("step_completed records completed/failed/canceled per settled child; a never-dispatched dependent emits nothing", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const events: RunProvenanceEvent[] = [];
+        // A/B/C dispatch together at level 0; D depends on the failing B. A
+        // completes, B fails (fail-fast cancels the in-flight C), and C settles
+        // canceled. D is never dispatched because its dependency failed.
+        const { deps } = makeDeps({
+            pool,
+            emitProvenance: (e) => events.push(e),
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 5, finishReason: "stop", error: null }],
+                ["B", { status: "failed", durationMs: 7, finishReason: null, error: "boom" }],
+                ["C", { status: "canceled", durationMs: 3, finishReason: null, error: null }],
+                // D intentionally has no configured result: if it were ever
+                // dispatched the startWorkflow mock would throw and fail the test.
+            ]),
+        });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }, { id: "C" }, { id: "D", depends_on: ["B"] }]), deps);
+
+        expect(result.status).toBe("partial");
+
+        // Map each settled step to its emitted terminal status.
+        const stepStatusById = new Map(events.flatMap((e) => (e.type === "step_completed" ? [[e.stepId, e.status] as const] : [])));
+        expect(stepStatusById.get("A")).toBe("completed");
+        expect(stepStatusById.get("B")).toBe("failed");
+        expect(stepStatusById.get("C")).toBe("canceled");
+        // The dependent that never executed produces no step activity.
+        expect(stepStatusById.has("D")).toBe(false);
+
+        // The complete step carries the child's durable duration; the canceled
+        // one does too; every step `atMs` is a stub value.
+        const stepEvents = events.flatMap((e) => (e.type === "step_completed" ? [e] : []));
+        expect(stepEvents).toHaveLength(3);
+        for (const e of stepEvents) expect(e.atMs).toBeGreaterThanOrEqual(FAKE_CLOCK_BASE_MS);
+        const a = stepEvents.find((e) => e.stepId === "A")!;
+        expect(a.durationMs).toBe(5);
+    });
+
+    it("a zero-artifact completed step still emits step_completed(completed) — settlement is registration-independent", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const events: RunProvenanceEvent[] = [];
+        // Body-level settlement observes only the child's status — there is no
+        // ArtifactRegistry in this path, so a step producing no artifact still
+        // yields a `step_completed(completed)`.
+        const { deps } = makeDeps({
+            pool,
+            emitProvenance: (e) => events.push(e),
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 2, finishReason: "stop", error: null }]]),
+        });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+
+        expect(result.status).toBe("completed");
+        const stepEvents = events.flatMap((e) => (e.type === "step_completed" ? [e] : []));
+        expect(stepEvents).toHaveLength(1);
+        expect(stepEvents[0]!.status).toBe("completed");
+    });
+
+    it("a DBOS-recovery re-execution re-emits identical timestamps (values come from the checkpointed clock, not Date.now())", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const events: RunProvenanceEvent[] = [];
+        const { deps } = makeDeps({
+            pool,
+            emitProvenance: (e) => events.push(e),
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 4, finishReason: "stop", error: null }],
+                ["B", { status: "complete", durationMs: 6, finishReason: "stop", error: null }],
+            ]),
+        });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }]), deps);
+        const firstRun = [...events];
+
+        // Simulate recovery: the checkpointed clock re-reads the SAME recorded
+        // values. Reset the fake clock and per-run capture to base, then re-run
+        // the identical body. A wall clock would advance between runs; the stub
+        // does not — so identical timestamps prove the values are clock-sourced.
+        dbosState.nowMs = FAKE_CLOCK_BASE_MS;
+        dbosState.pendingHandles = new Map();
+        dbosState.cancelled = new Set();
+        dbosState.emittedParts.length = 0;
+        events.length = 0;
+
+        await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }]), deps);
+
+        expect(events).toEqual(firstRun);
+        // The two run boundaries and both step settlements all carry stub times.
+        for (const e of events) expect(e.atMs).toBeGreaterThanOrEqual(FAKE_CLOCK_BASE_MS);
+    });
+
+    it("a throwing emitProvenance observer does not fail the run", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const { deps } = makeDeps({
+            pool,
+            emitProvenance: () => {
+                throw new Error("observer boom");
+            },
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+        });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
+        expect(result.status).toBe("completed");
     });
 });

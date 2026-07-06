@@ -73,6 +73,22 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
             return { analysisId: event.analysisId, actorKind: event.actor.kind, inputPath: event.input.path };
         case "prov.input_removed":
             return { analysisId: event.analysisId, actorKind: event.actor.kind, inputPath: event.input.path };
+        case "prov.run_started":
+            return { analysisId: event.analysisId, actorKind: event.actor.kind, runId: event.run.runId };
+        case "prov.run_completed":
+            return { analysisId: event.analysisId, actorKind: event.actor.kind, runId: event.outcome.runId, status: event.outcome.status };
+        case "prov.step_completed":
+            return {
+                analysisId: event.analysisId,
+                actorKind: event.actor.kind,
+                runId: event.outcome.runId,
+                stepId: event.outcome.stepId,
+                status: event.outcome.status,
+            };
+        case "prov.file_written":
+            return { analysisId: event.analysisId, actorKind: event.actor.kind, filePath: event.file.path, producer: event.file.producer };
+        case "prov.input_used":
+            return { analysisId: event.analysisId, actorKind: event.actor.kind, filePath: event.input.path, source: event.input.source };
     }
 }
 

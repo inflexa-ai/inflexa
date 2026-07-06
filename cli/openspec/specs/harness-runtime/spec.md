@@ -3,7 +3,6 @@
 ## Purpose
 The embedding seam between the cli and `@inflexa-ai/harness`: a lazy, process-singleton composition root that provisions/boots the runtime (Postgres readiness, exec-callback ingress, cortex schema, workflow registration, DBOS launch), realizes every `DataProfileDeps` seam locally, and tears down gracefully on exit. Owns the single global session-tree base and the loopback HTTP ingress that bridges sandbox-server callbacks onto DBOS topics. Lives in `src/modules/harness/`.
 ## Requirements
-
 ### Requirement: On-demand composition of the embedded harness runtime
 
 The system SHALL provide a composition module that boots the embedded harness runtime
@@ -163,12 +162,16 @@ model id, bio keys, local run authorizer). Specific to the run engine:
   the known-id list.
 - The step write prefix SHALL resolve to the harness's `runs/{runId}/{stepId}` path
   convention under the analysis's session tree.
-- The artifact registry SHALL be a no-op stub that registers nothing, fails nothing
-  (`failedCount: 0`), and treats sync as a local no-op — honest under the seam's
-  contract (external registration is absent locally today, and implementations must
-  not touch the local ledger). The stub SHALL carry a `TODO(extend)` comment naming
-  the provenance bridge (change D of the harness-integration change graph) as its
-  replacement. No dependency SHALL be realized as a fake that fabricates success.
+- The artifact registry SHALL be the provenance bus adapter (see
+  `prov-harness-bridge`): registration emits `prov.file_written` /
+  `prov.input_used` bus events feeding the analysis's signed tsprov document, and
+  sync stays a local no-op. The adapter never touches harness-owned tables and never
+  emits step lifecycle events.
+- `ExecuteAnalysisDeps.emitProvenance` SHALL be realized as the bus mapping for all
+  three lifecycle arms (`prov.run_started` / `prov.step_completed` /
+  `prov.run_completed` with the system actor and pass-through timestamps — see
+  `prov-harness-bridge`).
+- No dependency SHALL be realized as a fake that fabricates success.
 
 #### Scenario: Run deps resolve to their designated backends
 
@@ -185,10 +188,10 @@ model id, bio keys, local run authorizer). Specific to the run engine:
 - **WHEN** a step's agent id is not in the catalog (defense-in-depth — plan validation gates this upstream)
 - **THEN** the step fails with an error naming the unknown id and the known ids, rather than running a fallback agent
 
-#### Scenario: Stub registry never fails a step
+#### Scenario: Registration feeds the signed document without failing the step
 
-- **WHEN** a step's post-step pipeline registers its artifacts through the stub
-- **THEN** the result reports zero failures and no external ids, the local `cortex_artifacts` ledger write (owned by the harness around the seam) proceeds normally, and the step completes
+- **WHEN** a step's post-step pipeline registers its artifacts through the bus adapter
+- **THEN** the file and used-input provenance events are emitted, the result reports the registered paths with their PROV QNames as external ids and zero failures, the local `cortex_artifacts` ledger write (owned by the harness around the seam) proceeds normally, and the step completes — its step activity arriving separately from the scheduler settlement
 
 ### Requirement: Sandbox-hygiene scheduled workflows registered at boot
 
@@ -207,3 +210,4 @@ step failure instead of a hang until the step deadline.
 
 - **WHEN** a step's sandbox dies without posting a completion callback
 - **THEN** the watchdog records a synthetic failure completion and the step's recv unblocks before the step deadline
+

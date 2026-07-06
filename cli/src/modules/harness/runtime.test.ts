@@ -85,17 +85,22 @@ function recordingSeams(calls: string[]): BootSeams {
         registerSandboxStep: (deps) => {
             calls.push("registerSandboxStep");
             // The boot must wire the run-engine realizations onto the child deps:
-            // the catalog-backed builder and a real embedding-provider instance.
+            // the catalog-backed builder, a real embedding-provider instance, and
+            // the bus-adapter artifact registry (its `register`/`sync` translate a
+            // step's artifacts into `prov.*` events).
             expect(deps.buildAgent).toBeInstanceOf(Function);
-            expect(deps.artifactRegistry).toBeDefined();
+            expect(deps.artifactRegistry.register).toBeInstanceOf(Function);
+            expect(deps.artifactRegistry.sync).toBeInstanceOf(Function);
             expect(deps.embedding).toBeDefined();
             return async () => ({ status: "complete", durationMs: 0, finishReason: null, error: null });
         },
         registerExecuteAnalysis: (deps) => {
             calls.push("registerExecuteAnalysis");
             // The parent's dispatch closes over the registered child callable, so
-            // the child must already be registered by now (design D1).
+            // the child must already be registered by now (design D1). The bridge's
+            // run-lifecycle emitter is wired as the optional provenance observer.
             expect(deps.sandboxStepCallable).toBeInstanceOf(Function);
+            expect(deps.emitProvenance).toBeInstanceOf(Function);
             return async () => ({ runId: "", workflowId: "", status: "completed", completedSteps: [], failedSteps: [], canceledSteps: [] });
         },
         registerReaper: () => {

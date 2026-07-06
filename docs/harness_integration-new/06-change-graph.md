@@ -232,6 +232,17 @@ Note the new fact strengthening 03 §3 Option B: `inflexa run` already BLOCKS to
 terminal ledger status, so cli-side run-lifecycle emission has authoritative status
 without a harness change.
 
+## Change D2 — deepen-run-provenance (added 2026-07-06, after D landed)
+
+Not in the original five: D's landing assessment surfaced that its three deliberate cuts
+(receipt-time timestamps, registration-gated step visibility, dropped input lineage) plus the
+unadopted tsprov merge-policy fix were user-decision material, and all four were settled the
+same day. D2 sits between D and E in the graph: it modifies the capabilities D introduced
+(`prov-run-events`, `prov-harness-bridge`, `harness-runtime` — synced at D's archive), and E
+remains unblocked behind it. **Status: LANDED, 22/22 tasks, live-verified** — see
+`00-progress.md` §"Change D2" for what shipped and the follow-up findings (tool-read lineage
+gap, `summary.md` walk-ordering, the observed #28 wedge mechanism).
+
 ## Why C first (A folded in as its first slice)
 
 All the risk in this program lives in the one thing that has never run. The provenance

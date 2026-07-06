@@ -1,6 +1,6 @@
 import type { Message, Part } from "./session.ts";
 import type { AnalysisId } from "./analysis.ts";
-import type { ProvActor, ProvInputRef } from "./prov.ts";
+import type { ProvActor, ProvInputRef, ProvRunRef, ProvRunOutcome, ProvStepRef, ProvStepOutcome, ProvUsedInputRef, ProvFileRef } from "./prov.ts";
 
 /**
  * The cross-process event contract. Session-scoped events carry `sessionId`;
@@ -26,7 +26,12 @@ export type BusEvent =
           /** Set when the input is itself another analysis's output — links the two PROV subjects. */
           derivedFromAnalysisId: string | null;
       }
-    | { type: "prov.input_removed"; analysisId: AnalysisId; actor: ProvActor; input: ProvInputRef };
+    | { type: "prov.input_removed"; analysisId: AnalysisId; actor: ProvActor; input: ProvInputRef }
+    | { type: "prov.run_started"; analysisId: AnalysisId; actor: ProvActor; run: ProvRunRef }
+    | { type: "prov.run_completed"; analysisId: AnalysisId; actor: ProvActor; outcome: ProvRunOutcome }
+    | { type: "prov.step_completed"; analysisId: AnalysisId; actor: ProvActor; outcome: ProvStepOutcome }
+    | { type: "prov.file_written"; analysisId: AnalysisId; actor: ProvActor; file: ProvFileRef; step: ProvStepRef }
+    | { type: "prov.input_used"; analysisId: AnalysisId; actor: ProvActor; step: ProvStepRef; input: ProvUsedInputRef };
 
 /** A {@link BusEvent} stamped with a unique id by the bus on emit (for telemetry correlation). */
 export type StampedEvent = BusEvent & { __infId: string };

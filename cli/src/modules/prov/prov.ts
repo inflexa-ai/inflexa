@@ -6,7 +6,18 @@ import { bakedEnv } from "../../lib/env.ts";
 import { getLogger } from "../../lib/log.ts";
 import { findAnalysesByRef, getAnalysisIntegrity } from "../../db/primary_query.ts";
 import { updateAnalysisProvenance } from "../../db/primary_mutation.ts";
-import { appendCreation, appendInputAdded, appendInputRemoved, freshDocument, loadDocument } from "./document.ts";
+import {
+    appendCreation,
+    appendInputAdded,
+    appendInputRemoved,
+    appendRunStarted,
+    appendRunCompleted,
+    appendStepCompleted,
+    appendFileWritten,
+    appendInputUsed,
+    freshDocument,
+    loadDocument,
+} from "./document.ts";
 import { loadOrGenerateKeypair, computeChainHash, signHexDigest } from "./signing.ts";
 import { loadAuth } from "../auth/auth.ts";
 import { decodeIdTokenClaims } from "../auth/whoami.ts";
@@ -66,6 +77,7 @@ export function initProvenanceRecording(): void {
 }
 
 function onEvent(event: StampedEvent): void {
+    // TODO(robustness): This switch is OK, but it has like a cotr/dector pattern and maybe we can do something about that to avoid the repetition?
     switch (event.type) {
         case "prov.analysis_created": {
             const doc = liveDocForAnalysis(event.analysisId);
@@ -87,6 +99,46 @@ function onEvent(event: StampedEvent): void {
             const doc = liveDocForAnalysis(event.analysisId);
             if (!doc) return;
             appendInputRemoved(doc, event.analysisId, event.actor, event.input);
+            dirty.add(event.analysisId);
+            scheduleFlush();
+            break;
+        }
+        case "prov.run_started": {
+            const doc = liveDocForAnalysis(event.analysisId);
+            if (!doc) return;
+            appendRunStarted(doc, event.analysisId, event.actor, event.run);
+            dirty.add(event.analysisId);
+            scheduleFlush();
+            break;
+        }
+        case "prov.run_completed": {
+            const doc = liveDocForAnalysis(event.analysisId);
+            if (!doc) return;
+            appendRunCompleted(doc, event.analysisId, event.actor, event.outcome);
+            dirty.add(event.analysisId);
+            scheduleFlush();
+            break;
+        }
+        case "prov.step_completed": {
+            const doc = liveDocForAnalysis(event.analysisId);
+            if (!doc) return;
+            appendStepCompleted(doc, event.analysisId, event.actor, event.outcome);
+            dirty.add(event.analysisId);
+            scheduleFlush();
+            break;
+        }
+        case "prov.file_written": {
+            const doc = liveDocForAnalysis(event.analysisId);
+            if (!doc) return;
+            appendFileWritten(doc, event.analysisId, event.actor, event.file, event.step);
+            dirty.add(event.analysisId);
+            scheduleFlush();
+            break;
+        }
+        case "prov.input_used": {
+            const doc = liveDocForAnalysis(event.analysisId);
+            if (!doc) return;
+            appendInputUsed(doc, event.analysisId, event.actor, event.step, event.input);
             dirty.add(event.analysisId);
             scheduleFlush();
             break;
@@ -169,7 +221,11 @@ export async function flushProvenanceAsync(): Promise<void> {
             dirty.delete(analysisId);
             return;
         }
-        const json = doc.unified().serialize("json");
+        // `formalAttributeConflict: "first"` (see serializeProvenance in document.ts): a same-QName
+        // formal-attribute value conflict degrades to keep-first-plus-log rather than throwing out of
+        // the flush and leaving the analysis dirty and permanently unpersistable. D1's replay-stable
+        // times mean it should never trigger; it exists so no future writer defect can poison a flush.
+        const json = doc.unified({ formalAttributeConflict: "first" }).serialize("json");
 
         const kpResult = await loadOrGenerateKeypair();
         if (kpResult.isErr()) {

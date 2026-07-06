@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
     createAnthropicProvider,
     createEmbeddingProvider,
@@ -7,10 +7,17 @@ import {
     createSandboxClient,
     createWorkspaceFilesystem,
     SANDBOX_AGENT_META,
+    type AgentSession,
+    type ArtifactRegistrationInput,
+    type ExecuteAnalysisDeps,
+    type ProvenanceCollector,
+    type RunAuthorizer,
     type SandboxAgentBuildContext,
 } from "@inflexa-ai/harness";
 
-import { buildSandboxStepDeps, createStubArtifactRegistry, type RunEngineComposition } from "./run_deps.ts";
+import { Bus } from "../../lib/bus.ts";
+import type { StampedEvent } from "../../types/events.ts";
+import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition } from "./run_deps.ts";
 
 // All factories below construct lazily (pg pools connect on first query; the
 // SDK clients open no socket at construction), so the whole module builds
@@ -58,19 +65,57 @@ function fakeBuildContext(agentId: string, stepWritePrefix: string): SandboxAgen
     } as unknown as SandboxAgentBuildContext;
 }
 
-describe("createStubArtifactRegistry", () => {
-    test("register reports zero registrations and zero failures", async () => {
-        const registry = createStubArtifactRegistry();
-        // Inputs are unread by the no-op; empty casts stand in for the harness's
-        // registration input + session the cli cannot construct barrel-only.
-        const result = await registry.register({} as never, {} as never);
-
-        expect(result).toEqual({ registered: [], failed: [], failedCount: 0 });
+// The composed deps carry the bus-adapter registry + the run-lifecycle emitter (not the old no-op
+// stub), so registering/observing through them lands `prov.*` events on the bus. The adapter's own
+// per-entry behavior is covered in prov_bridge.test.ts; here we assert only the WIRING.
+describe("run-engine provenance wiring", () => {
+    let captured: StampedEvent[] = [];
+    function spy(event: StampedEvent): void {
+        captured.push(event);
+    }
+    afterEach(() => {
+        Bus.off("inflexa", spy);
     });
 
-    test("sync resolves to void", async () => {
-        const registry = createStubArtifactRegistry();
-        await expect(registry.sync({} as never, {} as never)).resolves.toBeUndefined();
+    // The bus adapter reads `getRecords()` + `getTrackedInputs()` off the collector and never touches
+    // the session; both return empty here so only the file event fires.
+    const emptyCollector = { getRecords: () => [], getTrackedInputs: () => [] } as unknown as ProvenanceCollector;
+    const noSession = {} as unknown as AgentSession;
+
+    test("buildSandboxStepDeps wires the bus-adapter registry — registering emits provenance events", async () => {
+        const deps = buildSandboxStepDeps(testComposition());
+        captured = [];
+        Bus.on("inflexa", spy);
+
+        const input: ArtifactRegistrationInput = {
+            resourceId: "an-1",
+            runId: "run-1",
+            stepId: "step-1",
+            artifacts: [{ stepId: "step-1", runId: "run-1", path: "output/r.csv", size: 7, type: "output", hash: "sha256:deadbeef" }],
+            collector: emptyCollector,
+        };
+        const result = await deps.artifactRegistry.register(input, noSession);
+
+        // No step event from the registry — the scheduler settlement owns step lifecycle now.
+        expect(captured.map((e) => e.type)).toEqual(["prov.file_written"]);
+        expect(result.registered).toHaveLength(1);
+        expect(result.registered[0]!.path).toBe("runs/run-1/step-1/output/r.csv");
+    });
+
+    test("buildExecuteAnalysisDeps carries emitProvenance, which lands run events on the bus", () => {
+        // `sandboxStepCallable` + `runAuthorizer` are stored, never invoked by the builder.
+        const callable = (async () => ({})) as unknown as ExecuteAnalysisDeps["sandboxStepCallable"];
+        const authorizer = {} as unknown as RunAuthorizer;
+        const deps = buildExecuteAnalysisDeps(testComposition(), callable, authorizer);
+
+        expect(deps.emitProvenance).toBeInstanceOf(Function);
+
+        captured = [];
+        Bus.on("inflexa", spy);
+        deps.emitProvenance!({ type: "run_started", analysisId: "an-1", runId: "run-1", planSummary: "plan", stepCount: 1, atMs: 1_700_000_000_000 });
+
+        expect(captured).toHaveLength(1);
+        expect(captured[0]!.type).toBe("prov.run_started");
     });
 });
 
