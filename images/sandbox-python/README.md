@@ -14,7 +14,7 @@ this image.
 ## Run it
 
 ```sh
-docker run --rm ghcr.io/inflexa-ai/inf-cli/sandbox-python:latest \
+docker run --rm ghcr.io/inflexa-ai/sandbox-python:latest \
   python3 -c "import scanpy; print(scanpy.__version__)"
 ```
 
@@ -30,7 +30,7 @@ Add your own packages without knowing any store paths — the image exports the
 install targets:
 
 ```dockerfile
-FROM ghcr.io/inflexa-ai/inf-cli/sandbox-python:latest
+FROM ghcr.io/inflexa-ai/sandbox-python:latest
 # PIP_TARGET is baked → this lands in the store and resolves at runtime.
 RUN pip install my-extra-package
 # Surface the addition in list_available_packages.

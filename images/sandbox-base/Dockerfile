@@ -36,6 +36,11 @@ RUN gcc -shared -fPIC -O2 -pthread -fstack-protector-strong -Wformat -Wformat-se
 
 FROM ${BASE_IMAGE}
 
+# OCI metadata: link the published package to its source repo (so GHCR files it
+# under the repo and it inherits repo access) and give it a specific description.
+LABEL org.opencontainers.image.source="https://github.com/inflexa-ai/inf-cli"
+LABEL org.opencontainers.image.description="Inflexa sandbox base — minimal runtime (rocker/r-ver + system Python 3.12) with the sandbox server and provenance hooks; the layer sandbox-python and sandbox-python-r build on."
+
 # =============================================================================
 # Runtime system libraries (no -dev packages, no build toolchain)
 # =============================================================================

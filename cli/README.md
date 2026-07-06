@@ -46,11 +46,11 @@ Analyses run inside a **sandbox image** that bakes the R / Python / conda / Node
 
 | Command | Does |
 |-|-|
-| `inflexa sandbox pull [variant]` | Pull a sandbox image (`python` = Python + bioconda CLI tools + Node; `python-r` = that plus R) from `ghcr.io/inflexa-ai/inf-cli/sandbox-<variant>` and configure sandboxes to use it |
+| `inflexa sandbox pull [variant]` | Pull a sandbox image (`python` = Python + bioconda CLI tools + Node; `python-r` = that plus R) from `ghcr.io/inflexa-ai/sandbox-<variant>` and configure sandboxes to use it |
 | `inflexa sandbox status` | Show the configured variant, its GHCR reference, whether the image is present locally, and its digest |
 
 `inflexa sandbox pull` also runs during `inflexa setup`. Before a sandbox launches, a missing image is offered and pulled (`inflexa profile` needs it). The published images are multi-arch manifests, so `docker pull` resolves the host architecture automatically — you pick only the variant, never the architecture. Flags: `--yes` skips the download confirmation.
 
 - **No local store** — the packages ship inside the pulled image, so there is no `~/.local/share/inflexa/libs` tree, no `/mnt/libs` bind mount, and no architecture-forcing. `harness.sandboxImage` (in `config.json`) records the pulled image tag; set it to a custom `FROM`-extended image to run your own.
-- **Extend it** — `FROM ghcr.io/inflexa-ai/inf-cli/sandbox-python-r` then `RUN pip install …` / `install.packages(…)` lands in the store automatically (the image exports `PIP_TARGET`/`R_LIBS_USER`/`INFLEXA_LIB_ROOT`); run `inflexa-libs-refresh` afterward so the additions show up in `list_available_packages`. See `images/sandbox-python*/README.md`.
+- **Extend it** — `FROM ghcr.io/inflexa-ai/sandbox-python-r` then `RUN pip install …` / `install.packages(…)` lands in the store automatically (the image exports `PIP_TARGET`/`R_LIBS_USER`/`INFLEXA_LIB_ROOT`); run `inflexa-libs-refresh` afterward so the additions show up in `list_available_packages`. See `images/sandbox-python*/README.md`.
 - **Managed deployments** still mount per-track tarballs read-only (cold-start friendly); those tarballs are extracted from these same images by the build pipeline and are infra-managed, not a CLI concern.
