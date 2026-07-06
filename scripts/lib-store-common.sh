@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Shared metadata for the per-track library store: the track set, each track's
-# tarball members (subtree + packages.txt fragment), the arch -> track-set
-# map, and the canonical packages.txt concat order + header.
+# tarball members (subtree + packages.txt fragment), the R-triple invariant, and
+# the canonical packages.txt concat order + header.
 #
 # Source this; do not execute it. Consumed by lib-store-pack.sh,
-# lib-store-assemble.sh, scripts/build-libs-local.sh, and the CI workflows.
+# lib-store-extract-tarballs.sh, lib-store-write-manifest.sh, lib-store-publish.sh,
+# scripts/build-libs-local.sh, and the CI workflows.
 #
 # Store layout (relative to a version's <arch> root / the mounted `current/`):
 #   r/cran  r/bioconductor  r/github  python/  conda/  node/
@@ -19,16 +20,28 @@ LIB_STORE_ALL_TRACKS="cran bioconductor github python conda node"
 # shellcheck disable=SC2034 # consumed by the scripts that source this file
 LIB_STORE_CONCAT_ORDER="cran bioconductor github python conda node"
 
-# The tracks each architecture's published store carries. The R triple travels
-# all-or-none because cran/bioconductor/github share one .libPaths() and form a
-# dependency chain; arm64 builds no R tarballs (r2u is amd64-only), so its
-# store is the non-R tracks.
-lib_store_arch_tracks() {
-  case "$1" in
-    amd64) echo "cran bioconductor github python conda node" ;;
-    arm64) echo "python conda node" ;;
-    *) return 1 ;;
-  esac
+# The per-arch published track set is now BEST-EFFORT, not a fixed list: each
+# arch publishes exactly the tracks its image build produced (extracted from the
+# published image, listed in <dist>/tracks.txt). Both arches attempt every track;
+# arm64 MAY carry R when it builds. The R triple still travels all-or-none because
+# cran/bioconductor/github share one .libPaths() and form a dependency chain —
+# {@link lib_store_assert_r_triple} enforces that at manifest time.
+
+# Fail if a track list carries a PARTIAL R triple (some but not all of
+# cran/bioconductor/github). The three share one R library path and dependency
+# chain, so a partial set would advertise a broken R stack. $1 is a
+# whitespace-delimited track list.
+lib_store_assert_r_triple() {
+  local list=" $1 "
+  local have=0
+  case "$list" in *" cran "*) have=$((have+1)) ;; esac
+  case "$list" in *" bioconductor "*) have=$((have+1)) ;; esac
+  case "$list" in *" github "*) have=$((have+1)) ;; esac
+  if [ "$have" -ne 0 ] && [ "$have" -ne 3 ]; then
+    echo "ERROR: partial R triple in track set ($1) — cran/bioconductor/github must travel together" >&2
+    return 1
+  fi
+  return 0
 }
 
 # The subtree whose presence marks a track as built.

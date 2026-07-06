@@ -25,31 +25,25 @@ describe("inflexa help & usage (e2e)", () => {
         expect(result.stderr).toContain("unknown command");
     });
 
-    // The root `.version()` owns `--version`; the pull command's pinned-version flag is
-    // `--pin` (NOT `--version`) precisely so there is no clash and no need for
-    // `enablePositionalOptions()` — which regressed root flags after a subcommand. Both
-    // directions are asserted: bare `--version` prints the version, and `--pin` reaches pull.
+    // The root `.version()` owns `--version`; `sandbox pull` takes a positional
+    // variant (not a `--version`-shaped flag), so there is no clash. Both directions
+    // are asserted: bare `--version` prints the version, and `sandbox pull <variant>`
+    // reaches the pull command's own handler.
     test("bare --version prints the CLI version and exits 0", () => {
         const result = runCli(["--version"]);
         expect(result.exitCode).toBe(0);
         expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
     });
 
-    test("`libs pull --pin <v>` reaches the pull handler, not the root --version", () => {
-        // Point the store at an unreachable host: reaching the handler means a manifest-fetch
-        // failure ("Library store pull failed"), NOT the CLI version string being printed.
-        const prev = Bun.env.INFLEXA_LIB_STORE_URL;
-        Bun.env.INFLEXA_LIB_STORE_URL = "http://127.0.0.1:1";
-        try {
-            const result = runCli(["libs", "pull", "--pin", "2026.07.04-nonexistent", "--yes"]);
-            expect(result.exitCode).toBe(1);
-            expect(result.stderr).toContain("Library store pull failed");
-            // The root `--version` handler did NOT fire (it would print just the version).
-            expect(result.stdout.trim()).not.toMatch(/^\d+\.\d+\.\d+$/);
-        } finally {
-            if (prev === undefined) delete Bun.env.INFLEXA_LIB_STORE_URL;
-            else Bun.env.INFLEXA_LIB_STORE_URL = prev;
-        }
+    test("`sandbox pull <variant>` reaches the pull handler, not the root --version", () => {
+        // An unknown variant is rejected by the sandbox-pull handler BEFORE any docker
+        // call, so this proves the subcommand routed there (not the root --version) without
+        // touching the container runtime or the network.
+        const result = runCli(["sandbox", "pull", "definitely-not-a-variant"]);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain("Unknown variant");
+        // The root `--version` handler did NOT fire (it would print just the version).
+        expect(result.stdout.trim()).not.toMatch(/^\d+\.\d+\.\d+$/);
     });
 
     // Regression for the reverted `enablePositionalOptions()`: it made a root-style flag

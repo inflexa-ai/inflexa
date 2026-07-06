@@ -20,12 +20,10 @@ function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHar
     return {
         model: "claude-test-model",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        sandboxImage: "sandbox-base:latest",
+        sandboxImage: "ghcr.io/inflexa-ai/inf-cli/sandbox-python-r:latest",
         resourcePolicy: { perStep: { maxCpu: 1, maxMemoryGb: 1, maxGpuCount: 0 }, budget: { cpu: 1, memoryGb: 1 } },
         adminPort: 8433,
         skillsDir,
-        libStorePath: null,
-        sandboxPlatform: null,
         ...overrides,
     };
 }

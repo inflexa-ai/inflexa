@@ -72,7 +72,7 @@ export interface DockerClientConfig {
  * Whether the lib store's `current` resolves to a COMPLETE, usable version, not merely a
  * present symlink. By sandbox-create time `current` may be gone (concurrent prune/`rm`), a
  * dangling symlink (its target pruned), or an incomplete tree. Binding a missing source
- * makes Docker auto-create a root-owned dir (bricking later `libs pull`); binding a broken
+ * makes Docker auto-create a root-owned dir (bricking a later store refresh); binding a broken
  * one mounts broken content. Require a resolved directory carrying both completeness
  * markers `activate` writes before it flips the pointer.
  */

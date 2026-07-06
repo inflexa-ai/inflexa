@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Publish a built library store to S3 — immutable versions, candidate-only
-# (this never moves `latest`; promotion happens after Gate 2 goes green, see
-# .github/workflows/validate-lib-store.yml):
+# (this never moves `latest`; promotion happens after acceptance goes green, see
+# .github/workflows/lib-store-acceptance.yml):
 #   1. Upload each packed track tarball write-once to <version>/linux-<arch>/<track>.tar.zst.
 #   2. If the arch's full track set built, write the per-arch manifest (the
 #      lockfile the CLI pulls) to <version>/linux-<arch>/manifest.json and
@@ -37,12 +37,9 @@ while read -r track; do
   fi
 done < "$DIST/tracks.txt"
 
-for t in $(lib_store_arch_tracks "$ARCH"); do
-  if ! grep -qx "$t" "$DIST/tracks.txt"; then
-    echo "::warning::Track '$t' did not build — no manifest or candidate published for $ARCH_DIR"
-    exit 0
-  fi
-done
+# Best-effort: publish the manifest for exactly the tracks that packed (the floor
+# already dropped empty tracks). Only guard the R triple's all-or-none invariant.
+lib_store_assert_r_triple "$(tr '\n' ' ' < "$DIST/tracks.txt")" || exit 1
 
 # manifest.json is immutable too, not just the tarballs. Nothing pins upstream package
 # versions, so a same-version retry (VERSION = date+sha) can rebuild different bytes: the
@@ -69,6 +66,6 @@ else
 fi
 rm -f manifest.json
 
-# Candidate pointer (mutable, but NOT latest): the version awaiting Gate 2.
+# Candidate pointer (mutable, but NOT latest): the version awaiting acceptance.
 echo "$VERSION" | aws s3 cp - "s3://$S3_BUCKET/candidate/$ARCH_DIR.txt"
-echo "Published candidate $VERSION for $ARCH_DIR (latest NOT moved — awaits Gate 2)"
+echo "Published candidate $VERSION for $ARCH_DIR (latest NOT moved — awaits acceptance)"

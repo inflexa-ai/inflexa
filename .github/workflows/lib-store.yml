@@ -1,37 +1,44 @@
-name: Build Library Store
+name: Build Sandbox Images
 
-# Builds the shared library store (R / Python / Node / bioconda tools) from
-# images/lib-store-builder/lib-store-manifest.yaml and publishes ONE
-# content-addressed tarball PER TRACK plus a per-arch manifest to object
-# storage; sandboxes mount the assembled result read-only at /mnt/libs.
+# Builds the three layered sandbox images (sandbox-base → sandbox-python →
+# sandbox-python-r) from images/*/Dockerfile + images/lib-store-manifest.yaml and
+# publishes them to GitHub Packages (GHCR) as multi-arch manifests. It then
+# extracts per-track tarballs OUT of the published images and publishes the
+# content-addressed managed-mount artifacts to S3 — one build, two consumers:
 #
-# amd64 needs a large self-hosted runner (label `inflexa-builder`) — the full
-# R + Bioconductor compile does not fit a GitHub-hosted runner. The three non-R
-# tracks also build on the free hosted arm64 runner. To build the store on your
-# own machine instead, use scripts/build-libs-local.sh.
+#   * OSS user: `docker run ghcr.io/inflexa-ai/inf-cli/sandbox-python-r` — the
+#     store is baked, zero pull, zero mount. Or `FROM` it and add libs.
+#   * Managed: mounts the extracted tarballs read-only at /mnt/libs (cold-start
+#     friendly), unchanged from before — only the tarball SOURCE moved (an image
+#     subtree, not a throwaway builder).
 #
-# Gate 1 (fail-loud build-time load test) runs inside each track stage: a load
-# failure fails that track's build. Per-track `continue-on-error` keeps a
-# single track failure from sinking the whole run — the tarballs that did build
-# are still uploaded (content-addressed, reusable), but an incomplete arch
-# publishes no manifest and no candidate.
+# amd64 needs a large self-hosted runner (label `inflexa-builder`) — the full R +
+# Bioconductor compile does not fit a GitHub-hosted runner. arm64 builds on the
+# hosted arm64 runner. Both arches attempt every image best-effort;
+# sandbox-python-r is continue-on-error (arm64 R source compiles are patchy), so
+# an arch that cannot build R still publishes base + python and the non-R tracks.
 #
-# Publish is OPT-IN via repo/org configuration; without it the workflow still
-# builds but skips the S3 upload:
+# The build-time LOAD CHECK runs inside each image build (best-effort + non-empty
+# floor). The COVERAGE REPORT runs after extraction (want-vs-got + regression diff
+# vs the last published manifest: an amd64 regression fails, an arm64 miss is
+# informational). Tarball publish is candidate-only; latest/<arch> advances only
+# after acceptance goes green — see .github/workflows/lib-store-acceptance.yml.
+#
+# GHCR push uses the workflow GITHUB_TOKEN (packages: write). S3 publish is OPT-IN
+# via repo/org configuration; without it the images still publish but the S3
+# upload is skipped:
 #   - vars.LIB_STORE_S3_BUCKET        target bucket
 #   - vars.LIB_STORE_PUBLISH_ROLE_ARN OIDC role to assume for the upload
 #   - vars.AWS_REGION                 optional; defaults to us-east-1
-#
-# PUBLISH MODEL (immutable versions, no latest promotion here): tarballs and
-# the per-arch manifest land under <version>/linux-<arch>/; the candidate
-# pointer marks the version awaiting Gate 2. `latest/<arch>` moves only after
-# Gate 2 goes green — see .github/workflows/validate-lib-store.yml.
 
 on:
   push:
     branches: [main]
     paths:
-      - images/lib-store-builder/lib-store-manifest.yaml
+      - images/lib-store-manifest.yaml
+      - images/sandbox-base/**
+      - images/sandbox-python/**
+      - images/sandbox-python-r/**
   workflow_dispatch:
 
 concurrency:
@@ -41,12 +48,14 @@ concurrency:
 permissions:
   contents: read
   id-token: write
+  packages: write
 
 env:
-  BUILDER_NAME: lib-store-builder
-  DOCKERFILE: images/lib-store-builder/Dockerfile
-  CONTEXT: images/lib-store-builder
-  MANIFEST: images/lib-store-builder/lib-store-manifest.yaml
+  BUILDER_NAME: sandbox-image-builder
+  MANIFEST: images/lib-store-manifest.yaml
+  IMAGE_BASE: ghcr.io/${{ github.repository }}/sandbox-base
+  IMAGE_PYTHON: ghcr.io/${{ github.repository }}/sandbox-python
+  IMAGE_PYTHON_R: ghcr.io/${{ github.repository }}/sandbox-python-r
 
 jobs:
   # A single coherent version + shared manifest metadata for every arch.
@@ -79,21 +88,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # amd64: self-hosted (all six tracks, including the R triple).
           - arch: amd64
             platform: linux/amd64
             runner: '["self-hosted", "inflexa-builder"]'
-            build_r: true
-          # arm64: hosted arm64 runner. No R compile (r2u is amd64-only;
-          # bioconda aarch64 is patchy) — only the three non-R tracks.
           - arch: arm64
             platform: linux/arm64
             runner: '"ubuntu-24.04-arm"'
-            build_r: false
     runs-on: ${{ fromJSON(matrix.runner) }}
     env:
       PLATFORM: ${{ matrix.platform }}
       ARCH: ${{ matrix.arch }}
+      VERSION: ${{ needs.prepare.outputs.version }}
       BASE_IMAGE: ${{ needs.prepare.outputs.base_image }}
     steps:
       - name: Checkout
@@ -108,11 +113,6 @@ jobs:
 
       - name: Free disk space (hosted arm64 runner)
         if: matrix.arch == 'arm64'
-        # Hosted runners have a fixed ~14 GB of usable disk and GitHub offers no
-        # supported way to skip the preinstalled toolsets (the alternatives are
-        # paid larger runners or self-hosting, like the amd64 leg). The conda +
-        # python images plus staging need most of that 14 GB, so drop the
-        # biggest toolsets we never use.
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/hostedtoolcache/CodeQL 2>/dev/null || true
           df -h /
@@ -120,10 +120,10 @@ jobs:
       - name: Recover stale builder state
         if: matrix.arch == 'amd64'
         # cleanup:false reuses the BuildKit container across runs on the
-        # persistent self-hosted builder. A cancelled prior run can leave
-        # orphaned sub-container network state behind — every subsequent build
-        # then sees "Connection refused" against public mirrors. Probe egress;
-        # recreate the builder only if broken.
+        # persistent self-hosted builder. A cancelled prior run can leave orphaned
+        # sub-container network state behind — every subsequent build then sees
+        # "Connection refused" against public mirrors. Probe egress; recreate the
+        # builder only if broken.
         run: |
           set -eu
           PROBE=$(mktemp -d) && trap 'rm -rf "$PROBE"' EXIT
@@ -141,70 +141,103 @@ jobs:
       - name: Ensure zstd
         run: command -v zstd >/dev/null || sudo apt-get install -y -qq zstd
 
-      - name: Warm base stage cache
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Layered build: base → python → python-r, each on this arch, tagged
+      # <image>:<version>-<arch>. `--load` puts each image in the local docker
+      # daemon so the tarball extraction below can `docker run` it without a
+      # pull-back; `docker push` then publishes it to GHCR.
+
+      - name: "Build + push: sandbox-base"
         run: |
-          docker buildx build \
-            --file "$DOCKERFILE" \
-            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+          docker buildx build --load \
+            -f images/sandbox-base/Dockerfile \
             --platform "$PLATFORM" \
-            --target base \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
             --builder "$BUILDER_NAME" \
-            "$CONTEXT"
+            -t "${IMAGE_BASE}:${VERSION}-${ARCH}" \
+            .
+          docker push "${IMAGE_BASE}:${VERSION}-${ARCH}"
 
-      # R triple (amd64 only): CRAN (binary .deb) -> Bioconductor (source) ->
-      # GitHub. Sequential because they share one .libPaths() dependency chain.
+      - name: "Build + push: sandbox-python"
+        run: |
+          docker buildx build --load \
+            -f images/sandbox-python/Dockerfile \
+            --platform "$PLATFORM" \
+            --build-arg "SANDBOX_BASE_IMAGE=${IMAGE_BASE}:${VERSION}-${ARCH}" \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+            --builder "$BUILDER_NAME" \
+            -t "${IMAGE_PYTHON}:${VERSION}-${ARCH}" \
+            .
+          docker push "${IMAGE_PYTHON}:${VERSION}-${ARCH}"
 
-      - name: "Build: CRAN"
-        id: cran
-        if: matrix.build_r
-        continue-on-error: true
-        run: scripts/lib-store-build-track.sh cran
-
-      - name: "Build: Bioconductor"
-        id: bioc
-        if: matrix.build_r && steps.cran.outcome == 'success'
-        continue-on-error: true
-        run: scripts/lib-store-build-track.sh bioconductor
-
-      - name: "Build: GitHub R packages"
-        id: github
-        if: matrix.build_r && steps.bioc.outcome == 'success'
+      - name: "Build + push: sandbox-python-r"
+        id: python_r
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/lib-store-build-track.sh github
+        run: |
+          docker buildx build --load \
+            -f images/sandbox-python-r/Dockerfile \
+            --platform "$PLATFORM" \
+            --build-arg "SANDBOX_PYTHON_IMAGE=${IMAGE_PYTHON}:${VERSION}-${ARCH}" \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+            --secret id=github_token,env=GITHUB_TOKEN \
+            --builder "$BUILDER_NAME" \
+            -t "${IMAGE_PYTHON_R}:${VERSION}-${ARCH}" \
+            .
+          docker push "${IMAGE_PYTHON_R}:${VERSION}-${ARCH}"
 
-      # Non-R tracks (both arches).
+      # Extract the per-track tarballs from the HIGHEST image that built for this
+      # arch: sandbox-python-r carries all tracks; if R did not build, fall back
+      # to sandbox-python (python/conda/node only).
+      - name: Extract per-track tarballs from the image
+        id: extract
+        run: |
+          if [ "${{ steps.python_r.outcome }}" = "success" ]; then
+            TOP="${IMAGE_PYTHON_R}:${VERSION}-${ARCH}"
+          else
+            echo "::warning::sandbox-python-r did not build for $ARCH — extracting non-R tracks from sandbox-python"
+            TOP="${IMAGE_PYTHON}:${VERSION}-${ARCH}"
+          fi
+          echo "top_image=$TOP" >> "$GITHUB_OUTPUT"
+          bash scripts/lib-store-extract-tarballs.sh "$TOP" staging
 
-      - name: "Build: Python"
-        id: python
-        continue-on-error: true
-        run: scripts/lib-store-build-track.sh python
-
-      - name: "Build: System tools"
-        id: conda
-        continue-on-error: true
-        run: scripts/lib-store-build-track.sh conda
-
-      - name: "Build: Node"
-        id: node
-        continue-on-error: true
-        run: scripts/lib-store-build-track.sh node
+      - name: Coverage report (want vs loaded, regression diff)
+        id: coverage
+        env:
+          S3_BUCKET: ${{ vars.LIB_STORE_S3_BUCKET }}
+        run: |
+          # Best-effort baseline: the last published coverage for this arch, if any.
+          PREV_ARG=()
+          if [ -n "$S3_BUCKET" ] && aws s3 cp "s3://$S3_BUCKET/latest/linux-${ARCH}/coverage.json" prev-coverage.json 2>/dev/null; then
+            PREV_ARG=(--previous prev-coverage.json)
+          fi
+          mkdir -p dist
+          # amd64 regression → non-zero → fails the job (no publish). arm64 miss is
+          # informational. The table is written to the step summary either way.
+          python3 scripts/lib-store-coverage.py \
+            --arch "$ARCH" --manifest "$MANIFEST" --store staging \
+            --out dist/coverage.json "${PREV_ARG[@]}" | tee coverage.out
+          cat coverage.out >> "$GITHUB_STEP_SUMMARY"
 
       - name: Pack per-track tarballs
         id: pack
         run: |
           bash scripts/lib-store-pack.sh staging dist
           {
-            echo "## Build Results ($ARCH)"
-            echo "| Track | Status |"
+            echo "## Image build ($ARCH)"
+            echo "| Image | Result |"
             echo "|-|-|"
-            echo "| CRAN | ${{ steps.cran.outcome }} |"
-            echo "| Bioconductor | ${{ steps.bioc.outcome }} |"
-            echo "| GitHub R | ${{ steps.github.outcome }} |"
-            echo "| Python | ${{ steps.python.outcome }} |"
-            echo "| System tools | ${{ steps.conda.outcome }} |"
-            echo "| Node | ${{ steps.node.outcome }} |"
+            echo "| sandbox-base | pushed |"
+            echo "| sandbox-python | pushed |"
+            echo "| sandbox-python-r | ${{ steps.python_r.outcome }} |"
+            echo "Extracted from: ${{ steps.extract.outputs.top_image }}"
             echo "Packed tracks: $(tr '\n' ' ' < dist/tracks.txt)"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -215,7 +248,7 @@ jobs:
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Publish skipped — set repo variables LIB_STORE_S3_BUCKET and LIB_STORE_PUBLISH_ROLE_ARN to enable S3 upload. Per-track tarballs were produced but not published."
+            echo "::notice::S3 publish skipped — set repo variables LIB_STORE_S3_BUCKET and LIB_STORE_PUBLISH_ROLE_ARN to enable the tarball upload. The images were still pushed to GHCR."
           fi
 
       - name: Configure AWS credentials
@@ -225,23 +258,25 @@ jobs:
           role-to-assume: ${{ vars.LIB_STORE_PUBLISH_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
 
-      - name: Publish track tarballs + candidate manifest
+      - name: Publish track tarballs + candidate manifest + coverage
         if: steps.publish.outputs.enabled == 'true'
         env:
           S3_BUCKET: ${{ vars.LIB_STORE_S3_BUCKET }}
-          # The public base URL the CLI fetches from (embedded into manifest
-          # track URLs). Defaults to the CLI's compiled default.
           PUBLIC_URL: ${{ vars.LIB_STORE_PUBLIC_URL || 'https://lib-store.inflexa.ai' }}
           R_VERSION: ${{ needs.prepare.outputs.r_version }}
           PYTHON_VERSION: ${{ needs.prepare.outputs.python_version }}
           GIT_SHA: ${{ github.sha }}
-        run: scripts/lib-store-publish.sh "$ARCH" "${{ needs.prepare.outputs.version }}" dist
+        run: |
+          scripts/lib-store-publish.sh "$ARCH" "$VERSION" dist
+          # The coverage baseline travels with the immutable version so the next
+          # build's regression diff has a per-arch reference point.
+          aws s3 cp dist/coverage.json "s3://$S3_BUCKET/$VERSION/linux-${ARCH}/coverage.json"
 
       - name: Record candidate metadata
         run: |
           mkdir -p candidate
           cat > "candidate/linux-${ARCH}.json" <<EOF
-          {"version":"${{ needs.prepare.outputs.version }}","arch":"linux-${ARCH}","publish":"${{ steps.publish.outputs.enabled }}"}
+          {"version":"${VERSION}","arch":"linux-${ARCH}","publish":"${{ steps.publish.outputs.enabled }}","image":"${{ steps.extract.outputs.top_image }}"}
           EOF
           cat "candidate/linux-${ARCH}.json"
 
@@ -255,7 +290,45 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          docker rmi lib-store-cran lib-store-bioconductor lib-store-github lib-store-python lib-store-conda lib-store-node 2>/dev/null || true
+          docker rmi "${IMAGE_BASE}:${VERSION}-${ARCH}" "${IMAGE_PYTHON}:${VERSION}-${ARCH}" "${IMAGE_PYTHON_R}:${VERSION}-${ARCH}" 2>/dev/null || true
           rm -rf staging dist candidate
           docker image prune -f 2>/dev/null || true
           docker container prune -f 2>/dev/null || true
+
+  # Combine the per-arch image tags into multi-arch manifest lists so
+  # `docker pull` resolves the host arch automatically. Only the arch tags that
+  # actually built are included (e.g. sandbox-python-r may be amd64-only).
+  manifest:
+    needs: [prepare, build]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifests
+        run: |
+          set -eu
+          combine() {
+            local image="$1"; shift
+            local srcs=()
+            for a in amd64 arm64; do
+              tag="${image}:${VERSION}-${a}"
+              if docker buildx imagetools inspect "$tag" >/dev/null 2>&1; then srcs+=("$tag"); fi
+            done
+            if [ "${#srcs[@]}" -eq 0 ]; then
+              echo "::warning::no arch tags for $image — skipping manifest"
+              return 0
+            fi
+            docker buildx imagetools create -t "${image}:${VERSION}" -t "${image}:latest" "${srcs[@]}"
+            echo "published ${image}:latest (${srcs[*]})"
+          }
+          combine "${IMAGE_BASE}"
+          combine "${IMAGE_PYTHON}"
+          combine "${IMAGE_PYTHON_R}"

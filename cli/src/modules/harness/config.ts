@@ -1,11 +1,10 @@
-import { existsSync, lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { availableParallelism, totalmem } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { z } from "zod";
 import type { MachineBudget, ResourceLimits, ResourcePolicy } from "@inflexa-ai/harness";
 import { readConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
-import { ARCHES, DOCKER_PLATFORM, type Arch } from "../libs/arch.ts";
+import { DEFAULT_SANDBOX_IMAGE } from "../libs/images.ts";
 
 /**
  * Shape of the `harness` config key. Lives here (not in lib/config.ts) so the harness feature owns
@@ -79,23 +78,6 @@ export type ResolvedHarnessConfig = {
     readonly adminPort: number;
     readonly skillsDir: string | null;
     /**
-     * Host dir to bind-mount read-only at `/mnt/libs`, or `null` when no store is
-     * provisioned. Set to the store root ONLY when its `current` symlink exists:
-     * Docker auto-creates a missing bind source as a root-owned empty dir, which
-     * would silently mount an empty store, so the mount is coupled to the store's
-     * actual presence (`inflexa libs pull` creates `current` → the harness starts
-     * mounting it). See modules/libs/ and the design's "coupling guard".
-     */
-    readonly libStorePath: string | null;
-    /**
-     * Docker `--platform` value forcing sandbox containers onto the SAME
-     * architecture as the mounted store (the active store's `meta.json` arch —
-     * native binaries under `/mnt/libs` must never run in a mismatched-arch
-     * container). `null` when no store is mounted or its arch is unknown: the
-     * sandbox then runs at Docker's default platform.
-     */
-    readonly sandboxPlatform: string | null;
-    /**
      * Set when the `harness` config key was present but failed validation (e.g. a field of the wrong
      * type). Carries the offending field paths so boot can report the real problem instead of a
      * misleading downstream error. The other fields are defaults here and must not be relied on.
@@ -110,9 +92,6 @@ export type ResolvedHarnessConfig = {
  * non-dev runs require the config key instead.
  */
 const devSkillsDir = join(import.meta.dir, "../../../../skills");
-
-/** Locally-built image tag (`docker build` per images/sandbox-base/README.md). */
-const DEFAULT_SANDBOX_IMAGE = "sandbox-base:latest";
 
 /** Detected host capacity: logical cores and total memory in whole GB. */
 export function detectedMachine(): MachineBudget {
@@ -180,73 +159,8 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
         resourcePolicy,
         adminPort: cfg?.adminPort ?? DEFAULT_ADMIN_PORT,
         skillsDir: cfg?.skillsDir ?? (env.isDev ? devSkillsDir : null),
-        ...resolveLibStore(),
         configError,
     };
-}
-
-/**
- * The coupling guard: return the store root to mount ONLY when its `current`
- * pointer exists, else `null` (no mount) — plus the Docker platform to force,
- * read from the active version's `meta.json`. Reads the top-level `libStorePath`
- * config override (not a `harness.*` field), defaulting to `env.libStorePath`.
- */
-function resolveLibStore(): { libStorePath: string | null; sandboxPlatform: string | null } {
-    const root = readConfig().libStorePath ?? env.libStorePath;
-    const libStorePath = libStoreMount(root);
-    return { libStorePath, sandboxPlatform: libStorePath === null ? null : libStorePlatform(root) };
-}
-
-/**
- * The Docker `--platform` value matching the active store's arch, or `null`
- * when the active version's `meta.json` is missing/corrupt or names an unknown
- * arch (a foreign/local build — no platform is forced). Exported for tests.
- */
-export function libStorePlatform(root: string): string | null {
-    try {
-        const version = basename(readlinkSync(join(root, "current")));
-        const raw: unknown = JSON.parse(readFileSync(join(root, version, "meta.json"), "utf8")); // on-disk JSON, arch checked below
-        if (typeof raw !== "object" || raw === null) return null;
-        const arch = (raw as Record<string, unknown>).arch;
-        if (typeof arch !== "string" || !(ARCHES as readonly string[]).includes(arch)) return null;
-        return DOCKER_PLATFORM[arch as Arch];
-    } catch {
-        return null;
-    }
-}
-
-/**
- * Pure coupling-guard predicate: the store root iff `current` is a live store
- * pointer, else `null`. Kept separate (and exported) from {@link resolveLibStoreMount}
- * so the invariant — no live `current`, no mount — is unit-testable against a temp dir.
- *
- * This mirrors `readActive` (modules/libs/store.ts) rather than a bare `existsSync`:
- * `existsSync` FOLLOWS the link, so a `current` that is a real directory (a
- * symlink-dereferencing restore) or a symlink whose target escapes the root would
- * pass the guard while `readActive` reports "no store" — the sandbox would then
- * advertise `/mnt/libs` it does not actually have. The predicate therefore requires
- * `current` to be a symlink whose target resolves, within the root, to an existing
- * version directory (`basename` strips any path components, so an out-of-root target
- * can never name a dir under the root).
- */
-export function libStoreMount(root: string): string | null {
-    const current = join(root, "current");
-    let isSymlink: boolean;
-    try {
-        isSymlink = lstatSync(current).isSymbolicLink();
-    } catch {
-        return null; // no `current` entry at all
-    }
-    if (!isSymlink) return null; // a real dir/file (deref restore) is not a provisioned store
-    let target: string;
-    try {
-        target = readlinkSync(current);
-    } catch {
-        return null;
-    }
-    const version = basename(target);
-    if (version === "" || version === "." || version === "..") return null; // degenerate pointer → no store
-    return existsSync(join(root, version)) ? root : null; // dangling → no store
 }
 
 /**

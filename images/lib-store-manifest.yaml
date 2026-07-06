@@ -399,11 +399,14 @@ python:
     arm64:
       - "liana"
 
-# Build-time dependencies are in images/lib-store-builder/Dockerfile (not listed here).
-# Runtime system libraries are in images/sandbox-base/Dockerfile (not listed here).
+# Build-time dependencies (compilers, -dev headers) are in the builder stages of
+# images/sandbox-python/Dockerfile and images/sandbox-python-r/Dockerfile (not
+# listed here). Runtime system libraries are in images/sandbox-base/Dockerfile
+# (not listed here).
 #
-# This manifest only lists R, Python, Node packages and bioinformatics tools
-# that go on the shared library store.
+# This manifest is the single package-set source of truth consumed by the layered
+# image builds: it only lists the R, Python, Node packages and bioinformatics
+# tools that go on the shared library store at /mnt/libs/current.
 
 # Bioinformatics CLI tools from bioconda. `common` builds on every arch;
 # `amd64` holds tools with no linux-aarch64 bioconda package (the arm64 conda

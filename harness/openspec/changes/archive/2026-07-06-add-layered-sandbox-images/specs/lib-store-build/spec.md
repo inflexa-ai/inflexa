@@ -1,102 +1,4 @@
-# lib-store-build Specification
-
-## Purpose
-TBD - created by archiving change add-lib-store-bundles-and-validation. Update Purpose after archive.
-## Requirements
-### Requirement: The store ships as per-track, self-describing tarballs
-
-The build SHALL package the library store as one tarball per **track** —
-`cran`, `bioconductor`, `github`, `python`, `conda`, `node` — rather than one
-combined archive. Each track tarball SHALL carry its own `packages.txt` fragment
-listing that track's contents. Both architectures SHALL attempt every track; the
-set of track tarballs produced for an arch SHALL be exactly those that met the
-non-empty floor for that arch (best-effort), rather than a fixed per-arch set.
-
-#### Scenario: A track tarball carries its own fragment
-
-- **WHEN** the build produces the `python` track tarball
-- **THEN** it carries a `packages.txt` fragment listing exactly that track's loaded packages
-
-#### Scenario: The produced track set is what passed the floor
-
-- **WHEN** the build runs for an architecture
-- **THEN** it produces a tarball for each track that met the non-empty floor on that arch, and none for a track that produced no loadable package
-
-### Requirement: packages.txt derives from the verified-loadable set
-
-Each track's `packages.txt` fragment SHALL be generated from the set of packages
-that actually **installed and loaded** during the build (the load check), NOT
-from the manifest wishlist. A package that fails to load SHALL be absent from the
-fragment without, on its own, failing the build. The client (or the baked image)
-SHALL surface the single `/mnt/libs/current/packages.txt` consumed by the harness
-`list_available_packages` tool as the concatenation of the present tracks'
-fragments. The advertised set SHALL therefore never list a package that failed to
-load.
-
-#### Scenario: A package that fails to load is not advertised
-
-- **GIVEN** a manifest package that installs but fails its load check
-- **WHEN** the track's `packages.txt` fragment is generated
-- **THEN** that package is absent from the fragment (and from the concatenated `packages.txt`)
-
-#### Scenario: The mounted or baked packages.txt is the concatenation of present tracks
-
-- **WHEN** a store is assembled by mount or baked into an image
-- **THEN** `/mnt/libs/current/packages.txt` is the concatenation of exactly the present tracks' fragments
-
-### Requirement: Builds publish immutable versions selected by a manifest
-
-Each build SHALL publish its track tarballs to a write-once, versioned path
-(`<version>/linux-<arch>/<track>.tar.zst`) that SHALL never be rewritten. For
-each arch the build SHALL write a **manifest** pinning each track's tarball —
-by a store-relative `path` (so a client joins it onto its own resolved base and
-a mirror redirects payload downloads, not only the manifest) plus an absolute
-`url` for compatibility — and its content digest. Clients SHALL resolve their
-arch's manifest and MAY skip re-pulling any track whose digest they already
-hold.
-
-#### Scenario: A published version is never mutated
-
-- **WHEN** a later build runs
-- **THEN** it writes a new `<version>/…` tree and leaves every prior version's tarballs byte-identical
-
-#### Scenario: Unchanged tracks dedup on pull
-
-- **GIVEN** a client already holding a track tarball with digest D
-- **WHEN** it resolves a manifest that pins the same digest D for that track
-- **THEN** it does not re-download that tarball
-
-### Requirement: latest advances only to a validated version
-
-The build SHALL gate promotion behind an **acceptance** check (formerly Gate 2).
-Acceptance SHALL run on a **fresh machine** — no network, runtime environment
-only, correct architecture — and SHALL obtain the candidate store the way it is
-actually consumed: by **booting the published image** (the OSS user path — the
-image the CLI's `inflexa sandbox pull` fetches) and/or by **mounting the extracted
-tarballs read-only** (the managed path), rather than a validator-private download.
-It SHALL run: `import`/`library()`/`require()` for **every** advertised package;
-a curated real operation for the compiled anchor packages; a network-filtered
-pass of R packages' own examples; and a check that the advertised `packages.txt`
-equals the actually-loadable set. Only when acceptance is green SHALL the
-`latest/<arch>` pointer be advanced to that version. A red acceptance SHALL leave
-`latest` unchanged and surface a failing status.
-
-#### Scenario: Green acceptance promotes latest
-
-- **GIVEN** a freshly published version whose acceptance run is green
-- **WHEN** acceptance completes
-- **THEN** `latest/<arch>` is advanced to that version
-
-#### Scenario: Red acceptance does not promote
-
-- **GIVEN** a freshly published version whose acceptance run is red
-- **WHEN** acceptance completes
-- **THEN** `latest/<arch>` still points at the previous validated version and the run reports failure
-
-#### Scenario: Acceptance obtains the store the way it is consumed
-
-- **WHEN** acceptance obtains the store
-- **THEN** it boots the published image (the OSS user path) and/or mounts the extracted tarballs read-only (the managed path), rather than a validator-private download path
+## ADDED Requirements
 
 ### Requirement: The build publishes three layered sandbox images
 
@@ -266,3 +168,93 @@ they share one R library path and form a dependency chain.
 - **WHEN** the arm64 manifest is written
 - **THEN** it pins only the non-R tracks and the coverage report lists the R packages as missing for arm64
 
+## MODIFIED Requirements
+
+### Requirement: The store ships as per-track, self-describing tarballs
+
+The build SHALL package the library store as one tarball per **track** —
+`cran`, `bioconductor`, `github`, `python`, `conda`, `node` — rather than one
+combined archive. Each track tarball SHALL carry its own `packages.txt` fragment
+listing that track's contents. Both architectures SHALL attempt every track; the
+set of track tarballs produced for an arch SHALL be exactly those that met the
+non-empty floor for that arch (best-effort), rather than a fixed per-arch set.
+
+#### Scenario: A track tarball carries its own fragment
+
+- **WHEN** the build produces the `python` track tarball
+- **THEN** it carries a `packages.txt` fragment listing exactly that track's loaded packages
+
+#### Scenario: The produced track set is what passed the floor
+
+- **WHEN** the build runs for an architecture
+- **THEN** it produces a tarball for each track that met the non-empty floor on that arch, and none for a track that produced no loadable package
+
+### Requirement: packages.txt derives from the verified-loadable set
+
+Each track's `packages.txt` fragment SHALL be generated from the set of packages
+that actually **installed and loaded** during the build (the load check), NOT
+from the manifest wishlist. A package that fails to load SHALL be absent from the
+fragment without, on its own, failing the build. The client (or the baked image)
+SHALL surface the single `/mnt/libs/current/packages.txt` consumed by the harness
+`list_available_packages` tool as the concatenation of the present tracks'
+fragments. The advertised set SHALL therefore never list a package that failed to
+load.
+
+#### Scenario: A package that fails to load is not advertised
+
+- **GIVEN** a manifest package that installs but fails its load check
+- **WHEN** the track's `packages.txt` fragment is generated
+- **THEN** that package is absent from the fragment (and from the concatenated `packages.txt`)
+
+#### Scenario: The mounted or baked packages.txt is the concatenation of present tracks
+
+- **WHEN** a store is assembled by mount or baked into an image
+- **THEN** `/mnt/libs/current/packages.txt` is the concatenation of exactly the present tracks' fragments
+
+### Requirement: latest advances only to a validated version
+
+The build SHALL gate promotion behind an **acceptance** check (formerly Gate 2).
+Acceptance SHALL run on a **fresh machine** — no network, runtime environment
+only, correct architecture — and SHALL obtain the candidate store the way it is
+actually consumed: by **booting the published image** (the OSS user path — the
+image the CLI's `inflexa sandbox pull` fetches) and/or by **mounting the extracted
+tarballs read-only** (the managed path), rather than a validator-private download.
+It SHALL run: `import`/`library()`/`require()` for **every** advertised package;
+a curated real operation for the compiled anchor packages; a network-filtered
+pass of R packages' own examples; and a check that the advertised `packages.txt`
+equals the actually-loadable set. Only when acceptance is green SHALL the
+`latest/<arch>` pointer be advanced to that version. A red acceptance SHALL leave
+`latest` unchanged and surface a failing status.
+
+#### Scenario: Green acceptance promotes latest
+
+- **GIVEN** a freshly published version whose acceptance run is green
+- **WHEN** acceptance completes
+- **THEN** `latest/<arch>` is advanced to that version
+
+#### Scenario: Red acceptance does not promote
+
+- **GIVEN** a freshly published version whose acceptance run is red
+- **WHEN** acceptance completes
+- **THEN** `latest/<arch>` still points at the previous validated version and the run reports failure
+
+#### Scenario: Acceptance obtains the store the way it is consumed
+
+- **WHEN** acceptance obtains the store
+- **THEN** it boots the published image (the OSS user path) and/or mounts the extracted tarballs read-only (the managed path), rather than a validator-private download path
+
+## REMOVED Requirements
+
+### Requirement: Each architecture publishes one fixed track set
+
+**Reason:** Replaced by *Each architecture publishes the tracks that pass the
+floor* — the per-arch set is now best-effort, and arm64 may publish R tracks
+rather than being fixed to the non-R tracks.
+
+### Requirement: Two fail-loud validation gates in distinct environments
+
+**Reason:** Replaced by the semantic *load check* (build-time, best-effort +
+non-empty floor), *coverage report* (want-vs-got + regression diff), and
+*acceptance* (as-a-user, gates `latest`). The numbered "Gate 1 / Gate 2"
+framing is retired; the two-distinct-environments property is preserved by the
+load check running in the build and acceptance running on a fresh machine.

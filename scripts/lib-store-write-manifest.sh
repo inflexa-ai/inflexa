@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Emit the per-arch manifest (the lockfile) to stdout, pinning each of the
-# arch's tracks to its published tarball URL + sha256 + byte size. This is the
-# producer half of the build<->CLI contract consumed by
-# cli/src/modules/libs/manifest.ts (schema: {version, tracks:{<t>:{path,url,sha256,size}}}).
+# Emit the per-arch manifest (the lockfile) to stdout, pinning each packed track
+# to its published tarball URL + sha256 + byte size. The track set is BEST-EFFORT
+# — exactly the tracks that met the non-empty floor and packed for this arch
+# (<dist_dir>/tracks.txt) — not a fixed per-arch list; arm64 may therefore pin R.
+# The R triple (cran/bioconductor/github) must be complete or absent.
 #
-# Fails if any of the arch's tracks is missing from <dist_dir> (an incomplete
-# store is never published). Env:
+# Env:
 #   PUBLIC_URL   base URL of the published store (e.g. https://lib-store.inflexa.ai)
 #   BASE_IMAGE R_VERSION PYTHON_VERSION GIT_SHA   informational metadata
 #
@@ -22,12 +22,15 @@ PUBLIC_URL="${PUBLIC_URL%/}"
 # shellcheck source=scripts/lib-store-common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-store-common.sh"
 
-tracks="$(lib_store_arch_tracks "$ARCH")" || { echo "ERROR: unknown arch: $ARCH" >&2; exit 1; }
+[ -f "$DIST/tracks.txt" ] || { echo "ERROR: $DIST/tracks.txt not found — nothing packed for $ARCH" >&2; exit 1; }
+tracks="$(tr '\n' ' ' < "$DIST/tracks.txt")"
+[ -n "$(printf '%s' "$tracks")" ] || { echo "ERROR: no packed tracks for $ARCH" >&2; exit 1; }
+lib_store_assert_r_triple "$tracks" || exit 1
 arch_dir="linux-$ARCH"
 
 for t in $tracks; do
   [ -f "$DIST/$t.tar.zst.sha256" ] && [ -f "$DIST/$t.tar.zst" ] \
-    || { echo "ERROR: track '$t' not in $DIST — the $ARCH store is incomplete" >&2; exit 1; }
+    || { echo "ERROR: track '$t' listed in tracks.txt but not packed in $DIST" >&2; exit 1; }
 done
 
 tracks_json=""

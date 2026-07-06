@@ -303,41 +303,43 @@ cli.command("setup")
         });
     });
 
-// The sandbox library store: obtain and inspect the R/Python/conda/node
-// packages mounted read-only into sandboxes at `/mnt/libs`. Nested
-// subcommands (à la `project`), each lazy-importing the handler.
-const libs = cli.command("libs").description("Manage the sandbox library store (R/Python/conda/node packages)");
+// The sandbox image: pull a variant (python | python-r) and inspect it. The
+// pulled image bakes the R/Python/conda/node packages at `/mnt/libs/current`, so
+// sandboxes launch on it with no local store and no `/mnt/libs` bind mount.
+// Nested subcommands (à la `project`), each lazy-importing the handler.
+const sandbox = cli.command("sandbox").description("Manage the sandbox image (R/Python/conda/node packages baked in)");
 
-libs.command("pull")
-    .description("Download and activate the sandbox library store for this machine's architecture")
-    .option("--pin <version>", "Pull a specific published version instead of latest")
-    .option("--yes", "Skip the download-size confirmation")
-    .action(async (options: { pin?: string; yes?: boolean }) => {
-        const { libsPull } = await import("../modules/libs/pull.ts");
-        const result = await libsPull({ version: options.pin, yes: options.yes });
+sandbox
+    .command("pull [variant]")
+    .description("Pull a sandbox image (python | python-r) from GitHub Packages and configure sandboxes to use it")
+    .option("--yes", "Skip the download confirmation")
+    .action(async (variant: string | undefined, options: { yes?: boolean }) => {
+        const { sandboxPull, parseVariant } = await import("../modules/libs/pull.ts");
+        if (variant !== undefined && parseVariant(variant) === null) {
+            console.error(`\n  Unknown variant "${variant}". Choose one of: python, python-r.\n`);
+            process.exitCode = 1;
+            return;
+        }
+        const result = await sandboxPull({ variant: parseVariant(variant) ?? undefined, yes: options.yes });
         result.match(
             (outcome) => {
-                if (outcome.type === "up_to_date") console.log(`Library store is up to date (${outcome.version}).`);
-                else if (outcome.type === "declined") console.log("Cancelled — nothing downloaded.");
+                if (outcome.type === "up_to_date") console.log(`Sandbox image up to date (${outcome.image}).`);
+                else if (outcome.type === "pulled") console.log(`Sandbox image ready: ${outcome.image}.`);
+                else if (outcome.type === "declined") console.log("Cancelled — nothing pulled.");
             },
             (error) => {
-                // A concurrent pull already owns the store lock — not a failure: the other
-                // process is provisioning it. Report plainly and exit 0.
-                if (error.type === "pull_in_progress") {
-                    console.log(`\n  ${error.message}\n`);
-                    return;
-                }
-                console.error(`\n  Library store pull failed: ${error.message}\n`);
+                console.error(`\n  Sandbox image pull failed: ${error.message}\n`);
                 process.exitCode = 1;
             },
         );
     });
 
-libs.command("status")
-    .description("Show the active library-store version, tracks, and whether it is up to date")
+sandbox
+    .command("status")
+    .description("Show the configured sandbox image variant, its GHCR reference, and whether it is present locally")
     .action(async () => {
-        const { libsStatus } = await import("../modules/libs/pull.ts");
-        await libsStatus();
+        const { sandboxStatus } = await import("../modules/libs/pull.ts");
+        await sandboxStatus();
     });
 
 cli.addHelpText("after", renderEnvHelp);

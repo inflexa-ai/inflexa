@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Anchor: scanpy + numba — a small end-to-end pipeline that forces the numba
 JIT path (neighbors) plus PCA. On the read-only runtime mount the JIT cache
-cannot be written, so this is exactly the class Gate 1 (writable builder) can
-miss and Gate 2 must catch."""
+cannot be written, so this is exactly the class the build-time load check
+(a writable builder) can miss and acceptance must catch."""
 import numpy as np
 import scanpy as sc
 from anndata import AnnData

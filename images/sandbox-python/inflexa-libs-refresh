@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Regenerate /mnt/libs/current/packages.txt — the file the harness
+list_available_packages tool reads — from the per-track fragments at the store
+root, in canonical section order beneath the shared advisory header.
+
+Two modes:
+
+  --from-fragments   Concatenate the existing per-track <track>.packages.txt
+                     fragments verbatim. The image build uses this so the baked
+                     packages.txt advertises exactly the load-tested set the
+                     build's load check produced (a package that installed but
+                     failed to load is absent from its fragment and so absent
+                     here).
+
+  (default)          Re-derive each track's fragment from what is actually
+                     installed under the store, then concatenate. A FROM-
+                     extension image runs this after `pip install` /
+                     `install.packages()` / etc. so its additions surface in
+                     list_available_packages. Re-derivation advertises everything
+                     installed (it does not re-run the load check), which is the
+                     right trade-off for a user-built downstream image.
+
+The header and section order are byte-identical to the CLI/managed producers so
+every store presents the same packages.txt however it was assembled.
+"""
+import os
+import re
+import sys
+
+ROOT = os.environ.get("INFLEXA_LIB_ROOT", "/mnt/libs/current")
+
+# R triple first, then python, conda, node — the canonical concat order shared
+# with scripts/lib-store-common.sh (LIB_STORE_CONCAT_ORDER) and the CLI.
+ORDER = ["cran", "bioconductor", "github", "python", "conda", "node"]
+
+HEADER = (
+    "# Available packages in the sandbox environment.\n"
+    "# Do NOT attempt to install packages — there is no network access and no build toolchain.\n"
+    "\n"
+)
+
+# Per-track: (fragment filename, section title, subtree relative to ROOT).
+TRACKS = {
+    "cran": ("cran.packages.txt", "R (CRAN)", "r/cran"),
+    "bioconductor": ("bioconductor.packages.txt", "R (Bioconductor)", "r/bioconductor"),
+    "github": ("github.packages.txt", "R (GitHub)", "r/github"),
+    "python": ("python.packages.txt", "Python (pip)", "python/site-packages"),
+    "conda": ("conda.packages.txt", "System tools (CLI)", "conda"),
+    "node": ("node.packages.txt", "Node (npm)", "node/node_modules"),
+}
+
+
+def write_fragment(track: str, names: list[str]) -> None:
+    frag, title, _ = TRACKS[track]
+    with open(os.path.join(ROOT, frag), "w") as fh:
+        fh.write(f"## {title}\n" + ", ".join(sorted(set(names))) + "\n")
+
+
+def rederive() -> None:
+    """Rewrite each track's fragment from the installed filesystem contents."""
+    # R tracks: each installed package is a directory under the track subtree.
+    for track in ("cran", "bioconductor", "github"):
+        subtree = os.path.join(ROOT, TRACKS[track][2])
+        if os.path.isdir(subtree):
+            names = [d for d in os.listdir(subtree) if os.path.isdir(os.path.join(subtree, d)) and not d.startswith(".")]
+            write_fragment(track, names)
+
+    # Python: distribution names from *.dist-info metadata directories.
+    site = os.path.join(ROOT, "python", "site-packages")
+    if os.path.isdir(site):
+        names = []
+        for d in os.listdir(site):
+            m = re.match(r"^(.+?)-[^-]+\.dist-info$", d)
+            if m:
+                names.append(m.group(1).replace("_", "-"))
+        write_fragment("python", names)
+
+    # conda: package names from the conda-meta records.
+    meta = os.path.join(ROOT, "conda", "conda-meta")
+    if os.path.isdir(meta):
+        names = []
+        for f in os.listdir(meta):
+            # <name>-<version>-<build>.json — strip the trailing two "-" segments.
+            m = re.match(r"^(.+)-[^-]+-[^-]+\.json$", f)
+            if m:
+                names.append(m.group(1))
+        write_fragment("conda", names)
+
+    # node: top-level installed modules (excludes .bin and scoped-package noise).
+    nm = os.path.join(ROOT, "node", "node_modules")
+    if os.path.isdir(nm):
+        names = [d for d in os.listdir(nm) if not d.startswith(".")]
+        write_fragment("node", names)
+
+
+def concat() -> str:
+    out = [HEADER]
+    for track in ORDER:
+        frag = os.path.join(ROOT, TRACKS[track][0])
+        if os.path.isfile(frag):
+            with open(frag) as fh:
+                out.append(fh.read())
+            out.append("\n")
+    return "".join(out)
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if args and args[0] not in ("--from-fragments", "--rederive"):
+        print(f"usage: inflexa-libs-refresh [--from-fragments|--rederive]", file=sys.stderr)
+        return 2
+    if not os.path.isdir(ROOT):
+        print(f"inflexa-libs-refresh: store root {ROOT} does not exist", file=sys.stderr)
+        return 1
+    if not args or args[0] == "--rederive":
+        rederive()
+    with open(os.path.join(ROOT, "packages.txt"), "w") as fh:
+        fh.write(concat())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
