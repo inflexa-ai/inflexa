@@ -1,5 +1,5 @@
 import type { ProvDocument } from "@inflexa-ai/tsprov";
-import type { StampedEvent } from "../../types/events.ts";
+import type { BusEvent, StampedEvent } from "../../types/events.ts";
 import type { ProvActor } from "../../types/prov.ts";
 import { Bus } from "../../lib/bus.ts";
 import { bakedEnv } from "../../lib/env.ts";
@@ -18,6 +18,7 @@ import {
     appendInputUsed,
     freshDocument,
     loadDocument,
+    PROV_UNIFY_OPTIONS,
 } from "./document.ts";
 import { loadOrGenerateKeypair, computeChainHash, signHexDigest } from "./signing.ts";
 import { loadAuth } from "../auth/auth.ts";
@@ -62,9 +63,31 @@ const liveDocs = new Map<string, ProvDocument>();
 const chainHashes = new Map<string, string | null>();
 // Analyses whose live doc has appends not yet written to the column, awaiting the next flush.
 const dirty = new Set<string>();
+// Per-analysis append revision, bumped on EVERY append (via `markDirty`). A flush records the
+// revision of the bytes it serialized and clears `dirty` only if that revision still holds when the
+// (async) sign+persist returns. An append that lands mid-flush advances the revision, so the flush
+// that snapshotted the earlier bytes leaves the analysis dirty and the drain re-serializes the tail.
+// Without this guard the trailing `dirty.delete` would swallow an append that arrived during the
+// flush's await window — e.g. a run's terminal `run_completed`, then lost to the DB once the process
+// exits (the shutdown drain also reads `dirty`).
+const revision = new Map<string, number>();
+// Flush is single-flight process-wide. `flushInProgress` gates re-entry so two passes never overlap
+// and thus never read the same `prev` chain hash and fork the chain; `flushRequested` records wakeups
+// that arrive during a pass so the drain loop consumes them without losing one; `pending` is the
+// in-flight pass the shutdown drain awaits.
+let flushInProgress = false;
+let flushRequested = false;
+let pending: Promise<void> = Promise.resolve();
 let flushScheduled = false;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let subscribed = false;
+
+/** Record an append against `analysisId`: advance its revision, mark it dirty, and wake the flush. */
+function markDirty(analysisId: string): void {
+    revision.set(analysisId, (revision.get(analysisId) ?? 0) + 1);
+    dirty.add(analysisId);
+    scheduleFlush();
+}
 
 /**
  * Subscribe the recorder to the bus. Explicit init (not an import side effect), mirroring
@@ -77,85 +100,70 @@ export function initProvenanceRecording(): void {
     Bus.on("inflexa", onEvent);
 }
 
+/** The `prov.*` subset of {@link StampedEvent} — the events the recorder records. Every one carries `analysisId`; the session-scoped events it ignores carry `sessionId` instead. */
+type StampedProvEvent = Extract<BusEvent, { type: `prov.${string}` }> & { __infId: string };
+
+/**
+ * Narrow a bus event to the `prov.*` subset. The `prov.` prefix IS the discriminant, so
+ * `startsWith("prov.")` corresponds exactly to the `prov.${string}` template type — that equivalence
+ * is what makes this type predicate sound. Narrowing up front lets the live-doc lookup and the
+ * dirty-mark — identical across every prov event — hoist out of the switch below, and is the sole
+ * reason `event.analysisId` is reachable before it (a session-scoped event has no `analysisId`).
+ */
+function isProvEvent(event: StampedEvent): event is StampedProvEvent {
+    return event.type.startsWith("prov.");
+}
+
 function onEvent(event: StampedEvent): void {
-    // TODO(robustness): This switch is OK, but it has like a cotr/dector pattern and maybe we can do something about that to avoid the repetition?
+    // Session-scoped events are not ours — drop them before the shared work. The switch then dispatches
+    // ONLY the per-event builder; the doc lookup, its guard, and the dirty-mark are common to all of it.
+    if (!isProvEvent(event)) return;
+    const doc = liveDocForAnalysis(event.analysisId);
+    if (!doc) return;
+
     switch (event.type) {
-        case "prov.analysis_created": {
-            const doc = liveDocForAnalysis(event.analysisId);
-            if (!doc) return;
+        case "prov.analysis_created":
             appendCreation(doc, event.analysisId, event.actor);
-            dirty.add(event.analysisId);
-            scheduleFlush();
             break;
-        }
-        case "prov.input_added": {
-            const doc = liveDocForAnalysis(event.analysisId);
-            if (!doc) return;
+        case "prov.input_added":
             appendInputAdded(doc, event.analysisId, event.actor, event.input, event.derivedFromAnalysisId);
-            dirty.add(event.analysisId);
-            scheduleFlush();
             break;
-        }
-        case "prov.input_removed": {
-            const doc = liveDocForAnalysis(event.analysisId);
-            if (!doc) return;
+        case "prov.input_removed":
             appendInputRemoved(doc, event.analysisId, event.actor, event.input);
-            dirty.add(event.analysisId);
-            scheduleFlush();
             break;
-        }
-        case "prov.run_started": {
-            const doc = liveDocForAnalysis(event.analysisId);
-            if (!doc) return;
+        case "prov.run_started":
             appendRunStarted(doc, event.analysisId, event.actor, event.run);
-            dirty.add(event.analysisId);
-            scheduleFlush();
             break;
-        }
-        case "prov.run_completed": {
-            const doc = liveDocForAnalysis(event.analysisId);
-            if (!doc) return;
+        case "prov.run_completed":
             appendRunCompleted(doc, event.analysisId, event.actor, event.outcome);
-            dirty.add(event.analysisId);
-            scheduleFlush();
             break;
-        }
-        case "prov.step_completed": {
-            const doc = liveDocForAnalysis(event.analysisId);
-            if (!doc) return;
+        case "prov.step_completed":
             appendStepCompleted(doc, event.analysisId, event.actor, event.outcome);
-            dirty.add(event.analysisId);
-            scheduleFlush();
             break;
-        }
-        case "prov.command_executed": {
-            const doc = liveDocForAnalysis(event.analysisId);
-            if (!doc) return;
+        case "prov.command_executed":
             appendCommandExecuted(doc, event.analysisId, event.actor, event.step, event.command);
-            dirty.add(event.analysisId);
-            scheduleFlush();
             break;
-        }
-        case "prov.file_written": {
-            const doc = liveDocForAnalysis(event.analysisId);
-            if (!doc) return;
+        case "prov.file_written":
             appendFileWritten(doc, event.analysisId, event.actor, event.file, event.step, event.generation);
-            dirty.add(event.analysisId);
-            scheduleFlush();
             break;
-        }
-        case "prov.input_used": {
-            const doc = liveDocForAnalysis(event.analysisId);
-            if (!doc) return;
+        case "prov.input_used":
             appendInputUsed(doc, event.analysisId, event.actor, event.step, event.input);
-            dirty.add(event.analysisId);
-            scheduleFlush();
             break;
-        }
-        // Non-prov.* events are ignored.
         default:
-            break;
+            // `event satisfies never`: every prov.* variant is handled above, so a NEW one added to
+            // BusEvent without a case here fails to compile at this line — a forgotten wiring is a build
+            // error, not a silently dropped record. Runtime-unreachable for a well-typed emit; the branch
+            // exists because the recorder is a bus subscriber and MUST NOT throw into the emitter (Bus is a
+            // raw EventEmitter that runs listeners un-isolated, and several prov emit sites are unguarded),
+            // so on the impossible path it logs and skips rather than crash the emitting mutation/step.
+            event satisfies never;
+            // `event.type` is statically `never` here but holds the real event's discriminant at runtime,
+            // naming which unhandled variant was dropped.
+            log.error({ type: (event as StampedEvent).type }, "unhandled prov event — not recorded");
+            return;
     }
+
+    markDirty(event.analysisId);
 }
 
 /** The analysis's live document — cached, else rebuilt from its stored PROV-JSON, else seeded fresh. `null` only when the analysis row has vanished. */
@@ -204,64 +212,123 @@ function liveDocForAnalysis(analysisId: string): ProvDocument | null {
 // is authoritative between flushes; a crash in that window loses the un-flushed tail — the accepted
 // trade-off for keeping recording off the synchronous mutation path (the A decision).
 function scheduleFlush(): void {
-    if (flushScheduled) return;
+    flushRequested = true;
+    // A pass already running will drain this wakeup itself (its loop re-reads `dirty` while
+    // `flushRequested` is set); a timer already armed will start one. Either way, do NOT arm a second
+    // timer — single-flight is enforced in `runFlush`, and a bare re-arm here would let two passes
+    // overlap and read the same `prev` chain hash.
+    if (flushScheduled || flushInProgress) return;
     flushScheduled = true;
     flushTimer = setTimeout(() => {
         flushScheduled = false;
         flushTimer = null;
-        void flushProvenanceAsync();
+        launchFlush();
     }, 0);
 }
 
+/** Start a flush pass unless one is already running (which will itself drain the new wakeup). */
+function launchFlush(): void {
+    if (flushInProgress) return;
+    pending = runFlush();
+}
+
 /**
- * Async flush: serialize, compute chain hash, sign, then persist all three columns atomically.
- * Every flush is signed — unsigned provenance is never written. A signing failure skips the
- * persist entirely (the dirty set retains the analysis so the next flush retries). Shutdown
- * registers this via {@link onShutdown} so un-flushed provenance is signed and persisted before
- * `process.exit()`. Dirty analyses are flushed concurrently via a {@link WaitGroup} — each
- * analysis signs independently (the keypair is process-cached, so there is no lock contention),
- * and `allSettled` ensures one failure doesn't block the others.
+ * Drive the flush loop to quiescence and await it. Every flush is SIGNED — unsigned provenance is
+ * never written; a signing/persist failure skips only that analysis (its `dirty` flag is retained so
+ * a later append retries it) and never degrades to an unsigned column. Shutdown registers this via
+ * {@link onShutdown} so un-flushed provenance is signed and persisted before `process.exit()`.
+ *
+ * Safe to call concurrently and re-enter: {@link runFlush}'s single-flight guard coalesces, so this
+ * only ever awaits the one in-flight pass. It returns once `dirty` is empty, or once a pass makes no
+ * progress (a persistent signing/persist fault) — looping past that would hang shutdown, and since we
+ * refuse to write unsigned bytes there is nothing left to attempt but to surface it.
  */
 export async function flushProvenanceAsync(): Promise<void> {
-    const wg = new WaitGroup();
-    wg.goMany([...dirty], async (analysisId) => {
-        const doc = liveDocs.get(analysisId);
-        if (!doc) {
-            dirty.delete(analysisId);
-            return;
-        }
-        // `formalAttributeConflict: "first"` (see serializeProvenance in document.ts): a same-QName
-        // formal-attribute value conflict degrades to keep-first-plus-log rather than throwing out of
-        // the flush and leaving the analysis dirty and permanently unpersistable. D1's replay-stable
-        // times mean it should never trigger; it exists so no future writer defect can poison a flush.
-        const json = doc.unified({ formalAttributeConflict: "first" }).serialize("json");
+    let previousDirty = Infinity;
+    do {
+        launchFlush();
+        await pending;
+        // Stop if a pass cleared nothing (persistent signing/persist failure); a late append that
+        // re-dirties shrinks `dirty` on the next pass, so a strictly-not-smaller size means no progress.
+        if (dirty.size >= previousDirty) break;
+        previousDirty = dirty.size;
+    } while (dirty.size > 0);
+    if (dirty.size > 0) log.error({ analyses: [...dirty] }, "provenance flush could not drain — signing or persist is failing");
+}
 
-        const kpResult = await loadOrGenerateKeypair();
-        if (kpResult.isErr()) {
-            log.error({ analysisId, err: kpResult.error.type }, "signing key unavailable; provenance not persisted");
-            return;
-        }
-        const kp = kpResult.value;
+/**
+ * One single-flight flush loop: drain passes until no wakeup is outstanding. `flushRequested` is
+ * consumed at the top of each pass; an append during the pass sets it again (via {@link markDirty}),
+ * so the loop runs once more and serializes that append's tail — this is what makes an append landing
+ * mid-flush survive rather than being swallowed by a trailing `dirty.delete`. The per-analysis
+ * snapshot (revision + bytes) is captured SYNCHRONOUSLY in the loop body — no `await` between reading
+ * `dirty` and serializing — so an append can never interleave into a half-built snapshot, and each
+ * analysis appears at most once per pass (`dirty` is a Set) so the concurrent {@link persistSnapshot}
+ * calls touch disjoint chains. Single-flight (this guard) plus that disjointness is what stops two
+ * flushes reading the same `prev` chain hash and forking the chain.
+ */
+async function runFlush(): Promise<void> {
+    if (flushInProgress) return;
+    flushInProgress = true;
+    try {
+        do {
+            flushRequested = false;
+            const wg = new WaitGroup();
+            for (const analysisId of [...dirty]) {
+                const doc = liveDocs.get(analysisId);
+                if (!doc) {
+                    dirty.delete(analysisId);
+                    revision.delete(analysisId);
+                    continue;
+                }
+                // Last-write-wins merge ({@link PROV_UNIFY_OPTIONS}, shared with the export path): a
+                // re-emitted terminal record (recovery replay → identical; resume → newer) resolves to
+                // one survivor rather than throwing, so a conflict can never leave the analysis dirty
+                // and permanently unpersistable.
+                const snapshotRevision = revision.get(analysisId) ?? 0;
+                const json = doc.unified(PROV_UNIFY_OPTIONS).serialize("json");
+                wg.go(persistSnapshot(analysisId, json, snapshotRevision));
+            }
+            await wg.wait();
+        } while (flushRequested);
+    } finally {
+        flushInProgress = false;
+    }
+}
 
-        const prev = chainHashes.get(analysisId) ?? null;
-        const result = await computeChainHash(prev, json).andThen((chainHash) =>
-            signHexDigest(kp.privateKey, chainHash).map((signature) => ({ chainHash, signature })),
-        );
-        if (result.isErr()) {
-            log.error({ analysisId, err: result.error }, "signing failed; provenance not persisted");
-            return;
-        }
-        const { chainHash, signature } = result.value;
-        updateAnalysisProvenance(analysisId, json, chainHash, signature).match(
-            () => {
-                dirty.delete(analysisId);
-                chainHashes.set(analysisId, chainHash);
-            },
-            (e) => log.error({ analysisId, err: e.type }, "failed to persist provenance"),
-        );
-    });
+/**
+ * Sign and persist one already-serialized snapshot. Single-flight (see {@link runFlush}) guarantees no
+ * other pass mutates this analysis's chain hash between the `prev` read and the `set` below, so the
+ * chain never forks. On any signing/persist failure the analysis stays dirty (retried later) and NO
+ * unsigned bytes are written. On success, `dirty` is cleared ONLY when the snapshot revision still
+ * holds — an append that landed after the snapshot keeps the analysis dirty for the next pass.
+ */
+async function persistSnapshot(analysisId: string, json: string, snapshotRevision: number): Promise<void> {
+    const kpResult = await loadOrGenerateKeypair();
+    if (kpResult.isErr()) {
+        log.error({ analysisId, err: kpResult.error.type }, "signing key unavailable; provenance not persisted");
+        return;
+    }
+    const kp = kpResult.value;
 
-    await wg.wait();
+    const prev = chainHashes.get(analysisId) ?? null;
+    const result = await computeChainHash(prev, json).andThen((chainHash) =>
+        signHexDigest(kp.privateKey, chainHash).map((signature) => ({ chainHash, signature })),
+    );
+    if (result.isErr()) {
+        log.error({ analysisId, err: result.error }, "signing failed; provenance not persisted");
+        return;
+    }
+    const { chainHash, signature } = result.value;
+    updateAnalysisProvenance(analysisId, json, chainHash, signature).match(
+        () => {
+            chainHashes.set(analysisId, chainHash);
+            // Clear dirty only if no append landed after this snapshot; otherwise the tail (records
+            // not in `json`) stays dirty and the drain re-serializes the mutated document.
+            if ((revision.get(analysisId) ?? 0) === snapshotRevision) dirty.delete(analysisId);
+        },
+        (e) => log.error({ analysisId, err: e.type }, "failed to persist provenance"),
+    );
 }
 
 /** Test-only: drop all in-memory live documents, chain hashes, and pending flushes so a fresh DB starts from a clean recorder. */
@@ -269,7 +336,11 @@ export function resetProvenanceRecorderForTests(): void {
     liveDocs.clear();
     chainHashes.clear();
     dirty.clear();
+    revision.clear();
     if (flushTimer) clearTimeout(flushTimer);
     flushTimer = null;
     flushScheduled = false;
+    flushInProgress = false;
+    flushRequested = false;
+    pending = Promise.resolve();
 }

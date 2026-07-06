@@ -1,6 +1,6 @@
 import { randomUUIDv7 } from "bun";
 import { type Result, ok, err } from "neverthrow";
-import { ProvDocument, type BuiltinProvFormat } from "@inflexa-ai/tsprov";
+import { ProvDocument, type BuiltinProvFormat, type UnifiedOptions } from "@inflexa-ai/tsprov";
 import type { Analysis } from "../../types/analysis.ts";
 import type {
     ProvActor,
@@ -31,6 +31,20 @@ import { getAnalysisProvenance, findAnalysesByRef } from "../../db/primary_query
 /** The namespace every inflexa-minted PROV identifier lives under. */
 const NS_PREFIX = "inflexa";
 const NS_URI = "https://inflexa.ai/prov#";
+
+/**
+ * The merge policy every persist/export `unified()` uses: LAST-write-wins. A DBOS recovery replay
+ * re-emits byte-identical execution records (times are checkpointed `DBOS.now()` reads), so last==first
+ * and they dedupe; a budget-pause that later RESUMES to completion re-declares the run/step activity
+ * with a genuinely newer terminal outcome, which must SUPERSEDE the earlier one. `formalAttributeConflict:
+ * "last"` resolves the formal `prov:endTime`; `singleValued` extends the same last-wins to the custom
+ * terminal attributes, which would otherwise union into a contradictory multi-value (`["canceled",
+ * "completed"]`). Kept in one place so the flush (prov.ts) and the export path below agree on the survivor.
+ */
+export const PROV_UNIFY_OPTIONS: UnifiedOptions = {
+    formalAttributeConflict: "last",
+    singleValued: [`${NS_PREFIX}:status`, `${NS_PREFIX}:durationMs`],
+};
 
 /** Replace every character a PROV qualified-name localpart disallows, so any string can seed an identifier. */
 function qnameSafe(s: string): string {
@@ -261,10 +275,9 @@ export function commandQName(step: ProvStepRef, outputs: ProvFileKey[]): string 
  * already-recorded time keeps re-emission's record mergeable (the surviving activity retains the
  * first-recorded time). This realizes the design's replay-idempotency goal, which the D4 record
  * shape alone does not: the shape (activity with a start/end time) is preserved; only the *source*
- * of the value is made idempotent. NOTE for review: this is the local workaround for the design's
- * "tsprov unified() merge semantics" risk (the observed behavior is a throw, worse than the
- * anticipated structural-duplication); the alternative is a tsprov change to make formal times
- * last-write-wins.
+ * of the value is made idempotent. The durable alternative is a tsprov change making formal times
+ * last-write-wins on merge (tsprov is first-party) instead of throwing; until that lands, this
+ * keep-first guard is the local workaround and lives here.
  */
 function occurrenceTime(doc: ProvDocument, activityQn: string, slot: "prov:startTime" | "prov:endTime", now: string): string | undefined {
     for (const rec of doc.getRecord(activityQn)) {
@@ -313,11 +326,14 @@ export function appendRunCompleted(doc: ProvDocument, analysisId: string, actor:
     // completion-side edge (an `actedOnBehalfOf`, an end trigger) needs them, and dropping
     // them would ripple through the uniform dispatch for zero gain.
     const rQn = runQName(outcome.runId);
-    // End time is the ISO of the harness-observed `completedAtMs` (see appendRunStarted). No preamble:
-    // completion re-declares the existing run activity's end/status only — the agent + association
-    // were declared at start, and re-declaring them here would add nothing unified() keeps.
+    // End time / status / duration are written DIRECTLY, with NO first-wins `occurrenceTime` guard: a
+    // budget-pause that later resumes to completion re-declares this activity with a genuinely newer
+    // terminal outcome, and that outcome must SUPERSEDE the earlier one. The flush/export `unified()`
+    // resolves the re-declaration last-write-wins ({@link PROV_UNIFY_OPTIONS}) — so a DBOS recovery
+    // replay (identical values) still dedupes to one, while a resume's newer values win. Completion
+    // adds no agent/analysis edge (those were declared at run start), so there is no preamble here.
     const endTime = new Date(outcome.completedAtMs).toISOString();
-    doc.activity(rQn, undefined, occurrenceTime(doc, rQn, "prov:endTime", endTime), {
+    doc.activity(rQn, undefined, endTime, {
         "inflexa:status": outcome.status,
         ...(outcome.durationMs !== undefined ? { "inflexa:durationMs": outcome.durationMs } : {}),
     });
@@ -335,9 +351,12 @@ export function appendStepCompleted(doc: ProvDocument, analysisId: string, actor
     const { agentQn } = recordPreamble(doc, analysisId, actor);
     const rQn = runQName(outcome.runId);
     const sQn = stepQName(outcome);
-    // End time from the harness-observed `completedAtMs`, not the wall clock (see appendRunStarted).
+    // End time / status / duration written directly (no first-wins `occurrenceTime`): a resumed step
+    // supersedes its earlier canceled settlement, resolved last-write-wins at the flush (see
+    // appendRunCompleted / {@link PROV_UNIFY_OPTIONS}). `prov:type`/`runId`/`stepId` are stable across
+    // re-emits and dedupe.
     const endTime = new Date(outcome.completedAtMs).toISOString();
-    doc.activity(sQn, undefined, occurrenceTime(doc, sQn, "prov:endTime", endTime), {
+    doc.activity(sQn, undefined, endTime, {
         "prov:type": "inflexa:Step",
         "inflexa:runId": outcome.runId,
         "inflexa:stepId": outcome.stepId,
@@ -489,13 +508,10 @@ export function serializeProvenance(analysis: Analysis, format: BuiltinProvForma
         if (format === "json" && json !== null) return ok(json);
         return (
             loadDocument(analysis, json)
-                // `formalAttributeConflict: "first"` on this export path (and the flush in prov.ts): a
-                // same-QName formal-attribute value conflict keeps the first value + logs, instead of
-                // throwing. It matches occurrenceTime's first-observed semantics, so the two layers agree
-                // on the survivor, and it retires the flush-poison failure mode — a writer defect can no
-                // longer make an analysis permanently un-exportable. D1's deterministic times mean it
-                // should never actually trigger.
-                .map((doc) => doc.unified({ formalAttributeConflict: "first" }).serialize(format))
+                // Same last-write-wins merge as the flush ({@link PROV_UNIFY_OPTIONS}), so the export and
+                // the signed column resolve any re-emitted record to the same survivor. A conflict never
+                // throws, so a writer defect can no longer make an analysis permanently un-exportable.
+                .map((doc) => doc.unified(PROV_UNIFY_OPTIONS).serialize(format))
                 .mapErr((e): DbError => ({ type: "query_failed", op: "serializeProvenance:deserialize", cause: e.cause }))
         );
     });

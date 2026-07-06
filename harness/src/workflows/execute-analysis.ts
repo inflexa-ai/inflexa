@@ -598,6 +598,13 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
 
     const budgetExceededChildIds = new Set<string>();
 
+    // Child workflow ids the parent itself cancelled (fail-fast / budget cascade). Their `getResult`
+    // rejects with a DBOS cancellation error and lands in the settlement error branch — but the step was
+    // CANCELED by us, not failed on its own merits. Keyed here (deterministic: `cancelInFlight` runs the
+    // same way on a replay) so that branch records it as canceled everywhere, matching how a child that
+    // returns a graceful `{status:"canceled"}` is already handled.
+    const canceledByParent = new Set<string>();
+
     const stepRuntime = new Map<string, { status: "pending" | "queued" | "running" | "completed" | "failed"; durationMs?: number; error?: string }>();
     for (const step of input.steps) {
         stepRuntime.set(step.id, { status: "pending" });
@@ -657,7 +664,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 }
                 failFast = true;
                 failureReason = `step "${scheduled.neverFits[0]}" exceeds the machine resource budget`;
-                await cancelInFlight(inFlight, "fail_fast");
+                await cancelInFlight(inFlight, "fail_fast", canceledByParent);
                 await emitDagSnapshot();
                 return;
             }
@@ -751,7 +758,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                     budgetExceeded = true;
                     failFast = true;
                     failureReason = "budget_exceeded";
-                    await cancelInFlight(inFlight, "budget_exceeded");
+                    await cancelInFlight(inFlight, "budget_exceeded", canceledByParent);
                 }
                 stepRuntime.set(settled.stepId, {
                     status: "failed",
@@ -769,7 +776,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 if (!failFast) {
                     failFast = true;
                     failureReason = r.error ?? (r.status === "blocked" ? "step_blocked" : "step_failed");
-                    await cancelInFlight(inFlight, "fail_fast");
+                    await cancelInFlight(inFlight, "fail_fast", canceledByParent);
                 }
                 stepRuntime.set(settled.stepId, {
                     status: "failed",
@@ -780,6 +787,22 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 stepDurationMs = r.durationMs ?? undefined;
                 await emitDagSnapshot();
             }
+        } else if (canceledByParent.has(settled.childId)) {
+            // The child threw because the PARENT cancelled it (fail-fast / budget cascade), not because
+            // it failed on its own — its `getResult` rejects with a DBOS cancellation error. Record it as
+            // canceled, mirroring the graceful `{status:"canceled"}` branch above so the `canceled` set,
+            // the terminal result, and the `step_completed` provenance all agree. No failFast / cancel
+            // cascade here: the run is already failing fast (that is why this child was cancelled).
+            canceled.add(settled.stepId);
+            stepRuntime.set(settled.stepId, {
+                // `stepRuntime` (the DAG snapshot) has no canceled tier; the graceful-cancel branch above
+                // likewise renders canceled steps as "failed", so this stays consistent with it.
+                status: "failed",
+                error: settled.err instanceof Error ? settled.err.message : String(settled.err),
+            });
+            stepStatus = "canceled";
+            stepDurationMs = undefined;
+            await emitDagSnapshot();
         } else {
             failed.add(settled.stepId);
             const cause: "budget_exceeded" | "fail_fast" = childWasBudgetExceeded || isBudgetExceeded(settled.err) ? "budget_exceeded" : "fail_fast";
@@ -791,7 +814,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 failFast = true;
                 failureReason = settled.err instanceof Error ? settled.err.message : String(settled.err);
             }
-            await cancelInFlight(inFlight, cause);
+            await cancelInFlight(inFlight, cause, canceledByParent);
             stepRuntime.set(settled.stepId, {
                 status: "failed",
                 error: settled.err instanceof Error ? settled.err.message : String(settled.err),
@@ -836,8 +859,12 @@ async function drainBudgetExceededNotifications(childIds: Set<string>): Promise<
 async function cancelInFlight(
     inFlight: ReadonlyMap<string, { stepId: string; handle: WorkflowHandle<SandboxStepResult> }>,
     cause: "fail_fast" | "budget_exceeded" | "external_cancel",
+    canceledByParent: Set<string>,
 ): Promise<void> {
     const ids = [...inFlight.keys()];
+    // Record every id BEFORE the cancel so the settlement loop classifies the resulting
+    // DBOS-cancellation rejection as canceled rather than failed (see `canceledByParent`).
+    for (const childId of ids) canceledByParent.add(childId);
     await Promise.allSettled(ids.map((childId) => DBOS.cancelWorkflow(childId)));
     for (let i = 0; i < ids.length; i++) {
         recordCancelledChild({ cause });

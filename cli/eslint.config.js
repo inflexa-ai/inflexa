@@ -101,6 +101,13 @@ export default defineConfig([
         },
         rules: {
             "neverthrow/must-use-result": "error",
+            // A switch over a union must handle every member OR carry a `default`. Lenient mode
+            // (`considerDefaultExhaustiveForUnions: true`) treats a `default` as covering the rest, so
+            // intentional default-driven switches (platform, error codes, subset handlers) pass while a
+            // switch that forgets a case AND has no fallback — the shape that silently drops a new
+            // variant — is caught. Complements, not replaces, the `satisfies never` idiom in exhaustive
+            // switches (which the type checker enforces regardless of this rule).
+            "@typescript-eslint/switch-exhaustiveness-check": ["error", { considerDefaultExhaustiveForUnions: true }],
         },
     },
     {

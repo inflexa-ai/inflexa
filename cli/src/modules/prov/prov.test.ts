@@ -910,9 +910,9 @@ describe("provenance recorder handles execution events (bus → flush → signed
 
     // D4: the flush-poison retirement. A same-QName formal-time conflict (a defect upstream of the
     // builders' determinism) must NOT throw out of the flush and leave the analysis permanently
-    // unpersistable — `formalAttributeConflict: "first"` degrades it to keep-first-plus-log. "First"
-    // matches occurrenceTime's first-observed semantics, so the two layers agree on the survivor.
-    test("a formal-time conflict at flush keeps the first value and still persists — not a throw", async () => {
+    // unpersistable — the last-write-wins policy (PROV_UNIFY_OPTIONS) degrades it to keep-last-plus-log,
+    // the same merge that lets a resumed run's newer terminal outcome supersede the earlier one.
+    test("a formal-time conflict at flush keeps the last value and still persists — not a throw", async () => {
         const { mkdirSync, rmSync } = await import("node:fs");
         const { join } = await import("node:path");
         const { tmpdir } = await import("node:os");
@@ -927,7 +927,7 @@ describe("provenance recorder handles execution events (bus → flush → signed
 
         // Seed the stored column with a document a defect would produce: two same-QName run activities
         // whose start times DIFFER. Serialize RAW (no unify) so BOTH records survive into the bytes —
-        // this is the poisoned state the keep-first policy must tolerate. Under the default "throw" the
+        // this is the poisoned state the keep-last policy must tolerate. Under the default "throw" the
         // next flush would throw on every retry, leaving the analysis forever dirty.
         const poisoned = freshDocument(analysis);
         poisoned.activity("inflexa:run-run-001", "2023-11-14T22:13:20.000Z", undefined, { "prov:type": "inflexa:Run" });
@@ -941,12 +941,64 @@ describe("provenance recorder handles execution events (bus → flush → signed
         const stored = getAnalysisProvenance("a1")._unsafeUnwrap();
         expect(stored).not.toBeNull();
         const json = JSON.parse(stored!) as { activity?: Record<string, { "prov:startTime"?: string }> };
-        // The first-recorded start time survives the merge (parsed to epoch-ms to normalize the offset).
-        expect(Date.parse(json.activity!["inflexa:run-run-001"]!["prov:startTime"]!)).toBe(Date.parse("2023-11-14T22:13:20.000Z"));
+        // The last-recorded start time survives the merge (parsed to epoch-ms to normalize the offset).
+        expect(Date.parse(json.activity!["inflexa:run-run-001"]!["prov:startTime"]!)).toBe(Date.parse("2000-01-01T00:00:00.000Z"));
         // The flush actually persisted — the integrity chain rotated off the seed, so it did not skip.
         const integrity = getAnalysisIntegrity("a1")._unsafeUnwrap();
         expect(integrity!.chainHash).not.toBe("seedhash");
         expect(integrity!.signature).not.toBe("seedsig");
+
+        resetSigningForTests(null);
+        rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    // #5: a budget-pause that later RESUMES to completion re-emits `run_completed` with a genuinely
+    // newer terminal outcome. The signed run activity must carry ONLY the latest status/duration/endTime
+    // (last-write-wins via PROV_UNIFY_OPTIONS' `singleValued`), never a contradictory multi-value like
+    // `["canceled","completed"]` — the failure mode before the merge policy was extended to custom attrs.
+    test("a resumed run's newer terminal outcome supersedes the earlier one — single-valued, not multi", async () => {
+        const { mkdirSync, rmSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const { tmpdir } = await import("node:os");
+        const { randomUUIDv7: uuid } = await import("bun");
+
+        const tmpDir = join(tmpdir(), `prov-resume-${uuid()}`);
+        mkdirSync(tmpDir, { recursive: true });
+        resetSigningForTests(join(tmpDir, "prov_key.json"));
+
+        insertAnchor({ id: "anchor1", createdAt: 1, updatedAt: 1, cachedPath: "/tmp/x", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis(analysis)._unsafeUnwrap();
+
+        Bus.emit("inflexa", { type: "prov.run_started", analysisId: "a1", actor: system, run: runRef });
+        // First terminal outcome: budget-canceled.
+        Bus.emit("inflexa", {
+            type: "prov.run_completed",
+            analysisId: "a1",
+            actor: system,
+            outcome: { runId: "run-001", status: "canceled", completedAtMs: 1_700_000_002_000, durationMs: 2000 },
+        });
+        await flushProvenanceAsync();
+
+        // Topup + resume re-runs the body → a newer terminal outcome for the SAME run activity.
+        Bus.emit("inflexa", {
+            type: "prov.run_completed",
+            analysisId: "a1",
+            actor: system,
+            outcome: { runId: "run-001", status: "completed", completedAtMs: 1_700_000_009_000, durationMs: 9000 },
+        });
+        await flushProvenanceAsync();
+
+        const stored = getAnalysisProvenance("a1")._unsafeUnwrap();
+        expect(stored).not.toBeNull();
+        const provn = ProvDocument.deserialize(stored!, "json").serialize("provn");
+        // The latest outcome wins and the earlier one is GONE — no multi-valued status/duration.
+        expect(provn).toContain("completed");
+        expect(provn).not.toContain("canceled");
+        expect(provn).toContain("9000");
+        expect(provn).not.toContain("2000");
+        // The end time is superseded too (last-write-wins on the formal attribute).
+        const json = JSON.parse(stored!) as { activity?: Record<string, { "prov:endTime"?: string }> };
+        expect(Date.parse(json.activity!["inflexa:run-run-001"]!["prov:endTime"]!)).toBe(1_700_000_009_000);
 
         resetSigningForTests(null);
         rmSync(tmpDir, { recursive: true, force: true });
