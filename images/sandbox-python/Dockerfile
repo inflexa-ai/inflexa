@@ -188,9 +188,14 @@ import nbformat; print('nbformat OK')" \
 # internals — and the store is read-only at runtime, so the cache can never be
 # written then. Each import runs independently so one LLVM/JIT crash doesn't
 # block the rest.
+# On arm64, pin numba/LLVM to a generic CPU model. Autodetecting the host CPU
+# crashes LLVM codegen on newer arm64 cores its scheduling model doesn't yet cover;
+# a generic target is portable across all arm64 CPUs. The runtime image must set the
+# same value so the baked JIT cache stays hit-compatible.
 RUN PYTHONPATH=${INFLEXA_LIB_ROOT}/python/site-packages \
     MPLCONFIGDIR=${INFLEXA_LIB_ROOT}/python/site-packages/matplotlib_config \
     bash -c '\
+    if [ "$(uname -m)" = aarch64 ]; then export NUMBA_CPU_NAME=generic; fi; \
     ok=0; fail=0; \
     for pkg in numba matplotlib scanpy seaborn pertpy scvi cell2location; do \
       if python3 -c "import $pkg; print(f\"$pkg OK\")" 2>&1; then \
@@ -203,7 +208,8 @@ RUN PYTHONPATH=${INFLEXA_LIB_ROOT}/python/site-packages \
     echo "Cache warm-up: $ok OK, $fail failed"; \
     '
 
-RUN PYTHONPATH=${INFLEXA_LIB_ROOT}/python/site-packages \
+RUN if [ "$(uname -m)" = aarch64 ]; then export NUMBA_CPU_NAME=generic; fi; \
+    PYTHONPATH=${INFLEXA_LIB_ROOT}/python/site-packages \
     MPLCONFIGDIR=${INFLEXA_LIB_ROOT}/python/site-packages/matplotlib_config \
     FRAGMENT_OUT=${INFLEXA_LIB_ROOT}/python.packages.txt \
     python3 /usr/local/bin/lib-store-py-loadtest.py
