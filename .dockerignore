@@ -1,0 +1,15 @@
+# Sandbox image builds only COPY from images/ — keep the build context small so a
+# local working tree (with node_modules etc.) doesn't tar ~1GB into every build.
+**/node_modules
+.git
+cli
+harness
+skills
+templates
+docs
+tests
+.github
+openspec
+**/.venv
+**/dist
+**/.turbo
