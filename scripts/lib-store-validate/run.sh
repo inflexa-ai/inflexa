@@ -33,7 +33,7 @@ set -euo pipefail
 
 SUITE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VALIDATOR_DIR="$(cd "$SUITE_DIR/../lib-validator" && pwd)"
-LIB_PATH="${INFLEXA_LIB_STORE:-${XDG_DATA_HOME:-$HOME/.local/share}/inflexa/libs}"
+LIB_PATH="${INFLEXA_LIB_STORE:-${XDG_DATA_HOME:-${HOME:-/root}/.local/share}/inflexa/libs}"
 MOUNT_IMAGE="${SANDBOX_BASE_IMAGE:-sandbox-base:latest}"
 BAKED_IMAGE=""
 SUMMARY_MD=""
@@ -56,6 +56,9 @@ SUMMARY_ARGS=()
 if [ -n "$SUMMARY_MD" ]; then
   mkdir -p "$(dirname "$SUMMARY_MD")"
   SUMMARY_DIR="$(cd "$(dirname "$SUMMARY_MD")" && pwd)"
+  # The container runs as the unprivileged sandbox user (uid 1000), so the bind
+  # target must be group/other-writable or validate.py can't drop the table into it.
+  chmod 0777 "$SUMMARY_DIR" 2>/dev/null || true
   SUMMARY_ARGS=( -v "$SUMMARY_DIR:/out" -e LIB_STORE_SUMMARY_MD="/out/$(basename "$SUMMARY_MD")" )
 fi
 

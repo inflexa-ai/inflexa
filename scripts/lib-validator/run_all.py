@@ -113,6 +113,10 @@ def run_one(path: Path, timeout: float) -> Result:
                       0.0, "Rscript not found on PATH")
 
     start = time.perf_counter()
+    # PYTHONSAFEPATH keeps the validator's own directory off sys.path[0], so a
+    # script named like a real package (joblib.py, numpy.py, plotly.py) does not
+    # shadow the installed package it is meant to smoke-test. Harmless for Rscript.
+    env = {**os.environ, "PYTHONSAFEPATH": "1"}
     try:
         proc = subprocess.run(
             [*interp, str(path)],
@@ -120,6 +124,7 @@ def run_one(path: Path, timeout: float) -> Result:
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return Result(path.stem, lang, ERROR, None, 0, 0, "",
