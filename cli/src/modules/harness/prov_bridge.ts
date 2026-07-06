@@ -81,8 +81,14 @@ export function createBusArtifactRegistry(): ArtifactRegistry {
                 // (inotify-only observation) is by construction a command effect, not a file-tool write.
                 const producer = producerByPath.get(entry.path) ?? "command";
                 const file: ProvFileRef = { path, hash: entry.hash, size: entry.size, producer };
-                // TODO(slop): Is it necessary to emit an event here? Who calls this? File Written should happen when an agent/sandbox writes a script
-                // What are we doing here looks like preparing files?
+                // Emitting at REGISTRATION (not at sandbox write time) mirrors the reference
+                // implementation (Cortex `registerStepArtifacts` → Nexus structured payload):
+                // registration is the attestation boundary — reconcile has just rehashed the
+                // surviving bytes from disk, whereas write-TIME observations are collector-internal
+                // because frame-time hashes are racy and write-then-delete leaves phantoms. This
+                // event covers step OUTPUTS only (Nexus: output files + generation edges); input
+                // reads ride `prov.input_used` below (Nexus: `type:"input"` references + used
+                // edges) and are never `file_written`.
                 Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, file, step });
                 registered.push({ path, externalId: fileQName(file) });
             }

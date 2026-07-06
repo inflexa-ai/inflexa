@@ -176,7 +176,10 @@ function stepQName(step: ProvStepRef): string {
     return `${NS_PREFIX}:step-${step.runId}-${step.stepId}`;
 }
 
-// TODO(slop): why aren't the hash/digest functions moved to lib/hash.ts?
+// These digests are PROV QName IDENTITY derivations over domain tuples, not content
+// hashing — `lib/hash.ts` owns generic content hashes (`sha256File`); these values are
+// meaningless outside this module's QName scheme, so they stay beside the QName builders
+// that consume them (see `fileDigest` for why the shared derivation must not drift).
 
 /**
  * The `(path, content hash)` digest that suffixes the file entity's QName. Factored out because a
@@ -260,7 +263,16 @@ export function appendRunStarted(doc: ProvDocument, analysisId: string, actor: P
  * is never a same-QName `entity` (which would collide with the activity and be PROV-invalid).
  */
 export function appendRunCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvRunOutcome): void {
-    // TODO(slop): Why aren't analysisId, and actor used? Don't rush to delete them and update callers. Instead think deeply, why aren't they used and why was the function defined like so in the first place?
+    // `analysisId` and `actor` are genuinely unused here, by design — not a lapse to clean
+    // up. (a) All five execution builders take the same `(doc, analysisId, actor, payload)`
+    // shape because the recorder's `onEvent` switch (`prov.ts`) dispatches them uniformly —
+    // that signature is the recorder's contract, not each builder's own need. (b) Completion
+    // is the one builder that appends no agent- or analysis-referencing record: it only
+    // re-declares the run activity's end time + status onto a QName whose `wasAssociatedWith`
+    // (agent) and `used` (run → analysis) edges `appendRunStarted` already wrote, so touching
+    // them here would add nothing `unified()` keeps. (c) Both stay because any future
+    // completion-side edge (an `actedOnBehalfOf`, an end trigger) needs them, and dropping
+    // them would ripple through the uniform dispatch for zero gain.
     const rQn = runQName(outcome.runId);
     // End time is the ISO of the harness-observed `completedAtMs` (see appendRunStarted). No preamble:
     // completion re-declares the existing run activity's end/status only — the agent + association
