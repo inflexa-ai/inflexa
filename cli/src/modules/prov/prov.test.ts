@@ -7,7 +7,18 @@ import { getAnalysisProvenance } from "../../db/primary_query.ts";
 import { Bus } from "../../lib/bus.ts";
 import { asStr256 } from "../../lib/types.ts";
 import type { Analysis } from "../../types/analysis.ts";
-import type { ProvActor, ProvInputRef, ProvRunRef, ProvRunOutcome, ProvStepRef, ProvStepOutcome, ProvUsedInputRef, ProvFileRef } from "../../types/prov.ts";
+import type {
+    ProvActor,
+    ProvInputRef,
+    ProvRunRef,
+    ProvRunOutcome,
+    ProvStepRef,
+    ProvStepOutcome,
+    ProvUsedInputRef,
+    ProvFileRef,
+    ProvFileKey,
+    ProvCommandRef,
+} from "../../types/prov.ts";
 import {
     appendCreation,
     appendInputAdded,
@@ -15,9 +26,11 @@ import {
     appendRunStarted,
     appendRunCompleted,
     appendStepCompleted,
+    appendCommandExecuted,
     appendFileWritten,
     appendInputUsed,
     fileQName,
+    commandQName,
     freshDocument,
     serializeProvenance,
 } from "./document.ts";
@@ -58,6 +71,42 @@ const stepOutcome: ProvStepOutcome = { runId: "run-001", stepId: "step-de", stat
 // exact file QName that file's `appendFileWritten` generates (the cross-run chain the design keys on).
 const priorInput: ProvUsedInputRef = { path: "runs/run-001/step-de/output/results.csv", hash: "abcdef1234567890", source: "prior", fileId: "file-42" };
 const fileRef: ProvFileRef = { path: "runs/run-001/step-de/output/results.csv", hash: "abcdef1234567890", size: 1024, producer: "command" };
+
+// Command-execution fixtures, all within step-de of run-001. Command A (`Rscript scripts/de.R`) writes
+// `de_results.csv`; command B (`python plot.py`) reads that SAME (path, hash) at command scope with
+// `source: "step"` and writes `heatmap.png` — the intra-step chain the design keys on. The file-tool
+// group writes `scripts/de.R`. A's `scriptPath` deliberately resolves to NEITHER its outputs nor its
+// inputs (so its script edge is skipped — the unkeyable-entity guard).
+const deResultsKey: ProvFileKey = { path: "runs/run-001/step-de/output/de_results.csv", hash: "hashDe0001" };
+const heatmapKey: ProvFileKey = { path: "runs/run-001/step-de/figures/heatmap.png", hash: "hashHeat01" };
+const cmdRunDe: ProvCommandRef = {
+    kind: "command",
+    command: "Rscript scripts/de.R",
+    args: ["--fdr", "0.05"],
+    exitCode: 0,
+    durationMs: 1200,
+    scriptPath: "scripts/de.R",
+    outputs: [deResultsKey],
+    inputs: [{ path: "data/inputs/counts.csv", hash: "hashCount1", source: "data", fileId: "file-1" }],
+};
+const cmdPlotHeatmap: ProvCommandRef = {
+    kind: "command",
+    command: "python plot.py",
+    exitCode: 0,
+    outputs: [heatmapKey],
+    inputs: [{ path: deResultsKey.path, hash: deResultsKey.hash, source: "step" }],
+};
+const fileToolWriteScript: ProvCommandRef = {
+    kind: "file_tool",
+    tool: "write_file",
+    outputs: [{ path: "runs/run-001/step-de/scripts/de.R", hash: "hashScr001" }],
+};
+// The ProvFileRef forms the produced-file `prov.file_written` events carry (generation "command").
+const deResultsFileRef: ProvFileRef = { ...deResultsKey, size: 2048, producer: "command" };
+const heatmapFileRef: ProvFileRef = { ...heatmapKey, size: 4096, producer: "command" };
+const scriptFileRef: ProvFileRef = { ...fileToolWriteScript.outputs[0]!, size: 512, producer: "file_tool" };
+// A leaf file: no producer record upstream, so its `prov.file_written` carries generation "step".
+const leafFileRef: ProvFileRef = { path: "runs/run-001/step-de/output/leaf.txt", hash: "hashLeaf01", size: 24, producer: "command" };
 
 describe("PROV document building (appendCreation / appendInputAdded / appendInputRemoved)", () => {
     test("appends each action's PROV records", () => {
@@ -146,7 +195,7 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
         const doc = freshDocument(analysis);
         appendRunStarted(doc, "a1", system, runRef);
         appendStepCompleted(doc, "a1", system, stepOutcome);
-        appendFileWritten(doc, "a1", system, fileRef, stepRef);
+        appendFileWritten(doc, "a1", system, fileRef, stepRef, "step");
         const provn = doc.unified().serialize("provn");
 
         expect(provn).toContain("inflexa:File");
@@ -220,7 +269,7 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
         // Run 1 produces the file.
         appendRunStarted(doc, "a1", system, runRef);
         appendStepCompleted(doc, "a1", system, stepOutcome);
-        appendFileWritten(doc, "a1", system, fileRef, stepRef);
+        appendFileWritten(doc, "a1", system, fileRef, stepRef, "step");
         // A later run's step reads it back with source "prior" — same (path, hash) as fileRef.
         const readerStep: ProvStepRef = { runId: "run-002", stepId: "step-model" };
         appendStepCompleted(doc, "a1", system, { runId: "run-002", stepId: "step-model", status: "completed", completedAtMs: 1_700_000_050_000 });
@@ -246,7 +295,7 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
         appendRunStarted(doc, "a1", system, runRef);
         appendRunCompleted(doc, "a1", system, runOutcome);
         appendStepCompleted(doc, "a1", system, stepOutcome);
-        appendFileWritten(doc, "a1", system, fileRef, stepRef);
+        appendFileWritten(doc, "a1", system, fileRef, stepRef, "step");
         appendInputUsed(doc, "a1", system, stepRef, priorInput);
         const unified = doc.unified();
         const parsed = ProvDocument.deserialize(unified.serialize("json"), "json");
@@ -261,11 +310,11 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
         const doc = freshDocument(analysis);
         appendRunStarted(doc, "a1", system, runRef);
         appendStepCompleted(doc, "a1", system, stepOutcome);
-        appendFileWritten(doc, "a1", system, fileRef, stepRef);
+        appendFileWritten(doc, "a1", system, fileRef, stepRef, "step");
         // Re-apply the same events, as body re-execution on recovery would.
         appendRunStarted(doc, "a1", system, runRef);
         appendStepCompleted(doc, "a1", system, stepOutcome);
-        appendFileWritten(doc, "a1", system, fileRef, stepRef);
+        appendFileWritten(doc, "a1", system, fileRef, stepRef, "step");
 
         const unified = doc.unified();
         const ids = unified.getRecords().map((r) => r.identifier?.toString() ?? "");
@@ -298,6 +347,148 @@ describe("PROV execution builders (appendRunStarted / appendRunCompleted / appen
         // One entity under the input's file QName, and one used-input relation record.
         expect(ids.filter((id) => id === fileQName(priorInput)).length).toBe(1);
         expect(ids.filter((id) => id.startsWith("inflexa:used-input-")).length).toBe(1);
+    });
+});
+
+describe("PROV command builders (appendCommandExecuted + generation move)", () => {
+    test("the command variant records an inflexa:Command activity with its facts, informed by step, associated with agent", () => {
+        const doc = freshDocument(analysis);
+        appendRunStarted(doc, "a1", system, runRef);
+        appendStepCompleted(doc, "a1", system, stepOutcome);
+        appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe);
+        const provn = doc.unified().serialize("provn");
+
+        expect(provn).toContain("activity(inflexa:cmd-run-001-step-de-");
+        expect(provn).toContain("inflexa:Command");
+        expect(provn).toContain("Rscript scripts/de.R"); // inflexa:command
+        expect(provn).toContain("--fdr 0.05"); // inflexa:args, joined into one string
+        expect(provn).toContain("inflexa:exitCode");
+        expect(provn).toContain("inflexa:durationMs");
+        // The command activity is informed by ITS STEP (not the run) and associated with the agent.
+        expect(provn).toMatch(/wasInformedBy\(inflexa:informed-cmd-run-001-step-de-\w+; inflexa:cmd-run-001-step-de-\w+, inflexa:step-run-001-step-de/);
+        expect(provn).toMatch(/wasAssociatedWith\(inflexa:assoc-cmd-run-001-step-de-/);
+        // Exactly one COMMAND-scoped used edge — the single data input. The unresolvable `scriptPath`
+        // ("scripts/de.R" matches no output/input) draws NO edge, proving the unkeyable-entity guard
+        // skips it. (Scoped to `used-cmd-` so the run→analysis `used` edge from appendRunStarted is excluded.)
+        expect((provn.match(/used\(inflexa:used-cmd-/g) ?? []).length).toBe(1);
+        expect(provn).toMatch(/used\(inflexa:used-cmd-run-001-step-de-[\w-]+; inflexa:cmd-run-001-step-de-\w+, inflexa:file-/);
+    });
+
+    test("the file_tool variant records an inflexa:FileToolWrite activity with the tool and no inputs", () => {
+        const doc = freshDocument(analysis);
+        appendStepCompleted(doc, "a1", system, stepOutcome);
+        appendCommandExecuted(doc, "a1", system, stepRef, fileToolWriteScript);
+        const provn = doc.unified().serialize("provn");
+
+        expect(provn).toContain("inflexa:FileToolWrite");
+        expect(provn).toContain("write_file"); // inflexa:tool
+        expect(provn).not.toContain("inflexa:Command"); // not the command kind
+        // It generates its output but reads nothing — a file-tool write is agent-authored content.
+        expect(provn).toMatch(/wasGeneratedBy\(inflexa:gen-\w+; inflexa:file-\w+, inflexa:cmd-run-001-step-de-/);
+        expect(provn).not.toContain("used(");
+    });
+
+    // The spec's intra-step chain scenario: A writes de_results, B reads it (source "step") and writes
+    // heatmap. After unify: ONE de_results entity, generated by A's activity, used by B's activity.
+    test("intra-step chain: de_results is generated by command A and used by command B; heatmap by B", () => {
+        const doc = freshDocument(analysis);
+        appendStepCompleted(doc, "a1", system, stepOutcome);
+        appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe);
+        appendCommandExecuted(doc, "a1", system, stepRef, cmdPlotHeatmap);
+        // The produced-file entities are declared by their file_written events (generation "command").
+        appendFileWritten(doc, "a1", system, deResultsFileRef, stepRef, "command");
+        appendFileWritten(doc, "a1", system, heatmapFileRef, stepRef, "command");
+
+        const unified = doc.unified();
+        const deQn = fileQName(deResultsKey);
+        const aQn = commandQName(stepRef, cmdRunDe.outputs);
+        const bQn = commandQName(stepRef, cmdPlotHeatmap.outputs);
+        // The read's QName equals the produced file's QName — the shared entity the chain walks through.
+        expect(fileQName({ path: cmdPlotHeatmap.inputs[0]!.path, hash: cmdPlotHeatmap.inputs[0]!.hash })).toBe(deQn);
+        // Exactly ONE entity under that QName after unify.
+        expect(unified.getRecords().filter((r) => (r.identifier?.toString() ?? "") === deQn).length).toBe(1);
+
+        const provn = unified.serialize("provn");
+        // de_results generated by A (wasGeneratedBy(id; entity, activity)) and used by B (used(id; activity, entity)).
+        expect(provn).toContain(`${deQn}, ${aQn}`);
+        expect(provn).toContain(`${bQn}, ${deQn}`);
+        // heatmap is generated by B.
+        expect(provn).toContain(`${fileQName(heatmapKey)}, ${bQn}`);
+    });
+
+    // design D3 / spec: exactly one generation edge per file — a produced file's sole generation is its
+    // command activity; a leaf file's sole generation is the step activity; no entity carries two.
+    test("exactly one generation edge per file: produced → command, leaf → step, never both", () => {
+        const doc = freshDocument(analysis);
+        appendStepCompleted(doc, "a1", system, stepOutcome);
+        // Produced file: its command owns the generation; the file event (generation "command") skips its edge.
+        appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe);
+        appendFileWritten(doc, "a1", system, deResultsFileRef, stepRef, "command");
+        // Leaf file: no command; the step-level generation is the fallback.
+        appendFileWritten(doc, "a1", system, leafFileRef, stepRef, "step");
+
+        const provn = doc.unified().serialize("provn");
+        // Two generation edges total, one per file — no file accrued a second.
+        expect((provn.match(/wasGeneratedBy\(/g) ?? []).length).toBe(2);
+        // The produced file is generated by a command activity, NOT the step.
+        const producedQn = fileQName(deResultsKey);
+        expect(provn).toContain(`${producedQn}, inflexa:cmd-run-001-step-de-`);
+        expect(provn).not.toContain(`${producedQn}, inflexa:step-run-001-step-de`);
+        // The leaf file is generated by the step activity.
+        expect(provn).toContain(`${fileQName(leafFileRef)}, inflexa:step-run-001-step-de`);
+    });
+
+    test("a scriptPath matching a command input resolves to that entity and its used edge dedups with the input", () => {
+        const doc = freshDocument(analysis);
+        appendStepCompleted(doc, "a1", system, stepOutcome);
+        // The script IS one of the command's inputs (an intra-step read of a script a file-tool wrote).
+        const scriptPath = "runs/run-001/step-de/scripts/de.R";
+        const withScript: ProvCommandRef = {
+            kind: "command",
+            command: "Rscript scripts/de.R",
+            exitCode: 0,
+            scriptPath,
+            outputs: [{ path: "runs/run-001/step-de/output/x.csv", hash: "hashX00001" }],
+            inputs: [{ path: scriptPath, hash: "hashScr001", source: "step" }],
+        };
+        appendCommandExecuted(doc, "a1", system, stepRef, withScript);
+        const provn = doc.unified().serialize("provn");
+        // Both the input loop and the script resolution address the same entity with the same used id,
+        // so after unify there is exactly ONE used edge — the command reads the script once.
+        expect((provn.match(/used\(/g) ?? []).length).toBe(1);
+        expect(provn).toContain(fileQName({ path: scriptPath, hash: "hashScr001" }));
+    });
+
+    // Replay idempotency: DBOS re-executes the body, re-emitting the same command group. Deterministic
+    // output-set QNames + relation ids collapse the re-emission to one record set under unified().
+    test("duplicate command emission dedups the activity and every relation by the output-set QName", () => {
+        // No step activity here so every relation counted below belongs to the command group alone —
+        // the command's `wasInformedBy(cmd, step)` is a forward reference the dedup count tolerates.
+        const doc = freshDocument(analysis);
+        appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe);
+        appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe); // body re-execution on recovery
+
+        const unified = doc.unified();
+        const cmdQn = commandQName(stepRef, cmdRunDe.outputs);
+        const ids = unified.getRecords().map((r) => r.identifier?.toString() ?? "");
+        expect(ids.filter((id) => id === cmdQn).length).toBe(1);
+
+        const provn = unified.serialize("provn");
+        const occurrences = (needle: string): number => provn.split(needle).length - 1;
+        expect(occurrences("wasInformedBy(")).toBe(1);
+        expect(occurrences("wasAssociatedWith(")).toBe(1);
+        expect(occurrences("wasGeneratedBy(")).toBe(1); // one output
+        expect(occurrences("used(")).toBe(1); // one input (unresolvable script skipped)
+    });
+
+    test("command records round-trip losslessly through PROV-JSON", () => {
+        const doc = freshDocument(analysis);
+        appendStepCompleted(doc, "a1", system, stepOutcome);
+        appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe);
+        appendCommandExecuted(doc, "a1", system, stepRef, fileToolWriteScript);
+        const unified = doc.unified();
+        const parsed = ProvDocument.deserialize(unified.serialize("json"), "json");
+        expect(unified.equals(parsed)).toBe(true);
     });
 });
 
@@ -600,7 +791,7 @@ describe("provenance recorder handles execution events (bus → flush → signed
         Bus.emit("inflexa", { type: "prov.analysis_created", analysisId: "a1", actor: system });
         Bus.emit("inflexa", { type: "prov.run_started", analysisId: "a1", actor: system, run: runRef });
         Bus.emit("inflexa", { type: "prov.step_completed", analysisId: "a1", actor: system, outcome: stepOutcome });
-        Bus.emit("inflexa", { type: "prov.file_written", analysisId: "a1", actor: system, file: fileRef, step: stepRef });
+        Bus.emit("inflexa", { type: "prov.file_written", analysisId: "a1", actor: system, file: fileRef, step: stepRef, generation: "step" });
         Bus.emit("inflexa", {
             type: "prov.input_used",
             analysisId: "a1",
@@ -626,6 +817,81 @@ describe("provenance recorder handles execution events (bus → flush → signed
         // The run activity carries both times and the terminal status (start + completion merged).
         expect(provn).toContain("inflexa:status");
 
+        const integrity = getAnalysisIntegrity("a1")._unsafeUnwrap();
+        expect(integrity!.chainHash).not.toBeNull();
+        expect(integrity!.signature).not.toBeNull();
+
+        resetSigningForTests(null);
+        rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    // Capstone (task 4.1): a realistic MIXED registration through the bus — 2 command groups (one the
+    // intra-step chain A→B), 1 file-tool group, their produced-file events, 1 leaf file, and the
+    // step-level input_used — flushes to the signed column with the command activities and per-command
+    // used/generation edges intact, and rotates the integrity columns. No live E2E: the bus→builder→
+    // flush→sign pipeline was live-proven by `deepen-run-provenance`; this adds one event kind through
+    // that unchanged machinery, so recorder-level coverage is the deliberate ceiling.
+    test("a mixed command registration flushes to the signed column with command activities and per-command edges", async () => {
+        const { mkdirSync, rmSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const { tmpdir } = await import("node:os");
+        const { randomUUIDv7: uuid } = await import("bun");
+
+        const tmpDir = join(tmpdir(), `prov-cmd-e2e-${uuid()}`);
+        mkdirSync(tmpDir, { recursive: true });
+        resetSigningForTests(join(tmpDir, "prov_key.json"));
+
+        insertAnchor({ id: "anchor1", createdAt: 1, updatedAt: 1, cachedPath: "/tmp/x", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis(analysis)._unsafeUnwrap();
+
+        Bus.emit("inflexa", { type: "prov.analysis_created", analysisId: "a1", actor: system });
+        Bus.emit("inflexa", { type: "prov.run_started", analysisId: "a1", actor: system, run: runRef });
+        Bus.emit("inflexa", { type: "prov.step_completed", analysisId: "a1", actor: system, outcome: stepOutcome });
+        // Command group A + its produced file (the chain's head).
+        Bus.emit("inflexa", { type: "prov.command_executed", analysisId: "a1", actor: system, step: stepRef, command: cmdRunDe });
+        Bus.emit("inflexa", { type: "prov.file_written", analysisId: "a1", actor: system, file: deResultsFileRef, step: stepRef, generation: "command" });
+        // Command group B reads A's output (source "step") and produces the heatmap (the chain's tail).
+        Bus.emit("inflexa", { type: "prov.command_executed", analysisId: "a1", actor: system, step: stepRef, command: cmdPlotHeatmap });
+        Bus.emit("inflexa", { type: "prov.file_written", analysisId: "a1", actor: system, file: heatmapFileRef, step: stepRef, generation: "command" });
+        // File-tool group + its produced file.
+        Bus.emit("inflexa", { type: "prov.command_executed", analysisId: "a1", actor: system, step: stepRef, command: fileToolWriteScript });
+        Bus.emit("inflexa", { type: "prov.file_written", analysisId: "a1", actor: system, file: scriptFileRef, step: stepRef, generation: "command" });
+        // A leaf file (no producer record) keeps the step-level generation.
+        Bus.emit("inflexa", { type: "prov.file_written", analysisId: "a1", actor: system, file: leafFileRef, step: stepRef, generation: "step" });
+        // Step-level input_used registry is untouched by the command edges (deliberate redundancy).
+        Bus.emit("inflexa", {
+            type: "prov.input_used",
+            analysisId: "a1",
+            actor: system,
+            step: stepRef,
+            input: { path: "data/inputs/counts.csv", hash: "hashCount1", source: "data", fileId: "file-1" },
+        });
+        Bus.emit("inflexa", { type: "prov.run_completed", analysisId: "a1", actor: system, outcome: runOutcome });
+        await flushProvenanceAsync();
+
+        const stored = getAnalysisProvenance("a1")._unsafeUnwrap();
+        expect(stored).not.toBeNull();
+        const provn = ProvDocument.deserialize(stored!, "json").serialize("provn");
+
+        // Both activity kinds are present, with their identifying facts.
+        expect(provn).toContain("inflexa:Command");
+        expect(provn).toContain("inflexa:FileToolWrite");
+        expect(provn).toContain("Rscript scripts/de.R");
+        expect(provn).toContain("python plot.py");
+        expect(provn).toContain("write_file");
+
+        // Per-command generation + used edges: de_results generated by A, used by B; heatmap by B; leaf by step.
+        const deQn = fileQName(deResultsKey);
+        const aQn = commandQName(stepRef, cmdRunDe.outputs);
+        const bQn = commandQName(stepRef, cmdPlotHeatmap.outputs);
+        expect(provn).toContain(`${deQn}, ${aQn}`); // wasGeneratedBy(de_results, A)
+        expect(provn).toContain(`${bQn}, ${deQn}`); // used(B, de_results) — the intra-step chain
+        expect(provn).toContain(`${fileQName(heatmapKey)}, ${bQn}`); // wasGeneratedBy(heatmap, B)
+        expect(provn).toContain(`${fileQName(leafFileRef)}, inflexa:step-run-001-step-de`); // leaf → step
+        // The produced files never take a step-level generation.
+        expect(provn).not.toContain(`${deQn}, inflexa:step-run-001-step-de`);
+
+        // The integrity columns rotated — the flush actually signed and persisted.
         const integrity = getAnalysisIntegrity("a1")._unsafeUnwrap();
         expect(integrity!.chainHash).not.toBeNull();
         expect(integrity!.signature).not.toBeNull();

@@ -1,6 +1,16 @@
 import type { Message, Part } from "./session.ts";
 import type { AnalysisId } from "./analysis.ts";
-import type { ProvActor, ProvInputRef, ProvRunRef, ProvRunOutcome, ProvStepRef, ProvStepOutcome, ProvUsedInputRef, ProvFileRef } from "./prov.ts";
+import type {
+    ProvActor,
+    ProvInputRef,
+    ProvRunRef,
+    ProvRunOutcome,
+    ProvStepRef,
+    ProvStepOutcome,
+    ProvUsedInputRef,
+    ProvFileRef,
+    ProvCommandRef,
+} from "./prov.ts";
 
 /**
  * The cross-process event contract. Session-scoped events carry `sessionId`;
@@ -30,7 +40,22 @@ export type BusEvent =
     | { type: "prov.run_started"; analysisId: AnalysisId; actor: ProvActor; run: ProvRunRef }
     | { type: "prov.run_completed"; analysisId: AnalysisId; actor: ProvActor; outcome: ProvRunOutcome }
     | { type: "prov.step_completed"; analysisId: AnalysisId; actor: ProvActor; outcome: ProvStepOutcome }
-    | { type: "prov.file_written"; analysisId: AnalysisId; actor: ProvActor; file: ProvFileRef; step: ProvStepRef }
+    | { type: "prov.command_executed"; analysisId: AnalysisId; actor: ProvActor; step: ProvStepRef; command: ProvCommandRef }
+    | {
+          type: "prov.file_written";
+          analysisId: AnalysisId;
+          actor: ProvActor;
+          file: ProvFileRef;
+          step: ProvStepRef;
+          /**
+           * Which activity owns this file's generation edge: `"command"` when a producer group's
+           * `prov.command_executed` writes it (the bridge bucketed the file as produced), `"step"` for
+           * a leaf file (no producer record — e.g. an inotify-only observation) that keeps the
+           * step-level generation fallback. The bridge's produced-vs-leaf decision rides the event so
+           * the recorder never has to infer it across events.
+           */
+          generation: "command" | "step";
+      }
     | { type: "prov.input_used"; analysisId: AnalysisId; actor: ProvActor; step: ProvStepRef; input: ProvUsedInputRef };
 
 /** A {@link BusEvent} stamped with a unique id by the bus on emit (for telemetry correlation). */

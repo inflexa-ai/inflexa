@@ -13,6 +13,7 @@ import {
     appendRunStarted,
     appendRunCompleted,
     appendStepCompleted,
+    appendCommandExecuted,
     appendFileWritten,
     appendInputUsed,
     freshDocument,
@@ -127,10 +128,18 @@ function onEvent(event: StampedEvent): void {
             scheduleFlush();
             break;
         }
+        case "prov.command_executed": {
+            const doc = liveDocForAnalysis(event.analysisId);
+            if (!doc) return;
+            appendCommandExecuted(doc, event.analysisId, event.actor, event.step, event.command);
+            dirty.add(event.analysisId);
+            scheduleFlush();
+            break;
+        }
         case "prov.file_written": {
             const doc = liveDocForAnalysis(event.analysisId);
             if (!doc) return;
-            appendFileWritten(doc, event.analysisId, event.actor, event.file, event.step);
+            appendFileWritten(doc, event.analysisId, event.actor, event.file, event.step, event.generation);
             dirty.add(event.analysisId);
             scheduleFlush();
             break;

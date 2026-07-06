@@ -16,6 +16,38 @@ folder does not re-do; its provenance/staging/checklist docs (01–05) are super
 
 ---
 
+## Change D3 — record-command-lineage (2026-07-06) — LANDED (code-complete, recorder-verified)
+
+Retires the last granularity cut from the original migration research (old Q1): the producing
+COMMAND is now a first-class PROV activity instead of a bare `inflexa:producer` discriminant.
+Specced + implemented in `cli/openspec/changes/record-command-lineage` (proposal, design D1–D5,
+2 modified capability specs, 11/11 tasks), cli-only — the `ArtifactRegistry` seam already carried
+the full `ProvenanceRecord`s; zero harness/tsprov changes. Two Opus worker slices
+(vocab+builders, bridge grouping) with orchestrator diff review.
+
+What landed:
+- **`prov.command_executed`** — one per surviving producer group, a discriminated
+  `ProvCommandRef` (`command` with command/args/exitCode/durationMs/scriptPath, or `file_tool`
+  with the tool name). Producer observation timestamps never cross the bus (replay-unstable).
+- **Replay-stable command identity**: producer OBJECT identity doesn't survive DBOS re-execution,
+  but the collector is last-write-wins per output path, so the group is keyed by its sorted
+  output `(path, hash)` set — `inflexa:cmd-{runId}-{stepId}-{digest}`.
+- **Generation moves to the command** (`wasGeneratedBy(file, cmd)` under the same
+  `gen-{fileDigest}` id); leaf files (no producer record) keep step-level generation, the
+  decision riding `prov.file_written.generation: "command" | "step"` — exactly one generation
+  edge per entity by construction.
+- **Intra-step chains — deliberately BEYOND Cortex**: a command's `"artifacts"`-source reads
+  resolve to the registration's own output entities as `source: "step"` used-edges (phantom
+  self-reads dropped), so cmd A → file → cmd B is walkable. Verified during design: Cortex
+  DROPS self-reads entirely (`resolveInputIndices` skips artifacts-source + batch outputs,
+  `nexus-translate.ts:303-319`) — chain fidelity is a documented local improvement, and the
+  step-level `prov.input_used` registry stays untouched (deliberate redundancy).
+
+Verification is recorder-level by design (no live E2E — the bus→builder→flush→sign pipeline was
+live-proven by D2 days earlier): 432 cli tests incl. the mixed-registration capstone (2 command
+groups + file_tool + leaf + intra-step chain → signed column shows `inflexa:Command` with
+per-command used/generation edges). Gates: cli typecheck clean, changed files lint-clean.
+
 ## Change D2 — deepen-run-provenance (2026-07-06) — LANDED (code-complete, live-verified)
 
 Follow-up to change D, born from the same-day assessment session that audited D against the

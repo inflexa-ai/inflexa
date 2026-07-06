@@ -1,8 +1,7 @@
-# prov-run-events Specification
+# prov-run-events Specification (delta)
 
-## Purpose
-TBD - created by archiving change bridge-harness-provenance. Update Purpose after archive.
-## Requirements
+## MODIFIED Requirements
+
 ### Requirement: Execution-level provenance events exist in the bus contract
 
 The `BusEvent` union SHALL carry six execution-level provenance events, each scoped
@@ -106,44 +105,3 @@ carry NO formal time.
 
 - **WHEN** the same `prov.command_executed` event is recorded twice (workflow re-execution) and the document is unified
 - **THEN** the document contains one command activity under the output-set QName and one of each of its relation records — not two
-
-### Requirement: Replay-idempotent recording
-
-Recording SHALL be replay-idempotent: re-emitting an execution-level event (as DBOS
-workflow re-execution does on recovery) MUST NOT structurally duplicate PROV
-records — after `unified()`, the document SHALL contain one record set per
-deterministic identifier (elements AND relations) regardless of how many times the
-same event was recorded. Additionally, a conflicting single-valued formal attribute
-MUST NOT prevent persistence: the cli's `unified()` invocations on the persistence
-and export paths SHALL pass tsprov's `formalAttributeConflict: "first"` policy, so a
-value conflict degrades to keep-first-plus-log instead of an unfushable analysis.
-
-#### Scenario: Duplicate emission dedups by deterministic identifier
-
-- **WHEN** the same `prov.run_started` and `prov.step_completed` events are emitted twice and the document is flushed and unified
-- **THEN** the serialized document contains one run activity, one step activity, and ONE of each relation record — not two
-
-#### Scenario: A formal-time conflict cannot poison the flush
-
-- **WHEN** the live document somehow holds two same-QName activity records whose formal times differ (a defect upstream of the builders' determinism)
-- **THEN** the flush still unifies, signs, and persists — the first-recorded time survives and the conflict is logged — rather than throwing on every retry and leaving the analysis permanently unfushable
-
-### Requirement: Execution events flow through the existing recorder and signing path
-
-The provenance recorder SHALL handle the four execution events exactly as the
-analysis-lifecycle events: load-or-create the live document for `event.analysisId`,
-append via the matching builder, mark dirty, and debounce-flush through the
-unchanged chain-hash + Ed25519 signing path. Events whose `analysisId` has no
-analysis row SHALL be dropped (the existing recorder guard). Signing failure SHALL
-crash the flush — provenance is never degraded to unsigned.
-
-#### Scenario: Bus emission lands in the signed column
-
-- **WHEN** `prov.run_started`, `prov.step_completed`, and `prov.file_written` are emitted for a known analysis and the recorder flushes
-- **THEN** `analyses.provenance` holds a PROV-JSON document containing the run, step, and file records, with the chain hash and signature updated
-
-#### Scenario: Unknown analysis is dropped silently
-
-- **WHEN** an execution event references an `analysisId` with no analysis row
-- **THEN** the recorder ignores the event and no document is created or modified
-

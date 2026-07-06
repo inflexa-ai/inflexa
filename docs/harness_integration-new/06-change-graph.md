@@ -243,6 +243,16 @@ remains unblocked behind it. **Status: LANDED, 22/22 tasks, live-verified** — 
 `00-progress.md` §"Change D2" for what shipped and the follow-up findings (tool-read lineage
 gap, `summary.md` walk-ordering, the observed #28 wedge mechanism).
 
+## Change D3 — record-command-lineage (added 2026-07-06, after D2 landed)
+
+The per-command granularity follow-up, born from the post-slop-review discussion that compared
+the bridge against Cortex/Nexus: D2's document still collapsed the producing command to a bare
+`producer` discriminant (the old Q1 cut). D3 makes command/file-tool executions first-class PROV
+activities with per-command used/generation edges and intra-step chains (a deliberate,
+documented improvement beyond Cortex, which drops self-reads). cli-only — the registry seam
+already carried the data. **Status: LANDED, 11/11 tasks, recorder-verified** — see
+`00-progress.md` §"Change D3".
+
 ## Why C first (A folded in as its first slice)
 
 All the risk in this program lives in the one thing that has never run. The provenance

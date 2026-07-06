@@ -1,7 +1,7 @@
 import type { ArtifactRegistrationInput, ArtifactRegistry, ExternalRegistrationResult, RunProvenanceEvent } from "@inflexa-ai/harness";
 
 import { Bus } from "../../lib/bus.ts";
-import type { ProvFileRef, ProvStepRef, ProvUsedInputRef } from "../../types/prov.ts";
+import type { ProvCommandInputRef, ProvCommandRef, ProvFileKey, ProvFileRef, ProvStepRef, ProvUsedInputRef } from "../../types/prov.ts";
 import { fileQName } from "../prov/document.ts";
 import { systemActor } from "../prov/prov.ts";
 
@@ -16,16 +16,118 @@ import { systemActor } from "../prov/prov.ts";
 // harness owns that local-ledger write AROUND this seam, and writes the returned `externalId` back
 // onto its row itself.
 //
-// The step-lifecycle split: this adapter emits FILE and USED-INPUT events only. Step activities
-// (`prov.step_completed`) come from the harness's scheduler settlement via `createRunProvenanceEmitter`
-// below — registration is skipped entirely for a step with an empty reconciled manifest and never
-// reached by a failed step, so it is NOT the site that observes every executed step.
+// The step-lifecycle split: this adapter emits COMMAND, FILE, and USED-INPUT events — the finer-grained
+// command lineage plus per-file generations and per-input reads. Step activities (`prov.step_completed`)
+// come from the harness's scheduler settlement via `createRunProvenanceEmitter` below — registration is
+// skipped entirely for a step with an empty reconciled manifest and never reached by a failed step, so
+// it is NOT the site that observes every executed step.
+//
+// Producer grouping (design D5): the manifest entries are partitioned by their collector record's
+// `producer` OBJECT reference (mirroring the reference implementation's per-execution grouping) into
+// command/file-tool groups, with entries that have no record forming the LEAF bucket. The partition is
+// exclusive by construction — a single record lookup decides each entry's bucket — which keeps a file
+// from ever accruing two generation authorities (a command activity AND its step). Each group emits one
+// `prov.command_executed` followed by its `prov.file_written` events with `generation: "command"`; leaf
+// files emit `generation: "step"`, so the produced-vs-leaf decision rides the file event and the
+// recorder never infers it across events. Files, command-scoped inputs, and command activities all
+// originate here; step lifecycle stays at the scheduler.
+
+// A collector record (`getRecords()` element), its `producer` object (the grouping key), and its
+// per-command `inputs` — derived off the already-imported `ArtifactRegistrationInput` because the
+// harness barrel does not re-export `ProvenanceRecord`/`Producer`/`InputRef`. Deriving pins the bridge
+// to the exact seam shape without reaching for a fragile deep-subpath import.
+type CollectorRecord = ReturnType<ArtifactRegistrationInput["collector"]["getRecords"]>[number];
+type CollectorProducer = CollectorRecord["producer"];
+type CollectorInputRef = CollectorRecord["inputs"][number];
+type ManifestEntry = ArtifactRegistrationInput["artifacts"][number];
 
 /**
- * The bus-adapter {@link ArtifactRegistry} — translates one step's registration into one
- * `prov.file_written` per manifest entry plus one `prov.input_used` per tracked input read, and
- * returns the deterministic file QNames so the harness can cross-reference its local ledger into the
- * signed document. It does NOT emit `prov.step_completed` (see the module note on the split).
+ * Scope a collector-recorded script path into the analysis-scoped file-QName space the group's outputs
+ * live in, so the document builder can resolve it against an already-registered output/input entity.
+ * `inferScriptPath` (harness collector) records whatever token the command line carried — a
+ * container-absolute `/{resourceId}/…`, an already analysis-rooted `runs/…`/`data/…`, or (the common
+ * case, since the sandbox cwd is the step write dir) a step-relative `scripts/foo.py`. Strip the
+ * container prefix, then prefix a step-relative remainder with `runs/{runId}/{stepId}/`; a path already
+ * rooted at a resource-tree dir passes through. Need not be exhaustive: an unresolvable result simply
+ * fails to match in the builder, which skips it rather than minting a dangling entity.
+ */
+function scopeScriptPath(scriptPath: string, resourceId: string, runId: string, stepId: string): string {
+    const containerPrefix = `/${resourceId}/`;
+    const stripped = scriptPath.startsWith(containerPrefix) ? scriptPath.slice(containerPrefix.length) : scriptPath;
+    const analysisRooted = stripped.startsWith("runs/") || stripped.startsWith("data/") || stripped.startsWith("dataprofile/");
+    return analysisRooted ? stripped : `runs/${runId}/${stepId}/${stripped}`;
+}
+
+/**
+ * Map one command's per-command reads to command-scoped {@link ProvCommandInputRef}s in the shared
+ * file-QName space (design D4). `data`/`upstream`/`prior` reads pass through with their `/{resourceId}/`
+ * mount prefix stripped to analysis-relative; a hash-less such ref is SKIPPED silently — it is attested
+ * upstream and the step-level `prov.input_used` loop is the site that reports it in `failed`, so failing
+ * it here too would double-count. An `"artifacts"`-source read is the step's OWN prior output — the
+ * intra-step chain signal the step-level registry drops as noise: it is stripped to its analysis-scoped
+ * `runs/{runId}/{stepId}/…` form and included as `source: "step"` ONLY when that path names a file THIS
+ * registration produces (`producedPaths`); a read of a written-then-deleted phantom hits nothing and is
+ * dropped so no `used` edge dangles onto an unregistered entity. Deduped by `(path, hash)` so a repeated
+ * open or a script re-read collapses to one edge.
+ */
+function toCommandInputs(reads: readonly CollectorInputRef[], resourceId: string, producedPaths: ReadonlySet<string>): ProvCommandInputRef[] {
+    const containerPrefix = `/${resourceId}/`;
+    const seen = new Set<string>();
+    const inputs: ProvCommandInputRef[] = [];
+    for (const ref of reads) {
+        const path = ref.path.startsWith(containerPrefix) ? ref.path.slice(containerPrefix.length) : ref.path;
+        const dedupKey = `${path}|${ref.hash}`;
+        if (ref.source === "artifacts") {
+            if (!producedPaths.has(path) || seen.has(dedupKey)) continue;
+            seen.add(dedupKey);
+            inputs.push({ path, hash: ref.hash, source: "step", ...(ref.fileId !== undefined ? { fileId: ref.fileId } : {}) });
+            continue;
+        }
+        if (!ref.hash || seen.has(dedupKey)) continue;
+        seen.add(dedupKey);
+        inputs.push({ path, hash: ref.hash, source: ref.source, ...(ref.fileId !== undefined ? { fileId: ref.fileId } : {}) });
+    }
+    return inputs;
+}
+
+/**
+ * Build the {@link ProvCommandRef} for one producer group. A `command` producer carries the full
+ * execution facts (`command`/`args`/`exitCode`/`durationMs`), the scoped `scriptPath`, the group's
+ * analysis-scoped `(path, hash)` outputs, and its command-scoped inputs; a `file_tool` producer carries
+ * only the tool name and outputs (agent-authored content has no reads, by construction). The producer's
+ * observation `timestamp` is NEVER forwarded — it is re-minted on every DBOS replay and would poison the
+ * document's replay-idempotency if it leaked into an identifier or formal position (design D1).
+ */
+function toCommandRef(
+    record: CollectorRecord,
+    outputs: ProvFileKey[],
+    resourceId: string,
+    runId: string,
+    stepId: string,
+    producedPaths: ReadonlySet<string>,
+): ProvCommandRef {
+    const producer = record.producer;
+    if (producer.type === "file_tool") return { kind: "file_tool", tool: producer.tool, outputs };
+    const scriptPath = record.scriptPath !== null ? scopeScriptPath(record.scriptPath, resourceId, runId, stepId) : undefined;
+    return {
+        kind: "command",
+        command: producer.command,
+        ...(producer.args !== undefined ? { args: producer.args } : {}),
+        exitCode: producer.exitCode,
+        ...(producer.durationMs !== undefined ? { durationMs: producer.durationMs } : {}),
+        ...(scriptPath !== undefined ? { scriptPath } : {}),
+        outputs,
+        inputs: toCommandInputs(record.inputs, resourceId, producedPaths),
+    };
+}
+
+/**
+ * The bus-adapter {@link ArtifactRegistry} — translates one step's registration into, per producer group,
+ * one `prov.command_executed` followed by that group's `prov.file_written` events (`generation:
+ * "command"`), then the leaf bucket's `prov.file_written` events (`generation: "step"`), then one
+ * `prov.input_used` per tracked non-`"artifacts"` read. It returns the deterministic file QNames so the
+ * harness can cross-reference its local ledger into the signed document, and does NOT emit
+ * `prov.step_completed` (see the module note on the split and the producer grouping).
  *
  * Three seam-contract facts shape the behavior:
  *
@@ -42,11 +144,12 @@ import { systemActor } from "../prov/prov.ts";
  *     collide onto one file entity. The same analysis-scoped path seeds the file QName, so the
  *     event, the QName, and the write-back key are one string. Inputs are READS, not registered
  *     artifacts — they carry no `externalId` and never enter `registered`.
- *  3. Tracked input refs (`getTrackedInputs()`) carry container-absolute paths (`/{resourceId}/…`).
- *     The step's own outputs re-surface as `source: "artifacts"` and are skipped (mirroring
- *     `fillInputHashesFromDisk`'s reconcile-time skip); the rest strip the mount prefix to
- *     analysis-relative — a `source: "prior"` read then keys onto the SAME file QName the producing
- *     run emitted, chaining lineage across runs for free.
+ *  3. Tracked input refs (`getTrackedInputs()`) and record inputs carry container-absolute paths
+ *     (`/{resourceId}/…`). The step's own outputs re-surface as `source: "artifacts"` — skipped by the
+ *     step-level registry (mirroring `fillInputHashesFromDisk`'s reconcile-time skip) but RESOLVED to a
+ *     command-scoped `source: "step"` input; the rest strip the mount prefix to analysis-relative — a
+ *     `source: "prior"` read then keys onto the SAME file QName the producing run emitted, chaining
+ *     lineage across runs for free.
  */
 export function createBusArtifactRegistry(): ArtifactRegistry {
     return {
@@ -55,46 +158,89 @@ export function createBusArtifactRegistry(): ArtifactRegistry {
             // commit, so a single value across the step's events is identical to re-reading per event.
             const actor = systemActor();
             const step: ProvStepRef = { runId: input.runId, stepId: input.stepId };
+            // Manifest entries + collector output records both key on the STEP-relative path; scope to the
+            // analysis-scoped form for the event, the QName seed, and the ledger write-back key (fact #2).
+            const scopePath = (relativePath: string): string => `runs/${input.runId}/${input.stepId}/${relativePath}`;
 
             // The collector keys its records by STEP-relative output path — the same shape the manifest
-            // entry arrives in — so the producer join happens on the raw `entry.path`, before scoping.
-            const producerByPath = new Map<string, ProvFileRef["producer"]>();
-            for (const rec of input.collector.getRecords()) {
-                producerByPath.set(rec.outputPath, rec.producer.type);
+            // entry arrives in — so the record lookup happens on the raw `entry.path`, before scoping.
+            const recordByPath = new Map<string, CollectorRecord>();
+            for (const rec of input.collector.getRecords()) recordByPath.set(rec.outputPath, rec);
+
+            // The analysis-scoped paths that WILL carry a file entity this registration — the membership
+            // set an intra-step `"artifacts"` self-read must hit to resolve (design D4). Hash-less entries
+            // are excluded: they fail below and never register an entity, so a read of one would dangle.
+            const producedPaths = new Set<string>();
+            for (const entry of input.artifacts) if (entry.hash) producedPaths.add(scopePath(entry.path));
+
+            // Partition (design D5): one lookup per entry buckets it by its record's `producer` OBJECT, or
+            // into the leaf bucket when it has no record. Exclusive by construction — this single get()
+            // decides — so a file can never land in both a command group and the leaf bucket (which would
+            // write two `wasGeneratedBy` edges for one entity). Insertion order is preserved for emission.
+            const groups = new Map<CollectorProducer, { record: CollectorRecord; entries: ManifestEntry[] }>();
+            const leaves: ManifestEntry[] = [];
+            for (const entry of input.artifacts) {
+                const rec = recordByPath.get(entry.path);
+                if (rec === undefined) {
+                    leaves.push(entry);
+                    continue;
+                }
+                const group = groups.get(rec.producer);
+                if (group !== undefined) group.entries.push(entry);
+                else groups.set(rec.producer, { record: rec, entries: [entry] });
             }
 
             const registered: ExternalRegistrationResult["registered"] = [];
             const failed: ExternalRegistrationResult["failed"] = [];
 
-            for (const entry of input.artifacts) {
-                const path = `runs/${input.runId}/${input.stepId}/${entry.path}`;
-
-                // Reconcile rehashes every surviving entry from disk, so a missing/empty hash past that
-                // point is an attestation invariant violation, not a routine case — report it as a
-                // registration failure (fail-fast) rather than emit a file we cannot content-attest.
+            // Attest one manifest entry to a `ProvFileRef`, or record a fail-fast rejection and return
+            // null. Reconcile rehashes every surviving entry from disk, so a missing/empty hash past that
+            // point is an attestation-invariant violation, not a routine case. The producer joins from the
+            // entry's record; a leaf (no record) falls back to "command" — an observed sandbox write with
+            // no in-process producer record (inotify-only observation) is by construction a command effect.
+            const attest = (entry: ManifestEntry): ProvFileRef | null => {
+                const path = scopePath(entry.path);
                 if (!entry.hash) {
                     failed.push({ path, error: `missing content hash for ${path} — reconcile guarantees one, so its absence is an upstream defect` });
-                    continue;
+                    return null;
                 }
+                return { path, hash: entry.hash, size: entry.size, producer: recordByPath.get(entry.path)?.producer.type ?? "command" };
+            };
 
-                // Fallback to "command": an observed sandbox write with no in-process producer record
-                // (inotify-only observation) is by construction a command effect, not a file-tool write.
-                const producer = producerByPath.get(entry.path) ?? "command";
-                const file: ProvFileRef = { path, hash: entry.hash, size: entry.size, producer };
-                // Emitting at REGISTRATION (not at sandbox write time) mirrors the reference
-                // implementation (Cortex `registerStepArtifacts` → Nexus structured payload):
-                // registration is the attestation boundary — reconcile has just rehashed the
-                // surviving bytes from disk, whereas write-TIME observations are collector-internal
-                // because frame-time hashes are racy and write-then-delete leaves phantoms. This
-                // event covers step OUTPUTS only (Nexus: output files + generation edges); input
-                // reads ride `prov.input_used` below (Nexus: `type:"input"` references + used
-                // edges) and are never `file_written`.
-                Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, file, step });
-                registered.push({ path, externalId: fileQName(file) });
+            // Per producer group, in declaration-before-reference order: one `prov.command_executed`, then
+            // that group's `prov.file_written` events flagged `generation: "command"` — their generation
+            // edge is the command activity's, not the step's.
+            for (const { record, entries } of groups.values()) {
+                const files: ProvFileRef[] = [];
+                for (const entry of entries) {
+                    const file = attest(entry);
+                    if (file !== null) files.push(file);
+                }
+                // A group whose every output failed attestation has no entity to anchor a command
+                // activity's generation edges — skip it rather than mint a zero-output command.
+                if (files.length === 0) continue;
+
+                const outputs: ProvFileKey[] = files.map((f) => ({ path: f.path, hash: f.hash }));
+                const command = toCommandRef(record, outputs, input.resourceId, input.runId, input.stepId, producedPaths);
+                Bus.emit("inflexa", { type: "prov.command_executed", analysisId: input.resourceId, actor, step, command });
+                for (const file of files) {
+                    Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, file, step, generation: "command" });
+                    registered.push({ path: file.path, externalId: fileQName(file) });
+                }
             }
 
-            // Container-absolute input paths (`/{resourceId}/…`) strip to analysis-relative so a prior
-            // read lands in the producing file's QName space (see fact #3).
+            // Leaf bucket: an observed write with no in-process producer record — no command activity, so
+            // its generation edge falls to the step activity (`generation: "step"`, today's fallback path).
+            for (const entry of leaves) {
+                const file = attest(entry);
+                if (file === null) continue;
+                Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, file, step, generation: "step" });
+                registered.push({ path: file.path, externalId: fileQName(file) });
+            }
+
+            // Step-level attested-input registry (unchanged): container-absolute reads strip to
+            // analysis-relative so a prior read lands in the producing file's QName space (fact #3); the
+            // step's own `"artifacts"` reads are skipped, and a hash-less ref fails the step.
             const inputPrefix = `/${input.resourceId}/`;
             for (const ref of input.collector.getTrackedInputs()) {
                 // The step's own outputs re-surface here as reads; skip them, mirroring reconcile's skip.
