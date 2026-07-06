@@ -87,7 +87,9 @@ export interface RunStartedPart {
 
 // ── DAG State (reconciliating) ──────────────────────────────────────
 
-export type StepStatus = "pending" | "running" | "completed" | "failed";
+/** `"pending"` = waiting on dependencies; `"queued"` = dependencies satisfied,
+ *  held until in-flight steps free machine-budget capacity. */
+export type StepStatus = "pending" | "queued" | "running" | "completed" | "failed";
 
 export interface DagStepState {
     id: string;

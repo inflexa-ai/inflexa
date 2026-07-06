@@ -1,6 +1,7 @@
+import { availableParallelism, totalmem } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import type { ResourceLimits } from "@inflexa-ai/harness";
+import type { MachineBudget, ResourceLimits, ResourcePolicy } from "@inflexa-ai/harness";
 import { readConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 
@@ -27,6 +28,18 @@ const harnessConfigSchema = z.object({
             maxCpu: z.number().positive().optional(),
             maxMemoryGb: z.number().positive().optional(),
             maxGpuCount: z.number().int().nonnegative().optional(),
+            budget: z
+                .object({
+                    cpu: z.number().positive().optional(),
+                    memoryGb: z.number().positive().optional(),
+                })
+                .optional(),
+            ephemeral: z
+                .object({
+                    cpu: z.number().positive(),
+                    memoryGb: z.number().positive(),
+                })
+                .optional(),
         })
         .optional(),
     adminPort: z.number().int().positive().optional(),
@@ -53,6 +66,14 @@ export type ResolvedHarnessConfig = {
     };
     readonly sandboxImage: string;
     readonly resourceLimits: ResourceLimits;
+    /**
+     * The full host resource policy the harness consumes: the per-step ceilings
+     * (`resourceLimits`, unchanged) plus the machine budget the run scheduler
+     * admits concurrent steps against, and the optional `run_ephemeral` sandbox
+     * size. The budget defaults to half the machine (raised to the per-step
+     * ceilings so a maximum-size step always remains schedulable).
+     */
+    readonly resourcePolicy: ResourcePolicy;
     /** DBOS admin port. */
     readonly adminPort: number;
     readonly skillsDir: string | null;
@@ -82,6 +103,39 @@ const DEFAULT_SANDBOX_IMAGE = "sandbox-base:latest";
 const DEFAULT_RESOURCE_LIMITS: ResourceLimits = { maxCpu: 4, maxMemoryGb: 8, maxGpuCount: 0 };
 
 /**
+ * Default machine budget: half the host's cores and memory — enough to run real
+ * analyses while leaving the other half for the user's editor, browser, and the
+ * harness itself. Exported so `inflexa setup` can show the same suggestion it
+ * would otherwise silently apply.
+ */
+export function detectedMachineBudget(): MachineBudget {
+    return {
+        cpu: Math.max(1, Math.floor(availableParallelism() / 2)),
+        memoryGb: Math.max(1, Math.floor(totalmem() / 1024 ** 3 / 2)),
+    };
+}
+
+/**
+ * Assemble the policy from the resolved per-step ceilings and the (possibly
+ * partial) configured budget. The budget is raised to the per-step ceilings when
+ * it lands below them — the harness rejects a policy whose maximum-size step
+ * could never be scheduled, and a user who explicitly configured `maxMemoryGb:
+ * 16` on a small machine meant to allow such steps to run (one at a time).
+ */
+function resolvePolicy(perStep: ResourceLimits, cfg: z.infer<typeof harnessConfigSchema> | undefined): ResourcePolicy {
+    const detected = detectedMachineBudget();
+    const budget = {
+        cpu: Math.max(cfg?.resourceLimits?.budget?.cpu ?? detected.cpu, perStep.maxCpu),
+        memoryGb: Math.max(cfg?.resourceLimits?.budget?.memoryGb ?? detected.memoryGb, perStep.maxMemoryGb),
+    };
+    return {
+        perStep,
+        budget,
+        ...(cfg?.resourceLimits?.ephemeral && { ephemeral: cfg.resourceLimits.ephemeral }),
+    };
+}
+
+/**
  * In the port family of the owned services (proxy 8317, postgres 8432) rather
  * than DBOS's usual 3001, which collides with common dev servers.
  */
@@ -89,6 +143,11 @@ const DEFAULT_ADMIN_PORT = 8433;
 
 /** All-defaults resolved config, used when the `harness` key is absent or when it failed validation. */
 function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, configError?: { issues: string }): ResolvedHarnessConfig {
+    const resourceLimits: ResourceLimits = {
+        maxCpu: cfg?.resourceLimits?.maxCpu ?? DEFAULT_RESOURCE_LIMITS.maxCpu,
+        maxMemoryGb: cfg?.resourceLimits?.maxMemoryGb ?? DEFAULT_RESOURCE_LIMITS.maxMemoryGb,
+        maxGpuCount: cfg?.resourceLimits?.maxGpuCount ?? DEFAULT_RESOURCE_LIMITS.maxGpuCount,
+    };
     return {
         model: cfg?.model ?? null,
         bioKeys: {
@@ -99,11 +158,8 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
             github: cfg?.bioKeys?.github,
         },
         sandboxImage: cfg?.sandboxImage ?? DEFAULT_SANDBOX_IMAGE,
-        resourceLimits: {
-            maxCpu: cfg?.resourceLimits?.maxCpu ?? DEFAULT_RESOURCE_LIMITS.maxCpu,
-            maxMemoryGb: cfg?.resourceLimits?.maxMemoryGb ?? DEFAULT_RESOURCE_LIMITS.maxMemoryGb,
-            maxGpuCount: cfg?.resourceLimits?.maxGpuCount ?? DEFAULT_RESOURCE_LIMITS.maxGpuCount,
-        },
+        resourceLimits,
+        resourcePolicy: resolvePolicy(resourceLimits, cfg),
         adminPort: cfg?.adminPort ?? DEFAULT_ADMIN_PORT,
         skillsDir: cfg?.skillsDir ?? (env.isDev ? devSkillsDir : null),
         configError,

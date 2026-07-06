@@ -55,7 +55,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Pool } from "pg";
 
-import type { ResourceSpec } from "../config/resource-limits.js";
+import type { MachineBudget, ResourceSpec } from "../config/resource-limits.js";
 import { forStep } from "../auth/types.js";
 import type { RunSession } from "../auth/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
@@ -113,6 +113,14 @@ export interface ExecuteAnalysisInput {
      * `DEFAULT_STEP_TIMEOUT_SECONDS` when a step is absent here.
      */
     readonly timeoutByStepId?: Readonly<Record<string, number>>;
+    /**
+     * Machine resource budget snapshotted by `executePlan` at the async edge.
+     * The scheduler admits dependency-satisfied steps only while the declared
+     * resources of concurrently running steps fit within it. Absent (no policy
+     * configured, or a workflow persisted before this field existed), every
+     * dependency-satisfied step starts immediately — the legacy fan-out.
+     */
+    readonly budget?: MachineBudget;
     /**
      * Durable `RunSession` minted at the async edge by `executePlan`.
      * Carries the run-authorization credential, identity, scope, and `runFrame.runId`.
@@ -500,7 +508,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
 
     const budgetExceededChildIds = new Set<string>();
 
-    const stepRuntime = new Map<string, { status: "pending" | "running" | "completed" | "failed"; durationMs?: number; error?: string }>();
+    const stepRuntime = new Map<string, { status: "pending" | "queued" | "running" | "completed" | "failed"; durationMs?: number; error?: string }>();
     for (const step of input.steps) {
         stepRuntime.set(step.id, { status: "pending" });
     }
@@ -536,9 +544,48 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
     const dbosParentId = DBOS.workflowID ?? workflowId;
     const dispatchReady = async (): Promise<void> => {
         if (failFast) return;
-        const ready = scheduleReady(input.steps, completed, new Set([...inFlight.values()].map((h) => h.stepId)));
-        if (ready.length === 0) return;
-        for (const stepId of ready) {
+        const inFlightStepIds = new Set([...inFlight.values()].map((h) => h.stepId));
+        let admit: readonly string[];
+        let queuedChanged = false;
+        if (input.budget) {
+            const scheduled = scheduleReady(input.steps, completed, inFlightStepIds, {
+                budget: input.budget,
+                resourcesByStepId: input.resourcesByStepId,
+            });
+            if (scheduled.neverFits.length > 0) {
+                // An over-budget step can never be admitted — plan-time validation
+                // makes this unreachable for new plans; stored plans fail loudly
+                // instead of waiting forever. Standard fail-fast follows.
+                for (const stepId of scheduled.neverFits) {
+                    const r = input.resourcesByStepId[stepId];
+                    const declared = r ? `${r.cpu} CPU / ${r.memoryGb} GB` : "undeclared";
+                    failed.add(stepId);
+                    stepRuntime.set(stepId, {
+                        status: "failed",
+                        error: `step resources (${declared}) exceed the machine budget (${input.budget.cpu} CPU / ${input.budget.memoryGb} GB)`,
+                    });
+                }
+                failFast = true;
+                failureReason = `step "${scheduled.neverFits[0]}" exceeds the machine resource budget`;
+                await cancelInFlight(inFlight, "fail_fast");
+                await emitDagSnapshot();
+                return;
+            }
+            for (const stepId of scheduled.heldForCapacity) {
+                if (stepRuntime.get(stepId)!.status !== "queued") {
+                    stepRuntime.set(stepId, { status: "queued" });
+                    queuedChanged = true;
+                }
+            }
+            admit = scheduled.admit;
+        } else {
+            admit = scheduleReady(input.steps, completed, inFlightStepIds);
+        }
+        if (admit.length === 0) {
+            if (queuedChanged) await emitDagSnapshot();
+            return;
+        }
+        for (const stepId of admit) {
             const idx = stepIndexById.get(stepId)!;
             const childWorkflowId = `${workflowId}-${idx}`;
             const baseChildInput = buildChildInput({

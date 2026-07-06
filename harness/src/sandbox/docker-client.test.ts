@@ -32,10 +32,12 @@ function stubDocker(): {
     created: CreatedContainer[];
     removed: string[];
     running: Map<string, boolean>;
+    oomKilled: Set<string>;
 } {
     const created: CreatedContainer[] = [];
     const removed: string[] = [];
     const running = new Map<string, boolean>();
+    const oomKilled = new Set<string>();
 
     const makeContainer = (id: string): StubContainer => ({
         id,
@@ -52,7 +54,7 @@ function stubDocker(): {
             }
             return {
                 NetworkSettings: { Ports: { "8765/tcp": [{ HostPort: "32100" }] } },
-                State: { Running: running.get(id) === true },
+                State: { Running: running.get(id) === true, OOMKilled: oomKilled.has(id) },
             };
         },
         stop: async () => {
@@ -77,7 +79,7 @@ function stubDocker(): {
         getContainer: (id: string) => makeContainer(id),
     } as unknown as Docker;
 
-    return { docker, created, removed, running };
+    return { docker, created, removed, running, oomKilled };
 }
 
 describe("docker createSandbox / teardown / isAlive", () => {
@@ -252,7 +254,7 @@ describe("docker createSandbox / teardown / isAlive", () => {
                     callbackSecret: "x",
                 })
             )._unsafeUnwrap(),
-        ).toBe(false);
+        ).toEqual({ alive: false, oomKilled: false });
 
         running.set("alive", true);
         expect(
@@ -265,7 +267,7 @@ describe("docker createSandbox / teardown / isAlive", () => {
                     callbackSecret: "x",
                 })
             )._unsafeUnwrap(),
-        ).toBe(true);
+        ).toEqual({ alive: true, oomKilled: false });
 
         running.set("stopped", false);
         expect(
@@ -278,7 +280,32 @@ describe("docker createSandbox / teardown / isAlive", () => {
                     callbackSecret: "x",
                 })
             )._unsafeUnwrap(),
-        ).toBe(false);
+        ).toEqual({ alive: false, oomKilled: false });
+    });
+
+    test("isAlive reports an OOM-killed container as dead with the OOM cause", async () => {
+        const { docker, running, oomKilled } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            sessionsBasePath: "/sessions",
+            docker,
+            registerSandbox: async () => {},
+        });
+
+        running.set("oomed", false);
+        oomKilled.add("oomed");
+        expect(
+            (
+                await ops.isAlive({
+                    sandboxId: "oomed",
+                    host: "h",
+                    port: 1,
+                    backend: "docker",
+                    callbackSecret: "x",
+                })
+            )._unsafeUnwrap(),
+        ).toEqual({ alive: false, oomKilled: true });
     });
 
     test("isAlive errs on non-404 errors so callers can retry", async () => {

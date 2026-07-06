@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { ok, err, type Result, type ResultAsync } from "neverthrow";
-import { AnalysisPlanSchema, validatePlan, upsertPlan, type AnalysisPlan, type DbError, type UpsertPlanInput } from "@inflexa-ai/harness";
+import { AnalysisPlanSchema, validatePlan, upsertPlan, type AnalysisPlan, type DbError, type ResourceLimits, type UpsertPlanInput } from "@inflexa-ai/harness";
 
 /**
  * The real `upsertPlan(pool, input)` return, captured by `ReturnType` so the
@@ -132,7 +132,7 @@ function derivePlanId(analysisId: string, fileBytes: Buffer): string {
  * "rejected before any side effect" gate). {@link persistPlan} does the pool-backed
  * write afterward, from the {@link PlanIntake} this returns.
  */
-export function validatePlanFile(analysisId: string, path: string): Result<PlanIntake, PlanIntakeError> {
+export function validatePlanFile(analysisId: string, path: string, perStepCeiling?: ResourceLimits): Result<PlanIntake, PlanIntakeError> {
     return readPlanBytes(path).andThen((bytes) =>
         parsePlanJson(path, bytes)
             .andThen((raw): Result<AnalysisPlan, PlanIntakeError> => {
@@ -147,7 +147,10 @@ export function validatePlanFile(analysisId: string, path: string): Result<PlanI
                 if (plan.steps.length === 0) {
                     return err({ type: "plan_invalid", path, errors: ["Plan has no steps — add at least one analysis step to run."] });
                 }
-                const structural = validatePlan(plan);
+                // The ceiling makes an over-sized step a loud pre-boot rejection —
+                // the same loud-at-plan-time gate the harness planner applies —
+                // instead of a run that fails at its first scheduling round.
+                const structural = validatePlan(plan, { perStepCeiling });
                 return structural.valid ? ok(plan) : err({ type: "plan_invalid", path, errors: structural.errors });
             })
             .map((plan): PlanIntake => ({

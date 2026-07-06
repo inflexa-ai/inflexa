@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+    type BudgetAdmission,
     CycleError,
     DuplicateStepIdError,
     MissingDependencyError,
@@ -55,6 +56,106 @@ describe("scheduleReady", () => {
     it("respects startedSet for in-flight siblings", () => {
         const plan = [step("A"), step("B", "A"), step("C", "A")];
         expect(scheduleReady(plan, new Set(["A"]), new Set(["B"]))).toEqual(["C"]);
+    });
+});
+
+describe("scheduleReady with budget admission", () => {
+    const admission = (budget: BudgetAdmission["budget"], resources: BudgetAdmission["resourcesByStepId"]): BudgetAdmission => ({
+        budget,
+        resourcesByStepId: resources,
+    });
+
+    it("admits every ready step while the budget has room", () => {
+        const plan = [step("A"), step("B"), step("C")];
+        const result = scheduleReady(
+            plan,
+            new Set(),
+            new Set(),
+            admission({ cpu: 8, memoryGb: 16 }, { A: { cpu: 2, memoryGb: 4 }, B: { cpu: 2, memoryGb: 4 }, C: { cpu: 2, memoryGb: 4 } }),
+        );
+        expect(result).toEqual({ admit: ["A", "B", "C"], heldForCapacity: [], neverFits: [] });
+    });
+
+    it("holds a ready step once the round's admissions fill the budget", () => {
+        const plan = [step("A"), step("B"), step("C")];
+        const result = scheduleReady(
+            plan,
+            new Set(),
+            new Set(),
+            admission({ cpu: 4, memoryGb: 8 }, { A: { cpu: 2, memoryGb: 4 }, B: { cpu: 2, memoryGb: 4 }, C: { cpu: 2, memoryGb: 4 } }),
+        );
+        expect(result).toEqual({ admit: ["A", "B"], heldForCapacity: ["C"], neverFits: [] });
+    });
+
+    it("counts in-flight steps' declared resources against the budget", () => {
+        const plan = [step("A"), step("B"), step("C")];
+        const result = scheduleReady(
+            plan,
+            new Set(),
+            new Set(["A", "B"]),
+            admission({ cpu: 4, memoryGb: 8 }, { A: { cpu: 2, memoryGb: 4 }, B: { cpu: 2, memoryGb: 4 }, C: { cpu: 2, memoryGb: 4 } }),
+        );
+        expect(result).toEqual({ admit: [], heldForCapacity: ["C"], neverFits: [] });
+    });
+
+    it("admits held steps once completions free capacity", () => {
+        const plan = [step("A"), step("B"), step("C")];
+        const resources = { A: { cpu: 2, memoryGb: 4 }, B: { cpu: 2, memoryGb: 4 }, C: { cpu: 2, memoryGb: 4 } };
+        const result = scheduleReady(plan, new Set(["A"]), new Set(["B"]), admission({ cpu: 4, memoryGb: 8 }, resources));
+        expect(result).toEqual({ admit: ["C"], heldForCapacity: [], neverFits: [] });
+    });
+
+    it("a smaller later candidate skips over a blocked larger one", () => {
+        const plan = [step("big"), step("small")];
+        const result = scheduleReady(
+            plan,
+            new Set(),
+            new Set(["running"]),
+            admission({ cpu: 4, memoryGb: 8 }, { running: { cpu: 2, memoryGb: 4 }, big: { cpu: 4, memoryGb: 8 }, small: { cpu: 1, memoryGb: 2 } }),
+        );
+        expect(result).toEqual({ admit: ["small"], heldForCapacity: ["big"], neverFits: [] });
+    });
+
+    it("gates on memory independently of CPU", () => {
+        const plan = [step("A"), step("B")];
+        const result = scheduleReady(
+            plan,
+            new Set(),
+            new Set(),
+            admission({ cpu: 8, memoryGb: 8 }, { A: { cpu: 1, memoryGb: 8 }, B: { cpu: 1, memoryGb: 1 } }),
+        );
+        expect(result).toEqual({ admit: ["A"], heldForCapacity: ["B"], neverFits: [] });
+    });
+
+    it("partitions a step that could never fit an empty budget into neverFits", () => {
+        const plan = [step("huge"), step("ok")];
+        const result = scheduleReady(
+            plan,
+            new Set(),
+            new Set(),
+            admission({ cpu: 4, memoryGb: 8 }, { huge: { cpu: 8, memoryGb: 16 }, ok: { cpu: 2, memoryGb: 4 } }),
+        );
+        expect(result).toEqual({ admit: ["ok"], heldForCapacity: [], neverFits: ["huge"] });
+    });
+
+    it("treats a step with no declared resources as weightless (legacy behavior for that step)", () => {
+        const plan = [step("undeclared"), step("B")];
+        const result = scheduleReady(plan, new Set(), new Set(), admission({ cpu: 4, memoryGb: 8 }, { B: { cpu: 4, memoryGb: 8 } }));
+        expect(result).toEqual({ admit: ["undeclared", "B"], heldForCapacity: [], neverFits: [] });
+    });
+
+    it("replays identically — same inputs, same partition", () => {
+        const plan = [step("A"), step("B", "A"), step("C", "A"), step("D", "B", "C")];
+        const adm = admission({ cpu: 4, memoryGb: 8 }, { A: { cpu: 4, memoryGb: 8 }, B: { cpu: 2, memoryGb: 4 }, C: { cpu: 2, memoryGb: 4 }, D: { cpu: 4, memoryGb: 8 } });
+        const first = scheduleReady(plan, new Set(["A"]), new Set(["B"]), adm);
+        const replay = scheduleReady(plan, new Set(["A"]), new Set(["B"]), adm);
+        expect(replay).toEqual(first);
+        expect(first).toEqual({ admit: ["C"], heldForCapacity: [], neverFits: [] });
+    });
+
+    it("without admission keeps the legacy flat readiness list", () => {
+        const plan = [step("A"), step("B"), step("C")];
+        expect(scheduleReady(plan, new Set())).toEqual(["A", "B", "C"]);
     });
 });
 

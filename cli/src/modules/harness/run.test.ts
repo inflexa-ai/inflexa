@@ -143,6 +143,7 @@ function makeSeams(
         },
         renderStepPrompt: (s) => `prompt:${s.id}`,
         newRunId: () => "run-fixed",
+        budget: { cpu: 4, memoryGb: 8 },
     };
     return { seams, rec };
 }

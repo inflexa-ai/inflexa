@@ -50,7 +50,7 @@ describe("checkShard", () => {
         const sent: Array<{ workflowId: string; execId: string; reason: string }> = [];
 
         const summary = await checkShard([row("sbx-1")], {
-            isAlive: async () => false,
+            isAlive: async () => ({ alive: false, oomKilled: false }),
             getStatus: async () => ({ status: "PENDING" }),
             sendSynthetic: async (workflowId, execId, _failure, reason) => {
                 sent.push({ workflowId, execId, reason });
@@ -72,10 +72,24 @@ describe("checkShard", () => {
         });
     });
 
+    test("OOM-killed sandbox sends the sandbox-oom-killed reason", async () => {
+        const sent: Array<{ reason: string; syntheticReason: string }> = [];
+
+        await checkShard([row("sbx-oom")], {
+            isAlive: async () => ({ alive: false, oomKilled: true }),
+            getStatus: async () => ({ status: "PENDING" }),
+            sendSynthetic: async (_workflowId, _execId, failure, reason) => {
+                sent.push({ reason, syntheticReason: failure.syntheticFailure?.reason ?? "" });
+            },
+        });
+
+        expect(sent).toEqual([{ reason: "sandbox-oom-killed", syntheticReason: "sandbox-oom-killed" }]);
+    });
+
     test("alive sandbox is skipped", async () => {
         const sent: unknown[] = [];
         const summary = await checkShard([row("sbx-2")], {
-            isAlive: async () => true,
+            isAlive: async () => ({ alive: true, oomKilled: false }),
             getStatus: async () => ({ status: "PENDING" }),
             sendSynthetic: async (...args) => {
                 sent.push(args);
@@ -88,7 +102,7 @@ describe("checkShard", () => {
     test("dead sandbox but terminal workflow does NOT send", async () => {
         const sent: unknown[] = [];
         const summary = await checkShard([row("sbx-3")], {
-            isAlive: async () => false,
+            isAlive: async () => ({ alive: false, oomKilled: false }),
             getStatus: async () => ({ status: "SUCCESS" }),
             sendSynthetic: async (...args) => {
                 sent.push(args);
@@ -105,7 +119,7 @@ describe("checkShard", () => {
     test("dead sandbox without execId is recorded but not sent", async () => {
         const sent: unknown[] = [];
         const summary = await checkShard([row("sbx-4", null)], {
-            isAlive: async () => false,
+            isAlive: async () => ({ alive: false, oomKilled: false }),
             getStatus: async () => ({ status: "PENDING" }),
             sendSynthetic: async (...args) => {
                 sent.push(args);
@@ -120,7 +134,7 @@ describe("checkShard", () => {
         const summary = await checkShard([row("sbx-5"), row("sbx-6")], {
             isAlive: async (ref) => {
                 if (ref.sandboxId === "sbx-5") throw new Error("API 5xx");
-                return true;
+                return { alive: true, oomKilled: false };
             },
             getStatus: async () => ({ status: "PENDING" }),
             sendSynthetic: async (...args) => {
@@ -134,7 +148,7 @@ describe("checkShard", () => {
     test("multiple dead+in-flight rows produce one synthetic each", async () => {
         const sent: string[] = [];
         await checkShard([row("a"), row("b"), row("c")], {
-            isAlive: async () => false,
+            isAlive: async () => ({ alive: false, oomKilled: false }),
             getStatus: async () => ({ status: "PENDING" }),
             sendSynthetic: async (_wf, execId) => {
                 sent.push(execId);
@@ -157,7 +171,7 @@ describe("checkShard", () => {
             execId: "an-1:run-1-0:s-a:fn-0",
         };
         await checkShard([r], {
-            isAlive: async () => false,
+            isAlive: async () => ({ alive: false, oomKilled: false }),
             getStatus: async () => ({ status: "PENDING" }),
             sendSynthetic: async (workflowId, execId) => {
                 seen.push({ workflowId, execId });
@@ -172,7 +186,7 @@ describe("checkShard — dead sandbox status gating", () => {
         const sent: unknown[] = [];
 
         const summary = await checkShard([row("sbx-nobus")], {
-            isAlive: async () => false,
+            isAlive: async () => ({ alive: false, oomKilled: false }),
             getStatus: async () => null,
             sendSynthetic: async (...args) => {
                 sent.push(args);

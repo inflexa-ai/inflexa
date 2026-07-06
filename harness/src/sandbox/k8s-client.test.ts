@@ -647,7 +647,7 @@ describe("k8s isAlive", () => {
                 coreApi: stub.coreApi,
                 registerSandbox: async () => {},
             });
-            const alive = (
+            const liveness = (
                 await ops.isAlive({
                     sandboxId: "sbx-x",
                     host: "h",
@@ -656,7 +656,38 @@ describe("k8s isAlive", () => {
                     callbackSecret: "x",
                 })
             )._unsafeUnwrap();
-            expect(alive).toBe(expected);
+            expect(liveness.alive).toBe(expected);
+            expect(liveness.oomKilled).toBe(false);
         }
+    });
+
+    test("Failed pod with an OOMKilled container reports the OOM cause", async () => {
+        const stub = stubApis([
+            {
+                status: {
+                    phase: "Failed",
+                    containerStatuses: [{ state: { terminated: { reason: "OOMKilled" } } }],
+                },
+                metadata: { name: "p" },
+            },
+        ]);
+        const ops = createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            namespace: "sandbox",
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+        const liveness = (
+            await ops.isAlive({
+                sandboxId: "sbx-oom",
+                host: "h",
+                port: 1,
+                backend: "k8s",
+                callbackSecret: "x",
+            })
+        )._unsafeUnwrap();
+        expect(liveness).toEqual({ alive: false, oomKilled: true });
     });
 });

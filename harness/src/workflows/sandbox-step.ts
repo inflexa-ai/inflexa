@@ -411,9 +411,10 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
     // that catches a dead pod between checkpoints.
     await DBOS.runStep(
         async () => {
-            const alive = await deps.sandboxClient.isAlive(sandbox);
-            if (!alive) {
-                throw new Error(`sandbox ${sandbox.sandboxId} no longer alive on replay — caller must restart the step`);
+            const liveness = await deps.sandboxClient.isAlive(sandbox);
+            if (!liveness.alive) {
+                const cause = liveness.oomKilled ? "was killed for exceeding its memory limit (sandbox-oom-killed)" : "no longer alive on replay";
+                throw new Error(`sandbox ${sandbox.sandboxId} ${cause} — caller must restart the step`);
             }
         },
         { name: "sandbox.recheck-alive" },

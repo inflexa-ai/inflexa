@@ -29,7 +29,7 @@ import type { RunSession } from "../auth/types.js";
 import { forSubAgent } from "../auth/types.js";
 import { finalText, runAgent } from "../loop/run-agent.js";
 import { durableStep } from "../loop/run-step.js";
-import type { ResourceSpec } from "../config/resource-limits.js";
+import type { ResourcePolicy, ResourceSpec } from "../config/resource-limits.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import { generateExecutionId } from "../sandbox/execution-id.js";
@@ -56,7 +56,8 @@ export const EPHEMERAL_WORKFLOW_PREFIX = "ephemeral:" as const;
 const DEFAULT_DEADLINE_MS = 120_000;
 
 /** Ephemeral runs have no planner estimate, so the sandbox box is chosen here
- *  explicitly — a mid-range request clamped to cluster limits at create time. */
+ *  explicitly — the policy's `ephemeral` spec when supplied, otherwise this
+ *  mid-range default; either way clamped to cluster limits at create time. */
 const EPHEMERAL_SANDBOX_RESOURCES: ResourceSpec = { cpu: 4, memoryGb: 8 };
 
 /** The body's construction-time deps — closed over at registration. */
@@ -72,6 +73,8 @@ export interface EphemeralDeps {
     readonly model: string;
     /** API keys for the bio/chem tools the ephemeral executor may use. */
     readonly bioKeys: BioToolKeys;
+    /** Host resource policy — its `ephemeral` spec overrides the default sandbox size. */
+    readonly resourcePolicy?: ResourcePolicy;
 }
 
 /**
@@ -128,7 +131,7 @@ export async function runEphemeralBody(input: EphemeralWorkflowInput, deps: Ephe
             analysisId,
             execId: null,
             childWorkflowId: workflowId,
-            resources: EPHEMERAL_SANDBOX_RESOURCES,
+            resources: deps.resourcePolicy?.ephemeral ?? EPHEMERAL_SANDBOX_RESOURCES,
             // No read-write step mount — only the read-only analysis tree.
             readOnly: true,
         },

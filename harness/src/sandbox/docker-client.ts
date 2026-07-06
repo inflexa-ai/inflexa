@@ -23,7 +23,7 @@ import { buildMountPlan } from "./mount-plan.js";
 function statusOf(e: SandboxError): number | undefined {
     return "status" in e ? e.status : undefined;
 }
-import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxRef } from "./types.js";
+import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef } from "./types.js";
 
 const SANDBOX_SERVER_PORT = 8765;
 const HEALTH_TIMEOUT_MS = 30_000;
@@ -93,7 +93,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
     createSandbox(meta: CreateSandboxMeta, identity: SandboxIdentity): ResultAsync<SandboxRef, SandboxError>;
     teardown(ref: SandboxRef): ResultAsync<void, SandboxError>;
     teardownById(sandboxId: string): ResultAsync<void, SandboxError>;
-    isAlive(ref: SandboxRef): ResultAsync<boolean, SandboxError>;
+    isAlive(ref: SandboxRef): ResultAsync<SandboxLiveness, SandboxError>;
     listManagedSandboxes(): ResultAsync<ManagedSandbox[], SandboxError>;
 } {
     const docker = config.docker ?? new Docker();
@@ -281,7 +281,10 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                 async () => {
                     const container = docker.getContainer(ref.sandboxId);
                     const info = await container.inspect();
-                    return info.State.Running === true;
+                    return {
+                        alive: info.State.Running === true,
+                        oomKilled: info.State.OOMKilled === true,
+                    };
                 },
                 (status, cause) => ({
                     type: "liveness_failed",
@@ -292,7 +295,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                 }),
             ).orElse((e) =>
                 // dockerode throws 404 for a missing container — observably dead.
-                statusOf(e) === 404 ? ok(false) : err(e),
+                statusOf(e) === 404 ? ok({ alive: false, oomKilled: false }) : err(e),
             );
         },
     };

@@ -16,6 +16,8 @@ The open-source Inflexa product monorepo — a set of **independent subsystems**
 
 `cli` and `harness` are **fully independent packages** — each owns its `package.json`, lockfile, and `node_modules`. `cli` is the *embedder*: it consumes `harness` as `@inflexa-ai/harness` (via `file:../harness`, or a published version) and wires the harness's capability seams to trivial local realizations. Nothing else crosses a subsystem boundary except the shared `skills/` and `templates/` content, which `harness` reads at runtime (`skillsDir` / `templatesDir`) — kept at the root precisely so both the OSS host and a managed deployment can load the same content.
 
+**Design rule for the boundary**: the harness is the product core and is designed from its own point of view — its capabilities, concepts, and configuration surface are harness-owned and host-agnostic, meaning the same thing under the CLI or a managed deployment. An embedder is a consumer: it supplies values at its composition root (configuration, policies, seam realizations) and never owns or redefines what the harness does. Design new capabilities harness-first, then wire them from the embedder — never as an embedder feature the harness happens to honor.
+
 ## Working here
 
 - Pick the subsystem, `cd` into it, then use its scripts (`bun install`, `bun run dev`, …). The root has none.

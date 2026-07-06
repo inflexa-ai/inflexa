@@ -15,7 +15,7 @@ import { ResultAsync, err, ok } from "neverthrow";
 
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { buildMountPlan } from "./mount-plan.js";
-import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxRef } from "./types.js";
+import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef } from "./types.js";
 
 /** Read the originating HTTP status off any `SandboxError` variant that carries one. */
 function statusOf(e: SandboxError): number | undefined {
@@ -428,7 +428,7 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
     createSandbox(meta: CreateSandboxMeta, identity: SandboxIdentity): ResultAsync<SandboxRef, SandboxError>;
     teardown(ref: SandboxRef): ResultAsync<void, SandboxError>;
     teardownById(sandboxId: string): ResultAsync<void, SandboxError>;
-    isAlive(ref: SandboxRef): ResultAsync<boolean, SandboxError>;
+    isAlive(ref: SandboxRef): ResultAsync<SandboxLiveness, SandboxError>;
     listManagedSandboxes(): ResultAsync<ManagedSandbox[], SandboxError>;
 } {
     const { batchApi, coreApi } = config.batchApi && config.coreApi ? { batchApi: config.batchApi, coreApi: config.coreApi } : buildKubeApi();
@@ -533,15 +533,21 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
             )
                 .map((pods) => {
                     const pod = pods.items[0];
-                    if (!pod) return false;
+                    if (!pod) return { alive: false, oomKilled: false };
                     const phase = pod.status?.phase;
                     // `Pending` and `Running` are alive; `Succeeded`, `Failed`,
                     // `Unknown` are dead. `Pending` covers startup.
-                    return phase === "Pending" || phase === "Running";
+                    const alive = phase === "Pending" || phase === "Running";
+                    const oomKilled =
+                        !alive &&
+                        (pod.status?.containerStatuses ?? []).some(
+                            (cs) => cs.state?.terminated?.reason === "OOMKilled" || cs.lastState?.terminated?.reason === "OOMKilled",
+                        );
+                    return { alive, oomKilled };
                 })
                 .orElse((e) =>
                     // A 404 means the pod is gone — observably dead.
-                    statusOf(e) === 404 ? ok(false) : err(e),
+                    statusOf(e) === 404 ? ok({ alive: false, oomKilled: false }) : err(e),
                 );
         },
     };
