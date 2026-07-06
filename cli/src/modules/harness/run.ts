@@ -403,16 +403,24 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
     );
 
     // Agents orient on `dataprofile/profile-summary.md`, but nothing hard-fails
-    // without it — warn and proceed (spec: warns but does not block).
-    const profileStatus = (await loadDataProfileStatus(runtime.pool, analysis.id)).match(
-        (st) => st,
-        () => null,
+    // without it — warn and proceed (spec: warns but does not block). Keep a read
+    // failure distinct from a legitimately absent/incomplete profile: collapsing a
+    // DbError to `null` here would print "No completed data profile" for an
+    // unreachable Postgres, masking the real fault behind a data-quality hint. This
+    // branch is purely about an honest message — the pool-backed `persistPlan` just
+    // below still hard-fails if the DB is genuinely down.
+    (await loadDataProfileStatus(runtime.pool, analysis.id)).match(
+        (status) => {
+            if (status?.status !== "completed") {
+                log.warn(
+                    "No completed data profile — agents orient on `dataprofile/profile-summary.md`, so steps get less context. Run `inflexa profile` first for best results.",
+                );
+            }
+        },
+        (e) => {
+            log.warn(`Could not read the data profile status (${e.type}) — proceeding without it, so steps may get less context. Is Postgres reachable?`);
+        },
     );
-    if (profileStatus?.status !== "completed") {
-        log.warn(
-            "No completed data profile — agents orient on `dataprofile/profile-summary.md`, so steps get less context. Run `inflexa profile` first for best results.",
-        );
-    }
 
     // Persist the pre-validated plan under its deterministic id — the plan was
     // already gated before boot; only this pool-backed write needs the runtime. The
