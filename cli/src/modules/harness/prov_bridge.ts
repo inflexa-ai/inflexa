@@ -66,23 +66,32 @@ function scopeScriptPath(scriptPath: string, resourceId: string, runId: string, 
  * it here too would double-count. An `"artifacts"`-source read is the step's OWN prior output — the
  * intra-step chain signal the step-level registry drops as noise: it is stripped to its analysis-scoped
  * `runs/{runId}/{stepId}/…` form and included as `source: "step"` ONLY when that path names a file THIS
- * registration produces (`producedPaths`); a read of a written-then-deleted phantom hits nothing and is
- * dropped so no `used` edge dangles onto an unregistered entity. Deduped by `(path, hash)` so a repeated
- * open or a script re-read collapses to one edge.
+ * registration produces. The edge is keyed on the SURVIVING output hash (`producedHashByPath`), NOT the
+ * read's own `ref.hash`: the collector is last-write-wins per path, so a self-read recorded against an
+ * earlier revision of the file (or with no hash at all — `fillInputHashesFromDisk` skips artifacts
+ * reads) would otherwise point its `used` edge at a `(path, hash)` entity this registration never
+ * registers. Resolving to the registered hash makes the edge land on a real entity by construction; a
+ * read of a written-then-deleted phantom (path absent from the map) is dropped. Deduped by
+ * `(path, hash)` so a repeated open or a script re-read collapses to one edge.
  */
-function toCommandInputs(reads: readonly CollectorInputRef[], resourceId: string, producedPaths: ReadonlySet<string>): ProvCommandInputRef[] {
+function toCommandInputs(reads: readonly CollectorInputRef[], resourceId: string, producedHashByPath: ReadonlyMap<string, string>): ProvCommandInputRef[] {
     const containerPrefix = `/${resourceId}/`;
     const seen = new Set<string>();
     const inputs: ProvCommandInputRef[] = [];
     for (const ref of reads) {
         const path = ref.path.startsWith(containerPrefix) ? ref.path.slice(containerPrefix.length) : ref.path;
-        const dedupKey = `${path}|${ref.hash}`;
         if (ref.source === "artifacts") {
-            if (!producedPaths.has(path) || seen.has(dedupKey)) continue;
+            // Key the self-read on the entity THIS registration will register (surviving output hash),
+            // not the replay/rewrite-fragile read-time hash — see the JSDoc.
+            const producedHash = producedHashByPath.get(path);
+            if (producedHash === undefined) continue;
+            const dedupKey = `${path}|${producedHash}`;
+            if (seen.has(dedupKey)) continue;
             seen.add(dedupKey);
-            inputs.push({ path, hash: ref.hash, source: "step", ...(ref.fileId !== undefined ? { fileId: ref.fileId } : {}) });
+            inputs.push({ path, hash: producedHash, source: "step", ...(ref.fileId !== undefined ? { fileId: ref.fileId } : {}) });
             continue;
         }
+        const dedupKey = `${path}|${ref.hash}`;
         if (!ref.hash || seen.has(dedupKey)) continue;
         seen.add(dedupKey);
         inputs.push({ path, hash: ref.hash, source: ref.source, ...(ref.fileId !== undefined ? { fileId: ref.fileId } : {}) });
@@ -104,7 +113,7 @@ function toCommandRef(
     resourceId: string,
     runId: string,
     stepId: string,
-    producedPaths: ReadonlySet<string>,
+    producedHashByPath: ReadonlyMap<string, string>,
 ): ProvCommandRef {
     const producer = record.producer;
     if (producer.type === "file_tool") return { kind: "file_tool", tool: producer.tool, outputs };
@@ -117,7 +126,7 @@ function toCommandRef(
         ...(producer.durationMs !== undefined ? { durationMs: producer.durationMs } : {}),
         ...(scriptPath !== undefined ? { scriptPath } : {}),
         outputs,
-        inputs: toCommandInputs(record.inputs, resourceId, producedPaths),
+        inputs: toCommandInputs(record.inputs, resourceId, producedHashByPath),
     };
 }
 
@@ -167,11 +176,13 @@ export function createBusArtifactRegistry(): ArtifactRegistry {
             const recordByPath = new Map<string, CollectorRecord>();
             for (const rec of input.collector.getRecords()) recordByPath.set(rec.outputPath, rec);
 
-            // The analysis-scoped paths that WILL carry a file entity this registration — the membership
-            // set an intra-step `"artifacts"` self-read must hit to resolve (design D4). Hash-less entries
-            // are excluded: they fail below and never register an entity, so a read of one would dangle.
-            const producedPaths = new Set<string>();
-            for (const entry of input.artifacts) if (entry.hash) producedPaths.add(scopePath(entry.path));
+            // The analysis-scoped path → surviving content hash of every file entity this registration
+            // WILL register — the map an intra-step `"artifacts"` self-read resolves against (design D4),
+            // keying its `used` edge onto the hash actually registered rather than the read's own. Hash-
+            // less entries are excluded: they fail below and never register an entity, so a read of one
+            // finds no key and is dropped rather than dangling.
+            const producedHashByPath = new Map<string, string>();
+            for (const entry of input.artifacts) if (entry.hash) producedHashByPath.set(scopePath(entry.path), entry.hash);
 
             // Partition (design D5): one lookup per entry buckets it by its record's `producer` OBJECT, or
             // into the leaf bucket when it has no record. Exclusive by construction — this single get()
@@ -221,7 +232,7 @@ export function createBusArtifactRegistry(): ArtifactRegistry {
                 if (files.length === 0) continue;
 
                 const outputs: ProvFileKey[] = files.map((f) => ({ path: f.path, hash: f.hash }));
-                const command = toCommandRef(record, outputs, input.resourceId, input.runId, input.stepId, producedPaths);
+                const command = toCommandRef(record, outputs, input.resourceId, input.runId, input.stepId, producedHashByPath);
                 Bus.emit("inflexa", { type: "prov.command_executed", analysisId: input.resourceId, actor, step, command });
                 for (const file of files) {
                     Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, file, step, generation: "command" });

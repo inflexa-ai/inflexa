@@ -163,6 +163,12 @@ export function applyBusEvent(event: BusEvent, sessionId: string): void {
                 setChatStatus("error");
             }
             break;
+
+        // Analysis-scoped events (`prov.*`) reach this process-global bus but have no place in a session
+        // view; ignore anything that is not one of the session-scoped events handled above. Deliberately
+        // NOT a `never`-exhaustive switch — this handler is meant to cover a SUBSET of the bus union.
+        default:
+            break;
     }
 }
 
