@@ -21,8 +21,9 @@ name: Build Sandbox Images
 # The build-time LOAD CHECK runs inside each image build (best-effort + non-empty
 # floor). The COVERAGE REPORT runs after extraction (want-vs-got + regression diff
 # vs the last published manifest: an amd64 regression fails, an arm64 miss is
-# informational). Tarball publish is candidate-only; latest/<arch> advances only
-# after acceptance goes green — see .github/workflows/lib-store-acceptance.yml.
+# informational). The build advances latest/<arch> at publish (build-floor gated),
+# mirroring the image :latest tag. Acceptance (.github/workflows/lib-store-acceptance.yml)
+# is a non-gating post-publish validation — it reports, it does not promote.
 #
 # GHCR push uses the workflow GITHUB_TOKEN (packages: write). S3 publish is OPT-IN
 # via repo/org configuration; without it the images still publish but the S3
@@ -275,9 +276,12 @@ jobs:
           TOP_IMAGE: ${{ steps.extract.outputs.top_image }}
         run: |
           scripts/lib-store-publish.sh "$ARCH" "$VERSION" dist
-          # The coverage baseline travels with the immutable version so the next
-          # build's regression diff has a per-arch reference point.
+          # The coverage baseline travels with the immutable version, and advances
+          # latest alongside the manifest (lib-store-publish.sh) so the next build's
+          # regression diff references this build. Acceptance is non-gating and moves
+          # neither.
           aws s3 cp dist/coverage.json "s3://$S3_BUCKET/$VERSION/linux-${ARCH}/coverage.json"
+          aws s3 cp dist/coverage.json "s3://$S3_BUCKET/latest/linux-${ARCH}/coverage.json"
 
       - name: Record candidate metadata
         run: |

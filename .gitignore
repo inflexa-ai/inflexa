@@ -16,7 +16,7 @@ dist-ssr
 # TypeScript incremental build info
 *.tsbuildinfo
 
-# Python bytecode cache (e.g. from cli/scripts/lib-validator/*.py smoke tests)
+# Python bytecode cache (e.g. from scripts/lib-validator/*.py smoke tests)
 __pycache__/
 *.py[cod]
 

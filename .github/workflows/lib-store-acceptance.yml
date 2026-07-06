@@ -1,19 +1,20 @@
 name: Sandbox Image Acceptance
 
-# Acceptance — the after-build, "as a user" validation gate (see design.md). It
-# runs on a FRESH machine with none of the builder's affordances and obtains the
-# store the way it is actually consumed: it PULLS the just-published sandbox image
-# for this arch from GHCR and boots it directly (the store is baked at
-# /mnt/libs/current, no mount), then runs the extensive suite
-# (scripts/lib-store-validate). The extracted tarballs are cut from that same
-# image, so validating the image validates the managed mount's content too.
+# Acceptance — the after-build, "as a user" validation (see design.md). It runs on
+# a FRESH machine with none of the builder's affordances and obtains the store the
+# way it is actually consumed: it PULLS the just-published sandbox image for this
+# arch from GHCR and boots it directly (the store is baked at /mnt/libs/current, no
+# mount), then runs the suite (scripts/lib-store-validate). The extracted tarballs
+# are cut from that same image, so validating the image validates the managed
+# mount's content too.
 #
-# Only a GREEN run promotes the candidate tarball manifest to latest/linux-<arch>;
-# a RED run leaves latest untouched and fails.
+# It is NON-GATING: `latest` was already advanced by the build. This run reports a
+# per-arch results table to the step summary and a green/red status for review —
+# it promotes nothing and rolls nothing back.
 #
 # Requires the same opt-in publish config as the build (LIB_STORE_S3_BUCKET,
-# LIB_STORE_PUBLISH_ROLE_ARN); without it there is nothing published to promote
-# and the run no-ops.
+# LIB_STORE_PUBLISH_ROLE_ARN) to resolve the candidate pointer; without it the run
+# no-ops.
 
 on:
   workflow_run:
@@ -73,8 +74,8 @@ jobs:
           fi
 
       # AWS credentials are configured BEFORE resolving the candidate: the
-      # workflow_dispatch path reads the candidate pointer from S3, and the
-      # promotion copy on green needs them too.
+      # workflow_dispatch path reads the candidate pointer from S3 to find the image
+      # to validate. Acceptance itself promotes nothing.
       - name: Configure AWS credentials
         if: steps.cfg.outputs.enabled == 'true'
         uses: aws-actions/configure-aws-credentials@v4
@@ -142,15 +143,11 @@ jobs:
         if: steps.candidate.outputs.present == 'true'
         run: docker pull "${{ steps.candidate.outputs.image }}"
 
-      # Boot the image (baked store, no mount), run the suite, promote on green.
-      - name: Validate + promote
+      # Boot the image (baked store, no mount) and run the suite. acceptance.sh
+      # renders the per-arch results table into the step summary and exits
+      # green/red; it promotes nothing.
+      - name: Validate + report
         if: steps.candidate.outputs.present == 'true'
         env:
           SANDBOX_IMAGE: ${{ steps.candidate.outputs.image }}
-        run: |
-          if scripts/lib-store-acceptance.sh "$ARCH" "${{ steps.candidate.outputs.version }}"; then
-            echo "| linux-$ARCH | GREEN → promoted |" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "| linux-$ARCH | RED → latest unchanged |" >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
+        run: scripts/lib-store-acceptance.sh "$ARCH" "${{ steps.candidate.outputs.version }}"

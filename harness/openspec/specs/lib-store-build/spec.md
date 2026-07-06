@@ -55,6 +55,13 @@ a mirror redirects payload downloads, not only the manifest) plus an absolute
 arch's manifest and MAY skip re-pulling any track whose digest they already
 hold.
 
+Each successful build SHALL advance the mutable `latest/linux-<arch>` pointer
+(manifest and coverage baseline) to the version it just published, gated by the
+build's own load check + non-empty floor + coverage regression guard — the same
+gate that decides whether the build publishes at all. Promotion to `latest` is
+NOT deferred to a separate acceptance run. This mirrors the image `:latest` tag,
+which the build already advances atomically at publish.
+
 #### Scenario: A published version is never mutated
 
 - **WHEN** a later build runs
@@ -66,37 +73,11 @@ hold.
 - **WHEN** it resolves a manifest that pins the same digest D for that track
 - **THEN** it does not re-download that tarball
 
-### Requirement: latest advances only to a validated version
+#### Scenario: A successful build advances latest
 
-The build SHALL gate promotion behind an **acceptance** check (formerly Gate 2).
-Acceptance SHALL run on a **fresh machine** — no network, runtime environment
-only, correct architecture — and SHALL obtain the candidate store the way it is
-actually consumed: by **booting the published image** (the OSS user path — the
-image the CLI's `inflexa sandbox pull` fetches) and/or by **mounting the extracted
-tarballs read-only** (the managed path), rather than a validator-private download.
-It SHALL run: `import`/`library()`/`require()` for **every** advertised package;
-a curated real operation for the compiled anchor packages; a network-filtered
-pass of R packages' own examples; and a check that the advertised `packages.txt`
-equals the actually-loadable set. Only when acceptance is green SHALL the
-`latest/<arch>` pointer be advanced to that version. A red acceptance SHALL leave
-`latest` unchanged and surface a failing status.
-
-#### Scenario: Green acceptance promotes latest
-
-- **GIVEN** a freshly published version whose acceptance run is green
-- **WHEN** acceptance completes
-- **THEN** `latest/<arch>` is advanced to that version
-
-#### Scenario: Red acceptance does not promote
-
-- **GIVEN** a freshly published version whose acceptance run is red
-- **WHEN** acceptance completes
-- **THEN** `latest/<arch>` still points at the previous validated version and the run reports failure
-
-#### Scenario: Acceptance obtains the store the way it is consumed
-
-- **WHEN** acceptance obtains the store
-- **THEN** it boots the published image (the OSS user path) and/or mounts the extracted tarballs read-only (the managed path), rather than a validator-private download path
+- **GIVEN** a build that passes its load check, non-empty floor, and coverage regression guard for an arch
+- **WHEN** the build publishes that arch
+- **THEN** `latest/linux-<arch>` (manifest + coverage baseline) advances to that version, without waiting on a separate acceptance run
 
 ### Requirement: The build publishes three layered sandbox images
 
@@ -265,4 +246,62 @@ they share one R library path and form a dependency chain.
 - **GIVEN** a build in which the arm64 R tracks fail to produce any loadable package
 - **WHEN** the arm64 manifest is written
 - **THEN** it pins only the non-R tracks and the coverage report lists the R packages as missing for arm64
+
+### Requirement: Acceptance is a non-gating post-publish validation
+
+After a build publishes, an **acceptance** run SHALL validate the published store
+on a **fresh machine** — no network, runtime environment only, correct
+architecture — obtaining the store the way it is actually consumed: by **booting
+the published image** (the OSS user path — the image `inflexa sandbox pull`
+fetches) and/or by **mounting the extracted tarballs read-only** (the managed
+path), rather than a validator-private download. It SHALL run, inside the
+obtained store:
+
+1. **the import-all invariant** — `import`/`library()`/`require()` for **every**
+   advertised package, and a check that the advertised `packages.txt` equals the
+   actually-loadable set (advertised ⊆ loadable).
+2. **the per-library smoke-test suite** (`lib-validator/run_all.py`) — the
+   behavioral pass: each covered library's self-contained smoke test runs a real
+   operation and reports pass, not-installed, or fail. An installed-but-broken
+   library counts as a failure; an absent library (its not-installed guard fires)
+   is a skip.
+
+Acceptance SHALL NOT run R packages' own examples and SHALL NOT maintain a
+curated anchor-operation registry; the per-library smoke-test suite is the sole
+behavioral pass and covers both R and Python. Acceptance SHALL NOT move `latest`
+or any other consumer-facing pointer and SHALL NOT publish, tag, or mutate any
+image or tarball — the build already published everything before acceptance runs.
+Acceptance SHALL surface, per architecture, a **results table** in its run
+summary reporting the import-all tally per track and the per-library validator
+outcome (counts of pass / fail / error / skipped, and the failing/errored
+libraries), plus an overall green/red status, so a maintainer can review exactly
+what was verified.
+
+#### Scenario: Acceptance obtains the store the way it is consumed
+
+- **WHEN** acceptance obtains the store
+- **THEN** it boots the published image (the OSS user path) and/or mounts the extracted tarballs read-only (the managed path), rather than a validator-private download path
+
+#### Scenario: The behavioral pass is the per-library smoke-test suite
+
+- **GIVEN** an obtained store with the per-library validators available
+- **WHEN** the acceptance run executes its behavioral pass
+- **THEN** it runs `lib-validator/run_all.py` inside the obtained store and does not run R package examples or a curated anchor registry
+
+#### Scenario: An absent library is skipped, not failed, by the behavioral pass
+
+- **GIVEN** a library whose smoke test's not-installed guard fires (the library is absent from this store/arch)
+- **WHEN** acceptance runs the per-library smoke-test suite
+- **THEN** that library is skipped by the behavioral pass, not counted as a failure
+
+#### Scenario: Acceptance does not move any pointer
+
+- **GIVEN** an acceptance run that completes either green or red
+- **WHEN** it finishes
+- **THEN** `latest/linux-<arch>`, the image `:latest` tag, and every published tarball are exactly as the build left them — acceptance mutates nothing
+
+#### Scenario: The acceptance run surfaces a results table
+
+- **WHEN** an acceptance run completes for an architecture
+- **THEN** its run summary contains a table of the import-all tally per track and the per-library validator outcome (pass / fail / error / skipped counts and the failing/errored libraries), plus the green/red status
 
