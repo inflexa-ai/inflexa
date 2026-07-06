@@ -359,7 +359,7 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
     // post-boot `persistPlan` so the file is read exactly once and its deterministic
     // id cannot shift if the file is edited mid-run. (`planPath` is narrowed to a
     // string by the `!planPath` guard above, whose `fail` returns `never`.)
-    const intake = validatePlanFile(analysis.id, planPath, cfg.resourceLimits).match(
+    const intake = validatePlanFile(analysis.id, planPath, cfg.resourcePolicy.perStep).match(
         (i) => i,
         (e) => fail(describePlanIntakeError(e)),
     );
