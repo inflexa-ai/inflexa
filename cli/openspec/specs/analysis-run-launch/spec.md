@@ -1,7 +1,7 @@
 # analysis-run-launch Specification
 
 ## Purpose
-The deliberate `inflexa run` action that launches a full `executeAnalysis` run from a validated plan: resolve the analysis, pre-flight, boot the embedded runtime, stage inputs, seed the ledger, take in the plan, and trigger — then block to a terminal run status with live progress, plus a read-only status view. Replicates the harness's own `executePlan` trigger flow (the cli runs no conversation agent). Lives in `src/modules/harness/run.ts`.
+The deliberate `inflexa run` action that launches a full `executeAnalysis` run from a validated plan: resolve the analysis, pre-flight (including validating the plan file), boot the embedded runtime, stage inputs, seed the ledger, persist the validated plan, and trigger — then block to a terminal run status with live progress, plus a read-only status view. Replicates the harness's own `executePlan` trigger flow (the cli runs no conversation agent). Lives in `src/modules/harness/run.ts`.
 
 ## Requirements
 
@@ -11,11 +11,16 @@ The system SHALL provide a dedicated command that launches a full `executeAnalys
 run for a resolved analysis from a validated plan. The command SHALL sequence:
 resolve the analysis reference → pre-flight prerequisite checks (the same actionable
 gates as the profile launch: sandbox image, embedding endpoint, skills dir, proxy
-key, model, Postgres) → boot the embedded runtime → stage the analysis's inputs into
-the session tree (mirror reconciliation; the run engine never downloads) → seed the
-harness analysis ledger row → plan intake → trigger. No passive flow (bare `inflexa`
-launch, TUI startup) SHALL stage, boot, or trigger. An analysis with no resolvable
-inputs SHALL short-circuit before boot with an actionable message.
+key, model, Postgres) → validate the plan file (the pure parse/schema/`validatePlan`
+gates, which persist nothing) → boot the embedded runtime → stage the analysis's
+inputs into the session tree (mirror reconciliation; the run engine never downloads)
+→ seed the harness analysis ledger row → persist the validated plan under its
+deterministic id → trigger. Plan validation SHALL precede the boot so a malformed or
+invalid plan is rejected before any side effect (no boot, no staging, no ledger row),
+per the plan-intake spec; only the deterministic-id persistence needs the booted
+pool. No passive flow (bare `inflexa` launch, TUI startup) SHALL stage, boot, or
+trigger. An analysis with no resolvable inputs SHALL short-circuit before boot with
+an actionable message.
 
 #### Scenario: Full launch sequence on a prepared analysis
 
@@ -26,6 +31,11 @@ inputs SHALL short-circuit before boot with an actionable message.
 
 - **WHEN** a prerequisite (e.g. sandbox image missing, embeddings endpoint unreachable) fails pre-flight
 - **THEN** the command exits with that prerequisite's actionable message and neither staging, plan persistence, nor a run row was produced
+
+#### Scenario: Invalid plan is rejected before boot
+
+- **WHEN** the plan file is unreadable, not valid JSON, fails the plan schema, or fails `validatePlan` (cycle, unknown agent, missing resources, zero steps)
+- **THEN** the command exits with the plan's actionable error before the runtime is booted — the runtime is never started, nothing is staged, and no ledger or plan row is written
 
 #### Scenario: Missing completed data profile warns but does not block
 
