@@ -65,15 +65,14 @@ export type ResolvedHarnessConfig = {
         readonly github?: string;
     };
     readonly sandboxImage: string;
+    /** Per-step ceilings — identical to `resourcePolicy.perStep`; its own field for the sandbox-client seam. */
     readonly resourceLimits: ResourceLimits;
     /**
      * The harness's `ResourcePolicy`, resolved from `harness.resourceLimits`:
-     * the per-step ceilings (`resourceLimits`, unchanged) plus the machine
-     * budget and optional ephemeral sandbox size. What the fields mean and how
-     * they are enforced is the harness's contract — this module only resolves
-     * the values it supplies: an unset budget defaults to half the detected
-     * host, raised to the per-step ceilings so the resolved policy always
-     * satisfies the harness's load-time invariants.
+     * the per-step ceilings plus the machine budget and optional ephemeral
+     * sandbox size. What the fields mean and how they are enforced is the
+     * harness's contract — this module only resolves the values it supplies
+     * (see `resolvePolicy` for the derivation and its defaults).
      */
     readonly resourcePolicy: ResourcePolicy;
     /** DBOS admin port. */
@@ -98,42 +97,47 @@ const devSkillsDir = join(import.meta.dir, "../../../../skills");
 /** Locally-built image tag (`docker build` per images/sandbox-base/README.md). */
 const DEFAULT_SANDBOX_IMAGE = "sandbox-base:latest";
 
-/**
- * Conservative dev-machine ceilings; every sandbox request is clamped to these
- * by the harness. Config-overridable for bigger workstations.
- */
-const DEFAULT_RESOURCE_LIMITS: ResourceLimits = { maxCpu: 4, maxMemoryGb: 8, maxGpuCount: 0 };
-
-/**
- * Default machine budget: half the host's cores and memory — enough to run real
- * analyses while leaving the other half for the user's editor, browser, and the
- * harness itself. Exported so `inflexa setup` can show the same suggestion it
- * would otherwise silently apply.
- */
-export function detectedMachineBudget(): MachineBudget {
+/** Detected host capacity: logical cores and total memory in whole GB. */
+export function detectedMachine(): MachineBudget {
     return {
-        cpu: Math.max(1, Math.floor(availableParallelism() / 2)),
-        memoryGb: Math.max(1, Math.floor(totalmem() / 1024 ** 3 / 2)),
+        cpu: Math.max(1, availableParallelism()),
+        memoryGb: Math.max(1, Math.floor(totalmem() / 1024 ** 3)),
     };
 }
 
 /**
- * Assemble the policy from the resolved per-step ceilings and the (possibly
- * partial) configured budget. The budget is raised to the per-step ceilings when
- * it lands below them — the harness rejects a policy whose maximum-size step
- * could never be scheduled, and a user who explicitly configured `maxMemoryGb:
- * 16` on a small machine meant to allow such steps to run (one at a time).
+ * Resolve the resource policy the CLI supplies to the harness. The machine
+ * budget — the total share of this host analyses may use — is the value the
+ * user owns (`inflexa setup` asks for exactly this); unset, it defaults to
+ * half the detected machine, leaving the rest for the user's editor, browser,
+ * and the harness itself. The per-step ceilings are derived, not asked: a
+ * single step may take the whole allowance (the harness serializes heavy
+ * steps against the budget), so they default to the budget itself, with the
+ * explicit `maxCpu`/`maxMemoryGb` keys kept as expert overrides. An explicit
+ * ceiling above the budget raises the budget to it — the harness rejects a
+ * policy whose maximum-size step could never be scheduled, and a user who
+ * configured `maxMemoryGb: 16` on a small machine meant to allow such steps
+ * to run (one at a time).
  */
-function resolvePolicy(perStep: ResourceLimits, cfg: z.infer<typeof harnessConfigSchema> | undefined): ResourcePolicy {
-    const detected = detectedMachineBudget();
-    const budget = {
-        cpu: Math.max(cfg?.resourceLimits?.budget?.cpu ?? detected.cpu, perStep.maxCpu),
-        memoryGb: Math.max(cfg?.resourceLimits?.budget?.memoryGb ?? detected.memoryGb, perStep.maxMemoryGb),
+function resolvePolicy(cfg: z.infer<typeof harnessConfigSchema> | undefined): ResourcePolicy {
+    const machine = detectedMachine();
+    const limits = cfg?.resourceLimits;
+    const configured = {
+        cpu: limits?.budget?.cpu ?? Math.max(1, Math.floor(machine.cpu / 2)),
+        memoryGb: limits?.budget?.memoryGb ?? Math.max(1, Math.floor(machine.memoryGb / 2)),
+    };
+    const perStep: ResourceLimits = {
+        maxCpu: limits?.maxCpu ?? configured.cpu,
+        maxMemoryGb: limits?.maxMemoryGb ?? configured.memoryGb,
+        maxGpuCount: limits?.maxGpuCount ?? 0,
     };
     return {
         perStep,
-        budget,
-        ...(cfg?.resourceLimits?.ephemeral && { ephemeral: cfg.resourceLimits.ephemeral }),
+        budget: {
+            cpu: Math.max(configured.cpu, perStep.maxCpu),
+            memoryGb: Math.max(configured.memoryGb, perStep.maxMemoryGb),
+        },
+        ...(limits?.ephemeral && { ephemeral: limits.ephemeral }),
     };
 }
 
@@ -145,11 +149,7 @@ const DEFAULT_ADMIN_PORT = 8433;
 
 /** All-defaults resolved config, used when the `harness` key is absent or when it failed validation. */
 function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, configError?: { issues: string }): ResolvedHarnessConfig {
-    const resourceLimits: ResourceLimits = {
-        maxCpu: cfg?.resourceLimits?.maxCpu ?? DEFAULT_RESOURCE_LIMITS.maxCpu,
-        maxMemoryGb: cfg?.resourceLimits?.maxMemoryGb ?? DEFAULT_RESOURCE_LIMITS.maxMemoryGb,
-        maxGpuCount: cfg?.resourceLimits?.maxGpuCount ?? DEFAULT_RESOURCE_LIMITS.maxGpuCount,
-    };
+    const resourcePolicy = resolvePolicy(cfg);
     return {
         model: cfg?.model ?? null,
         bioKeys: {
@@ -160,8 +160,8 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
             github: cfg?.bioKeys?.github,
         },
         sandboxImage: cfg?.sandboxImage ?? DEFAULT_SANDBOX_IMAGE,
-        resourceLimits,
-        resourcePolicy: resolvePolicy(resourceLimits, cfg),
+        resourceLimits: resourcePolicy.perStep,
+        resourcePolicy,
         adminPort: cfg?.adminPort ?? DEFAULT_ADMIN_PORT,
         skillsDir: cfg?.skillsDir ?? (env.isDev ? devSkillsDir : null),
         configError,
