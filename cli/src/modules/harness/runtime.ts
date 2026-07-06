@@ -83,8 +83,9 @@ export type RunTriggerDeps = {
     /** Local run-authorization seam — mints/revokes the durable `RunSession` at the async edge. */
     readonly runAuthorizer: RunAuthorizer;
     /**
-     * Machine budget snapshotted into every launched run's workflow input — the
-     * scheduler admits concurrent steps against it. From `resourcePolicy.budget`.
+     * The harness machine budget (`resourcePolicy.budget`), supplied on every
+     * launched run's `ExecuteAnalysisInput` — its meaning and enforcement are
+     * the harness's contract.
      */
     readonly budget: MachineBudget;
 };
