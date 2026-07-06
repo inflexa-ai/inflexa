@@ -123,12 +123,16 @@ function derivePlanId(analysisId: string, fileBytes: Buffer): string {
 }
 
 /**
- * Run the three read-side gates the harness's own trigger (`tools/execute-plan.ts`)
- * applies — JSON parse, `AnalysisPlanSchema`, then `validatePlan` — and, only once
- * all pass, derive the id and summary. Purely synchronous and side-effect-free: a
- * failing gate returns before anything is persisted.
+ * The pure, side-effect-free plan gate: read the file bytes, run the three
+ * read-side checks the harness's own trigger (`tools/execute-plan.ts`) applies —
+ * JSON parse, `AnalysisPlanSchema`, then `validatePlan` — and, only once all pass,
+ * derive the deterministic id and summary. No persistence, so the run command
+ * calls this BEFORE it boots the runtime, rejecting a malformed plan before any
+ * side effect (no boot, no staging, no ledger row — the plan-intake spec's
+ * "rejected before any side effect" gate). {@link persistPlan} does the pool-backed
+ * write afterward, from the {@link PlanIntake} this returns.
  */
-function validatePlanFile(analysisId: string, path: string): Result<PlanIntake, PlanIntakeError> {
+export function validatePlanFile(analysisId: string, path: string): Result<PlanIntake, PlanIntakeError> {
     return readPlanBytes(path).andThen((bytes) =>
         parsePlanJson(path, bytes)
             .andThen((raw): Result<AnalysisPlan, PlanIntakeError> => {
@@ -157,21 +161,33 @@ function validatePlanFile(analysisId: string, path: string): Result<PlanIntake, 
 }
 
 /**
- * Take an analysis plan in from a JSON file: read the bytes, apply the harness's
- * three plan gates, derive the deterministic id, and persist through the injected
- * seam. On success yields `{ planId, plan, planSummary }` for the run command to
- * trigger from; on any gate failure rejects with the file path and the verbatim
- * errors, having persisted nothing.
+ * Persist an already-validated {@link PlanIntake} through the injected seam, under
+ * the id {@link validatePlanFile} derived. Split from validation so the run command
+ * can gate a bad plan BEFORE boot and reach the pool-backed write only here, once a
+ * runtime exists. The intake is carried across that boundary rather than re-read, so
+ * the file is read exactly once and its deterministic id cannot shift under a
+ * mid-run edit of the file. A seam failure surfaces as `persist_failed` carrying the
+ * file path (for the command's message) and the underlying `DbError`.
+ */
+export function persistPlan(analysisId: string, path: string, intake: PlanIntake, deps: PlanIntakeDeps): ResultAsync<PlanIntake, PlanIntakeError> {
+    return deps
+        .upsertPlan({ planId: intake.planId, analysisId, plan: intake.plan })
+        .map((): PlanIntake => intake)
+        .mapErr((cause): PlanIntakeError => ({ type: "persist_failed", path, cause }));
+}
+
+/**
+ * Take an analysis plan in from a JSON file in a single call: {@link validatePlanFile}
+ * then {@link persistPlan}. On success yields `{ planId, plan, planSummary }`; on any
+ * gate failure rejects with the file path and the verbatim errors, having persisted
+ * nothing. The run command splits these two halves across its runtime-boot boundary
+ * (validate pre-boot, persist post-boot) to fail fast; this composed form is the
+ * whole-intake contract for a caller that already holds a pool.
  *
  * Idempotent by the id's determinism plus the seam's insert-if-absent semantics:
  * re-taking the same file under the same analysis re-derives the same id and the
  * seam no-ops, so a repeat intake reports success without a duplicate row.
  */
 export function intakePlan(analysisId: string, path: string, deps: PlanIntakeDeps): ResultAsync<PlanIntake, PlanIntakeError> {
-    return validatePlanFile(analysisId, path).asyncAndThen((intake) =>
-        deps
-            .upsertPlan({ planId: intake.planId, analysisId, plan: intake.plan })
-            .map((): PlanIntake => intake)
-            .mapErr((cause): PlanIntakeError => ({ type: "persist_failed", path, cause })),
-    );
+    return validatePlanFile(analysisId, path).asyncAndThen((intake) => persistPlan(analysisId, path, intake, deps));
 }

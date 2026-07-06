@@ -14,7 +14,7 @@
 // together with file intake when the planner is adopted. Keep it a thin mirror —
 // do not grow trigger logic here that the harness does not also have.
 
-import { randomUUID } from "node:crypto";
+import { randomUUIDv7 } from "bun";
 import { intro, log, outro, spinner } from "@clack/prompts";
 import { ok, err, type Result } from "neverthrow";
 import {
@@ -52,7 +52,7 @@ import type { ContextFlags } from "../analysis/context.ts";
 import { sessionTreeDataDir } from "../staging/paths.ts";
 import { stageInputs } from "../staging/staging.ts";
 import { resolveHarnessConfig } from "./config.ts";
-import { intakePlan, type PlanIntakeError } from "./plan_intake.ts";
+import { validatePlanFile, persistPlan, type PlanIntakeError } from "./plan_intake.ts";
 import { describeBootError, ensureSandboxImage, formatElapsed, readNewestWorkflowStep, resolveSingleAnalysis, withStatusPool } from "./profile.ts";
 import { bootHarnessRuntime, type RunTriggerDeps } from "./runtime.ts";
 
@@ -86,12 +86,11 @@ export type RunTriggerSeams = {
 
 /**
  * Bind the trigger seams to the booted runtime's {@link RunTriggerDeps} and the
- * harness's barrel state functions. `newRunId` is a bare `randomUUID()` (v4) from
- * `node:crypto`, NOT the cli's house `randomUUIDv7()`: the run id IS the DBOS
- * `workflowId` (`runLauncher.launch(..., { workflowId: runId }, ...)`), so it must
- * match the harness's own contract — `execute-plan.ts` mints "the bare UUID that
- * IS the DBOS workflowID" the same way, and matching the harness beats the cli
- * house rule for this one value.
+ * harness's barrel state functions. `newRunId` is the cli's house `randomUUIDv7()`:
+ * the run id IS the DBOS `workflowId` (`runLauncher.launch(..., { workflowId: runId
+ * }, ...)`), and a v7 UUID is a valid workflowId just as the v4 the harness's
+ * `execute-plan.ts` mints — the cli owns this id for its own runs, so there is no
+ * interop reason to deviate from the single house id scheme.
  */
 export function defaultRunTriggerSeams(deps: RunTriggerDeps): RunTriggerSeams {
     return {
@@ -101,7 +100,7 @@ export function defaultRunTriggerSeams(deps: RunTriggerDeps): RunTriggerSeams {
         runAuthorizer: deps.runAuthorizer,
         launch: (input, runId) => deps.runLauncher.launch(deps.executeAnalysis, { workflowId: runId }, input),
         renderStepPrompt,
-        newRunId: () => randomUUID(),
+        newRunId: () => randomUUIDv7(),
     };
 }
 
@@ -319,8 +318,9 @@ function describeTriggerError(e: TriggerAnalysisRunError): string {
  * `inflexa run <analysis> --plan <file>` — the deliberate action that stages
  * files, boots the embedded harness, and launches a full `executeAnalysis` run
  * (no-litter: passive flows never reach any of this). Flow mirrors `inflexa
- * profile` beat for beat: resolve analysis → pre-flight → boot → stage → seed
- * ledger → plan intake → trigger → block to terminal.
+ * profile` beat for beat: resolve analysis → pre-flight (incl. pure plan
+ * validation) → boot → stage → seed ledger → persist plan → trigger → block to
+ * terminal.
  */
 export async function runAnalysis(flags: ContextFlags, planPath: string | undefined): Promise<void> {
     const analysis = resolveSingleAnalysis(flags, RUN_EMPTY_HINT);
@@ -346,6 +346,18 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
     if (inputRefs.length === 0) {
         fail(`"${analysis.name}" has no inputs — add input files in the chat first, then re-run \`inflexa run --plan <file>\`.`);
     }
+
+    // Gate the plan file BEFORE booting. `validatePlanFile` is pure (read + parse +
+    // schema + `validatePlan`), so a malformed/invalid plan is rejected here with no
+    // side effect — no boot, no staging, no ledger row — per the plan-intake spec's
+    // "rejected before any side effect". The derived `intake` is carried to the
+    // post-boot `persistPlan` so the file is read exactly once and its deterministic
+    // id cannot shift if the file is edited mid-run. (`planPath` is narrowed to a
+    // string by the `!planPath` guard above, whose `fail` returns `never`.)
+    const intake = validatePlanFile(analysis.id, planPath).match(
+        (i) => i,
+        (e) => fail(describePlanIntakeError(e)),
+    );
 
     await ensureSandboxImage(cfg.sandboxImage);
 
@@ -402,10 +414,11 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
         );
     }
 
-    // Plan intake — read, apply the harness's plan gates, persist under the
-    // deterministic id. Each rejection maps to its own actionable message.
-    const intake = (await intakePlan(analysis.id, planPath, { upsertPlan: (input) => upsertPlan(runtime.pool, input) })).match(
-        (i) => i,
+    // Persist the pre-validated plan under its deterministic id — the plan was
+    // already gated before boot; only this pool-backed write needs the runtime. The
+    // `cortex_plans` row FK-references the analysis row seeded just above.
+    (await persistPlan(analysis.id, planPath, intake, { upsertPlan: (input) => upsertPlan(runtime.pool, input) })).match(
+        () => {},
         (e) => fail(describePlanIntakeError(e)),
     );
 
@@ -457,11 +470,43 @@ function renderRunProgress(steps: StepExecutionRow[], detail: { step: number; la
 }
 
 /**
+ * Terminal DBOS workflow statuses (`dbos.workflow_status.status`), as opposed to the
+ * live ones (`PENDING`/`ENQUEUED`/`DELAYED`). The parent run body writes its terminal
+ * `cortex_runs` status from inside itself (`collectAndComplete`) BEFORE it returns,
+ * so a workflow that has reached one of these while the ledger still reads `running`
+ * died before that write — e.g. an infra throw in the parent's `validateAndInit`,
+ * which DBOS records as `ERROR` and recovery never reclaims. That is a wedge the wait
+ * must break out of, not poll forever.
+ */
+const DBOS_TERMINAL_STATUSES: ReadonlySet<string> = new Set(["SUCCESS", "ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED", "CANCELLED"]);
+
+/**
+ * The parent run workflow's DBOS status (`workflow_uuid = runId`, the PK), or `null`
+ * if the row is not yet written or the read fails. A best-effort liveness signal for
+ * {@link waitForRunTerminal}; a hiccup here just defers the verdict one poll tick.
+ */
+async function readParentWorkflowDbosStatus(pool: Pool, runId: string): Promise<string | null> {
+    try {
+        const result = await pool.query<{ status: string }>({
+            text: `SELECT status FROM dbos.workflow_status WHERE workflow_uuid = $1`,
+            values: [runId],
+        });
+        return result.rows[0]?.status ?? null;
+    } catch {
+        // Liveness is a backstop, not the primary signal: on a read error keep
+        // polling (the top-of-loop queryRun fails fatally if the DB is truly down).
+        return null;
+    }
+}
+
+/**
  * Poll `cortex_runs` until the run leaves `running`, narrating step-level progress
  * on the spinner. Progress reads (steps + newest DBOS step) are best-effort and
- * NEVER abort the wait; only losing the run row itself is fatal (the row was
- * reserved before launch, so its disappearance is a genuine fault, not routine
- * desync).
+ * NEVER abort the wait. Two conditions do end it as a fault: losing the run row
+ * itself (the row was reserved before launch, so its disappearance is a genuine
+ * fault, not routine desync), and a WEDGE — the durable workflow reaching a terminal
+ * DBOS status while the ledger row is still `running` (see {@link DBOS_TERMINAL_STATUSES}),
+ * which would otherwise poll forever with no timeout.
  */
 async function waitForRunTerminal(pool: Pool, runId: string, s: Spinner): Promise<CortexRunRow> {
     const startedAt = Date.now();
@@ -478,6 +523,24 @@ async function waitForRunTerminal(pool: Pool, runId: string, s: Spinner): Promis
             return fail("The run row disappeared from the ledger while waiting.");
         }
         if (run.status !== "running") return run;
+
+        // Liveness backstop against an indefinitely wedged wait: a terminal workflow
+        // whose ledger row is still `running` failed before writing its terminal
+        // status. Re-read the row once to rule out the benign race where the workflow
+        // terminalized the ledger and finished between this iteration's two reads;
+        // only a fresh, still-`running` row under a terminal workflow is a real wedge.
+        // A read error or a vanished row falls through to be settled on the next tick.
+        const dbosStatus = await readParentWorkflowDbosStatus(pool, runId);
+        if (dbosStatus !== null && DBOS_TERMINAL_STATUSES.has(dbosStatus)) {
+            const settled = await queryRun(pool, runId);
+            if (settled.isOk() && settled.value !== null) {
+                if (settled.value.status !== "running") return settled.value;
+                s.error("The run stopped without recording a terminal status");
+                return fail(
+                    `Run ${runId} is wedged — its durable workflow reached DBOS status ${dbosStatus} but the ledger still reads \`running\`, so it failed before writing a terminal status. Inspect it with \`inflexa run --status\`; run recovery lands with #28.`,
+                );
+            }
+        }
 
         const steps = (await queryStepsByRun(pool, runId)).unwrapOr([]);
         // Newest workflow of the run family: the parent (`workflow_uuid = runId`) or
