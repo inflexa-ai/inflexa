@@ -2,7 +2,7 @@ import { randomUUIDv7 } from "bun";
 import { type Result, ok, err } from "neverthrow";
 import { ProvDocument, type BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import type { Analysis } from "../../types/analysis.ts";
-import type { ProvActor, ProvInputRef } from "../../types/prov.ts";
+import type { ProvActor, ProvInputRef, ProvRunRef, ProvRunOutcome, ProvStepRef, ProvStepOutcome, ProvUsedInputRef, ProvFileRef } from "../../types/prov.ts";
 import type { IdOrName } from "../../lib/types.ts";
 import type { DbError } from "../../db/errors.ts";
 import { getAnalysisProvenance, findAnalysesByRef } from "../../db/primary_query.ts";
@@ -93,9 +93,24 @@ export function loadDocument(analysis: Analysis, storedJson: string | null): Res
     }
 }
 
-// Each append function mints a fresh activity, stamps it at append time (the action's occurrence),
-// and declares the agent. The analysis subject is assumed already present (declared by
-// freshDocument or carried in the deserialized document). Shared preamble lives in startAction.
+// The analysis-lifecycle builders (create / add-input / remove-input) each mint a fresh action
+// activity stamped at append time — one distinct activity per genuinely distinct user action. The
+// execution builders (run / step / file) instead key off deterministic QNames so DBOS workflow
+// re-execution on recovery re-emits the same records and unified() dedups them; they share only the
+// preamble below and never mint a random-UUID action (which would defeat that idempotency). The
+// analysis subject is assumed already present (declared by freshDocument or the deserialized doc).
+
+/**
+ * The preamble every builder shares: declare (re-declare) the responsible agent and stamp the
+ * occurrence time, returning the analysis subject QName alongside. It mints NO activity — the
+ * caller owns its own node (a deterministic execution QName, or `startAction`'s random action).
+ */
+function recordPreamble(doc: ProvDocument, analysisId: string, actor: ProvActor): { analysisQn: string; agentQn: string; time: string } {
+    const analysisQn = analysisQName(analysisId);
+    const time = new Date().toISOString();
+    const agentQn = appendAgent(doc, actor);
+    return { analysisQn, agentQn, time };
+}
 
 function startAction(
     doc: ProvDocument,
@@ -103,10 +118,8 @@ function startAction(
     activityType: string,
     actor: ProvActor,
 ): { analysisQn: string; actionQn: string; time: string; agentQn: string } {
-    const analysisQn = analysisQName(analysisId);
+    const { analysisQn, agentQn, time } = recordPreamble(doc, analysisId, actor);
     const actionQn = `${NS_PREFIX}:action-${randomUUIDv7()}`;
-    const time = new Date().toISOString();
-    const agentQn = appendAgent(doc, actor);
     doc.activity(actionQn, time, time, { "prov:type": activityType });
     doc.wasAssociatedWith(actionQn, agentQn);
     return { analysisQn, actionQn, time, agentQn };
@@ -136,6 +149,207 @@ export function appendInputRemoved(doc: ProvDocument, analysisId: string, actor:
     doc.wasInvalidatedBy(inputQn, actionQn, time);
 }
 
+// The execution builders below use content-deterministic QNames (not random per-event ids) so a run
+// completing on a later boot's DBOS recovery re-emits identical records, and unified() collapses the
+// re-emission to one record set per QName. Runs and steps are PROV activities; files are entities.
+//
+// The RELATIONS these builders emit carry deterministic identifiers too — a subtler requirement than
+// the element QNames. unified() dedups by identifier ONLY: an anonymous relation never enters
+// tsprov's `_idMap` (verified against bundle.ts `unifiedRecords`/`addRecordInternal`), so a
+// re-emitted anonymous relation DUPLICATES instead of merging, even when byte-identical. Each id is
+// derived from the relation's FULL formal endpoint tuple — the run/step/file key, plus a hash of the
+// AGENT QName for agent-bearing relations (whose agent endpoint can differ when a recovery re-derives
+// the actor, e.g. across a cli upgrade). Keying on less than the full tuple would let two same-id
+// records disagree on a formal endpoint and re-trigger unified()'s single-value throw — the failure
+// class `occurrenceTime` guards against. The `time` argument is omitted from every identified
+// relation for that same reason: two same-id relations with differing formal times throw on merge,
+// and the occurrence times already live on the run/step activities — so re-emission merges cleanly
+// (identical formals → tsprov keeps one).
+
+/** The run-activity QName — one activity per run regardless of how many events reference it (start + completion re-declare the same id). */
+function runQName(runId: string): string {
+    return `${NS_PREFIX}:run-${runId}`;
+}
+
+/** The step-activity QName, keyed by `(runId, stepId)` so each step is a distinct activity a file generation can reference. */
+function stepQName(step: ProvStepRef): string {
+    return `${NS_PREFIX}:step-${step.runId}-${step.stepId}`;
+}
+
+// TODO(slop): why aren't the hash/digest functions moved to lib/hash.ts?
+
+/**
+ * The `(path, content hash)` digest that suffixes the file entity's QName. Factored out because a
+ * file's execution relations (`gen`/`attr`/`deriv` ids below) reuse this exact suffix, so the two
+ * derivations stay in one place — the file QName and its relation ids never drift apart. Typed on
+ * the structural `(path, hash)` pick, not `ProvFileRef`, so an INPUT read (`ProvUsedInputRef`, which
+ * carries no size/producer) keys into the same space as the output it reads — that shared key is
+ * what merges a `source: "prior"` read onto its producing file's entity under `unified()`.
+ */
+function fileDigest(file: Pick<ProvFileRef, "path" | "hash">): string {
+    return Bun.hash(`${file.path}|${file.hash}`).toString(36);
+}
+
+/** A short stable hash of an agent QName, folded into an agent-bearing relation's id (see the execution-builders note). */
+function agentDigest(agentQn: string): string {
+    return Bun.hash(agentQn).toString(36);
+}
+
+/**
+ * The file-entity QName, keyed by `(path, content hash)` so re-writing identical bytes to a path
+ * dedups to one entity. Exported because the harness bridge (`prov_bridge.ts`) returns this same
+ * QName as the artifact's `externalId`, giving the harness's local `cortex_artifacts` row a stable
+ * cross-reference into the signed document — so the derivation must live in one place, not be
+ * duplicated at the bridge. Typed on the `(path, hash)` pick so both an output and an input read of
+ * the same bytes resolve to one QName.
+ */
+export function fileQName(file: Pick<ProvFileRef, "path" | "hash">): string {
+    return `${NS_PREFIX}:file-${fileDigest(file)}`;
+}
+
+/**
+ * The occurrence time to stamp into an execution activity's `startTime`/`endTime` slot: the wall
+ * clock the first time, but `undefined` once that slot is already populated under this QName.
+ *
+ * tsprov's `unified()` THROWS ("Cannot have more than one value for attribute prov:startTime")
+ * when it merges two same-QName activities that set the same single-valued formal time attribute to
+ * *different* values — verified against `@inflexa-ai/tsprov`. DBOS re-executes the workflow body on
+ * recovery, so each execution builder can be invoked twice for one logical event with a *fresh*
+ * observer clock; a naive re-stamp would therefore crash the flush's `unified()`. Omitting the
+ * already-recorded time keeps re-emission's record mergeable (the surviving activity retains the
+ * first-recorded time). This realizes the design's replay-idempotency goal, which the D4 record
+ * shape alone does not: the shape (activity with a start/end time) is preserved; only the *source*
+ * of the value is made idempotent. NOTE for review: this is the local workaround for the design's
+ * "tsprov unified() merge semantics" risk (the observed behavior is a throw, worse than the
+ * anticipated structural-duplication); the alternative is a tsprov change to make formal times
+ * last-write-wins.
+ */
+function occurrenceTime(doc: ProvDocument, activityQn: string, slot: "prov:startTime" | "prov:endTime", now: string): string | undefined {
+    for (const rec of doc.getRecord(activityQn)) {
+        if (rec.getAttribute(slot).length > 0) return undefined;
+    }
+    return now;
+}
+
+/**
+ * Append the run-start records: a run activity opened with a start time, associated with the actor's
+ * agent, and `used`-linked to the analysis entity. It deliberately does NOT re-generate the analysis
+ * — `appendCreation` is the analysis's single generation, and a second `wasGeneratedBy` would violate
+ * PROV generation-uniqueness (and compound on every run).
+ */
+export function appendRunStarted(doc: ProvDocument, analysisId: string, actor: ProvActor, run: ProvRunRef): void {
+    const { analysisQn, agentQn } = recordPreamble(doc, analysisId, actor);
+    const rQn = runQName(run.runId);
+    // Formal start time is the ISO of the harness-observed `startedAtMs`, NOT the append-time wall
+    // clock — so the recorded boundary is the true workflow start even when the flush-surviving
+    // observation is a later recovery boot. `occurrenceTime` stays as defense in depth: the payload
+    // ms is replay-identical, so it no-ops here and only guards a hypothetical upstream writer defect.
+    const startTime = new Date(run.startedAtMs).toISOString();
+    doc.activity(rQn, occurrenceTime(doc, rQn, "prov:startTime", startTime), undefined, {
+        "prov:type": "inflexa:Run",
+        "inflexa:runId": run.runId,
+        ...(run.planSummary ? { "inflexa:planSummary": run.planSummary } : {}),
+    });
+    doc.wasAssociatedWith(rQn, agentQn, undefined, `${NS_PREFIX}:assoc-run-${run.runId}-${agentDigest(agentQn)}`);
+    doc.used(rQn, analysisQn, undefined, `${NS_PREFIX}:used-run-${run.runId}`);
+}
+
+/**
+ * Append the run-completion records: the SAME run-activity QName re-declared with an end time and
+ * outcome attributes. unified() merges the start-time and end-time records into one activity — this
+ * is never a same-QName `entity` (which would collide with the activity and be PROV-invalid).
+ */
+export function appendRunCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvRunOutcome): void {
+    // TODO(slop): Why aren't analysisId, and actor used? Don't rush to delete them and update callers. Instead think deeply, why aren't they used and why was the function defined like so in the first place?
+    const rQn = runQName(outcome.runId);
+    // End time is the ISO of the harness-observed `completedAtMs` (see appendRunStarted). No preamble:
+    // completion re-declares the existing run activity's end/status only — the agent + association
+    // were declared at start, and re-declaring them here would add nothing unified() keeps.
+    const endTime = new Date(outcome.completedAtMs).toISOString();
+    doc.activity(rQn, undefined, occurrenceTime(doc, rQn, "prov:endTime", endTime), {
+        "inflexa:status": outcome.status,
+        ...(outcome.durationMs !== undefined ? { "inflexa:durationMs": outcome.durationMs } : {}),
+    });
+}
+
+/**
+ * Append the step-completion records: a step activity closed with an end time and terminal status,
+ * `wasInformedBy` its run activity, and associated with the actor's agent. The step is an activity
+ * (not an entity) so a file's `wasGeneratedBy` can validly reference it. Takes the settlement
+ * {@link ProvStepOutcome} — every EXECUTED step settles here (registration is skipped for
+ * zero-artifact steps and never reached by failed ones), so `inflexa:status` records whether it
+ * completed, failed, or was canceled.
+ */
+export function appendStepCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvStepOutcome): void {
+    const { agentQn } = recordPreamble(doc, analysisId, actor);
+    const rQn = runQName(outcome.runId);
+    const sQn = stepQName(outcome);
+    // End time from the harness-observed `completedAtMs`, not the wall clock (see appendRunStarted).
+    const endTime = new Date(outcome.completedAtMs).toISOString();
+    doc.activity(sQn, undefined, occurrenceTime(doc, sQn, "prov:endTime", endTime), {
+        "prov:type": "inflexa:Step",
+        "inflexa:runId": outcome.runId,
+        "inflexa:stepId": outcome.stepId,
+        "inflexa:status": outcome.status,
+        ...(outcome.durationMs !== undefined ? { "inflexa:durationMs": outcome.durationMs } : {}),
+    });
+    doc.wasInformedBy(sQn, rQn, `${NS_PREFIX}:informed-${outcome.runId}-${outcome.stepId}`);
+    doc.wasAssociatedWith(sQn, agentQn, undefined, `${NS_PREFIX}:assoc-step-${outcome.runId}-${outcome.stepId}-${agentDigest(agentQn)}`);
+}
+
+/**
+ * Append the file-write records: a file entity generated by its producing step activity, attributed
+ * to the actor's agent, and `wasDerivedFrom` the analysis entity — the coarse lineage edge (no
+ * per-input derivation edges in this cut).
+ */
+export function appendFileWritten(doc: ProvDocument, analysisId: string, actor: ProvActor, file: ProvFileRef, step: ProvStepRef): void {
+    const { analysisQn, agentQn } = recordPreamble(doc, analysisId, actor);
+    const sQn = stepQName(step);
+    const suffix = fileDigest(file);
+    const fQn = fileQName(file);
+    doc.entity(fQn, {
+        "prov:type": "inflexa:File",
+        "inflexa:path": file.path,
+        "inflexa:hash": file.hash,
+        "inflexa:size": file.size,
+        "inflexa:producer": file.producer,
+    });
+    doc.wasGeneratedBy(fQn, sQn, undefined, `${NS_PREFIX}:gen-${suffix}`);
+    doc.wasAttributedTo(fQn, agentQn, `${NS_PREFIX}:attr-${suffix}-${agentDigest(agentQn)}`);
+    doc.wasDerivedFrom(fQn, analysisQn, undefined, undefined, undefined, `${NS_PREFIX}:deriv-${suffix}`);
+}
+
+/**
+ * Append the input-read records: an entity for the file the step consumed, `used` by the reading
+ * step activity. The entity is keyed in the SAME `(path, hash)` space as outputs (via {@link fileQName}),
+ * which is the load-bearing choice — a `source: "prior"` read of `runs/{priorRun}/{step}/output/x.csv`
+ * resolves to the very QName that file's `appendFileWritten` generated, so `unified()` merges the two
+ * and the cross-run derivation chain (prior step → file → this step) falls out with no extra modeling.
+ *
+ * It records only the input-side attributes (`inflexa:path/hash/source`, and `inflexa:fileId` when the
+ * harness resolved one); a prior read's merged entity also carries the producing side's
+ * `prov:type`/`size`/`producer`, which are multi-valued and union cleanly. A `source: "data"` or
+ * cross-analysis read has no `wasGeneratedBy` in this document — valid PROV (an entity may exist
+ * without a recorded generation). The `used` edge carries a deterministic id over its full endpoint
+ * tuple (step key + the file's `(path, hash)` digest) and NO formal time, mirroring the file relations.
+ */
+export function appendInputUsed(doc: ProvDocument, analysisId: string, actor: ProvActor, step: ProvStepRef, input: ProvUsedInputRef): void {
+    // Called for its agent-declaration side effect only (the `used` edge and the input entity carry
+    // no agent, per the spec) — so the responsible agent is present even if this input read is the
+    // first execution record recorded. Its wall-clock `time` is deliberately discarded: no formal
+    // position on these records reads the clock.
+    recordPreamble(doc, analysisId, actor);
+    const sQn = stepQName(step);
+    const eQn = fileQName(input);
+    doc.entity(eQn, {
+        "inflexa:path": input.path,
+        "inflexa:hash": input.hash,
+        "inflexa:source": input.source,
+        ...(input.fileId !== undefined ? { "inflexa:fileId": input.fileId } : {}),
+    });
+    doc.used(sQn, eQn, undefined, `${NS_PREFIX}:used-input-${step.runId}-${step.stepId}-${fileDigest(input)}`);
+}
+
 /**
  * Serialize an analysis's provenance for export. For JSON format, returns the **exact stored bytes**
  * from the DB column — the same bytes the chain hash was computed over, so the export is verifiable
@@ -146,9 +360,17 @@ export function appendInputRemoved(doc: ProvDocument, analysisId: string, actor:
 export function serializeProvenance(analysis: Analysis, format: BuiltinProvFormat): Result<string, DbError> {
     return getAnalysisProvenance(analysis.id).andThen((json): Result<string, DbError> => {
         if (format === "json" && json !== null) return ok(json);
-        return loadDocument(analysis, json)
-            .map((doc) => doc.unified().serialize(format))
-            .mapErr((e): DbError => ({ type: "query_failed", op: "serializeProvenance:deserialize", cause: e.cause }));
+        return (
+            loadDocument(analysis, json)
+                // `formalAttributeConflict: "first"` on this export path (and the flush in prov.ts): a
+                // same-QName formal-attribute value conflict keeps the first value + logs, instead of
+                // throwing. It matches occurrenceTime's first-observed semantics, so the two layers agree
+                // on the survivor, and it retires the flush-poison failure mode — a writer defect can no
+                // longer make an analysis permanently un-exportable. D1's deterministic times mean it
+                // should never actually trigger.
+                .map((doc) => doc.unified({ formalAttributeConflict: "first" }).serialize(format))
+                .mapErr((e): DbError => ({ type: "query_failed", op: "serializeProvenance:deserialize", cause: e.cause }))
+        );
     });
 }
 

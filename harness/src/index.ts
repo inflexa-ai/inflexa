@@ -27,7 +27,13 @@ export type { RunCharge } from "./billing/run-charge.js";
 // Seam: artifact registration.
 export { createFilesystemArtifactRegistry } from "./execution/filesystem-artifact-registry.js";
 export type { FilesystemArtifactRegistryDeps } from "./execution/filesystem-artifact-registry.js";
-export type { ArtifactRegistry, ArtifactRegistrationInput, ExternalRegistrationResult } from "./execution/artifact-registry.js";
+export type { ArtifactRegistry, ArtifactRegistrationInput, ArtifactSyncInput, ExternalRegistrationResult } from "./execution/artifact-registry.js";
+// The `ArtifactRegistrationInput` payload types an embedder's `register` seam
+// destructures: the reconciled manifest entries and the step-level provenance
+// collector (the `provenance/collector.js` class — distinct from the workspace
+// seam of the same name in `workspace/provenance-collector.js`).
+export type { ArtifactManifestEntry } from "./schemas/artifact-manifest.js";
+export type { ProvenanceCollector } from "./provenance/collector.js";
 
 // Seam: report preview publishing.
 export { UnavailablePreviewPublisher } from "./tools/report/preview-publisher.js";
@@ -129,7 +135,7 @@ export type { ExecEventMessage, DoneMarker } from "./sandbox/types.js";
 // close over the registered child callable). `assembleCoreRuntime` also wires
 // these, but an embedder running only the run engine registers them directly.
 export { registerExecuteAnalysis } from "./workflows/execute-analysis.js";
-export type { ExecuteAnalysisDeps, ExecuteAnalysisInput, ExecuteAnalysisResult } from "./workflows/execute-analysis.js";
+export type { ExecuteAnalysisDeps, ExecuteAnalysisInput, ExecuteAnalysisResult, RunProvenanceEvent } from "./workflows/execute-analysis.js";
 export { registerSandboxStep } from "./workflows/sandbox-step.js";
 export type { SandboxStepDeps, SandboxStepInput, SandboxStepResult, SandboxAgentBuildContext } from "./workflows/sandbox-step.js";
 

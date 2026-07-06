@@ -159,6 +159,55 @@ export interface ExecuteAnalysisResult {
 // ── Dep injection ─────────────────────────────────────────────────────
 
 /**
+ * A run-lifecycle provenance observation handed to an optional host observer.
+ * Harness-owned plain union — the harness stays tsprov-free and bus-free; the
+ * host maps these execution facts onto its own ledger vocabulary.
+ *
+ * Every `atMs` is epoch milliseconds read via `await DBOS.now()`, a checkpointed
+ * step: a body re-executed by DBOS recovery reads the recorded value, so a
+ * re-emitted event carries the identical timestamp and merges on the host's
+ * ledger without a value conflict. Never source these from a wall clock
+ * (`Date.now()`) — that would diverge across replays and defeat the merge.
+ *
+ * `run_completed.durationMs` is the terminal `atMs` minus the `run_started`
+ * `atMs` (both `DBOS.now()` reads) — the true workflow-observed run span.
+ *
+ * `step_completed` fires once at EVERY scheduler-loop settlement — the only site
+ * that observes every executed step (registration sees only artifact-producing
+ * steps, and a child cannot observe its own parent-driven cancel). Steps that
+ * were never dispatched (dependents of a failed sibling) emit nothing by design;
+ * the run's terminal status carries that outcome. `status` maps the settlement
+ * outcome: `complete` → `"completed"`, `canceled` → `"canceled"`,
+ * `failed`/`blocked`/child-error → `"failed"`.
+ *
+ * `run_completed` fires at BOTH terminal boundaries (success and failure); the
+ * `status` field distinguishes them.
+ */
+export type RunProvenanceEvent =
+    | { type: "run_started"; analysisId: string; runId: string; planSummary: string; stepCount: number; atMs: number }
+    | {
+          type: "step_completed";
+          analysisId: string;
+          runId: string;
+          stepId: string;
+          /** Settlement outcome mapped to a terminal step status. */
+          status: "completed" | "failed" | "canceled";
+          /** The child's durable execution duration; absent when the child settled by throwing. */
+          durationMs?: number;
+          atMs: number;
+      }
+    | {
+          type: "run_completed";
+          analysisId: string;
+          runId: string;
+          /** The body's terminal status — `RunStatus` minus `"running"`. */
+          status: "completed" | "partial" | "failed" | "canceled" | "suspended_insufficient_funds";
+          atMs: number;
+          /** `atMs − run_started.atMs`: the workflow-observed run span in ms. */
+          durationMs: number;
+      };
+
+/**
  * Construction-time deps for the parent workflow. The order-of-operations is
  * the body's own: it brackets the run, dispatches children, and synthesizes
  * directly via `DBOS.*` + the harness's helpers. Only the genuinely host-specific seams
@@ -190,6 +239,17 @@ export interface ExecuteAnalysisDeps {
 
     /** Run-authorization seam — the terminal path revokes through `revoke`. */
     readonly runAuthorizer: RunAuthorizer;
+
+    /**
+     * Optional, fire-and-forget provenance observation of the run lifecycle.
+     * Deliberately invoked directly in the workflow body (NOT wrapped in
+     * `DBOS.runStep`) so that body re-execution on DBOS recovery re-fires it —
+     * a cached step would suppress the recovery re-emission, defeating the
+     * point. Idempotency is the consumer's job, achieved via the deterministic
+     * identifiers the events carry, not via step caching. Every call site is
+     * guarded so a throwing observer never fails the run.
+     */
+    readonly emitProvenance?: (event: RunProvenanceEvent) => void;
 }
 
 // ── In-body orchestration helpers ────────────────────────────────────
@@ -197,6 +257,22 @@ export interface ExecuteAnalysisDeps {
 /** Emit a chat data part on the parent's DBOS stream. */
 function emitStreamPart(part: unknown): Promise<void> {
     return DBOS.writeStream("events", part);
+}
+
+/**
+ * Fire the optional run-lifecycle provenance observer, isolating a throwing
+ * host observer from the workflow. The harness is host-agnostic and cannot
+ * assume the callback is total; a defect in it must log loudly and be
+ * swallowed, never corrupt run state — integrity enforcement lives at the
+ * host's own ledger, not here.
+ */
+function emitProvenanceGuarded(deps: ExecuteAnalysisDeps, event: RunProvenanceEvent): void {
+    if (!deps.emitProvenance) return;
+    try {
+        deps.emitProvenance(event);
+    } catch (err) {
+        console.error(`[executeAnalysis] emitProvenance threw for run ${event.runId} (event=${event.type}):`, err);
+    }
 }
 
 /**
@@ -331,11 +407,24 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     }
     const { attempt } = init;
 
+    // One checkpointed clock read stamps the run's start; the terminal read in
+    // `collectAndComplete` subtracts it for the true run span. Checkpointed →
+    // replay-stable (see `RunProvenanceEvent`).
+    const startedAtMs = await DBOS.now();
+
     await emitStreamPart({
         type: "data-run-started",
         runId,
         planSummary: input.planSummary,
         stepCount: input.steps.length,
+    });
+    emitProvenanceGuarded(deps, {
+        type: "run_started",
+        analysisId: input.analysisId,
+        runId,
+        planSummary: input.planSummary,
+        stepCount: input.steps.length,
+        atMs: startedAtMs,
     });
 
     // (2-4) Scheduler loop + fail-fast + pause cascade.
@@ -384,6 +473,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         runId,
         workflowId,
         attempt,
+        startedAtMs,
         completed: final.completed,
         failed: final.failed,
         canceled: final.canceled,
@@ -636,6 +726,12 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
 
         const childWasBudgetExceeded = budgetExceededChildIds.has(settled.childId);
 
+        // Terminal step status + duration for the provenance emission below. Every
+        // settlement branch assigns both, so the emission fires exactly once per
+        // settled child with the mapped status.
+        let stepStatus: "completed" | "failed" | "canceled";
+        let stepDurationMs: number | undefined;
+
         if (settled.kind === "result") {
             const r = settled.result;
             if (r.status === "complete") {
@@ -644,6 +740,8 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                     status: "completed",
                     durationMs: r.durationMs ?? undefined,
                 });
+                stepStatus = "completed";
+                stepDurationMs = r.durationMs ?? undefined;
                 await emitDagSnapshot();
                 await dispatchReady();
             } else if (r.status === "canceled") {
@@ -660,6 +758,8 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                     durationMs: r.durationMs ?? undefined,
                     error: r.error ?? "canceled",
                 });
+                stepStatus = "canceled";
+                stepDurationMs = r.durationMs ?? undefined;
                 await emitDagSnapshot();
             } else {
                 // failed or blocked — a blocker (see the harness-sandbox-agents spec) fails fast exactly like a
@@ -676,6 +776,8 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                     durationMs: r.durationMs ?? undefined,
                     error: r.error ?? (r.status === "blocked" ? "step_blocked" : "step_failed"),
                 });
+                stepStatus = "failed";
+                stepDurationMs = r.durationMs ?? undefined;
                 await emitDagSnapshot();
             }
         } else {
@@ -694,8 +796,28 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 status: "failed",
                 error: settled.err instanceof Error ? settled.err.message : String(settled.err),
             });
+            stepStatus = "failed";
+            // A child that settled by throwing carries no durable duration.
+            stepDurationMs = undefined;
             await emitDagSnapshot();
         }
+
+        // One `step_completed` provenance emission per settled child — this
+        // settlement loop is the only site that observes every executed step.
+        // Plain guarded call (NOT `DBOS.runStep`): body re-execution on recovery
+        // must re-fire it, and the checkpointed `DBOS.now()` read keeps the
+        // timestamp replay-stable. Never-dispatched steps reach no settlement, so
+        // they emit nothing by design.
+        const settledAtMs = await DBOS.now();
+        emitProvenanceGuarded(deps, {
+            type: "step_completed",
+            analysisId: input.analysisId,
+            runId,
+            stepId: settled.stepId,
+            status: stepStatus,
+            ...(stepDurationMs !== undefined ? { durationMs: stepDurationMs } : {}),
+            atMs: settledAtMs,
+        });
     }
 
     await drainBudgetExceededNotifications(budgetExceededChildIds);
@@ -729,6 +851,8 @@ interface CollectAndCompleteArgs {
     readonly runId: string;
     readonly workflowId: string;
     readonly attempt: number;
+    /** `run_started` `atMs` (a `DBOS.now()` read) — subtracted for `run_completed.durationMs`. */
+    readonly startedAtMs: number;
     readonly completed: ReadonlySet<string>;
     readonly failed: ReadonlySet<string>;
     readonly canceled: ReadonlySet<string>;
@@ -742,7 +866,7 @@ interface CollectAndCompleteArgs {
 }
 
 async function collectAndComplete(args: CollectAndCompleteArgs): Promise<ExecuteAnalysisResult> {
-    const { input, runId, workflowId, attempt, completed, failed, canceled, budgetExceeded, failureReason, forceFailed, deps } = args;
+    const { input, runId, workflowId, attempt, startedAtMs, completed, failed, canceled, budgetExceeded, failureReason, forceFailed, deps } = args;
 
     const status = forceFailed
         ? "failed"
@@ -821,6 +945,11 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         console.error(`[executeAnalysis] revokeRunAuthorization failed for run ${runId} (reason=${revokeReason}):`, err);
     }
 
+    // Single terminal clock read shared by both `run_completed` emissions; the
+    // duration measures from the `run_started` read threaded in as `startedAtMs`.
+    // Checkpointed → replay-stable (see `RunProvenanceEvent`).
+    const terminalAtMs = await DBOS.now();
+
     if (status === "completed" || status === "partial") {
         const artifactCount = await DBOS.runStep(() => countArtifactsForRun(deps.pool, input.analysisId, runId), { name: "count-run-artifacts" }).catch(
             () => 0,
@@ -842,12 +971,28 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                   }
                 : {}),
         });
+        emitProvenanceGuarded(deps, {
+            type: "run_completed",
+            analysisId: input.analysisId,
+            runId,
+            status,
+            atMs: terminalAtMs,
+            durationMs: terminalAtMs - startedAtMs,
+        });
     } else {
         await emitStreamPart({
             type: "data-run-failed",
             runId,
             error: failureReason ?? (budgetExceeded ? "Run paused: insufficient budget" : "Run canceled before completion"),
             ...(budgetExceeded ? { reason: "budget_exceeded" } : {}),
+        });
+        emitProvenanceGuarded(deps, {
+            type: "run_completed",
+            analysisId: input.analysisId,
+            runId,
+            status,
+            atMs: terminalAtMs,
+            durationMs: terminalAtMs - startedAtMs,
         });
     }
 
@@ -861,13 +1006,19 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     };
 }
 
+/**
+ * `"running"` is excluded from the return: it is only the joined-existing
+ * trigger outcome, never a settled terminal status. Narrowing it away here lets
+ * the terminal `run_completed` provenance emission carry the terminal-only
+ * status vocabulary without a cast.
+ */
 function deriveFinalStatus(args: {
     totalSteps: number;
     completed: ReadonlySet<string>;
     failed: ReadonlySet<string>;
     canceled: ReadonlySet<string>;
     budgetExceeded: boolean;
-}): ExecuteAnalysisFinalStatus {
+}): Exclude<ExecuteAnalysisFinalStatus, "running"> {
     const { totalSteps, completed, failed, canceled, budgetExceeded } = args;
     if (budgetExceeded) return "canceled";
     if (failed.size > 0) {
