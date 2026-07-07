@@ -1,0 +1,3 @@
+# Hand-maintained data corpora — keep their own formatting, don't let
+# prettier churn them (they are large, edited by hand, and diff-noisy).
+src/data/

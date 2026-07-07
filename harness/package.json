@@ -32,7 +32,8 @@
     "format": "prettier --write src/",
     "format:file": "prettier --write",
     "lint": "eslint .",
-    "prepare": "tsc -p tsconfig.json"
+    "prepare": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.5",
@@ -69,6 +70,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/bun": "latest",
     "@types/dockerode": "^3.3.0",
     "@types/node": "^24.0.0",
     "@types/nunjucks": "^3.2.6",

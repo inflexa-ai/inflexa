@@ -81,11 +81,11 @@ export function TextArea(props: TextAreaProps): JSX.Element {
 
     const textarea = (
         <textarea
-            // Inline ref callback (not a named function) so the reactive reads below stay inside a
-            // scope the lint rule recognizes — a named `ref={handleRef}` is flagged as a reactive
-            // variable used in JSX. The `r.on(...)` subscriptions are imperative opentui event
-            // registrations, not a Solid tracked scope: their handlers read props lazily at
-            // focus/blur time (staying current), so no reactive dependency is dropped.
+            // The `r.on(...)` subscriptions are imperative opentui event registrations, not a Solid
+            // tracked scope: their handlers read props lazily at focus/blur time (staying current),
+            // so no reactive dependency is dropped. An inline ref callback keeps those reads inside
+            // the callback's scope; a named `ref={handleRef}` reads as a reactive variable used in
+            // JSX (which solid/reactivity flags), so the callback stays inline here.
             ref={(r: TextareaRenderable) => {
                 ref = r;
                 // eslint-disable-next-line solid/reactivity -- r.on() is an event subscription, not a tracked scope; the prop read fires at focus time
