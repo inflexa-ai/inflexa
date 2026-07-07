@@ -4,7 +4,9 @@
  * Used directly by target-assessment workflow steps and by tool wrappers.
  */
 
-import { apiFetch, describeApiError } from "./api-utils.js";
+import { z } from "zod";
+
+import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { OT_GRAPHQL, OT_HEADERS } from "./opentargets-config.js";
 
 export interface Association {
@@ -132,13 +134,107 @@ const EXPRESSION_QUERY = `
   }
 `;
 
-function extractDatatype(datatypeScores: { id: string; score: number }[], id: string): number | null {
+// Open Targets GraphQL `data` payload schemas, validated at the fetch boundary.
+// Fields the mapping code reads behind a guard (optional chaining, `?? default`,
+// `Array.isArray`) are `.optional()`; fields read directly — a missing value
+// would otherwise mis-map — stay required so a contract break surfaces as
+// `invalid_response` instead of silently producing garbage.
+const DatatypeScoreSchema = z.object({ id: z.string().optional(), score: z.number().optional() });
+
+const TargetAssociationsDataSchema = z.object({
+    target: z
+        .object({
+            id: z.string(),
+            approvedSymbol: z.string(),
+            approvedName: z.string(),
+            tractability: z.array(z.object({ label: z.string().optional(), modality: z.string().optional(), value: z.boolean().optional() })).optional(),
+        })
+        .optional(),
+    associations: z
+        .object({
+            associatedDiseases: z
+                .object({
+                    rows: z
+                        .array(
+                            z.object({
+                                disease: z.object({ id: z.string(), name: z.string() }),
+                                score: z.number(),
+                                datatypeScores: z.array(DatatypeScoreSchema).optional(),
+                            }),
+                        )
+                        .optional(),
+                })
+                .optional(),
+        })
+        .optional(),
+});
+
+const DiseaseAssociationsDataSchema = z.object({
+    disease: z
+        .object({
+            id: z.string().optional(),
+            name: z.string().optional(),
+            associatedTargets: z
+                .object({
+                    rows: z
+                        .array(
+                            z.object({
+                                target: z
+                                    .object({ id: z.string().optional(), approvedSymbol: z.string().optional(), approvedName: z.string().optional() })
+                                    .optional(),
+                                score: z.number(),
+                                datatypeScores: z.array(DatatypeScoreSchema).optional(),
+                            }),
+                        )
+                        .optional(),
+                })
+                .optional(),
+        })
+        .optional(),
+});
+
+const TargetSafetyDataSchema = z.object({
+    target: z
+        .object({
+            id: z.string().optional(),
+            approvedSymbol: z.string(),
+            safetyLiabilities: z
+                .array(
+                    z.object({
+                        event: z.string().optional(),
+                        biosamples: z.array(z.object({ tissueLabel: z.string().optional() })).optional(),
+                        effects: z.array(z.object({ direction: z.string().optional() })).optional(),
+                        datasource: z.string().optional(),
+                    }),
+                )
+                .optional(),
+        })
+        .optional(),
+});
+
+const TargetExpressionDataSchema = z.object({
+    target: z
+        .object({
+            expressions: z
+                .array(
+                    z.object({
+                        tissue: z.object({ id: z.string(), label: z.string(), organs: z.array(z.string()).optional() }),
+                        rna: z.object({ value: z.number().optional(), unit: z.string().optional() }).optional(),
+                        protein: z.object({ level: z.number().optional() }).optional(),
+                    }),
+                )
+                .optional(),
+        })
+        .optional(),
+});
+
+function extractDatatype(datatypeScores: { id?: string; score?: number }[], id: string): number | null {
     const match = datatypeScores.find((d) => d.id === id);
     return match?.score ?? null;
 }
 
-async function gqlFetch<T>(query: string, variables: Record<string, unknown>): Promise<T> {
-    const res = await apiFetch<{ data?: T }>(OT_GRAPHQL, {
+async function gqlFetch<S extends z.ZodType>(query: string, variables: Record<string, unknown>, schema: S): Promise<z.infer<S>> {
+    const res = await apiFetchValidated(OT_GRAPHQL, z.object({ data: schema.optional() }), {
         method: "POST",
         headers: OT_HEADERS,
         body: JSON.stringify({ query, variables }),
@@ -150,23 +246,7 @@ async function gqlFetch<T>(query: string, variables: Record<string, unknown>): P
 
 /** Fetch target info, tractability, and disease associations for an Ensembl gene id. */
 export async function searchTargetAssociations(ensemblId: string, limit = 25): Promise<TargetInfo | null> {
-    const data = await gqlFetch<{
-        target?: {
-            id: string;
-            approvedSymbol: string;
-            approvedName: string;
-            tractability?: { label: string; modality: string; value: boolean }[];
-        };
-        associations?: {
-            associatedDiseases?: {
-                rows: {
-                    disease: { id: string; name: string };
-                    score: number;
-                    datatypeScores: { id: string; score: number }[];
-                }[];
-            };
-        };
-    }>(TARGET_QUERY, { ensemblId, size: limit });
+    const data = await gqlFetch(TARGET_QUERY, { ensemblId, size: limit }, TargetAssociationsDataSchema);
 
     const target = data.target;
     if (!target) return null;
@@ -202,19 +282,7 @@ export async function searchTargetAssociations(ensemblId: string, limit = 25): P
 
 /** Fetch target associations for a disease (EFO id). */
 export async function searchDiseaseAssociations(efoId: string, limit = 25): Promise<Association[]> {
-    const data = await gqlFetch<{
-        disease?: {
-            id: string;
-            name: string;
-            associatedTargets?: {
-                rows: {
-                    target: { id: string; approvedSymbol: string; approvedName: string };
-                    score: number;
-                    datatypeScores: { id: string; score: number }[];
-                }[];
-            };
-        };
-    }>(DISEASE_QUERY, { efoId, size: limit });
+    const data = await gqlFetch(DISEASE_QUERY, { efoId, size: limit }, DiseaseAssociationsDataSchema);
 
     const rows = data.disease?.associatedTargets?.rows ?? [];
     return rows.map((row) => ({
@@ -235,18 +303,7 @@ export async function searchDiseaseAssociations(efoId: string, limit = 25): Prom
 
 /** Fetch known safety liabilities for a target. */
 export async function getTargetSafetyLiabilities(ensemblId: string): Promise<{ targetSymbol: string; safetyLiabilities: SafetyLiability[] } | null> {
-    const data = await gqlFetch<{
-        target?: {
-            id: string;
-            approvedSymbol: string;
-            safetyLiabilities?: {
-                event?: string;
-                biosamples?: { tissueLabel?: string }[];
-                effects?: { direction?: string }[];
-                datasource?: string;
-            }[];
-        };
-    }>(SAFETY_QUERY, { ensemblId });
+    const data = await gqlFetch(SAFETY_QUERY, { ensemblId }, TargetSafetyDataSchema);
 
     const target = data.target;
     if (!target) return null;
@@ -273,15 +330,7 @@ export async function getTargetSafetyLiabilities(ensemblId: string): Promise<{ t
  * (Off-Tissue Risk) and §3.9 (Normal Tissue Expression).
  */
 export async function getBaselineExpression(ensemblId: string): Promise<BaselineExpressionEntry[]> {
-    const data = await gqlFetch<{
-        target?: {
-            expressions?: {
-                tissue: { id: string; label: string; organs?: string[] };
-                rna?: { value?: number; unit?: string };
-                protein?: { level?: number };
-            }[];
-        };
-    }>(EXPRESSION_QUERY, { ensemblId });
+    const data = await gqlFetch(EXPRESSION_QUERY, { ensemblId }, TargetExpressionDataSchema);
 
     const expressions = data.target?.expressions ?? [];
     return expressions.map((e) => ({

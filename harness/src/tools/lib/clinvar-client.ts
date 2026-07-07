@@ -4,7 +4,9 @@
  * Used by §3.4 (Genetic Alterations — ClinVar variants).
  */
 
-import { apiFetch, describeApiError } from "./api-utils.js";
+import { z } from "zod";
+
+import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { ncbiUrl } from "./ncbi-utils.js";
 
 export type ClinicalSignificance = "pathogenic" | "likely-pathogenic" | "benign" | "likely-benign" | "uncertain";
@@ -20,24 +22,47 @@ export interface ClinvarVariant {
     accession: string;
 }
 
+// NCBI esummary wire shapes, validated at the fetch boundary. Every field is
+// optional — esummary omits absent values, and the record mapping below tolerates
+// partial payloads, so an over-strict schema would regress graceful degradation.
+
 /** NCBI esummary v2 classification block (germline or legacy). */
-interface ClinvarClassification {
-    description?: string;
-    review_status?: string;
-    trait_set?: Array<{ trait_name?: string }>;
-}
+const ClinvarClassificationSchema = z.object({
+    description: z.string().optional(),
+    review_status: z.string().optional(),
+    trait_set: z.array(z.object({ trait_name: z.string().optional() })).optional(),
+});
+type ClinvarClassification = z.infer<typeof ClinvarClassificationSchema>;
 
 /** A single ClinVar esummary record. */
-interface ClinvarSummaryRecord {
-    title?: string;
-    accession?: string;
-    genes?: Array<{ symbol?: string }>;
-    germline_classification?: ClinvarClassification;
-    clinical_significance?: ClinvarClassification | string;
-    trait_set?: Array<{ trait_name?: string }>;
-    molecular_consequence_list?: string[];
-    variation_set?: Array<{ variation_loc?: Array<{ variant_type?: string }> }>;
-}
+const ClinvarSummaryRecordSchema = z.object({
+    title: z.string().optional(),
+    accession: z.string().optional(),
+    genes: z.array(z.object({ symbol: z.string().optional() })).optional(),
+    germline_classification: ClinvarClassificationSchema.optional(),
+    clinical_significance: z.union([ClinvarClassificationSchema, z.string()]).optional(),
+    trait_set: z.array(z.object({ trait_name: z.string().optional() })).optional(),
+    molecular_consequence_list: z.array(z.string()).optional(),
+    variation_set: z.array(z.object({ variation_loc: z.array(z.object({ variant_type: z.string().optional() })).optional() })).optional(),
+});
+type ClinvarSummaryRecord = z.infer<typeof ClinvarSummaryRecordSchema>;
+
+const ClinvarSearchResponseSchema = z.object({
+    esearchresult: z
+        .object({
+            idlist: z.array(z.string()).optional(),
+            count: z.union([z.string(), z.number()]).optional(),
+        })
+        .optional(),
+});
+
+// esummary keys each record under its UID; the `uids` key holds a string[] of
+// the returned UIDs, so a record value is a summary object OR that string[].
+// The array member is listed first so an actual array never falls through to
+// the object schema (which rejects arrays).
+const ClinvarSummaryResponseSchema = z.object({
+    result: z.record(z.string(), z.union([z.array(z.string()), ClinvarSummaryRecordSchema])).optional(),
+});
 
 const SIG_MAP: Record<ClinicalSignificance, string> = {
     pathogenic: "clinsig_pathogenic",
@@ -74,7 +99,7 @@ export async function searchClinvar(
         retmax: String(limit),
         retmode: "json",
     });
-    const searchRes = await apiFetch<{ esearchresult?: { idlist?: string[]; count?: string | number } }>(searchUrl);
+    const searchRes = await apiFetchValidated(searchUrl, ClinvarSearchResponseSchema);
     if (searchRes.isErr()) throw new Error(describeApiError(searchRes.error));
 
     const ids: string[] = searchRes.value?.esearchresult?.idlist ?? [];
@@ -87,7 +112,7 @@ export async function searchClinvar(
         id: ids.join(","),
         retmode: "json",
     });
-    const summaryRes = await apiFetch<{ result?: Record<string, ClinvarSummaryRecord | string[] | undefined> }>(summaryUrl);
+    const summaryRes = await apiFetchValidated(summaryUrl, ClinvarSummaryResponseSchema);
     if (summaryRes.isErr()) throw new Error(describeApiError(summaryRes.error));
 
     const result: Record<string, ClinvarSummaryRecord | string[] | undefined> = summaryRes.value?.result ?? {};

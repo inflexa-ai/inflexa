@@ -18,7 +18,9 @@
  * "target-unresolved"` (per design §6).
  */
 
-import { apiFetch } from "./api-utils.js";
+import { z } from "zod";
+
+import { apiFetchValidated } from "./api-utils.js";
 import { resolveSymbolToEnsemblId } from "./ensembl-client.js";
 import { searchTargets as searchChemblTargets } from "./chembl-client.js";
 import { normalizeProteinFamily } from "./protein-family-normalize.js";
@@ -66,41 +68,67 @@ export interface ResolvedTarget {
     };
 }
 
-interface HgncResponse {
-    response?: {
-        docs?: Array<{
-            symbol?: string;
-            name?: string;
-            hgnc_id?: string;
-            ensembl_gene_id?: string;
-            uniprot_ids?: string[];
-            entrez_id?: string;
-            alias_symbol?: string[];
-            prev_symbol?: string[];
-        }>;
-    };
-}
+// HGNC search payload, validated at the fetch boundary. Every field is optional
+// because the API omits absent values; each read below is optional-chained /
+// defaulted, so a missing field degrades gracefully rather than throwing.
+const HgncResponseSchema = z.object({
+    response: z
+        .object({
+            docs: z
+                .array(
+                    z.object({
+                        symbol: z.string().optional(),
+                        name: z.string().optional(),
+                        hgnc_id: z.string().optional(),
+                        ensembl_gene_id: z.string().optional(),
+                        uniprot_ids: z.array(z.string()).optional(),
+                        entrez_id: z.string().optional(),
+                        alias_symbol: z.array(z.string()).optional(),
+                        prev_symbol: z.array(z.string()).optional(),
+                    }),
+                )
+                .optional(),
+        })
+        .optional(),
+});
+type HgncResponse = z.infer<typeof HgncResponseSchema>;
 
 /** A single doc from the HGNC search payload — every field is optional. */
 type HgncDoc = NonNullable<NonNullable<HgncResponse["response"]>["docs"]>[number];
 
-interface UniprotResponse {
-    results?: Array<{
-        primaryAccession?: string;
-        proteinDescription?: {
-            recommendedName?: { fullName?: { value?: string } };
-            alternativeNames?: { fullName?: { value?: string } }[];
-        };
-        genes?: { geneName?: { value?: string }; synonyms?: { value?: string }[] }[];
-        proteinFamily?: string;
-        extraAttributes?: { uniParcId?: string };
-        keywords?: { name?: string }[];
-    }>;
-}
+// UniProt search payload, validated at the fetch boundary. Every field is
+// optional because the API omits absent values.
+const UniprotResponseSchema = z.object({
+    results: z
+        .array(
+            z.object({
+                primaryAccession: z.string().optional(),
+                proteinDescription: z
+                    .object({
+                        recommendedName: z.object({ fullName: z.object({ value: z.string().optional() }).optional() }).optional(),
+                        alternativeNames: z.array(z.object({ fullName: z.object({ value: z.string().optional() }).optional() })).optional(),
+                    })
+                    .optional(),
+                genes: z
+                    .array(
+                        z.object({
+                            geneName: z.object({ value: z.string().optional() }).optional(),
+                            synonyms: z.array(z.object({ value: z.string().optional() })).optional(),
+                        }),
+                    )
+                    .optional(),
+                proteinFamily: z.string().optional(),
+                extraAttributes: z.object({ uniParcId: z.string().optional() }).optional(),
+                keywords: z.array(z.object({ name: z.string().optional() })).optional(),
+            }),
+        )
+        .optional(),
+});
+type UniprotResponse = z.infer<typeof UniprotResponseSchema>;
 
 async function fetchHgncBy(field: string, value: string) {
     const url = `${HGNC_BASE}/${field}/${encodeURIComponent(value)}`;
-    const res = await apiFetch<HgncResponse>(url, { headers: HGNC_HEADERS });
+    const res = await apiFetchValidated(url, HgncResponseSchema, { headers: HGNC_HEADERS });
     if (res.isErr()) return null;
     const docs = res.value.response?.docs ?? [];
     return docs[0] ?? null;
@@ -108,7 +136,7 @@ async function fetchHgncBy(field: string, value: string) {
 
 async function fetchUniprotByAccession(accession: string) {
     const url = `${UNIPROT_BASE}?query=accession:${encodeURIComponent(accession)}&format=json&size=1`;
-    const res = await apiFetch<UniprotResponse>(url, { headers: UNIPROT_HEADERS });
+    const res = await apiFetchValidated(url, UniprotResponseSchema, { headers: UNIPROT_HEADERS });
     if (res.isErr()) return null;
     return res.value.results?.[0] ?? null;
 }
@@ -116,7 +144,7 @@ async function fetchUniprotByAccession(accession: string) {
 async function fetchUniprotBySymbol(symbol: string) {
     const query = `gene_exact:${symbol} AND organism_id:9606 AND reviewed:true`;
     const url = `${UNIPROT_BASE}?query=${encodeURIComponent(query)}&format=json&size=1`;
-    const res = await apiFetch<UniprotResponse>(url, { headers: UNIPROT_HEADERS });
+    const res = await apiFetchValidated(url, UniprotResponseSchema, { headers: UNIPROT_HEADERS });
     if (res.isErr()) return null;
     return res.value.results?.[0] ?? null;
 }

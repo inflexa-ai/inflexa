@@ -9,7 +9,7 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 import { PUBCHEM_HEADERS as HEADERS, PUBCHEM_BASE } from "../lib/pubchem-config.js";
 
 const PROPERTY_LIST = [
@@ -27,40 +27,29 @@ const PROPERTY_LIST = [
     "Complexity",
 ].join(",");
 
-interface Compound {
-    cid: number;
-    canonicalSmiles: string | null;
-    molecularFormula: string | null;
-    molecularWeight: number | null;
-    iupacName: string | null;
-    inchi: string | null;
-    inchiKey: string | null;
-    xlogp: number | null;
-    tpsa: number | null;
-    hbondDonorCount: number | null;
-    hbondAcceptorCount: number | null;
-    rotatableBondCount: number | null;
-    complexity: number | null;
-}
-
-interface PugPropertyRow {
-    CID?: number;
-    CanonicalSMILES?: string;
-    MolecularFormula?: string;
-    MolecularWeight?: number;
-    IUPACName?: string;
-    InChI?: string;
-    InChIKey?: string;
-    XLogP?: number;
-    TPSA?: number;
-    HBondDonorCount?: number;
-    HBondAcceptorCount?: number;
-    RotatableBondCount?: number;
-    Complexity?: number;
-}
-
-function mapCompound(raw: PugPropertyRow): Compound {
-    return {
+// A single schema that both validates and normalizes one PUG-REST property row:
+// the `.object(...)` half is the wire shape (every field optional — PubChem
+// omits absent properties), the `.transform(...)` half maps it to the camelCase
+// `Compound` we return. Parsing IS the validation, and because the transform
+// rides on the schema, `z.infer` below is the OUTPUT type — no separate raw
+// interface or mapper.
+const PugPropertyRowSchema = z
+    .object({
+        CID: z.number().optional(),
+        CanonicalSMILES: z.string().optional(),
+        MolecularFormula: z.string().optional(),
+        MolecularWeight: z.number().optional(),
+        IUPACName: z.string().optional(),
+        InChI: z.string().optional(),
+        InChIKey: z.string().optional(),
+        XLogP: z.number().optional(),
+        TPSA: z.number().optional(),
+        HBondDonorCount: z.number().optional(),
+        HBondAcceptorCount: z.number().optional(),
+        RotatableBondCount: z.number().optional(),
+        Complexity: z.number().optional(),
+    })
+    .transform((raw) => ({
         cid: raw.CID ?? 0,
         canonicalSmiles: raw.CanonicalSMILES ?? null,
         molecularFormula: raw.MolecularFormula ?? null,
@@ -74,8 +63,11 @@ function mapCompound(raw: PugPropertyRow): Compound {
         hbondAcceptorCount: raw.HBondAcceptorCount ?? null,
         rotatableBondCount: raw.RotatableBondCount ?? null,
         complexity: raw.Complexity ?? null,
-    };
-}
+    }));
+
+const PubChemPropertyResponseSchema = z.object({
+    PropertyTable: z.object({ Properties: z.array(PugPropertyRowSchema).optional() }).optional(),
+});
 
 /** Build the PUG-REST URL path segment for the given search type. */
 function buildNamespace(searchBy: string, query: string): string {
@@ -110,9 +102,7 @@ export const searchPubchemCompoundTool = defineTool({
         const namespace = buildNamespace(searchBy, query);
         const url = `${PUBCHEM_BASE}/${namespace}/property/${PROPERTY_LIST}/JSON`;
 
-        const res = await apiFetch<{
-            PropertyTable?: { Properties?: PugPropertyRow[] };
-        }>(url, { headers: HEADERS });
+        const res = await apiFetchValidated(url, PubChemPropertyResponseSchema, { headers: HEADERS });
 
         if (res.isErr()) {
             // PubChem returns 404 when the query matches no compound — expected.
@@ -120,7 +110,8 @@ export const searchPubchemCompoundTool = defineTool({
             throw new Error(describeApiError(res.error));
         }
 
+        // Already validated + normalized by PugPropertyRowSchema's transform.
         const rows = res.value.PropertyTable?.Properties ?? [];
-        return ok({ results: rows.map(mapCompound) });
+        return ok({ results: rows });
     },
 });

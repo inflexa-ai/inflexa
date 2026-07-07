@@ -5,8 +5,10 @@
  * §2.6.3 (trial AEs), §2.5 (failed trials), and §6.5 (discovery trials).
  */
 
+import { z } from "zod";
+
 import { withHost } from "../../lib/host-concurrency.js";
-import { apiFetch, describeApiError } from "./api-utils.js";
+import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { CT_BASE, CT_HEADERS } from "./clinicaltrials-config.js";
 
 export interface ClinicalTrial {
@@ -81,98 +83,110 @@ export interface SearchOptions {
     limit?: number;
 }
 
-// Raw shapes for the ClinicalTrials.gov v2 study JSON — only the fields the
-// mappers below read are modelled; every field is optional (the API omits
-// modules that carry no data).
-interface CtIntervention {
-    name?: string;
-    type?: string;
-    description?: string;
-    otherNames?: unknown;
-}
-interface CtOutcome {
-    measure?: string;
-    description?: string;
-    timeFrame?: string;
-}
-interface CtIdentificationModule {
-    nctId?: string;
-    briefTitle?: string;
-    officialTitle?: string;
-}
-interface CtStatusModule {
-    overallStatus?: string;
-    whyStopped?: string;
-    startDateStruct?: { date?: string };
-    primaryCompletionDateStruct?: { date?: string };
-}
-interface CtDesignModule {
-    phases?: string[];
-    studyType?: string;
-    designInfo?: { primaryPurpose?: string };
-    enrollmentInfo?: { count?: number };
-}
-interface CtDescriptionModule {
-    briefSummary?: string;
-    detailedDescription?: string;
-}
-interface CtOutcomesModule {
-    primaryOutcomes?: CtOutcome[];
-    secondaryOutcomes?: CtOutcome[];
-    otherOutcomes?: CtOutcome[];
-}
-interface CtProtocolSection {
-    identificationModule?: CtIdentificationModule;
-    statusModule?: CtStatusModule;
-    designModule?: CtDesignModule;
-    descriptionModule?: CtDescriptionModule;
-    conditionsModule?: { conditions?: string[] };
-    armsInterventionsModule?: { interventions?: CtIntervention[] };
-    sponsorCollaboratorsModule?: { leadSponsor?: { name?: string } };
-    outcomesModule?: CtOutcomesModule;
-}
-interface CtResultsMeasurement {
-    value?: string;
-    lowerLimit?: string;
-    upperLimit?: string;
-}
-interface CtResultsMeasure {
-    title?: string;
-    unitOfMeasure?: string;
-    classes?: Array<{ categories?: Array<{ measurements?: CtResultsMeasurement[] }> }>;
-}
-interface CtAdverseEventGroupRaw {
-    id?: string;
-    title?: string;
-    description?: string;
-}
-interface CtAdverseEventStat {
-    groupId?: string;
-    numAffected?: number;
-    numAtRisk?: number;
-}
-interface CtAdverseEventRaw {
-    term?: string;
-    organSystem?: string;
-    stats?: CtAdverseEventStat[];
-}
-interface CtAdverseEventsModule {
-    eventGroups?: CtAdverseEventGroupRaw[];
-    seriousEvents?: CtAdverseEventRaw[];
-    otherEvents?: CtAdverseEventRaw[];
-}
-interface CtResultsSection {
-    outcomeMeasuresModule?: { outcomeMeasures?: CtResultsMeasure[] };
-    adverseEventsModule?: CtAdverseEventsModule;
-}
-interface CtStudy {
-    protocolSection?: CtProtocolSection;
-    resultsSection?: CtResultsSection;
-}
-interface CtSearchResponse {
-    studies?: CtStudy[];
-    totalCount?: number;
-}
+// Raw shapes for the ClinicalTrials.gov v2 study JSON, validated at the fetch
+// boundary — only the fields the mappers below read are modelled; every field
+// is optional (the API omits modules that carry no data), so a partial-but-
+// valid study still parses. `z.infer` supplies the types the mappers annotate.
+const CtInterventionSchema = z.object({
+    name: z.string().optional(),
+    type: z.string().optional(),
+    description: z.string().optional(),
+    otherNames: z.unknown().optional(),
+});
+const CtOutcomeSchema = z.object({
+    measure: z.string().optional(),
+    description: z.string().optional(),
+    timeFrame: z.string().optional(),
+});
+const CtIdentificationModuleSchema = z.object({
+    nctId: z.string().optional(),
+    briefTitle: z.string().optional(),
+    officialTitle: z.string().optional(),
+});
+type CtIdentificationModule = z.infer<typeof CtIdentificationModuleSchema>;
+const CtStatusModuleSchema = z.object({
+    overallStatus: z.string().optional(),
+    whyStopped: z.string().optional(),
+    startDateStruct: z.object({ date: z.string().optional() }).optional(),
+    primaryCompletionDateStruct: z.object({ date: z.string().optional() }).optional(),
+});
+type CtStatusModule = z.infer<typeof CtStatusModuleSchema>;
+const CtDesignModuleSchema = z.object({
+    phases: z.array(z.string()).optional(),
+    studyType: z.string().optional(),
+    designInfo: z.object({ primaryPurpose: z.string().optional() }).optional(),
+    enrollmentInfo: z.object({ count: z.number().optional() }).optional(),
+});
+type CtDesignModule = z.infer<typeof CtDesignModuleSchema>;
+const CtDescriptionModuleSchema = z.object({
+    briefSummary: z.string().optional(),
+    detailedDescription: z.string().optional(),
+});
+type CtDescriptionModule = z.infer<typeof CtDescriptionModuleSchema>;
+const CtOutcomesModuleSchema = z.object({
+    primaryOutcomes: z.array(CtOutcomeSchema).optional(),
+    secondaryOutcomes: z.array(CtOutcomeSchema).optional(),
+    otherOutcomes: z.array(CtOutcomeSchema).optional(),
+});
+type CtOutcomesModule = z.infer<typeof CtOutcomesModuleSchema>;
+const CtProtocolSectionSchema = z.object({
+    identificationModule: CtIdentificationModuleSchema.optional(),
+    statusModule: CtStatusModuleSchema.optional(),
+    designModule: CtDesignModuleSchema.optional(),
+    descriptionModule: CtDescriptionModuleSchema.optional(),
+    conditionsModule: z.object({ conditions: z.array(z.string()).optional() }).optional(),
+    armsInterventionsModule: z.object({ interventions: z.array(CtInterventionSchema).optional() }).optional(),
+    sponsorCollaboratorsModule: z.object({ leadSponsor: z.object({ name: z.string().optional() }).optional() }).optional(),
+    outcomesModule: CtOutcomesModuleSchema.optional(),
+});
+type CtProtocolSection = z.infer<typeof CtProtocolSectionSchema>;
+const CtResultsMeasurementSchema = z.object({
+    value: z.string().optional(),
+    lowerLimit: z.string().optional(),
+    upperLimit: z.string().optional(),
+});
+const CtResultsMeasureSchema = z.object({
+    title: z.string().optional(),
+    unitOfMeasure: z.string().optional(),
+    classes: z.array(z.object({ categories: z.array(z.object({ measurements: z.array(CtResultsMeasurementSchema).optional() })).optional() })).optional(),
+});
+type CtResultsMeasure = z.infer<typeof CtResultsMeasureSchema>;
+const CtAdverseEventGroupRawSchema = z.object({
+    id: z.string().optional(),
+    title: z.string().optional(),
+    description: z.string().optional(),
+});
+const CtAdverseEventStatSchema = z.object({
+    groupId: z.string().optional(),
+    numAffected: z.number().optional(),
+    numAtRisk: z.number().optional(),
+});
+const CtAdverseEventRawSchema = z.object({
+    term: z.string().optional(),
+    organSystem: z.string().optional(),
+    stats: z.array(CtAdverseEventStatSchema).optional(),
+});
+type CtAdverseEventRaw = z.infer<typeof CtAdverseEventRawSchema>;
+const CtAdverseEventsModuleSchema = z.object({
+    eventGroups: z.array(CtAdverseEventGroupRawSchema).optional(),
+    seriousEvents: z.array(CtAdverseEventRawSchema).optional(),
+    otherEvents: z.array(CtAdverseEventRawSchema).optional(),
+});
+type CtAdverseEventsModule = z.infer<typeof CtAdverseEventsModuleSchema>;
+const CtResultsSectionSchema = z.object({
+    outcomeMeasuresModule: z.object({ outcomeMeasures: z.array(CtResultsMeasureSchema).optional() }).optional(),
+    adverseEventsModule: CtAdverseEventsModuleSchema.optional(),
+});
+type CtResultsSection = z.infer<typeof CtResultsSectionSchema>;
+const CtStudySchema = z.object({
+    protocolSection: CtProtocolSectionSchema.optional(),
+    resultsSection: CtResultsSectionSchema.optional(),
+});
+type CtStudy = z.infer<typeof CtStudySchema>;
+const CtSearchResponseSchema = z.object({
+    studies: z.array(CtStudySchema).optional(),
+    totalCount: z.number().optional(),
+});
 
 const STUDY_FIELDS = [
     "NCTId",
@@ -243,7 +257,7 @@ export async function searchTrials(query: string, options: SearchOptions = {}): 
     if (options.phase) params.set("filter.phase", options.phase);
     if (options.status) params.set("filter.overallStatus", options.status);
 
-    const res = await apiFetch<CtSearchResponse>(`${CT_BASE}/studies?${params.toString()}`, {
+    const res = await apiFetchValidated(`${CT_BASE}/studies?${params.toString()}`, CtSearchResponseSchema, {
         headers: CT_HEADERS,
     });
     if (res.isErr()) throw new Error(describeApiError(res.error));
@@ -344,7 +358,7 @@ function extractEffect(resultsMeasure: CtResultsMeasure | undefined): OutcomeEff
 /** Fetch full study details including outcomes and adverse events. */
 export async function getTrialDetails(nctId: string): Promise<TrialDetails | null> {
     const url = `${CT_BASE}/studies/${encodeURIComponent(nctId)}?format=json`;
-    const res = await apiFetch<CtStudy>(url, { headers: CT_HEADERS });
+    const res = await apiFetchValidated(url, CtStudySchema, { headers: CT_HEADERS });
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return null;
         throw new Error(describeApiError(res.error));

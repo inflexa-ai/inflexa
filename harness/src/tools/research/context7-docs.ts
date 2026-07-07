@@ -11,13 +11,22 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 
 const CONTEXT7_BASE = "https://context7.com/api/v1";
 
 type ResolveLibraryIdOutput = { found: false } | { found: true; libraryId: string; name: string; description: string };
 
 type QueryDocsOutput = { found: false } | { found: true; documentation: string };
+
+// Raw Context7 wire shapes, validated at the fetch boundary. `id`/`name` stay
+// required — they are read without a guard — while genuinely-optional fields
+// carry `.optional()` so a partial-but-valid response still parses.
+const Context7SearchResponseSchema = z.object({
+    results: z.array(z.object({ id: z.string(), name: z.string(), description: z.string().optional() })).optional(),
+});
+
+const Context7DocsResponseSchema = z.object({ content: z.string().optional() });
 
 export const resolveLibraryIdTool = defineTool({
     id: "resolve_library_id",
@@ -28,9 +37,11 @@ export const resolveLibraryIdTool = defineTool({
         query: z.string().describe("What you need help with — used to rank results by relevance (e.g., 'how to run differential expression')."),
     }),
     execute: async ({ libraryName, query }): Promise<Result<ResolveLibraryIdOutput, ToolError>> => {
-        const result = await apiFetch<{
-            results?: Array<{ id: string; name: string; description?: string }>;
-        }>(`${CONTEXT7_BASE}/search?query=${encodeURIComponent(libraryName)}&topic=${encodeURIComponent(query)}`, { maxRetries: 1 });
+        const result = await apiFetchValidated(
+            `${CONTEXT7_BASE}/search?query=${encodeURIComponent(libraryName)}&topic=${encodeURIComponent(query)}`,
+            Context7SearchResponseSchema,
+            { maxRetries: 1 },
+        );
 
         if (result.isErr()) throw new Error(`Context7 search failed: ${describeApiError(result.error)}`);
 
@@ -56,8 +67,9 @@ export const queryDocsTool = defineTool({
         query: z.string().describe("Specific question about the library (e.g., 'rank_genes_groups function parameters and usage')."),
     }),
     execute: async ({ libraryId, query }): Promise<Result<QueryDocsOutput, ToolError>> => {
-        const result = await apiFetch<{ content?: string }>(
+        const result = await apiFetchValidated(
             `${CONTEXT7_BASE}/docs?libraryId=${encodeURIComponent(libraryId)}&query=${encodeURIComponent(query)}`,
+            Context7DocsResponseSchema,
             { maxRetries: 1 },
         );
 

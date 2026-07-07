@@ -9,7 +9,7 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 
 const QUICKGO_BASE = "https://www.ebi.ac.uk/QuickGO/services";
 const HEADERS = { Accept: "application/json" };
@@ -30,34 +30,57 @@ interface GoAnnotation {
     qualifier?: string;
 }
 
-interface QuickGOTermResult {
-    results?: Array<{
-        id?: string;
-        name?: string;
-        definition?: { text?: string } | null;
-        aspect?: string;
-    }>;
-}
+// QuickGO term response, validated at the fetch boundary. The `.transform`
+// carries the (context-free) rename from the raw wire fields to the `GoTerm[]`
+// we return, so parsing IS both the validation and the normalization — there
+// is no separate raw interface or mapper to keep in sync.
+const GoTermResponseSchema = z
+    .object({
+        results: z
+            .array(
+                z.object({
+                    id: z.string().optional(),
+                    name: z.string().optional(),
+                    definition: z.object({ text: z.string().optional() }).nullable().optional(),
+                    aspect: z.string().optional(),
+                }),
+            )
+            .optional(),
+    })
+    .transform((res): GoTerm[] =>
+        (res.results ?? []).map((t) => ({
+            id: t.id ?? "",
+            name: t.name ?? "",
+            definition: t.definition?.text ?? undefined,
+            aspect: t.aspect ?? undefined,
+        })),
+    );
 
-interface QuickGOAnnotationResult {
-    results?: Array<{
-        geneProductId?: string;
-        goId?: string;
-        goName?: string;
-        goAspect?: string;
-        goEvidence?: string;
-        qualifier?: string;
-    }>;
-}
-
-function mapTerms(res: QuickGOTermResult): GoTerm[] {
-    return (res.results ?? []).map((t) => ({
-        id: t.id ?? "",
-        name: t.name ?? "",
-        definition: t.definition?.text ?? undefined,
-        aspect: t.aspect ?? undefined,
-    }));
-}
+const GoAnnotationResponseSchema = z
+    .object({
+        results: z
+            .array(
+                z.object({
+                    geneProductId: z.string().optional(),
+                    goId: z.string().optional(),
+                    goName: z.string().optional(),
+                    goAspect: z.string().optional(),
+                    goEvidence: z.string().optional(),
+                    qualifier: z.string().optional(),
+                }),
+            )
+            .optional(),
+    })
+    .transform((res): GoAnnotation[] =>
+        (res.results ?? []).map((a) => ({
+            geneProductId: a.geneProductId ?? "",
+            goId: a.goId ?? "",
+            goName: a.goName ?? "",
+            aspect: a.goAspect ?? undefined,
+            evidenceCode: a.goEvidence ?? undefined,
+            qualifier: a.qualifier ?? undefined,
+        })),
+    );
 
 export const lookupGoTermTool = defineTool({
     id: "lookup_go_term",
@@ -88,9 +111,11 @@ export const lookupGoTermTool = defineTool({
         if (goId) {
             tasks.push(
                 (async () => {
-                    const res = await apiFetch<QuickGOTermResult>(`${QUICKGO_BASE}/ontology/go/terms/${encodeURIComponent(goId)}`, { headers: HEADERS });
+                    const res = await apiFetchValidated(`${QUICKGO_BASE}/ontology/go/terms/${encodeURIComponent(goId)}`, GoTermResponseSchema, {
+                        headers: HEADERS,
+                    });
                     if (res.isErr()) throw new Error(`GO lookup: ${describeApiError(res.error)}`);
-                    terms = mapTerms(res.value);
+                    terms = res.value;
                 })(),
             );
         }
@@ -99,9 +124,9 @@ export const lookupGoTermTool = defineTool({
             tasks.push(
                 (async () => {
                     const params = new URLSearchParams({ query, limit: String(limit) });
-                    const res = await apiFetch<QuickGOTermResult>(`${QUICKGO_BASE}/ontology/go/search?${params}`, { headers: HEADERS });
+                    const res = await apiFetchValidated(`${QUICKGO_BASE}/ontology/go/search?${params}`, GoTermResponseSchema, { headers: HEADERS });
                     if (res.isErr()) throw new Error(`GO search: ${describeApiError(res.error)}`);
-                    const searchTerms = mapTerms(res.value);
+                    const searchTerms = res.value;
                     terms = terms ? [...terms, ...searchTerms] : searchTerms;
                 })(),
             );
@@ -116,16 +141,9 @@ export const lookupGoTermTool = defineTool({
                     });
                     if (taxonId) params.set("taxonId", String(taxonId));
 
-                    const res = await apiFetch<QuickGOAnnotationResult>(`${QUICKGO_BASE}/annotation/search?${params}`, { headers: HEADERS });
+                    const res = await apiFetchValidated(`${QUICKGO_BASE}/annotation/search?${params}`, GoAnnotationResponseSchema, { headers: HEADERS });
                     if (res.isErr()) throw new Error(`Annotations: ${describeApiError(res.error)}`);
-                    annotations = (res.value.results ?? []).map((a) => ({
-                        geneProductId: a.geneProductId ?? "",
-                        goId: a.goId ?? "",
-                        goName: a.goName ?? "",
-                        aspect: a.goAspect ?? undefined,
-                        evidenceCode: a.goEvidence ?? undefined,
-                        qualifier: a.qualifier ?? undefined,
-                    }));
+                    annotations = res.value;
                 })(),
             );
         }

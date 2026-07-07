@@ -7,7 +7,9 @@
  * calls. Returns a per-species table of tissue × expression-rank.
  */
 
-import { apiFetch, describeApiError, isUnexpectedApiError } from "./api-utils.js";
+import { z } from "zod";
+
+import { apiFetchValidated, describeApiError, isUnexpectedApiError } from "./api-utils.js";
 
 const ENSEMBL_BASE = "https://rest.ensembl.org";
 const BGEE_BASE = "https://www.bgee.org/api";
@@ -61,16 +63,31 @@ export function bucketRank(expressionState: string, score: number | null): Expre
     return "low";
 }
 
-/** A single expression call from the Bgee API `data.calls` array. */
-interface BgeeCall {
-    condition?: {
-        anatEntity?: { name?: string };
-        cellType?: { name?: string };
-    };
-    expressionScore?: { expressionScore?: string | number };
-    expressionQuality?: string;
-    expressionState?: string;
-}
+// A single expression call from the Bgee API `data.calls` array, plus the envelope that
+// wraps them. Validated at the fetch boundary; `parseExpressionResponse` reads the fields
+// defensively. Every field optional — the API omits absent values.
+const BgeeCallSchema = z.object({
+    condition: z
+        .object({
+            anatEntity: z.object({ name: z.string().optional() }).optional(),
+            cellType: z.object({ name: z.string().optional() }).optional(),
+        })
+        .optional(),
+    expressionScore: z.object({ expressionScore: z.union([z.string(), z.number()]).optional() }).optional(),
+    expressionQuality: z.string().optional(),
+    expressionState: z.string().optional(),
+});
+type BgeeCall = z.infer<typeof BgeeCallSchema>;
+
+const BgeeExpressionResponseSchema = z.object({
+    data: z.object({ calls: z.array(BgeeCallSchema).optional() }).optional(),
+});
+
+// Ensembl REST response shapes consumed by the ortholog-resolution path.
+const EnsemblLookupSchema = z.object({ id: z.string().optional() });
+const EnsemblHomologyResponseSchema = z.object({
+    data: z.array(z.object({ homologies: z.array(z.object({ id: z.string().optional(), type: z.string().optional() })).optional() })).optional(),
+});
 
 export function parseExpressionResponse(raw: unknown): TissueRow[] {
     // `raw` is the untyped Bgee API payload; `.data.calls` is reached defensively and
@@ -114,7 +131,7 @@ export function parseExpressionResponse(raw: unknown): TissueRow[] {
 
 async function resolveHumanEnsembl(symbol: string): Promise<string | null> {
     const url = `${ENSEMBL_BASE}/lookup/symbol/homo_sapiens/${encodeURIComponent(symbol)}`;
-    const res = await apiFetch<{ id?: string }>(url, { headers: ENSEMBL_HEADERS });
+    const res = await apiFetchValidated(url, EnsemblLookupSchema, { headers: ENSEMBL_HEADERS });
     if (res.isErr()) {
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
         return null;
@@ -126,9 +143,7 @@ async function resolveHumanEnsembl(symbol: string): Promise<string | null> {
 async function resolveOrtholog(symbol: string, targetSpecies: SupportedSpecies): Promise<string | null> {
     const url =
         `${ENSEMBL_BASE}/homology/symbol/homo_sapiens/${encodeURIComponent(symbol)}` + `?type=orthologues;target_species=${targetSpecies};format=condensed`;
-    const res = await apiFetch<{
-        data?: Array<{ homologies?: Array<{ id?: string; type?: string }> }>;
-    }>(url, { headers: ENSEMBL_HEADERS });
+    const res = await apiFetchValidated(url, EnsemblHomologyResponseSchema, { headers: ENSEMBL_HEADERS });
     if (res.isErr()) {
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
         return null;
@@ -140,7 +155,7 @@ async function resolveOrtholog(symbol: string, targetSpecies: SupportedSpecies):
 
 async function fetchBgeeForSpecies(ensemblId: string, taxonId: number): Promise<TissueRow[]> {
     const url = `${BGEE_BASE}/?page=gene&action=expression&display_type=json` + `&gene_id=${encodeURIComponent(ensemblId)}&species_id=${taxonId}`;
-    const res = await apiFetch<unknown>(url);
+    const res = await apiFetchValidated(url, BgeeExpressionResponseSchema);
     if (res.isErr()) {
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
         return [];

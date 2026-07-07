@@ -4,7 +4,9 @@
  * Used directly by target-assessment workflow steps and by tool wrappers.
  */
 
-import { apiFetch, describeApiError } from "./api-utils.js";
+import { z } from "zod";
+
+import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { CHEMBL_BASE, CHEMBL_HEADERS as HEADERS } from "./chembl-config.js";
 
 export interface ChemblTarget {
@@ -63,55 +65,80 @@ export interface ChemblPolypharmHit {
     pchemblValue: number | null;
 }
 
-interface TargetComponentSynonym {
-    syn_type?: string;
-    component_synonym?: string;
-}
+const TargetComponentSynonymSchema = z.object({
+    syn_type: z.string().optional(),
+    component_synonym: z.string().optional(),
+});
 
-interface TargetComponent {
-    accession?: string;
-    target_component_synonyms?: TargetComponentSynonym[];
-}
+const TargetComponentSchema = z.object({
+    accession: z.string().optional(),
+    target_component_synonyms: z.array(TargetComponentSynonymSchema).optional(),
+});
+type TargetComponent = z.infer<typeof TargetComponentSchema>;
 
-interface RawTarget {
-    target_chembl_id?: string;
-    pref_name?: string;
-    target_type?: string;
-    organism?: string;
-    target_components?: TargetComponent[];
-}
+const RawTargetSchema = z.object({
+    target_chembl_id: z.string().optional(),
+    pref_name: z.string().optional(),
+    target_type: z.string().optional(),
+    organism: z.string().optional(),
+    target_components: z.array(TargetComponentSchema).optional(),
+});
+type RawTarget = z.infer<typeof RawTargetSchema>;
 
 /** A raw activity row from the ChEMBL `activity` endpoint. */
-interface RawChemblActivity {
-    activity_id?: number;
-    molecule_chembl_id?: string;
-    target_chembl_id?: string;
-    standard_type?: string;
-    standard_value?: string | number | null;
-    standard_units?: string;
-    assay_chembl_id?: string;
-    assay_type?: string;
-    pchembl_value?: string | number | null;
-}
+const RawChemblActivitySchema = z.object({
+    activity_id: z.number().optional(),
+    molecule_chembl_id: z.string().optional(),
+    target_chembl_id: z.string().optional(),
+    standard_type: z.string().optional(),
+    standard_value: z.union([z.string(), z.number()]).nullable().optional(),
+    standard_units: z.string().optional(),
+    assay_chembl_id: z.string().optional(),
+    assay_type: z.string().optional(),
+    pchembl_value: z.union([z.string(), z.number()]).nullable().optional(),
+});
 
 /** A raw mechanism row from the ChEMBL `mechanism` endpoint. */
-interface RawChemblMechanism {
-    mechanism_of_action?: string;
-    action_type?: string;
-    target_chembl_id?: string;
-    molecule_chembl_id?: string;
-}
+const RawChemblMechanismSchema = z.object({
+    mechanism_of_action: z.string().optional(),
+    action_type: z.string().optional(),
+    target_chembl_id: z.string().optional(),
+    molecule_chembl_id: z.string().optional(),
+});
+
+/** A drug-indication record nested inside a ChEMBL molecule/drug record. */
+const DrugIndicationRecordSchema = z.object({
+    mesh_heading: z.string().optional(),
+    efo_term: z.string().optional(),
+});
+type DrugIndicationRecord = z.infer<typeof DrugIndicationRecordSchema>;
 
 /** A raw molecule/drug record from the ChEMBL `molecule` / `drug` endpoints. */
-interface RawChemblMolecule {
-    molecule_chembl_id?: string;
-    pref_name?: string;
-    max_phase?: number | null;
-    molecule_type?: string;
-    first_approval?: number | null;
-    drug_indications?: DrugIndicationRecord[];
-    molecule_hierarchy?: { parent_chembl_id?: string };
-}
+const RawChemblMoleculeSchema = z.object({
+    molecule_chembl_id: z.string().optional(),
+    pref_name: z.string().optional(),
+    max_phase: z.number().nullable().optional(),
+    molecule_type: z.string().optional(),
+    first_approval: z.number().nullable().optional(),
+    drug_indications: z.array(DrugIndicationRecordSchema).optional(),
+    molecule_hierarchy: z.object({ parent_chembl_id: z.string().optional() }).optional(),
+});
+
+// Response envelopes returned by the ChEMBL list/record endpoints, validated at
+// the fetch boundary. Every wrapper field is optional because the API omits it
+// when there is no data (a 404 is handled separately as an expected empty).
+const TargetSearchResponseSchema = z.object({ targets: z.array(RawTargetSchema).optional() });
+const ActivitiesResponseSchema = z.object({ activities: z.array(RawChemblActivitySchema).optional() });
+const MechanismsResponseSchema = z.object({ mechanisms: z.array(RawChemblMechanismSchema).optional() });
+const DrugSearchResponseSchema = z.object({ drugs: z.array(RawChemblMoleculeSchema).optional() });
+const MoleculeSearchResponseSchema = z.object({ molecules: z.array(RawChemblMoleculeSchema).optional() });
+const TargetNameResponseSchema = z.object({ pref_name: z.string().optional() });
+const MoleculeStructuresResponseSchema = z.object({
+    molecule_structures: z.object({ standard_inchi_key: z.string().nullable().optional() }).optional(),
+});
+const TargetComponentsResponseSchema = z.object({
+    target_components: z.array(z.object({ accession: z.string().optional(), component_type: z.string().optional() })).optional(),
+});
 
 function extractGeneNames(components?: TargetComponent[]): string[] {
     if (!components?.length) return [];
@@ -149,7 +176,7 @@ function parseNumeric(val: string | number | undefined | null): number | null {
 
 export async function searchTargets(query: string, limit = 25): Promise<ChemblTarget[]> {
     const url = `${CHEMBL_BASE}/target/search.json?q=${encodeURIComponent(query)}&limit=${limit}`;
-    const res = await apiFetch<{ targets?: RawTarget[] }>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, TargetSearchResponseSchema, { headers: HEADERS });
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return [];
         throw new Error(describeApiError(res.error));
@@ -169,7 +196,7 @@ export async function getBioactivity(
         url += `&standard_type=${encodeURIComponent(options.activityType)}`;
     }
 
-    const res = await apiFetch<{ activities?: RawChemblActivity[] }>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, ActivitiesResponseSchema, { headers: HEADERS });
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return [];
         throw new Error(describeApiError(res.error));
@@ -189,14 +216,14 @@ export async function getBioactivity(
 }
 
 async function fetchTargetName(targetChemblId: string): Promise<string | null> {
-    const res = await apiFetch<{ pref_name?: string }>(`${CHEMBL_BASE}/target/${targetChemblId}.json`, { headers: HEADERS });
+    const res = await apiFetchValidated(`${CHEMBL_BASE}/target/${targetChemblId}.json`, TargetNameResponseSchema, { headers: HEADERS });
     if (res.isErr() || !res.value.pref_name) return null;
     return res.value.pref_name;
 }
 
 export async function getMechanism(chemblId: string): Promise<ChemblMechanism[]> {
     const url = `${CHEMBL_BASE}/mechanism.json?molecule_chembl_id=${encodeURIComponent(chemblId)}`;
-    const res = await apiFetch<{ mechanisms?: RawChemblMechanism[] }>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, MechanismsResponseSchema, { headers: HEADERS });
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return [];
         throw new Error(describeApiError(res.error));
@@ -228,11 +255,6 @@ export async function getMechanism(chemblId: string): Promise<ChemblMechanism[]>
     }));
 }
 
-interface DrugIndicationRecord {
-    mesh_heading?: string;
-    efo_term?: string;
-}
-
 function extractIndication(indications?: DrugIndicationRecord[]): string | null {
     if (!indications?.length) return null;
     const terms = new Set<string>();
@@ -245,7 +267,7 @@ function extractIndication(indications?: DrugIndicationRecord[]): string | null 
 
 export async function getDrugInfo(query: string, limit = 25): Promise<ChemblDrug[]> {
     const drugUrl = `${CHEMBL_BASE}/drug/search.json?q=${encodeURIComponent(query)}&limit=${limit}`;
-    const drugRes = await apiFetch<{ drugs?: RawChemblMolecule[] }>(drugUrl, { headers: HEADERS });
+    const drugRes = await apiFetchValidated(drugUrl, DrugSearchResponseSchema, { headers: HEADERS });
 
     if (drugRes.isOk() && drugRes.value.drugs?.length) {
         return drugRes.value.drugs.map((raw) => ({
@@ -263,7 +285,7 @@ export async function getDrugInfo(query: string, limit = 25): Promise<ChemblDrug
     }
 
     const molUrl = `${CHEMBL_BASE}/molecule/search.json?q=${encodeURIComponent(query)}&limit=${limit}`;
-    const molRes = await apiFetch<{ molecules?: RawChemblMolecule[] }>(molUrl, { headers: HEADERS });
+    const molRes = await apiFetchValidated(molUrl, MoleculeSearchResponseSchema, { headers: HEADERS });
     if (molRes.isErr()) {
         if (molRes.error.type === "http_status" && molRes.error.status === 404) return [];
         throw new Error(describeApiError(molRes.error));
@@ -288,7 +310,7 @@ export async function getTargetModulators(targetChemblId: string, options: { min
     const minPhase = options.minPhase ?? 2;
     const limit = options.limit ?? 200;
     const mechUrl = `${CHEMBL_BASE}/mechanism.json?target_chembl_id=${encodeURIComponent(targetChemblId)}` + `&limit=${limit}`;
-    const mechRes = await apiFetch<{ mechanisms?: RawChemblMechanism[] }>(mechUrl, { headers: HEADERS });
+    const mechRes = await apiFetchValidated(mechUrl, MechanismsResponseSchema, { headers: HEADERS });
     if (mechRes.isErr()) {
         if (mechRes.error.type === "http_status" && mechRes.error.status === 404) return [];
         throw new Error(describeApiError(mechRes.error));
@@ -306,7 +328,7 @@ export async function getTargetModulators(targetChemblId: string, options: { min
         const batch = ids.slice(i, i + concurrency);
         const results = await Promise.all(
             batch.map(async (id) => {
-                const res = await apiFetch<RawChemblMolecule>(`${CHEMBL_BASE}/molecule/${id}.json`, {
+                const res = await apiFetchValidated(`${CHEMBL_BASE}/molecule/${id}.json`, RawChemblMoleculeSchema, {
                     headers: HEADERS,
                 });
                 if (res.isErr()) return null;
@@ -340,7 +362,7 @@ export async function getModulatorPolypharmacology(
     const minPchembl = options.minPchembl ?? 5;
     const limit = options.limit ?? 200;
     const url = `${CHEMBL_BASE}/activity.json?molecule_chembl_id=${encodeURIComponent(moleculeChemblId)}` + `&limit=${limit}&pchembl_value__gte=${minPchembl}`;
-    const res = await apiFetch<{ activities?: RawChemblActivity[] }>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, ActivitiesResponseSchema, { headers: HEADERS });
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return [];
         throw new Error(describeApiError(res.error));
@@ -394,7 +416,7 @@ export async function getModulatorOnTargetPchembl(modulatorChemblId: string, tar
         `${CHEMBL_BASE}/activity.json?molecule_chembl_id=${encodeURIComponent(modulatorChemblId)}` +
         `&target_chembl_id=${encodeURIComponent(targetChemblId)}` +
         `&pchembl_value__isnull=false&limit=10`;
-    const res = await apiFetch<{ activities?: RawChemblActivity[] }>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, ActivitiesResponseSchema, { headers: HEADERS });
     if (res.isErr()) return null;
     const values = (res.value.activities ?? []).map((a) => parseNumeric(a.pchembl_value)).filter((v): v is number => v !== null);
     if (values.length === 0) return null;
@@ -429,7 +451,7 @@ export async function getModulatorsViaActivity(args: {
         url += `&molecule_type=${encodeURIComponent(molecule_type)}`;
     }
 
-    const res = await apiFetch<{ activities?: RawChemblActivity[] }>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, ActivitiesResponseSchema, { headers: HEADERS });
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return [];
         throw new Error(describeApiError(res.error));
@@ -449,7 +471,7 @@ export async function getModulatorsViaActivity(args: {
         const batch = ids.slice(i, i + concurrency);
         const results = await Promise.all(
             batch.map(async (id) => {
-                const molRes = await apiFetch<RawChemblMolecule>(`${CHEMBL_BASE}/molecule/${id}.json`, {
+                const molRes = await apiFetchValidated(`${CHEMBL_BASE}/molecule/${id}.json`, RawChemblMoleculeSchema, {
                     headers: HEADERS,
                 });
                 if (molRes.isErr()) return null;
@@ -479,9 +501,7 @@ export async function getModulatorsViaActivity(args: {
  * with `molecule_type: "Unknown"`).
  */
 export async function getMoleculeInChIKey(moleculeChemblId: string): Promise<string | null> {
-    const res = await apiFetch<{
-        molecule_structures?: { standard_inchi_key?: string | null };
-    }>(`${CHEMBL_BASE}/molecule/${moleculeChemblId}.json`, { headers: HEADERS });
+    const res = await apiFetchValidated(`${CHEMBL_BASE}/molecule/${moleculeChemblId}.json`, MoleculeStructuresResponseSchema, { headers: HEADERS });
     if (res.isErr()) return null;
     return res.value.molecule_structures?.standard_inchi_key ?? null;
 }
@@ -495,8 +515,9 @@ export async function getMoleculeInChIKey(moleculeChemblId: string): Promise<str
  * trial of a CALCRL drug being surfaced under a CALCR assessment).
  */
 export async function getDrugPrimaryTargetUniprots(moleculeChemblId: string): Promise<string[]> {
-    const mechRes = await apiFetch<{ mechanisms?: Array<{ target_chembl_id?: string }> }>(
+    const mechRes = await apiFetchValidated(
         `${CHEMBL_BASE}/mechanism.json?molecule_chembl_id=${encodeURIComponent(moleculeChemblId)}&limit=20`,
+        MechanismsResponseSchema,
         { headers: HEADERS },
     );
     if (mechRes.isErr()) return [];
@@ -508,9 +529,7 @@ export async function getDrugPrimaryTargetUniprots(moleculeChemblId: string): Pr
 
     const accessions = new Set<string>();
     for (const targetId of targetIds) {
-        const tRes = await apiFetch<{
-            target_components?: Array<{ accession?: string; component_type?: string }>;
-        }>(`${CHEMBL_BASE}/target/${targetId}.json`, { headers: HEADERS });
+        const tRes = await apiFetchValidated(`${CHEMBL_BASE}/target/${targetId}.json`, TargetComponentsResponseSchema, { headers: HEADERS });
         if (tRes.isErr()) continue;
         for (const c of tRes.value.target_components ?? []) {
             if (c.accession && (c.component_type ?? "").toUpperCase() === "PROTEIN") {

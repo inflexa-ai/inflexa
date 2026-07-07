@@ -9,7 +9,9 @@
  * medicine names.
  */
 
-import { apiFetch, describeApiError } from "./api-utils.js";
+import { z } from "zod";
+
+import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { EMA_REFERRALS_URL } from "./ema-config.js";
 
 export interface EmaReferral {
@@ -34,33 +36,6 @@ export interface EmaReferral {
     referralUrl: string;
 }
 
-interface RawReferral {
-    category?: string;
-    referral_name?: string;
-    international_non_proprietary_name_inn_common_name?: string;
-    current_status?: string;
-    safety_referral?: string;
-    referral_type?: string;
-    associated_names_centrally_authorised_medicines?: string;
-    associated_names_non_centrally_authorised_medicines?: string;
-    class?: string;
-    reference_number?: string;
-    authorisation_model?: string;
-    procedure_start_date?: string;
-    prac_recommendation_date?: string;
-    cmdh_position_date?: string;
-    chmp_cvmp_opinion_date?: string;
-    european_commission_decision_date?: string;
-    first_published_date?: string;
-    last_updated_date?: string;
-    referral_url?: string;
-}
-
-interface ReferralFile {
-    meta?: { total_records?: number; timestamp?: string };
-    data?: RawReferral[];
-}
-
 function parseMedicineList(field: string | undefined): string[] {
     if (!field || !field.trim()) return [];
     return field
@@ -69,8 +44,34 @@ function parseMedicineList(field: string | undefined): string[] {
         .filter(Boolean);
 }
 
-function mapRaw(raw: RawReferral): EmaReferral {
-    return {
+// One schema that both validates the raw referral wire shape (snake_case, every
+// field optional — the bulk file omits absent values) and normalizes it into the
+// camelCase `EmaReferral` we return. Parsing IS the validation: `apiFetchValidated`
+// runs this over the download, so a record whose field TYPES drift is rejected as
+// `invalid_response` instead of silently mis-mapped.
+const EmaReferralSchema = z
+    .object({
+        category: z.string().optional(),
+        referral_name: z.string().optional(),
+        international_non_proprietary_name_inn_common_name: z.string().optional(),
+        current_status: z.string().optional(),
+        safety_referral: z.string().optional(),
+        referral_type: z.string().optional(),
+        associated_names_centrally_authorised_medicines: z.string().optional(),
+        associated_names_non_centrally_authorised_medicines: z.string().optional(),
+        class: z.string().optional(),
+        reference_number: z.string().optional(),
+        authorisation_model: z.string().optional(),
+        procedure_start_date: z.string().optional(),
+        prac_recommendation_date: z.string().optional(),
+        cmdh_position_date: z.string().optional(),
+        chmp_cvmp_opinion_date: z.string().optional(),
+        european_commission_decision_date: z.string().optional(),
+        first_published_date: z.string().optional(),
+        last_updated_date: z.string().optional(),
+        referral_url: z.string().optional(),
+    })
+    .transform((raw): EmaReferral => ({
         category: raw.category ?? "",
         referralName: raw.referral_name ?? "",
         inn: raw.international_non_proprietary_name_inn_common_name ?? "",
@@ -90,8 +91,12 @@ function mapRaw(raw: RawReferral): EmaReferral {
         firstPublishedDate: raw.first_published_date ?? "",
         lastUpdatedDate: raw.last_updated_date ?? "",
         referralUrl: raw.referral_url ?? "",
-    };
-}
+    }));
+
+const ReferralFileSchema = z.object({
+    meta: z.object({ total_records: z.number().optional(), timestamp: z.string().optional() }).optional(),
+    data: z.array(EmaReferralSchema).optional(),
+});
 
 let _cache: { fetchedAt: number; referrals: EmaReferral[] } | null = null;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -105,11 +110,11 @@ export async function fetchAllReferrals(): Promise<EmaReferral[]> {
     if (_cache && Date.now() - _cache.fetchedAt < CACHE_TTL_MS) {
         return _cache.referrals;
     }
-    const res = await apiFetch<ReferralFile>(EMA_REFERRALS_URL, {
+    const res = await apiFetchValidated(EMA_REFERRALS_URL, ReferralFileSchema, {
         headers: { Accept: "application/json" },
     });
     if (res.isErr()) throw new Error(`EMA referrals fetch failed: ${describeApiError(res.error)}`);
-    const referrals = (res.value.data ?? []).map(mapRaw);
+    const referrals = res.value.data ?? [];
     _cache = { fetchedAt: Date.now(), referrals };
     return referrals;
 }

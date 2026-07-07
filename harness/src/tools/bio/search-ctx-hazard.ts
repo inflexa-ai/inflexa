@@ -7,40 +7,81 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 import { EPA_CCTE_BASE, getEpaCcteHeaders } from "../lib/toxcast-config.js";
 
-interface ToxValEntry {
-    source: string;
-    toxvalType: string;
-    toxvalNumeric: number | null;
-    toxvalUnits: string;
-    studyType: string;
-    studyDurationClass: string;
-    species: string;
-    exposureRoute: string;
-    toxicologicalEffect: string;
-    riskAssessmentClass: string;
-    humanEco: string;
-    year: number | null;
-    quality: string;
-}
+// Each schema below both validates one raw CTX hazard row and normalizes it
+// into the curated output shape via `.transform`; `z.infer` is that output
+// type. Every wire field is optional (the API omits absent values); the two
+// numeric fields the API sends as string-or-number stay `z.unknown()` so
+// `toNumberOrNull` can coerce them without the schema rejecting the row.
+const ToxValSchema = z
+    .object({
+        source: z.string().optional(),
+        toxvalType: z.string().optional(),
+        toxvalNumeric: z.unknown().optional(),
+        toxvalUnits: z.string().optional(),
+        studyType: z.string().optional(),
+        studyDurationClass: z.string().optional(),
+        speciesCommon: z.string().optional(),
+        exposureRoute: z.string().optional(),
+        toxicologicalEffect: z.string().optional(),
+        riskAssessmentClass: z.string().optional(),
+        humanEco: z.string().optional(),
+        year: z.unknown().optional(),
+        quality: z.string().optional(),
+    })
+    .transform((r) => ({
+        source: r.source ?? "",
+        toxvalType: r.toxvalType ?? "",
+        toxvalNumeric: toNumberOrNull(r.toxvalNumeric),
+        toxvalUnits: r.toxvalUnits ?? "",
+        studyType: r.studyType ?? "",
+        studyDurationClass: r.studyDurationClass ?? "",
+        species: r.speciesCommon ?? "",
+        exposureRoute: r.exposureRoute ?? "",
+        toxicologicalEffect: r.toxicologicalEffect ?? "",
+        riskAssessmentClass: r.riskAssessmentClass ?? "",
+        humanEco: r.humanEco ?? "",
+        year: toNumberOrNull(r.year),
+        quality: r.quality ?? "",
+    }));
+type ToxValEntry = z.infer<typeof ToxValSchema>;
 
-interface GenetoxSummary {
-    source: string;
-    assayCategory: string;
-    assayType: string;
-    metabolicActivation: string;
-    species: string;
-    overallResult: string;
-    year: number | null;
-}
+const GenetoxSchema = z
+    .object({
+        source: z.string().optional(),
+        assayCategory: z.string().optional(),
+        assayType: z.string().optional(),
+        metabolicActivation: z.string().optional(),
+        species: z.string().optional(),
+        overallResult: z.string().optional(),
+        year: z.unknown().optional(),
+    })
+    .transform((r) => ({
+        source: r.source ?? "",
+        assayCategory: r.assayCategory ?? "",
+        assayType: r.assayType ?? "",
+        metabolicActivation: r.metabolicActivation ?? "",
+        species: r.species ?? "",
+        overallResult: r.overallResult ?? "",
+        year: toNumberOrNull(r.year),
+    }));
+type GenetoxSummary = z.infer<typeof GenetoxSchema>;
 
-interface CancerSummary {
-    source: string;
-    classification: string;
-    url: string;
-}
+const CancerSchema = z
+    .object({
+        source: z.string().optional(),
+        classification: z.string().optional(),
+        cancerClassification: z.string().optional(),
+        url: z.string().optional(),
+    })
+    .transform((r) => ({
+        source: r.source ?? "",
+        classification: r.classification ?? r.cancerClassification ?? "",
+        url: r.url ?? "",
+    }));
+type CancerSummary = z.infer<typeof CancerSchema>;
 
 interface CtxHazardOutput {
     found: true;
@@ -53,43 +94,13 @@ interface CtxHazardOutput {
 
 type CtxHazardResult = { found: false; query: string } | CtxHazardOutput;
 
-interface CtxChemicalSearchRow {
-    dtxsid: string;
-    preferredName?: string;
-}
-
-interface RawToxValRow {
-    source?: string;
-    toxvalType?: string;
-    toxvalNumeric?: unknown;
-    toxvalUnits?: string;
-    studyType?: string;
-    studyDurationClass?: string;
-    speciesCommon?: string;
-    exposureRoute?: string;
-    toxicologicalEffect?: string;
-    riskAssessmentClass?: string;
-    humanEco?: string;
-    year?: unknown;
-    quality?: string;
-}
-
-interface RawGenetoxRow {
-    source?: string;
-    assayCategory?: string;
-    assayType?: string;
-    metabolicActivation?: string;
-    species?: string;
-    overallResult?: string;
-    year?: unknown;
-}
-
-interface RawCancerRow {
-    source?: string;
-    classification?: string;
-    cancerClassification?: string;
-    url?: string;
-}
+// The chemical-search endpoint returns rows the code reads `dtxsid` from
+// unguarded, so `dtxsid` stays required — a row missing it is a contract break
+// surfaced as `invalid_response`, not a silent `undefined`.
+const CtxChemicalSearchRowSchema = z.object({
+    dtxsid: z.string(),
+    preferredName: z.string().optional(),
+});
 
 export function createSearchCtxHazardTool(deps: { apiKey: string }) {
     return defineTool({
@@ -163,7 +174,7 @@ async function resolveDtxsid(query: string, headers: Record<string, string>): Pr
     }
 
     const url = `${EPA_CCTE_BASE}/chemical/search/equal/${encodeURIComponent(query)}`;
-    const res = await apiFetch<CtxChemicalSearchRow[]>(url, { headers });
+    const res = await apiFetchValidated(url, z.array(CtxChemicalSearchRowSchema), { headers });
     if (res.isErr()) throw new Error(describeApiError(res.error));
     if (!res.value?.length) return null;
 
@@ -176,24 +187,10 @@ async function resolveDtxsid(query: string, headers: Record<string, string>): Pr
 
 async function fetchToxval(dtxsid: string, headers: Record<string, string>, limit: number): Promise<ToxValEntry[]> {
     const url = `${EPA_CCTE_BASE}/hazard/toxval/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<RawToxValRow[]>(url, { headers });
+    const res = await apiFetchValidated(url, z.array(ToxValSchema), { headers });
     if (res.isErr() || !Array.isArray(res.value)) return [];
 
-    return res.value.slice(0, limit).map((r) => ({
-        source: r.source ?? "",
-        toxvalType: r.toxvalType ?? "",
-        toxvalNumeric: toNumberOrNull(r.toxvalNumeric),
-        toxvalUnits: r.toxvalUnits ?? "",
-        studyType: r.studyType ?? "",
-        studyDurationClass: r.studyDurationClass ?? "",
-        species: r.speciesCommon ?? "",
-        exposureRoute: r.exposureRoute ?? "",
-        toxicologicalEffect: r.toxicologicalEffect ?? "",
-        riskAssessmentClass: r.riskAssessmentClass ?? "",
-        humanEco: r.humanEco ?? "",
-        year: toNumberOrNull(r.year),
-        quality: r.quality ?? "",
-    }));
+    return res.value.slice(0, limit);
 }
 
 function toNumberOrNull(v: unknown): number | null {
@@ -204,28 +201,16 @@ function toNumberOrNull(v: unknown): number | null {
 
 async function fetchGenetox(dtxsid: string, headers: Record<string, string>, limit: number): Promise<GenetoxSummary[]> {
     const url = `${EPA_CCTE_BASE}/hazard/genetox/summary/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<RawGenetoxRow[]>(url, { headers });
+    const res = await apiFetchValidated(url, z.array(GenetoxSchema), { headers });
     if (res.isErr() || !Array.isArray(res.value)) return [];
 
-    return res.value.slice(0, limit).map((r) => ({
-        source: r.source ?? "",
-        assayCategory: r.assayCategory ?? "",
-        assayType: r.assayType ?? "",
-        metabolicActivation: r.metabolicActivation ?? "",
-        species: r.species ?? "",
-        overallResult: r.overallResult ?? "",
-        year: toNumberOrNull(r.year),
-    }));
+    return res.value.slice(0, limit);
 }
 
 async function fetchCancer(dtxsid: string, headers: Record<string, string>): Promise<CancerSummary[]> {
     const url = `${EPA_CCTE_BASE}/hazard/cancer-summary/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<RawCancerRow[]>(url, { headers });
+    const res = await apiFetchValidated(url, z.array(CancerSchema), { headers });
     if (res.isErr() || !Array.isArray(res.value)) return [];
 
-    return res.value.map((r) => ({
-        source: r.source ?? "",
-        classification: r.classification ?? r.cancerClassification ?? "",
-        url: r.url ?? "",
-    }));
+    return res.value;
 }

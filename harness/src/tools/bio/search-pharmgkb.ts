@@ -6,18 +6,22 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 import { PHARMGKB_BASE, PHARMGKB_HEADERS } from "../lib/pharmgkb-config.js";
 
-interface PharmgkbAnnotation {
-    location?: { genes?: { symbol?: string }[] };
-    relatedChemicals?: { name?: string }[];
-    levelOfEvidence?: { term?: string };
-}
+// Raw PharmGKB clinicalAnnotation wire shape, validated at the fetch boundary.
+// Every field is optional because the API omits absent values; the mapper in
+// `execute` folds request context (`query`) into its output, so the schema
+// models only the raw wire and the mapping stays where it is.
+const PharmgkbAnnotationSchema = z.object({
+    location: z.object({ genes: z.array(z.object({ symbol: z.string().optional() })).optional() }).optional(),
+    relatedChemicals: z.array(z.object({ name: z.string().optional() })).optional(),
+    levelOfEvidence: z.object({ term: z.string().optional() }).optional(),
+});
 
-interface PharmgkbResponse {
-    data?: PharmgkbAnnotation[];
-}
+const PharmgkbResponseSchema = z.object({
+    data: z.array(PharmgkbAnnotationSchema).optional(),
+});
 
 export const searchPharmgkbTool = defineTool({
     id: "search_pharmgkb",
@@ -32,7 +36,7 @@ export const searchPharmgkbTool = defineTool({
         const filter = searchType === "gene" ? `location.genes.symbol=${encodeURIComponent(query)}` : `relatedChemicals.name=${encodeURIComponent(query)}`;
         const endpoint = `${PHARMGKB_BASE}/clinicalAnnotation?${filter}`;
 
-        const res = await apiFetch<PharmgkbResponse>(endpoint, { headers: PHARMGKB_HEADERS });
+        const res = await apiFetchValidated(endpoint, PharmgkbResponseSchema, { headers: PHARMGKB_HEADERS });
         if (res.isErr()) throw new Error(describeApiError(res.error));
 
         const data = res.value?.data ?? [];

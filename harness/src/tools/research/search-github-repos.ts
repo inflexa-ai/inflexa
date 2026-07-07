@@ -10,7 +10,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 
 const BASE_URL = "https://api.github.com/search/repositories";
 
@@ -24,6 +24,24 @@ export interface GithubRepo {
     language?: string;
     lastUpdated?: string;
 }
+
+// Raw GitHub search wire shape, validated at the fetch boundary. Every field is
+// optional — `parseGithubReposResponse` already filters out items missing the
+// fields it needs, so an over-strict schema would drop otherwise-usable pages.
+const GithubReposResponseSchema = z.object({
+    items: z
+        .array(
+            z.object({
+                html_url: z.string().optional(),
+                full_name: z.string().optional(),
+                description: z.string().optional(),
+                stargazers_count: z.number().optional(),
+                language: z.string().optional(),
+                updated_at: z.string().optional(),
+            }),
+        )
+        .optional(),
+});
 
 export function parseGithubReposResponse(raw: unknown): GithubRepo[] {
     const items = (raw as { items?: unknown[] } | undefined)?.items;
@@ -77,7 +95,7 @@ export function createSearchGithubReposTool(deps: { githubToken?: string }) {
             if (deps.githubToken) {
                 headers.Authorization = `Bearer ${deps.githubToken}`;
             }
-            const res = await apiFetch<unknown>(`${BASE_URL}?${params}`, { headers });
+            const res = await apiFetchValidated(`${BASE_URL}?${params}`, GithubReposResponseSchema, { headers });
             if (res.isErr()) {
                 return ok({ success: false as const, error: describeApiError(res.error), repos: [] });
             }

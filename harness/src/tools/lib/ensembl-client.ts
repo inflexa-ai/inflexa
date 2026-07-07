@@ -4,7 +4,9 @@
  * Used by §1.1 (Entity resolution) and as a fallback for ID resolution.
  */
 
-import { apiFetch, describeApiError } from "./api-utils.js";
+import { z } from "zod";
+
+import { apiFetchValidated, describeApiError } from "./api-utils.js";
 
 const ENSEMBL_BASE = "https://rest.ensembl.org";
 const HEADERS = {
@@ -25,18 +27,34 @@ export interface GeneInfo {
     seqRegionName: string;
 }
 
-function mapGene(symbol: string, raw: Record<string, unknown>): GeneInfo {
+// Raw Ensembl gene wire shape (snake_case), validated at the fetch boundary.
+// Every field is optional because the API omits absent values; `mapGene`
+// normalizes each into the camelCase `GeneInfo` we return.
+const RawGeneSchema = z.object({
+    id: z.string().optional(),
+    display_name: z.string().optional(),
+    description: z.string().optional(),
+    biotype: z.string().optional(),
+    start: z.number().optional(),
+    end: z.number().optional(),
+    strand: z.number().optional(),
+    assembly_name: z.string().optional(),
+    seq_region_name: z.string().optional(),
+});
+type RawGene = z.infer<typeof RawGeneSchema>;
+
+function mapGene(symbol: string, raw: RawGene): GeneInfo {
     return {
         symbol,
-        id: (raw.id as string) ?? "",
-        displayName: (raw.display_name as string) ?? "",
-        description: (raw.description as string) ?? "",
-        biotype: (raw.biotype as string) ?? "",
-        start: (raw.start as number) ?? 0,
-        end: (raw.end as number) ?? 0,
-        strand: (raw.strand as number) ?? 0,
-        assemblyName: (raw.assembly_name as string) ?? "",
-        seqRegionName: (raw.seq_region_name as string) ?? "",
+        id: raw.id ?? "",
+        displayName: raw.display_name ?? "",
+        description: raw.description ?? "",
+        biotype: raw.biotype ?? "",
+        start: raw.start ?? 0,
+        end: raw.end ?? 0,
+        strand: raw.strand ?? 0,
+        assemblyName: raw.assembly_name ?? "",
+        seqRegionName: raw.seq_region_name ?? "",
     };
 }
 
@@ -51,7 +69,7 @@ export async function lookupGenes(symbols: string[], options: LookupOptions = {}
 
     if (symbols.length === 1) {
         const expandParam = expand ? "?expand=1" : "";
-        const result = await apiFetch<Record<string, unknown>>(`${ENSEMBL_BASE}/lookup/symbol/${species}/${symbols[0]}${expandParam}`, { headers: HEADERS });
+        const result = await apiFetchValidated(`${ENSEMBL_BASE}/lookup/symbol/${species}/${symbols[0]}${expandParam}`, RawGeneSchema, { headers: HEADERS });
         if (result.isErr()) {
             if (result.error.type === "http_status" && result.error.status === 400) {
                 return { genes: [], notFound: [symbols[0]] };
@@ -61,7 +79,7 @@ export async function lookupGenes(symbols: string[], options: LookupOptions = {}
         return { genes: [mapGene(symbols[0], result.value)], notFound: [] };
     }
 
-    const result = await apiFetch<Record<string, Record<string, unknown>>>(`${ENSEMBL_BASE}/lookup/symbol/${species}`, {
+    const result = await apiFetchValidated(`${ENSEMBL_BASE}/lookup/symbol/${species}`, z.record(z.string(), RawGeneSchema), {
         method: "POST",
         headers: HEADERS,
         body: JSON.stringify({ symbols }),
@@ -81,7 +99,7 @@ export async function lookupGenes(symbols: string[], options: LookupOptions = {}
 /** Resolve a single human gene symbol to its canonical Ensembl ID. */
 export async function resolveSymbolToEnsemblId(symbol: string): Promise<string | null> {
     const url = `${ENSEMBL_BASE}/lookup/symbol/homo_sapiens/${encodeURIComponent(symbol)}`;
-    const res = await apiFetch<{ id?: string }>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, z.object({ id: z.string().optional() }), { headers: HEADERS });
     if (res.isErr()) return null;
     if (typeof res.value.id !== "string" || !res.value.id.startsWith("ENSG")) return null;
     return res.value.id;
