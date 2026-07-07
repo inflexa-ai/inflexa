@@ -30,7 +30,7 @@ afterEach(() => {
 describe("inflexa repair (e2e)", () => {
     test("re-points an anchor's cached path to the marker's current location", () => {
         const moved = tmp();
-        writeMarker(moved, "A1");
+        writeMarker(moved, "A1")._unsafeUnwrap();
         insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: "/stale/old/path", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
         closeDb();
 

@@ -39,7 +39,7 @@ afterEach(() => {
 describe("resolveAnchor", () => {
     test("step 1 — returns the cached path when it still holds the marker", () => {
         const dir = tmp();
-        writeMarker(dir, "A1");
+        writeMarker(dir, "A1")._unsafeUnwrap();
         insertAnchorRow("A1", dir);
         expect(resolveAnchor("A1", { searchRoots: [dir] })._unsafeUnwrap()?.path).toBe(dir);
     });
@@ -54,7 +54,7 @@ describe("resolveAnchor", () => {
     test("step 2 — self-heals to a search root that holds the marker after a move", () => {
         const moved = tmp();
         const stale = tmp(); // cached path, marker no longer here
-        writeMarker(moved, "A1");
+        writeMarker(moved, "A1")._unsafeUnwrap();
         insertAnchorRow("A1", stale);
 
         const result = resolveAnchor("A1", { searchRoots: [moved] })._unsafeUnwrap();

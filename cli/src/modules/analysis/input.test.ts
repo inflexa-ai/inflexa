@@ -22,7 +22,7 @@ afterEach(() => {
 describe("classifyInputPath", () => {
     test("inside a tracked anchor → an anchor-relative ref that rides the anchor's UUID", () => {
         const dir = tmp();
-        writeMarker(dir, "A1");
+        writeMarker(dir, "A1")._unsafeUnwrap();
         mkdirSync(join(dir, "src"));
         const ref = classifyInputPath("ana1", "src", dir)._unsafeUnwrap();
         expect(ref).toEqual({ path: "src", isDir: true, analysisId: "ana1", anchorId: "A1" });
@@ -30,7 +30,7 @@ describe("classifyInputPath", () => {
 
     test("at the anchor directory itself → relative path '.'", () => {
         const dir = tmp();
-        writeMarker(dir, "A1");
+        writeMarker(dir, "A1")._unsafeUnwrap();
         const ref = classifyInputPath("ana1", ".", dir)._unsafeUnwrap();
         expect(ref.path).toBe(".");
         expect(ref.anchorId).toBe("A1");
