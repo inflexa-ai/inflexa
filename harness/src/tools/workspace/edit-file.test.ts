@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,7 +10,6 @@ import { createReadFileTool } from "./read-file.js";
 import { createWorkspaceMutator } from "./mutator.js";
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { stepWritePrefix, toSandboxPath } from "../../workspace/paths.js";
-import type { ProvenanceCollector, ProvenanceSnapshot } from "../../workspace/provenance-collector.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
 
@@ -72,13 +70,6 @@ function makeFakeClient(sessionsBasePath: string): FakeClient {
     };
 }
 
-class CollectingProvenance implements ProvenanceCollector {
-    readonly snapshots: ProvenanceSnapshot[] = [];
-    async recordSnapshot(snap: ProvenanceSnapshot) {
-        this.snapshots.push(snap);
-    }
-}
-
 describe("edit_file tool", () => {
     let sessionsBasePath: string;
 
@@ -91,7 +82,7 @@ describe("edit_file tool", () => {
         rmSync(sessionsBasePath, { recursive: true, force: true });
     });
 
-    function buildTool(opts: { provenance?: ProvenanceCollector } = {}) {
+    function buildTool() {
         const fs = createWorkspaceFilesystem({ sessionsBasePath });
         const client = makeFakeClient(sessionsBasePath);
         const workingDir = stepWritePrefix({
@@ -105,14 +96,12 @@ describe("edit_file tool", () => {
             sandbox: makeSandboxRef(),
             sessionsBasePath,
             analysisId: ANALYSIS,
-            runId: RUN,
             stepId: STEP,
             workflowId: "wf1",
             workingDir,
             sandboxWorkingDir: toSandboxPath(sessionsBasePath, workingDir),
             nextFunctionId: () => "fn1",
             deadlineMs: () => 9_999_999,
-            ...(opts.provenance ? { provenance: opts.provenance } : {}),
         });
         const tool = createEditFileTool({
             mutator,
@@ -239,33 +228,5 @@ describe("edit_file tool", () => {
             )
         )._unsafeUnwrap();
         expect(out.status).toBe("file_not_found");
-    });
-
-    it("records provenance for the post-edit content (not pre-edit)", async () => {
-        const beforeContent = "hello world";
-        await seed(beforeContent);
-        const prov = new CollectingProvenance();
-        const { tool } = buildTool({ provenance: prov });
-        const { ctx } = makeToolContext();
-
-        const out = (
-            await tool.execute(
-                {
-                    path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/notes.md`,
-                    old_string: "world",
-                    new_string: "harness",
-                    replace_all: false,
-                },
-                ctx,
-            )
-        )._unsafeUnwrap();
-        expect(out.status).toBe("ok");
-        expect(prov.snapshots.length).toBe(1);
-        const afterContent = "hello harness";
-        const expectedSha = createHash("sha256").update(afterContent, "utf8").digest("hex");
-        expect(prov.snapshots[0]!.sha256).toBe(expectedSha);
-        expect(prov.snapshots[0]!.bytes).toBe(Buffer.byteLength(afterContent, "utf8"));
-        const preSha = createHash("sha256").update(beforeContent, "utf8").digest("hex");
-        expect(prov.snapshots[0]!.sha256).not.toBe(preSha);
     });
 });

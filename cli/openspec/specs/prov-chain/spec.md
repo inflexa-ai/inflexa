@@ -33,29 +33,25 @@ The system SHALL sign the chain hash with the Ed25519 private key (per `prov-sig
 - **WHEN** the recorder flushes and a signing keypair is available
 - **THEN** `provenance`, `provenance_chain_hash`, and `provenance_signature` are all updated in a single SQL statement
 
-#### Scenario: Flush without keypair writes provenance only
+#### Scenario: Flush cannot obtain a signing key — nothing is persisted
 
-- **WHEN** the recorder flushes and no signing keypair is available
-- **THEN** `provenance` is updated
-- **AND** `provenance_chain_hash` and `provenance_signature` remain `NULL`
+- **WHEN** the recorder flushes but the signing key cannot be obtained (corrupt keypair file, generation failure, or a lost keygen race — the key is generated on first use, so this is a hard fault, not the normal path)
+- **THEN** NO column is written — `provenance`, `provenance_chain_hash`, and `provenance_signature` are all left unchanged
+- **AND** the analysis is retained as dirty so a later append retries the flush; a persistent failure surfaces as a logged `provenance flush could not drain — signing or persist is failing`
 
-### Requirement: DB migration v3 adds integrity columns
+### Requirement: Integrity columns are part of the baseline schema
 
-The system SHALL add a migration `version: 3` in `src/db/primary_migrations.ts` that executes:
-```sql
-ALTER TABLE analyses ADD COLUMN provenance_chain_hash TEXT;
-ALTER TABLE analyses ADD COLUMN provenance_signature TEXT;
-```
-Existing rows receive `NULL` for both columns, correctly treated as "unsigned" by the verification logic.
+The `analyses` table SHALL declare all four provenance columns — `provenance TEXT`, `provenance_chain_hash TEXT`, `provenance_signature TEXT`, and `provenance_prev_chain_hash TEXT` — in the single `version: 1` baseline migration in `src/db/primary_migrations.ts`. There is no separate `ALTER TABLE` / `version: 2` / `version: 3` migration; the columns exist from the first migration. A newly created analysis row has `NULL` in all four until its first signed flush, which the verifier reads as `unsigned` (or `empty` when `provenance` itself is `NULL`).
 
-#### Scenario: Migration v3 adds columns to existing database
+The dedicated `provenance_prev_chain_hash` column holds the chain hash of the PREVIOUS flush, so the verifier can recompute `chainHash = SHA-256(provenance_prev_chain_hash || provenance)` from stored data alone. `updateAnalysisProvenance` rotates it in the same atomic `UPDATE`: it copies the current `provenance_chain_hash` into `provenance_prev_chain_hash` before writing the new `provenance_chain_hash` and `provenance_signature`.
 
-- **WHEN** the migration runner applies version 3 to a database at version 2
-- **THEN** the `analyses` table gains `provenance_chain_hash` and `provenance_signature` columns
-- **AND** existing rows have `NULL` for both
-
-#### Scenario: Fresh database gets all migrations
+#### Scenario: Baseline migration creates all four integrity columns
 
 - **WHEN** the migration runner executes against a fresh database
-- **THEN** migrations 1, 2, and 3 are all applied
-- **AND** `analyses` has `provenance`, `provenance_chain_hash`, and `provenance_signature` columns
+- **THEN** migration 1 is applied and `analyses` has `provenance`, `provenance_chain_hash`, `provenance_signature`, and `provenance_prev_chain_hash` columns
+- **AND** a row that has never been flushed has `NULL` in all four
+
+#### Scenario: prev_chain_hash rotates on each flush
+
+- **WHEN** `updateAnalysisProvenance` persists a new signed flush
+- **THEN** the same `UPDATE` copies the current `provenance_chain_hash` into `provenance_prev_chain_hash` before writing the new `provenance_chain_hash` and `provenance_signature`

@@ -17,9 +17,11 @@ before registration (inputs are immutable for the step — the analysis tree is
 mounted read-only), and an input that cannot be hashed is terminal rather than
 registered hashless (see the artifact-manifest spec for the reconcile rules).
 
-This is the OSS view of the seam. The OSS build exposes only the `ArtifactRegistry`
-interface and its `FilesystemArtifactRegistry` realization; the seam result is a
-flat per-path outcome and carries no managed signing vocabulary. The structured
+This is the OSS view of the seam. The OSS build exposes the `ArtifactRegistry`
+interface with `createNoopArtifactRegistry` as its local default; the live
+realization is the embedder's (e.g. the cli's bus adapter feeding a signed
+provenance ledger). The seam result is a flat per-path outcome and carries no
+managed signing vocabulary. The structured
 signing-method payload and any synthesized empty-input collector are a managed
 adapter's concern and are not part of OSS core.
 

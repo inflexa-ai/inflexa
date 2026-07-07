@@ -6,13 +6,13 @@
  * delegates external provenance registration to an injected `ArtifactRegistry`.
  * The seam input is the high-level step input; the result is a flat per-path
  * outcome. The seam deliberately mentions no host-managed vocabulary — a
- * filesystem adapter satisfies it just as well as a managed adapter.
+ * trivial no-op adapter satisfies it just as well as a managed adapter.
  *
  * Adapters:
  *   - a managed provenance adapter (harness/compose/) — builds the structured
  *     payload and calls the host provenance ledger.
- *   - `FilesystemArtifactRegistry` (the harness, this dir) — writes a local provenance
- *     index file.
+ *   - `createNoopArtifactRegistry` (the harness, this dir) — registers nothing
+ *     externally; the local `cortex_artifacts` ledger is the only record.
  */
 
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";

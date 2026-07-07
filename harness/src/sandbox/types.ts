@@ -76,6 +76,12 @@ export const ProvenanceFrameSchema = z.object({
     disabled: z.boolean().default(false),
     reads: z.array(ProvenanceFrameEntrySchema).default([]),
     writes: z.array(ProvenanceFrameEntrySchema).default([]),
+    /**
+     * Reserved. All four sandbox capture layers report deletes per the
+     * sandbox-provenance-tracking spec, but the harness has no consumer —
+     * `feedExecFrame` reads only `reads`/`writes`. Kept on the wire for a
+     * future invalidation mapping.
+     */
     deletes: z.array(ProvenanceFrameEntrySchema).default([]),
 });
 export type ProvenanceFrame = z.infer<typeof ProvenanceFrameSchema>;

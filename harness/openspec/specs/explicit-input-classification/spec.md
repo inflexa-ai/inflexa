@@ -12,10 +12,11 @@ without re-parsing paths.
 
 Classification is driven from structured step context (the step's own `stepId`
 and `runId`, plus its `dependsOn` list) by prefix matching, not path-segment
-extraction. The one exception is prior-run reads, where the source-run plumbing
-was never completed (`sourceRunIds` is declared but never populated), so that
-single branch falls back to extracting the run and step ids from the path and is
-documented in-code as the lone path-parsing case.
+extraction. The one exception is prior-run reads: a prior-run path matches
+neither the step's own ids nor its `dependsOn` prefixes, so no structured
+context can classify it, and that single branch falls back to extracting the
+run and step ids from the path — documented in-code as the lone path-parsing
+case.
 
 The integration point is `feedExecFrame`: it ingests one sandbox-server exec
 provenance frame, strips the `/{resourceId}/` mount prefix from each read,
@@ -132,13 +133,14 @@ same-run step outside `dependsOn` is still a valid upstream input.
 ### Requirement: Prior-run classification is the one documented path-extraction fallback
 
 The prior-run branch SHALL be the only place classification parses path segments,
-and SHALL carry an in-code comment explaining the gap: `sourceRunIds` is declared
-but never populated, the execute-analysis workflow builds step context without
-it, prior run IDs are available in the `cortex_runs` ledger, and threading them
-through `classifyReadPath` as a prefix list (like `dependsOn`) would eliminate the
-fallback.
+and SHALL carry an in-code comment stating why the fallback exists: a read under
+`runs/{otherRunId}/…` that matches neither the step's own run nor a `dependsOn`
+entry carries no step metadata linking it, so the path segments are the only
+available source for the `{source: "prior", runId, stepId}` classification. The
+comment SHALL describe only code that exists — it SHALL NOT reference
+declarations, types, or plumbing absent from the tree.
 
 #### Scenario: Comment exists at the fallback location
 
 - **WHEN** a developer reads the prior-run classification branch
-- **THEN** they find a comment explaining the gap, what is missing, and what would eliminate the path extraction
+- **THEN** they find a comment stating why path extraction is the only source for prior-run identity, with no references to nonexistent declarations

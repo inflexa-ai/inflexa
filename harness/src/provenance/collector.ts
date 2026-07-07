@@ -17,7 +17,7 @@ import type { ProvenanceRecord, InputRef, InputSource, Producer } from "./types.
 
 /** A single observed write from the provenance frame.
  *
- * `hash` is left empty by `processProvenanceFrame` — it is the
+ * `hash` is left empty by `feedExecFrame` — it is the
  * responsibility of `reconcileManifestWithDisk` to populate the hash
  * from disk just before registration, so the registered hash always
  * matches the bytes the storage backend will receive at upload time. Callers that
@@ -60,7 +60,8 @@ function inferScriptPath(command: string, args?: string[]): string | null {
 // ── Input classification ────────────────────────────────────────────
 
 /** Explicit classification context for a file read. Callers build this
- *  from StepMetadata instead of the collector parsing paths. */
+ *  from the step's own coordinates (stepId/runId/dependsOn) instead of the
+ *  collector parsing paths. */
 export interface InputClassificationContext {
     source: InputSource;
     stepId?: string;
@@ -75,9 +76,8 @@ export interface InputClassificationContext {
  * dependencies (dependsOn).
  *
  * For prior-run reads (paths under runs/ that don't match own run or
- * any dependsOn entry), this falls back to path extraction. See the
- * detailed comment in the prior-run branch for why and what needs to
- * happen to eliminate it.
+ * any dependsOn entry), this falls back to path extraction — see the
+ * prior-run branch below for why.
  */
 export function classifyReadPath(relativePath: string, ownStepId: string, ownRunId: string, dependsOn?: string[]): InputClassificationContext {
     if (relativePath.startsWith("data/") || relativePath.startsWith("dataprofile/")) {
@@ -113,40 +113,11 @@ export function classifyReadPath(relativePath: string, ownStepId: string, ownRun
         }
     }
 
-    // ┌──────────────────────────────────────────────────────────────────┐
-    // │ PRIOR-RUN FALLBACK — PATH EXTRACTION                            │
-    // │                                                                  │
-    // │ This is the ONE remaining path-parsing case. It exists because   │
-    // │ StepMetadata.sourceRunIds is declared but NEVER POPULATED.       │
-    // │                                                                  │
-    // │ The infrastructure exists but is disconnected:                   │
-    // │   - StepMetadata.sourceRunIds (workspace-profiles.ts:53)         │
-    // │     → Declared with comment "not used for mount construction"    │
-    // │     → Never set by any caller                                   │
-    // │   - execute-analysis.ts:474-487 builds stepMetadata              │
-    // │     → Sets dependsOn from step.depends_on                       │
-    // │     → Does NOT set sourceRunIds                                  │
-    // │   - generatePlan tool (generate-plan.ts:88) has priorRuns input  │
-    // │     → Never called with actual prior run data                   │
-    // │   - cortex_runs table has all run IDs per analysis               │
-    // │     → Never queried to discover prior runs at workflow init      │
-    // │   - The PVC mounts everything at /{resourceId}/ so prior run    │
-    // │     files are accidentally visible via the filesystem            │
-    // │                                                                  │
-    // │ TO ELIMINATE THIS FALLBACK:                                      │
-    // │   1. In execute-analysis.ts, before running steps:               │
-    // │      query cortex_runs for prior run IDs for this analysis       │
-    // │   2. Pass them as sourceRunIds in StepMetadata                   │
-    // │   3. Thread sourceRunIds through to ProvenanceCollector          │
-    // │   4. Add sourceRunIds to classifyReadPath() params               │
-    // │   5. Build prefixes: runs/{priorRunId}/ for each prior run      │
-    // │   6. Match and extract stepId from known prior run prefixes      │
-    // │      (same prefix-matching pattern as dependsOn, no parsing)    │
-    // │                                                                  │
-    // │ Until then, we extract runId and stepId from the path for        │
-    // │ prior-run reads. This is the only place in the provenance        │
-    // │ system that does path-segment extraction.                        │
-    // └──────────────────────────────────────────────────────────────────┘
+    // Prior-run fallback: a read under `runs/{otherRunId}/...` that is neither
+    // this step's own run nor a `dependsOn` entry carries no step metadata
+    // linking it, so the path segments are the only source for the
+    // `{source: "prior", runId, stepId}` classification. This is the one place
+    // the provenance system extracts identity from path segments.
     if (relativePath.startsWith("runs/")) {
         const parts = relativePath.split("/");
         const priorRunId = parts[1];

@@ -66,16 +66,19 @@ The system SHALL register `inflexa prov verify-file <path>` that verifies a prov
 ### Requirement: Verification result type
 
 The system SHALL define a discriminated union `VerifyResult` with the following variants:
-- `{ status: "valid" }` — chain hash recomputes correctly AND signature verifies.
-- `{ status: "unsigned" }` — no signature stored.
-- `{ status: "tampered"; detail: string }` — chain hash or signature does not verify.
-- `{ status: "no-key" }` — signature exists but public key is missing.
-- `{ status: "empty" }` — no provenance recorded.
+- `{ status: "valid" }` — the chain hash (DB path) or payload digest (file path) recomputes correctly AND the Ed25519 signature verifies.
+- `{ status: "unsigned" }` — no chain hash / signature is stored (a legacy row recorded before integrity was enabled; current flushes never persist unsigned, so new writes cannot produce this state).
+- `{ status: "tampered"; detail: string }` — the recomputed chain hash or payload digest does not match the stored value, or the signature does not verify; `detail` names which.
+- `{ status: "no-key" }` — a signature is stored but the public key file is missing, so it cannot be verified.
+- `{ status: "empty" }` — no provenance has been recorded for the analysis.
+- `{ status: "invalid-sidecar"; detail: string }` — (file path) the `.sig.json` sidecar is missing, malformed, or fails schema validation.
+- `{ status: "invalid-key" }` — (file path) the public key embedded in the sidecar cannot be imported as an Ed25519 key.
+- `{ status: "verify-error"; detail: string }` — a crypto operation (chain-hash/digest computation or signature verification) failed internally; `detail` carries the cause.
 
 #### Scenario: Each verification outcome maps to exactly one variant
 
 - **WHEN** verification is performed
-- **THEN** the result is exactly one of the five `VerifyResult` variants
+- **THEN** the result is exactly one of the eight `VerifyResult` variants
 
 ### Requirement: Verification logic is pure and testable
 
@@ -93,7 +96,7 @@ The system SHALL add a "Verify provenance" entry to the command palette (categor
 #### Scenario: TUI verify shows result as notice
 
 - **WHEN** the user selects "Verify provenance" from the command palette
-- **THEN** a notice is displayed with the verification status (valid/unsigned/tampered/no-key/empty)
+- **THEN** a notice is displayed with the verification status (one of the eight `VerifyResult` variants)
 
 ### Requirement: Export includes a self-describing verification sidecar
 
@@ -117,10 +120,11 @@ The system SHALL extend `inflexa prov export` to write a sidecar file `provenanc
 - **THEN** it writes `provenance.json` and `provenance.json.sig.json` to the output directory
 - **AND** the sidecar contains `payloadType`, `payloadDigestAlgorithm`, `payloadDigest`, `payloadDigestMethod`, `signatureAlgorithm`, `signature`, and `publicKey`
 
-#### Scenario: Export without signature writes no sidecar
+#### Scenario: Export hard-fails when signing is impossible — never exported unsigned
 
-- **WHEN** `inflexa prov export my-analysis` runs and the analysis has no stored signature
-- **THEN** it writes only `provenance.json` (no `.sig.json` sidecar)
+- **WHEN** `inflexa prov export my-analysis --format json` runs but signing cannot complete (the keypair file is corrupt, or a crypto operation fails, so `buildSidecar` returns `err(SigningError)`)
+- **THEN** the command prints `Signing failed (<type>) — provenance is never exported unsigned.` and exits non-zero via `fail()`
+- **AND** it does not silently succeed by writing only `provenance.json`: a JSON export always signs (the key is generated on first use), so an unsignable export is a hard failure, not a graceful "provenance only" path
 
 #### Scenario: Third-party verification with sidecar
 
