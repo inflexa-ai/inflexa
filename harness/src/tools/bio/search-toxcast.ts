@@ -35,6 +35,35 @@ type ToxcastOutput =
           };
       };
 
+interface CtxChemicalSearchRow {
+    dtxsid: string;
+    preferredName?: string;
+    casrn?: string | null;
+}
+
+interface ToxcastMc5Param {
+    ac50?: number;
+    acc?: number;
+}
+
+interface ToxcastMc6Param {
+    flag?: unknown;
+}
+
+interface ToxcastBioactivityRow {
+    aeid?: number;
+    hitc?: number;
+    maxMean?: number | null;
+    modl?: string;
+    mc5Param?: ToxcastMc5Param | null;
+    mc6Param?: ToxcastMc6Param | null;
+}
+
+interface ToxcastAssaySummaryRow {
+    aeid?: number;
+    aenm?: string;
+}
+
 export function createSearchToxcastTool(deps: { apiKey: string }) {
     return defineTool({
         id: "search_toxcast",
@@ -60,20 +89,20 @@ export function createSearchToxcastTool(deps: { apiKey: string }) {
             const aeidMap = await fetchAssayNames(dtxsid, headers);
 
             const bioUrl = `${EPA_CCTE_BASE}/bioactivity/data/search/by-dtxsid/${dtxsid}`;
-            const bioRes = await apiFetch<any[]>(bioUrl, { headers });
+            const bioRes = await apiFetch<ToxcastBioactivityRow[]>(bioUrl, { headers });
             if (bioRes.isErr()) throw new Error(describeApiError(bioRes.error));
 
             const allResults = bioRes.value ?? [];
             const totalAssays = allResults.length;
-            const activeAssays = allResults.filter((r: any) => r.hitc === 1).length;
+            const activeAssays = allResults.filter((r) => r.hitc === 1).length;
 
-            const filtered = activeOnly ? allResults.filter((r: any) => r.hitc === 1) : allResults;
+            const filtered = activeOnly ? allResults.filter((r) => r.hitc === 1) : allResults;
 
-            filtered.sort((a: any, b: any) => extractAc50(a) - extractAc50(b));
+            filtered.sort((a, b) => extractAc50(a) - extractAc50(b));
 
-            const results = filtered.slice(0, limit).map((r: any) => {
+            const results = filtered.slice(0, limit).map((r) => {
                 const aeid = r.aeid ?? 0;
-                const mc6 = r.mc6Param ?? {};
+                const mc6: ToxcastMc6Param = r.mc6Param ?? {};
                 const flags: string[] = Array.isArray(mc6.flag) ? mc6.flag : [];
 
                 return {
@@ -103,11 +132,11 @@ export function createSearchToxcastTool(deps: { apiKey: string }) {
     });
 }
 
-function extractAc50(r: any): number {
+function extractAc50(r: ToxcastBioactivityRow): number {
     return extractAc50Raw(r) ?? Infinity;
 }
 
-function extractAc50Raw(r: any): number | null {
+function extractAc50Raw(r: ToxcastBioactivityRow): number | null {
     const mc5 = r.mc5Param;
     if (mc5 && typeof mc5 === "object") {
         if (typeof mc5.ac50 === "number") return mc5.ac50;
@@ -122,7 +151,7 @@ async function resolveDtxsid(query: string, headers: Record<string, string>): Pr
     }
 
     const searchUrl = `${EPA_CCTE_BASE}/chemical/search/equal/${encodeURIComponent(query)}`;
-    const searchRes = await apiFetch<any[]>(searchUrl, { headers });
+    const searchRes = await apiFetch<CtxChemicalSearchRow[]>(searchUrl, { headers });
     if (searchRes.isErr()) throw new Error(describeApiError(searchRes.error));
     if (!searchRes.value?.length) return null;
 
@@ -137,7 +166,7 @@ async function resolveDtxsid(query: string, headers: Record<string, string>): Pr
 async function fetchAssayNames(dtxsid: string, headers: Record<string, string>): Promise<Map<number, string>> {
     const map = new Map<number, string>();
     const url = `${EPA_CCTE_BASE}/bioactivity/data/summary/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<any[]>(url, { headers });
+    const res = await apiFetch<ToxcastAssaySummaryRow[]>(url, { headers });
     if (res.isOk() && Array.isArray(res.value)) {
         for (const s of res.value) {
             if (s.aeid != null && s.aenm) {

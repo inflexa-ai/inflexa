@@ -12,8 +12,7 @@
  */
 
 export type PreviewMintResult =
-    | { ok: true; data: { baseUrl: string; token: string; expiresAt: string } }
-    | { ok: false; status?: number; error: { message?: string } };
+    { ok: true; data: { baseUrl: string; token: string; expiresAt: string } } | { ok: false; status?: number; error: { message?: string } };
 
 export interface PreviewPublisher {
     mintPreviewAccess(resourceId: string, previewId: string): Promise<PreviewMintResult>;

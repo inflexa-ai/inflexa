@@ -50,7 +50,7 @@ describe("contentToCortexMessages", () => {
             },
             { role: "assistant", content: [{ type: "text", text: "Here are the results." }] },
         ];
-        await history.appendTurn(THREAD, turn);
+        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
 
         const page = (await history.loadPage(THREAD, 0, 100))._unsafeUnwrap();
         const cortex = await contentToCortexMessages(page.messages);
@@ -99,7 +99,7 @@ describe("contentToCortexMessages", () => {
             });
         }
         turn.push({ role: "assistant", content: [{ type: "text", text: "Here is the report." }] });
-        await history.appendTurn(THREAD, turn);
+        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
 
         const page = (await history.loadPage(THREAD, 0, 100))._unsafeUnwrap();
         const cortex = await contentToCortexMessages(page.messages);
@@ -191,12 +191,14 @@ describe("contentToCortexMessages", () => {
             })
         )._unsafeUnwrap();
         const runId = "run-card-fixed-1";
-        await insertRun(pool, {
-            runId,
-            analysisId,
-            workflowName: "executeAnalysis",
-            planId,
-        });
+        (
+            await insertRun(pool, {
+                runId,
+                analysisId,
+                workflowName: "executeAnalysis",
+                planId,
+            })
+        )._unsafeUnwrap();
 
         const cortex = await contentToCortexMessages(
             [
@@ -256,12 +258,14 @@ describe("contentToCortexMessages", () => {
             })
         )._unsafeUnwrap();
         const runId = "run-card-titled-1";
-        await insertRun(pool, {
-            runId,
-            analysisId,
-            workflowName: "executeAnalysis",
-            planId,
-        });
+        (
+            await insertRun(pool, {
+                runId,
+                analysisId,
+                workflowName: "executeAnalysis",
+                planId,
+            })
+        )._unsafeUnwrap();
 
         const cortex = await contentToCortexMessages(
             [
@@ -368,7 +372,7 @@ describe("ThreadHistory.loadPage", () => {
             messages.push({ role: "user", content: [{ type: "text", text: `m${i}` }] });
             messages.push({ role: "assistant", content: [{ type: "text", text: `r${i}` }] });
         }
-        await history.appendTurn(THREAD, messages);
+        (await history.appendTurn(THREAD, messages))._unsafeUnwrap();
 
         const first = (await history.loadPage(THREAD, 0, 5))._unsafeUnwrap();
         expect(first.total).toBe(6); // six turns, not twelve rows
@@ -400,7 +404,7 @@ describe("ThreadHistory.loadPage", () => {
             });
         }
         turn.push({ role: "assistant", content: [{ type: "text", text: "summary" }] });
-        await history.appendTurn(THREAD, turn);
+        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
 
         // Even with perPage 1, the single turn loads whole: 1 user + 5 tool-call +
         // 5 tool-result + 1 summary = 12 rows.
@@ -417,7 +421,7 @@ describe("ThreadHistory.loadPage", () => {
         for (let i = 0; i < 24; i++) {
             messages.push({ role: "user", content: [{ type: "text", text: `m${i}` }] });
         }
-        await history.appendTurn(THREAD, messages);
+        (await history.appendTurn(THREAD, messages))._unsafeUnwrap();
 
         // One page covering all 24 — a lexicographic sort on the bigint `seq`
         // would yield 0,1,10,11,...,2,20,...,3,... and place seq 9 last.

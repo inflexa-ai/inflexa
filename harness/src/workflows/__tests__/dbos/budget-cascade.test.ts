@@ -512,7 +512,7 @@ describe("Integration test 10.9 — 402 pause + resume cascade", () => {
         const analysisId = "a-budget-parent-cancel";
         const planId = "plan-budget-parent-cancel";
 
-        await upsertAnalysis(rig.pool, analysisId, null, null);
+        (await upsertAnalysis(rig.pool, analysisId, null, null))._unsafeUnwrap();
         await rig.pool.query(
             `INSERT INTO cortex_plans (plan_id, analysis_id, plan, parent_plan_id, created_at)
          VALUES ($1, $2, $3::jsonb, NULL, $4)`,
@@ -612,7 +612,7 @@ describe("Integration test 10.9 — 402 pause + resume cascade", () => {
         const analysisId = "a-budget-prod-cancel";
         const planId = "plan-budget-prod-cancel";
 
-        await upsertAnalysis(rig.pool, analysisId, null, null);
+        (await upsertAnalysis(rig.pool, analysisId, null, null))._unsafeUnwrap();
         await rig.pool.query(
             `INSERT INTO cortex_plans (plan_id, analysis_id, plan, parent_plan_id, created_at)
          VALUES ($1, $2, $3::jsonb, NULL, $4)`,

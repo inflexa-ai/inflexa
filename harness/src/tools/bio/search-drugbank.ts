@@ -12,36 +12,30 @@ import { defineTool } from "../define-tool.js";
 import { apiFetch, describeApiError } from "../lib/api-utils.js";
 import { DRUGBANK_BASE, getDrugbankHeaders } from "../lib/drugbank-config.js";
 
-const DrugResultSchema = z.object({
-    drugbankId: z.string(),
-    name: z.string(),
-    description: z.string(),
-    type: z.string(),
-    groups: z.array(z.string()),
-    categories: z.array(z.string()),
-    indication: z.string(),
-    pharmacodynamics: z.string(),
-    mechanismOfAction: z.string(),
-    toxicity: z.string(),
-    halfLife: z.string(),
-    targets: z.array(
-        z.object({
-            name: z.string(),
-            geneSymbol: z.string(),
-            actions: z.array(z.string()),
-            knownAction: z.string(),
-        }),
-    ),
-    interactions: z.array(
-        z.object({
-            drugbankId: z.string(),
-            name: z.string(),
-            description: z.string(),
-        }),
-    ),
-});
-
-type DrugResult = z.infer<typeof DrugResultSchema>;
+interface DrugResult {
+    drugbankId: string;
+    name: string;
+    description: string;
+    type: string;
+    groups: string[];
+    categories: string[];
+    indication: string;
+    pharmacodynamics: string;
+    mechanismOfAction: string;
+    toxicity: string;
+    halfLife: string;
+    targets: {
+        name: string;
+        geneSymbol: string;
+        actions: string[];
+        knownAction: string;
+    }[];
+    interactions: {
+        drugbankId: string;
+        name: string;
+        description: string;
+    }[];
+}
 
 interface RawDrug {
     drugbank_id?: string;
@@ -119,7 +113,7 @@ export function createSearchDrugbankTool(deps: { apiKey: string }) {
                 url = `${DRUGBANK_BASE}/drugs?q=${encodeURIComponent(query)}&limit=${limit}`;
             }
 
-            const res = await apiFetch<any>(url, { headers });
+            const res = await apiFetch<RawDrug | RawDrug[]>(url, { headers });
             if (res.isErr()) throw new Error(describeApiError(res.error));
 
             const rawDrugs: RawDrug[] = Array.isArray(res.value) ? res.value : [res.value];

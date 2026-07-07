@@ -148,8 +148,7 @@ export async function modulatorTriage(input: Phase1Bundle, deps: DecisionAgentDe
 // ── drugs-in-class ───────────────────────────────────────────────────
 
 export type DrugsInClassResult =
-    | CoverageEnvelope<DrugsInClassOutput>
-    | { readonly kind: "budget-exceeded"; readonly sentinel: typeof BUDGET_EXCEEDED_SENTINEL };
+    CoverageEnvelope<DrugsInClassOutput> | { readonly kind: "budget-exceeded"; readonly sentinel: typeof BUDGET_EXCEEDED_SENTINEL };
 
 export async function drugsInClass(input: Phase1Bundle, deps: DecisionAgentDeps): Promise<DrugsInClassResult> {
     const modulators = input.collectors.chemblModulators;

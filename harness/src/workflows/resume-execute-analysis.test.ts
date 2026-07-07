@@ -27,11 +27,13 @@ describe("prepareExecuteAnalysisResume", () => {
 
     it("bumps attempt_count from 0 -> 1 and preserves runId/workflowId", async () => {
         ({ pool, drop } = await withSchema("resume_helper_bump"));
-        await insertRun(pool, {
-            runId: "run-1",
-            analysisId: "a1",
-            workflowName: "executeAnalysis",
-        });
+        (
+            await insertRun(pool, {
+                runId: "run-1",
+                analysisId: "a1",
+                workflowName: "executeAnalysis",
+            })
+        )._unsafeUnwrap();
 
         const result = await prepareExecuteAnalysisResume(pool, "run-1");
         expect(result.runId).toBe("run-1");
@@ -47,11 +49,13 @@ describe("prepareExecuteAnalysisResume", () => {
 
     it("repeated calls bump monotonically", async () => {
         ({ pool, drop } = await withSchema("resume_helper_repeat"));
-        await insertRun(pool, {
-            runId: "run-1",
-            analysisId: "a1",
-            workflowName: "executeAnalysis",
-        });
+        (
+            await insertRun(pool, {
+                runId: "run-1",
+                analysisId: "a1",
+                workflowName: "executeAnalysis",
+            })
+        )._unsafeUnwrap();
 
         const first = await prepareExecuteAnalysisResume(pool, "run-1");
         const second = await prepareExecuteAnalysisResume(pool, "run-1");

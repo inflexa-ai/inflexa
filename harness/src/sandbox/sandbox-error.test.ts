@@ -67,13 +67,15 @@ describe("sandbox-error", () => {
                 }),
             );
             expect(result.isErr()).toBe(true);
-            const e = result._unsafeUnwrapErr();
-            expect(e.type).toBe("container_create_failed");
-            expect(e.op).toBe("docker.createSandbox");
-            if (e.type === "container_create_failed") {
-                expect(e.sandboxId).toBe("sbx-1");
-                expect(e.status).toBe(500);
-                expect(e.cause).toBe(cause);
+            if (result.isErr()) {
+                const e = result.error;
+                expect(e.type).toBe("container_create_failed");
+                expect(e.op).toBe("docker.createSandbox");
+                if (e.type === "container_create_failed") {
+                    expect(e.sandboxId).toBe("sbx-1");
+                    expect(e.status).toBe(500);
+                    expect(e.cause).toBe(cause);
+                }
             }
         });
 
@@ -88,11 +90,13 @@ describe("sandbox-error", () => {
                         : { type: "container_create_failed", op: "docker.createSandbox", status, cause },
             );
             expect(result.isErr()).toBe(true);
-            const e = result._unsafeUnwrapErr();
-            expect(e.type).toBe("name_conflict");
-            if (e.type === "name_conflict") {
-                expect(e.owner).toBe("other");
-                expect(e.sandboxId).toBe("sbx-2");
+            if (result.isErr()) {
+                const e = result.error;
+                expect(e.type).toBe("name_conflict");
+                if (e.type === "name_conflict") {
+                    expect(e.owner).toBe("other");
+                    expect(e.sandboxId).toBe("sbx-2");
+                }
             }
         });
 
@@ -103,9 +107,12 @@ describe("sandbox-error", () => {
                 },
                 (status, cause) => ({ type: "teardown_failed", op: "k8s.teardown", status, cause }),
             );
-            const e = result._unsafeUnwrapErr();
-            expect(e.type).toBe("teardown_failed");
-            if (e.type === "teardown_failed") expect(e.status).toBe(404);
+            expect(result.isErr()).toBe(true);
+            if (result.isErr()) {
+                const e = result.error;
+                expect(e.type).toBe("teardown_failed");
+                if (e.type === "teardown_failed") expect(e.status).toBe(404);
+            }
         });
     });
 

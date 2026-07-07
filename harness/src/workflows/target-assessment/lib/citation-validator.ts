@@ -5,11 +5,11 @@
 // was always 0. These patterns match the format the agent actually writes.
 // The block content may include array index notation like `[0]`, so we
 // use a pattern that allows `[digits]` inside the outer brackets.
-const DOSSIER_CITE_BLOCK_RE = /\[dossier:\s*((?:[^\[\]]*(?:\[\d+\])?)*)\]/gi;
+const DOSSIER_CITE_BLOCK_RE = /\[dossier:\s*((?:[^[\]]*(?:\[\d+\])?)*)\]/gi;
 // External citation IDs are plain strings — no array-index notation like `[n]` — so the simple [^\]]+ class suffices here instead of the array-index-aware pattern used by DOSSIER_CITE_BLOCK_RE.
 const EXTERNAL_CITE_BLOCK_RE = /\[external citation:\s*([^\]]+)\]/gi;
 // Assumes at most one `external citation:` segment per dossier block (the recommendation prompt produces at most one); a hypothetical second segment in the same block would be parsed imperfectly.
-const EXTERNAL_SEGMENT_RE = /external citation:\s*((?:[^\[\]]*(?:\[\d+\])?)*)/i;
+const EXTERNAL_SEGMENT_RE = /external citation:\s*((?:[^[\]]*(?:\[\d+\])?)*)/i;
 const NCT_RE = /\bNCT\d{8}\b/g;
 const PMID_RE = /\bPMID[:\s]?(\d{6,9})\b/g;
 
@@ -96,7 +96,31 @@ type RecLike = {
     external_citations?: Array<{ id: string }>;
 };
 
-function resolvePath(root: any, path: string): unknown {
+// Loose structural view over a raw dossier. Every field is optional and each
+// section wraps its payload as `{ coverage?, data? }`; this names only the
+// fields the citation checks read. `resolvePath` walks the body generically
+// (path strings), so it keeps `unknown`; the structured collectors below use
+// this view. The public entrypoint accepts `unknown` and casts to it.
+type Section<T> = { coverage?: string; data?: T };
+
+type TrialRow = {
+    nct_id?: unknown;
+    interventions?: unknown[];
+    armsInterventionsModule?: { interventions?: unknown[] };
+};
+
+type CitationDossierView = {
+    drug_interactions?: Section<{ rows?: Array<{ drug_name?: unknown }> }>;
+    reference_biology?: { key_papers?: Section<{ rows?: Array<{ pmid?: unknown }> }> };
+    clinical_development?: {
+        trials?: Section<{ rows?: TrialRow[] }>;
+        failed_trials?: Section<{ rows?: TrialRow[] }>;
+    };
+    analytics?: { discovery_trials?: Section<{ rows?: TrialRow[] }> };
+    safety_profile?: { target_organ_liabilities?: Array<{ organ?: unknown }> };
+};
+
+function resolvePath(root: unknown, path: string): unknown {
     if (!path.startsWith("dossier")) return undefined;
     const stripped = path.replace(/^dossier\.?/, "");
     if (stripped === "") return root;
@@ -104,8 +128,8 @@ function resolvePath(root: any, path: string): unknown {
     return walkWithDataFallback(root, parts);
 }
 
-function walkWithDataFallback(root: any, parts: string[]): unknown {
-    let cur: any = root;
+function walkWithDataFallback(root: unknown, parts: string[]): unknown {
+    let cur: unknown = root;
     for (const p of parts) {
         if (cur == null) return undefined;
         const next = readPart(cur, p);
@@ -120,7 +144,7 @@ function walkWithDataFallback(root: any, parts: string[]): unknown {
         // "translational_chain.data.peak_evidence_tier"). This mirrors how a human
         // reader refers to the field; flagging it as unresolved produces noise.
         if (typeof cur === "object" && "data" in cur) {
-            const viaData = readPart((cur as any).data, p);
+            const viaData = readPart((cur as Record<string, unknown>).data, p);
             if (viaData !== undefined) {
                 cur = viaData;
                 continue;
@@ -131,10 +155,10 @@ function walkWithDataFallback(root: any, parts: string[]): unknown {
     return cur;
 }
 
-function readPart(node: any, p: string): unknown {
+function readPart(node: unknown, p: string): unknown {
     if (node == null) return undefined;
     if (/^\d+$/.test(p)) return Array.isArray(node) ? node[parseInt(p, 10)] : undefined;
-    return typeof node === "object" ? node[p] : undefined;
+    return typeof node === "object" ? (node as Record<string, unknown>)[p] : undefined;
 }
 
 /**
@@ -201,14 +225,14 @@ function normaliseBullet(b: KeyRiskLike): { text: string; category?: string } {
     return typeof b === "string" ? { text: b } : { text: b.text, category: b.category };
 }
 
-function collectClassDrugNames(dossier: any): Set<string> {
+function collectClassDrugNames(dossier: CitationDossierView): Set<string> {
     const rows = dossier?.drug_interactions?.data?.rows ?? [];
-    return new Set(rows.map((r: any) => String(r.drug_name ?? "").toUpperCase()).filter(Boolean));
+    return new Set(rows.map((r) => String(r.drug_name ?? "").toUpperCase()).filter(Boolean));
 }
 
-function collectKeyPaperPmids(dossier: any): Set<string> {
+function collectKeyPaperPmids(dossier: CitationDossierView): Set<string> {
     const rows = dossier?.reference_biology?.key_papers?.data?.rows ?? [];
-    return new Set(rows.map((r: any) => String(r.pmid)).filter(Boolean));
+    return new Set(rows.map((r) => String(r.pmid)).filter(Boolean));
 }
 
 /**
@@ -219,34 +243,35 @@ function collectKeyPaperPmids(dossier: any): Set<string> {
  *   raw CT.gov v2 JSON shape that may appear in test fixtures or future collector
  *   output before the assembler flattens it.
  */
-function extractInterventionNames(row: any): string[] {
+function extractInterventionNames(row: TrialRow): string[] {
     // Production flat shape (priority)
     if (Array.isArray(row.interventions)) {
-        return row.interventions.map((iv: any) => (typeof iv === "string" ? iv.toUpperCase() : String(iv?.name ?? "").toUpperCase()));
+        return row.interventions.map((iv) => (typeof iv === "string" ? iv.toUpperCase() : String((iv as { name?: unknown })?.name ?? "").toUpperCase()));
     }
     // Raw CT.gov nested shape fallback
     const nested = row?.armsInterventionsModule?.interventions;
     if (Array.isArray(nested)) {
-        return nested.map((iv: any) => String(iv?.name ?? "").toUpperCase());
+        return nested.map((iv) => String((iv as { name?: unknown })?.name ?? "").toUpperCase());
     }
     return [];
 }
 
-function findTrialInterventions(dossier: any, nctId: string): string[] {
-    const trialSets: any[][] = [
+function findTrialInterventions(dossier: CitationDossierView, nctId: string): string[] {
+    const trialSets: TrialRow[][] = [
         dossier?.clinical_development?.trials?.data?.rows ?? [],
         dossier?.clinical_development?.failed_trials?.data?.rows ?? [],
         dossier?.analytics?.discovery_trials?.data?.rows ?? [],
     ];
     for (const set of trialSets) {
-        const row = set.find((t: any) => t.nct_id === nctId);
+        const row = set.find((t) => t.nct_id === nctId);
         if (!row) continue;
         return extractInterventionNames(row);
     }
     return [];
 }
 
-export function validateRecommendationCitations(rec: RecLike, dossier: any): RecommendationAudit {
+export function validateRecommendationCitations(rec: RecLike, dossier: unknown): RecommendationAudit {
+    const dossierView = dossier as CitationDossierView;
     const unresolved: RecommendationAuditEntry[] = [];
     const nonDossier: Array<{ token: string; source: string }> = [];
     let total = 0;
@@ -259,8 +284,8 @@ export function validateRecommendationCitations(rec: RecLike, dossier: any): Rec
         ...rec.key_risks.map((b) => ({ surface: "key_risks" as const, text: normaliseBullet(b).text })),
     ];
 
-    const classDrugNames = collectClassDrugNames(dossier);
-    const keyPmids = collectKeyPaperPmids(dossier);
+    const classDrugNames = collectClassDrugNames(dossierView);
+    const keyPmids = collectKeyPaperPmids(dossierView);
 
     for (const { surface, text } of surfaces) {
         for (const { path, resolvable } of findPathTokens(text)) {
@@ -285,7 +310,7 @@ export function validateRecommendationCitations(rec: RecLike, dossier: any): Rec
         }
         for (const m of text.matchAll(NCT_RE)) {
             const nctId = m[0];
-            const interventions = findTrialInterventions(dossier, nctId);
+            const interventions = findTrialInterventions(dossierView, nctId);
             // Only flag wrong-class when the trial IS present in the dossier
             // and its interventions don't reference the class. Trials absent
             // from the collected sets are unverifiable — flagging them would
@@ -310,10 +335,10 @@ export function validateRecommendationCitations(rec: RecLike, dossier: any): Rec
         }
     }
 
-    const organLiabilities = dossier?.safety_profile?.target_organ_liabilities ?? [];
+    const organLiabilities = dossierView?.safety_profile?.target_organ_liabilities ?? [];
     const tolOrgans = new Set(
         organLiabilities
-            .map((t: any) =>
+            .map((t) =>
                 String(t?.organ ?? "")
                     .toLowerCase()
                     .trim(),

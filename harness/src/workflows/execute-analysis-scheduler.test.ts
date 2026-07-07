@@ -146,7 +146,10 @@ describe("scheduleReady with budget admission", () => {
 
     it("replays identically — same inputs, same partition", () => {
         const plan = [step("A"), step("B", "A"), step("C", "A"), step("D", "B", "C")];
-        const adm = admission({ cpu: 4, memoryGb: 8 }, { A: { cpu: 4, memoryGb: 8 }, B: { cpu: 2, memoryGb: 4 }, C: { cpu: 2, memoryGb: 4 }, D: { cpu: 4, memoryGb: 8 } });
+        const adm = admission(
+            { cpu: 4, memoryGb: 8 },
+            { A: { cpu: 4, memoryGb: 8 }, B: { cpu: 2, memoryGb: 4 }, C: { cpu: 2, memoryGb: 4 }, D: { cpu: 4, memoryGb: 8 } },
+        );
         const first = scheduleReady(plan, new Set(["A"]), new Set(["B"]), adm);
         const replay = scheduleReady(plan, new Set(["A"]), new Set(["B"]), adm);
         expect(replay).toEqual(first);

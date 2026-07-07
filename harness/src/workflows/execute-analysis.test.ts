@@ -461,7 +461,9 @@ describe("executeAnalysis body", () => {
         expect(result.failedSteps).toEqual(["A"]);
         const terminal = record.emittedParts.find((p) => p.type === "data-run-failed") as { error?: string } | undefined;
         expect(terminal?.error).toContain("budget");
-        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{ steps: Array<{ id: string; status: string; error?: string }> }>;
+        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{
+            steps: Array<{ id: string; status: string; error?: string }>;
+        }>;
         const last = dagParts[dagParts.length - 1]!;
         expect(last.steps[0]!.status).toBe("failed");
         expect(last.steps[0]!.error).toContain("machine budget");

@@ -529,6 +529,8 @@ describe("docker createSandbox / teardown / isAlive", () => {
             callbackSecret: "x",
         });
         expect(result.isErr()).toBe(true);
-        expect(result._unsafeUnwrapErr().type).toBe("liveness_failed");
+        if (result.isErr()) {
+            expect(result.error.type).toBe("liveness_failed");
+        }
     });
 });

@@ -9,40 +9,27 @@
  * under `evidence: [...]` arrays.
  */
 
-import type {
-    DossierV4Body,
-    Entity,
-    TractabilitySection,
-    EvidenceItem,
-    TractabilityV4Section,
-    RegulatoryActionRow,
-} from "@inflexa-ai/harness/contracts/target-dossier.js";
+import type { z } from "zod";
+import type { EvidenceItem, RegulatoryActionRow, OffTargetRowV4Schema, ExcludedOffTargetRowV4Schema } from "@inflexa-ai/harness/contracts/target-dossier.js";
 import { expectedOrgansFromBody } from "../lib/compute-derived.js";
 import type { Phase2Bundle } from "../steps/phase2-aggregate.js";
 import type { Phase3Bundle } from "../steps/phase3-aggregate.js";
-import type { ResolvedTarget } from "../schemas.js";
-import { inferTherapeuticArea, getBenchmarks, getDatasetAttribution } from "../../../tools/lib/clinical-benchmarks-client.js";
-import { inferModalityFromFamily } from "../../../tools/lib/protein-family-modality.js";
+import { inferTherapeuticArea } from "../../../tools/lib/clinical-benchmarks-client.js";
 import { SafetyPanelFileSchema, type SafetyTarget } from "../../../data/safety-panel-schema.js";
 import safetyPanelData from "../../../data/safety-panel.json" with { type: "json" };
-import { classifyTrialAttribution, isOnTargetChemblId, resolveFamilySiblingUniprots, resolveOnTargetChemblIds } from "../lib/target-identity-filter.js";
+import { isOnTargetChemblId } from "../lib/target-identity-filter.js";
 import { isIntendedCoTarget } from "../lib/intended-polypharm-filter.js";
 import { makeHeterodimerOfAssessmentFilter } from "../lib/heterodimer-filter.js";
 import { buildFamilyComplexSupplement } from "../lib/family-complex-supplement.js";
 import type { FamilyComplexesBundle } from "../schemas.js";
 import { computeSelectivity } from "../lib/compute-selectivity.js";
-import { getDrugPrimaryTargetUniprots } from "../../../tools/lib/chembl-client.js";
-import type { Pool } from "pg";
-import { annotateOffTargetPanel } from "../lib/clinical-consequence-annotator.js";
-import type { ClinicalConsequenceAnnotatorDeps } from "../lib/clinical-consequence-annotator.js";
-import { coverageFromRows } from "../coverage.js";
-import { fetchRegulatoryActions } from "../lib/regulatory-actions.js";
 import { classifyOrgan, classifyPolypharmOrgan, classifyTrialAe, type CanonicalOrgan } from "../lib/meddra-organ-map.js";
 import { HIGH_EXPRESSION_TPM_THRESHOLD, CNS_REGION_TPM_FLOOR, MUSCULOSKELETAL_TPM_FLOOR } from "../lib/expression-constants.js";
 export { HIGH_EXPRESSION_TPM_THRESHOLD };
-import { resolveModulatorMoleculeType } from "../lib/dedup-modulators.js";
 import type { ChemblModulator } from "../../../tools/lib/chembl-client.js";
-import { searchFailedTrialsForDrugNames } from "../../../tools/lib/clinical-trials-client.js";
+
+type OffTargetRowV4 = z.infer<typeof OffTargetRowV4Schema>;
+type ExcludedOffTargetRowV4 = z.infer<typeof ExcludedOffTargetRowV4Schema>;
 
 // ── Safety panel lookup ─────────────────────────────────────────────
 
@@ -532,7 +519,7 @@ export function filterAndDedupOffTargetRows(rows: RawOffTargetRow[], ctx: { asse
         // `clinical_consequence` comes from the safety-panel lookup when the
         // off-target is on that panel; otherwise it is left null here and the
         // post-pass LLM annotator (annotateOffTargetPanel) fills it in.
-        const { target_chembl_id: _tcid, target_type: _tt, accession: _acc, ...rest } = winner as any;
+        const { target_chembl_id: _tcid, target_type: _tt, accession: _acc, ...rest } = winner;
         out.push({
             ...rest,
             off_target_id: winner.off_target_id ?? null,
@@ -687,8 +674,8 @@ export function aggregateOffTargetPanel(
         metadata: r.metadata,
     });
 
-    const rows: any[] = [];
-    const excludedRows: any[] = [];
+    const rows: OffTargetRowV4[] = [];
+    const excludedRows: ExcludedOffTargetRowV4[] = [];
 
     for (const r of cleanRows.slice(0, 50)) {
         const base = toBaseRow(r);
@@ -761,7 +748,7 @@ export function aggregateOffTargetPanel(
     if (familyComplexes && familyComplexes.complexes.length > 0) {
         const supplementRows = buildFamilyComplexSupplement(familyComplexes);
         const norm = (name: string) => name.trim().toLowerCase();
-        const existingNames = new Set(excludedRows.map((r: any) => norm(r.off_target_name)));
+        const existingNames = new Set(excludedRows.map((r) => norm(r.off_target_name)));
         for (const supp of supplementRows) {
             if (!existingNames.has(norm(supp.off_target_name))) {
                 excludedRows.push(supp);
@@ -1166,35 +1153,4 @@ export function assembleDrugInteractions(phase2: Phase2Bundle, enrichedModulator
         };
     });
     return rows.sort((a, b) => b.best_score - a.best_score);
-}
-
-// ── §3.10.4 / §3.11 — PubMed-derived sections ───────────────────────
-
-const SPECIES_PATTERNS: Array<{ species: string; rx: RegExp }> = [
-    { species: "mouse", rx: /\b(mouse|mice|murine)\b/i },
-    { species: "rat", rx: /\brats?\b/i },
-    { species: "macaque", rx: /\b(macaque|cynomolgus|rhesus)\b/i },
-    { species: "dog", rx: /\b(canine|beagle)\b/i },
-    { species: "human", rx: /\b(human|patient|cohort)\b/i },
-];
-
-const IN_VITRO_RX =
-    /\b(organoid|spheroid|cell line|cell-line|primary cells?|cultured|culture|in vitro|cell culture|hipsc|ipsc|3d culture|microfluidic|chip|on a chip)\b/i;
-
-function inferSpeciesFromTitle(title: string): { species: string; modelSystem: string } | null {
-    let species: string | null = null;
-    for (const p of SPECIES_PATTERNS) {
-        if (p.rx.test(title)) {
-            species = p.species;
-            break;
-        }
-    }
-    if (!species) return null;
-    if (IN_VITRO_RX.test(title)) {
-        return { species, modelSystem: "complex_in_vitro" };
-    }
-    return {
-        species,
-        modelSystem: species === "human" ? "ex_vivo_human" : "in_vivo_animal",
-    };
 }

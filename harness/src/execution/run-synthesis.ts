@@ -94,7 +94,7 @@ function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): Validati
         });
     }
 
-    synthesis.findings.forEach((f, i) => {
+    for (const [i, f] of synthesis.findings.entries()) {
         if (!ctx.knownStepIds.has(f.stepId)) {
             issues.push({
                 path: `synthesis.findings[${i}].stepId`,
@@ -103,11 +103,11 @@ function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): Validati
                 hint: `Known stepIds: ${Array.from(ctx.knownStepIds).join(", ")}`,
             });
         }
-    });
+    }
 
     const findingKeys = new Set(synthesis.findings.map((f) => `${f.stepId}::${f.title}`));
-    synthesis.themes.forEach((t, ti) => {
-        t.findings.forEach((ref, fi) => {
+    for (const [ti, t] of synthesis.themes.entries()) {
+        for (const [fi, ref] of t.findings.entries()) {
             if (!findingKeys.has(`${ref.stepId}::${ref.title}`)) {
                 issues.push({
                     path: `synthesis.themes[${ti}].findings[${fi}]`,
@@ -115,11 +115,11 @@ function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): Validati
                     message: `theme reference (stepId="${ref.stepId}", title="${ref.title}") ` + `does not match any entry in findings[]`,
                 });
             }
-        });
-    });
+        }
+    }
 
     const citedPmids = new Set(synthesis.findings.flatMap((f) => f.references.map((r) => r.pmid)));
-    synthesis.keyReferences.forEach((r, i) => {
+    for (const [i, r] of synthesis.keyReferences.entries()) {
         if (!citedPmids.has(r.pmid)) {
             issues.push({
                 path: `synthesis.keyReferences[${i}].pmid`,
@@ -128,11 +128,11 @@ function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): Validati
                 hint: "Every keyReferences entry must already be cited by at least one finding.",
             });
         }
-    });
+    }
 
     const pmidRe = /^\d+$/;
-    synthesis.findings.forEach((f, fi) => {
-        f.references.forEach((r, ri) => {
+    for (const [fi, f] of synthesis.findings.entries()) {
+        for (const [ri, r] of f.references.entries()) {
             if (!pmidRe.test(r.pmid)) {
                 issues.push({
                     path: `synthesis.findings[${fi}].references[${ri}].pmid`,
@@ -140,9 +140,9 @@ function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): Validati
                     message: `pmid "${r.pmid}" is not a valid numeric PMID`,
                 });
             }
-        });
-    });
-    synthesis.keyReferences.forEach((r, i) => {
+        }
+    }
+    for (const [i, r] of synthesis.keyReferences.entries()) {
         if (!pmidRe.test(r.pmid)) {
             issues.push({
                 path: `synthesis.keyReferences[${i}].pmid`,
@@ -150,7 +150,7 @@ function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): Validati
                 message: `pmid "${r.pmid}" is not a valid numeric PMID`,
             });
         }
-    });
+    }
 
     return issues;
 }

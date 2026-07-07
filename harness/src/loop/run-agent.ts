@@ -168,12 +168,12 @@ async function dispatchTools(
     const workflowTools: { tu: ToolCallPart; idx: number }[] = [];
     const inlineTools: { tu: ToolCallPart; idx: number }[] = [];
 
-    toolUses.forEach((tu, idx) => {
+    for (const [idx, tu] of toolUses.entries()) {
         const mode = toolsById.get(tu.toolName)?.executionMode ?? "step";
         if (mode === "workflow") workflowTools.push({ tu, idx });
         else if (mode === "inline") inlineTools.push({ tu, idx });
         else stepTools.push({ tu, idx });
-    });
+    }
 
     await Promise.all(
         stepTools.map(({ tu, idx }) =>

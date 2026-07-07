@@ -1,5 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import type { LanguageModelV4, LanguageModelV4CallOptions, LanguageModelV4GenerateResult, LanguageModelV4StreamResult, LanguageModelV4Usage } from "@ai-sdk/provider";
+import type {
+    LanguageModelV4,
+    LanguageModelV4CallOptions,
+    LanguageModelV4GenerateResult,
+    LanguageModelV4StreamResult,
+    LanguageModelV4Usage,
+} from "@ai-sdk/provider";
 
 import { makeSession } from "./__fixtures__/session.js";
 import { createAiSdkProvider, createConfiguredAiSdkProvider } from "./ai-sdk.js";
@@ -46,9 +52,11 @@ function fakeModel(
         modelId: "fake-model",
         supportedUrls: {},
         doGenerate: impl,
-        doStream: streamImpl ?? (async () => {
-            throw new Error("streaming is not used in these tests");
-        }),
+        doStream:
+            streamImpl ??
+            (async () => {
+                throw new Error("streaming is not used in these tests");
+            }),
     };
 }
 
@@ -90,10 +98,12 @@ describe("createAiSdkProvider", () => {
         const result = await provider.chat(request, makeSession());
 
         expect(result.isErr()).toBe(true);
-        expect(result._unsafeUnwrapErr()).toMatchObject({
-            type: "budget",
-            retryable: false,
-        });
+        if (result.isErr()) {
+            expect(result.error).toMatchObject({
+                type: "budget",
+                retryable: false,
+            });
+        }
     });
 
     it("preserves retryability classification for transient upstream failures", async () => {
@@ -107,10 +117,12 @@ describe("createAiSdkProvider", () => {
         const result = await provider.chat(request, makeSession());
 
         expect(result.isErr()).toBe(true);
-        expect(result._unsafeUnwrapErr()).toMatchObject({
-            type: "provider",
-            retryable: true,
-        });
+        if (result.isErr()) {
+            expect(result.error).toMatchObject({
+                type: "provider",
+                retryable: true,
+            });
+        }
     });
 
     it("rethrows aborts instead of classifying them", async () => {
@@ -123,8 +135,8 @@ describe("createAiSdkProvider", () => {
         });
 
         try {
-            await provider.chat(request, makeSession(), signal);
-            throw new Error("expected abort to be rethrown");
+            const result = await provider.chat(request, makeSession(), signal);
+            throw new Error(`expected abort to be rethrown, got a ${result.isOk() ? "ok" : "err"} result`);
         } catch (err) {
             expect(err).toBeInstanceOf(DOMException);
             expect((err as DOMException).name).toBe("AbortError");
@@ -212,7 +224,10 @@ describe("empty text block sanitization", () => {
                             { type: "tool-call", toolCallId: "tc-1", toolName: "execute_command", input: { command: "ls" } },
                         ],
                     },
-                    { role: "tool", content: [{ type: "tool-result", toolCallId: "tc-1", toolName: "execute_command", output: { type: "text", value: "ok" } }] },
+                    {
+                        role: "tool",
+                        content: [{ type: "tool-result", toolCallId: "tc-1", toolName: "execute_command", output: { type: "text", value: "ok" } }],
+                    },
                     { role: "assistant", content: "" },
                 ],
                 tools: {},

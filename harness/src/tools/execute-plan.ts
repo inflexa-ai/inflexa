@@ -120,7 +120,7 @@ export function createExecutePlanTool(deps: ExecutePlanToolDeps) {
                     runId,
                 }).unwrapOr(null);
                 if (card) {
-                    ctx.emit({
+                    await ctx.emit({
                         type: "data-run-card",
                         source: ctx.session.provenance,
                         data: card,

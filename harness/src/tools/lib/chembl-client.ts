@@ -81,6 +81,38 @@ interface RawTarget {
     target_components?: TargetComponent[];
 }
 
+/** A raw activity row from the ChEMBL `activity` endpoint. */
+interface RawChemblActivity {
+    activity_id?: number;
+    molecule_chembl_id?: string;
+    target_chembl_id?: string;
+    standard_type?: string;
+    standard_value?: string | number | null;
+    standard_units?: string;
+    assay_chembl_id?: string;
+    assay_type?: string;
+    pchembl_value?: string | number | null;
+}
+
+/** A raw mechanism row from the ChEMBL `mechanism` endpoint. */
+interface RawChemblMechanism {
+    mechanism_of_action?: string;
+    action_type?: string;
+    target_chembl_id?: string;
+    molecule_chembl_id?: string;
+}
+
+/** A raw molecule/drug record from the ChEMBL `molecule` / `drug` endpoints. */
+interface RawChemblMolecule {
+    molecule_chembl_id?: string;
+    pref_name?: string;
+    max_phase?: number | null;
+    molecule_type?: string;
+    first_approval?: number | null;
+    drug_indications?: DrugIndicationRecord[];
+    molecule_hierarchy?: { parent_chembl_id?: string };
+}
+
 function extractGeneNames(components?: TargetComponent[]): string[] {
     if (!components?.length) return [];
     const genes = new Set<string>();
@@ -137,13 +169,13 @@ export async function getBioactivity(
         url += `&standard_type=${encodeURIComponent(options.activityType)}`;
     }
 
-    const res = await apiFetch<{ activities?: any[] }>(url, { headers: HEADERS });
+    const res = await apiFetch<{ activities?: RawChemblActivity[] }>(url, { headers: HEADERS });
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return [];
         throw new Error(describeApiError(res.error));
     }
 
-    return (res.value.activities ?? []).map((raw: any) => ({
+    return (res.value.activities ?? []).map((raw) => ({
         activityId: raw.activity_id != null ? raw.activity_id : null,
         compoundChemblId: raw.molecule_chembl_id ?? "",
         targetChemblId: raw.target_chembl_id ?? null,
@@ -164,7 +196,7 @@ async function fetchTargetName(targetChemblId: string): Promise<string | null> {
 
 export async function getMechanism(chemblId: string): Promise<ChemblMechanism[]> {
     const url = `${CHEMBL_BASE}/mechanism.json?molecule_chembl_id=${encodeURIComponent(chemblId)}`;
-    const res = await apiFetch<{ mechanisms?: any[] }>(url, { headers: HEADERS });
+    const res = await apiFetch<{ mechanisms?: RawChemblMechanism[] }>(url, { headers: HEADERS });
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return [];
         throw new Error(describeApiError(res.error));
@@ -181,13 +213,13 @@ export async function getMechanism(chemblId: string): Promise<ChemblMechanism[]>
     for (let i = 0; i < targetIdArray.length; i += concurrency) {
         const batch = targetIdArray.slice(i, i + concurrency);
         const names = await Promise.all(batch.map(fetchTargetName));
-        batch.forEach((id, idx) => {
+        for (const [idx, id] of batch.entries()) {
             const name = names[idx];
             if (name) targetNames.set(id, name);
-        });
+        }
     }
 
-    return rawMechanisms.map((raw: any) => ({
+    return rawMechanisms.map((raw) => ({
         mechanismOfAction: raw.mechanism_of_action ?? null,
         actionType: raw.action_type ?? null,
         targetChemblId: raw.target_chembl_id ?? null,
@@ -213,10 +245,10 @@ function extractIndication(indications?: DrugIndicationRecord[]): string | null 
 
 export async function getDrugInfo(query: string, limit = 25): Promise<ChemblDrug[]> {
     const drugUrl = `${CHEMBL_BASE}/drug/search.json?q=${encodeURIComponent(query)}&limit=${limit}`;
-    const drugRes = await apiFetch<{ drugs?: any[] }>(drugUrl, { headers: HEADERS });
+    const drugRes = await apiFetch<{ drugs?: RawChemblMolecule[] }>(drugUrl, { headers: HEADERS });
 
     if (drugRes.isOk() && drugRes.value.drugs?.length) {
-        return drugRes.value.drugs.map((raw: any) => ({
+        return drugRes.value.drugs.map((raw) => ({
             moleculeChemblId: raw.molecule_chembl_id ?? "",
             preferredName: raw.pref_name ?? null,
             maxPhase: raw.max_phase != null ? Number(raw.max_phase) : null,
@@ -231,14 +263,14 @@ export async function getDrugInfo(query: string, limit = 25): Promise<ChemblDrug
     }
 
     const molUrl = `${CHEMBL_BASE}/molecule/search.json?q=${encodeURIComponent(query)}&limit=${limit}`;
-    const molRes = await apiFetch<{ molecules?: any[] }>(molUrl, { headers: HEADERS });
+    const molRes = await apiFetch<{ molecules?: RawChemblMolecule[] }>(molUrl, { headers: HEADERS });
     if (molRes.isErr()) {
         if (molRes.error.type === "http_status" && molRes.error.status === 404) return [];
         throw new Error(describeApiError(molRes.error));
     }
 
-    const approved = (molRes.value.molecules ?? []).filter((mol: any) => mol.max_phase != null && mol.max_phase >= 4);
-    return approved.map((raw: any) => ({
+    const approved = (molRes.value.molecules ?? []).filter((mol) => mol.max_phase != null && mol.max_phase >= 4);
+    return approved.map((raw) => ({
         moleculeChemblId: raw.molecule_chembl_id ?? "",
         preferredName: raw.pref_name ?? null,
         maxPhase: raw.max_phase != null ? Number(raw.max_phase) : null,
@@ -256,7 +288,7 @@ export async function getTargetModulators(targetChemblId: string, options: { min
     const minPhase = options.minPhase ?? 2;
     const limit = options.limit ?? 200;
     const mechUrl = `${CHEMBL_BASE}/mechanism.json?target_chembl_id=${encodeURIComponent(targetChemblId)}` + `&limit=${limit}`;
-    const mechRes = await apiFetch<{ mechanisms?: any[] }>(mechUrl, { headers: HEADERS });
+    const mechRes = await apiFetch<{ mechanisms?: RawChemblMechanism[] }>(mechUrl, { headers: HEADERS });
     if (mechRes.isErr()) {
         if (mechRes.error.type === "http_status" && mechRes.error.status === 404) return [];
         throw new Error(describeApiError(mechRes.error));
@@ -274,7 +306,7 @@ export async function getTargetModulators(targetChemblId: string, options: { min
         const batch = ids.slice(i, i + concurrency);
         const results = await Promise.all(
             batch.map(async (id) => {
-                const res = await apiFetch<any>(`${CHEMBL_BASE}/molecule/${id}.json`, {
+                const res = await apiFetch<RawChemblMolecule>(`${CHEMBL_BASE}/molecule/${id}.json`, {
                     headers: HEADERS,
                 });
                 if (res.isErr()) return null;
@@ -308,7 +340,7 @@ export async function getModulatorPolypharmacology(
     const minPchembl = options.minPchembl ?? 5;
     const limit = options.limit ?? 200;
     const url = `${CHEMBL_BASE}/activity.json?molecule_chembl_id=${encodeURIComponent(moleculeChemblId)}` + `&limit=${limit}&pchembl_value__gte=${minPchembl}`;
-    const res = await apiFetch<{ activities?: any[] }>(url, { headers: HEADERS });
+    const res = await apiFetch<{ activities?: RawChemblActivity[] }>(url, { headers: HEADERS });
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return [];
         throw new Error(describeApiError(res.error));
@@ -340,10 +372,10 @@ export async function getModulatorPolypharmacology(
     for (let i = 0; i < tids.length; i += concurrency) {
         const batch = tids.slice(i, i + concurrency);
         const names = await Promise.all(batch.map(fetchTargetName));
-        batch.forEach((id, idx) => {
+        for (const [idx, id] of batch.entries()) {
             const hit = hits.find((h) => h.targetChemblId === id);
             if (hit) hit.targetName = names[idx];
-        });
+        }
     }
 
     return hits.sort((a, b) => (b.pchemblValue ?? 0) - (a.pchemblValue ?? 0));
@@ -362,9 +394,9 @@ export async function getModulatorOnTargetPchembl(modulatorChemblId: string, tar
         `${CHEMBL_BASE}/activity.json?molecule_chembl_id=${encodeURIComponent(modulatorChemblId)}` +
         `&target_chembl_id=${encodeURIComponent(targetChemblId)}` +
         `&pchembl_value__isnull=false&limit=10`;
-    const res = await apiFetch<{ activities?: any[] }>(url, { headers: HEADERS });
+    const res = await apiFetch<{ activities?: RawChemblActivity[] }>(url, { headers: HEADERS });
     if (res.isErr()) return null;
-    const values = (res.value.activities ?? []).map((a: any) => parseNumeric(a.pchembl_value)).filter((v): v is number => v !== null);
+    const values = (res.value.activities ?? []).map((a) => parseNumeric(a.pchembl_value)).filter((v): v is number => v !== null);
     if (values.length === 0) return null;
     values.sort((a, b) => a - b);
     const mid = Math.floor(values.length / 2);
@@ -397,7 +429,7 @@ export async function getModulatorsViaActivity(args: {
         url += `&molecule_type=${encodeURIComponent(molecule_type)}`;
     }
 
-    const res = await apiFetch<{ activities?: any[] }>(url, { headers: HEADERS });
+    const res = await apiFetch<{ activities?: RawChemblActivity[] }>(url, { headers: HEADERS });
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return [];
         throw new Error(describeApiError(res.error));
@@ -417,7 +449,7 @@ export async function getModulatorsViaActivity(args: {
         const batch = ids.slice(i, i + concurrency);
         const results = await Promise.all(
             batch.map(async (id) => {
-                const molRes = await apiFetch<any>(`${CHEMBL_BASE}/molecule/${id}.json`, {
+                const molRes = await apiFetch<RawChemblMolecule>(`${CHEMBL_BASE}/molecule/${id}.json`, {
                     headers: HEADERS,
                 });
                 if (molRes.isErr()) return null;

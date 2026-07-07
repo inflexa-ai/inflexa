@@ -15,7 +15,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { Pool } from "pg";
 import type { TargetAssessmentPhase, TargetAssessmentProgressEvent } from "@inflexa-ai/harness/contracts/target-dossier.js";
 
-import { unwrapOrThrow } from "../../lib/result.js";
+import { describeDbError } from "../../lib/db-result.js";
 import { updateProgress } from "../../state/target-assessments.js";
 
 /** DBOS stream key the SSE route reads via `DBOS.readStream(wfId, "progress")`. */
@@ -85,12 +85,16 @@ export async function emitProgress(pool: Pool, assessmentId: string, phase: Prog
             // (`markAssessmentSuspended` already set status + progress text). A
             // row write here would either race or overwrite the suspended status.
             if (phase !== "suspended") {
-                try {
-                    const rowStatus = phase === "completed" ? ("completed" as const) : phase === "failed" ? ("failed" as const) : ("running" as const);
-                    unwrapOrThrow(await updateProgress(pool, assessmentId, message, rowStatus));
-                } catch (err) {
-                    console.warn(`[ta-progress] updateProgress failed for ${assessmentId} (${phase}): ${err instanceof Error ? err.message : err}`);
-                }
+                const rowStatus = phase === "completed" ? ("completed" as const) : phase === "failed" ? ("failed" as const) : ("running" as const);
+                // Best-effort: log a failed row write and continue — progress
+                // emission MUST NOT block the workflow. `updateProgress` returns
+                // its DB failure as an `Err`, so handle both branches here.
+                (await updateProgress(pool, assessmentId, message, rowStatus)).match(
+                    () => {},
+                    (error) => {
+                        console.warn(`[ta-progress] updateProgress failed for ${assessmentId} (${phase}): ${describeDbError(error)}`);
+                    },
+                );
             }
         },
         { name: `ta-progress:${phase}` },

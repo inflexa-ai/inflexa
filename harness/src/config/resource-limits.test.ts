@@ -38,12 +38,8 @@ describe("parseResourcePolicy", () => {
     });
 
     it("rejects non-positive budget values", () => {
-        expect(() => parseResourcePolicy({ ...valid, budget: { cpu: 0, memoryGb: 16 } })).toThrow(
-            ResourceLimitsConfigError,
-        );
-        expect(() => parseResourcePolicy({ ...valid, budget: { cpu: 8, memoryGb: -1 } })).toThrow(
-            ResourceLimitsConfigError,
-        );
+        expect(() => parseResourcePolicy({ ...valid, budget: { cpu: 0, memoryGb: 16 } })).toThrow(ResourceLimitsConfigError);
+        expect(() => parseResourcePolicy({ ...valid, budget: { cpu: 8, memoryGb: -1 } })).toThrow(ResourceLimitsConfigError);
     });
 
     it("rejects a structurally invalid policy", () => {

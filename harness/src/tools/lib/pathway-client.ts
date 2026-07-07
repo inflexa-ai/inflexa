@@ -38,6 +38,12 @@ export interface Pathway {
     url?: string;
 }
 
+/** A single hit from the Reactome ContentService search response. */
+interface ReactomeSearchEntry {
+    stId?: string;
+    name?: string;
+}
+
 export interface PathwaySearchOptions {
     source?: "kegg" | "reactome" | "both";
     organism?: string;
@@ -80,12 +86,12 @@ export async function searchReactome(query: string, species: string, maxResults:
         cluster: "true",
         rows: String(maxResults),
     });
-    const searchRes = await apiFetch<{ results?: Array<{ entries?: any[] }> }>(`${REACTOME_BASE}/search/query?${params}`, {
+    const searchRes = await apiFetch<{ results?: Array<{ entries?: ReactomeSearchEntry[] }> }>(`${REACTOME_BASE}/search/query?${params}`, {
         headers: { Accept: "application/json" },
     });
     if (searchRes.isErr()) return [];
 
-    const entries: any[] = [];
+    const entries: ReactomeSearchEntry[] = [];
     for (const group of searchRes.value.results ?? []) {
         for (const entry of group.entries ?? []) entries.push(entry);
     }

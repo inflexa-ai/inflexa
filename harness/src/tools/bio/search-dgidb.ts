@@ -50,32 +50,18 @@ const DRUG_INTERACTIONS_QUERY = `query($drugs: [String!]!) {
   }
 }`;
 
-const InteractionSchema = z.object({
-    geneName: z.string(),
-    drugName: z.string(),
-    drugConceptId: z.string().optional(),
-    interactionTypes: z.array(
-        z.object({
-            type: z.string(),
-            directionality: z.string().optional(),
-        }),
-    ),
-    interactionScore: z.number().optional(),
-    sourceCount: z.number().int(),
-    sources: z.array(z.string()),
-    publicationCount: z.number().int(),
-    pmids: z.array(z.string()).max(10),
-    attributes: z
-        .array(
-            z.object({
-                name: z.string(),
-                value: z.string(),
-            }),
-        )
-        .max(20),
-});
-
-type Interaction = z.infer<typeof InteractionSchema>;
+interface Interaction {
+    geneName: string;
+    drugName: string;
+    drugConceptId?: string;
+    interactionTypes: { type: string; directionality?: string }[];
+    interactionScore?: number;
+    sourceCount: number;
+    sources: string[];
+    publicationCount: number;
+    pmids: string[];
+    attributes: { name: string; value: string }[];
+}
 
 interface RawInteraction {
     interactionScore?: number | null;

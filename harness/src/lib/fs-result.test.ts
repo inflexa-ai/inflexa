@@ -59,7 +59,9 @@ describe("fs-result", () => {
                 throw errnoThrow("ENOENT");
             });
             expect(result.isErr()).toBe(true);
-            expect(result._unsafeUnwrapErr().type).toBe("read_failed");
+            if (result.isErr()) {
+                expect(result.error.type).toBe("read_failed");
+            }
         });
 
         it("maps EACCES to err(permission_denied) carrying op + path + cause", async () => {
@@ -72,34 +74,45 @@ describe("fs-result", () => {
                 { path: "/locked.txt", onAbsent: () => null },
             );
             expect(result.isErr()).toBe(true);
-            const e = result._unsafeUnwrapErr();
-            expect(e.type).toBe("permission_denied");
-            expect(e.op).toBe("ws.readFile");
-            expect(e.path).toBe("/locked.txt");
-            expect(e.cause).toBe(cause);
+            if (result.isErr()) {
+                const e = result.error;
+                expect(e.type).toBe("permission_denied");
+                expect(e.op).toBe("ws.readFile");
+                expect(e.path).toBe("/locked.txt");
+                expect(e.cause).toBe(cause);
+            }
         });
 
         it("maps EPERM to err(permission_denied)", async () => {
             const result = await tryFs("ws.readFile", async () => {
                 throw errnoThrow("EPERM");
             });
-            expect(result._unsafeUnwrapErr().type).toBe("permission_denied");
+            expect(result.isErr()).toBe(true);
+            if (result.isErr()) {
+                expect(result.error.type).toBe("permission_denied");
+            }
         });
 
         it("maps EISDIR to err(is_a_directory)", async () => {
             const result = await tryFs("ws.readFile", async () => {
                 throw errnoThrow("EISDIR");
             });
-            expect(result._unsafeUnwrapErr().type).toBe("is_a_directory");
+            expect(result.isErr()).toBe(true);
+            if (result.isErr()) {
+                expect(result.error.type).toBe("is_a_directory");
+            }
         });
 
         it("maps an unclassified throw (EMFILE) to err(read_failed)", async () => {
             const result = await tryFs("ws.readFile", async () => {
                 throw errnoThrow("EMFILE");
             });
-            const e = result._unsafeUnwrapErr();
-            expect(e.type).toBe("read_failed");
-            expect(e.op).toBe("ws.readFile");
+            expect(result.isErr()).toBe(true);
+            if (result.isErr()) {
+                const e = result.error;
+                expect(e.type).toBe("read_failed");
+                expect(e.op).toBe("ws.readFile");
+            }
         });
     });
 
@@ -114,7 +127,10 @@ describe("fs-result", () => {
             const result = await tryFsWrite("ws.writeFile", async () => {
                 throw errnoThrow("EACCES");
             });
-            expect(result._unsafeUnwrapErr().type).toBe("permission_denied");
+            expect(result.isErr()).toBe(true);
+            if (result.isErr()) {
+                expect(result.error.type).toBe("permission_denied");
+            }
         });
 
         it("maps an unclassified throw (ENOSPC) to err(write_failed)", async () => {
@@ -125,9 +141,12 @@ describe("fs-result", () => {
                 },
                 { path: "/full" },
             );
-            const e = result._unsafeUnwrapErr();
-            expect(e.type).toBe("write_failed");
-            expect(e.path).toBe("/full");
+            expect(result.isErr()).toBe(true);
+            if (result.isErr()) {
+                const e = result.error;
+                expect(e.type).toBe("write_failed");
+                expect(e.path).toBe("/full");
+            }
         });
 
         it("absence with onAbsent stays in the ok channel", async () => {
@@ -160,11 +179,13 @@ describe("fs-result", () => {
                 "/remote/file",
             );
             expect(result.isErr()).toBe(true);
-            const e = result._unsafeUnwrapErr();
-            expect(e.type).toBe("fetch_failed");
-            expect(e.op).toBe("presigned.fetch");
-            expect(e.path).toBe("/remote/file");
-            expect(e.cause).toBe(cause);
+            if (result.isErr()) {
+                const e = result.error;
+                expect(e.type).toBe("fetch_failed");
+                expect(e.op).toBe("presigned.fetch");
+                expect(e.path).toBe("/remote/file");
+                expect(e.cause).toBe(cause);
+            }
         });
     });
 

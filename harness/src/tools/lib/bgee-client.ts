@@ -61,10 +61,21 @@ export function bucketRank(expressionState: string, score: number | null): Expre
     return "low";
 }
 
+/** A single expression call from the Bgee API `data.calls` array. */
+interface BgeeCall {
+    condition?: {
+        anatEntity?: { name?: string };
+        cellType?: { name?: string };
+    };
+    expressionScore?: { expressionScore?: string | number };
+    expressionQuality?: string;
+    expressionState?: string;
+}
+
 export function parseExpressionResponse(raw: unknown): TissueRow[] {
     // `raw` is the untyped Bgee API payload; `.data.calls` is reached defensively and
     // the `Array.isArray` guard below means a shape mismatch degrades to an empty list.
-    const calls = (raw as any)?.data?.calls;
+    const calls = (raw as { data?: { calls?: BgeeCall[] } } | null)?.data?.calls;
     if (!Array.isArray(calls)) return [];
 
     const out: TissueRow[] = [];

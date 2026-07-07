@@ -86,6 +86,24 @@ export function toThrowable(value: unknown): Error {
  * the DBOS step edge and any other boundary whose failure protocol is an
  * exception (a driver's throw-to-rollback). The throw is isolated here so the
  * rest of the code stays Result-shaped.
+ *
+ * Use it ONLY where a throw is the boundary's failure contract:
+ *
+ *  - **DBOS workflow/step bodies** (directly, or composed via `resultStep` in
+ *    `loop/run-step.ts`). DBOS records a step as failed — and retries / fails
+ *    fast — only on a thrown exception; a *returned* `err` would be durably
+ *    cached as a successful step output and replayed as success forever.
+ *  - **Tool `execute` bodies**, where the loop's dispatch catch maps the
+ *    throw into a model-visible error tool result (`loop/run-agent.ts`).
+ *  - **Driver edges whose protocol is a throw** (e.g. throw-to-rollback).
+ *
+ * Anywhere else, keep the `Result` flowing: return it, chain
+ * `.andThen`/`.map`/`.mapErr`, or `.match` both branches. Never reach for
+ * this to dodge error handling in composable domain logic.
+ *
+ * The `must-use-result` lint rule recognizes `unwrapOrThrow(...)` as
+ * consuming its Result (see the plugin patch in `eslint.config.js`) — do not
+ * rewrite call sites into inline `.match`+throw forms to appease lint.
  */
 export function unwrapOrThrow<T, E>(result: Result<T, E>): T {
     if (result.isErr()) throw toThrowable(result.error);

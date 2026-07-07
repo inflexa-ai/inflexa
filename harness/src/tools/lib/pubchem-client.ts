@@ -33,6 +33,17 @@ const PROPERTY_FIELDS = [
     "HBondAcceptorCount",
 ].join(",");
 
+/** A single record from the PUG-REST `PropertyTable.Properties` array. */
+interface RawPubChemProperty {
+    CID: number;
+    MolecularWeight?: unknown;
+    InChIKey?: unknown;
+    ConnectivitySMILES?: unknown;
+    CanonicalSMILES?: unknown;
+    HBondDonorCount?: unknown;
+    HBondAcceptorCount?: unknown;
+}
+
 function parseNumber(value: unknown): number | null {
     if (value == null) return null;
     if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -43,7 +54,7 @@ function parseNumber(value: unknown): number | null {
     return null;
 }
 
-function mapProps(raw: any): PubChemCompoundProperties {
+function mapProps(raw: RawPubChemProperty): PubChemCompoundProperties {
     return {
         cid: raw.CID,
         molecularWeight: parseNumber(raw.MolecularWeight),
@@ -57,7 +68,7 @@ function mapProps(raw: any): PubChemCompoundProperties {
 
 export async function getCompoundPropertiesByCID(cid: number): Promise<PubChemCompoundProperties | null> {
     const url = `${PUBCHEM_BASE}/compound/cid/${cid}/property/${PROPERTY_FIELDS}/JSON`;
-    const res = await apiFetch<{ PropertyTable?: { Properties?: any[] } }>(url, {
+    const res = await apiFetch<{ PropertyTable?: { Properties?: RawPubChemProperty[] } }>(url, {
         headers: PUBCHEM_HEADERS,
     });
     if (res.isErr()) {

@@ -50,12 +50,7 @@ function isAbortError(value: unknown): boolean {
     return false;
 }
 
-function responseFromMessages(
-    messages: readonly ModelMessage[],
-    fallbackText: string,
-    finishReason: FinishReason,
-    rawFinishReason?: string,
-): ChatResponse {
+function responseFromMessages(messages: readonly ModelMessage[], fallbackText: string, finishReason: FinishReason, rawFinishReason?: string): ChatResponse {
     const message = [...messages].reverse().find((m): m is Extract<ModelMessage, { role: "assistant" }> => m.role === "assistant");
     if (message === undefined) {
         return {

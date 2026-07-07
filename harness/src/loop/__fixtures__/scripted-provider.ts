@@ -23,7 +23,10 @@ function mapFinishReason(finishReason: ChatResponse["finishReason"] | "tool_use"
     }
 }
 
-export function makeMessage(content: ContentBlock[], finishReason: ChatResponse["finishReason"] | "tool_use" | "end_turn" | "max_tokens" | "refusal"): ChatResponse {
+export function makeMessage(
+    content: ContentBlock[],
+    finishReason: ChatResponse["finishReason"] | "tool_use" | "end_turn" | "max_tokens" | "refusal",
+): ChatResponse {
     return {
         message: { role: "assistant", content },
         finishReason: mapFinishReason(finishReason),
@@ -71,7 +74,7 @@ export function scriptedProvider(script: ChatResponse[] | ((callIndex: number, r
             sessions.push(session);
             return okAsync(reply(i, request));
         },
-        async *chatStream(): AsyncIterable<ChatStreamEvent> {
+        chatStream(): AsyncIterable<ChatStreamEvent> {
             throw new Error("scriptedProvider: chatStream is not used by runAgent");
         },
     };

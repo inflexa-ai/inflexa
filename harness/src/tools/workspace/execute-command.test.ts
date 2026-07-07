@@ -54,7 +54,7 @@ function makeFakeClient(opts: FakeOpts = {}): FakeSandboxClient {
         },
         async awaitExec(execId: string, _callbackSecret: string, emit: ExecEmit, deadlineMs: number) {
             awaits.push({ execId, deadlineMs });
-            for (const ev of opts.intermediateEvents ?? []) emit(ev);
+            for (const ev of opts.intermediateEvents ?? []) await emit(ev);
             if (opts.awaitError) throw opts.awaitError;
             return { ...result, execId };
         },

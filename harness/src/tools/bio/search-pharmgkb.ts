@@ -9,6 +9,16 @@ import { defineTool } from "../define-tool.js";
 import { apiFetch, describeApiError } from "../lib/api-utils.js";
 import { PHARMGKB_BASE, PHARMGKB_HEADERS } from "../lib/pharmgkb-config.js";
 
+interface PharmgkbAnnotation {
+    location?: { genes?: { symbol?: string }[] };
+    relatedChemicals?: { name?: string }[];
+    levelOfEvidence?: { term?: string };
+}
+
+interface PharmgkbResponse {
+    data?: PharmgkbAnnotation[];
+}
+
 export const searchPharmgkbTool = defineTool({
     id: "search_pharmgkb",
     description:
@@ -22,13 +32,13 @@ export const searchPharmgkbTool = defineTool({
         const filter = searchType === "gene" ? `location.genes.symbol=${encodeURIComponent(query)}` : `relatedChemicals.name=${encodeURIComponent(query)}`;
         const endpoint = `${PHARMGKB_BASE}/clinicalAnnotation?${filter}`;
 
-        const res = await apiFetch<any>(endpoint, { headers: PHARMGKB_HEADERS });
+        const res = await apiFetch<PharmgkbResponse>(endpoint, { headers: PHARMGKB_HEADERS });
         if (res.isErr()) throw new Error(describeApiError(res.error));
 
         const data = res.value?.data ?? [];
-        const annotations = data.slice(0, limit).map((ann: any) => ({
-            gene: ann.location?.genes?.map((g: any) => g.symbol).join(", ") ?? query,
-            drug: ann.relatedChemicals?.map((c: any) => c.name).join(", ") ?? "",
+        const annotations = data.slice(0, limit).map((ann) => ({
+            gene: ann.location?.genes?.map((g) => g.symbol).join(", ") ?? query,
+            drug: ann.relatedChemicals?.map((c) => c.name).join(", ") ?? "",
             phenotype: null,
             levelOfEvidence: ann.levelOfEvidence?.term ?? "Unknown",
             guidelineSource: null,

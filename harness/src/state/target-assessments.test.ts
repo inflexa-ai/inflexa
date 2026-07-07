@@ -21,7 +21,6 @@ import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
-import { unwrapOrThrow } from "../lib/result.js";
 
 import {
     getAssessment,
@@ -50,7 +49,7 @@ describe("harness/state/target-assessments", () => {
     });
 
     async function insertRow(opts: { workflowId?: string } = {}): Promise<string> {
-        return unwrapOrThrow(
+        return (
             await insertAssessment(pool, {
                 organizationId: orgId,
                 targetId: "ENSG00000146648",
@@ -58,11 +57,11 @@ describe("harness/state/target-assessments", () => {
                 billingContextId: "bc_test",
                 requestedBy: "user_test",
                 ...opts,
-            }),
-        );
+            })
+        )._unsafeUnwrap();
     }
 
-    const readRow = async (id: string) => unwrapOrThrow(await getAssessment(pool, id, orgId));
+    const readRow = async (id: string) => (await getAssessment(pool, id, orgId))._unsafeUnwrap();
 
     describe("insertAssessment", () => {
         it("defaults workflowId to id when omitted", async () => {
@@ -83,7 +82,7 @@ describe("harness/state/target-assessments", () => {
     describe("markAssessmentSuspended", () => {
         it("flips status to suspended_insufficient_funds", async () => {
             const id = await insertRow();
-            unwrapOrThrow(await markAssessmentSuspended(pool, id));
+            (await markAssessmentSuspended(pool, id))._unsafeUnwrap();
             const row = await readRow(id);
             expect(row!.status).toBe("suspended_insufficient_funds");
             expect(row!.progress).toContain("Suspended");
@@ -91,13 +90,13 @@ describe("harness/state/target-assessments", () => {
 
         it("is idempotent on replay", async () => {
             const id = await insertRow();
-            unwrapOrThrow(await markAssessmentSuspended(pool, id));
+            (await markAssessmentSuspended(pool, id))._unsafeUnwrap();
             const firstRow = await readRow(id);
             const firstUpdatedAt = firstRow!.updatedAt;
 
             // Brief wait so updated_at would tick on a second touch.
             await new Promise((r) => setTimeout(r, 5));
-            unwrapOrThrow(await markAssessmentSuspended(pool, id));
+            (await markAssessmentSuspended(pool, id))._unsafeUnwrap();
             const secondRow = await readRow(id);
             expect(secondRow!.status).toBe("suspended_insufficient_funds");
             // updated_at advances (the UPDATE matched), but status stays consistent.
@@ -106,8 +105,8 @@ describe("harness/state/target-assessments", () => {
 
         it("does not resurrect a soft-deleted row", async () => {
             const id = await insertRow();
-            unwrapOrThrow(await softDeleteAssessment(pool, id, orgId));
-            unwrapOrThrow(await markAssessmentSuspended(pool, id));
+            (await softDeleteAssessment(pool, id, orgId))._unsafeUnwrap();
+            (await markAssessmentSuspended(pool, id))._unsafeUnwrap();
             const row = await readRow(id);
             expect(row!.status).toBe("deleted");
         });
@@ -116,8 +115,8 @@ describe("harness/state/target-assessments", () => {
     describe("markAssessmentRunning", () => {
         it("lifts a suspended row back to running", async () => {
             const id = await insertRow();
-            unwrapOrThrow(await markAssessmentSuspended(pool, id));
-            unwrapOrThrow(await markAssessmentRunning(pool, id));
+            (await markAssessmentSuspended(pool, id))._unsafeUnwrap();
+            (await markAssessmentRunning(pool, id))._unsafeUnwrap();
             const row = await readRow(id);
             expect(row!.status).toBe("running");
             expect(row!.error).toBeNull();
@@ -125,8 +124,8 @@ describe("harness/state/target-assessments", () => {
 
         it("does not resurrect a soft-deleted row", async () => {
             const id = await insertRow();
-            unwrapOrThrow(await softDeleteAssessment(pool, id, orgId));
-            unwrapOrThrow(await markAssessmentRunning(pool, id));
+            (await softDeleteAssessment(pool, id, orgId))._unsafeUnwrap();
+            (await markAssessmentRunning(pool, id))._unsafeUnwrap();
             const row = await readRow(id);
             expect(row!.status).toBe("deleted");
         });
@@ -135,8 +134,8 @@ describe("harness/state/target-assessments", () => {
     describe("soft-delete guards", () => {
         it("updateProgress is a no-op on deleted rows", async () => {
             const id = await insertRow();
-            unwrapOrThrow(await softDeleteAssessment(pool, id, orgId));
-            unwrapOrThrow(await updateProgress(pool, id, "should not stick", "running"));
+            (await softDeleteAssessment(pool, id, orgId))._unsafeUnwrap();
+            (await updateProgress(pool, id, "should not stick", "running"))._unsafeUnwrap();
             const row = await readRow(id);
             expect(row!.status).toBe("deleted");
             expect(row!.progress).not.toBe("should not stick");
@@ -144,8 +143,8 @@ describe("harness/state/target-assessments", () => {
 
         it("setDossier is a no-op on deleted rows", async () => {
             const id = await insertRow();
-            unwrapOrThrow(await softDeleteAssessment(pool, id, orgId));
-            unwrapOrThrow(await setDossier(pool, id, { schema_version: "3" }));
+            (await softDeleteAssessment(pool, id, orgId))._unsafeUnwrap();
+            (await setDossier(pool, id, { schema_version: "3" }))._unsafeUnwrap();
             const row = await readRow(id);
             expect(row!.status).toBe("deleted");
             expect(row!.dossier).toBeNull();
@@ -153,13 +152,13 @@ describe("harness/state/target-assessments", () => {
 
         it("markFailed is a no-op on deleted rows", async () => {
             const id = await insertRow();
-            unwrapOrThrow(await softDeleteAssessment(pool, id, orgId));
-            unwrapOrThrow(
+            (await softDeleteAssessment(pool, id, orgId))._unsafeUnwrap();
+            (
                 await markFailed(pool, id, {
                     kind: "target-unresolved",
                     message: "test",
-                }),
-            );
+                })
+            )._unsafeUnwrap();
             const row = await readRow(id);
             expect(row!.status).toBe("deleted");
             expect(row!.error).toBeNull();

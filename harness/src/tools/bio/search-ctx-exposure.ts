@@ -56,6 +56,46 @@ interface ExposureOutput {
 
 type ExposureResult = { found: false; query: string } | ExposureOutput;
 
+interface CtxChemicalSearchRow {
+    dtxsid: string;
+}
+
+interface RawSeemPrediction {
+    dtxsid?: string;
+    productionVolume?: number | null;
+    units?: string;
+    probabilityDietary?: number | null;
+    probabilityResidential?: number | null;
+    probabilityPesticde?: number | null;
+    probabilityPesticide?: number | null;
+    probabilityIndustrial?: number | null;
+}
+
+interface RawHttkRow {
+    parameter?: string;
+    measured?: number | null;
+    predicted?: number | null;
+    units?: string;
+    model?: string;
+    species?: string;
+    reference?: string;
+}
+
+interface RawFunctionalUseRow {
+    functioncategory?: string;
+    reportedfunction?: string;
+    doctitle?: string;
+}
+
+interface RawProductDataRow {
+    productname?: string;
+    gencat?: string;
+    prodfam?: string;
+    prodtype?: string;
+    centralweightfraction?: number | null;
+    weightfractiontype?: string;
+}
+
 export function createSearchCtxExposureTool(deps: { apiKey: string }) {
     return defineTool({
         id: "search_ctx_exposure",
@@ -132,7 +172,7 @@ async function resolveDtxsid(query: string, headers: Record<string, string>): Pr
     }
 
     const url = `${EPA_CCTE_BASE}/chemical/search/equal/${encodeURIComponent(query)}`;
-    const res = await apiFetch<any[]>(url, { headers });
+    const res = await apiFetch<CtxChemicalSearchRow[]>(url, { headers });
     if (res.isErr()) throw new Error(describeApiError(res.error));
     if (!res.value?.length) return null;
 
@@ -141,7 +181,7 @@ async function resolveDtxsid(query: string, headers: Record<string, string>): Pr
 
 async function fetchSeem(dtxsid: string, headers: Record<string, string>): Promise<SeemPrediction | undefined> {
     const url = `${EPA_CCTE_BASE}/exposure/seem/general/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<any>(url, { headers });
+    const res = await apiFetch<RawSeemPrediction | RawSeemPrediction[]>(url, { headers });
     if (res.isErr() || !res.value) return undefined;
 
     const d = Array.isArray(res.value) ? res.value[0] : res.value;
@@ -160,10 +200,10 @@ async function fetchSeem(dtxsid: string, headers: Record<string, string>): Promi
 
 async function fetchHttk(dtxsid: string, headers: Record<string, string>): Promise<HttkParameter[]> {
     const url = `${EPA_CCTE_BASE}/exposure/httk/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<any[]>(url, { headers });
+    const res = await apiFetch<RawHttkRow[]>(url, { headers });
     if (res.isErr() || !Array.isArray(res.value)) return [];
 
-    return res.value.map((r: any) => ({
+    return res.value.map((r) => ({
         parameter: r.parameter ?? "",
         measured: r.measured ?? null,
         predicted: r.predicted ?? null,
@@ -176,10 +216,10 @@ async function fetchHttk(dtxsid: string, headers: Record<string, string>): Promi
 
 async function fetchFunctionalUse(dtxsid: string, headers: Record<string, string>, limit: number): Promise<FunctionalUse[]> {
     const url = `${EPA_CCTE_BASE}/exposure/functional-use/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<any[]>(url, { headers });
+    const res = await apiFetch<RawFunctionalUseRow[]>(url, { headers });
     if (res.isErr() || !Array.isArray(res.value)) return [];
 
-    return res.value.slice(0, limit).map((r: any) => ({
+    return res.value.slice(0, limit).map((r) => ({
         functionCategory: r.functioncategory ?? "",
         reportedFunction: r.reportedfunction ?? "",
         docTitle: r.doctitle ?? "",
@@ -188,10 +228,10 @@ async function fetchFunctionalUse(dtxsid: string, headers: Record<string, string
 
 async function fetchProductData(dtxsid: string, headers: Record<string, string>, limit: number): Promise<ProductData[]> {
     const url = `${EPA_CCTE_BASE}/exposure/product-data/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<any[]>(url, { headers });
+    const res = await apiFetch<RawProductDataRow[]>(url, { headers });
     if (res.isErr() || !Array.isArray(res.value)) return [];
 
-    return res.value.slice(0, limit).map((r: any) => ({
+    return res.value.slice(0, limit).map((r) => ({
         productName: r.productname ?? "",
         generalCategory: r.gencat ?? "",
         productFamily: r.prodfam ?? "",

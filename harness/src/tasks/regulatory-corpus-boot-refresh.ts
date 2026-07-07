@@ -153,7 +153,7 @@ export async function maybeKickOffRegulatoryCorpusRefresh(
     // the detached promise settles. Other replicas booting in the meantime
     // hit `pg_try_advisory_lock` and skip.
     const client = await pool.connect();
-    let acquired = false;
+    let acquired: boolean;
     try {
         acquired = await tryAcquireLock(client);
     } catch (err) {

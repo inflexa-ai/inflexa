@@ -51,7 +51,9 @@ describe("unwrapOrThrow", () => {
 
 describe("isResult", () => {
     it("is true for ok and err", () => {
+        // eslint-disable-next-line neverthrow/must-use-result -- the Result is the fixture consumed by isResult, the type guard under test
         expect(isResult(ok(1))).toBe(true);
+        // eslint-disable-next-line neverthrow/must-use-result -- the Result is the fixture consumed by isResult, the type guard under test
         expect(isResult(err("x"))).toBe(true);
     });
 

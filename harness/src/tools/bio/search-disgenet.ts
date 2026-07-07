@@ -12,22 +12,20 @@ import { defineTool } from "../define-tool.js";
 import { apiFetch, describeApiError } from "../lib/api-utils.js";
 import { DISGENET_BASE, getDisgenetHeaders } from "../lib/disgenet-config.js";
 
-const GdaSchema = z.object({
-    geneSymbol: z.string(),
-    geneName: z.string(),
-    geneId: z.number(),
-    diseaseName: z.string(),
-    diseaseId: z.string(),
-    diseaseType: z.string(),
-    score: z.number(),
-    evidenceIndex: z.number(),
-    yearInitial: z.number().nullable(),
-    yearFinal: z.number().nullable(),
-    nPmids: z.number(),
-    source: z.string(),
-});
-
-type Gda = z.infer<typeof GdaSchema>;
+interface Gda {
+    geneSymbol: string;
+    geneName: string;
+    geneId: number;
+    diseaseName: string;
+    diseaseId: string;
+    diseaseType: string;
+    score: number;
+    evidenceIndex: number;
+    yearInitial: number | null;
+    yearFinal: number | null;
+    nPmids: number;
+    source: string;
+}
 
 interface RawGda {
     gene_symbol?: string;

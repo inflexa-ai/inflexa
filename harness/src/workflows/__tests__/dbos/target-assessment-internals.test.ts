@@ -27,7 +27,6 @@ import { ResultAsync, err, ok } from "neverthrow";
 
 import { toProviderError } from "../../../providers/errors.js";
 import { setupDbosForTests, type DbosTestRig } from "../../../__tests__/setup/dbos.js";
-import { unwrapOrThrow } from "../../../lib/result.js";
 import { insertAssessment, getAssessment } from "../../../state/target-assessments.js";
 import { BUDGET_EXCEEDED_SENTINEL, BUDGET_EXCEEDED_TOPIC, runLlmStep, type BudgetExceededMarker } from "../../target-assessment/lib/llm-step.js";
 import { emitProgress } from "../../target-assessment/progress.js";
@@ -278,15 +277,15 @@ describe("target-assessment internals (DBOS)", () => {
 
     describe("emitProgress", () => {
         it("writes a typed progress part to the DBOS stream and updates the row", async () => {
-            const assessmentId = unwrapOrThrow(
+            const assessmentId = (
                 await insertAssessment(rig.pool, {
                     organizationId: "org_test",
                     targetId: "ENSG00000146648",
                     targetLabel: "EGFR",
                     billingContextId: "bc_test",
                     requestedBy: "user_test",
-                }),
-            );
+                })
+            )._unsafeUnwrap();
             currentEmitArgs = { assessmentId };
 
             const handle = await DBOS.startWorkflow(emitProgressHarness, {
@@ -307,22 +306,22 @@ describe("target-assessment internals (DBOS)", () => {
             expect(payload["message"]).toMatch(/triaging|modulators/i);
             expect(typeof payload["at"]).toBe("string");
 
-            const row = unwrapOrThrow(await getAssessment(rig.pool, assessmentId, "org_test"));
+            const row = (await getAssessment(rig.pool, assessmentId, "org_test"))._unsafeUnwrap();
             expect(row).not.toBeNull();
             expect(row!.status).toBe("running");
             expect(row!.progress).toMatch(/triaging|modulators/i);
         });
 
         it("flips the row to 'completed' on the terminal completed phase", async () => {
-            const assessmentId = unwrapOrThrow(
+            const assessmentId = (
                 await insertAssessment(rig.pool, {
                     organizationId: "org_test",
                     targetId: "ENSG00000142208",
                     targetLabel: "AKT1",
                     billingContextId: "bc_test",
                     requestedBy: "user_test",
-                }),
-            );
+                })
+            )._unsafeUnwrap();
             currentEmitArgs = { assessmentId };
 
             const handle = await DBOS.startWorkflow(emitProgressHarness, {
@@ -330,21 +329,21 @@ describe("target-assessment internals (DBOS)", () => {
             })({ phase: "completed" });
             await handle.getResult();
 
-            const row = unwrapOrThrow(await getAssessment(rig.pool, assessmentId, "org_test"));
+            const row = (await getAssessment(rig.pool, assessmentId, "org_test"))._unsafeUnwrap();
             expect(row!.status).toBe("completed");
             expect(row!.progress).toBe("Completed");
         });
 
         it("flips the row to 'failed' on the terminal failed phase", async () => {
-            const assessmentId = unwrapOrThrow(
+            const assessmentId = (
                 await insertAssessment(rig.pool, {
                     organizationId: "org_test",
                     targetId: "ENSG00000133703",
                     targetLabel: "KRAS",
                     billingContextId: "bc_test",
                     requestedBy: "user_test",
-                }),
-            );
+                })
+            )._unsafeUnwrap();
             currentEmitArgs = { assessmentId };
 
             const handle = await DBOS.startWorkflow(emitProgressHarness, {
@@ -352,7 +351,7 @@ describe("target-assessment internals (DBOS)", () => {
             })({ phase: "failed" });
             await handle.getResult();
 
-            const row = unwrapOrThrow(await getAssessment(rig.pool, assessmentId, "org_test"));
+            const row = (await getAssessment(rig.pool, assessmentId, "org_test"))._unsafeUnwrap();
             expect(row!.status).toBe("failed");
         });
     });

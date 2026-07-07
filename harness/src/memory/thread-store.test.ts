@@ -74,7 +74,7 @@ describe("createThread + getThread", () => {
 
 describe("updateTitle", () => {
     it("changes only the title and bumps updated_at (2.2)", async () => {
-        await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Old" });
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Old" }))._unsafeUnwrap();
 
         const updated = (await store.updateTitle("t1", "New title"))._unsafeUnwrap();
         expect(updated).not.toBeNull();
@@ -93,13 +93,15 @@ describe("updateTitle", () => {
 describe("deleteThread (soft delete)", () => {
     it("excludes the thread from get/list while the row and messages persist (2.2, 2.3)", async () => {
         const history = createThreadHistory(pool);
-        await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Doomed" });
-        await history.appendTurn("t1", [
-            { role: "user", content: [{ type: "text", text: "hi" }] },
-            { role: "assistant", content: [{ type: "text", text: "hello" }] },
-        ]);
+        (await store.createThread({ threadId: "t1", analysisId: ANALYSIS_A, title: "Doomed" }))._unsafeUnwrap();
+        (
+            await history.appendTurn("t1", [
+                { role: "user", content: [{ type: "text", text: "hi" }] },
+                { role: "assistant", content: [{ type: "text", text: "hello" }] },
+            ])
+        )._unsafeUnwrap();
 
-        await store.deleteThread("t1");
+        (await store.deleteThread("t1"))._unsafeUnwrap();
 
         // Absent from get + list.
         expect((await store.getThread("t1"))._unsafeUnwrap()).toBeNull();
@@ -119,12 +121,12 @@ describe("deleteThread (soft delete)", () => {
 
 describe("listThreads", () => {
     it("is scoped to one analysis, newest-updated first (2.3)", async () => {
-        await store.createThread({ threadId: "a1", analysisId: ANALYSIS_A, title: "A1" });
-        await store.createThread({ threadId: "a2", analysisId: ANALYSIS_A, title: "A2" });
-        await store.createThread({ threadId: "b1", analysisId: ANALYSIS_B, title: "B1" });
+        (await store.createThread({ threadId: "a1", analysisId: ANALYSIS_A, title: "A1" }))._unsafeUnwrap();
+        (await store.createThread({ threadId: "a2", analysisId: ANALYSIS_A, title: "A2" }))._unsafeUnwrap();
+        (await store.createThread({ threadId: "b1", analysisId: ANALYSIS_B, title: "B1" }))._unsafeUnwrap();
 
         // Touch a1 last so it sorts first.
-        await store.updateTitle("a1", "A1 updated");
+        (await store.updateTitle("a1", "A1 updated"))._unsafeUnwrap();
 
         const page = (await store.listThreads({ analysisId: ANALYSIS_A }))._unsafeUnwrap();
         expect(page.total).toBe(2);
@@ -135,11 +137,13 @@ describe("listThreads", () => {
 
     it("paginates with total and hasMore (2.3)", async () => {
         for (let i = 0; i < 5; i++) {
-            await store.createThread({
-                threadId: `t${i}`,
-                analysisId: ANALYSIS_A,
-                title: `T${i}`,
-            });
+            (
+                await store.createThread({
+                    threadId: `t${i}`,
+                    analysisId: ANALYSIS_A,
+                    title: `T${i}`,
+                })
+            )._unsafeUnwrap();
         }
 
         const first = (await store.listThreads({ analysisId: ANALYSIS_A, page: 0, perPage: 2 }))._unsafeUnwrap();

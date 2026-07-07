@@ -31,7 +31,7 @@ describe("createWorkspaceFilesystem", () => {
 
     it("reads a materialized file as ok", async () => {
         await writeFile(join(sessions, ANALYSIS, "data", "inputs", "x.csv"), "sample_id,gene\n1,BRCA1\n");
-        const r = unwrapOrThrow(await fs.readFile({ session, path: "data/inputs/x.csv" }));
+        const r = (await fs.readFile({ session, path: "data/inputs/x.csv" }))._unsafeUnwrap();
         expect(r.kind).toBe("ok");
         if (r.kind === "ok") {
             expect(r.content.toString("utf8")).toContain("BRCA1");
@@ -39,20 +39,20 @@ describe("createWorkspaceFilesystem", () => {
     });
 
     it("returns not_found for a missing path with no presigned fallback", async () => {
-        const r = unwrapOrThrow(await fs.readFile({ session, path: "data/inputs/missing.csv" }));
+        const r = (await fs.readFile({ session, path: "data/inputs/missing.csv" }))._unsafeUnwrap();
         expect(r.kind).toBe("not_found");
     });
 
     it("returns truncated when the local file exceeds maxBytes", async () => {
         const payload = Buffer.alloc(2048, 0x41); // 'A' x 2048
         await writeFile(join(sessions, ANALYSIS, "data", "inputs", "big.bin"), payload);
-        const r = unwrapOrThrow(
+        const r = (
             await fs.readFile({
                 session,
                 path: "data/inputs/big.bin",
                 maxBytes: 1024,
-            }),
-        );
+            })
+        )._unsafeUnwrap();
         expect(r.kind).toBe("truncated");
         if (r.kind === "truncated") {
             expect(r.content.length).toBe(1024);
@@ -61,12 +61,12 @@ describe("createWorkspaceFilesystem", () => {
     });
 
     it("returns out_of_scope for a traversal that escapes the analysis tree", async () => {
-        const r = unwrapOrThrow(await fs.readFile({ session, path: "../other-analysis/x.csv" }));
+        const r = (await fs.readFile({ session, path: "../other-analysis/x.csv" }))._unsafeUnwrap();
         expect(r.kind).toBe("out_of_scope");
     });
 
     it("returns out_of_scope for /etc/passwd-style absolute paths", async () => {
-        const r = unwrapOrThrow(await fs.readFile({ session, path: "/etc/passwd" }));
+        const r = (await fs.readFile({ session, path: "/etc/passwd" }))._unsafeUnwrap();
         expect(r.kind).toBe("out_of_scope");
     });
 
@@ -81,7 +81,7 @@ describe("createWorkspaceFilesystem", () => {
             sessionsBasePath: sessions,
             presignedFallback: fallback,
         });
-        const r = unwrapOrThrow(await fs2.readFile({ session, path: "data/inputs/cold.csv" }));
+        const r = (await fs2.readFile({ session, path: "data/inputs/cold.csv" }))._unsafeUnwrap();
         expect(r.kind).toBe("ok");
         if (r.kind === "ok") {
             expect(r.content.toString("utf8")).toBe("from-nexus");
@@ -116,7 +116,7 @@ describe("createWorkspaceFilesystem", () => {
         await writeFile(join(dir, "b.csv"), "22");
         await mkdir(join(dir, "sub"));
 
-        const r = unwrapOrThrow(await fs.list({ session, path: "data/inputs" }));
+        const r = (await fs.list({ session, path: "data/inputs" }))._unsafeUnwrap();
         expect(r.kind).toBe("ok");
         if (r.kind === "ok") {
             const names = r.entries.map((e) => e.name).sort();
@@ -130,20 +130,20 @@ describe("createWorkspaceFilesystem", () => {
     });
 
     it("list returns out_of_scope for a traversal path", async () => {
-        const r = unwrapOrThrow(await fs.list({ session, path: "../" }));
+        const r = (await fs.list({ session, path: "../" }))._unsafeUnwrap();
         expect(r.kind).toBe("out_of_scope");
     });
 
     it("headLines returns only the first N lines of a multi-line file", async () => {
         const body = Array.from({ length: 100 }, (_, i) => `line${i + 1}`).join("\n");
         await writeFile(join(sessions, ANALYSIS, "data", "inputs", "big.csv"), body);
-        const r = unwrapOrThrow(
+        const r = (
             await fs.readFile({
                 session,
                 path: "data/inputs/big.csv",
                 headLines: 5,
-            }),
-        );
+            })
+        )._unsafeUnwrap();
         expect(r.kind).toBe("ok");
         if (r.kind === "ok") {
             const lines = r.content.toString("utf8").split("\n");
@@ -154,13 +154,13 @@ describe("createWorkspaceFilesystem", () => {
     it("tailLines returns only the last N complete lines", async () => {
         const body = Array.from({ length: 100 }, (_, i) => `line${i + 1}`).join("\n");
         await writeFile(join(sessions, ANALYSIS, "data", "inputs", "log.txt"), body);
-        const r = unwrapOrThrow(
+        const r = (
             await fs.readFile({
                 session,
                 path: "data/inputs/log.txt",
                 tailLines: 3,
-            }),
-        );
+            })
+        )._unsafeUnwrap();
         expect(r.kind).toBe("ok");
         if (r.kind === "ok") {
             const lines = r.content.toString("utf8").split("\n");
@@ -174,14 +174,14 @@ describe("createWorkspaceFilesystem", () => {
         // because we stop streaming after we have 5 lines.
         const body = Array.from({ length: 10_000 }, (_, i) => `row${i}`).join("\n");
         await writeFile(join(sessions, ANALYSIS, "data", "inputs", "huge.csv"), body);
-        const r = unwrapOrThrow(
+        const r = (
             await fs.readFile({
                 session,
                 path: "data/inputs/huge.csv",
                 headLines: 5,
                 maxBytes: 1024,
-            }),
-        );
+            })
+        )._unsafeUnwrap();
         expect(r.kind).toBe("ok");
         if (r.kind === "ok") {
             const lines = r.content.toString("utf8").split("\n");
@@ -192,14 +192,14 @@ describe("createWorkspaceFilesystem", () => {
     it("tailLines reads via a window from the end — bounded by maxBytes", async () => {
         const body = Array.from({ length: 10_000 }, (_, i) => `row${i}`).join("\n");
         await writeFile(join(sessions, ANALYSIS, "data", "inputs", "huge.csv"), body);
-        const r = unwrapOrThrow(
+        const r = (
             await fs.readFile({
                 session,
                 path: "data/inputs/huge.csv",
                 tailLines: 3,
                 maxBytes: 64 * 1024,
-            }),
-        );
+            })
+        )._unsafeUnwrap();
         expect(r.kind).toBe("ok");
         if (r.kind === "ok") {
             const lines = r.content.toString("utf8").split("\n");
@@ -209,13 +209,13 @@ describe("createWorkspaceFilesystem", () => {
 
     it("headLines on a small file returns the whole file when fewer lines exist", async () => {
         await writeFile(join(sessions, ANALYSIS, "data", "inputs", "short.csv"), "a\nb\nc");
-        const r = unwrapOrThrow(
+        const r = (
             await fs.readFile({
                 session,
                 path: "data/inputs/short.csv",
                 headLines: 100,
-            }),
-        );
+            })
+        )._unsafeUnwrap();
         expect(r.kind).toBe("ok");
         if (r.kind === "ok") {
             expect(r.content.toString("utf8")).toBe("a\nb\nc");
@@ -224,14 +224,14 @@ describe("createWorkspaceFilesystem", () => {
 
     it("stat returns ok / not_found / out_of_scope", async () => {
         await writeFile(join(sessions, ANALYSIS, "data", "inputs", "x.csv"), "x");
-        const present = unwrapOrThrow(await fs.stat({ session, path: "data/inputs/x.csv" }));
+        const present = (await fs.stat({ session, path: "data/inputs/x.csv" }))._unsafeUnwrap();
         expect(present.kind).toBe("ok");
         if (present.kind === "ok") expect(present.type).toBe("file");
 
-        const missing = unwrapOrThrow(await fs.stat({ session, path: "nope.csv" }));
+        const missing = (await fs.stat({ session, path: "nope.csv" }))._unsafeUnwrap();
         expect(missing.kind).toBe("not_found");
 
-        const escape = unwrapOrThrow(await fs.stat({ session, path: "/etc/passwd" }));
+        const escape = (await fs.stat({ session, path: "/etc/passwd" }))._unsafeUnwrap();
         expect(escape.kind).toBe("out_of_scope");
     });
 });

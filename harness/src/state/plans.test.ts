@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
-import { unwrapOrThrow } from "../lib/result.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { upsertAnalysis } from "./analyses.js";
 import { loadPlan, upsertPlan } from "./plans.js";
@@ -24,8 +23,8 @@ describe("upsertPlan", () => {
         drop = ctx.drop;
         // cortex_plans.analysis_id has an FK to cortex_analysis_state — seed both
         // analyses the parent-scope cases reference.
-        unwrapOrThrow(await upsertAnalysis(pool, "analysis-1", null, null));
-        unwrapOrThrow(await upsertAnalysis(pool, "analysis-2", null, null));
+        (await upsertAnalysis(pool, "analysis-1", null, null))._unsafeUnwrap();
+        (await upsertAnalysis(pool, "analysis-2", null, null))._unsafeUnwrap();
     });
 
     afterAll(async () => {
@@ -34,21 +33,21 @@ describe("upsertPlan", () => {
 
     it("persists a fresh plan that loadPlan round-trips", async () => {
         const plan = { title: "t", steps: [{ id: "s1" }] };
-        unwrapOrThrow(await upsertPlan(pool, { planId: "pln-00000001", analysisId: "analysis-1", plan }));
+        (await upsertPlan(pool, { planId: "pln-00000001", analysisId: "analysis-1", plan }))._unsafeUnwrap();
 
-        const loaded = unwrapOrThrow(await loadPlan(pool, "pln-00000001", { analysisId: "analysis-1" }));
+        const loaded = (await loadPlan(pool, "pln-00000001", { analysisId: "analysis-1" }))._unsafeUnwrap();
         expect(loaded).toEqual(plan);
     });
 
     it("re-upserting the same id is a no-op success — one row survives, first payload kept", async () => {
         const first = { v: 1 };
         const second = { v: 2 };
-        unwrapOrThrow(await upsertPlan(pool, { planId: "pln-0000000a", analysisId: "analysis-1", plan: first }));
-        unwrapOrThrow(await upsertPlan(pool, { planId: "pln-0000000a", analysisId: "analysis-1", plan: second }));
+        (await upsertPlan(pool, { planId: "pln-0000000a", analysisId: "analysis-1", plan: first }))._unsafeUnwrap();
+        (await upsertPlan(pool, { planId: "pln-0000000a", analysisId: "analysis-1", plan: second }))._unsafeUnwrap();
 
         expect(await countPlans(pool, "pln-0000000a")).toBe(1);
         // ON CONFLICT DO NOTHING leaves the original row untouched.
-        const loaded = unwrapOrThrow(await loadPlan(pool, "pln-0000000a", { analysisId: "analysis-1" }));
+        const loaded = (await loadPlan(pool, "pln-0000000a", { analysisId: "analysis-1" }))._unsafeUnwrap();
         expect(loaded).toEqual(first);
     });
 
@@ -57,16 +56,18 @@ describe("upsertPlan", () => {
     });
 
     it("enforces the parent-scope check when the parent belongs to another analysis", async () => {
-        unwrapOrThrow(await upsertPlan(pool, { planId: "pln-000000b0", analysisId: "analysis-1", plan: {} }));
+        (await upsertPlan(pool, { planId: "pln-000000b0", analysisId: "analysis-1", plan: {} }))._unsafeUnwrap();
 
         let message = "";
         try {
-            await upsertPlan(pool, {
-                planId: "pln-000000b1",
-                analysisId: "analysis-2",
-                plan: {},
-                parentPlanId: "pln-000000b0",
-            });
+            (
+                await upsertPlan(pool, {
+                    planId: "pln-000000b1",
+                    analysisId: "analysis-2",
+                    plan: {},
+                    parentPlanId: "pln-000000b0",
+                })
+            )._unsafeUnwrap();
         } catch (err) {
             message = err instanceof Error ? err.message : String(err);
         }
@@ -76,15 +77,15 @@ describe("upsertPlan", () => {
     });
 
     it("accepts a parent in the same analysis", async () => {
-        unwrapOrThrow(await upsertPlan(pool, { planId: "pln-000000c0", analysisId: "analysis-1", plan: {} }));
-        unwrapOrThrow(
+        (await upsertPlan(pool, { planId: "pln-000000c0", analysisId: "analysis-1", plan: {} }))._unsafeUnwrap();
+        (
             await upsertPlan(pool, {
                 planId: "pln-000000c1",
                 analysisId: "analysis-1",
                 plan: {},
                 parentPlanId: "pln-000000c0",
-            }),
-        );
+            })
+        )._unsafeUnwrap();
         expect(await countPlans(pool, "pln-000000c1")).toBe(1);
     });
 });

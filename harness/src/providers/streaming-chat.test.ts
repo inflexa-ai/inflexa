@@ -13,7 +13,6 @@ function streamingFake(deltas: readonly string[], final: ChatResponse, options: 
     return {
         capabilities: { toolCalling: true },
         chat: () => okAsync(final),
-        // eslint-disable-next-line @typescript-eslint/require-await
         chatStream: async function* (): AsyncIterable<ChatStreamEvent> {
             for (const text of deltas) yield { type: "text-delta", text };
             if (!options.omitDone) yield { type: "done", response: final };
@@ -50,8 +49,10 @@ describe("createStreamingChat", () => {
 
         const result = await streaming.chat(REQUEST, makeSession());
         expect(result.isErr()).toBe(true);
-        const error = result._unsafeUnwrapErr();
-        expect(error.type).toBe("provider");
-        expect(error.message).toContain("ended without a final message");
+        if (result.isErr()) {
+            const error = result.error;
+            expect(error.type).toBe("provider");
+            expect(error.message).toContain("ended without a final message");
+        }
     });
 });

@@ -33,11 +33,13 @@ function contentText(content: unknown): string {
 describe("prepareChatTurn", () => {
     it("returns not_found when the thread is owned by a different analysis", async () => {
         const store = createThreadStore(pool);
-        await store.createThread({
-            threadId: "t1",
-            analysisId: ANALYSIS_B,
-            title: "Owned by B",
-        });
+        (
+            await store.createThread({
+                threadId: "t1",
+                analysisId: ANALYSIS_B,
+                title: "Owned by B",
+            })
+        )._unsafeUnwrap();
 
         const result = await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "t1", userInput: "hello" });
 
@@ -52,10 +54,12 @@ describe("prepareChatTurn", () => {
         const history = createThreadHistory(pool);
 
         // Seed one prior turn so it must appear in the assembled window.
-        await history.appendTurn("t-new", [
-            { role: "user", content: "earlier question about PCA" },
-            { role: "assistant", content: "earlier answer" },
-        ]);
+        (
+            await history.appendTurn("t-new", [
+                { role: "user", content: "earlier question about PCA" },
+                { role: "assistant", content: "earlier answer" },
+            ])
+        )._unsafeUnwrap();
 
         const result = await prepareChatTurn(
             { pool },
@@ -87,11 +91,13 @@ describe("prepareChatTurn", () => {
 
     it("leaves an existing non-empty title unchanged", async () => {
         const store = createThreadStore(pool);
-        await store.createThread({
-            threadId: "t-titled",
-            analysisId: ANALYSIS_A,
-            title: "My Existing Title",
-        });
+        (
+            await store.createThread({
+                threadId: "t-titled",
+                analysisId: ANALYSIS_A,
+                title: "My Existing Title",
+            })
+        )._unsafeUnwrap();
 
         const result = await prepareChatTurn(
             { pool },

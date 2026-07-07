@@ -142,7 +142,9 @@ async function fillInputHashesFromDisk(collector: ProvenanceCollector, sessionPa
             info = await stat(hostPath);
         } catch (err) {
             if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-                throw new Error(`[reconcile-manifest] cannot attest input ${ref.path}: not present at reconcile (stepId=${stepId} runId=${runId})`);
+                throw new Error(`[reconcile-manifest] cannot attest input ${ref.path}: not present at reconcile (stepId=${stepId} runId=${runId})`, {
+                    cause: err,
+                });
             }
             throw err;
         }

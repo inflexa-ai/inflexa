@@ -140,6 +140,7 @@ export function resolveAnalysisBilling(pool: Querier, analysisId: string): Resul
             } catch (err) {
                 throw new Error(
                     `resolveAnalysisBilling: billing_context is not valid JSON for analysisId=${analysisId}: ${err instanceof Error ? err.message : err}`,
+                    { cause: err },
                 );
             }
         } else {

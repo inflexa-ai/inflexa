@@ -86,22 +86,28 @@ describe("load", () => {
 
 describe("updateSection section isolation (2.5)", () => {
     it("updating constraints leaves goal / hypotheses / findings byte-identical", async () => {
-        await wm.updateSection(ANALYSIS, "goal", { text: "the analysis goal" });
-        await wm.updateSection(ANALYSIS, "hypothesis", {
-            op: "add",
-            text: "a working hypothesis",
-        });
-        await wm.updateSection(ANALYSIS, "finding", {
-            runId: "run-A",
-            text: "a recorded finding",
-        });
+        (await wm.updateSection(ANALYSIS, "goal", { text: "the analysis goal" }))._unsafeUnwrap();
+        (
+            await wm.updateSection(ANALYSIS, "hypothesis", {
+                op: "add",
+                text: "a working hypothesis",
+            })
+        )._unsafeUnwrap();
+        (
+            await wm.updateSection(ANALYSIS, "finding", {
+                runId: "run-A",
+                text: "a recorded finding",
+            })
+        )._unsafeUnwrap();
 
         const before = (await wm.load(ANALYSIS))._unsafeUnwrap();
-        await wm.updateSection(ANALYSIS, "constraint", {
-            op: "add",
-            text: "FDR threshold 0.01",
-            origin: "user",
-        });
+        (
+            await wm.updateSection(ANALYSIS, "constraint", {
+                op: "add",
+                text: "FDR threshold 0.01",
+                origin: "user",
+            })
+        )._unsafeUnwrap();
         const after = (await wm.load(ANALYSIS))._unsafeUnwrap();
 
         expect(after.goal).toBe(before.goal);
@@ -112,26 +118,34 @@ describe("updateSection section isolation (2.5)", () => {
     });
 
     it("revising and retiring list entries amends only that section", async () => {
-        await wm.updateSection(ANALYSIS, "hypothesis", {
-            op: "add",
-            text: "first hypothesis",
-        });
-        await wm.updateSection(ANALYSIS, "hypothesis", {
-            op: "add",
-            text: "second hypothesis",
-        });
+        (
+            await wm.updateSection(ANALYSIS, "hypothesis", {
+                op: "add",
+                text: "first hypothesis",
+            })
+        )._unsafeUnwrap();
+        (
+            await wm.updateSection(ANALYSIS, "hypothesis", {
+                op: "add",
+                text: "second hypothesis",
+            })
+        )._unsafeUnwrap();
         const seeded = (await wm.load(ANALYSIS))._unsafeUnwrap();
         const [first, second] = seeded.hypotheses;
 
-        await wm.updateSection(ANALYSIS, "hypothesis", {
-            op: "revise",
-            id: first!.id,
-            text: "first hypothesis (refined)",
-        });
-        await wm.updateSection(ANALYSIS, "hypothesis", {
-            op: "retire",
-            id: second!.id,
-        });
+        (
+            await wm.updateSection(ANALYSIS, "hypothesis", {
+                op: "revise",
+                id: first!.id,
+                text: "first hypothesis (refined)",
+            })
+        )._unsafeUnwrap();
+        (
+            await wm.updateSection(ANALYSIS, "hypothesis", {
+                op: "retire",
+                id: second!.id,
+            })
+        )._unsafeUnwrap();
 
         const after = (await wm.load(ANALYSIS))._unsafeUnwrap();
         expect(after.hypotheses.length).toBe(1);
@@ -142,17 +156,21 @@ describe("updateSection section isolation (2.5)", () => {
 
 describe("updateSection run-scoped findings (2.6)", () => {
     it("recording a finding under run B does not disturb run A", async () => {
-        await wm.updateSection(ANALYSIS, "finding", {
-            runId: "run-A",
-            text: "finding from run A",
-        });
+        (
+            await wm.updateSection(ANALYSIS, "finding", {
+                runId: "run-A",
+                text: "finding from run A",
+            })
+        )._unsafeUnwrap();
         const afterA = (await wm.load(ANALYSIS))._unsafeUnwrap();
         const runABefore = afterA.findings["run-A"];
 
-        await wm.updateSection(ANALYSIS, "finding", {
-            runId: "run-B",
-            text: "finding from run B",
-        });
+        (
+            await wm.updateSection(ANALYSIS, "finding", {
+                runId: "run-B",
+                text: "finding from run B",
+            })
+        )._unsafeUnwrap();
         const afterB = (await wm.load(ANALYSIS))._unsafeUnwrap();
 
         expect(JSON.stringify(afterB.findings["run-A"])).toBe(JSON.stringify(runABefore));
@@ -161,14 +179,18 @@ describe("updateSection run-scoped findings (2.6)", () => {
     });
 
     it("appends multiple findings under the same run", async () => {
-        await wm.updateSection(ANALYSIS, "finding", {
-            runId: "run-A",
-            text: "first finding",
-        });
-        await wm.updateSection(ANALYSIS, "finding", {
-            runId: "run-A",
-            text: "second finding",
-        });
+        (
+            await wm.updateSection(ANALYSIS, "finding", {
+                runId: "run-A",
+                text: "first finding",
+            })
+        )._unsafeUnwrap();
+        (
+            await wm.updateSection(ANALYSIS, "finding", {
+                runId: "run-A",
+                text: "second finding",
+            })
+        )._unsafeUnwrap();
         const loaded = (await wm.load(ANALYSIS))._unsafeUnwrap();
         expect(loaded.findings["run-A"]!.map((f) => f.text)).toEqual(["first finding", "second finding"]);
     });
@@ -176,24 +198,32 @@ describe("updateSection run-scoped findings (2.6)", () => {
 
 describe("render (2.7)", () => {
     it("groups findings by run and includes all four sections", async () => {
-        await wm.updateSection(ANALYSIS, "goal", { text: "the analysis goal" });
-        await wm.updateSection(ANALYSIS, "constraint", {
-            op: "add",
-            text: "FDR threshold 0.01",
-            origin: "user",
-        });
-        await wm.updateSection(ANALYSIS, "hypothesis", {
-            op: "add",
-            text: "EGFR drives resistance",
-        });
-        await wm.updateSection(ANALYSIS, "finding", {
-            runId: "run-A",
-            text: "412 genes differentially expressed",
-        });
-        await wm.updateSection(ANALYSIS, "finding", {
-            runId: "run-B",
-            text: "pathway X enriched",
-        });
+        (await wm.updateSection(ANALYSIS, "goal", { text: "the analysis goal" }))._unsafeUnwrap();
+        (
+            await wm.updateSection(ANALYSIS, "constraint", {
+                op: "add",
+                text: "FDR threshold 0.01",
+                origin: "user",
+            })
+        )._unsafeUnwrap();
+        (
+            await wm.updateSection(ANALYSIS, "hypothesis", {
+                op: "add",
+                text: "EGFR drives resistance",
+            })
+        )._unsafeUnwrap();
+        (
+            await wm.updateSection(ANALYSIS, "finding", {
+                runId: "run-A",
+                text: "412 genes differentially expressed",
+            })
+        )._unsafeUnwrap();
+        (
+            await wm.updateSection(ANALYSIS, "finding", {
+                runId: "run-B",
+                text: "pathway X enriched",
+            })
+        )._unsafeUnwrap();
 
         const md = (await wm.render(ANALYSIS))._unsafeUnwrap();
 

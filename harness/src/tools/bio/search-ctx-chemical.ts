@@ -45,6 +45,43 @@ interface PropertySummary {
 
 type CtxChemicalOutput = { found: false; query: string } | { found: true; detail: ChemicalDetail; properties?: PropertySummary[] };
 
+interface CtxChemicalSearchRow {
+    dtxsid: string;
+}
+
+interface RawChemicalDetail {
+    dtxsid?: string;
+    dtxcid?: string;
+    casrn?: string | null;
+    preferredName?: string;
+    iupacName?: string;
+    molFormula?: string;
+    smiles?: string;
+    inchikey?: string;
+    monoisotopicMass?: number | null;
+    averageMass?: number | null;
+    qcLevel?: number | null;
+    totalAssays?: number | null;
+    activeAssays?: number | null;
+    percentAssays?: number | null;
+    pubchemCid?: number | null;
+    pubmedCount?: number | null;
+    sourcesCount?: number | null;
+}
+
+interface RawPropertySummary {
+    propName?: string;
+    unit?: string;
+    experimentalCount?: number | null;
+    experimentalMedian?: number | null;
+    experimentalMin?: number | null;
+    experimentalMax?: number | null;
+    predictedCount?: number | null;
+    predictedMedian?: number | null;
+    predictedMin?: number | null;
+    predictedMax?: number | null;
+}
+
 export function createSearchCtxChemicalTool(deps: { apiKey: string }) {
     return defineTool({
         id: "search_ctx_chemical",
@@ -70,10 +107,10 @@ export function createSearchCtxChemicalTool(deps: { apiKey: string }) {
             const { dtxsid } = resolved;
 
             const detailUrl = `${EPA_CCTE_BASE}/chemical/detail/search/by-dtxsid/${dtxsid}?projection=chemicaldetailstandard`;
-            const detailRes = await apiFetch<any>(detailUrl, { headers });
+            const detailRes = await apiFetch<RawChemicalDetail>(detailUrl, { headers });
             if (detailRes.isErr()) throw new Error(describeApiError(detailRes.error));
 
-            const d = detailRes.value ?? {};
+            const d: RawChemicalDetail = detailRes.value ?? {};
             const detail: ChemicalDetail = {
                 dtxsid: d.dtxsid ?? dtxsid,
                 dtxcid: d.dtxcid ?? "",
@@ -102,10 +139,10 @@ export function createSearchCtxChemicalTool(deps: { apiKey: string }) {
 
             if (includeProperties) {
                 const propUrl = `${EPA_CCTE_BASE}/chemical/property/summary/search/by-dtxsid/${dtxsid}`;
-                const propRes = await apiFetch<any[]>(propUrl, { headers });
+                const propRes = await apiFetch<RawPropertySummary[]>(propUrl, { headers });
 
                 if (propRes.isOk() && Array.isArray(propRes.value)) {
-                    result.properties = propRes.value.map((p: any) => ({
+                    result.properties = propRes.value.map((p) => ({
                         propName: p.propName ?? "",
                         unit: p.unit ?? "",
                         experimentalCount: p.experimentalCount ?? null,
@@ -131,7 +168,7 @@ async function resolveDtxsid(query: string, headers: Record<string, string>): Pr
     }
 
     const url = `${EPA_CCTE_BASE}/chemical/search/equal/${encodeURIComponent(query)}`;
-    const res = await apiFetch<any[]>(url, { headers });
+    const res = await apiFetch<CtxChemicalSearchRow[]>(url, { headers });
     if (res.isErr()) throw new Error(describeApiError(res.error));
     if (!res.value?.length) return null;
 

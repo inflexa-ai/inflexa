@@ -35,6 +35,39 @@ export interface SeriousnessProfile {
     otherSeriousCount: number;
 }
 
+interface FaersCountResult {
+    term?: string;
+    count?: number;
+}
+
+interface FaersCountResponse {
+    results?: FaersCountResult[];
+}
+
+interface FaersMetaResponse {
+    meta?: { results?: { total?: number } };
+}
+
+/** openFDA drug-label metadata block (`openfda`) — all fields free-form JSON. */
+interface OpenFdaLabelMeta {
+    application_number?: unknown;
+    brand_name?: unknown;
+    generic_name?: unknown;
+}
+
+/** A single openFDA structured-product-label record. */
+interface OpenFdaLabel {
+    set_id?: unknown;
+    openfda?: OpenFdaLabelMeta;
+    effective_time?: unknown;
+    boxed_warning?: unknown;
+    warnings_and_cautions?: unknown;
+    warnings?: unknown;
+    rems_summary?: unknown;
+    rems_indication?: unknown;
+    medication_guide?: unknown;
+}
+
 function buildSearch(drugName: string, serious: boolean): string {
     const escaped = drugName.replace(/"/g, '\\"');
     let search = `patient.drug.openfda.generic_name:"${escaped}"`;
@@ -52,18 +85,18 @@ export async function getFaersByDrug(
     const search = buildSearch(drugName, serious);
     const countUrl = `${OPENFDA_BASE}?search=${encodeURIComponent(search)}` + `&count=patient.reaction.reactionmeddrapt.exact&limit=${limit}`;
 
-    const res = await apiFetch<any>(countUrl);
+    const res = await apiFetch<FaersCountResponse>(countUrl);
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return { totalReports: 0, adverseEvents: [] };
         throw new Error(describeApiError(res.error));
     }
-    const adverseEvents: AdverseEventCount[] = (res.value?.results ?? []).map((r: any) => ({
+    const adverseEvents: AdverseEventCount[] = (res.value?.results ?? []).map((r) => ({
         reaction: r.term ?? "Unknown",
         count: r.count ?? 0,
     }));
 
     const totalUrl = `${OPENFDA_BASE}?search=${encodeURIComponent(search)}&limit=1`;
-    const totalRes = await apiFetch<any>(totalUrl);
+    const totalRes = await apiFetch<FaersMetaResponse>(totalUrl);
     const totalReports = totalRes.isOk() ? totalRes.value?.meta?.results?.total : undefined;
 
     return { totalReports, adverseEvents };
@@ -79,7 +112,7 @@ export async function getFaersSeriousness(drugName: string): Promise<Seriousness
     const search = `patient.drug.openfda.generic_name:"${escaped}"`;
 
     const totalUrl = `${OPENFDA_BASE}?search=${encodeURIComponent(search)}&limit=1`;
-    const totalRes = await apiFetch<any>(totalUrl);
+    const totalRes = await apiFetch<FaersMetaResponse>(totalUrl);
     if (totalRes.isErr()) {
         if (totalRes.error.type === "http_status" && totalRes.error.status === 404) return null;
         throw new Error(describeApiError(totalRes.error));
@@ -100,7 +133,7 @@ export async function getFaersSeriousness(drugName: string): Promise<Seriousness
     async function countWith(field: string): Promise<number> {
         const q = `${search}+AND+${field}:1`;
         const url = `${OPENFDA_BASE}?search=${encodeURIComponent(q)}&limit=1`;
-        const res = await apiFetch<any>(url);
+        const res = await apiFetch<FaersMetaResponse>(url);
         if (res.isErr()) return 0;
         return res.value?.meta?.results?.total ?? 0;
     }
@@ -149,7 +182,7 @@ function joinSection(value: unknown): string | null {
  * the DailyMed `setid` URL (canonical reference), falls back to a search URL
  * keyed by application number when only that is available.
  */
-function buildLabelSourceUrl(label: any): string {
+function buildLabelSourceUrl(label: OpenFdaLabel): string {
     const setId = typeof label?.set_id === "string" ? label.set_id : null;
     if (setId) return `https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=${setId}`;
     const appNum = firstString(label?.openfda?.application_number);
@@ -159,8 +192,8 @@ function buildLabelSourceUrl(label: any): string {
     return "https://www.accessdata.fda.gov/scripts/cder/daf/";
 }
 
-function mapLabel(raw: any): DrugLabelAction {
-    const openfda = raw?.openfda ?? {};
+function mapLabel(raw: OpenFdaLabel): DrugLabelAction {
+    const openfda: OpenFdaLabelMeta = raw?.openfda ?? {};
     const remsTextCandidates = [raw?.rems_summary, raw?.rems_indication, raw?.medication_guide];
     const hasRems = remsTextCandidates.some((v) => joinSection(v) !== null) || (joinSection(raw?.boxed_warning)?.toLowerCase().includes("rems") ?? false);
 
@@ -187,7 +220,7 @@ export async function getDrugLabelActions(genericName: string, options: { limit?
     const escaped = genericName.replace(/"/g, '\\"');
     const search = `openfda.generic_name:"${escaped}"`;
     const url = `${OPENFDA_LABEL_BASE}?search=${encodeURIComponent(search)}` + `&sort=effective_time:desc&limit=${limit}`;
-    const res = await apiFetch<{ results?: any[] }>(url);
+    const res = await apiFetch<{ results?: OpenFdaLabel[] }>(url);
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return [];
         throw new Error(describeApiError(res.error));

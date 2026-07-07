@@ -264,6 +264,7 @@ export async function initCortexState(pool: Pool): Promise<void> {
                             `CREATE EXTENSION IF NOT EXISTS vector failed: ${msg}. ` +
                             `Ask platform-infra to enable pgvector on the RDS parameter group, ` +
                             `or grant CREATE on the database to the Cortex role.`,
+                        { cause: err },
                     );
                 }
             }

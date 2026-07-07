@@ -188,7 +188,6 @@ type SynthesisDriverResult<TOut> = SynthesisDriverOk<TOut> | { readonly kind: "b
  */
 async function runSynthesisWithProbe<TOut>(input: SynthesisDriverInput<TOut>): Promise<SynthesisDriverResult<TOut>> {
     let firstError: Error | null = null;
-    let firstOutput: TOut | null = null;
     let firstProbe: ProbeResult | null = null;
 
     // Attempt 1
@@ -206,7 +205,7 @@ async function runSynthesisWithProbe<TOut>(input: SynthesisDriverInput<TOut>): P
         if (result.kind === "budget-exceeded") {
             return { kind: "budget-exceeded", sentinel: result.sentinel };
         }
-        firstOutput = result.value;
+        const firstOutput = result.value;
         firstProbe = input.probe(firstOutput);
         if (firstProbe.verdict === "pass" || firstProbe.verdict === "relaxed") {
             return {
