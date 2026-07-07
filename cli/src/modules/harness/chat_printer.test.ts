@@ -1,0 +1,145 @@
+import { describe, expect, test } from "bun:test";
+import type { EmitFn, EventSource } from "@inflexa-ai/harness";
+
+import { createChatPrinter, type ChatSink } from "./chat_printer.ts";
+
+/**
+ * A recording sink + printer. `out()` accumulates conversation output; `errs`
+ * accumulates diagnostics. `emit` is wrapped to a `void` return — the printer's
+ * emit is synchronous, but `EmitFn`'s declared type is `void | Promise<void>`,
+ * so the wrapper keeps the call sites free of floating-promise noise.
+ */
+function harness(): { emit: (e: Parameters<EmitFn>[0]) => void; finishTurn: (t?: string) => void; out: () => string; errs: string[] } {
+    const outChunks: string[] = [];
+    const errs: string[] = [];
+    const sink: ChatSink = { out: (s) => outChunks.push(s), errLine: (s) => errs.push(s) };
+    const printer = createChatPrinter(sink);
+    return { emit: (e) => void printer.emit(e), finishTurn: printer.finishTurn, out: () => outChunks.join(""), errs };
+}
+
+/** Top-level provenance (callPath length 1) — passes the sub-agent depth filter. */
+const TOP: EventSource = { agentId: "cli-chat", callPath: ["cli-chat"] };
+/** Sub-agent provenance (callPath length 2) — dropped by the depth filter. */
+const SUB: EventSource = { agentId: "planner", callPath: ["cli-chat", "planner"] };
+
+describe("createChatPrinter", () => {
+    test("text-delta accumulates verbatim, no pacing", () => {
+        const h = harness();
+        h.emit({ type: "text-delta", text: "he" });
+        h.emit({ type: "text-delta", text: "llo wor" });
+        h.emit({ type: "text-delta", text: "ld" });
+        expect(h.out()).toBe("hello world");
+    });
+
+    test("sub-agent traffic (callPath deeper than top level) is dropped", () => {
+        const h = harness();
+        h.emit({ type: "tool-started", source: SUB, toolUseId: "t1", name: "grep", input: {} });
+        h.emit({ type: "tool-finished", source: SUB, toolUseId: "t1", name: "grep", isError: false });
+        h.emit({ type: "data-plan", source: SUB, data: { planId: "pln-deadbeef", title: "hidden", steps: [] } });
+        expect(h.out()).toBe("");
+        expect(h.errs).toEqual([]);
+    });
+
+    test("tool chip: one line on start, outcome on finish", () => {
+        const h = harness();
+        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "grep", input: { q: "gene" } });
+        h.emit({ type: "tool-finished", source: TOP, toolUseId: "t1", name: "grep", isError: false });
+        const out = h.out();
+        expect(out).toContain("[tool] grep running...");
+        expect(out).toContain("[tool] grep done");
+    });
+
+    test("tool chip: error outcome is marked", () => {
+        const h = harness();
+        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "read_file", input: {} });
+        h.emit({ type: "tool-finished", source: TOP, toolUseId: "t1", name: "read_file", isError: true });
+        expect(h.out()).toContain("[tool] read_file error");
+    });
+
+    test("data-plan renders id, title, and per-step lines", () => {
+        const h = harness();
+        h.emit({
+            type: "data-plan",
+            source: TOP,
+            data: {
+                id: "pres-1",
+                planId: "pln-abc12345",
+                title: "Differential expression",
+                steps: [
+                    { id: "T1S1", name: "align", agent: "scientific-executor" },
+                    { id: "T1S2", name: "quantify", agent: "scientific-executor" },
+                ],
+            },
+        });
+        const out = h.out();
+        expect(out).toContain("[plan] Differential expression (pln-abc12345)");
+        expect(out).toContain("- T1S1 align [scientific-executor]");
+        expect(out).toContain("- T1S2 quantify [scientific-executor]");
+    });
+
+    test("data-plan falls back to planId as heading when title is absent", () => {
+        const h = harness();
+        h.emit({ type: "data-plan", source: TOP, data: { planId: "pln-abc12345", steps: [] } });
+        expect(h.out()).toContain("[plan] pln-abc12345 (pln-abc12345)");
+    });
+
+    test("data-run-card renders run id, title, and step count", () => {
+        const h = harness();
+        h.emit({ type: "data-run-card", source: TOP, data: { id: "pres-r", runId: "run-xyz", planId: "pln-abc12345", title: "DE run", stepCount: 3 } });
+        expect(h.out()).toContain("[run] run-xyz: DE run (3 step(s))");
+    });
+
+    test("unknown conversation parts print a one-line tagged mention, not swallowed", () => {
+        const h = harness();
+        h.emit({ type: "data-presentation", source: TOP, data: { id: "x", content: { kind: "markdown", body: "hi" } } });
+        expect(h.out()).toContain("[part:data-presentation]");
+    });
+
+    test("copy-on-receive: mutating a part after emit does not change output", () => {
+        const h = harness();
+        const data: { planId: string; title: string; steps: { id: string; name: string; agent: string }[] } = {
+            planId: "pln-abc12345",
+            title: "Original",
+            steps: [{ id: "S1", name: "one", agent: "a1" }],
+        };
+        h.emit({ type: "data-plan", source: TOP, data });
+        const snapshot = h.out();
+        // Mutate the exact object handed to emit — the in-process emit hazard.
+        data.title = "MUTATED";
+        data.steps.push({ id: "S2", name: "two", agent: "a2" });
+        data.steps[0]!.name = "CHANGED";
+        expect(h.out()).toBe(snapshot);
+        expect(snapshot).toContain("[plan] Original");
+        expect(snapshot).not.toContain("MUTATED");
+        expect(snapshot).not.toContain("S2");
+    });
+
+    test("finishTurn renders the final answer only when nothing streamed", () => {
+        const streamed = harness();
+        streamed.emit({ type: "text-delta", text: "streamed answer" });
+        streamed.finishTurn("final answer");
+        expect(streamed.out()).toContain("streamed answer");
+        expect(streamed.out()).not.toContain("final answer");
+
+        const silent = harness();
+        silent.finishTurn("the whole answer");
+        expect(silent.out()).toContain("the whole answer");
+    });
+
+    test("finishTurn closes a tool chip left open by an aborted turn", () => {
+        const h = harness();
+        h.emit({ type: "tool-started", source: TOP, toolUseId: "t1", name: "grep", input: {} });
+        h.finishTurn();
+        expect(h.out()).toContain("[tool] grep interrupted");
+    });
+
+    test("per-turn state resets between turns", () => {
+        const h = harness();
+        h.emit({ type: "text-delta", text: "turn one" });
+        h.finishTurn("ignored because streamed");
+        // Second turn streams nothing — the fallback must render (streamedText was reset).
+        h.finishTurn("turn two answer");
+        expect(h.out()).toContain("turn one");
+        expect(h.out()).toContain("turn two answer");
+    });
+});

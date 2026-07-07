@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { randomUUIDv7 } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -35,6 +36,21 @@ test("a live foreign holder is a conflict", async () => {
     const proc = Bun.spawn(["sleep", "60"]);
     seedForeignLock(key, proc.pid);
     expect(acquireInstanceLock(key)).toEqual({ acquired: false, holderPid: proc.pid });
+    proc.kill();
+    await proc.exited;
+});
+
+test("the per-analysis run/profile/chat guard refuses a live holder and surfaces its pid", async () => {
+    // The instance lock the deliberate `run`/`profile`/`chat` commands take before
+    // booting is keyed by the analysis id (a UUIDv7 — never colliding with the runtime
+    // sentinel). A second command against an analysis a live process already holds is a
+    // conflict, and the holderPid it returns is exactly what those commands print in
+    // their stderr conflict line. This is the lock-level contract those guards rely on;
+    // exercising the commands themselves would require booting the runtime.
+    const analysisId = randomUUIDv7();
+    const proc = Bun.spawn(["sleep", "60"]);
+    seedForeignLock(analysisId, proc.pid);
+    expect(acquireInstanceLock(analysisId)).toEqual({ acquired: false, holderPid: proc.pid });
     proc.kill();
     await proc.exited;
 });

@@ -13,10 +13,13 @@ import type { ResolvedHarnessConfig } from "./config.ts";
 import type { ExecIngress } from "./ingress.ts";
 
 let skillsDir: string;
+let templatesDir: string;
 
 function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHarnessConfig {
-    skillsDir = join(tmpdir(), `harness-runtime-test-${randomUUIDv7()}`);
+    skillsDir = join(tmpdir(), `harness-runtime-test-skills-${randomUUIDv7()}`);
+    templatesDir = join(tmpdir(), `harness-runtime-test-templates-${randomUUIDv7()}`);
     mkdirSync(skillsDir, { recursive: true });
+    mkdirSync(templatesDir, { recursive: true });
     return {
         model: "claude-test-model",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
@@ -24,6 +27,7 @@ function testConfig(overrides: Partial<ResolvedHarnessConfig> = {}): ResolvedHar
         resourcePolicy: { perStep: { maxCpu: 1, maxMemoryGb: 1, maxGpuCount: 0 }, budget: { cpu: 1, memoryGb: 1 } },
         adminPort: 8433,
         skillsDir,
+        templatesDir,
         ...overrides,
     };
 }
@@ -71,37 +75,53 @@ function recordingSeams(calls: string[]): BootSeams {
             calls.push("resolveEmbedding");
             return ok(fakeEmbedding());
         },
-        register: (deps) => {
-            calls.push("register");
-            // The one base every consumer must share (design D2).
-            expect(deps.sessionsBasePath).toBe(env.sessionsDir);
-            expect(deps.skillsDir).toBe(skillsDir);
-            // The register deps carry the RESOLVED provider instance advertising
-            // its width — the seam the per-analysis index is sized from.
-            expect(deps.embedding.dimensions).toBe(1536);
-            expect(deps.embedding.embed).toBeInstanceOf(Function);
-            return async () => {};
+        sweepEphemeral: async () => {
+            calls.push("sweepEphemeral");
         },
-        registerSandboxStep: (deps) => {
-            calls.push("registerSandboxStep");
-            // The boot must wire the run-engine realizations onto the child deps:
-            // the catalog-backed builder, a real embedding-provider instance, and
-            // the bus-adapter artifact registry (its `register`/`sync` translate a
-            // step's artifacts into `prov.*` events).
-            expect(deps.buildAgent).toBeInstanceOf(Function);
-            expect(deps.artifactRegistry.register).toBeInstanceOf(Function);
-            expect(deps.artifactRegistry.sync).toBeInstanceOf(Function);
-            expect(deps.embedding).toBeDefined();
-            return async () => ({ status: "complete", durationMs: 0, finishReason: null, error: null });
-        },
-        registerExecuteAnalysis: (deps) => {
-            calls.push("registerExecuteAnalysis");
-            // The parent's dispatch closes over the registered child callable, so
-            // the child must already be registered by now (design D1). The bridge's
-            // run-lifecycle emitter is wired as the optional provenance observer.
-            expect(deps.sandboxStepCallable).toBeInstanceOf(Function);
-            expect(deps.emitProvenance).toBeInstanceOf(Function);
-            return async () => ({ runId: "", workflowId: "", status: "completed", completedSteps: [], failedSteps: [], canceledSteps: [] });
+        assemble: (deps) => {
+            calls.push("assemble");
+            // The boot hands the composition root the run-engine realizations on the
+            // workflow deps and the conversation bundle. `assembleCoreRuntime` owns
+            // child-before-parent registration internally, so the offline seam only
+            // asserts the deps arrived shaped correctly, then returns the callables.
+            const { workflows, conversation } = deps;
+            // The sandbox-step child carries the catalog-backed builder and the
+            // bus-adapter artifact registry (its `register`/`sync` translate a step's
+            // artifacts into `prov.*` events).
+            expect(workflows.sandboxStep.buildAgent).toBeInstanceOf(Function);
+            expect(workflows.sandboxStep.artifactRegistry.register).toBeInstanceOf(Function);
+            expect(workflows.sandboxStep.artifactRegistry.sync).toBeInstanceOf(Function);
+            // The parent builder receives the registered child callable and wires the
+            // bridge's run-lifecycle emitter as the optional provenance observer
+            // (design D1). Exercise it with a stand-in child callable.
+            const child = async () => ({ status: "complete" as const, durationMs: 0, finishReason: null, error: null });
+            const executeAnalysisDeps = workflows.buildExecuteAnalysis(child);
+            expect(executeAnalysisDeps.sandboxStepCallable).toBe(child);
+            expect(executeAnalysisDeps.emitProvenance).toBeInstanceOf(Function);
+            // The data-profile bundle carries the base every consumer shares (design
+            // D2) plus the RESOLVED provider instance advertising its index width.
+            expect(workflows.dataProfile.sessionsBasePath).toBe(env.sessionsDir);
+            expect(workflows.dataProfile.skillsDir).toBe(skillsDir);
+            expect(workflows.dataProfile.embedding.dimensions).toBe(1536);
+            expect(workflows.dataProfile.embedding.embed).toBeInstanceOf(Function);
+            // The ephemeral + target-assessment bundles carry the shared backends.
+            expect(workflows.ephemeral.sandboxClient).toBeDefined();
+            expect(workflows.executeTargetAssessment.chatProvider).toBeDefined();
+            // The conversation bundle carries the local realizations: the configured
+            // templates tree, the unavailable-preview factory, and the shared launcher.
+            expect(conversation.templatesDir).toBe(templatesDir);
+            expect(conversation.createPreviewPublisher).toBeInstanceOf(Function);
+            expect(conversation.runLauncher.launch).toBeInstanceOf(Function);
+            return {
+                conversationAgent: { id: "conversation-agent", systemPrompt: "", model: "claude-test-model", tools: [], maxIterations: 50 },
+                workflows: {
+                    executeAnalysis: async () => ({ runId: "", workflowId: "", status: "completed", completedSteps: [], failedSteps: [], canceledSteps: [] }),
+                    sandboxStep: async () => ({ status: "complete", durationMs: 0, finishReason: null, error: null }),
+                    executeTargetAssessment: async () => ({ assessmentId: "", status: "completed", bytes: 0 }),
+                    dataProfile: async () => {},
+                    ephemeral: async () => ({ text: "", durationMs: 0, stepsUsed: 0 }),
+                },
+            };
         },
         registerReaper: () => {
             calls.push("registerReaper");
@@ -131,29 +151,30 @@ function recordingSeams(calls: string[]): BootSeams {
 afterEach(() => {
     __resetHarnessRuntimeForTest();
     rmSync(skillsDir, { recursive: true, force: true });
+    rmSync(templatesDir, { recursive: true, force: true });
 });
 
 describe("bootHarnessRuntime", () => {
-    test("boots in the contract order: prereqs → postgres → schema init → registration cohort → launch", async () => {
+    test("boots in the contract order: prereqs → postgres → schema init → ephemeral sweep → assemble → crons → launch", async () => {
         const calls: string[] = [];
         const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
 
         const runtime = result._unsafeUnwrap();
         // The embedding provider resolves first (design: local-embeddings boots
-        // ahead of the proxy key), then the whole registration cohort lands
-        // between schema init and the single launch, child (sandbox-step) before
-        // parent (execute-analysis), then the profile workflow, then the three
-        // sandbox-hygiene crons (design D1/D5). The CLI is a poll-mode embedder,
-        // so it binds NO callback ingress — `startIngress` is never called.
+        // ahead of the proxy key). The ephemeral sweep runs strictly between schema
+        // init and assembly (design D2 — cancel stale rows before recovery can
+        // re-dispatch them), then the composition root registers the whole workflow
+        // cohort in one call, then the three sandbox-hygiene crons, all before the
+        // single launch (design D1/D5). The CLI is a poll-mode embedder, so it
+        // binds NO callback ingress — `startIngress` is never called.
         expect(calls).toEqual([
             "resolveEmbedding",
             "readKey",
             "probeEmbedding",
             "postgres",
             "initState",
-            "registerSandboxStep",
-            "registerExecuteAnalysis",
-            "register",
+            "sweepEphemeral",
+            "assemble",
             "registerReaper",
             "registerWatchdog",
             "registerNotificationSweep",
@@ -162,6 +183,10 @@ describe("bootHarnessRuntime", () => {
         expect(calls).not.toContain("ingress");
         expect(runtime.model).toBe("claude-test-model");
         expect(runtime.triggerDeps.workflow).toBeInstanceOf(Function);
+        // The assembled conversation agent + its provider are on the handle (the
+        // upcoming `chat` command drives `runAgent(conversationAgent, …, provider)`).
+        expect(runtime.conversationAgent.id).toBe("conversation-agent");
+        expect(runtime.provider).toBeDefined();
     });
 
     test("exposes run-trigger deps: the parent callable, a run launcher, and the run authorizer", async () => {
@@ -175,21 +200,30 @@ describe("bootHarnessRuntime", () => {
         expect(runtime.runTriggerDeps.pool).toBe(runtime.pool);
     });
 
-    test("registers the child sandbox-step before the execute-analysis parent, and every workflow before the single launch", async () => {
+    test("sweeps ephemerals after schema init, assembles once before launch, and registers the whole cohort pre-launch", async () => {
         const calls: string[] = [];
         await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
 
-        const child = calls.indexOf("registerSandboxStep");
-        const parent = calls.indexOf("registerExecuteAnalysis");
+        const initState = calls.indexOf("initState");
+        const sweep = calls.indexOf("sweepEphemeral");
+        const assemble = calls.indexOf("assemble");
         const launch = calls.indexOf("launch");
-        expect(child).toBeGreaterThanOrEqual(0);
-        expect(child).toBeLessThan(parent);
-        // Every registration precedes the one launch (recovery finds workflows by
+        // The sweep is the single race-free pre-launch cancel point (design D2): it
+        // must follow schema init and precede assembly (which registers the ephemeral
+        // workflow) — and, transitively, launch.
+        expect(initState).toBeLessThan(sweep);
+        expect(sweep).toBeLessThan(assemble);
+        // Child-before-parent ordering now lives inside `assembleCoreRuntime` (one
+        // call), so the boot only proves the whole cohort — the composition root plus
+        // the three crons — lands before the one launch (recovery finds workflows by
         // registered name at launch; nothing may register after).
-        const registrations = ["registerSandboxStep", "registerExecuteAnalysis", "register", "registerReaper", "registerWatchdog", "registerNotificationSweep"];
+        const registrations = ["assemble", "registerReaper", "registerWatchdog", "registerNotificationSweep"];
         for (const name of registrations) {
-            expect(calls.indexOf(name)).toBeLessThan(launch);
+            const at = calls.indexOf(name);
+            expect(at).toBeGreaterThanOrEqual(0);
+            expect(at).toBeLessThan(launch);
         }
+        expect(calls.filter((c) => c === "assemble")).toHaveLength(1);
         expect(calls.filter((c) => c === "launch")).toHaveLength(1);
     });
 
@@ -218,15 +252,7 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
         expect(result.isErr()).toBe(true);
-        for (const name of [
-            "registerSandboxStep",
-            "registerExecuteAnalysis",
-            "register",
-            "registerReaper",
-            "registerWatchdog",
-            "registerNotificationSweep",
-            "launch",
-        ]) {
+        for (const name of ["sweepEphemeral", "assemble", "registerReaper", "registerWatchdog", "registerNotificationSweep", "launch"]) {
             expect(calls).not.toContain(name);
         }
     });
@@ -351,6 +377,18 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: cfg });
 
         expect(result._unsafeUnwrapErr()).toMatchObject({ type: "skills_dir_missing" });
+        expect(calls).toEqual([]);
+    });
+
+    test("missing templates dir fails before any side effect", async () => {
+        const calls: string[] = [];
+        const cfg = testConfig();
+        // Skills tree stays present, so the templates gate (which sits right after it)
+        // is the one that fires — a distinct pre-flight prerequisite (design D3).
+        rmSync(templatesDir, { recursive: true, force: true });
+        const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: cfg });
+
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "templates_dir_missing" });
         expect(calls).toEqual([]);
     });
 

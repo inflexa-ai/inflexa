@@ -50,6 +50,10 @@ export type { Tool, ToolDefinition, ToolContext, ToolError } from "./tools/defin
 export { runAgent, finalText } from "./loop/run-agent.js";
 export type { RunAgentOptions, RunAgentResult, AgentFinish } from "./loop/run-agent.js";
 export type { AgentDefinition, RunStep, EmitFn, EmitEvent, EventSource } from "./loop/types.js";
+// `passthroughStep` is the in-process `RunStep`: the host request/chat path runs
+// the loop with no durability wrapper (workflow contexts use the durable step).
+// An embedder driving `runAgent` outside a workflow passes it as `runStep`.
+export { passthroughStep } from "./loop/run-step.js";
 
 // Session value objects + helpers.
 export { forStep, forSubAgent, scopeResource, scopeWorkloadId } from "./auth/types.js";
@@ -72,7 +76,78 @@ export { createAnthropicProvider } from "./providers/anthropic.js";
 export type { AnthropicProviderDeps } from "./providers/anthropic.js";
 export { createEmbeddingProvider } from "./providers/embedding.js";
 export type { EmbeddingProviderDeps } from "./providers/embedding.js";
-export type { ChatProvider, EmbeddingProvider, ChatRequest, ChatResponse, ChatStreamEvent, ModelMessage } from "./providers/types.js";
+export type { AgentChat, ChatProvider, EmbeddingProvider, ChatRequest, ChatResponse, ChatStreamEvent, ModelMessage } from "./providers/types.js";
+// Provider error channel. `ProviderError` is the value `chat`/`embed` fail
+// with; `toProviderError` is its sole constructor. Exposed so an embedder
+// realizing its own `ChatProvider`/`EmbeddingProvider` fails with the exact
+// same shape the harness's own realizations do, rather than re-deriving it.
+export { toProviderError } from "./providers/errors.js";
+export type { ProviderError } from "./providers/errors.js";
+// `createStreamingChat` wraps a `ChatProvider` as a streaming `AgentChat` (the
+// type `runAgent`'s `provider` option takes): its `chat` drives the provider's
+// `chatStream` and forwards each text delta to `onText`, so a same-process host
+// gets live token streaming out of the otherwise non-streaming loop.
+export { createStreamingChat } from "./providers/streaming-chat.js";
+
+// Conversation turn + thread memory — the transport-free halves of one chat
+// turn a same-process host drives itself. `prepareChatTurn` assembles the
+// message array (thread-ownership resolution, title seed, analysis-context
+// injection); the caller runs `runAgent` with its own `emit`; `appendTurn`
+// (`createThreadHistory`) persists the turn. `createThreadStore` owns thread
+// metadata (create/list/title). `contentToCortexMessages` + `createCardResolver`
+// reconstruct display cards from a persisted thread on reload.
+export { prepareChatTurn } from "./app/chat-turn.js";
+export type { PrepareChatTurnDeps, PrepareChatTurnParams, PrepareChatTurnResult } from "./app/chat-turn.js";
+export { createThreadStore } from "./memory/thread-store.js";
+export type { ThreadStore, Thread, CreateThreadInput, ListThreadsInput, ThreadPage } from "./memory/thread-store.js";
+export { createThreadHistory } from "./memory/thread-history.js";
+export type { ThreadHistory, StoredMessage, MessagePage } from "./memory/thread-history.js";
+export { contentToCortexMessages } from "./memory/content-to-cortex.js";
+export { createCardResolver } from "./memory/reconstruct-cards.js";
+export type { ToolCardResolver, StoredToolCallForCard } from "./memory/reconstruct-cards.js";
+
+// Chat wire contracts — the Cortex-native chat-stream vocabulary a consumer
+// rendering the stream types against. Two names are deliberately NOT re-exported
+// here because the main barrel already binds them to other types: `EventSource`
+// (already exported from `loop/types.js`, same `{ agentId, callPath }` shape —
+// reach provenance through each event's `source`) and the chat-parts `PlanStep`
+// (the barrel's `PlanStep` is the scheduler's `{ id, depends_on }`; a plan card's
+// step type is `NonNullable<PlanPart["steps"]>[number]`). Both stay reachable via
+// the `@inflexa-ai/harness/contracts/*` deep subpaths.
+export type { CortexChatEvent, TextDeltaEvent, ToolStartedEvent, ToolFinishedEvent, FinishEvent, ChatErrorEvent } from "./contracts/chat-events.js";
+export type {
+    CortexChatPart,
+    PresentationPart,
+    PresentationContent,
+    PlanPart,
+    RunCardPart,
+    FileReferencePart,
+    FileReferenceEntry,
+    RunStartedPart,
+    DagStatePart,
+    DagStepState,
+    StepStatus,
+    StepActivityPart,
+    StepPhase,
+    StepFileTreePart,
+    FileTreeEntry,
+    StepOutputPart,
+    StepOutputFile,
+    StepSummaryPart,
+    StepBlockedPart,
+    RunSynthesisPart,
+    SynthesizedFinding,
+    BiologicalTheme,
+    SynthesisProgressPart,
+    SynthesisPhase,
+    RunCompletedPart,
+    RunCompletedFinding,
+    RunFailedPart,
+    PreviewPart,
+    DataPreviewFailedPart,
+} from "./contracts/chat-parts.js";
+export { PART_REGISTRY, isTransient, isReconciling, isSidebarPart } from "./contracts/part-registry.js";
+export type { CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } from "./contracts/part-registry.js";
 
 // Embedder runtime surface — what a same-process host needs to run durable
 // workflows itself: the DBOS lifecycle, per-workflow registration + triggers,
@@ -80,8 +155,12 @@ export type { ChatProvider, EmbeddingProvider, ChatRequest, ChatResponse, ChatSt
 // session tree, and the exec-callback envelope pieces (the HTTP→DBOS-topic
 // ingress is the embedder's to host; see the sandbox-server callback protocol).
 
-// DBOS lifecycle.
-export { launchDbos, shutdownDbos } from "./runtime/dbos.js";
+// DBOS lifecycle. `sweepEphemeralWorkflows` is a pre-launch boot duty: once the
+// `ephemeral` workflow is registered, a host crash mid-run leaves a PENDING
+// `ephemeral:*` row that the next launch's recovery would re-dispatch (a sandbox
+// for a chat turn that no longer exists). The embedder sweeps it with a direct
+// system-DB UPDATE between state-init and `launchDbos` — the only race-free point.
+export { launchDbos, shutdownDbos, sweepEphemeralWorkflows } from "./runtime/dbos.js";
 export type { DbosConfig } from "./runtime/dbos.js";
 // DBOS workflow-status vocabulary. An embedder that reads its own
 // `dbos.workflow_status` rows must classify them against the SDK's status set,

@@ -45,14 +45,15 @@ const harnessConfigSchema = z.object({
         .optional(),
     adminPort: z.number().int().positive().optional(),
     skillsDir: z.string().optional(),
+    templatesDir: z.string().optional(),
 });
 
 /**
  * The `harness` config key resolved to concrete values. The embedder is NOT
  * configured here: it comes from the top-level `embedding` config key, resolved
- * by `modules/embedding/resolve.ts` at boot. The one genuine launch prerequisite
- * this config cannot default is the skills tree (outside a dev checkout); the
- * pre-flight turns its `null` into an actionable error.
+ * by `modules/embedding/resolve.ts` at boot. The two genuine launch prerequisites
+ * this config cannot default are the skills and templates trees (outside a dev
+ * checkout); the pre-flight turns either `null` into an actionable error.
  */
 export type ResolvedHarnessConfig = {
     /** Chat model id; `null` means resolve the default from the proxy's `/models` at boot. */
@@ -77,6 +78,8 @@ export type ResolvedHarnessConfig = {
     /** DBOS admin port. */
     readonly adminPort: number;
     readonly skillsDir: string | null;
+    /** Root templates tree for in-process report rendering; `null` outside a dev checkout without the config key. */
+    readonly templatesDir: string | null;
     /**
      * Set when the `harness` config key was present but failed validation (e.g. a field of the wrong
      * type). Carries the offending field paths so boot can report the real problem instead of a
@@ -92,6 +95,14 @@ export type ResolvedHarnessConfig = {
  * non-dev runs require the config key instead.
  */
 const devSkillsDir = join(import.meta.dir, "../../../../skills");
+
+/**
+ * Dev-checkout templates tree: the shared repo-root `templates/` directory
+ * (cli/src/modules/harness → four levels up). Meaningless inside a compiled
+ * binary — `import.meta.dir` is a bundled virtual path there — which is why
+ * non-dev runs require the config key instead.
+ */
+const devTemplatesDir = join(import.meta.dir, "../../../../templates");
 
 /** Detected host capacity: logical cores and total memory in whole GB. */
 export function detectedMachine(): MachineBudget {
@@ -159,6 +170,7 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
         resourcePolicy,
         adminPort: cfg?.adminPort ?? DEFAULT_ADMIN_PORT,
         skillsDir: cfg?.skillsDir ?? (env.isDev ? devSkillsDir : null),
+        templatesDir: cfg?.templatesDir ?? (env.isDev ? devTemplatesDir : null),
         configError,
     };
 }

@@ -20,13 +20,23 @@ shape since `06-change-graph.md` sketched it).
 
 ---
 
-## Where the program stands (2026-07-07)
+## Where the program stands (2026-07-08)
 
 ```
-landed:   C ──► F ──► D ──► D2 ──► D3 ──► E    (+ resource-budgeted scheduling, 1c8d622)
-next:     ┌─ conversation-agent adoption ── needs the research loop in 02
+landed:   C ──► F ──► D ──► D2 ──► D3 ──► E ──► embed-conversation-agent (skeleton, 2026-07-08)
+next:     ┌─ #33 M1/M2 (daemon skeleton + run engine behind the server)
+          ├─ record-plan-lineage (the RQ6 provenance rider, deferred out of the skeleton)
           └─ durability hardening ────────── framed in 01, largely lands via #33 M2
 ```
+
+The Ordering-C walking skeleton (`13-sequencing-memo.md` §3) is **landed and archived**:
+`cli/openspec/changes/archive/2026-07-08-embed-conversation-agent/`. It adopts
+`assembleCoreRuntime` (discharging change C's D1 debt), realizes the three conversation
+deps (`templatesDir`/`chrome`/`createPreviewPublisher`), adds the pre-launch ephemeral
+sweep, and ships `inflexa chat <analysis>` — a deliberately temporary clack REPL behind
+the same clearing contract as `plan_intake`/`run` (#33 M3/M4 named as the replacement).
+It also took the #37 interim per-analysis lock across `run`/`profile`/`chat` and did the
+#32 stage-1 docs-only clearing-contract inversion (plan-intake = protocol replay surface).
 
 ## Backlog map — every known open item and its home
 
@@ -39,8 +49,10 @@ next:     ┌─ conversation-agent adoption ── needs the research loop in 0
 | Daemon architecture (one runtime, many clients) | #33 | decided + milestoned (M1–M4) |
 | State ownership under the daemon | #36 | open; 4 decision areas with recommendations |
 | Provenance chain-fork (two recorders, one analysis) | #37 | open bug; structurally closed by #33 M2/M3 |
-| Plan-intake reframe (author/replay split) | #32 | postponed — pickup point IS planner adoption (02) |
-| Conversation-agent adoption | **02 in this folder** | research program defined, loop not yet run |
+| Plan-intake reframe (author/replay split) | #32 | stage 1 LANDED (docs-only inversion in embed-conversation-agent, 2026-07-08); `run.ts` trigger absorbed by #33 M2; `plan export` = post-M3 change |
+| Conversation-agent adoption | **02 in this folder** | skeleton LANDED + archived 2026-07-08 (`embed-conversation-agent`); artifacts 10–13 drove it; #33 M1/M2 next |
+| Plan-authorship provenance rider (plan entity + `threadId` + `SoftwareAgent` actor) | `record-plan-lineage` (unfiled successor) | deferred out of the skeleton per 13 §6; precedes #33 M1 |
+| Chat-model boot probe gap (dead-but-Claude model passes the guard) | embed-conversation-agent `findings.md` F1 | surfaced live 2026-07-08; boot probes the embedder but not the chat model — candidate follow-up |
 | Tool-read lineage gap (`read_file` invisible to lineage) | `harness_integration-new/00-progress.md` §D2 findings | unfiled |
 | Tool-write lineage gap (`recordFileToolWrite` uncalled) | change E design D2 names it out-of-scope | unfiled |
 | Data-profile + ephemeral lineage coverage hole | `03-provenance-migration-plan.md` open decisions | undecided |
@@ -56,6 +68,137 @@ next:     ┌─ conversation-agent adoption ── needs the research loop in 0
       02 research loop was kicked off the same day.
 - [x] File the recovery wedge as its own issue — filed as #41 (supersedes 01's §5
       recommendation), linked from #27 and #33 design-note-5.
-- [ ] Whether conversation-agent adoption presupposes #33 M1/M2 (daemon skeleton + run
-      engine behind the server) or starts embedded — the sequencing question 02 puts
-      first (RQ7).
+- [x] Whether conversation-agent adoption presupposes #33 M1/M2 (daemon skeleton + run
+      engine behind the server) or starts embedded — answered by the loop:
+      `13-sequencing-memo.md` recommends Ordering C (embedded walking skeleton behind a
+      deliberate text command → M1/M2 → adoption's product surface as M3+M4). The
+      remaining calls are in the aggregated decisions list below.
+
+---
+
+## 2026-07-07 — the 02 research loop ran: conversation-agent adoption (RQ1–RQ7) — COMPLETE
+
+Researched against HEAD `825d7825643caff9c75e6a1cc4207aac5de1416f`; same discipline as
+`harness_integration-new`: an **inventory pass** (4 parallel research readers — the
+harness chat surface, the cli chat stack, the managed Cortex reference embedding, the
+prior docs — plus direct full reads of every load-bearing file), a **verification
+pass** (highest-stakes claims spot-re-verified by direct read, not agent-relayed:
+`contracts/chat-events` + `part-registry`, the cli engine's Part lifecycle,
+`appendTurn`'s advisory lock, the message-envelope shape, the managed route's threadId
+rebuild and background-completion header, `insertPlan`'s id minting, the data-profile
+vs sandbox-step sandbox-create asymmetry — all passed, no artifact corrections
+needed), and this close-out.
+
+**Mid-loop HEAD move**: `06f85b8` landed while the loop ran (records the #28
+data-profile kill/resume verification; #28 CLOSED; wedge issue filed as **#41**;
+tracker rows above updated by that commit). Only citation drift: `runtime.ts` lines
+below 388 shift by −7 (a removed `TODO(robustness)` block); pin notes added to
+artifacts 10 and 13.
+
+### Artifacts (the RQ deliverables)
+
+- **`10-conversation-agent-inventory.md` — RQ2.** `assembleCoreRuntime`'s full dep
+  surface vs the cli root: 12-field `ConversationAssemblyDeps` with only 3 gaps, all
+  trivial (`templatesDir` → root `templates/`, `chrome` → `{}`,
+  `createPreviewPublisher` → `UnavailablePreviewPublisher`); the two unregistered
+  workflow bundles cost ~nothing (ephemeral = zero new backends; target-assessment =
+  six fields all present). What actually breaks out of wiring order, verified from
+  code — including the previously unknown **`sweepEphemeralWorkflows` pre-launch boot
+  duty with zero callers in the OSS tree** (registering `ephemeral` without it makes
+  recovery re-dispatch dead chat-turn sandboxes). D1 verdict: adopt the full root.
+- **`11-chat-topology.md` — RQ1/RQ3.** Both chat stacks end-to-end. Answer: **one chat
+  per analysis** — the conversation agent replaces the proxy chat; **harness Postgres
+  owns its threads** (compatible with #36: threads are agent working state, the
+  `cortex_working_memory` class; identity stays SQLite-canonical; the history view
+  reads `loadPage` → `contentToCortexMessages`, cards derived from the transcript, no
+  mirror store). The wire contract is the harness `contracts/` vocabulary
+  (`CortexChatEvent` + 17 `CortexChatPart`s), **not** the cli bus shapes. The
+  run-stream READ side (fold/merge/child-discovery) exists only in managed Cortex —
+  #33 M4 needs an additive harness read helper (cli must never import the DBOS SDK).
+- **`12-planner-flow.md` — RQ4/RQ5.** `generatePlan` → `executePlan` traced. The
+  approval gate is **prompt-enforced and conversational** — no structural gate; the
+  plan is persisted by `submit_plan` before any human sees it; a TUI approve button is
+  UX sugar that sends a message. No-litter boundary named: plan files only on explicit
+  export or hand-authoring. #32 priced across three options; recommend **Option B
+  (invert, staged)**: contract rewrites at adoption (docs-only), the `run.ts` trigger
+  replica absorbed by #33 M2, `plan export` post-M3 — with the load-bearing id
+  asymmetry documented (planner ids random via `insertPlan`, intake ids
+  content-hashed; export→replay mints a NEW plan id, which is correct replay semantics
+  but needs deliberate lineage carriage).
+- **`13-sequencing-memo.md` — RQ7 + RQ6.** Neither pure ordering wins. Recommended
+  **Ordering C**: an embedded walking skeleton behind a deliberate clack command
+  (`embed-conversation-agent`, cli tree; the only throwaway is the command itself —
+  composition root and turn loop transfer verbatim to the daemon because the app-fn
+  layer is transport-free by design) → #33 M1/M2 → adoption's product surface as
+  M3+M4. The skeleton's verification statement mirrors change C's ("chat plans and
+  launches a real run" = first exercise of `assembleCoreRuntime`, the proxy provider
+  at 40-tool/50-iteration scale, the pg thread machinery, and the full
+  plan→approve→execute→inspect loop with `cortex_runs.thread_id` stamped). RQ6:
+  minimum bar = plan-authorship lineage (plan entity + `threadId` + `SoftwareAgent`
+  actor as a small provenance rider before M1); per-turn `prov.message_sent`/
+  `prov.tool_invoked` harvesting explicitly deferred; rule everywhere — chat/plan
+  provenance is emitted only in the recorder's process (the skeleton takes the
+  per-analysis lock, closing #37's pair for its duration; M2 closes #37 structurally).
+
+### Corrections found (the predecessor pattern held — prior claims failed re-verification)
+
+1. **`app/chat-turn.ts` is preparation-only** — no `runAgent`, no stream consumption;
+   `consumeStream` does not exist anywhere in `harness/src` (greps in 10 §0). The
+   brief §1 and `harness/CLAUDE.md:146` are stale; background completion in the
+   managed reference is a detached promise plus an SSE abort that deliberately does
+   not cancel.
+2. **No paced reveal exists in the TUI** — `conversation.ts:60-63` documents the
+   typewriter was tried and reverted; the brief's RQ3 premise and the stale comment at
+   `app.launch.tsx:42-43` are wrong.
+3. **`run.ts`'s progress display never consumes typed run-event parts** — it polls
+   `cortex_runs`/`queryStepsByRun`/`dbos.*` on a 2 s tick; nothing in `cli/src` reads
+   the DBOS run-event stream at all (greps in 11 §0.2).
+4. **`assembleCoreRuntime` has zero production callers anywhere** — managed Cortex
+   vendors an older harness and registers directly (`cortex/harness/server.ts:233-298`).
+   Adopting the full root is its first exercise, not a catch-up; budget the skeleton
+   accordingly.
+5. **Stale harness docs to flag upstream**: `registerAnalysisWorkflows` named as the
+   callable's producer (`agents/conversation-agent.ts:108`, `tools/execute-plan.ts:56`)
+   while being uncalled and structurally unusable; the composite
+   `workflowID = "${analysisId}:${runId}"` docstring (`conversation-agent.ts:15-16`)
+   vs the bare-runId reality (`execute-plan.ts:243`); `harness/CONTEXT.md:71`
+   describes the ephemeral pre-launch sweep as running while `sweepEphemeralWorkflows`
+   has zero callers; `harness/CLAUDE.md:151` claims `contracts/` is barrel-exported —
+   it is not; `contracts/chat-events.ts:4` says "15 `data-*` parts" — the registry
+   has 17.
+6. **Context-update claims re-verified rather than trusted**: the wedge asymmetry
+   holds by direct read (data-profile creates its sandbox in the workflow body,
+   `tasks/data-profile.ts:189-198` → fresh container on recovery; the run path's
+   `sandbox.mint`/`sandbox.create` are `DBOS.runStep`-wrapped,
+   `workflows/sandbox-step.ts:392,406` → leaked container reused). The "#28 closed /
+   wedge issue filed" claims were **not yet true at loop start** (checked via `gh`:
+   #28 OPEN, no #41) and became true mid-loop via `06f85b8` — recorded here so the
+   timeline is honest.
+
+### Open user decisions (aggregated) — RESOLVED by the skeleton landing (2026-07-08)
+
+The `embed-conversation-agent` change resolved these as its recommendations predicted:
+
+- [x] **Ordering C** confirmed — embedded walking skeleton landed first; #33 M1/M2 next.
+- [x] Skeleton command surface: **`inflexa chat` REPL** (with `--thread` resume).
+- [x] D1 debt: adopted `assembleCoreRuntime`; `executeTargetAssessment` registered
+      deliberately untriggerable (recorded in the spec + a boot comment).
+- [x] Contracts surface: **barrel growth** (additive riders); `harness/CLAUDE.md:151`
+      fixed (and `:146` `consumeStream` claim, plus two stale docstrings).
+- [x] #32: **Option B** (invert, staged) — stage 1 (docs-only) landed; `run.ts` trigger
+      absorbed by #33 M2; `plan export` = post-M3 change.
+- [x] Per-analysis lock in `run`/`profile` (+ `chat`) — taken in the skeleton (#37 fix 1).
+- [x] Prompt-enforced approval gate — accepted for the skeleton; `RunAuthorizer` hard
+      gate named as the structural fallback, not built.
+
+Still open (deferred deliberately, not decided here):
+
+- [ ] Plan-lineage provenance rider — **split into a `record-plan-lineage` successor**
+      (the D/D2/D3 precedent); precedes #33 M1. Not bundled into the skeleton.
+- [ ] Proxy-chat fate + existing SQLite chat history — decided at the TUI cutover
+      (#33 M3), not the skeleton (11 §3.5/§6).
+- [ ] `templatesDir` packaging for an installed cli — same open question change C left
+      for `skillsDir` (10 §7); recorded in the change's design, checkout-run supported.
+- [ ] Chat-model boot probe — findings F1; boot probes the embedder but not the chat
+      model, so a dead-but-advertised Claude model passes the guard and fails at first
+      turn. Candidate follow-up.
