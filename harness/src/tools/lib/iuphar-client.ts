@@ -10,18 +10,26 @@
  * panels never list a sibling receptor-complex as a developable hit.
  */
 
-import { apiFetch, describeApiError, type ApiError } from "./api-utils.js";
+import { z } from "zod";
+
+import { apiFetchValidated, describeApiError, type ApiError } from "./api-utils.js";
 import { IUPHAR_BASE, IUPHAR_HEADERS as HEADERS } from "./iuphar-config.js";
 
-export interface IupharTarget {
-    targetId: number;
-    name: string;
-    type: string | null;
-    familyIds: number[];
-    subunitIds: number[];
-    complexIds: number[];
-    subunitType?: string;
-}
+// Validated at the fetch boundary. GtoPdb returns familyIds/complexIds as
+// arrays on every target, and the resolver reads `.length` / iterates them
+// without a guard, so they stay required — a missing value surfaces as
+// `invalid_response` rather than a runtime TypeError. subunitIds and type are
+// only read behind a guard, so they may be absent.
+const IupharTargetSchema = z.object({
+    targetId: z.number(),
+    name: z.string(),
+    type: z.string().nullable().optional(),
+    familyIds: z.array(z.number()),
+    subunitIds: z.array(z.number()).optional(),
+    complexIds: z.array(z.number()),
+    subunitType: z.string().optional(),
+});
+export type IupharTarget = z.infer<typeof IupharTargetSchema>;
 
 export interface IupharHeterodimer {
     /** Complex target record (e.g., the AMY1 receptor). */
@@ -44,7 +52,7 @@ function notFound(error: ApiError): boolean {
 
 async function fetchTargets(query: string): Promise<IupharTarget[]> {
     const url = `${IUPHAR_BASE}/targets?${query}`;
-    const res = await apiFetch<IupharTarget[]>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, z.array(IupharTargetSchema), { headers: HEADERS });
     if (res.isErr()) {
         if (notFound(res.error)) return [];
         throw new Error(describeApiError(res.error));
@@ -77,7 +85,7 @@ export async function resolveTarget(uniprotOrGeneSymbol: string): Promise<Iuphar
 
 export async function getSubunits(complexId: number): Promise<IupharTarget[]> {
     const url = `${IUPHAR_BASE}/targets/${complexId}/subunits`;
-    const res = await apiFetch<IupharTarget[]>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, z.array(IupharTargetSchema), { headers: HEADERS });
     if (res.isErr()) {
         if (notFound(res.error)) return [];
         throw new Error(describeApiError(res.error));
@@ -98,7 +106,7 @@ export async function getFamilyHeterodimers(uniprotOrGeneSymbol: string): Promis
     if (!target || target.complexIds.length === 0) return [];
 
     const url = `${IUPHAR_BASE}/targets/${target.targetId}/complexes`;
-    const res = await apiFetch<IupharTarget[]>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, z.array(IupharTargetSchema), { headers: HEADERS });
     if (res.isErr()) {
         if (notFound(res.error)) return [];
         throw new Error(describeApiError(res.error));
@@ -144,17 +152,20 @@ export async function getAccessoryProteinNames(uniprotOrGeneSymbol: string): Pro
     return [...names].sort();
 }
 
-export interface IupharFamily {
-    familyId: number;
-    name: string;
-    targetIds: number[];
-    parentFamilyIds: number[];
-    subFamilyIds: number[];
-}
+// getFamilySiblingUniprots iterates `targetIds` without a guard, so it stays
+// required; the other fields are not read, so they may be absent.
+const IupharFamilySchema = z.object({
+    familyId: z.number().optional(),
+    name: z.string().optional(),
+    targetIds: z.array(z.number()),
+    parentFamilyIds: z.array(z.number()).optional(),
+    subFamilyIds: z.array(z.number()).optional(),
+});
+export type IupharFamily = z.infer<typeof IupharFamilySchema>;
 
 export async function getFamily(familyId: number): Promise<IupharFamily | null> {
     const url = `${IUPHAR_BASE}/targets/families/${familyId}`;
-    const res = await apiFetch<IupharFamily>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, IupharFamilySchema, { headers: HEADERS });
     if (res.isErr()) {
         if (notFound(res.error)) return null;
         throw new Error(describeApiError(res.error));
@@ -162,16 +173,16 @@ export async function getFamily(familyId: number): Promise<IupharFamily | null> 
     return res.value;
 }
 
-interface IupharDatabaseLink {
-    accession?: string;
-    database?: string;
-    species?: string;
-}
+const IupharDatabaseLinkSchema = z.object({
+    accession: z.string().optional(),
+    database: z.string().optional(),
+    species: z.string().optional(),
+});
 
 /** Fetch the UniProtKB cross-references (human only) for an IUPHAR target. */
 export async function getTargetHumanUniprots(targetId: number): Promise<string[]> {
     const url = `${IUPHAR_BASE}/targets/${targetId}/databaseLinks`;
-    const res = await apiFetch<IupharDatabaseLink[]>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, z.array(IupharDatabaseLinkSchema), { headers: HEADERS });
     if (res.isErr()) {
         if (notFound(res.error)) return [];
         throw new Error(describeApiError(res.error));
@@ -219,7 +230,7 @@ export async function getFamilySiblingUniprots(uniprotOrGeneSymbol: string): Pro
         const uniprotLists = await Promise.all(
             batch.map(async (tid) => {
                 const url = `${IUPHAR_BASE}/targets/${tid}`;
-                const res = await apiFetch<IupharTarget>(url, { headers: HEADERS });
+                const res = await apiFetchValidated(url, IupharTargetSchema, { headers: HEADERS });
                 if (res.isErr()) return [];
                 const t = res.value;
                 if (t.subunitIds && t.subunitIds.length > 0) return [];

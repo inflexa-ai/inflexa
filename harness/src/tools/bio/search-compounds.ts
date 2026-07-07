@@ -11,53 +11,57 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 import { CHEMBL_BASE, CHEMBL_HEADERS as HEADERS } from "../lib/chembl-config.js";
 
-interface Compound {
-    chemblId: string;
-    preferredCompoundName: string | null;
-    canonicalSmiles: string | null;
-    molecularWeight: number | null;
-    alogp: number | null;
-    molecularFormula: string | null;
-}
-
-interface MoleculeRecord {
-    molecule_chembl_id?: string;
-    pref_name?: string;
-    molecule_structures?: {
-        canonical_smiles?: string;
-    };
-    molecule_properties?: {
-        full_mwt?: string;
-        alogp?: string;
-        molecular_formula?: string;
-    };
-}
-
-interface TargetRecord {
-    target_chembl_id?: string;
-}
-
-interface ActivityRecord {
-    molecule_chembl_id?: string;
-}
-
-function mapMolecule(raw: MoleculeRecord): Compound {
-    return {
+// A single schema that both validates and normalizes one ChEMBL molecule
+// record: the `.object(...)` half is the snake_case wire shape (every field
+// optional — ChEMBL omits absent values), the `.transform(...)` half maps it to
+// the camelCase `Compound` we return. Parsing IS the validation, and because
+// the transform rides on the schema, `z.infer` below is the OUTPUT type — no
+// separate raw interface or mapper.
+const MoleculeSchema = z
+    .object({
+        molecule_chembl_id: z.string().optional(),
+        pref_name: z.string().optional(),
+        molecule_structures: z
+            .object({
+                canonical_smiles: z.string().optional(),
+            })
+            .optional(),
+        molecule_properties: z
+            .object({
+                full_mwt: z.string().optional(),
+                alogp: z.string().optional(),
+                molecular_formula: z.string().optional(),
+            })
+            .optional(),
+    })
+    .transform((raw) => ({
         chemblId: raw.molecule_chembl_id ?? "",
         preferredCompoundName: raw.pref_name ?? null,
         canonicalSmiles: raw.molecule_structures?.canonical_smiles ?? null,
         molecularWeight: raw.molecule_properties?.full_mwt ? parseFloat(raw.molecule_properties.full_mwt) : null,
         alogp: raw.molecule_properties?.alogp ? parseFloat(raw.molecule_properties.alogp) : null,
         molecularFormula: raw.molecule_properties?.molecular_formula ?? null,
-    };
-}
+    }));
+type Compound = z.infer<typeof MoleculeSchema>;
+
+const TargetSearchResponseSchema = z.object({
+    targets: z.array(z.object({ target_chembl_id: z.string().optional() })).optional(),
+});
+
+const ActivityResponseSchema = z.object({
+    activities: z.array(z.object({ molecule_chembl_id: z.string().optional() })).optional(),
+});
+
+const MoleculeResponseSchema = z.object({
+    molecules: z.array(MoleculeSchema).optional(),
+});
 
 async function searchByTarget(query: string, limit: number): Promise<Compound[]> {
     // Step 1: Search targets to resolve ChEMBL ID
-    const targetRes = await apiFetch<{ targets?: TargetRecord[] }>(`${CHEMBL_BASE}/target/search.json?q=${encodeURIComponent(query)}&limit=1`, {
+    const targetRes = await apiFetchValidated(`${CHEMBL_BASE}/target/search.json?q=${encodeURIComponent(query)}&limit=1`, TargetSearchResponseSchema, {
         headers: HEADERS,
     });
     if (targetRes.isErr()) {
@@ -70,7 +74,7 @@ async function searchByTarget(query: string, limit: number): Promise<Compound[]>
     if (!targetChemblId) return [];
 
     // Step 2: Fetch activities for that target
-    const activityRes = await apiFetch<{ activities?: ActivityRecord[] }>(`${CHEMBL_BASE}/activity.json?target_chembl_id=${targetChemblId}&limit=${limit}`, {
+    const activityRes = await apiFetchValidated(`${CHEMBL_BASE}/activity.json?target_chembl_id=${targetChemblId}&limit=${limit}`, ActivityResponseSchema, {
         headers: HEADERS,
     });
     if (activityRes.isErr()) {
@@ -93,7 +97,7 @@ async function searchByTarget(query: string, limit: number): Promise<Compound[]>
     for (let i = 0; i < idArray.length; i += batchSize) {
         const batch = idArray.slice(i, i + batchSize);
         const idsParam = batch.join(";");
-        const molRes = await apiFetch<{ molecules?: MoleculeRecord[] }>(`${CHEMBL_BASE}/molecule/set/${idsParam}.json`, { headers: HEADERS });
+        const molRes = await apiFetchValidated(`${CHEMBL_BASE}/molecule/set/${idsParam}.json`, MoleculeResponseSchema, { headers: HEADERS });
         if (molRes.isErr()) {
             if (!(molRes.error.type === "http_status" && molRes.error.status === 404)) {
                 throw new Error(describeApiError(molRes.error));
@@ -102,7 +106,7 @@ async function searchByTarget(query: string, limit: number): Promise<Compound[]>
         }
         if (molRes.value.molecules) {
             for (const mol of molRes.value.molecules) {
-                compounds.push(mapMolecule(mol));
+                compounds.push(mol);
             }
         }
     }
@@ -111,26 +115,27 @@ async function searchByTarget(query: string, limit: number): Promise<Compound[]>
 }
 
 async function searchByCompound(query: string, limit: number): Promise<Compound[]> {
-    const res = await apiFetch<{ molecules?: MoleculeRecord[] }>(`${CHEMBL_BASE}/molecule/search.json?q=${encodeURIComponent(query)}&limit=${limit}`, {
+    const res = await apiFetchValidated(`${CHEMBL_BASE}/molecule/search.json?q=${encodeURIComponent(query)}&limit=${limit}`, MoleculeResponseSchema, {
         headers: HEADERS,
     });
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return [];
         throw new Error(describeApiError(res.error));
     }
-    return (res.value.molecules ?? []).map(mapMolecule);
+    return res.value.molecules ?? [];
 }
 
 async function searchBySmiles(smiles: string, limit: number): Promise<Compound[]> {
-    const res = await apiFetch<{ molecules?: MoleculeRecord[] }>(
+    const res = await apiFetchValidated(
         `${CHEMBL_BASE}/molecule.json?molecule_structures__canonical_smiles__flexmatch=${encodeURIComponent(smiles)}&limit=${limit}`,
+        MoleculeResponseSchema,
         { headers: HEADERS },
     );
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return [];
         throw new Error(describeApiError(res.error));
     }
-    return (res.value.molecules ?? []).map(mapMolecule);
+    return res.value.molecules ?? [];
 }
 
 export const searchCompoundsTool = defineTool({

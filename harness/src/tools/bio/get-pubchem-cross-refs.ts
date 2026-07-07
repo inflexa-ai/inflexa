@@ -8,7 +8,7 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 import { PUBCHEM_HEADERS as HEADERS, PUBCHEM_BASE } from "../lib/pubchem-config.js";
 
 interface CrossRefEntry {
@@ -20,6 +20,25 @@ interface PugXrefRecord {
     RegistryID?: string;
     SourceName?: string;
 }
+
+// The PUG-REST xrefs wire shape, validated at the fetch boundary: one
+// `Information` entry per CID with parallel `RegistryID[]` / `SourceName[]`
+// arrays. Every field is optional — PubChem omits absent values.
+const PubChemXrefResponseSchema = z.object({
+    InformationList: z
+        .object({
+            Information: z
+                .array(
+                    z.object({
+                        CID: z.number().optional(),
+                        RegistryID: z.array(z.string()).optional(),
+                        SourceName: z.array(z.string()).optional(),
+                    }),
+                )
+                .optional(),
+        })
+        .optional(),
+});
 
 function mapCrossRef(raw: PugXrefRecord): CrossRefEntry {
     return {
@@ -41,15 +60,7 @@ export const getPubchemCrossRefsTool = defineTool({
     execute: async ({ cid }) => {
         const url = `${PUBCHEM_BASE}/compound/cid/${cid}/xrefs/RegistryID,SourceName/JSON`;
 
-        const res = await apiFetch<{
-            InformationList?: {
-                Information?: Array<{
-                    CID?: number;
-                    RegistryID?: string[];
-                    SourceName?: string[];
-                }>;
-            };
-        }>(url, { headers: HEADERS });
+        const res = await apiFetchValidated(url, PubChemXrefResponseSchema, { headers: HEADERS });
 
         if (res.isErr()) {
             // PubChem returns 404 when the CID has no cross-references — expected.

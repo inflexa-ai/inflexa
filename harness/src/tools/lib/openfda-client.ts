@@ -5,7 +5,9 @@
  * AEs).
  */
 
-import { apiFetch, describeApiError } from "./api-utils.js";
+import { z } from "zod";
+
+import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { OPENFDA_BASE, OPENFDA_LABEL_BASE } from "./openfda-config.js";
 
 export interface AdverseEventCount {
@@ -35,38 +37,38 @@ export interface SeriousnessProfile {
     otherSeriousCount: number;
 }
 
-interface FaersCountResult {
-    term?: string;
-    count?: number;
-}
+// FAERS count/meta wire shapes, validated at the fetch boundary. Every field is
+// optional — the API omits absent values, and graceful degradation relies on a
+// partial-but-valid payload still parsing.
+const FaersCountResponseSchema = z.object({
+    results: z.array(z.object({ term: z.string().optional(), count: z.number().optional() })).optional(),
+});
 
-interface FaersCountResponse {
-    results?: FaersCountResult[];
-}
-
-interface FaersMetaResponse {
-    meta?: { results?: { total?: number } };
-}
+const FaersMetaResponseSchema = z.object({
+    meta: z.object({ results: z.object({ total: z.number().optional() }).optional() }).optional(),
+});
 
 /** openFDA drug-label metadata block (`openfda`) — all fields free-form JSON. */
-interface OpenFdaLabelMeta {
-    application_number?: unknown;
-    brand_name?: unknown;
-    generic_name?: unknown;
-}
+const OpenFdaLabelMetaSchema = z.object({
+    application_number: z.unknown().optional(),
+    brand_name: z.unknown().optional(),
+    generic_name: z.unknown().optional(),
+});
+type OpenFdaLabelMeta = z.infer<typeof OpenFdaLabelMetaSchema>;
 
-/** A single openFDA structured-product-label record. */
-interface OpenFdaLabel {
-    set_id?: unknown;
-    openfda?: OpenFdaLabelMeta;
-    effective_time?: unknown;
-    boxed_warning?: unknown;
-    warnings_and_cautions?: unknown;
-    warnings?: unknown;
-    rems_summary?: unknown;
-    rems_indication?: unknown;
-    medication_guide?: unknown;
-}
+/** A single openFDA structured-product-label record (raw wire shape). */
+const OpenFdaLabelSchema = z.object({
+    set_id: z.unknown().optional(),
+    openfda: OpenFdaLabelMetaSchema.optional(),
+    effective_time: z.unknown().optional(),
+    boxed_warning: z.unknown().optional(),
+    warnings_and_cautions: z.unknown().optional(),
+    warnings: z.unknown().optional(),
+    rems_summary: z.unknown().optional(),
+    rems_indication: z.unknown().optional(),
+    medication_guide: z.unknown().optional(),
+});
+type OpenFdaLabel = z.infer<typeof OpenFdaLabelSchema>;
 
 function buildSearch(drugName: string, serious: boolean): string {
     const escaped = drugName.replace(/"/g, '\\"');
@@ -85,7 +87,7 @@ export async function getFaersByDrug(
     const search = buildSearch(drugName, serious);
     const countUrl = `${OPENFDA_BASE}?search=${encodeURIComponent(search)}` + `&count=patient.reaction.reactionmeddrapt.exact&limit=${limit}`;
 
-    const res = await apiFetch<FaersCountResponse>(countUrl);
+    const res = await apiFetchValidated(countUrl, FaersCountResponseSchema);
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return { totalReports: 0, adverseEvents: [] };
         throw new Error(describeApiError(res.error));
@@ -96,7 +98,7 @@ export async function getFaersByDrug(
     }));
 
     const totalUrl = `${OPENFDA_BASE}?search=${encodeURIComponent(search)}&limit=1`;
-    const totalRes = await apiFetch<FaersMetaResponse>(totalUrl);
+    const totalRes = await apiFetchValidated(totalUrl, FaersMetaResponseSchema);
     const totalReports = totalRes.isOk() ? totalRes.value?.meta?.results?.total : undefined;
 
     return { totalReports, adverseEvents };
@@ -112,7 +114,7 @@ export async function getFaersSeriousness(drugName: string): Promise<Seriousness
     const search = `patient.drug.openfda.generic_name:"${escaped}"`;
 
     const totalUrl = `${OPENFDA_BASE}?search=${encodeURIComponent(search)}&limit=1`;
-    const totalRes = await apiFetch<FaersMetaResponse>(totalUrl);
+    const totalRes = await apiFetchValidated(totalUrl, FaersMetaResponseSchema);
     if (totalRes.isErr()) {
         if (totalRes.error.type === "http_status" && totalRes.error.status === 404) return null;
         throw new Error(describeApiError(totalRes.error));
@@ -133,7 +135,7 @@ export async function getFaersSeriousness(drugName: string): Promise<Seriousness
     async function countWith(field: string): Promise<number> {
         const q = `${search}+AND+${field}:1`;
         const url = `${OPENFDA_BASE}?search=${encodeURIComponent(q)}&limit=1`;
-        const res = await apiFetch<FaersMetaResponse>(url);
+        const res = await apiFetchValidated(url, FaersMetaResponseSchema);
         if (res.isErr()) return 0;
         return res.value?.meta?.results?.total ?? 0;
     }
@@ -209,6 +211,13 @@ function mapLabel(raw: OpenFdaLabel): DrugLabelAction {
     };
 }
 
+// The label endpoint's records are mapped to `DrugLabelAction` rows by
+// `mapLabel` — a context-free normalize folded into the schema so ONE schema
+// validates the raw wire AND emits the output rows.
+const OpenFdaLabelResponseSchema = z.object({
+    results: z.array(OpenFdaLabelSchema.transform(mapLabel)).optional(),
+});
+
 /**
  * Fetch FDA Structured Product Label entries by generic drug name. Returns
  * the most recent N labels (sorted by effective_time desc); each row carries
@@ -220,10 +229,10 @@ export async function getDrugLabelActions(genericName: string, options: { limit?
     const escaped = genericName.replace(/"/g, '\\"');
     const search = `openfda.generic_name:"${escaped}"`;
     const url = `${OPENFDA_LABEL_BASE}?search=${encodeURIComponent(search)}` + `&sort=effective_time:desc&limit=${limit}`;
-    const res = await apiFetch<{ results?: OpenFdaLabel[] }>(url);
+    const res = await apiFetchValidated(url, OpenFdaLabelResponseSchema);
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return [];
         throw new Error(describeApiError(res.error));
     }
-    return (res.value.results ?? []).map(mapLabel);
+    return res.value.results ?? [];
 }

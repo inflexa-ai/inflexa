@@ -7,7 +7,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 import { EPA_CCTE_BASE, getEpaCcteHeaders } from "../lib/toxcast-config.js";
 
 interface ToxcastAssayResult {
@@ -35,34 +35,42 @@ type ToxcastOutput =
           };
       };
 
-interface CtxChemicalSearchRow {
-    dtxsid: string;
-    preferredName?: string;
-    casrn?: string | null;
-}
+// Raw CTX Bioactivity API wire shapes, validated at the fetch boundary. Fields
+// are optional because the API omits absent values; `dtxsid` stays required
+// because `resolveDtxsid` reads it without a guard, so a row missing it is a
+// contract break surfaced as `invalid_response` rather than a runtime error.
+// The row-shaping/filtering logic in `execute` stays put — it depends on the
+// resolved chemical, the assay-name map, and the `activeOnly`/`limit` inputs.
+const CtxChemicalSearchRowSchema = z.object({
+    dtxsid: z.string(),
+    preferredName: z.string().optional(),
+    casrn: z.string().nullable().optional(),
+});
 
-interface ToxcastMc5Param {
-    ac50?: number;
-    acc?: number;
-}
+const ToxcastMc5ParamSchema = z.object({
+    ac50: z.number().optional(),
+    acc: z.number().optional(),
+});
 
-interface ToxcastMc6Param {
-    flag?: unknown;
-}
+const ToxcastMc6ParamSchema = z.object({
+    flag: z.unknown().optional(),
+});
+type ToxcastMc6Param = z.infer<typeof ToxcastMc6ParamSchema>;
 
-interface ToxcastBioactivityRow {
-    aeid?: number;
-    hitc?: number;
-    maxMean?: number | null;
-    modl?: string;
-    mc5Param?: ToxcastMc5Param | null;
-    mc6Param?: ToxcastMc6Param | null;
-}
+const ToxcastBioactivityRowSchema = z.object({
+    aeid: z.number().optional(),
+    hitc: z.number().optional(),
+    maxMean: z.number().nullable().optional(),
+    modl: z.string().optional(),
+    mc5Param: ToxcastMc5ParamSchema.nullable().optional(),
+    mc6Param: ToxcastMc6ParamSchema.nullable().optional(),
+});
+type ToxcastBioactivityRow = z.infer<typeof ToxcastBioactivityRowSchema>;
 
-interface ToxcastAssaySummaryRow {
-    aeid?: number;
-    aenm?: string;
-}
+const ToxcastAssaySummaryRowSchema = z.object({
+    aeid: z.number().optional(),
+    aenm: z.string().optional(),
+});
 
 export function createSearchToxcastTool(deps: { apiKey: string }) {
     return defineTool({
@@ -89,7 +97,7 @@ export function createSearchToxcastTool(deps: { apiKey: string }) {
             const aeidMap = await fetchAssayNames(dtxsid, headers);
 
             const bioUrl = `${EPA_CCTE_BASE}/bioactivity/data/search/by-dtxsid/${dtxsid}`;
-            const bioRes = await apiFetch<ToxcastBioactivityRow[]>(bioUrl, { headers });
+            const bioRes = await apiFetchValidated(bioUrl, z.array(ToxcastBioactivityRowSchema), { headers });
             if (bioRes.isErr()) throw new Error(describeApiError(bioRes.error));
 
             const allResults = bioRes.value ?? [];
@@ -151,7 +159,7 @@ async function resolveDtxsid(query: string, headers: Record<string, string>): Pr
     }
 
     const searchUrl = `${EPA_CCTE_BASE}/chemical/search/equal/${encodeURIComponent(query)}`;
-    const searchRes = await apiFetch<CtxChemicalSearchRow[]>(searchUrl, { headers });
+    const searchRes = await apiFetchValidated(searchUrl, z.array(CtxChemicalSearchRowSchema), { headers });
     if (searchRes.isErr()) throw new Error(describeApiError(searchRes.error));
     if (!searchRes.value?.length) return null;
 
@@ -166,7 +174,7 @@ async function resolveDtxsid(query: string, headers: Record<string, string>): Pr
 async function fetchAssayNames(dtxsid: string, headers: Record<string, string>): Promise<Map<number, string>> {
     const map = new Map<number, string>();
     const url = `${EPA_CCTE_BASE}/bioactivity/data/summary/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<ToxcastAssaySummaryRow[]>(url, { headers });
+    const res = await apiFetchValidated(url, z.array(ToxcastAssaySummaryRowSchema), { headers });
     if (res.isOk() && Array.isArray(res.value)) {
         for (const s of res.value) {
             if (s.aeid != null && s.aenm) {

@@ -9,7 +9,9 @@
  * hand-curated override table.
  */
 
-import { apiFetch, describeApiError } from "./api-utils.js";
+import { z } from "zod";
+
+import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { PUBCHEM_BASE, PUBCHEM_HEADERS } from "./pubchem-config.js";
 
 export interface PubChemCompoundProperties {
@@ -33,16 +35,28 @@ const PROPERTY_FIELDS = [
     "HBondAcceptorCount",
 ].join(",");
 
-/** A single record from the PUG-REST `PropertyTable.Properties` array. */
-interface RawPubChemProperty {
-    CID: number;
-    MolecularWeight?: unknown;
-    InChIKey?: unknown;
-    ConnectivitySMILES?: unknown;
-    CanonicalSMILES?: unknown;
-    HBondDonorCount?: unknown;
-    HBondAcceptorCount?: unknown;
-}
+// A single record from the PUG-REST `PropertyTable.Properties` array, validated
+// at the fetch boundary. Every field is optional — PubChem omits absent
+// properties, and a row missing `CID` is handled gracefully by the caller's
+// guard (returns null) rather than being a contract break.
+const RawPubChemPropertySchema = z.object({
+    CID: z.number().optional(),
+    MolecularWeight: z.unknown(),
+    InChIKey: z.unknown(),
+    ConnectivitySMILES: z.unknown(),
+    CanonicalSMILES: z.unknown(),
+    HBondDonorCount: z.unknown(),
+    HBondAcceptorCount: z.unknown(),
+});
+type RawPubChemProperty = z.infer<typeof RawPubChemPropertySchema>;
+
+const PubChemPropertyResponseSchema = z.object({
+    PropertyTable: z.object({ Properties: z.array(RawPubChemPropertySchema).optional() }).optional(),
+});
+
+const PubChemCidListResponseSchema = z.object({
+    IdentifierList: z.object({ CID: z.array(z.number()).optional() }).optional(),
+});
 
 function parseNumber(value: unknown): number | null {
     if (value == null) return null;
@@ -56,7 +70,7 @@ function parseNumber(value: unknown): number | null {
 
 function mapProps(raw: RawPubChemProperty): PubChemCompoundProperties {
     return {
-        cid: raw.CID,
+        cid: raw.CID ?? 0,
         molecularWeight: parseNumber(raw.MolecularWeight),
         inchiKey: typeof raw.InChIKey === "string" ? raw.InChIKey : null,
         canonicalSmiles:
@@ -68,7 +82,7 @@ function mapProps(raw: RawPubChemProperty): PubChemCompoundProperties {
 
 export async function getCompoundPropertiesByCID(cid: number): Promise<PubChemCompoundProperties | null> {
     const url = `${PUBCHEM_BASE}/compound/cid/${cid}/property/${PROPERTY_FIELDS}/JSON`;
-    const res = await apiFetch<{ PropertyTable?: { Properties?: RawPubChemProperty[] } }>(url, {
+    const res = await apiFetchValidated(url, PubChemPropertyResponseSchema, {
         headers: PUBCHEM_HEADERS,
     });
     if (res.isErr()) {
@@ -87,7 +101,7 @@ export async function getCompoundPropertiesByCID(cid: number): Promise<PubChemCo
  */
 export async function getCompoundPropertiesByInChIKey(inchiKey: string): Promise<PubChemCompoundProperties | null> {
     const cidUrl = `${PUBCHEM_BASE}/compound/inchikey/${encodeURIComponent(inchiKey)}/cids/JSON`;
-    const cidRes = await apiFetch<{ IdentifierList?: { CID?: number[] } }>(cidUrl, {
+    const cidRes = await apiFetchValidated(cidUrl, PubChemCidListResponseSchema, {
         headers: PUBCHEM_HEADERS,
     });
     if (cidRes.isErr()) {

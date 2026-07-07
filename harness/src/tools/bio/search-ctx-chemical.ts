@@ -7,7 +7,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 import { EPA_CCTE_BASE, getEpaCcteHeaders } from "../lib/toxcast-config.js";
 
 interface ChemicalDetail {
@@ -45,42 +45,49 @@ interface PropertySummary {
 
 type CtxChemicalOutput = { found: false; query: string } | { found: true; detail: ChemicalDetail; properties?: PropertySummary[] };
 
-interface CtxChemicalSearchRow {
-    dtxsid: string;
-}
+// The chemical-search endpoint returns rows the code reads `[0].dtxsid` from
+// after a length guard, so `dtxsid` stays required — a row missing it is a
+// contract break surfaced as `invalid_response`, not a silent `undefined`.
+const CtxChemicalSearchRowSchema = z.object({
+    dtxsid: z.string(),
+});
 
-interface RawChemicalDetail {
-    dtxsid?: string;
-    dtxcid?: string;
-    casrn?: string | null;
-    preferredName?: string;
-    iupacName?: string;
-    molFormula?: string;
-    smiles?: string;
-    inchikey?: string;
-    monoisotopicMass?: number | null;
-    averageMass?: number | null;
-    qcLevel?: number | null;
-    totalAssays?: number | null;
-    activeAssays?: number | null;
-    percentAssays?: number | null;
-    pubchemCid?: number | null;
-    pubmedCount?: number | null;
-    sourcesCount?: number | null;
-}
+// Raw CTX chemical-detail wire shape, validated at the fetch boundary. Every
+// field is optional (the API omits absent values); the mapper below normalizes
+// it into `ChemicalDetail`, folding in the resolved `dtxsid` fallback.
+const RawChemicalDetailSchema = z.object({
+    dtxsid: z.string().optional(),
+    dtxcid: z.string().optional(),
+    casrn: z.string().nullable().optional(),
+    preferredName: z.string().optional(),
+    iupacName: z.string().optional(),
+    molFormula: z.string().optional(),
+    smiles: z.string().optional(),
+    inchikey: z.string().optional(),
+    monoisotopicMass: z.number().nullable().optional(),
+    averageMass: z.number().nullable().optional(),
+    qcLevel: z.number().nullable().optional(),
+    totalAssays: z.number().nullable().optional(),
+    activeAssays: z.number().nullable().optional(),
+    percentAssays: z.number().nullable().optional(),
+    pubchemCid: z.number().nullable().optional(),
+    pubmedCount: z.number().nullable().optional(),
+    sourcesCount: z.number().nullable().optional(),
+});
+type RawChemicalDetail = z.infer<typeof RawChemicalDetailSchema>;
 
-interface RawPropertySummary {
-    propName?: string;
-    unit?: string;
-    experimentalCount?: number | null;
-    experimentalMedian?: number | null;
-    experimentalMin?: number | null;
-    experimentalMax?: number | null;
-    predictedCount?: number | null;
-    predictedMedian?: number | null;
-    predictedMin?: number | null;
-    predictedMax?: number | null;
-}
+const RawPropertySummarySchema = z.object({
+    propName: z.string().optional(),
+    unit: z.string().optional(),
+    experimentalCount: z.number().nullable().optional(),
+    experimentalMedian: z.number().nullable().optional(),
+    experimentalMin: z.number().nullable().optional(),
+    experimentalMax: z.number().nullable().optional(),
+    predictedCount: z.number().nullable().optional(),
+    predictedMedian: z.number().nullable().optional(),
+    predictedMin: z.number().nullable().optional(),
+    predictedMax: z.number().nullable().optional(),
+});
 
 export function createSearchCtxChemicalTool(deps: { apiKey: string }) {
     return defineTool({
@@ -107,7 +114,7 @@ export function createSearchCtxChemicalTool(deps: { apiKey: string }) {
             const { dtxsid } = resolved;
 
             const detailUrl = `${EPA_CCTE_BASE}/chemical/detail/search/by-dtxsid/${dtxsid}?projection=chemicaldetailstandard`;
-            const detailRes = await apiFetch<RawChemicalDetail>(detailUrl, { headers });
+            const detailRes = await apiFetchValidated(detailUrl, RawChemicalDetailSchema, { headers });
             if (detailRes.isErr()) throw new Error(describeApiError(detailRes.error));
 
             const d: RawChemicalDetail = detailRes.value ?? {};
@@ -139,7 +146,7 @@ export function createSearchCtxChemicalTool(deps: { apiKey: string }) {
 
             if (includeProperties) {
                 const propUrl = `${EPA_CCTE_BASE}/chemical/property/summary/search/by-dtxsid/${dtxsid}`;
-                const propRes = await apiFetch<RawPropertySummary[]>(propUrl, { headers });
+                const propRes = await apiFetchValidated(propUrl, z.array(RawPropertySummarySchema), { headers });
 
                 if (propRes.isOk() && Array.isArray(propRes.value)) {
                     result.properties = propRes.value.map((p) => ({
@@ -168,7 +175,7 @@ async function resolveDtxsid(query: string, headers: Record<string, string>): Pr
     }
 
     const url = `${EPA_CCTE_BASE}/chemical/search/equal/${encodeURIComponent(query)}`;
-    const res = await apiFetch<CtxChemicalSearchRow[]>(url, { headers });
+    const res = await apiFetchValidated(url, z.array(CtxChemicalSearchRowSchema), { headers });
     if (res.isErr()) throw new Error(describeApiError(res.error));
     if (!res.value?.length) return null;
 

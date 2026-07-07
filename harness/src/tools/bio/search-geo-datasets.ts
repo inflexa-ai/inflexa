@@ -6,32 +6,43 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 
 const ESEARCH_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 
-interface GeoEsearchResponse {
-    esearchresult?: {
-        idlist?: string[];
-        count?: string;
-    };
-}
+// NCBI E-utilities wire shapes, validated at the fetch boundary. Every field is
+// optional because the API omits absent values; the mapping in `execute` keys
+// off the esearch `idlist` (request context) and reshapes each summary, so the
+// schemas model only the raw wire.
+const GeoEsearchResponseSchema = z.object({
+    esearchresult: z
+        .object({
+            idlist: z.array(z.string()).optional(),
+            count: z.string().optional(),
+        })
+        .optional(),
+});
 
-interface GeoDatasetSummary {
-    accession?: string;
-    gse?: string;
-    title?: string;
-    summary?: string;
-    gpl?: string | null;
-    platform?: string | null;
-    n_samples?: string | number;
-    taxon?: string | null;
-    pubmedids?: (string | number)[];
-}
+const GeoDatasetSummarySchema = z.object({
+    accession: z.string().optional(),
+    gse: z.string().optional(),
+    title: z.string().optional(),
+    summary: z.string().optional(),
+    gpl: z.string().nullable().optional(),
+    platform: z.string().nullable().optional(),
+    n_samples: z.union([z.string(), z.number()]).optional(),
+    taxon: z.string().nullable().optional(),
+    pubmedids: z.array(z.union([z.string(), z.number()])).optional(),
+});
+type GeoDatasetSummary = z.infer<typeof GeoDatasetSummarySchema>;
 
-interface GeoEsummaryResponse {
-    result?: Record<string, GeoDatasetSummary | undefined>;
-}
+// The esummary `result` object mixes a `uids` string array in with the
+// numeric-keyed dataset summaries; `.catch(undefined)` on the record value lets
+// that `uids` entry (and any drifted summary) fall through as undefined rather
+// than rejecting the whole response — the mapping reads only the numeric ids.
+const GeoEsummaryResponseSchema = z.object({
+    result: z.record(z.string(), GeoDatasetSummarySchema.optional().catch(undefined)).optional(),
+});
 
 export const searchGeoDatasetsTool = defineTool({
     id: "search_geo_datasets",
@@ -52,14 +63,14 @@ export const searchGeoDatasetsTool = defineTool({
         searchQuery += typeFilter;
 
         const searchUrl = `${ESEARCH_BASE}/esearch.fcgi?db=${db}&term=${encodeURIComponent(searchQuery)}&retmax=${limit}&retmode=json`;
-        const searchRes = await apiFetch<GeoEsearchResponse>(searchUrl);
+        const searchRes = await apiFetchValidated(searchUrl, GeoEsearchResponseSchema);
         if (searchRes.isErr()) throw new Error(describeApiError(searchRes.error));
 
         const ids: string[] = searchRes.value?.esearchresult?.idlist ?? [];
         if (ids.length === 0) return ok({ totalFound: 0, datasets: [] });
 
         const summaryUrl = `${ESEARCH_BASE}/esummary.fcgi?db=${db}&id=${ids.join(",")}&retmode=json`;
-        const summaryRes = await apiFetch<GeoEsummaryResponse>(summaryUrl);
+        const summaryRes = await apiFetchValidated(summaryUrl, GeoEsummaryResponseSchema);
         if (summaryRes.isErr()) throw new Error(describeApiError(summaryRes.error));
 
         const result: Record<string, GeoDatasetSummary | undefined> = summaryRes.value?.result ?? {};

@@ -5,7 +5,9 @@
  * pubmed-index Phase-1 collector.
  */
 
-import { apiFetch, describeApiError } from "./api-utils.js";
+import { z } from "zod";
+
+import { apiFetch, apiFetchValidated, describeApiError } from "./api-utils.js";
 import {
     NCBI_BASE,
     NCBI_IDCONV,
@@ -20,6 +22,16 @@ import {
 } from "./ncbi-utils.js";
 
 export type { PubMedSummary, ArticleDetail, FullTextResult };
+
+// NCBI E-utilities JSON payloads, validated at the fetch boundary. Every field
+// is optional because the API omits absent values.
+const EsearchResponseSchema = z.object({
+    esearchresult: z.object({ idlist: z.array(z.string()).optional(), count: z.string().optional() }).optional(),
+});
+
+const IdConvResponseSchema = z.object({
+    records: z.array(z.object({ pmid: z.string().optional(), pmcid: z.string().optional() })).optional(),
+});
 
 export interface SearchOptions {
     maxResults?: number;
@@ -50,9 +62,7 @@ export async function searchPubmed(
     }
 
     const searchUrl = ncbiUrl(ncbiApiKey, `${NCBI_BASE}/esearch.fcgi`, esearchParams);
-    const searchResult = await apiFetch<{
-        esearchresult?: { idlist?: string[]; count?: string };
-    }>(searchUrl);
+    const searchResult = await apiFetchValidated(searchUrl, EsearchResponseSchema);
 
     if (searchResult.isErr()) throw new Error(describeApiError(searchResult.error));
 
@@ -83,7 +93,7 @@ export async function getArticleDetails(ncbiApiKey: string | undefined, pmids: s
         }),
         { parseAs: "text" },
     );
-    const idConvAsync = apiFetch<unknown>(ncbiUrl(ncbiApiKey, NCBI_IDCONV, { ids: idString, format: "json" }));
+    const idConvAsync = apiFetchValidated(ncbiUrl(ncbiApiKey, NCBI_IDCONV, { ids: idString, format: "json" }), IdConvResponseSchema);
     // Both requests run concurrently; each Result is awaited and handled below.
     const efetchResult = await efetchAsync;
     const idConvResult = await idConvAsync;

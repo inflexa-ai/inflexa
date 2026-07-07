@@ -5,7 +5,9 @@
  * Used by §3.10.1 (Knockout phenotype card).
  */
 
-import { apiFetch, describeApiError, isUnexpectedApiError } from "./api-utils.js";
+import { z } from "zod";
+
+import { apiFetchValidated, describeApiError, isUnexpectedApiError } from "./api-utils.js";
 
 const IMPC_BASE = "https://www.ebi.ac.uk/mi/impc/solr";
 const PHENOTYPE_ROW_CAP = 500;
@@ -38,23 +40,27 @@ const ORGAN_SYSTEM_MAP: Record<string, string> = {
     "embryo phenotype": "growth",
 };
 
-/** A single IMPC Solr document — fields vary by core; all optional. */
-interface ImpcSolrDoc {
-    mp_term_id?: string;
-    mp_term_name?: string;
-    p_value?: number;
-    top_level_mp_term_name?: unknown;
-    sex?: unknown;
-    parameter_stable_id?: string;
-    parameter_name?: string;
-    marker_symbol?: string;
-    mgi_accession_id?: string;
-}
+// A single IMPC Solr document — fields vary by core; all optional. `top_level_mp_term_name`
+// and `sex` are `z.unknown()` because the code reads them defensively (`Array.isArray`,
+// `typeof === "string"`) rather than trusting a wire type.
+const ImpcSolrDocSchema = z.object({
+    mp_term_id: z.string().optional(),
+    mp_term_name: z.string().optional(),
+    p_value: z.number().optional(),
+    top_level_mp_term_name: z.unknown().optional(),
+    sex: z.unknown().optional(),
+    parameter_stable_id: z.string().optional(),
+    parameter_name: z.string().optional(),
+    marker_symbol: z.string().optional(),
+    mgi_accession_id: z.string().optional(),
+});
+type ImpcSolrDoc = z.infer<typeof ImpcSolrDocSchema>;
 
-/** The `response` envelope shared by every IMPC Solr core. */
-interface ImpcSolrResponse {
-    response?: { docs?: ImpcSolrDoc[]; numFound?: number };
-}
+// The `response` envelope shared by every IMPC Solr core, validated at the fetch boundary.
+const ImpcSolrResponseSchema = z.object({
+    response: z.object({ docs: z.array(ImpcSolrDocSchema).optional(), numFound: z.number().optional() }).optional(),
+});
+type ImpcSolrResponse = z.infer<typeof ImpcSolrResponseSchema>;
 
 export interface MpTerm {
     id: string;
@@ -193,7 +199,7 @@ export function derivedViability(calls: ViabilityCall[]): ViabilityCategory {
 async function resolveImpcGene(humanSymbol: string): Promise<{ mouseMarkerSymbol: string; mgiAccessionId: string } | null> {
     const q = `human_gene_symbol:${escapeSolrValue(humanSymbol)}`;
     const url = `${IMPC_BASE}/gene/select?q=${encodeURIComponent(q)}` + `&rows=1&fl=marker_symbol,mgi_accession_id&wt=json`;
-    const res = await apiFetch<ImpcSolrResponse>(url);
+    const res = await apiFetchValidated(url, ImpcSolrResponseSchema);
     if (res.isErr()) {
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
         return null;
@@ -211,7 +217,7 @@ async function resolveImpcGene(humanSymbol: string): Promise<{ mouseMarkerSymbol
 async function fetchPhenotypes(mouseSym: string): Promise<{ raw: unknown; numFound: number }> {
     const q = `marker_symbol:${escapeSolrValue(mouseSym)}`;
     const url = `${IMPC_BASE}/genotype-phenotype/select?q=${encodeURIComponent(q)}` + `&rows=${PHENOTYPE_ROW_CAP}&wt=json`;
-    const res = await apiFetch<ImpcSolrResponse>(url);
+    const res = await apiFetchValidated(url, ImpcSolrResponseSchema);
     if (res.isErr()) {
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
         return { raw: { response: { docs: [] } }, numFound: 0 };
@@ -223,7 +229,7 @@ async function fetchPhenotypes(mouseSym: string): Promise<{ raw: unknown; numFou
 async function fetchAssignedViability(mouseSym: string): Promise<unknown> {
     const q = `marker_symbol:${escapeSolrValue(mouseSym)} AND procedure_name:"${VIABILITY_PROCEDURE}"`;
     const url = `${IMPC_BASE}/genotype-phenotype/select?q=${encodeURIComponent(q)}` + `&rows=20&wt=json`;
-    const res = await apiFetch<ImpcSolrResponse>(url);
+    const res = await apiFetchValidated(url, ImpcSolrResponseSchema);
     if (res.isErr()) {
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
         return { response: { docs: [] } };
@@ -234,7 +240,7 @@ async function fetchAssignedViability(mouseSym: string): Promise<unknown> {
 async function fetchScreenRan(mouseSym: string): Promise<unknown> {
     const q = `marker_symbol:${escapeSolrValue(mouseSym)} AND parameter_stable_id:IMPC_VIA_*`;
     const url = `${IMPC_BASE}/statistical-result/select?q=${encodeURIComponent(q)}` + `&rows=50&fl=parameter_stable_id,parameter_name&wt=json`;
-    const res = await apiFetch<ImpcSolrResponse>(url);
+    const res = await apiFetchValidated(url, ImpcSolrResponseSchema);
     if (res.isErr()) {
         if (isUnexpectedApiError(res.error)) throw new Error(describeApiError(res.error));
         return { response: { docs: [] } };

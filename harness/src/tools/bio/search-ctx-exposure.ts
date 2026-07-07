@@ -7,7 +7,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 import { EPA_CCTE_BASE, getEpaCcteHeaders } from "../lib/toxcast-config.js";
 
 interface SeemPrediction {
@@ -56,45 +56,51 @@ interface ExposureOutput {
 
 type ExposureResult = { found: false; query: string } | ExposureOutput;
 
-interface CtxChemicalSearchRow {
-    dtxsid: string;
-}
+// The chemical-search endpoint returns rows the code reads `[0].dtxsid` from
+// after a length guard, so `dtxsid` stays required — a row missing it is a
+// contract break surfaced as `invalid_response`, not a silent `undefined`.
+const CtxChemicalSearchRowSchema = z.object({
+    dtxsid: z.string(),
+});
 
-interface RawSeemPrediction {
-    dtxsid?: string;
-    productionVolume?: number | null;
-    units?: string;
-    probabilityDietary?: number | null;
-    probabilityResidential?: number | null;
-    probabilityPesticde?: number | null;
-    probabilityPesticide?: number | null;
-    probabilityIndustrial?: number | null;
-}
+// SEEM exposure-prediction wire shape (endpoint returns a single object or an
+// array). `probabilityPesticde` is the API's own misspelling, read as a
+// fallback before the corrected `probabilityPesticide`, so both stay modeled.
+const RawSeemPredictionSchema = z.object({
+    dtxsid: z.string().optional(),
+    productionVolume: z.number().nullable().optional(),
+    units: z.string().optional(),
+    probabilityDietary: z.number().nullable().optional(),
+    probabilityResidential: z.number().nullable().optional(),
+    probabilityPesticde: z.number().nullable().optional(),
+    probabilityPesticide: z.number().nullable().optional(),
+    probabilityIndustrial: z.number().nullable().optional(),
+});
 
-interface RawHttkRow {
-    parameter?: string;
-    measured?: number | null;
-    predicted?: number | null;
-    units?: string;
-    model?: string;
-    species?: string;
-    reference?: string;
-}
+const RawHttkRowSchema = z.object({
+    parameter: z.string().optional(),
+    measured: z.number().nullable().optional(),
+    predicted: z.number().nullable().optional(),
+    units: z.string().optional(),
+    model: z.string().optional(),
+    species: z.string().optional(),
+    reference: z.string().optional(),
+});
 
-interface RawFunctionalUseRow {
-    functioncategory?: string;
-    reportedfunction?: string;
-    doctitle?: string;
-}
+const RawFunctionalUseRowSchema = z.object({
+    functioncategory: z.string().optional(),
+    reportedfunction: z.string().optional(),
+    doctitle: z.string().optional(),
+});
 
-interface RawProductDataRow {
-    productname?: string;
-    gencat?: string;
-    prodfam?: string;
-    prodtype?: string;
-    centralweightfraction?: number | null;
-    weightfractiontype?: string;
-}
+const RawProductDataRowSchema = z.object({
+    productname: z.string().optional(),
+    gencat: z.string().optional(),
+    prodfam: z.string().optional(),
+    prodtype: z.string().optional(),
+    centralweightfraction: z.number().nullable().optional(),
+    weightfractiontype: z.string().optional(),
+});
 
 export function createSearchCtxExposureTool(deps: { apiKey: string }) {
     return defineTool({
@@ -172,7 +178,7 @@ async function resolveDtxsid(query: string, headers: Record<string, string>): Pr
     }
 
     const url = `${EPA_CCTE_BASE}/chemical/search/equal/${encodeURIComponent(query)}`;
-    const res = await apiFetch<CtxChemicalSearchRow[]>(url, { headers });
+    const res = await apiFetchValidated(url, z.array(CtxChemicalSearchRowSchema), { headers });
     if (res.isErr()) throw new Error(describeApiError(res.error));
     if (!res.value?.length) return null;
 
@@ -181,7 +187,7 @@ async function resolveDtxsid(query: string, headers: Record<string, string>): Pr
 
 async function fetchSeem(dtxsid: string, headers: Record<string, string>): Promise<SeemPrediction | undefined> {
     const url = `${EPA_CCTE_BASE}/exposure/seem/general/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<RawSeemPrediction | RawSeemPrediction[]>(url, { headers });
+    const res = await apiFetchValidated(url, z.union([RawSeemPredictionSchema, z.array(RawSeemPredictionSchema)]), { headers });
     if (res.isErr() || !res.value) return undefined;
 
     const d = Array.isArray(res.value) ? res.value[0] : res.value;
@@ -200,7 +206,7 @@ async function fetchSeem(dtxsid: string, headers: Record<string, string>): Promi
 
 async function fetchHttk(dtxsid: string, headers: Record<string, string>): Promise<HttkParameter[]> {
     const url = `${EPA_CCTE_BASE}/exposure/httk/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<RawHttkRow[]>(url, { headers });
+    const res = await apiFetchValidated(url, z.array(RawHttkRowSchema), { headers });
     if (res.isErr() || !Array.isArray(res.value)) return [];
 
     return res.value.map((r) => ({
@@ -216,7 +222,7 @@ async function fetchHttk(dtxsid: string, headers: Record<string, string>): Promi
 
 async function fetchFunctionalUse(dtxsid: string, headers: Record<string, string>, limit: number): Promise<FunctionalUse[]> {
     const url = `${EPA_CCTE_BASE}/exposure/functional-use/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<RawFunctionalUseRow[]>(url, { headers });
+    const res = await apiFetchValidated(url, z.array(RawFunctionalUseRowSchema), { headers });
     if (res.isErr() || !Array.isArray(res.value)) return [];
 
     return res.value.slice(0, limit).map((r) => ({
@@ -228,7 +234,7 @@ async function fetchFunctionalUse(dtxsid: string, headers: Record<string, string
 
 async function fetchProductData(dtxsid: string, headers: Record<string, string>, limit: number): Promise<ProductData[]> {
     const url = `${EPA_CCTE_BASE}/exposure/product-data/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<RawProductDataRow[]>(url, { headers });
+    const res = await apiFetchValidated(url, z.array(RawProductDataRowSchema), { headers });
     if (res.isErr() || !Array.isArray(res.value)) return [];
 
     return res.value.slice(0, limit).map((r) => ({

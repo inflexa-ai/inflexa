@@ -10,7 +10,7 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 import { PUBCHEM_HEADERS as HEADERS, PUBCHEM_BASE } from "../lib/pubchem-config.js";
 
 interface Assay {
@@ -21,20 +21,36 @@ interface Assay {
     activityValue: number | null;
 }
 
-interface PugAssaySummary {
-    Table?: {
-        Columns?: {
-            Column?: Array<{ Heading?: string }>;
-        };
-        Row?: Array<{
-            Cell?: Array<{
-                intval?: number;
-                fval?: number;
-                sval?: string;
-            }>;
-        }>;
-    };
-}
+// The PUG-REST assay-summary wire shape (a table of columns + rows), validated
+// at the fetch boundary; `parseAssaySummary` maps the heading-indexed cells into
+// `Assay` records. Every field is optional — PubChem omits absent values.
+const PugAssaySummarySchema = z.object({
+    Table: z
+        .object({
+            Columns: z
+                .object({
+                    Column: z.array(z.object({ Heading: z.string().optional() })).optional(),
+                })
+                .optional(),
+            Row: z
+                .array(
+                    z.object({
+                        Cell: z
+                            .array(
+                                z.object({
+                                    intval: z.number().optional(),
+                                    fval: z.number().optional(),
+                                    sval: z.string().optional(),
+                                }),
+                            )
+                            .optional(),
+                    }),
+                )
+                .optional(),
+        })
+        .optional(),
+});
+type PugAssaySummary = z.infer<typeof PugAssaySummarySchema>;
 
 function parseAssaySummary(data: PugAssaySummary): Assay[] {
     const columns = data.Table?.Columns?.Column ?? [];
@@ -98,7 +114,7 @@ export const getPubchemAssaysTool = defineTool({
     execute: async ({ cid, activeOnly = false, limit = 50 }) => {
         const url = `${PUBCHEM_BASE}/compound/cid/${cid}/assaysummary/JSON`;
 
-        const res = await apiFetch<PugAssaySummary>(url, { headers: HEADERS });
+        const res = await apiFetchValidated(url, PugAssaySummarySchema, { headers: HEADERS });
 
         if (res.isErr()) {
             // PubChem returns 404 when the CID has no assay data — expected.

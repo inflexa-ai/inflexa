@@ -7,7 +7,9 @@
  * "where is the target broken in human disease, and how often" view.
  */
 
-import { apiFetch, describeApiError } from "./api-utils.js";
+import { z } from "zod";
+
+import { apiFetchValidated, describeApiError } from "./api-utils.js";
 
 const CBIOPORTAL_BASE = "https://www.cbioportal.org/api";
 const HEADERS = { Accept: "application/json" } as const;
@@ -27,50 +29,58 @@ export interface MutationFrequency {
     studies: string[];
 }
 
-interface RawMolecularProfile {
-    molecularProfileId: string;
-    studyId: string;
-    molecularAlterationType?: string;
-}
+// Raw cBioPortal wire shapes, validated at the fetch boundary. Fields the code
+// reads as map keys or feeds into `string[]` params stay required — a missing
+// value there is a contract break we surface as `invalid_response`, not a silent
+// `undefined`; every other field is optional because the API omits absent values.
+const RawMolecularProfileSchema = z.object({
+    molecularProfileId: z.string(),
+    studyId: z.string(),
+    molecularAlterationType: z.string().optional(),
+});
+type RawMolecularProfile = z.infer<typeof RawMolecularProfileSchema>;
 
-interface RawMutationCount {
-    studyId: string;
-    sampleId: string;
-    mutationCount: number;
-}
+const RawMutationCountSchema = z.object({
+    studyId: z.string(),
+    sampleId: z.string(),
+    mutationCount: z.number().optional(),
+});
+type RawMutationCount = z.infer<typeof RawMutationCountSchema>;
 
-interface RawSampleList {
-    sampleListId: string;
-    studyId: string;
-    category?: string;
-    sampleCount?: number;
-}
+const RawSampleListSchema = z.object({
+    sampleListId: z.string().optional(),
+    studyId: z.string(),
+    category: z.string().optional(),
+    sampleCount: z.number().optional(),
+});
+type RawSampleList = z.infer<typeof RawSampleListSchema>;
 
-interface RawCancerStudy {
-    studyId: string;
-    cancerTypeId?: string;
-    cancerType?: { name?: string; cancerTypeId?: string };
-    name?: string;
-    description?: string;
-}
+const RawCancerStudySchema = z.object({
+    studyId: z.string(),
+    cancerTypeId: z.string().optional(),
+    cancerType: z.object({ name: z.string().optional(), cancerTypeId: z.string().optional() }).optional(),
+    name: z.string().optional(),
+    description: z.string().optional(),
+});
+type RawCancerStudy = z.infer<typeof RawCancerStudySchema>;
 
 async function listStudies(): Promise<RawCancerStudy[]> {
     const url = `${CBIOPORTAL_BASE}/studies?projection=SUMMARY&pageSize=10000`;
-    const res = await apiFetch<RawCancerStudy[]>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, z.array(RawCancerStudySchema), { headers: HEADERS });
     if (res.isErr()) throw new Error(describeApiError(res.error));
     return res.value ?? [];
 }
 
 async function listAllSampleLists(): Promise<RawSampleList[]> {
     const url = `${CBIOPORTAL_BASE}/sample-lists?projection=SUMMARY&pageSize=10000`;
-    const res = await apiFetch<RawSampleList[]>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, z.array(RawSampleListSchema), { headers: HEADERS });
     if (res.isErr()) throw new Error(describeApiError(res.error));
     return res.value ?? [];
 }
 
 async function listMutationProfiles(): Promise<RawMolecularProfile[]> {
     const url = `${CBIOPORTAL_BASE}/molecular-profiles?projection=SUMMARY&pageSize=10000`;
-    const res = await apiFetch<RawMolecularProfile[]>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, z.array(RawMolecularProfileSchema), { headers: HEADERS });
     if (res.isErr()) throw new Error(describeApiError(res.error));
     return (res.value ?? []).filter((p) => p.molecularAlterationType === "MUTATION_EXTENDED");
 }
@@ -78,7 +88,7 @@ async function listMutationProfiles(): Promise<RawMolecularProfile[]> {
 async function fetchMutationCountsForGene(entrezGeneId: number, profileIds: string[]): Promise<RawMutationCount[]> {
     if (profileIds.length === 0) return [];
     const url = `${CBIOPORTAL_BASE}/mutations/fetch?projection=SUMMARY`;
-    const res = await apiFetch<RawMutationCount[]>(url, {
+    const res = await apiFetchValidated(url, z.array(RawMutationCountSchema), {
         method: "POST",
         headers: { ...HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -97,7 +107,7 @@ async function fetchMutationCountsForGene(entrezGeneId: number, profileIds: stri
  */
 async function resolveEntrezId(symbol: string): Promise<number | null> {
     const url = `${CBIOPORTAL_BASE}/genes/${encodeURIComponent(symbol)}`;
-    const res = await apiFetch<{ entrezGeneId?: number }>(url, { headers: HEADERS });
+    const res = await apiFetchValidated(url, z.object({ entrezGeneId: z.number().optional() }), { headers: HEADERS });
     if (res.isErr()) return null;
     return res.value?.entrezGeneId ?? null;
 }

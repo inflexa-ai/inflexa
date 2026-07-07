@@ -11,7 +11,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 
 const BASE_URL = "https://api.semanticscholar.org/graph/v1";
 const DEFAULT_FIELDS = "paperId,title,abstract,year,venue,citationCount,url,authors,externalIds";
@@ -27,6 +27,28 @@ export interface SemanticScholarPaper {
     authors: string[];
     externalIds?: Record<string, string>;
 }
+
+// Raw Semantic Scholar wire shape, validated at the fetch boundary. Every field
+// is optional — `parseSemanticScholarResponse` already filters/coerces defensively,
+// so a partial-but-valid response must still parse; `externalIds` values stay
+// unconstrained (`z.unknown`) since the mapper only checks the container is an object.
+const SemanticScholarResponseSchema = z.object({
+    data: z
+        .array(
+            z.object({
+                paperId: z.string().optional(),
+                title: z.string().optional(),
+                abstract: z.string().optional(),
+                year: z.number().optional(),
+                venue: z.string().optional(),
+                citationCount: z.number().optional(),
+                url: z.string().optional(),
+                authors: z.array(z.object({ name: z.string().optional() })).optional(),
+                externalIds: z.record(z.string(), z.unknown()).optional(),
+            }),
+        )
+        .optional(),
+});
 
 type SearchSemanticScholarOutput = { success: false; error: string; papers: SemanticScholarPaper[] } | { success: true; papers: SemanticScholarPaper[] };
 
@@ -77,7 +99,7 @@ export const searchSemanticScholarTool = defineTool({
         const apiKey = process.env.SEMANTIC_SCHOLAR_API_KEY;
         const headers: Record<string, string> = {};
         if (apiKey) headers["x-api-key"] = apiKey;
-        const res = await apiFetch<unknown>(`${BASE_URL}/paper/search?${params}`, {
+        const res = await apiFetchValidated(`${BASE_URL}/paper/search?${params}`, SemanticScholarResponseSchema, {
             headers,
         });
         if (res.isErr()) {

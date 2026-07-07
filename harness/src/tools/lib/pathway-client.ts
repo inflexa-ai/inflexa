@@ -4,7 +4,9 @@
  * Used by §3.7 (Pathway Context).
  */
 
-import { apiFetch, parseTSV } from "./api-utils.js";
+import { z } from "zod";
+
+import { apiFetch, apiFetchValidated, parseTSV } from "./api-utils.js";
 
 const KEGG_BASE = "https://rest.kegg.jp";
 const REACTOME_BASE = "https://reactome.org/ContentService";
@@ -38,11 +40,29 @@ export interface Pathway {
     url?: string;
 }
 
+// Reactome ContentService raw wire shapes, validated at the fetch boundary.
+// Every field is optional because the API omits absent values.
+
 /** A single hit from the Reactome ContentService search response. */
-interface ReactomeSearchEntry {
-    stId?: string;
-    name?: string;
-}
+const ReactomeSearchEntrySchema = z.object({
+    stId: z.string().optional(),
+    name: z.string().optional(),
+});
+type ReactomeSearchEntry = z.infer<typeof ReactomeSearchEntrySchema>;
+
+const ReactomeSearchResponseSchema = z.object({
+    results: z.array(z.object({ entries: z.array(ReactomeSearchEntrySchema).optional() })).optional(),
+});
+
+/** Participant list — `searchReactome` reads `displayName` per participant. */
+const ReactomeParticipantsSchema = z.array(z.object({ displayName: z.string().optional() }));
+
+/** Participant list — `getPathwayMemberships` reads `refEntities` per participant. */
+const ReactomeParticipantEntitiesSchema = z.array(
+    z.object({
+        refEntities: z.array(z.object({ schemaClass: z.string().optional(), identifier: z.string().optional() })).optional(),
+    }),
+);
 
 export interface PathwaySearchOptions {
     source?: "kegg" | "reactome" | "both";
@@ -86,7 +106,7 @@ export async function searchReactome(query: string, species: string, maxResults:
         cluster: "true",
         rows: String(maxResults),
     });
-    const searchRes = await apiFetch<{ results?: Array<{ entries?: ReactomeSearchEntry[] }> }>(`${REACTOME_BASE}/search/query?${params}`, {
+    const searchRes = await apiFetchValidated(`${REACTOME_BASE}/search/query?${params}`, ReactomeSearchResponseSchema, {
         headers: { Accept: "application/json" },
     });
     if (searchRes.isErr()) return [];
@@ -105,7 +125,7 @@ export async function searchReactome(query: string, species: string, maxResults:
 
     if (includeGenes) {
         for (const pw of pathways) {
-            const partRes = await apiFetch<Array<{ displayName?: string }>>(`${REACTOME_BASE}/data/participants/${pw.id}`, {
+            const partRes = await apiFetchValidated(`${REACTOME_BASE}/data/participants/${pw.id}`, ReactomeParticipantsSchema, {
                 headers: { Accept: "application/json" },
             });
             if (partRes.isOk()) {
@@ -145,12 +165,9 @@ export async function getPathwayMemberships(geneSymbol: string): Promise<Pathway
     await Promise.all(
         reactome.slice(0, 50).map(async (pw) => {
             try {
-                const partRes = await apiFetch<Array<{ refEntities?: Array<{ schemaClass?: string; identifier?: string }> }>>(
-                    `${REACTOME_BASE}/data/participants/${pw.id}`,
-                    {
-                        headers: { Accept: "application/json" },
-                    },
-                );
+                const partRes = await apiFetchValidated(`${REACTOME_BASE}/data/participants/${pw.id}`, ReactomeParticipantEntitiesSchema, {
+                    headers: { Accept: "application/json" },
+                });
                 if (partRes.isErr()) return;
                 const accs = new Set<string>();
                 for (const entity of partRes.value) {
