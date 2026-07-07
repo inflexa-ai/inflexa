@@ -38,7 +38,10 @@ const PugPropertyRowSchema = z
         CID: z.number().optional(),
         CanonicalSMILES: z.string().optional(),
         MolecularFormula: z.string().optional(),
-        MolecularWeight: z.number().optional(),
+        // PUG-REST serializes MolecularWeight as a string (e.g. "180.16") to
+        // preserve significant figures; accept both and let the transform's
+        // `Number(...)` normalize it.
+        MolecularWeight: z.union([z.number(), z.string()]).optional(),
         IUPACName: z.string().optional(),
         InChI: z.string().optional(),
         InChIKey: z.string().optional(),

@@ -136,9 +136,12 @@ const EXPRESSION_QUERY = `
 
 // Open Targets GraphQL `data` payload schemas, validated at the fetch boundary.
 // Fields the mapping code reads behind a guard (optional chaining, `?? default`,
-// `Array.isArray`) are `.optional()`; fields read directly — a missing value
-// would otherwise mis-map — stay required so a contract break surfaces as
-// `invalid_response` instead of silently producing garbage.
+// `Array.isArray`) are `.nullable().optional()`; fields read directly — a missing
+// value would otherwise mis-map — stay required so a contract break surfaces as
+// `invalid_response` instead of silently producing garbage. Nullable matters
+// because GraphQL returns an explicit `null` (not omission) for a nullable root
+// that resolves empty — an unknown/retired id yields `{"target": null}`, which a
+// bare `.optional()` rejects, turning a clean "not found" into a thrown error.
 const DatatypeScoreSchema = z.object({ id: z.string().optional(), score: z.number().optional() });
 
 const TargetAssociationsDataSchema = z.object({
@@ -147,8 +150,12 @@ const TargetAssociationsDataSchema = z.object({
             id: z.string(),
             approvedSymbol: z.string(),
             approvedName: z.string(),
-            tractability: z.array(z.object({ label: z.string().optional(), modality: z.string().optional(), value: z.boolean().optional() })).optional(),
+            tractability: z
+                .array(z.object({ label: z.string().optional(), modality: z.string().optional(), value: z.boolean().optional() }))
+                .nullable()
+                .optional(),
         })
+        .nullable()
         .optional(),
     associations: z
         .object({
@@ -159,13 +166,15 @@ const TargetAssociationsDataSchema = z.object({
                             z.object({
                                 disease: z.object({ id: z.string(), name: z.string() }),
                                 score: z.number(),
-                                datatypeScores: z.array(DatatypeScoreSchema).optional(),
+                                datatypeScores: z.array(DatatypeScoreSchema).nullable().optional(),
                             }),
                         )
+                        .nullable()
                         .optional(),
                 })
                 .optional(),
         })
+        .nullable()
         .optional(),
 });
 
@@ -181,15 +190,18 @@ const DiseaseAssociationsDataSchema = z.object({
                             z.object({
                                 target: z
                                     .object({ id: z.string().optional(), approvedSymbol: z.string().optional(), approvedName: z.string().optional() })
+                                    .nullable()
                                     .optional(),
                                 score: z.number(),
-                                datatypeScores: z.array(DatatypeScoreSchema).optional(),
+                                datatypeScores: z.array(DatatypeScoreSchema).nullable().optional(),
                             }),
                         )
+                        .nullable()
                         .optional(),
                 })
                 .optional(),
         })
+        .nullable()
         .optional(),
 });
 
@@ -201,14 +213,22 @@ const TargetSafetyDataSchema = z.object({
             safetyLiabilities: z
                 .array(
                     z.object({
-                        event: z.string().optional(),
-                        biosamples: z.array(z.object({ tissueLabel: z.string().optional() })).optional(),
-                        effects: z.array(z.object({ direction: z.string().optional() })).optional(),
-                        datasource: z.string().optional(),
+                        event: z.string().nullable().optional(),
+                        biosamples: z
+                            .array(z.object({ tissueLabel: z.string().nullable().optional() }))
+                            .nullable()
+                            .optional(),
+                        effects: z
+                            .array(z.object({ direction: z.string().nullable().optional() }))
+                            .nullable()
+                            .optional(),
+                        datasource: z.string().nullable().optional(),
                     }),
                 )
+                .nullable()
                 .optional(),
         })
+        .nullable()
         .optional(),
 });
 
@@ -218,13 +238,15 @@ const TargetExpressionDataSchema = z.object({
             expressions: z
                 .array(
                     z.object({
-                        tissue: z.object({ id: z.string(), label: z.string(), organs: z.array(z.string()).optional() }),
-                        rna: z.object({ value: z.number().optional(), unit: z.string().optional() }).optional(),
-                        protein: z.object({ level: z.number().optional() }).optional(),
+                        tissue: z.object({ id: z.string(), label: z.string(), organs: z.array(z.string()).nullable().optional() }),
+                        rna: z.object({ value: z.number().nullable().optional(), unit: z.string().nullable().optional() }).nullable().optional(),
+                        protein: z.object({ level: z.number().nullable().optional() }).nullable().optional(),
                     }),
                 )
+                .nullable()
                 .optional(),
         })
+        .nullable()
         .optional(),
 });
 

@@ -28,15 +28,18 @@ export interface GithubRepo {
 // Raw GitHub search wire shape, validated at the fetch boundary. Every field is
 // optional — `parseGithubReposResponse` already filters out items missing the
 // fields it needs, so an over-strict schema would drop otherwise-usable pages.
+// `description` and `language` are also `.nullable()` because GitHub sends an
+// explicit JSON `null` (not omission) for repos lacking them — the common case,
+// which a bare `.optional()` would reject and take the whole page down with it.
 const GithubReposResponseSchema = z.object({
     items: z
         .array(
             z.object({
                 html_url: z.string().optional(),
                 full_name: z.string().optional(),
-                description: z.string().optional(),
+                description: z.string().nullable().optional(),
                 stargazers_count: z.number().optional(),
-                language: z.string().optional(),
+                language: z.string().nullable().optional(),
                 updated_at: z.string().optional(),
             }),
         )

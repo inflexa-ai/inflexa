@@ -32,8 +32,8 @@ export interface GeneInfo {
 // normalizes each into the camelCase `GeneInfo` we return.
 const RawGeneSchema = z.object({
     id: z.string().optional(),
-    display_name: z.string().optional(),
-    description: z.string().optional(),
+    display_name: z.string().nullable().optional(),
+    description: z.string().nullable().optional(),
     biotype: z.string().optional(),
     start: z.number().optional(),
     end: z.number().optional(),

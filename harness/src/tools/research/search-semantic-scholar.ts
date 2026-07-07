@@ -32,19 +32,22 @@ export interface SemanticScholarPaper {
 // is optional — `parseSemanticScholarResponse` already filters/coerces defensively,
 // so a partial-but-valid response must still parse; `externalIds` values stay
 // unconstrained (`z.unknown`) since the mapper only checks the container is an object.
+// The scalar fields are also `.nullable()`: Semantic Scholar sends an explicit
+// `null` for a missing abstract/year/venue/url/externalIds (very common), which a
+// bare `.optional()` would reject — failing the whole `data` array on one such paper.
 const SemanticScholarResponseSchema = z.object({
     data: z
         .array(
             z.object({
                 paperId: z.string().optional(),
                 title: z.string().optional(),
-                abstract: z.string().optional(),
-                year: z.number().optional(),
-                venue: z.string().optional(),
-                citationCount: z.number().optional(),
-                url: z.string().optional(),
-                authors: z.array(z.object({ name: z.string().optional() })).optional(),
-                externalIds: z.record(z.string(), z.unknown()).optional(),
+                abstract: z.string().nullable().optional(),
+                year: z.number().nullable().optional(),
+                venue: z.string().nullable().optional(),
+                citationCount: z.number().nullable().optional(),
+                url: z.string().nullable().optional(),
+                authors: z.array(z.object({ name: z.string().nullable().optional() })).optional(),
+                externalIds: z.record(z.string(), z.unknown()).nullable().optional(),
             }),
         )
         .optional(),

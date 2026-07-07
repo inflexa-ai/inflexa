@@ -23,7 +23,7 @@ type QueryDocsOutput = { found: false } | { found: true; documentation: string }
 // required — they are read without a guard — while genuinely-optional fields
 // carry `.optional()` so a partial-but-valid response still parses.
 const Context7SearchResponseSchema = z.object({
-    results: z.array(z.object({ id: z.string(), name: z.string(), description: z.string().optional() })).optional(),
+    results: z.array(z.object({ id: z.string(), name: z.string(), description: z.string().nullable().optional() })).optional(),
 });
 
 const Context7DocsResponseSchema = z.object({ content: z.string().optional() });
