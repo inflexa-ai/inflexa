@@ -42,6 +42,17 @@ type CollectorInputRef = CollectorRecord["inputs"][number];
 type ManifestEntry = ArtifactRegistrationInput["artifacts"][number];
 
 /**
+ * Strip the container mount prefix `/{resourceId}/` off a collector-recorded path, yielding its
+ * analysis-relative form; a path not under that mount (already analysis-rooted, or otherwise) passes
+ * through unchanged. Container reads and the recorded script line all arrive mount-absolute, so this is
+ * the single normalization every path crosses before it seeds — or resolves against — a file QName.
+ */
+function stripContainerPrefix(path: string, resourceId: string): string {
+    const prefix = `/${resourceId}/`;
+    return path.startsWith(prefix) ? path.slice(prefix.length) : path;
+}
+
+/**
  * Scope a collector-recorded script path into the analysis-scoped file-QName space the group's outputs
  * live in, so the document builder can resolve it against an already-registered output/input entity.
  * `inferScriptPath` (harness collector) records whatever token the command line carried — a
@@ -52,8 +63,7 @@ type ManifestEntry = ArtifactRegistrationInput["artifacts"][number];
  * fails to match in the builder, which skips it rather than minting a dangling entity.
  */
 function scopeScriptPath(scriptPath: string, resourceId: string, runId: string, stepId: string): string {
-    const containerPrefix = `/${resourceId}/`;
-    const stripped = scriptPath.startsWith(containerPrefix) ? scriptPath.slice(containerPrefix.length) : scriptPath;
+    const stripped = stripContainerPrefix(scriptPath, resourceId);
     const analysisRooted = stripped.startsWith("runs/") || stripped.startsWith("data/") || stripped.startsWith("dataprofile/");
     return analysisRooted ? stripped : `runs/${runId}/${stepId}/${stripped}`;
 }
@@ -75,11 +85,10 @@ function scopeScriptPath(scriptPath: string, resourceId: string, runId: string, 
  * `(path, hash)` so a repeated open or a script re-read collapses to one edge.
  */
 function toCommandInputs(reads: readonly CollectorInputRef[], resourceId: string, producedHashByPath: ReadonlyMap<string, string>): ProvCommandInputRef[] {
-    const containerPrefix = `/${resourceId}/`;
     const seen = new Set<string>();
     const inputs: ProvCommandInputRef[] = [];
     for (const ref of reads) {
-        const path = ref.path.startsWith(containerPrefix) ? ref.path.slice(containerPrefix.length) : ref.path;
+        const path = stripContainerPrefix(ref.path, resourceId);
         if (ref.source === "artifacts") {
             // Key the self-read on the entity THIS registration will register (surviving output hash),
             // not the replay/rewrite-fragile read-time hash — see the JSDoc.
@@ -249,16 +258,15 @@ export function createBusArtifactRegistry(): ArtifactRegistry {
                 registered.push({ path: file.path, externalId: fileQName(file) });
             }
 
-            // Step-level attested-input registry (unchanged): container-absolute reads strip to
-            // analysis-relative so a prior read lands in the producing file's QName space (fact #3); the
-            // step's own `"artifacts"` reads are skipped, and a hash-less ref fails the step.
-            const inputPrefix = `/${input.resourceId}/`;
+            // Step-level attested-input registry: container-absolute reads strip to analysis-relative so a
+            // prior read lands in the producing file's QName space (fact #3); the step's own `"artifacts"`
+            // reads are skipped, and a hash-less ref fails the step.
             for (const ref of input.collector.getTrackedInputs()) {
                 // The step's own outputs re-surface here as reads; skip them, mirroring reconcile's skip.
                 const source = ref.source;
                 if (source === "artifacts") continue;
 
-                const path = ref.path.startsWith(inputPrefix) ? ref.path.slice(inputPrefix.length) : ref.path;
+                const path = stripContainerPrefix(ref.path, input.resourceId);
 
                 // `fillInputHashesFromDisk` fails the step on an unattestable input, so a hash-less ref
                 // here is an upstream defect — fail registration rather than record a non-attested read.

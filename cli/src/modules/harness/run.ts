@@ -45,7 +45,6 @@ import {
     type RunAuthorizer,
     type RunStatus,
     type StepExecutionRow,
-    type WorkflowStatusString,
 } from "@inflexa-ai/harness";
 
 import { fail, dieOn, failViaShutdown } from "../../lib/cli.ts";
@@ -500,7 +499,10 @@ function renderRunProgress(steps: StepExecutionRow[], detail: { step: number; la
  * terminal is still ours: this is a deliberate SUBSET of `WorkflowStatusString` with
  * the live members (`PENDING`/`ENQUEUED`/`DELAYED`) excluded.
  */
-const DBOS_TERMINAL_STATUSES: ReadonlySet<WorkflowStatusString> = new Set([
+// Typed `ReadonlySet<string>` (not `<WorkflowStatusString>`) so the membership test below takes the raw
+// `dbos.workflow_status` string directly, with no cast. The ELEMENTS are still the SDK's `StatusString`
+// constants, so an engine-side status rename still breaks this list at build time.
+const DBOS_TERMINAL_STATUSES: ReadonlySet<string> = new Set([
     StatusString.SUCCESS,
     StatusString.ERROR,
     StatusString.MAX_RECOVERY_ATTEMPTS_EXCEEDED,
@@ -558,12 +560,7 @@ async function waitForRunTerminal(pool: Pool, runId: string, s: Spinner): Promis
         // only a fresh, still-`running` row under a terminal workflow is a real wedge.
         // A read error or a vanished row falls through to be settled on the next tick.
         const dbosStatus = await readParentWorkflowDbosStatus(pool, runId);
-        // `dbosStatus` is a raw string from `dbos.workflow_status`; the cast only
-        // satisfies `ReadonlySet<WorkflowStatusString>.has`'s invariant argument type.
-        // It is sound because `.has` is a pure membership lookup — a value that is not
-        // one of the four terminal literals is simply absent and returns false, so the
-        // cast can never misclassify a live or unknown status as terminal.
-        if (dbosStatus !== null && DBOS_TERMINAL_STATUSES.has(dbosStatus as WorkflowStatusString)) {
+        if (dbosStatus !== null && DBOS_TERMINAL_STATUSES.has(dbosStatus)) {
             const settled = await queryRun(pool, runId);
             if (settled.isOk() && settled.value !== null) {
                 if (settled.value.status !== "running") return settled.value;

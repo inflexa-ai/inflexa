@@ -830,7 +830,7 @@ describe("provenance recorder handles execution events (bus → flush → signed
     // step-level input_used — flushes to the signed column with the command activities and per-command
     // used/generation edges intact, and rotates the integrity columns. No live E2E: the bus→builder→
     // flush→sign pipeline was live-proven by `deepen-run-provenance`; this adds one event kind through
-    // that unchanged machinery, so recorder-level coverage is the deliberate ceiling.
+    // that same machinery, so recorder-level coverage is the deliberate ceiling.
     test("a mixed command registration flushes to the signed column with command activities and per-command edges", async () => {
         const { mkdirSync, rmSync } = await import("node:fs");
         const { join } = await import("node:path");

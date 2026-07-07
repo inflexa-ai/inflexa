@@ -62,8 +62,14 @@ export type ProvRunRef = {
 export type ProvRunOutcome = {
     /** Identifies the run whose activity this completion closes — matches the `run_started` `runId`. */
     runId: string;
-    /** The harness's terminal run status (its `RunStatus` minus the non-terminal `"running"`); both the success and failure boundary sites resolve to one of these. */
-    status: "completed" | "partial" | "failed" | "canceled" | "suspended_insufficient_funds";
+    /**
+     * The harness's terminal run status. The run body resolves BOTH boundary sites through
+     * `deriveFinalStatus`, which records a budget pause as `"canceled"` — so
+     * `"suspended_insufficient_funds"` (a `RunStatus` member) is never emitted and is deliberately
+     * absent here. Widen this only when the harness actually emits a new terminal status; the bridge's
+     * `event.status → outcome.status` assignment is the compile-time check that keeps the two in step.
+     */
+    status: "completed" | "partial" | "failed" | "canceled";
     /**
      * Epoch-ms the harness observed the run terminate, from its checkpointed clock — replay-stable,
      * never a cli receipt time. Builders convert it to the run activity's formal `prov:endTime`.
