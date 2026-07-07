@@ -57,13 +57,13 @@ const CtxChemicalSearchRowSchema = z.object({
 // it into `ChemicalDetail`, folding in the resolved `dtxsid` fallback.
 const RawChemicalDetailSchema = z.object({
     dtxsid: z.string().optional(),
-    dtxcid: z.string().optional(),
+    dtxcid: z.string().nullable().optional(),
     casrn: z.string().nullable().optional(),
-    preferredName: z.string().optional(),
-    iupacName: z.string().optional(),
-    molFormula: z.string().optional(),
-    smiles: z.string().optional(),
-    inchikey: z.string().optional(),
+    preferredName: z.string().nullable().optional(),
+    iupacName: z.string().nullable().optional(),
+    molFormula: z.string().nullable().optional(),
+    smiles: z.string().nullable().optional(),
+    inchikey: z.string().nullable().optional(),
     monoisotopicMass: z.number().nullable().optional(),
     averageMass: z.number().nullable().optional(),
     qcLevel: z.number().nullable().optional(),
@@ -77,8 +77,8 @@ const RawChemicalDetailSchema = z.object({
 type RawChemicalDetail = z.infer<typeof RawChemicalDetailSchema>;
 
 const RawPropertySummarySchema = z.object({
-    propName: z.string().optional(),
-    unit: z.string().optional(),
+    propName: z.string().nullable().optional(),
+    unit: z.string().nullable().optional(),
     experimentalCount: z.number().nullable().optional(),
     experimentalMedian: z.number().nullable().optional(),
     experimentalMin: z.number().nullable().optional(),

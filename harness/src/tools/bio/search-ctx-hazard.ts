@@ -17,19 +17,19 @@ import { EPA_CCTE_BASE, getEpaCcteHeaders } from "../lib/toxcast-config.js";
 // `toNumberOrNull` can coerce them without the schema rejecting the row.
 const ToxValSchema = z
     .object({
-        source: z.string().optional(),
-        toxvalType: z.string().optional(),
+        source: z.string().nullable().optional(),
+        toxvalType: z.string().nullable().optional(),
         toxvalNumeric: z.unknown().optional(),
-        toxvalUnits: z.string().optional(),
-        studyType: z.string().optional(),
-        studyDurationClass: z.string().optional(),
-        speciesCommon: z.string().optional(),
-        exposureRoute: z.string().optional(),
-        toxicologicalEffect: z.string().optional(),
-        riskAssessmentClass: z.string().optional(),
-        humanEco: z.string().optional(),
+        toxvalUnits: z.string().nullable().optional(),
+        studyType: z.string().nullable().optional(),
+        studyDurationClass: z.string().nullable().optional(),
+        speciesCommon: z.string().nullable().optional(),
+        exposureRoute: z.string().nullable().optional(),
+        toxicologicalEffect: z.string().nullable().optional(),
+        riskAssessmentClass: z.string().nullable().optional(),
+        humanEco: z.string().nullable().optional(),
         year: z.unknown().optional(),
-        quality: z.string().optional(),
+        quality: z.string().nullable().optional(),
     })
     .transform((r) => ({
         source: r.source ?? "",
@@ -50,12 +50,12 @@ type ToxValEntry = z.infer<typeof ToxValSchema>;
 
 const GenetoxSchema = z
     .object({
-        source: z.string().optional(),
-        assayCategory: z.string().optional(),
-        assayType: z.string().optional(),
-        metabolicActivation: z.string().optional(),
-        species: z.string().optional(),
-        overallResult: z.string().optional(),
+        source: z.string().nullable().optional(),
+        assayCategory: z.string().nullable().optional(),
+        assayType: z.string().nullable().optional(),
+        metabolicActivation: z.string().nullable().optional(),
+        species: z.string().nullable().optional(),
+        overallResult: z.string().nullable().optional(),
         year: z.unknown().optional(),
     })
     .transform((r) => ({
@@ -71,10 +71,10 @@ type GenetoxSummary = z.infer<typeof GenetoxSchema>;
 
 const CancerSchema = z
     .object({
-        source: z.string().optional(),
-        classification: z.string().optional(),
-        cancerClassification: z.string().optional(),
-        url: z.string().optional(),
+        source: z.string().nullable().optional(),
+        classification: z.string().nullable().optional(),
+        cancerClassification: z.string().nullable().optional(),
+        url: z.string().nullable().optional(),
     })
     .transform((r) => ({
         source: r.source ?? "",
@@ -99,7 +99,7 @@ type CtxHazardResult = { found: false; query: string } | CtxHazardOutput;
 // surfaced as `invalid_response`, not a silent `undefined`.
 const CtxChemicalSearchRowSchema = z.object({
     dtxsid: z.string(),
-    preferredName: z.string().optional(),
+    preferredName: z.string().nullable().optional(),
 });
 
 export function createSearchCtxHazardTool(deps: { apiKey: string }) {

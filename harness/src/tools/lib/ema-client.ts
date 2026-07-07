@@ -36,7 +36,7 @@ export interface EmaReferral {
     referralUrl: string;
 }
 
-function parseMedicineList(field: string | undefined): string[] {
+function parseMedicineList(field: string | null | undefined): string[] {
     if (!field || !field.trim()) return [];
     return field
         .split(/[;,]/)
@@ -45,31 +45,34 @@ function parseMedicineList(field: string | undefined): string[] {
 }
 
 // One schema that both validates the raw referral wire shape (snake_case, every
-// field optional — the bulk file omits absent values) and normalizes it into the
-// camelCase `EmaReferral` we return. Parsing IS the validation: `apiFetchValidated`
-// runs this over the download, so a record whose field TYPES drift is rejected as
-// `invalid_response` instead of silently mis-mapped.
+// field optional or null — the bulk file omits or nulls absent values) and
+// normalizes it into the camelCase `EmaReferral` we return. Parsing IS the
+// validation: `apiFetchValidated` runs this over the download, so a record whose
+// field TYPES drift is rejected as `invalid_response` instead of silently
+// mis-mapped. Every field is `.nullable()` so one null-bearing record in the
+// ~600-row catalogue doesn't fail the whole `data` array (the transform already
+// collapses null to "" via `??`).
 const EmaReferralSchema = z
     .object({
-        category: z.string().optional(),
-        referral_name: z.string().optional(),
-        international_non_proprietary_name_inn_common_name: z.string().optional(),
-        current_status: z.string().optional(),
-        safety_referral: z.string().optional(),
-        referral_type: z.string().optional(),
-        associated_names_centrally_authorised_medicines: z.string().optional(),
-        associated_names_non_centrally_authorised_medicines: z.string().optional(),
-        class: z.string().optional(),
-        reference_number: z.string().optional(),
-        authorisation_model: z.string().optional(),
-        procedure_start_date: z.string().optional(),
-        prac_recommendation_date: z.string().optional(),
-        cmdh_position_date: z.string().optional(),
-        chmp_cvmp_opinion_date: z.string().optional(),
-        european_commission_decision_date: z.string().optional(),
-        first_published_date: z.string().optional(),
-        last_updated_date: z.string().optional(),
-        referral_url: z.string().optional(),
+        category: z.string().nullable().optional(),
+        referral_name: z.string().nullable().optional(),
+        international_non_proprietary_name_inn_common_name: z.string().nullable().optional(),
+        current_status: z.string().nullable().optional(),
+        safety_referral: z.string().nullable().optional(),
+        referral_type: z.string().nullable().optional(),
+        associated_names_centrally_authorised_medicines: z.string().nullable().optional(),
+        associated_names_non_centrally_authorised_medicines: z.string().nullable().optional(),
+        class: z.string().nullable().optional(),
+        reference_number: z.string().nullable().optional(),
+        authorisation_model: z.string().nullable().optional(),
+        procedure_start_date: z.string().nullable().optional(),
+        prac_recommendation_date: z.string().nullable().optional(),
+        cmdh_position_date: z.string().nullable().optional(),
+        chmp_cvmp_opinion_date: z.string().nullable().optional(),
+        european_commission_decision_date: z.string().nullable().optional(),
+        first_published_date: z.string().nullable().optional(),
+        last_updated_date: z.string().nullable().optional(),
+        referral_url: z.string().nullable().optional(),
     })
     .transform((raw): EmaReferral => ({
         category: raw.category ?? "",

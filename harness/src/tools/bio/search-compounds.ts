@@ -23,18 +23,23 @@ import { CHEMBL_BASE, CHEMBL_HEADERS as HEADERS } from "../lib/chembl-config.js"
 const MoleculeSchema = z
     .object({
         molecule_chembl_id: z.string().optional(),
-        pref_name: z.string().optional(),
+        // ChEMBL sends explicit `null` (not omission) for an unnamed compound, and
+        // `null` for the whole structures/properties blocks on biologics/antibodies
+        // — `.nullable()` so those rows parse instead of failing the `molecules` array.
+        pref_name: z.string().nullable().optional(),
         molecule_structures: z
             .object({
-                canonical_smiles: z.string().optional(),
+                canonical_smiles: z.string().nullable().optional(),
             })
+            .nullable()
             .optional(),
         molecule_properties: z
             .object({
-                full_mwt: z.string().optional(),
-                alogp: z.string().optional(),
-                molecular_formula: z.string().optional(),
+                full_mwt: z.string().nullable().optional(),
+                alogp: z.string().nullable().optional(),
+                molecular_formula: z.string().nullable().optional(),
             })
+            .nullable()
             .optional(),
     })
     .transform((raw) => ({

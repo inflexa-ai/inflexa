@@ -69,7 +69,7 @@ const CtxChemicalSearchRowSchema = z.object({
 const RawSeemPredictionSchema = z.object({
     dtxsid: z.string().optional(),
     productionVolume: z.number().nullable().optional(),
-    units: z.string().optional(),
+    units: z.string().nullable().optional(),
     probabilityDietary: z.number().nullable().optional(),
     probabilityResidential: z.number().nullable().optional(),
     probabilityPesticde: z.number().nullable().optional(),
@@ -78,28 +78,28 @@ const RawSeemPredictionSchema = z.object({
 });
 
 const RawHttkRowSchema = z.object({
-    parameter: z.string().optional(),
+    parameter: z.string().nullable().optional(),
     measured: z.number().nullable().optional(),
     predicted: z.number().nullable().optional(),
-    units: z.string().optional(),
-    model: z.string().optional(),
-    species: z.string().optional(),
-    reference: z.string().optional(),
+    units: z.string().nullable().optional(),
+    model: z.string().nullable().optional(),
+    species: z.string().nullable().optional(),
+    reference: z.string().nullable().optional(),
 });
 
 const RawFunctionalUseRowSchema = z.object({
-    functioncategory: z.string().optional(),
-    reportedfunction: z.string().optional(),
-    doctitle: z.string().optional(),
+    functioncategory: z.string().nullable().optional(),
+    reportedfunction: z.string().nullable().optional(),
+    doctitle: z.string().nullable().optional(),
 });
 
 const RawProductDataRowSchema = z.object({
-    productname: z.string().optional(),
-    gencat: z.string().optional(),
-    prodfam: z.string().optional(),
-    prodtype: z.string().optional(),
+    productname: z.string().nullable().optional(),
+    gencat: z.string().nullable().optional(),
+    prodfam: z.string().nullable().optional(),
+    prodtype: z.string().nullable().optional(),
     centralweightfraction: z.number().nullable().optional(),
-    weightfractiontype: z.string().optional(),
+    weightfractiontype: z.string().nullable().optional(),
 });
 
 export function createSearchCtxExposureTool(deps: { apiKey: string }) {

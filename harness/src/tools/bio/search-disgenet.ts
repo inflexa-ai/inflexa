@@ -20,18 +20,18 @@ import { DISGENET_BASE, getDisgenetHeaders } from "../lib/disgenet-config.js";
 // `z.infer` below is the OUTPUT type — no separate raw interface or mapper.
 const GdaSchema = z
     .object({
-        gene_symbol: z.string().optional(),
-        gene_name: z.string().optional(),
-        geneid: z.number().optional(),
-        disease_name: z.string().optional(),
-        diseaseid: z.string().optional(),
-        disease_type: z.string().optional(),
-        score: z.number().optional(),
-        ei: z.number().optional(),
-        year_initial: z.number().optional(),
-        year_final: z.number().optional(),
-        pmid_count: z.number().optional(),
-        source: z.string().optional(),
+        gene_symbol: z.string().nullable().optional(),
+        gene_name: z.string().nullable().optional(),
+        geneid: z.number().nullable().optional(),
+        disease_name: z.string().nullable().optional(),
+        diseaseid: z.string().nullable().optional(),
+        disease_type: z.string().nullable().optional(),
+        score: z.number().nullable().optional(),
+        ei: z.number().nullable().optional(),
+        year_initial: z.number().nullable().optional(),
+        year_final: z.number().nullable().optional(),
+        pmid_count: z.number().nullable().optional(),
+        source: z.string().nullable().optional(),
     })
     .transform((gda) => ({
         geneSymbol: gda.gene_symbol ?? "",
