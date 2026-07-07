@@ -155,6 +155,17 @@ cli.command("run [analysis]")
         else await runAnalysis(flags, options.plan);
     });
 
+// The conversational harness entry point: boots the embedded runtime and drives
+// the conversation agent in a stdout REPL (a deliberately temporary dev surface —
+// see chat.ts's TODO(extend); no passive flow may boot the runtime).
+cli.command("chat [analysis]")
+    .description("Chat with the analysis agent (plan, execute, and inspect runs conversationally)")
+    .option("--thread <id>", "Resume an existing conversation thread")
+    .action(async (analysis: string | undefined, options: { thread?: string }) => {
+        const { runChat } = await import("../modules/harness/chat.ts");
+        await runChat({ analysis }, options.thread);
+    });
+
 const analysisCmd = cli.command("analysis").description("Manage analyses (grouping)");
 
 analysisCmd

@@ -1,18 +1,20 @@
-// TODO(extend): `triggerAnalysisRun` in this file is a faithful replica of the
-// harness's own `executePlan` chat tool (`harness/src/tools/execute-plan.ts`):
-// dedup pre-check → reserve → authorize → build input → launch, with the same
-// three failure paths (authorize-failure marks the row failed; launch-failure
-// revokes + marks failed; a dedup collision resolves to the winner). The harness
-// keeps that flow inside a chat-route tool that needs a `ToolContext` and an
-// analysis-scoped `RequestSession` and emits `data-run-card` parts the cli does
-// not render, so the cli cannot call it off-label (design D2). This replica
-// exists ONLY to drive the run engine from the cli before the
-// conversation-agent/planner adoption lands a shared, callable trigger. It is
-// under the SAME dev-surface clearing contract as file-based plan intake
-// (`plan_intake.ts`, whose own `TODO(extend)` names the same contract) and the
-// `plan-intake` spec (`openspec/specs/plan-intake/spec.md`): retire this replica
-// together with file intake when the planner is adopted. Keep it a thin mirror —
-// do not grow trigger logic here that the harness does not also have.
+// TODO(extend): `triggerAnalysisRun` here replicates the harness's own `executePlan`
+// chat tool (`harness/src/tools/execute-plan.ts`): dedup pre-check → reserve →
+// authorize → build input → launch, with the same three failure paths
+// (authorize-failure marks the row failed; launch-failure revokes + marks failed; a
+// dedup collision resolves to the winner). The harness keeps that flow inside a
+// chat-route tool driven by a live `ToolContext` and an analysis-scoped
+// `RequestSession`; `inflexa run --plan <file>` is the model-free REPLAY path with no
+// chat turn to supply them, so it cannot call the tool and drives the run engine
+// through this mirror instead (design D2). The mirror STANDS: #33 M2 absorbs its
+// internals into the daemon's trigger endpoint, so chat-executed and file-replayed
+// plans run one shared flow — the replica is folded into that endpoint, not deleted;
+// file replay is a first-class capability (`plan_intake.ts`'s `TODO(extend)` and the
+// `plan-intake` spec, `openspec/specs/plan-intake/spec.md`, record the same). The
+// eventual inverse — a deliberate `inflexa plan export` command that serializes a
+// run's plan back to the interchange format — is the named follow-up (canonical
+// record in `plan_intake.ts`). Keep it a thin mirror — do not grow trigger logic
+// here the harness does not also have.
 
 import { randomUUIDv7 } from "bun";
 import { intro, log, outro, spinner } from "@clack/prompts";
@@ -48,6 +50,7 @@ import {
 } from "@inflexa-ai/harness";
 
 import { fail, dieOn, failViaShutdown } from "../../lib/cli.ts";
+import { acquireInstanceLock } from "../../lib/lock.ts";
 import { shutdown } from "../../lib/shutdown.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
 import type { ContextFlags } from "../analysis/context.ts";
@@ -366,6 +369,18 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
     );
 
     await ensureSandboxImage(cfg.sandboxImage);
+
+    // Claim the per-analysis instance lock before boot, so this analysis stays
+    // single-process for the whole run — the interim two-recorder fix of #37, the
+    // same guard the TUI takes on open (app.launch.tsx). Acquired after the fail-fast
+    // pre-flight gates and before the runtime boots or any input is staged; the
+    // read-only `--status` path never reaches here, so it observes without a lock. The
+    // process-exit hook (src/index.ts) releases it on every exit, so a bail-out below
+    // leaks nothing.
+    const lock = acquireInstanceLock(analysis.id);
+    if (!lock.acquired) {
+        fail(`"${analysis.name}" is already open in another instance (pid ${lock.holderPid}). Wait for it to finish or stop that process, then re-run.`);
+    }
 
     const s = spinner();
     s.start("Booting the harness runtime (Postgres, callback listener, DBOS)");

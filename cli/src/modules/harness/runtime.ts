@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import type pino from "pino";
 import { ok, err, type Result } from "neverthrow";
 import {
+    assembleCoreRuntime,
     createAnthropicProvider,
     createDbosRunLauncher,
     createLocalRunAuthorizer,
@@ -13,20 +14,20 @@ import {
     launchDbos,
     makeLocalAuth,
     queryActiveSandboxes,
-    registerDataProfileWorkflow,
-    registerExecuteAnalysis,
     registerNotificationSweep,
     registerSandboxReaper,
-    registerSandboxStep,
     registerWatchdog,
     shutdownDbos,
+    sweepEphemeralWorkflows,
+    UnavailablePreviewPublisher,
+    type AgentDefinition,
     type AgentSession,
-    type DataProfileDeps,
+    type ChatProvider,
+    type ConversationAssemblyDeps,
+    type CoreWorkflowDeps,
     type DataProfileTriggerDeps,
-    type DataProfileWorkflowInput,
     type DbosConfig,
     type EmbeddingProvider,
-    type ExecuteAnalysisDeps,
     type ExecuteAnalysisInput,
     type ExecuteAnalysisResult,
     type MachineBudget,
@@ -35,9 +36,6 @@ import {
     type RegisterReaperDeps,
     type RunAuthorizer,
     type RunLauncher,
-    type SandboxStepDeps,
-    type SandboxStepInput,
-    type SandboxStepResult,
     type WatchdogDeps,
 } from "@inflexa-ai/harness";
 
@@ -52,7 +50,7 @@ import type { PostgresConnection, PostgresError } from "../infra/postgres_types.
 import { readApiKey, resolveModelId, type ChatSetupError } from "../intelligence/chat.ts";
 import { resolveHarnessConfig, type ResolvedHarnessConfig } from "./config.ts";
 import { noopExecIngress, startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
-import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition } from "./run_deps.ts";
+import { buildEphemeralDeps, buildExecuteAnalysisDeps, buildExecuteTargetAssessmentDeps, buildSandboxStepDeps, type RunEngineComposition } from "./run_deps.ts";
 
 // The embedded-harness composition root. Boots lazily on the first profile
 // trigger (never from a passive flow — no-litter policy) and holds a process
@@ -62,8 +60,10 @@ import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineCompositi
 //
 // Registration happens BEFORE `launchDbos`: `DBOS.launch()` runs recovery
 // synchronously and resolves in-flight workflows by their registered name, so a
-// workflow not registered at launch cannot be reclaimed. This matches
-// `assembleCoreRuntime`, the declared source of truth for wiring order.
+// workflow not registered at launch cannot be reclaimed. `assembleCoreRuntime`
+// (the harness composition root) owns the whole registration cohort in one call —
+// it is the declared source of truth for wiring order (child-before-parent), so
+// the boot hands it the deps and never registers a durable workflow by hand.
 
 /**
  * Ready-to-use deps for the analysis-run trigger flow (`inflexa run`). Mirrors
@@ -100,6 +100,20 @@ export type HarnessRuntime = {
     readonly triggerDeps: DataProfileTriggerDeps;
     /** Ready-to-use deps for the analysis-run trigger flow. */
     readonly runTriggerDeps: RunTriggerDeps;
+    /**
+     * The assembled conversation `AgentDefinition` — the `chat` command drives it
+     * with {@link HarnessRuntime.provider} via `runAgent`. Built by
+     * `assembleCoreRuntime` over the same registered workflow callables the
+     * trigger deps expose, so its `execute_plan` tool launches the identical
+     * `executeAnalysis` parent.
+     */
+    readonly conversationAgent: AgentDefinition;
+    /**
+     * The proxy-backed chat provider the conversation agent runs its tool loop on
+     * — the same instance the durable workflows use. Exposed so `chat` can pass it
+     * as the `runAgent` provider without re-resolving the model or key.
+     */
+    readonly provider: ChatProvider;
     readonly ingress: ExecIngress;
 };
 
@@ -110,6 +124,7 @@ export type HarnessBootError =
     | { type: "embedding_probe_failed"; detail: string }
     | { type: "embedding_dimension_mismatch"; expected: number; actual: number }
     | { type: "skills_dir_missing"; path: string | null }
+    | { type: "templates_dir_missing"; path: string | null }
     | { type: "proxy_key_missing"; cause: ChatSetupError }
     | { type: "model_unresolved"; cause: ChatSetupError }
     | { type: "model_not_claude"; model: string }
@@ -179,11 +194,20 @@ export type BootSeams = {
     readonly readKey: () => Promise<Result<string, ChatSetupError>>;
     readonly resolveModel: (apiKey: string) => Promise<Result<string, ChatSetupError>>;
     readonly resolveEmbedding: () => Result<EmbeddingProvider, EmbeddingResolveError>;
-    readonly register: (deps: DataProfileDeps) => (input: DataProfileWorkflowInput) => Promise<void>;
-    /** Register the sandbox-step CHILD workflow — must run before {@link BootSeams.registerExecuteAnalysis}. */
-    readonly registerSandboxStep: (deps: SandboxStepDeps) => (input: SandboxStepInput) => Promise<SandboxStepResult>;
-    /** Register the execute-analysis PARENT workflow — its deps close over the child callable. */
-    readonly registerExecuteAnalysis: (deps: ExecuteAnalysisDeps) => (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
+    /**
+     * The harness composition root — registers all five durable workflows
+     * (child-before-parent, one cohort) and builds the conversation agent over
+     * the registered callables. Replaces the hand-maintained per-workflow
+     * registration seams; the ordering invariant now lives in the harness.
+     */
+    readonly assemble: typeof assembleCoreRuntime;
+    /**
+     * Cancel this executor's PENDING `ephemeral:*` rows BEFORE launch (design
+     * D2). Registering the ephemeral workflow makes a crashed turn's row
+     * re-dispatchable by recovery; the only race-free cancel point is a direct
+     * pre-launch system-DB UPDATE.
+     */
+    readonly sweepEphemeral: typeof sweepEphemeralWorkflows;
     /** Register the orphaned-container reaper scheduled workflow (design D5). */
     readonly registerReaper: (deps: RegisterReaperDeps) => void;
     /** Register the dead-sandbox liveness watchdog scheduled workflow (design D5). */
@@ -201,9 +225,8 @@ const realSeams: BootSeams = {
     readKey: readApiKey,
     resolveModel: resolveModelId,
     resolveEmbedding: () => resolveEmbedder(readConfig()),
-    register: registerDataProfileWorkflow,
-    registerSandboxStep,
-    registerExecuteAnalysis,
+    assemble: assembleCoreRuntime,
+    sweepEphemeral: sweepEphemeralWorkflows,
     registerReaper: registerSandboxReaper,
     registerWatchdog,
     registerNotificationSweep,
@@ -242,9 +265,10 @@ export function __resetHarnessRuntimeForTest(): void {
 
 /**
  * Boot (or return) the embedded harness runtime. Sequence: prerequisites →
- * Postgres readiness → callback ingress → schema init → workflow registration
- * → DBOS launch. Idempotent per process; the shutdown hook is registered once,
- * on success.
+ * Postgres readiness → callback ingress → schema init → ephemeral sweep →
+ * composition root (`assembleCoreRuntime`) → sandbox-hygiene crons → DBOS
+ * launch. Idempotent per process; the shutdown hook is registered once, on
+ * success.
  */
 export async function bootHarnessRuntime(
     options: { seams?: Partial<BootSeams>; config?: ResolvedHarnessConfig } = {},
@@ -266,6 +290,13 @@ export async function bootHarnessRuntime(
     // proxy fronts OAuth chat providers and serves no embeddings route.
     if (cfg.skillsDir === null || !existsSync(cfg.skillsDir)) {
         return err({ type: "skills_dir_missing", path: cfg.skillsDir });
+    }
+    // Templates are the conversation agent's second unconditional prerequisite:
+    // `iterate_report` joins `report-html` under this tree. Gated here, beside
+    // skills, so a missing tree fails free before any side effect (mirrors the
+    // skills gate exactly — `cfg.templatesDir` is non-null past this point).
+    if (cfg.templatesDir === null || !existsSync(cfg.templatesDir)) {
+        return err({ type: "templates_dir_missing", path: cfg.templatesDir });
     }
     const embedderResult = seams.resolveEmbedding();
     if (embedderResult.isErr()) return err({ type: "embedding_unresolved", cause: embedderResult.error });
@@ -352,16 +383,26 @@ export async function bootHarnessRuntime(
         // may resume a profile workflow that queries them on its first step.
         await seams.initState(pool);
 
+        // Cancel this executor's stale PENDING `ephemeral:*` rows BEFORE launch
+        // (design D2). Once `assembleCoreRuntime` registers the ephemeral workflow
+        // below, a prior crash's row becomes re-dispatchable by launch-time
+        // recovery — a sandbox for a chat turn whose awaiter is long gone. The only
+        // race-free cancel point is a direct system-DB UPDATE before launch, so the
+        // sweep sits strictly between schema init and assembly, never after launch.
+        // `executorId "local"` matches `launchDbos`'s stable executor id below.
+        await seams.sweepEphemeral({ pool, logger, executorId: "local" });
+
         const resolveBilling = createNoopBillingResolver();
 
         // Shared backends built ONCE so the profile workflow, the sandbox-step
-        // child, and the execute-analysis parent all close over the SAME
-        // instances. `provider` is a `ChatProvider` (it satisfies the
-        // sandbox-step's `AgentChat` seam too). The embedding provider is NOT
-        // built here — it was resolved up-front (`embedding`, via the
-        // resolveEmbedding seam) and is threaded through unchanged, so the profile
-        // path and the run engine share the one resolved instance. `cfg.skillsDir`
-        // is non-null here — the pre-flight above returned if it was null.
+        // child, the execute-analysis parent, the ephemeral runner, and the
+        // conversation agent all close over the SAME instances. `provider` is a
+        // `ChatProvider` (it satisfies the sandbox-step's `AgentChat` seam too). The
+        // embedding provider is NOT built here — it was resolved up-front
+        // (`embedding`, via the resolveEmbedding seam) and is threaded through
+        // unchanged, so every path shares the one resolved instance. `cfg.skillsDir`
+        // and `cfg.templatesDir` are non-null here — the pre-flight above returned
+        // if either was null.
         const provider = createAnthropicProvider({ baseURL: env.cliproxyApiUrl, token: apiKey, model, resolveBilling });
         const sandboxClient = createSandboxClient({
             pool,
@@ -380,10 +421,16 @@ export async function bootHarnessRuntime(
             sessionsBasePath: env.sessionsDir,
         });
         const workspaceFs = createWorkspaceFilesystem({ sessionsBasePath: env.sessionsDir });
-        // One authorizer instance, shared by the parent workflow's terminal
-        // revoke and the run-trigger flow's async-edge authorize (the local
-        // realization is stateless, so sharing is purely to avoid duplication).
+        // One authorizer instance, shared by the parent workflow's terminal revoke,
+        // the run-trigger flow's async-edge authorize, AND the conversation agent's
+        // execute_plan / run_ephemeral tools (the local realization is stateless, so
+        // sharing is purely to avoid duplication).
         const runAuthorizer = createLocalRunAuthorizer();
+        // One launcher instance, shared by the conversation agent's execute_plan
+        // tool (wired through the conversation bundle) and the file-replay run
+        // trigger (`runTriggerDeps`) — same reasoning as the shared authorizer: a
+        // single seam realization drives every durable-run launch on this analysis.
+        const runLauncher = createDbosRunLauncher();
 
         const composition: RunEngineComposition = {
             pool,
@@ -397,33 +444,66 @@ export async function bootHarnessRuntime(
             bioKeys: cfg.bioKeys,
         };
 
-        // Registration cohort — ONE pre-launch batch (design D1/D5). Child before
-        // parent: the parent's dispatch closes over the registered child callable,
-        // so `registerSandboxStep` must precede `registerExecuteAnalysis` (mirrors
-        // `assemble.ts:75-76`). The three sandbox-hygiene scheduled workflows join
-        // the same batch. All of it lands before `launch`, which is the invariant
-        // that matters: DBOS recovery at launch resolves in-flight workflows by
-        // their registered name, so nothing the cli can trigger may register after.
-        const sandboxStepCallable = seams.registerSandboxStep(buildSandboxStepDeps(composition));
-        const executeAnalysis = seams.registerExecuteAnalysis(buildExecuteAnalysisDeps(composition, sandboxStepCallable, runAuthorizer));
-
-        const workflow = seams.register({
+        // Registration cohort — ONE pre-launch call (design D1). `assembleCoreRuntime`
+        // registers all five durable workflows and builds the conversation agent over
+        // the registered callables. Child-before-parent ordering is the harness's
+        // invariant now: `buildExecuteAnalysis` receives the registered sandbox-step
+        // callable, an ordering its builder API makes a type error to violate — the
+        // cli no longer hand-maintains a mirror of it. `executeTargetAssessment` is
+        // registered DELIBERATELY UNTRIGGERABLE: no cli surface launches it, so it is
+        // never recovered — harmless wiring the one-cohort discipline requires, not
+        // dead code (design D1). Everything lands before `launch`, the invariant that
+        // matters: recovery resolves in-flight workflows by registered name, so
+        // nothing the cli can trigger may register after.
+        const workflows: CoreWorkflowDeps = {
+            sandboxStep: buildSandboxStepDeps(composition),
+            buildExecuteAnalysis: (sandboxStep) => buildExecuteAnalysisDeps(composition, sandboxStep, runAuthorizer),
+            executeTargetAssessment: buildExecuteTargetAssessmentDeps(composition, runAuthorizer),
+            // The data-profile deps stay an inline bundle: every field is a shared
+            // backend plus the shared authorizer, so there is no reusable builder to
+            // extract (unlike the two run-engine bundles).
+            dataProfile: {
+                provider,
+                pool,
+                sandboxClient,
+                workspaceFs,
+                sessionsBasePath: env.sessionsDir,
+                model,
+                runAuthorizer,
+                bioKeys: cfg.bioKeys,
+                embedding,
+                skillsDir: cfg.skillsDir,
+            },
+            ephemeral: buildEphemeralDeps(composition),
+        };
+        // The conversation agent's dep surface minus the three fields
+        // `assembleCoreRuntime` injects itself (both workflow callables + the resource
+        // policy). Every backend is the shared instance; `templatesDir` is non-null
+        // past the pre-flight gate; `chrome: {}` is the honest local default — with
+        // the unavailable preview publisher, report preview short-circuits before any
+        // Chrome connection (design D3).
+        const conversation: ConversationAssemblyDeps = {
             provider,
             pool,
-            sandboxClient,
-            workspaceFs,
-            sessionsBasePath: env.sessionsDir,
-            model,
-            runAuthorizer,
-            bioKeys: cfg.bioKeys,
             embedding,
-            skillsDir: cfg.skillsDir,
-        });
+            workspaceFs,
+            model,
+            sessionsBasePath: env.sessionsDir,
+            runAuthorizer,
+            runLauncher,
+            createPreviewPublisher: async () => new UnavailablePreviewPublisher(),
+            bioKeys: cfg.bioKeys,
+            templatesDir: cfg.templatesDir,
+            chrome: {},
+        };
+        const core = seams.assemble({ conversation, workflows, resourcePolicy: cfg.resourcePolicy });
 
         // Sandbox-hygiene crons: reaper tears down orphaned containers a killed
         // host left behind; the watchdog converts a dead sandbox into a prompt
         // step failure instead of a deadline-long hang; the sweep clears stale
         // notification rows. They act only on rows/containers the harness created.
+        // They stay the boot's own duty — `assembleCoreRuntime` does not own them —
+        // and register before `launch` alongside the durable cohort.
         seams.registerReaper({ pool, sandboxClient, logger });
         // `composition.pool` (typed `Pool`) rather than the `Pool | null`-typed
         // `pool` local, whose narrowing a deferred closure does not preserve.
@@ -451,8 +531,10 @@ export async function bootHarnessRuntime(
         const runtime: HarnessRuntime = {
             model,
             pool,
-            triggerDeps: { pool, runAuthorizer, workflow },
-            runTriggerDeps: { pool, executeAnalysis, runLauncher: createDbosRunLauncher(), runAuthorizer, budget: cfg.resourcePolicy.budget },
+            triggerDeps: { pool, runAuthorizer, workflow: core.workflows.dataProfile },
+            runTriggerDeps: { pool, executeAnalysis: core.workflows.executeAnalysis, runLauncher, runAuthorizer, budget: cfg.resourcePolicy.budget },
+            conversationAgent: core.conversationAgent,
+            provider,
             ingress,
         };
         active = runtime;

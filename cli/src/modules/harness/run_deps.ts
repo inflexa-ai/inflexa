@@ -6,6 +6,7 @@ import {
     SANDBOX_AGENT_META,
     type AgentDefinition,
     type ChatProvider,
+    type CoreWorkflowDeps,
     type EmbeddingProvider,
     type ExecuteAnalysisDeps,
     type Pool,
@@ -164,5 +165,50 @@ export function buildExecuteAnalysisDeps(
         runCharge: createNoopRunCharge(),
         runAuthorizer,
         emitProvenance: createRunProvenanceEmitter(),
+    };
+}
+
+/**
+ * Assemble the ephemeral-runner's construction deps. Every field is a straight
+ * pass-through of the shared backends — an ephemeral chat-turn run needs the same
+ * provider/pool/sandbox/workspace/embedding graph the durable workflows use.
+ * `resourcePolicy` is omitted deliberately: `assembleCoreRuntime` injects the one
+ * host policy so the ephemeral sandbox size can never diverge from what the
+ * planner tools and `execute_plan` see. The return type is sourced from
+ * {@link CoreWorkflowDeps} (barrel) rather than the harness-internal `EphemeralDeps`,
+ * which is not part of the embedder surface.
+ */
+export function buildEphemeralDeps(comp: RunEngineComposition): CoreWorkflowDeps["ephemeral"] {
+    return {
+        provider: comp.provider,
+        pool: comp.pool,
+        sandboxClient: comp.sandboxClient,
+        workspaceFs: comp.workspaceFs,
+        embedding: comp.embedding,
+        sessionsBasePath: comp.sessionsBasePath,
+        model: comp.model,
+        bioKeys: comp.bioKeys,
+    };
+}
+
+/**
+ * Assemble the target-assessment workflow's construction deps. Registered
+ * deliberately untriggerable in the cli (no surface launches it; design D1), so
+ * these deps exist only to satisfy `assembleCoreRuntime`'s one-cohort
+ * registration — never exercised at runtime. `chatProvider` takes the one shared
+ * provider (`ChatProvider extends AgentChat`); `decisionModel`/`synthesisModel`
+ * reuse the single cli model id, and `ncbiApiKey` threads the optional NCBI key
+ * for the Phase-1 collectors. The return type is sourced from
+ * {@link CoreWorkflowDeps} (barrel) rather than the harness-internal
+ * `ExecuteTargetAssessmentDeps`, which is not part of the embedder surface.
+ */
+export function buildExecuteTargetAssessmentDeps(comp: RunEngineComposition, runAuthorizer: RunAuthorizer): CoreWorkflowDeps["executeTargetAssessment"] {
+    return {
+        pool: comp.pool,
+        runAuthorizer,
+        ncbiApiKey: comp.bioKeys.ncbi,
+        chatProvider: comp.provider,
+        decisionModel: comp.model,
+        synthesisModel: comp.model,
     };
 }

@@ -11,9 +11,10 @@
  * The system prompt is static composition — SOUL kernel + SOUL conversational
  * + the conversation prompt — with no processor pipeline.
  *
- * `executePlan` is wired here — it starts the DBOS `executeAnalysis` parent
- * workflow with `workflowID = "${analysisId}:${runId}"` and returns the runId
- * (results are pull-only via `inspectRun` on a later turn). `run_ephemeral`
+ * `executePlan` is wired here — it launches the DBOS `executeAnalysis` parent
+ * workflow under `workflowId = runId` (the bare run UUID) through the
+ * `RunLauncher` seam and returns the runId (results are pull-only via
+ * `inspectRun` on a later turn). `run_ephemeral`
  * is wired here too — it mints a run authorization, starts the turn-scoped DBOS
  * `ephemeral` workflow, and awaits the result inline; chat disconnect cancels
  * the workflow and it is never recovered. `iterateReport` is wired here too — in-process Nunjucks
@@ -104,9 +105,9 @@ export interface ConversationAgentDeps {
     /** Model id — provenance / metric label; the provider owns the wire model. */
     readonly model: string;
     /**
-     * Registered `executeAnalysis` workflow — produced by
-     * `registerAnalysisWorkflows`. `executePlan` calls
-     * `DBOS.startWorkflow(executeAnalysisWorkflow, ...)` to launch the run.
+     * Registered `executeAnalysis` workflow callable — produced by
+     * `registerExecuteAnalysis` (wired by `assembleCoreRuntime`). `executePlan`
+     * launches it through the `RunLauncher` seam to start the run.
      */
     readonly executeAnalysisWorkflow: (input: ExecuteAnalysisInput) => Promise<ExecuteAnalysisResult>;
     /**

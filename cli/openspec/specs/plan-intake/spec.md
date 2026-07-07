@@ -1,27 +1,34 @@
 # plan-intake Specification
 
 ## Purpose
-A deliberately temporary dev surface that loads an analysis plan from a user-supplied JSON file, validates it exactly as the harness's own trigger does, derives a deterministic `pln-<8hex>` id, and persists it into the harness plan store — so the run engine can be exercised before plan authoring lands with the conversation-agent/planner adoption. Lives in `src/modules/harness/plan_intake.ts`. This capability is expected to be REMOVED when the planner is adopted.
+The protocol **replay** surface: loads an analysis plan from a user-supplied JSON file, validates it exactly as the harness's own trigger does, derives a deterministic `pln-<8hex>` id, and persists it into the harness plan store. The conversation-agent planner (`inflexa chat`) is the primary plan author; file intake is a first-class, human-inspectable interchange format and the model-free way to exercise the run engine. Lives in `src/modules/harness/plan_intake.ts`.
 
 ## Requirements
 
-### Requirement: Plan intake is a temporary dev surface with a clearing contract
+### Requirement: Plan intake is the protocol replay surface
 
-The plan-intake module and the cli-side replicated trigger flow it feeds SHALL each
-carry a `TODO(extend)` comment block stating the clearing contract and naming what
-replaces them. Plan intake — loading an analysis plan from a user-supplied JSON file
-— exists ONLY to exercise the run engine before plan authoring lands with the
-conversation-agent/planner adoption (the harness's `generatePlan` tool is the
-product path); the marker blocks exist so
-the surface is discoverable and removable when the planner arrives. This requirement
-itself records the same contract at spec level: when plan authoring is adopted, this
-capability is expected to be REMOVED (file intake retired or demoted to an explicit
-debug tool), not silently grown into a product feature.
+Plan intake — loading an analysis plan from a user-supplied JSON file — SHALL be the
+protocol **replay** surface: the conversation-agent planner is the primary plan
+author, and hand-authoring a plan file is a supported dev workflow, not the product
+path. The intake module and the cli-side replicated trigger flow it feeds SHALL each
+carry a comment block stating this standing contract and its remaining evolution:
+the replicated trigger's internals are absorbed by the daemon's trigger endpoint
+(#33 M2, so chat-executed and file-replayed plans exercise one flow — no harness
+extraction is needed for that), and a deliberate `plan export` command (the inverse
+of intake, with canonical serialization and source-plan lineage) is a named follow-up
+change. Validation and persistence gates are unchanged: intake validates exactly as
+the harness's own trigger does and persists through the harness state layer under the
+deterministic content-derived id.
 
-#### Scenario: The temporary surface is marked in code
+#### Scenario: The standing contract is marked in code
 
 - **WHEN** the plan-intake module and the run trigger flow are inspected
-- **THEN** each carries a `TODO(extend)` block naming conversation-agent/planner adoption as the replacement and this capability as the spec-level record to clear
+- **THEN** each carries a comment block naming intake as the replay surface, the planner as the primary author, #33 M2 as what absorbs the trigger replica, and `plan export` as the named follow-up
+
+#### Scenario: Replay of an unchanged protocol is idempotent
+
+- **WHEN** the same plan file is replayed for the same analysis while a run for it is active
+- **THEN** the derived id matches and the invocation attaches to the existing run rather than double-launching
 
 ### Requirement: Plan files are validated exactly as the harness's own trigger validates plans
 

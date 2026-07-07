@@ -53,7 +53,7 @@ type ExecuteAnalysisWorkflow = (input: ExecuteAnalysisInput) => Promise<ExecuteA
 
 export interface ExecutePlanToolDeps {
     readonly pool: Pool;
-    /** Registered DBOS workflow function — produced by `registerAnalysisWorkflows`. */
+    /** Registered `executeAnalysis` workflow callable — produced by `registerExecuteAnalysis` (wired by `assembleCoreRuntime`). */
     readonly executeAnalysisWorkflow: ExecuteAnalysisWorkflow;
     /** Authorizes the run at the async edge and revokes on the abort paths. */
     readonly runAuthorizer: RunAuthorizer;

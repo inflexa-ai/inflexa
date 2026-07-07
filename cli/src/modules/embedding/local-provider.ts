@@ -20,13 +20,11 @@
 
 import { err, errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow";
 
-import type { AgentSession, EmbeddingProvider } from "@inflexa-ai/harness";
-// `ProviderError` + `toProviderError` live behind the providers/errors deep path
-// (not re-exported by the barrel). Reusing `toProviderError` keeps the local
-// provider's error shape identical to the cloud provider's. Deep subpaths of
-// `@inflexa-ai/harness` are a supported import surface (see harness AGENTS.md).
-import type { ProviderError } from "@inflexa-ai/harness/providers/errors";
-import { toProviderError } from "@inflexa-ai/harness/providers/errors";
+import type { AgentSession, EmbeddingProvider, ProviderError } from "@inflexa-ai/harness";
+// Reusing the harness's `toProviderError` keeps the local provider's error
+// shape identical to the cloud `createEmbeddingProvider`'s, so the seam yields
+// the same `ProviderError` no matter which realization runs.
+import { toProviderError } from "@inflexa-ai/harness";
 
 export interface LocalEmbeddingProviderDeps {
     /** Absolute path to the GGUF model file (typically `env.embeddingModelPath`). */

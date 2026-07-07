@@ -15,6 +15,7 @@ import { confirm, fail, dieOn } from "../../lib/cli.ts";
 import { activeRuntime, resolvePostgresConfig } from "../../lib/config.ts";
 import { capture, ensureReady, inherit } from "../../lib/container.ts";
 import { variantOfImage } from "../libs/images.ts";
+import { acquireInstanceLock } from "../../lib/lock.ts";
 import { getLogger } from "../../lib/log.ts";
 import { shutdown } from "../../lib/shutdown.ts";
 import type { Analysis } from "../../types/analysis.ts";
@@ -92,6 +93,8 @@ export function describeBootError(e: HarnessBootError): string {
             ].join("\n");
         case "skills_dir_missing":
             return `Skills directory not found${e.path ? ` at ${e.path}` : ""}. Set \`harness.skillsDir\` in config.json (a checkout's \`skills/\` tree).`;
+        case "templates_dir_missing":
+            return `Templates directory not found${e.path ? ` at ${e.path}` : ""}. Set \`harness.templatesDir\` in config.json (a checkout's \`templates/\` tree).`;
         case "proxy_key_missing":
             return "Proxy client key not found — run `inflexa setup` to provision the proxy first.";
         case "model_unresolved":
@@ -176,6 +179,18 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
     if (cfg.configError) fail(describeBootError({ type: "harness_config_invalid", issues: cfg.configError.issues }));
 
     await ensureSandboxImage(cfg.sandboxImage);
+
+    // Claim the per-analysis instance lock before boot, so this analysis stays
+    // single-process for the whole profile — the interim two-recorder fix of #37, the
+    // same guard the TUI takes on open (app.launch.tsx). Acquired after the fail-fast
+    // pre-flight gates and before the runtime boots or any input is staged; the
+    // read-only `--status` path never reaches here, so it observes without a lock. The
+    // process-exit hook (src/index.ts) releases it on every exit, so a bail-out below
+    // leaks nothing.
+    const lock = acquireInstanceLock(analysis.id);
+    if (!lock.acquired) {
+        fail(`"${analysis.name}" is already open in another instance (pid ${lock.holderPid}). Wait for it to finish or stop that process, then re-run.`);
+    }
 
     const s = spinner();
     s.start("Booting the harness runtime (Postgres, callback listener, DBOS)");

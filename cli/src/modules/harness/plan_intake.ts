@@ -1,12 +1,18 @@
-// TODO(extend): this file-based plan intake is a deliberately temporary dev
-// surface that exists only to exercise the run engine before plan authoring
-// lands with the conversation-agent/planner adoption — the harness's
-// `generatePlan` tool is the product path, not a hand-written JSON file. The
-// spec `openspec/specs/plan-intake/spec.md` is the spec-level record to clear
-// when that adoption arrives, together with the replicated trigger flow in the
-// run module (its own `TODO(extend)` names the same contract). Do not grow this
-// surface into a product feature: when the planner arrives, retire file intake
-// or demote it to an explicit debug tool.
+// TODO(extend): file-based plan intake — loading an analysis plan from a JSON file
+// — is the protocol REPLAY surface. The conversation-agent planner (`inflexa chat`)
+// is the primary plan author; hand-authoring a plan file is a supported dev workflow
+// — a human-inspectable interchange format and the model-free way to exercise the
+// run engine — not the product path. Two named evolutions remain, both tracked here
+// so the contract stays discoverable: (1) the cli-side replicated trigger flow this
+// feeds (`run.ts`, whose own `TODO(extend)` records the same) is absorbed by the
+// daemon's trigger endpoint at #33 M2, so chat-executed and file-replayed plans run
+// one shared flow — no harness extraction is needed for that; (2) a deliberate
+// `inflexa plan export` command — intake's inverse, with canonical serialization and
+// source-plan lineage — is the named follow-up change. Validation and persistence are
+// fixed points, not scaffolding: intake gates a file exactly as the harness's own
+// trigger does and persists through the harness state layer under the deterministic,
+// content-derived id. The standing record is the `plan-intake` spec
+// (`openspec/specs/plan-intake/spec.md`).
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";

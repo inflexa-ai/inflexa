@@ -1,7 +1,7 @@
 # analysis-run-launch Specification
 
 ## Purpose
-The deliberate `inflexa run` action that launches a full `executeAnalysis` run from a validated plan: resolve the analysis, pre-flight (including validating the plan file), boot the embedded runtime, stage inputs, seed the ledger, persist the validated plan, and trigger — then block to a terminal run status with live progress, plus a read-only status view. Replicates the harness's own `executePlan` trigger flow (the cli runs no conversation agent). Lives in `src/modules/harness/run.ts`.
+The deliberate `inflexa run` action that launches a full `executeAnalysis` run from a validated plan file: resolve the analysis, pre-flight (including validating the plan file), acquire the per-analysis instance lock, boot the embedded runtime, stage inputs, seed the ledger, persist the validated plan, and trigger — then block to a terminal run status with live progress, plus a read-only status view. This is the model-free replay path: it replicates the harness's own `executePlan` trigger flow because a file-driven launch has no chat turn to supply a live tool context (the conversation-agent path is `inflexa chat`). The replica's internals are absorbed by the daemon trigger endpoint at #33 M2. Lives in `src/modules/harness/run.ts`.
 
 ## Requirements
 
