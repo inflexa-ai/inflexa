@@ -47,6 +47,11 @@ export type ChatSink = {
  * and resets per-turn state (dangling tool chips, the streamed-text flag).
  */
 export type ChatPrinter = {
+    /**
+     * The `EmitFn` sink handed to `runAgent` (and fed the streaming provider's
+     * text deltas). Drops sub-agent traffic, renders each event category coarsely,
+     * and never retains a received object (copy-on-receive).
+     */
     readonly emit: EmitFn;
     /**
      * Close out the turn. `fallbackText` is the turn's final assistant text
@@ -83,6 +88,8 @@ function readPlanCard(data: unknown): { planId: string; title: string; steps: { 
     const d = (data ?? {}) as Record<string, unknown>;
     const rawSteps = Array.isArray(d.steps) ? d.steps : [];
     const steps = rawSteps.map((s) => {
+        // Same rationale as `d`: each step is untrusted `unknown`, cast to a loose
+        // record so every field below is read-and-coerced, never trusted.
         const step = (s ?? {}) as Record<string, unknown>;
         return {
             id: typeof step.id === "string" ? step.id : "",
@@ -104,6 +111,8 @@ function readPlanCard(data: unknown): { planId: string; title: string; steps: { 
  * `{runId, planId, title, stepCount}`), so this renders identity + step count.
  */
 function readRunCard(data: unknown): { runId: string; title: string; stepCount: number } {
+    // `data` is external/loop-owned; cast to a loose record and read-and-coerce
+    // every field (missing/mistyped → empty), never trusting the shape.
     const d = (data ?? {}) as Record<string, unknown>;
     return {
         runId: typeof d.runId === "string" ? d.runId : "",
@@ -124,9 +133,12 @@ export function createChatPrinter(sink: ChatSink): ChatPrinter {
     const openTools = new Map<string, { name: string; startedAt: number }>();
 
     const emit: EmitFn = (event) => {
-        // Rule 2: sub-agent traffic stays out of the transcript.
+        // Rule 2: sub-agent traffic stays out of the transcript. `callPath` is
+        // typed as an array, but this data is external/loop-owned, so guard with
+        // `Array.isArray` (matching every other untrusted read below) — a malformed
+        // source lacking the array falls through as top-level rather than throwing.
         const src = eventSource(event);
-        if (src && src.callPath.length > 1) return;
+        if (src && Array.isArray(src.callPath) && src.callPath.length > 1) return;
 
         switch (event.type) {
             case "text-delta":
