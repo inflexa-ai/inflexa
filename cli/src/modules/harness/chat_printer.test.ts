@@ -142,4 +142,58 @@ describe("createChatPrinter", () => {
         expect(h.out()).toContain("turn one");
         expect(h.out()).toContain("turn two answer");
     });
+
+    test("an unhandled data part prints its [part:<type>] tag, not swallowed", () => {
+        const h = harness();
+        // A `data-*` type the render switch has no case for hits the catch-all.
+        h.emit({ type: "data-widget", source: TOP, data: { anything: true } });
+        expect(h.out()).toContain("[part:data-widget]");
+    });
+
+    test("tool-finished with no prior tool-started renders without a duration suffix", () => {
+        const h = harness();
+        // No matching `tool-started` → no start time to diff → no "(…)" suffix, no throw.
+        h.emit({ type: "tool-finished", source: TOP, toolUseId: "orphan", name: "grep", isError: false });
+        const out = h.out();
+        expect(out).toContain("[tool] grep done");
+        expect(out).not.toContain("(");
+    });
+
+    test("tool chip duration: sub-second renders ms, >= 1s renders seconds", () => {
+        // formatMs branches on the Date.now() delta between start and finish. Stub
+        // the clock to control the measured elapsed time; restore it in finally.
+        const realNow = Date.now;
+        let clock = 0;
+        Date.now = () => clock;
+        try {
+            const h = harness();
+            clock = 1000;
+            h.emit({ type: "tool-started", source: TOP, toolUseId: "fast", name: "grep", input: {} });
+            clock = 1300; // 300ms elapsed → the `ms` branch
+            h.emit({ type: "tool-finished", source: TOP, toolUseId: "fast", name: "grep", isError: false });
+            clock = 2000;
+            h.emit({ type: "tool-started", source: TOP, toolUseId: "slow", name: "align", input: {} });
+            clock = 4500; // 2500ms elapsed → the `s` branch
+            h.emit({ type: "tool-finished", source: TOP, toolUseId: "slow", name: "align", isError: false });
+            const out = h.out();
+            expect(out).toContain("[tool] grep done (300ms)");
+            expect(out).toContain("[tool] align done (2.5s)");
+        } finally {
+            Date.now = realNow;
+        }
+    });
+
+    test("copy-on-receive: mutating a run card after emit does not change output", () => {
+        const h = harness();
+        const data: { runId: string; title: string; stepCount: number } = { runId: "run-xyz", title: "Original", stepCount: 3 };
+        h.emit({ type: "data-run-card", source: TOP, data });
+        const snapshot = h.out();
+        // Mutate the exact object handed to emit — the in-process emit hazard.
+        data.title = "MUTATED";
+        data.stepCount = 99;
+        expect(h.out()).toBe(snapshot);
+        expect(snapshot).toContain("[run] run-xyz: Original (3 step(s))");
+        expect(snapshot).not.toContain("MUTATED");
+        expect(snapshot).not.toContain("99");
+    });
 });

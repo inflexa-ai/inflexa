@@ -170,8 +170,11 @@ export async function runChat(flags: ContextFlags, threadRef: string | undefined
  * The REPL. One `ThreadHistory`, one printer, and one `AgentSession` are built
  * ONCE and reused every turn (the thread is fixed for the invocation). Each turn
  * is the harness's transport-free sequence — `prepareChatTurn → runAgent →
- * appendTurn` — under a turn-scoped abort signal (design D7). The loop ends on a
- * cancelled prompt (Ctrl+C / Ctrl+D at idle → clean shutdown).
+ * appendTurn` — under a turn-scoped abort signal (design D7). The loop ends two
+ * ways, both draining through `shutdown` from HERE (never from a signal handler):
+ * a cancelled prompt (Ctrl+C / Ctrl+D at idle → `shutdown(0)`), or a turn that
+ * returns `"stop"` because a second SIGINT arrived mid-turn (→ `shutdown(130)`,
+ * after the turn has fully unwound).
  */
 async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: string): Promise<void> {
     const history = createThreadHistory(runtime.pool);
@@ -214,23 +217,49 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
         }
         const userInput = answer.trim();
         if (userInput.length === 0) continue;
-        await runTurn(runtime, chat, history, printer, sink, session, analysisId, threadId, userInput);
+        const outcome = await runTurn(runtime, chat, history, printer, sink, session, analysisId, threadId, userInput);
+        // A second SIGINT during the turn requested a stop. The turn has fully
+        // unwound (its `appendTurn` ran against a still-live pool), so drain and
+        // exit here — once, deterministically (130 = terminated by SIGINT).
+        if (outcome === "stop") {
+            outro("Ended chat");
+            return void (await shutdown(130));
+        }
     }
 }
 
 /**
- * One chat turn under a turn-scoped `AbortController` (design D7). The SIGINT
- * handler is installed for the turn's duration only, so the idle prompt keeps
- * clack's own Ctrl+C handling (isCancel → clean exit): first SIGINT aborts the
- * turn (unwinds, back to the prompt); a second while the abort is in flight
- * force-exits via the graceful shutdown path.
+ * One chat turn under a turn-scoped `AbortController` (design D7). Returns
+ * `"continue"` to keep the REPL prompting or `"stop"` to end it — the loop, not
+ * this function, owns teardown, which is exactly what makes the second-SIGINT
+ * path race-free.
  *
- * `appendTurn` ALWAYS runs — even on abort or a thrown turn — so the turn
- * persists. On a clean return that is `[userMessage, ...loopOutput]`; on a
- * throw/abort the harness's `runAgent` throws BEFORE returning its message array
- * (the AbortError propagates out of the streaming `chat`), so the partial loop
- * output is structurally unavailable and only `[userMessage]` can be persisted —
- * though the tokens streamed before the abort remain visible on the terminal.
+ * The SIGINT handler is installed for the turn's duration only, so the idle
+ * prompt keeps clack's own Ctrl+C handling (isCancel → clean exit):
+ *
+ *   - FIRST SIGINT: abort the turn. `runAgent` throws its AbortError, the turn
+ *     unwinds through `appendTurn`/`finishTurn`, and we return `"continue"` — back
+ *     to the prompt.
+ *   - SECOND SIGINT (while the first is still unwinding): flag `forceStop` and do
+ *     nothing else. We deliberately do NOT call `shutdown()` from the handler:
+ *     `shutdown()` runs `pool.end()` in an onShutdown hook, and a fire-and-forget
+ *     `shutdown()` would race the still-unwinding turn — `appendTurn` writing to a
+ *     pool being torn down ("Could not save the turn"), or the loop starting a
+ *     fresh turn mid-teardown, until `process.exit(130)` finally wins. Instead the
+ *     turn finishes unwinding with the pool still alive, then we return `"stop"`
+ *     and `runRepl` drains and shuts down ONCE, deterministically, after the turn.
+ *
+ * Limitation: a tool that ignores its abort signal won't observe `forceStop` until
+ * it returns on its own, so a stuck turn delays the stop — a harness/tool concern,
+ * out of scope here.
+ *
+ * `appendTurn` ALWAYS runs on every `runAgent`-reaching path — even on abort or a
+ * thrown turn — so the turn persists. On a clean return that is
+ * `[userMessage, ...loopOutput]`; on a throw/abort the harness's `runAgent` throws
+ * BEFORE returning its message array (the AbortError propagates out of the
+ * streaming `chat`), so the partial loop output is structurally unavailable and
+ * only `[userMessage]` can be persisted — though the tokens streamed before the
+ * abort remain visible on the terminal.
  *
  * On a clean turn the answer already streamed live through `chat`'s onText, so
  * `finishTurn(fallbackText)` suppresses its duplicate final render (the deltas
@@ -247,14 +276,15 @@ async function runTurn(
     analysisId: string,
     threadId: string,
     userInput: string,
-): Promise<void> {
+): Promise<"continue" | "stop"> {
     const controller = new AbortController();
     let aborting = false;
+    // Set by a SECOND SIGINT (see doc): request a deterministic stop AFTER this
+    // turn finishes unwinding, rather than tearing down the pool concurrently.
+    let forceStop = false;
     const onSigint = (): void => {
         if (aborting) {
-            // Second interrupt while the abort is already unwinding — force-exit
-            // through the graceful path (130 = terminated by SIGINT).
-            void shutdown(130);
+            forceStop = true;
             return;
         }
         aborting = true;
@@ -268,13 +298,18 @@ async function runTurn(
         );
         if (prepared.kind === "prepare_failed") {
             sink.errLine(`Could not assemble the turn (is Postgres reachable?): ${errText(prepared.cause)}`);
-            return;
+            // Emit the per-turn separator + reset state on this pre-`runAgent` bail
+            // too, so output shape stays uniform with the streamed path (nothing
+            // streamed here, so there is no double print).
+            printer.finishTurn();
+            return forceStop ? "stop" : "continue";
         }
         if (prepared.kind === "not_found") {
             // Reachable only if the thread was deleted mid-session (the resume
             // pre-check already refused foreign/absent ids before the REPL began).
             sink.errLine("This conversation thread is no longer available.");
-            return;
+            printer.finishTurn();
+            return forceStop ? "stop" : "continue";
         }
 
         const initial = prepared.messages;
@@ -304,6 +339,10 @@ async function runTurn(
             (e) => sink.errLine(`Could not save the turn to the thread (${e.type}).`),
         );
         printer.finishTurn(fallbackText);
+        // A second SIGINT during the turn requests a deterministic stop; report it
+        // up so `runRepl` tears down after the turn has fully unwound (the `finally`
+        // below still runs first, removing this turn's SIGINT listener).
+        return forceStop ? "stop" : "continue";
     } finally {
         process.removeListener("SIGINT", onSigint);
     }
