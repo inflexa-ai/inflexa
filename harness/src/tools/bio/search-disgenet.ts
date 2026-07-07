@@ -9,38 +9,46 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 import { DISGENET_BASE, getDisgenetHeaders } from "../lib/disgenet-config.js";
 
-interface Gda {
-    geneSymbol: string;
-    geneName: string;
-    geneId: number;
-    diseaseName: string;
-    diseaseId: string;
-    diseaseType: string;
-    score: number;
-    evidenceIndex: number;
-    yearInitial: number | null;
-    yearFinal: number | null;
-    nPmids: number;
-    source: string;
-}
-
-interface RawGda {
-    gene_symbol?: string;
-    gene_name?: string;
-    geneid?: number;
-    disease_name?: string;
-    diseaseid?: string;
-    disease_type?: string;
-    score?: number;
-    ei?: number;
-    year_initial?: number;
-    year_final?: number;
-    pmid_count?: number;
-    source?: string;
-}
+// A single schema that both validates and normalizes one DisGeNET GDA record:
+// the `.object(...)` half is the snake_case wire shape (every field optional —
+// the API omits absent values), the `.transform(...)` half maps it to the
+// camelCase `Gda` we return. Parsing IS the validation (`apiFetchValidated`
+// runs it over the JSON), and because the transform rides on the schema,
+// `z.infer` below is the OUTPUT type — no separate raw interface or mapper.
+const GdaSchema = z
+    .object({
+        gene_symbol: z.string().optional(),
+        gene_name: z.string().optional(),
+        geneid: z.number().optional(),
+        disease_name: z.string().optional(),
+        diseaseid: z.string().optional(),
+        disease_type: z.string().optional(),
+        score: z.number().optional(),
+        ei: z.number().optional(),
+        year_initial: z.number().optional(),
+        year_final: z.number().optional(),
+        pmid_count: z.number().optional(),
+        source: z.string().optional(),
+    })
+    .transform((gda) => ({
+        geneSymbol: gda.gene_symbol ?? "",
+        geneName: gda.gene_name ?? "",
+        geneId: gda.geneid ?? 0,
+        diseaseName: gda.disease_name ?? "",
+        diseaseId: gda.diseaseid ?? "",
+        diseaseType: gda.disease_type ?? "",
+        score: gda.score ?? 0,
+        evidenceIndex: gda.ei ?? 0,
+        yearInitial: gda.year_initial ?? null,
+        yearFinal: gda.year_final ?? null,
+        nPmids: gda.pmid_count ?? 0,
+        source: gda.source ?? "",
+    }));
+type Gda = z.infer<typeof GdaSchema>;
+const GdaListSchema = z.array(GdaSchema);
 
 export function createSearchDisgenetTool(deps: { apiKey: string }) {
     return defineTool({
@@ -73,24 +81,11 @@ export function createSearchDisgenetTool(deps: { apiKey: string }) {
                 url += `&source=${source}`;
             }
 
-            const res = await apiFetch<RawGda[]>(url, { headers });
+            const res = await apiFetchValidated(url, GdaListSchema, { headers });
             if (res.isErr()) throw new Error(describeApiError(res.error));
 
-            const data = Array.isArray(res.value) ? res.value : [];
-            const associations: Gda[] = data.map((gda) => ({
-                geneSymbol: gda.gene_symbol ?? "",
-                geneName: gda.gene_name ?? "",
-                geneId: gda.geneid ?? 0,
-                diseaseName: gda.disease_name ?? "",
-                diseaseId: gda.diseaseid ?? "",
-                diseaseType: gda.disease_type ?? "",
-                score: gda.score ?? 0,
-                evidenceIndex: gda.ei ?? 0,
-                yearInitial: gda.year_initial ?? null,
-                yearFinal: gda.year_final ?? null,
-                nPmids: gda.pmid_count ?? 0,
-                source: gda.source ?? "",
-            }));
+            // Already validated + normalized to camelCase by GdaSchema's transform.
+            const associations: Gda[] = res.value;
 
             return ok({ associations });
         },

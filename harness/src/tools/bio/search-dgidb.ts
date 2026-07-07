@@ -13,7 +13,7 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 
 const DGIDB_GRAPHQL_URL = "https://dgidb.org/api/graphql";
 
@@ -63,29 +63,40 @@ interface Interaction {
     attributes: { name: string; value: string }[];
 }
 
-interface RawInteraction {
-    interactionScore?: number | null;
-    interactionTypes?: { type?: string; directionality?: string | null }[];
-    drug?: { name?: string; conceptId?: string | null } | null;
-    gene?: { name?: string } | null;
-    interactionAttributes?: { name?: string; value?: string }[];
-    publications?: { pmid?: string | number }[];
-    sources?: { sourceDbName?: string }[];
-}
+// Shape of the DGIdb GraphQL payload as it arrives on the wire. Validated at
+// the fetch boundary; `mapInteraction` normalizes each record into the
+// `Interaction` we return. Most fields are optional/nullable to match GraphQL's
+// per-field nullability — but `RawNode.name` is required because we key the
+// node map on `name.toLowerCase()`; a node missing it is a contract break we
+// surface as an `invalid_response` error rather than a runtime TypeError.
+const RawInteractionSchema = z.object({
+    interactionScore: z.number().nullable().optional(),
+    interactionTypes: z.array(z.object({ type: z.string().optional(), directionality: z.string().nullable().optional() })).optional(),
+    drug: z.object({ name: z.string().optional(), conceptId: z.string().nullable().optional() }).nullable().optional(),
+    gene: z.object({ name: z.string().optional() }).nullable().optional(),
+    interactionAttributes: z.array(z.object({ name: z.string().optional(), value: z.string().optional() })).optional(),
+    publications: z.array(z.object({ pmid: z.union([z.string(), z.number()]).optional() })).optional(),
+    sources: z.array(z.object({ sourceDbName: z.string().optional() })).optional(),
+});
 
-interface RawNode {
-    name: string;
-    conceptId?: string | null;
-    interactions?: RawInteraction[];
-}
+const RawNodeSchema = z.object({
+    name: z.string(),
+    conceptId: z.string().nullable().optional(),
+    interactions: z.array(RawInteractionSchema).optional(),
+});
 
-interface DgidbResponse {
-    data?: {
-        genes?: { nodes?: RawNode[] };
-        drugs?: { nodes?: RawNode[] };
-    };
-    errors?: { message?: string }[];
-}
+const DgidbResponseSchema = z.object({
+    data: z
+        .object({
+            genes: z.object({ nodes: z.array(RawNodeSchema).optional() }).optional(),
+            drugs: z.object({ nodes: z.array(RawNodeSchema).optional() }).optional(),
+        })
+        .optional(),
+    errors: z.array(z.object({ message: z.string().optional() })).optional(),
+});
+
+type RawInteraction = z.infer<typeof RawInteractionSchema>;
+type RawNode = z.infer<typeof RawNodeSchema>;
 
 function mapInteraction(
     raw: RawInteraction,
@@ -173,7 +184,7 @@ export const searchDgidbTool = defineTool({
         const variableName = isGene ? "genes" : "drugs";
         const queryString = isGene ? GENE_INTERACTIONS_QUERY : DRUG_INTERACTIONS_QUERY;
 
-        const res = await apiFetch<DgidbResponse>(DGIDB_GRAPHQL_URL, {
+        const res = await apiFetchValidated(DGIDB_GRAPHQL_URL, DgidbResponseSchema, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

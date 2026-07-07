@@ -11,7 +11,7 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 import { GWAS_BASE, GWAS_HEADERS } from "../lib/gwas-catalog-config.js";
 
 interface GwasAssociation {
@@ -30,47 +30,66 @@ interface GwasAssociation {
     sampleSize: string;
 }
 
-interface RawGwasStudy {
-    accessionId?: string;
-    pubmedId?: string;
-    initialSampleSize?: string;
-}
+// GWAS Catalog raw wire shapes (HAL+JSON), validated at the fetch boundary.
+// Every field is optional because the API omits absent values; leaf strings
+// that the API can return as an explicit `null` are `.nullable()`.
+const RawGwasStudySchema = z.object({
+    accessionId: z.string().optional(),
+    pubmedId: z.string().optional(),
+    initialSampleSize: z.string().optional(),
+});
+type RawGwasStudy = z.infer<typeof RawGwasStudySchema>;
 
-interface RawGwasAssociation {
-    _snpRsId?: string;
-    loci?: {
-        strongestRiskAlleles?: { riskAlleleName?: string | null }[];
-        authorReportedGenes?: { geneName?: string | null }[];
-    }[];
-    efoTraits?: { trait?: string | null }[];
-    study?: RawGwasStudy;
-    pvalueMantissa?: number;
-    pvalueExponent?: number;
-    riskFrequency?: string;
-    orPerCopyNum?: number | null;
-    betaNum?: number | null;
-    range?: string;
-}
+// `_snpRsId` is not on the wire — the 'gene' search path assigns it after
+// parsing (`a._snpRsId = snp.rsId`), so it stays a writable optional field.
+const RawGwasAssociationSchema = z.object({
+    _snpRsId: z.string().optional(),
+    loci: z
+        .array(
+            z.object({
+                strongestRiskAlleles: z.array(z.object({ riskAlleleName: z.string().nullable().optional() })).optional(),
+                authorReportedGenes: z.array(z.object({ geneName: z.string().nullable().optional() })).optional(),
+            }),
+        )
+        .optional(),
+    efoTraits: z.array(z.object({ trait: z.string().nullable().optional() })).optional(),
+    study: RawGwasStudySchema.optional(),
+    pvalueMantissa: z.number().optional(),
+    pvalueExponent: z.number().optional(),
+    riskFrequency: z.string().optional(),
+    orPerCopyNum: z.number().nullable().optional(),
+    betaNum: z.number().nullable().optional(),
+    range: z.string().optional(),
+});
+type RawGwasAssociation = z.infer<typeof RawGwasAssociationSchema>;
 
-interface GwasEmbedded {
-    _embedded?: { associations?: RawGwasAssociation[] };
-    page?: { totalElements?: number };
-}
+const GwasEmbeddedSchema = z.object({
+    _embedded: z.object({ associations: z.array(RawGwasAssociationSchema).optional() }).optional(),
+    page: z.object({ totalElements: z.number().optional() }).optional(),
+});
 
-interface GwasTraitSearchResponse {
-    _embedded?: {
-        efoTraits?: { _links?: { self?: { href?: string } } }[];
-    };
-}
+const GwasTraitSearchResponseSchema = z.object({
+    _embedded: z
+        .object({
+            efoTraits: z.array(z.object({ _links: z.object({ self: z.object({ href: z.string().optional() }).optional() }).optional() })).optional(),
+        })
+        .optional(),
+});
 
-interface GwasSnpSearchResponse {
-    _embedded?: {
-        singleNucleotidePolymorphisms?: {
-            rsId?: string;
-            _links?: { associations?: { href?: string } };
-        }[];
-    };
-}
+const GwasSnpSearchResponseSchema = z.object({
+    _embedded: z
+        .object({
+            singleNucleotidePolymorphisms: z
+                .array(
+                    z.object({
+                        rsId: z.string().optional(),
+                        _links: z.object({ associations: z.object({ href: z.string().optional() }).optional() }).optional(),
+                    }),
+                )
+                .optional(),
+        })
+        .optional(),
+});
 
 function mapAssociation(a: RawGwasAssociation): GwasAssociation {
     const loci = a.loci ?? [];
@@ -125,7 +144,7 @@ export const searchGwasCatalogTool = defineTool({
         }
 
         if (searchType === "trait") {
-            const traitRes = await apiFetch<GwasTraitSearchResponse>(url, { headers: GWAS_HEADERS });
+            const traitRes = await apiFetchValidated(url, GwasTraitSearchResponseSchema, { headers: GWAS_HEADERS });
             if (traitRes.isErr()) throw new Error(describeApiError(traitRes.error));
 
             const traits = traitRes.value?._embedded?.efoTraits ?? [];
@@ -143,7 +162,7 @@ export const searchGwasCatalogTool = defineTool({
         }
 
         if (searchType === "gene") {
-            const snpRes = await apiFetch<GwasSnpSearchResponse>(url, { headers: GWAS_HEADERS });
+            const snpRes = await apiFetchValidated(url, GwasSnpSearchResponseSchema, { headers: GWAS_HEADERS });
             if (snpRes.isErr()) throw new Error(describeApiError(snpRes.error));
 
             const snps = snpRes.value?._embedded?.singleNucleotidePolymorphisms ?? [];
@@ -152,7 +171,7 @@ export const searchGwasCatalogTool = defineTool({
             for (const snp of snps.slice(0, Math.min(limit, 10))) {
                 const assocLink = snp?._links?.associations?.href;
                 if (!assocLink) continue;
-                const aRes = await apiFetch<GwasEmbedded>(assocLink, {
+                const aRes = await apiFetchValidated(assocLink, GwasEmbeddedSchema, {
                     headers: GWAS_HEADERS,
                 });
                 if (aRes.isOk()) {
@@ -170,7 +189,7 @@ export const searchGwasCatalogTool = defineTool({
             });
         }
 
-        const res = await apiFetch<GwasEmbedded>(url, { headers: GWAS_HEADERS });
+        const res = await apiFetchValidated(url, GwasEmbeddedSchema, { headers: GWAS_HEADERS });
         if (res.isErr()) throw new Error(describeApiError(res.error));
 
         const rawAssocs = res.value?._embedded?.associations ?? [];
