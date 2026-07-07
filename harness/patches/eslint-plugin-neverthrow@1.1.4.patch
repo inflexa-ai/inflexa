@@ -1,0 +1,39 @@
+diff --git a/node_modules/eslint-plugin-neverthrow/.bun-tag-6aa690f07c1b1c9f b/.bun-tag-6aa690f07c1b1c9f
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/dist/src/rules/must-use-result.js b/dist/src/rules/must-use-result.js
+index 9e8c55043cc3fffde1585a346a3c8a763d0ef88c..1b9f9b44cfff8223c36c646097ae5dfdf6a67268 100644
+--- a/dist/src/rules/must-use-result.js
++++ b/dist/src/rules/must-use-result.js
+@@ -17,7 +17,8 @@ const resultProperties = [
+     'match',
+     'unwrapOr',
+ ];
+-const handledMethods = ['match', 'unwrapOr', '_unsafeUnwrap'];
++const handledMethods = ['match', 'unwrapOr', '_unsafeUnwrap', 'isErr', 'isOk'];
++const handledProperties = ['error', 'value', 'isErr', 'isOk'];
+ // evalua dentro de la expresion si es result
+ // si es result chequea que sea manejada en el la expresion
+ // si no es manejada revisa si es asignada o usada como argumento para una funcion
+@@ -52,6 +53,9 @@ function isMemberCalledFn(node) {
+ }
+ function isHandledResult(node) {
+     var _a;
++    if (node.parent && node.parent.type === 'AwaitExpression') {
++        return isHandledResult(node.parent);
++    }
+     const memberExpresion = node.parent;
+     if ((memberExpresion === null || memberExpresion === void 0 ? void 0 : memberExpresion.type) === 'MemberExpression') {
+         const methodName = findMemberName(memberExpresion);
+@@ -59,7 +63,10 @@ function isHandledResult(node) {
+         if (methodName && handledMethods.includes(methodName) && methodIsCalled) {
+             return true;
+         }
+-        const parent = (_a = node.parent) === null || _a === void 0 ? void 0 : _a.parent; // search for chain method .map().handler
++        if (methodName && handledProperties.includes(methodName)) {
++            return true;
++        }
++        const parent = (_a = node.parent) === null || _a === void 0 ? void 0 : _a.parent;
+         if (parent && (parent === null || parent === void 0 ? void 0 : parent.type) !== 'ExpressionStatement') {
+             return isHandledResult(parent);
+         }

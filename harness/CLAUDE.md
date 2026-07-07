@@ -37,6 +37,10 @@ The sandbox client includes Docker and Kubernetes backends. The `SANDBOX_BACKEND
 
 **After a big change**, run `tsc -p tsconfig.json` and `bun test`.
 
+## Formatting
+
+**After editing source files in `src/`, run `bun run format:file <paths>` on the specific files you changed before reporting the task as complete.** Only format files inside `src/` — never format markdown, config, or spec files. Use `bun run format` for full-project formatting.
+
 ## Architecture
 
 **Core Philosophy**: The harness owns the agent loop and the execution boundary. Chat is regular HTTP; durable operations are DBOS workflows. The same `runAgent` primitive runs in both. Operative architectural decisions live in [`CONTEXT.md`](CONTEXT.md) and the OpenSpec specs ([`openspec/specs/`](openspec/specs/)).
@@ -209,6 +213,15 @@ The harness uses Postgres (`pg` directly + pgvector). The DBOS system DB carries
 **Sandbox failures**: sandbox-server logs failed commands with exit code and stderr; the run-event stream surfaces `step-activity` failures. For the local Docker backend, inspect with `docker logs <container>`.
 
 **Workflow recovery**: A terminated or crashed host's in-flight workflows are recovered when a host restarts under the same stable `executorID` and DBOS reclaims its own `dbos.workflow_status` rows at launch ([harness-durable-runtime](openspec/specs/harness-durable-runtime/spec.md)). Operator-facing recovery controls, if any, belong to the embedder.
+
+## Error handling — neverthrow with an exception-speaking core
+
+Failure is modeled as `Result`/`ResultAsync` values (neverthrow), but the durability engine underneath speaks exceptions: **DBOS records a step as failed — and retries / fails fast — only on a thrown exception**. A `Result` err that crosses `DBOS.runStep` as a *return value* is durably cached as a successful step and replayed as success forever. The full house rules live at the top of `src/lib/result.ts`; the two sanctioned bridges are:
+
+- `unwrapOrThrow(result)` (`src/lib/result.ts`) — the canonical Result→throw bridge. Use it only inside DBOS workflow/step bodies, tool `execute` bodies (the loop's dispatch catch maps the throw to an error tool result), and throw-protocol driver edges. Never in composable domain logic — there, keep the `Result` flowing.
+- `resultStep` (`src/loop/run-step.ts`) — the composed seam the agent loop uses (`runStep` + `unwrapOrThrow`).
+
+The `must-use-result` lint rule is patched in `eslint.config.js` to recognize `unwrapOrThrow(...)` as consuming its Result — do not rewrite bridge sites into inline `.match`+throw forms, and do not add per-site lint disables for it.
 
 ## Code Comments
 
