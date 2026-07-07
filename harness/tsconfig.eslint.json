@@ -1,0 +1,12 @@
+{
+    // Lint-only program: the build tsconfig excludes test files (they must not
+    // land in dist/), but type-aware ESLint rules require every linted file to
+    // be part of the project. This config widens the include to all of src/.
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "noEmit": true,
+        "declaration": false
+    },
+    "include": ["src"],
+    "exclude": ["node_modules"]
+}
