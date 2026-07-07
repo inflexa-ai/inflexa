@@ -62,11 +62,11 @@ export function TextInput(props: TextInputProps): JSX.Element {
 
     const input = (
         <input
-            // Inline ref callback (not a named function) so the reactive reads below stay inside a
-            // scope the lint rule recognizes — a named `ref={handleRef}` is flagged as a reactive
-            // variable used in JSX. The `r.on(...)` subscriptions are imperative opentui event
-            // registrations, not a Solid tracked scope: their handlers read props lazily at
-            // focus/blur time (staying current), so no reactive dependency is dropped.
+            // The `r.on(...)` subscriptions are imperative opentui event registrations, not a Solid
+            // tracked scope: their handlers read props lazily at focus/blur time (staying current),
+            // so no reactive dependency is dropped. An inline ref callback keeps those reads inside
+            // the callback's scope; a named `ref={handleRef}` reads as a reactive variable used in
+            // JSX (which solid/reactivity flags), so the callback stays inline here.
             ref={(r: InputRenderable) => {
                 ref = r;
                 // opentui defaults scrollMargin to 0.2 (20% of viewport width), which wastes ~17

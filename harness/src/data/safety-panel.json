@@ -1,370 +1,436 @@
 {
-    "schema_version": 1,
-    "panel_version": "1.0.0",
-    "curated_at": "2026-04-30",
-    "targets": [
-        {
-            "chembl_id": "CHEMBL1833",
-            "gene_symbol": "HTR2B",
-            "uniprot": "P41595",
-            "ensembl_gene_id": "ENSG00000135914",
-            "name": "5-hydroxytryptamine receptor 2B",
-            "organ_system": "cardiac",
-            "clinical_consequence": "Serotonin-driven fibroblast proliferation → cardiac valvulopathy and fibrosis",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL1866",
-            "gene_symbol": "KCNQ1",
-            "uniprot": "P51787",
-            "ensembl_gene_id": "ENSG00000053918",
-            "name": "Potassium voltage-gated channel subfamily KQT member 1",
-            "organ_system": "cardiac",
-            "clinical_consequence": "IKs inhibition → QT prolongation and increased risk of torsades de pointes",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL1940",
-            "gene_symbol": "CACNA1C",
-            "uniprot": "Q13936",
-            "ensembl_gene_id": "ENSG00000151067",
-            "name": "Voltage-dependent L-type calcium channel subunit alpha-1C",
-            "organ_system": "cardiac",
-            "clinical_consequence": "Impaired cardiac contractility → hypotension, heart failure and conduction abnormalities",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL1980",
-            "gene_symbol": "SCN5A",
-            "uniprot": "Q14524",
-            "ensembl_gene_id": "ENSG00000183873",
-            "name": "Sodium channel protein type 5 subunit alpha",
-            "organ_system": "cardiac",
-            "clinical_consequence": "Cardiac conduction block → Brugada-like arrhythmia and sudden cardiac death",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL210",
-            "gene_symbol": "ADRB2",
-            "uniprot": "P07550",
-            "ensembl_gene_id": "ENSG00000169252",
-            "name": "Beta-2 adrenergic receptor",
-            "organ_system": "cardiac",
-            "clinical_consequence": "Tachycardia and QT prolongation from off-target beta-2 adrenoceptor stimulation",
-            "severity": "medium",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL211",
-            "gene_symbol": "CHRM2",
-            "uniprot": "P08172",
-            "ensembl_gene_id": "ENSG00000181072",
-            "name": "Muscarinic acetylcholine receptor M2",
-            "organ_system": "cardiac",
-            "clinical_consequence": "Bradycardia and AV block from parasympathetic overdrive via M2 receptor antagonism or agonism",
-            "severity": "medium",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL213",
-            "gene_symbol": "ADRB1",
-            "uniprot": "P08588",
-            "ensembl_gene_id": "ENSG00000043591",
-            "name": "Beta-1 adrenergic receptor",
-            "organ_system": "cardiac",
-            "clinical_consequence": "Tachycardia and myocardial ischemia from unintended beta-1 adrenoceptor stimulation",
-            "severity": "medium",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL229",
-            "gene_symbol": "ADRA1A",
-            "uniprot": "P35348",
-            "ensembl_gene_id": "ENSG00000120907",
-            "name": "Alpha-1A adrenergic receptor",
-            "organ_system": "cardiac",
-            "clinical_consequence": "Orthostatic hypotension and reflex tachycardia from alpha-1A adrenoceptor blockade",
-            "severity": "medium",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL240",
-            "gene_symbol": "KCNH2",
-            "uniprot": "Q12809",
-            "ensembl_gene_id": "ENSG00000055118",
-            "name": "hERG voltage-gated potassium channel",
-            "organ_system": "cardiac",
-            "clinical_consequence": "QT prolongation → torsades de pointes and ventricular fibrillation",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL241",
-            "gene_symbol": "PDE3A",
-            "uniprot": "Q14432",
-            "ensembl_gene_id": "ENSG00000172572",
-            "name": "cGMP-inhibited 3',5'-cyclic phosphodiesterase 3A",
-            "organ_system": "cardiac",
-            "clinical_consequence": "Elevated cardiac cAMP → increased contractility, arrhythmia and sudden cardiac death",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL252",
-            "gene_symbol": "EDNRA",
-            "uniprot": "P25101",
-            "ensembl_gene_id": "ENSG00000151617",
-            "name": "Endothelin-1 receptor",
-            "organ_system": "cardiac",
-            "clinical_consequence": "Vasoconstriction → hypertension, pulmonary arterial hypertension and cardiac remodelling",
-            "severity": "medium",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL1697668",
-            "gene_symbol": "SLCO1B1",
-            "uniprot": "Q9Y6L6",
-            "ensembl_gene_id": "ENSG00000134538",
-            "name": "Solute carrier organic anion transporter family member 1B1",
-            "organ_system": "hepatic",
-            "clinical_consequence": "OATP1B1 inhibition → impaired hepatic statin uptake and statin-induced myopathy",
-            "severity": "medium",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL1743121",
-            "gene_symbol": "SLCO1B3",
-            "uniprot": "Q9NPD5",
-            "ensembl_gene_id": "ENSG00000111700",
-            "name": "Solute carrier organic anion transporter family member 1B3",
-            "organ_system": "hepatic",
-            "clinical_consequence": "OATP1B3 inhibition → hepatic drug accumulation and altered clearance of bilirubin and drugs",
-            "severity": "medium",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL289",
-            "gene_symbol": "CYP2D6",
-            "uniprot": "P10635",
-            "ensembl_gene_id": "ENSG00000100197",
-            "name": "Cytochrome P450 2D6",
-            "organ_system": "hepatic",
-            "clinical_consequence": "CYP2D6 inhibition → drug-drug interactions with narrow-therapeutic-index substrates such as codeine and tamoxifen",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL3356",
-            "gene_symbol": "CYP1A2",
-            "uniprot": "P05177",
-            "ensembl_gene_id": "ENSG00000140505",
-            "name": "Cytochrome P450 1A2",
-            "organ_system": "hepatic",
-            "clinical_consequence": "CYP1A2 inhibition → elevated plasma levels of substrates including clozapine and theophylline",
-            "severity": "medium",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL3397",
-            "gene_symbol": "CYP2C9",
-            "uniprot": "P11712",
-            "ensembl_gene_id": "ENSG00000138109",
-            "name": "Cytochrome P450 2C9",
-            "organ_system": "hepatic",
-            "clinical_consequence": "CYP2C9 inhibition → increased exposure to warfarin and NSAIDs, raising bleeding and toxicity risk",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL340",
-            "gene_symbol": "CYP3A4",
-            "uniprot": "P08684",
-            "ensembl_gene_id": "ENSG00000160868",
-            "name": "Cytochrome P450 3A4",
-            "organ_system": "hepatic",
-            "clinical_consequence": "CYP3A4 inhibition or induction → broad drug-drug interactions affecting the majority of marketed drugs",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL3622",
-            "gene_symbol": "CYP2C19",
-            "uniprot": "P33261",
-            "ensembl_gene_id": "ENSG00000165841",
-            "name": "Cytochrome P450 2C19",
-            "organ_system": "hepatic",
-            "clinical_consequence": "CYP2C19 inhibition → clopidogrel resistance and elevated proton-pump inhibitor exposure",
-            "severity": "medium",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL6020",
-            "gene_symbol": "ABCB11",
-            "uniprot": "O95342",
-            "ensembl_gene_id": "ENSG00000073734",
-            "name": "Bile salt export pump",
-            "organ_system": "hepatic",
-            "clinical_consequence": "BSEP inhibition → intrahepatic cholestasis, bile acid accumulation and drug-induced liver injury",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL216",
-            "gene_symbol": "CHRM1",
-            "uniprot": "P11229",
-            "ensembl_gene_id": "ENSG00000168539",
-            "name": "Muscarinic acetylcholine receptor M1",
-            "organ_system": "cns",
-            "clinical_consequence": "Cognitive impairment, confusion and delirium from central muscarinic M1 receptor blockade",
-            "severity": "medium",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL217",
-            "gene_symbol": "DRD2",
-            "uniprot": "P14416",
-            "ensembl_gene_id": "ENSG00000149295",
-            "name": "D(2) dopamine receptor",
-            "organ_system": "cns",
-            "clinical_consequence": "Extrapyramidal symptoms, tardive dyskinesia and hyperprolactinaemia from D2 receptor blockade",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL224",
-            "gene_symbol": "HTR2A",
-            "uniprot": "P28223",
-            "ensembl_gene_id": "ENSG00000102468",
-            "name": "5-hydroxytryptamine receptor 2A",
-            "organ_system": "cns",
-            "clinical_consequence": "Hallucinations, psychosis and serotonin syndrome from 5-HT2A receptor perturbation",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL231",
-            "gene_symbol": "HRH1",
-            "uniprot": "P35367",
-            "ensembl_gene_id": "ENSG00000196639",
-            "name": "Histamine H1 receptor",
-            "organ_system": "cns",
-            "clinical_consequence": "Central sedation, cognitive impairment and weight gain from H1 receptor blockade",
-            "severity": "medium",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL233",
-            "gene_symbol": "OPRM1",
-            "uniprot": "P35372",
-            "ensembl_gene_id": "ENSG00000112038",
-            "name": "Mu-type opioid receptor",
-            "organ_system": "cns",
-            "clinical_consequence": "Respiratory depression, dependence and opioid-induced neurotoxicity from mu-opioid receptor activation",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL237",
-            "gene_symbol": "OPRK1",
-            "uniprot": "P41145",
-            "ensembl_gene_id": "ENSG00000082556",
-            "name": "Kappa-type opioid receptor",
-            "organ_system": "cns",
-            "clinical_consequence": "Dysphoria, sedation and hallucinations from kappa-opioid receptor activation",
-            "severity": "medium",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL238",
-            "gene_symbol": "SLC6A3",
-            "uniprot": "Q01959",
-            "ensembl_gene_id": "ENSG00000142319",
-            "name": "Sodium-dependent dopamine transporter",
-            "organ_system": "cns",
-            "clinical_consequence": "Abuse potential, psychomotor agitation and stereotypy from dopamine transporter inhibition",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL1743122",
-            "gene_symbol": "SLC22A2",
-            "uniprot": "O15244",
-            "ensembl_gene_id": "ENSG00000112499",
-            "name": "Solute carrier family 22 member 2",
-            "organ_system": "renal",
-            "clinical_consequence": "OCT2 inhibition → impaired renal drug clearance and nephrotoxicity risk from substrate accumulation",
-            "severity": "medium",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL1743126",
-            "gene_symbol": "SLC47A1",
-            "uniprot": "Q96FL8",
-            "ensembl_gene_id": "ENSG00000142494",
-            "name": "Multidrug and toxin extrusion protein 1",
-            "organ_system": "renal",
-            "clinical_consequence": "MATE1 inhibition → renal drug accumulation and increased metformin plasma levels",
-            "severity": "medium",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL221",
-            "gene_symbol": "PTGS1",
-            "uniprot": "P23219",
-            "ensembl_gene_id": "ENSG00000095303",
-            "name": "Prostaglandin G/H synthase 1",
-            "organ_system": "gi",
-            "clinical_consequence": "Gastric mucosal prostaglandin depletion → peptic ulceration and GI bleeding",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL245",
-            "gene_symbol": "CHRM3",
-            "uniprot": "P20309",
-            "ensembl_gene_id": "ENSG00000133019",
-            "name": "Muscarinic acetylcholine receptor M3",
-            "organ_system": "gi",
-            "clinical_consequence": "Constipation, dry mouth, urinary retention and ileus from M3 muscarinic receptor blockade",
-            "severity": "medium",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL1936",
-            "gene_symbol": "KIT",
-            "uniprot": "P10721",
-            "ensembl_gene_id": "ENSG00000157404",
-            "name": "Mast/stem cell growth factor receptor Kit",
-            "organ_system": "hematologic",
-            "clinical_consequence": "Myelosuppression and anaemia from off-target inhibition of KIT-dependent haematopoiesis",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL1974",
-            "gene_symbol": "FLT3",
-            "uniprot": "P36888",
-            "ensembl_gene_id": "ENSG00000122025",
-            "name": "Receptor-type tyrosine-protein kinase FLT3",
-            "organ_system": "hematologic",
-            "clinical_consequence": "Myelosuppression and QT prolongation from off-target FLT3 kinase inhibition",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        },
-        {
-            "chembl_id": "CHEMBL1825",
-            "gene_symbol": "TNF",
-            "uniprot": "P01375",
-            "ensembl_gene_id": "ENSG00000204490",
-            "name": "Tumor necrosis factor",
-            "organ_system": "immune",
-            "clinical_consequence": "Broad immunosuppression → increased infection risk and reactivation of latent tuberculosis",
-            "severity": "high",
-            "references": ["PMID:22122021"]
-        }
-    ]
+  "schema_version": 1,
+  "panel_version": "1.0.0",
+  "curated_at": "2026-04-30",
+  "targets": [
+    {
+      "chembl_id": "CHEMBL1833",
+      "gene_symbol": "HTR2B",
+      "uniprot": "P41595",
+      "ensembl_gene_id": "ENSG00000135914",
+      "name": "5-hydroxytryptamine receptor 2B",
+      "organ_system": "cardiac",
+      "clinical_consequence": "Serotonin-driven fibroblast proliferation → cardiac valvulopathy and fibrosis",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL1866",
+      "gene_symbol": "KCNQ1",
+      "uniprot": "P51787",
+      "ensembl_gene_id": "ENSG00000053918",
+      "name": "Potassium voltage-gated channel subfamily KQT member 1",
+      "organ_system": "cardiac",
+      "clinical_consequence": "IKs inhibition → QT prolongation and increased risk of torsades de pointes",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL1940",
+      "gene_symbol": "CACNA1C",
+      "uniprot": "Q13936",
+      "ensembl_gene_id": "ENSG00000151067",
+      "name": "Voltage-dependent L-type calcium channel subunit alpha-1C",
+      "organ_system": "cardiac",
+      "clinical_consequence": "Impaired cardiac contractility → hypotension, heart failure and conduction abnormalities",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL1980",
+      "gene_symbol": "SCN5A",
+      "uniprot": "Q14524",
+      "ensembl_gene_id": "ENSG00000183873",
+      "name": "Sodium channel protein type 5 subunit alpha",
+      "organ_system": "cardiac",
+      "clinical_consequence": "Cardiac conduction block → Brugada-like arrhythmia and sudden cardiac death",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL210",
+      "gene_symbol": "ADRB2",
+      "uniprot": "P07550",
+      "ensembl_gene_id": "ENSG00000169252",
+      "name": "Beta-2 adrenergic receptor",
+      "organ_system": "cardiac",
+      "clinical_consequence": "Tachycardia and QT prolongation from off-target beta-2 adrenoceptor stimulation",
+      "severity": "medium",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL211",
+      "gene_symbol": "CHRM2",
+      "uniprot": "P08172",
+      "ensembl_gene_id": "ENSG00000181072",
+      "name": "Muscarinic acetylcholine receptor M2",
+      "organ_system": "cardiac",
+      "clinical_consequence": "Bradycardia and AV block from parasympathetic overdrive via M2 receptor antagonism or agonism",
+      "severity": "medium",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL213",
+      "gene_symbol": "ADRB1",
+      "uniprot": "P08588",
+      "ensembl_gene_id": "ENSG00000043591",
+      "name": "Beta-1 adrenergic receptor",
+      "organ_system": "cardiac",
+      "clinical_consequence": "Tachycardia and myocardial ischemia from unintended beta-1 adrenoceptor stimulation",
+      "severity": "medium",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL229",
+      "gene_symbol": "ADRA1A",
+      "uniprot": "P35348",
+      "ensembl_gene_id": "ENSG00000120907",
+      "name": "Alpha-1A adrenergic receptor",
+      "organ_system": "cardiac",
+      "clinical_consequence": "Orthostatic hypotension and reflex tachycardia from alpha-1A adrenoceptor blockade",
+      "severity": "medium",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL240",
+      "gene_symbol": "KCNH2",
+      "uniprot": "Q12809",
+      "ensembl_gene_id": "ENSG00000055118",
+      "name": "hERG voltage-gated potassium channel",
+      "organ_system": "cardiac",
+      "clinical_consequence": "QT prolongation → torsades de pointes and ventricular fibrillation",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL241",
+      "gene_symbol": "PDE3A",
+      "uniprot": "Q14432",
+      "ensembl_gene_id": "ENSG00000172572",
+      "name": "cGMP-inhibited 3',5'-cyclic phosphodiesterase 3A",
+      "organ_system": "cardiac",
+      "clinical_consequence": "Elevated cardiac cAMP → increased contractility, arrhythmia and sudden cardiac death",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL252",
+      "gene_symbol": "EDNRA",
+      "uniprot": "P25101",
+      "ensembl_gene_id": "ENSG00000151617",
+      "name": "Endothelin-1 receptor",
+      "organ_system": "cardiac",
+      "clinical_consequence": "Vasoconstriction → hypertension, pulmonary arterial hypertension and cardiac remodelling",
+      "severity": "medium",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL1697668",
+      "gene_symbol": "SLCO1B1",
+      "uniprot": "Q9Y6L6",
+      "ensembl_gene_id": "ENSG00000134538",
+      "name": "Solute carrier organic anion transporter family member 1B1",
+      "organ_system": "hepatic",
+      "clinical_consequence": "OATP1B1 inhibition → impaired hepatic statin uptake and statin-induced myopathy",
+      "severity": "medium",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL1743121",
+      "gene_symbol": "SLCO1B3",
+      "uniprot": "Q9NPD5",
+      "ensembl_gene_id": "ENSG00000111700",
+      "name": "Solute carrier organic anion transporter family member 1B3",
+      "organ_system": "hepatic",
+      "clinical_consequence": "OATP1B3 inhibition → hepatic drug accumulation and altered clearance of bilirubin and drugs",
+      "severity": "medium",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL289",
+      "gene_symbol": "CYP2D6",
+      "uniprot": "P10635",
+      "ensembl_gene_id": "ENSG00000100197",
+      "name": "Cytochrome P450 2D6",
+      "organ_system": "hepatic",
+      "clinical_consequence": "CYP2D6 inhibition → drug-drug interactions with narrow-therapeutic-index substrates such as codeine and tamoxifen",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL3356",
+      "gene_symbol": "CYP1A2",
+      "uniprot": "P05177",
+      "ensembl_gene_id": "ENSG00000140505",
+      "name": "Cytochrome P450 1A2",
+      "organ_system": "hepatic",
+      "clinical_consequence": "CYP1A2 inhibition → elevated plasma levels of substrates including clozapine and theophylline",
+      "severity": "medium",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL3397",
+      "gene_symbol": "CYP2C9",
+      "uniprot": "P11712",
+      "ensembl_gene_id": "ENSG00000138109",
+      "name": "Cytochrome P450 2C9",
+      "organ_system": "hepatic",
+      "clinical_consequence": "CYP2C9 inhibition → increased exposure to warfarin and NSAIDs, raising bleeding and toxicity risk",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL340",
+      "gene_symbol": "CYP3A4",
+      "uniprot": "P08684",
+      "ensembl_gene_id": "ENSG00000160868",
+      "name": "Cytochrome P450 3A4",
+      "organ_system": "hepatic",
+      "clinical_consequence": "CYP3A4 inhibition or induction → broad drug-drug interactions affecting the majority of marketed drugs",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL3622",
+      "gene_symbol": "CYP2C19",
+      "uniprot": "P33261",
+      "ensembl_gene_id": "ENSG00000165841",
+      "name": "Cytochrome P450 2C19",
+      "organ_system": "hepatic",
+      "clinical_consequence": "CYP2C19 inhibition → clopidogrel resistance and elevated proton-pump inhibitor exposure",
+      "severity": "medium",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL6020",
+      "gene_symbol": "ABCB11",
+      "uniprot": "O95342",
+      "ensembl_gene_id": "ENSG00000073734",
+      "name": "Bile salt export pump",
+      "organ_system": "hepatic",
+      "clinical_consequence": "BSEP inhibition → intrahepatic cholestasis, bile acid accumulation and drug-induced liver injury",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL216",
+      "gene_symbol": "CHRM1",
+      "uniprot": "P11229",
+      "ensembl_gene_id": "ENSG00000168539",
+      "name": "Muscarinic acetylcholine receptor M1",
+      "organ_system": "cns",
+      "clinical_consequence": "Cognitive impairment, confusion and delirium from central muscarinic M1 receptor blockade",
+      "severity": "medium",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL217",
+      "gene_symbol": "DRD2",
+      "uniprot": "P14416",
+      "ensembl_gene_id": "ENSG00000149295",
+      "name": "D(2) dopamine receptor",
+      "organ_system": "cns",
+      "clinical_consequence": "Extrapyramidal symptoms, tardive dyskinesia and hyperprolactinaemia from D2 receptor blockade",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL224",
+      "gene_symbol": "HTR2A",
+      "uniprot": "P28223",
+      "ensembl_gene_id": "ENSG00000102468",
+      "name": "5-hydroxytryptamine receptor 2A",
+      "organ_system": "cns",
+      "clinical_consequence": "Hallucinations, psychosis and serotonin syndrome from 5-HT2A receptor perturbation",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL231",
+      "gene_symbol": "HRH1",
+      "uniprot": "P35367",
+      "ensembl_gene_id": "ENSG00000196639",
+      "name": "Histamine H1 receptor",
+      "organ_system": "cns",
+      "clinical_consequence": "Central sedation, cognitive impairment and weight gain from H1 receptor blockade",
+      "severity": "medium",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL233",
+      "gene_symbol": "OPRM1",
+      "uniprot": "P35372",
+      "ensembl_gene_id": "ENSG00000112038",
+      "name": "Mu-type opioid receptor",
+      "organ_system": "cns",
+      "clinical_consequence": "Respiratory depression, dependence and opioid-induced neurotoxicity from mu-opioid receptor activation",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL237",
+      "gene_symbol": "OPRK1",
+      "uniprot": "P41145",
+      "ensembl_gene_id": "ENSG00000082556",
+      "name": "Kappa-type opioid receptor",
+      "organ_system": "cns",
+      "clinical_consequence": "Dysphoria, sedation and hallucinations from kappa-opioid receptor activation",
+      "severity": "medium",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL238",
+      "gene_symbol": "SLC6A3",
+      "uniprot": "Q01959",
+      "ensembl_gene_id": "ENSG00000142319",
+      "name": "Sodium-dependent dopamine transporter",
+      "organ_system": "cns",
+      "clinical_consequence": "Abuse potential, psychomotor agitation and stereotypy from dopamine transporter inhibition",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL1743122",
+      "gene_symbol": "SLC22A2",
+      "uniprot": "O15244",
+      "ensembl_gene_id": "ENSG00000112499",
+      "name": "Solute carrier family 22 member 2",
+      "organ_system": "renal",
+      "clinical_consequence": "OCT2 inhibition → impaired renal drug clearance and nephrotoxicity risk from substrate accumulation",
+      "severity": "medium",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL1743126",
+      "gene_symbol": "SLC47A1",
+      "uniprot": "Q96FL8",
+      "ensembl_gene_id": "ENSG00000142494",
+      "name": "Multidrug and toxin extrusion protein 1",
+      "organ_system": "renal",
+      "clinical_consequence": "MATE1 inhibition → renal drug accumulation and increased metformin plasma levels",
+      "severity": "medium",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL221",
+      "gene_symbol": "PTGS1",
+      "uniprot": "P23219",
+      "ensembl_gene_id": "ENSG00000095303",
+      "name": "Prostaglandin G/H synthase 1",
+      "organ_system": "gi",
+      "clinical_consequence": "Gastric mucosal prostaglandin depletion → peptic ulceration and GI bleeding",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL245",
+      "gene_symbol": "CHRM3",
+      "uniprot": "P20309",
+      "ensembl_gene_id": "ENSG00000133019",
+      "name": "Muscarinic acetylcholine receptor M3",
+      "organ_system": "gi",
+      "clinical_consequence": "Constipation, dry mouth, urinary retention and ileus from M3 muscarinic receptor blockade",
+      "severity": "medium",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL1936",
+      "gene_symbol": "KIT",
+      "uniprot": "P10721",
+      "ensembl_gene_id": "ENSG00000157404",
+      "name": "Mast/stem cell growth factor receptor Kit",
+      "organ_system": "hematologic",
+      "clinical_consequence": "Myelosuppression and anaemia from off-target inhibition of KIT-dependent haematopoiesis",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL1974",
+      "gene_symbol": "FLT3",
+      "uniprot": "P36888",
+      "ensembl_gene_id": "ENSG00000122025",
+      "name": "Receptor-type tyrosine-protein kinase FLT3",
+      "organ_system": "hematologic",
+      "clinical_consequence": "Myelosuppression and QT prolongation from off-target FLT3 kinase inhibition",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    },
+    {
+      "chembl_id": "CHEMBL1825",
+      "gene_symbol": "TNF",
+      "uniprot": "P01375",
+      "ensembl_gene_id": "ENSG00000204490",
+      "name": "Tumor necrosis factor",
+      "organ_system": "immune",
+      "clinical_consequence": "Broad immunosuppression → increased infection risk and reactivation of latent tuberculosis",
+      "severity": "high",
+      "references": [
+        "PMID:22122021"
+      ]
+    }
+  ]
 }
