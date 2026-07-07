@@ -58,9 +58,13 @@ describe("data-profile state transitions", () => {
 
     it("tryStartDataProfile: only one caller wins the race", async () => {
         await seedAnalysis(pool, "a-race", "pending");
-        const [aR, bR] = await Promise.all([tryStartDataProfile(pool, "a-race"), tryStartDataProfile(pool, "a-race")]);
-        const a = aR._unsafeUnwrap();
-        const b = bR._unsafeUnwrap();
+        // Both claims start before either is awaited — the eager ResultAsync fires
+        // its query on construction, so the two UPDATEs race at the DB. Awaiting one
+        // before constructing the other would serialize them and mask the race.
+        const raceA = tryStartDataProfile(pool, "a-race");
+        const raceB = tryStartDataProfile(pool, "a-race");
+        const a = (await raceA)._unsafeUnwrap();
+        const b = (await raceB)._unsafeUnwrap();
         expect([a, b].filter(Boolean)).toHaveLength(1);
     });
 
@@ -72,8 +76,8 @@ describe("data-profile state transitions", () => {
 
     it("tryRerunDataProfile: completed → running, preserves data_profile_result", async () => {
         await seedAnalysis(pool, "a-rerun", "pending");
-        await tryStartDataProfile(pool, "a-rerun");
-        await completeDataProfile(pool, "a-rerun", SAMPLE_RESULT);
+        (await tryStartDataProfile(pool, "a-rerun"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-rerun", SAMPLE_RESULT))._unsafeUnwrap();
 
         const before = (await loadDataProfileStatus(pool, "a-rerun"))._unsafeUnwrap();
         expect(before?.status).toBe("completed");
@@ -99,9 +103,9 @@ describe("data-profile state transitions", () => {
 
     it("tryRetryDataProfile: failed → running, preserves data_profile_result", async () => {
         await seedAnalysis(pool, "a-retry", "pending");
-        await tryStartDataProfile(pool, "a-retry");
-        await completeDataProfile(pool, "a-retry", SAMPLE_RESULT);
-        await failDataProfile(pool, "a-retry", "sandbox crashed");
+        (await tryStartDataProfile(pool, "a-retry"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-retry", SAMPLE_RESULT))._unsafeUnwrap();
+        (await failDataProfile(pool, "a-retry", "sandbox crashed"))._unsafeUnwrap();
 
         const before = (await loadDataProfileStatus(pool, "a-retry"))._unsafeUnwrap();
         expect(before?.status).toBe("failed");
@@ -125,10 +129,10 @@ describe("data-profile state transitions", () => {
 
     it("failDataProfile preserves prior data_profile_result", async () => {
         await seedAnalysis(pool, "a-fail-preserve", "pending");
-        await tryStartDataProfile(pool, "a-fail-preserve");
-        await completeDataProfile(pool, "a-fail-preserve", SAMPLE_RESULT);
-        await tryRerunDataProfile(pool, "a-fail-preserve");
-        await failDataProfile(pool, "a-fail-preserve", "timeout");
+        (await tryStartDataProfile(pool, "a-fail-preserve"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-fail-preserve", SAMPLE_RESULT))._unsafeUnwrap();
+        (await tryRerunDataProfile(pool, "a-fail-preserve"))._unsafeUnwrap();
+        (await failDataProfile(pool, "a-fail-preserve", "timeout"))._unsafeUnwrap();
 
         const status = (await loadDataProfileStatus(pool, "a-fail-preserve"))._unsafeUnwrap();
         expect(status?.status).toBe("failed");
@@ -138,7 +142,7 @@ describe("data-profile state transitions", () => {
 
     it("expireStaleDataProfile marks old running profiles as failed", async () => {
         await seedAnalysis(pool, "a-stale", "pending");
-        await tryStartDataProfile(pool, "a-stale");
+        (await tryStartDataProfile(pool, "a-stale"))._unsafeUnwrap();
 
         // Backdate started_at to 15 minutes ago
         await pool.query({
@@ -158,7 +162,7 @@ describe("data-profile state transitions", () => {
 
     it("expireStaleDataProfile: no-op when within timeout", async () => {
         await seedAnalysis(pool, "a-fresh", "pending");
-        await tryStartDataProfile(pool, "a-fresh");
+        (await tryStartDataProfile(pool, "a-fresh"))._unsafeUnwrap();
 
         const expired = (await expireStaleDataProfile(pool, "a-fresh", 10 * 60 * 1000))._unsafeUnwrap();
         expect(expired).toBe(false);

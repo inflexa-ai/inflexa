@@ -46,16 +46,37 @@ export interface InteractionOptions {
     limit?: number;
 }
 
+/** A raw interaction row from the STRING interaction/network endpoints. */
+interface RawStringInteraction {
+    preferredName_A?: string;
+    preferredName_B?: string;
+    score?: number;
+    escore?: number;
+    dscore?: number;
+    tscore?: number;
+}
+
+/** A raw enrichment row from the STRING enrichment endpoint. */
+interface RawStringEnrichment {
+    category?: string;
+    term?: string;
+    description?: string;
+    p_value?: number;
+    fdr?: number;
+    number_of_genes?: number;
+    preferredNames?: string[] | string;
+}
+
 /** Fetch interaction partners (one-hop) for the given identifiers. */
 export async function getInteractionPartners(identifiers: string[], options: InteractionOptions = {}): Promise<StringInteraction[]> {
     const params = buildParams(identifiers, options.species ?? 9606, {
         required_score: options.minScore ?? 400,
         limit: options.limit ?? 20,
     });
-    const res = await apiFetch<any[]>(`${STRING_BASE}/interaction_partners?${params}`);
+    const res = await apiFetch<RawStringInteraction[]>(`${STRING_BASE}/interaction_partners?${params}`);
     if (res.isErr()) throw new Error(describeApiError(res.error));
     return res.value
-        .map((d: any) => ({
+        .map((d) => ({
             proteinA: d.preferredName_A ?? "",
             proteinB: d.preferredName_B ?? "",
             score: d.score ?? 0,
@@ -71,10 +92,10 @@ export async function getInteractionNetwork(identifiers: string[], options: Inte
     const params = buildParams(identifiers, options.species ?? 9606, {
         required_score: options.minScore ?? 400,
     });
-    const res = await apiFetch<any[]>(`${STRING_BASE}/network?${params}`);
+    const res = await apiFetch<RawStringInteraction[]>(`${STRING_BASE}/network?${params}`);
     if (res.isErr()) throw new Error(describeApiError(res.error));
     return res.value
-        .map((d: any) => ({
+        .map((d) => ({
             proteinA: d.preferredName_A ?? "",
             proteinB: d.preferredName_B ?? "",
             score: d.score ?? 0,
@@ -88,10 +109,10 @@ export async function getInteractionNetwork(identifiers: string[], options: Inte
 /** Functional enrichment for a gene set. */
 export async function getEnrichment(identifiers: string[], species = 9606): Promise<StringEnrichment[]> {
     const params = buildParams(identifiers, species);
-    const res = await apiFetch<any[]>(`${STRING_BASE}/enrichment?${params}`);
+    const res = await apiFetch<RawStringEnrichment[]>(`${STRING_BASE}/enrichment?${params}`);
     if (res.isErr()) throw new Error(describeApiError(res.error));
     return res.value
-        .map((d: any) => ({
+        .map((d) => ({
             category: d.category ?? "",
             term: d.term ?? "",
             description: d.description ?? "",

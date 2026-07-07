@@ -15,9 +15,7 @@ import { unwrapOrThrow } from "../../lib/result.js";
 import type { ListEntry, WorkspaceFilesystem } from "../../workspace/filesystem.js";
 
 type ListFilesOutput =
-    | { status: "ok"; path: string; entries: readonly ListEntry[] }
-    | { status: "not_found"; path: string }
-    | { status: "out_of_scope"; path: string };
+    { status: "ok"; path: string; entries: readonly ListEntry[] } | { status: "not_found"; path: string } | { status: "out_of_scope"; path: string };
 
 const ListFilesInputSchema = z.object({
     path: z

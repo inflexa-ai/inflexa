@@ -66,8 +66,7 @@ export interface RunLlmStepOptions {
 export const BUDGET_EXCEEDED_SENTINEL = Symbol.for("ta.budget-exceeded");
 
 export type RunLlmStepResult =
-    | { readonly kind: "ok"; readonly response: ChatResponse }
-    | { readonly kind: "budget-exceeded"; readonly sentinel: typeof BUDGET_EXCEEDED_SENTINEL };
+    { readonly kind: "ok"; readonly response: ChatResponse } | { readonly kind: "budget-exceeded"; readonly sentinel: typeof BUDGET_EXCEEDED_SENTINEL };
 
 /**
  * Run one LLM call inside a `DBOS.runStep` boundary. On a billing-gateway 402 the

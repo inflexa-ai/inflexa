@@ -63,7 +63,7 @@ describe("legacyAnthropicToModelMessage", () => {
         });
         expect(tool).toEqual({
             role: "tool",
-            content: [{ type: "tool-result", toolCallId: "toolu-1", toolName: "lookup_gene", output: { type: "error-text", value: "{\"found\":true}" } }],
+            content: [{ type: "tool-result", toolCallId: "toolu-1", toolName: "lookup_gene", output: { type: "error-text", value: '{"found":true}' } }],
         });
     });
 
@@ -143,7 +143,9 @@ describe("backfillAiSdkMessageEnvelopes", () => {
 
         await backfillAiSdkMessageEnvelopes(asClient(fake));
         expect(fake.updates).toHaveLength(1);
-        expect(JSON.parse(String(fake.updates[0]![0]))).toEqual(envelopeMessage({ role: "user", content: [{ type: "text", text: "hello", providerOptions: undefined }] }));
+        expect(JSON.parse(String(fake.updates[0]![0]))).toEqual(
+            envelopeMessage({ role: "user", content: [{ type: "text", text: "hello", providerOptions: undefined }] }),
+        );
 
         fake.legacyRows = [];
         await backfillAiSdkMessageEnvelopes(asClient(fake));

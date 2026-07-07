@@ -41,7 +41,7 @@ export function createShowPlanTool(pool: Pool) {
             const card = unwrapOrThrow(await buildPlanCardData(pool, planId, resourceId, title));
             if (!card) return ok({ shown: false as const, reason: "plan_not_found" as const });
 
-            ctx.emit({
+            await ctx.emit({
                 type: "data-plan",
                 source: ctx.session.provenance,
                 data: card,

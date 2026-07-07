@@ -100,8 +100,8 @@ describe("appendTurn / loadRecent round-trip", () => {
     it("returns appended messages oldest-first with monotonic seq", async () => {
         const turn1 = [userText("question one"), assistantText("answer one")];
         const turn2 = [userText("question two"), assistantText("answer two")];
-        await history.appendTurn(THREAD, turn1);
-        await history.appendTurn(THREAD, turn2);
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
 
         const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
         expect(loaded).toEqual([...turn1, ...turn2]);
@@ -116,12 +116,10 @@ describe("appendTurn / loadRecent round-trip", () => {
 
     it("preserves a thinking block signature byte-identical", async () => {
         const signature = "Ev4BCkYIBx+gC/sig/abc==DEF09+xyz";
-        await history.appendTurn(THREAD, [userText("reason about this"), assistantThinking("step-by-step reasoning", signature)]);
+        (await history.appendTurn(THREAD, [userText("reason about this"), assistantThinking("step-by-step reasoning", signature)]))._unsafeUnwrap();
 
         const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
-        const reasoning = loaded
-            .flatMap((m) => (typeof m.content === "string" ? [] : m.content))
-            .find((b) => b.type === "reasoning");
+        const reasoning = loaded.flatMap((m) => (typeof m.content === "string" ? [] : m.content)).find((b) => b.type === "reasoning");
         expect(reasoning).toMatchObject({
             type: "reasoning",
             providerOptions: { anthropic: { signature } },
@@ -140,9 +138,9 @@ describe("loadRecent token windowing", () => {
         const turn1 = [userText("first question about the dataset"), assistantText("first detailed answer about the dataset")];
         const turn2 = [userText("second question about the genes"), assistantText("second detailed answer about the genes")];
         const turn3 = [userText("third question about the pathways"), assistantText("third detailed answer about the pathways")];
-        await history.appendTurn(THREAD, turn1);
-        await history.appendTurn(THREAD, turn2);
-        await history.appendTurn(THREAD, turn3);
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn3))._unsafeUnwrap();
 
         // Budget fits turn3 + turn2 exactly, but not turn1.
         const budget = turnCost(turn2) + turnCost(turn3);
@@ -160,8 +158,8 @@ describe("loadRecent token windowing", () => {
             userToolResult("toolu_1", JSON.stringify({ hits: 12, genes: ["TP53"] })),
             assistantText("a thorough synthesis of every result returned above"),
         ];
-        await history.appendTurn(THREAD, small);
-        await history.appendTurn(THREAD, oversized);
+        (await history.appendTurn(THREAD, small))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, oversized))._unsafeUnwrap();
 
         // Budget far below the most recent turn's own cost.
         const loaded = (await history.loadRecent(THREAD, 1))._unsafeUnwrap();
@@ -182,8 +180,8 @@ describe("loadRecent boundary snapping", () => {
             assistantText("answer grounded in the tool result"),
         ];
         const turn2 = [userText("a simple follow-up question"), assistantText("a simple follow-up answer")];
-        await history.appendTurn(THREAD, turn1);
-        await history.appendTurn(THREAD, turn2);
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
 
         // A naive newest-first cut at this budget would include turn2 plus the
         // tail of turn1 — landing the window start on turn1's tool_result-only
@@ -203,8 +201,8 @@ describe("loadRecent boundary snapping", () => {
             userToolResult("toolu_x", JSON.stringify({ pathway: "apoptosis" })),
             assistantText("final answer using the pathway result"),
         ];
-        await history.appendTurn(THREAD, turn1);
-        await history.appendTurn(THREAD, turn2);
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
 
         // Budget lands between the tool_use and its tool_result if walked
         // message-by-message. The turn-atomic window keeps the pair together.
@@ -225,8 +223,8 @@ describe("loadRecent boundary snapping", () => {
 
 describe("loadRecent overflow metric", () => {
     it("reports no eviction for a thread under budget", async () => {
-        await history.appendTurn(THREAD, [userText("a small question"), assistantText("a small answer")]);
-        await history.loadRecent(THREAD, 1_000_000);
+        (await history.appendTurn(THREAD, [userText("a small question"), assistantText("a small answer")]))._unsafeUnwrap();
+        (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
 
         const collected = await collectMetrics();
         const evicted = collected.find((m) => m.descriptor.name === "cortex.harness.thread.turns_evicted");
@@ -244,12 +242,12 @@ describe("loadRecent overflow metric", () => {
         const turn1 = [userText("question one here"), assistantText("answer one here")];
         const turn2 = [userText("question two here"), assistantText("answer two here")];
         const turn3 = [userText("question three here"), assistantText("answer three here")];
-        await history.appendTurn(THREAD, turn1);
-        await history.appendTurn(THREAD, turn2);
-        await history.appendTurn(THREAD, turn3);
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn3))._unsafeUnwrap();
 
         // Only the most recent turn fits — turns 1 and 2 are evicted.
-        await history.loadRecent(THREAD, turnCost(turn3));
+        (await history.loadRecent(THREAD, turnCost(turn3)))._unsafeUnwrap();
 
         const collected = await collectMetrics();
         const evicted = collected.find((m) => m.descriptor.name === "cortex.harness.thread.turns_evicted");

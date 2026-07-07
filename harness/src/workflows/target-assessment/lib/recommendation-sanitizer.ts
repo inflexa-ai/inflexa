@@ -19,7 +19,7 @@ const SCAFFOLD_TOKEN_RE = /per_section_synthesis\.[A-Za-z_][\w.]*(?:\[[\d–-]+\
 // Citations to dossier.per_section_synthesis.* — this namespace doesn't exist
 // in the v4 schema. The synthesis prompt occasionally emits these paths;
 // strip them to prevent non-resolvable citations in recommendation prose.
-const INVALID_PATH_RE = /\(?dossier\.per_section_synthesis\.[a-z_.\[\]0-9]*\)?/gi;
+const INVALID_PATH_RE = /\(?dossier\.per_section_synthesis\.[a-z_.[\]0-9]*\)?/gi;
 // Dangling "dossier." with no path suffix is leftover templating; strip it.
 const DANGLING_DOSSIER_RE = /\bdossier\.(?=\s|$|[.,;])/g;
 

@@ -201,8 +201,8 @@ export async function annotateClinicalConsequence(
 export async function annotateOffTargetPanel(
     pool: Pool,
     panel: {
-        rows: Array<Record<string, any>>;
-        excluded_rows: Array<Record<string, any>>;
+        rows: Array<Record<string, unknown>>;
+        excluded_rows: Array<Record<string, unknown>>;
     },
     primaryTargetGene: string,
     deps?: ClinicalConsequenceAnnotatorDeps,

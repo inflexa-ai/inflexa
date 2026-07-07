@@ -11,8 +11,6 @@
  */
 
 import type { Pool, PoolClient } from "pg";
-import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
-import type { ProvenanceCollector } from "../provenance/collector.js";
 import type { AgentSession } from "../auth/types.js";
 import type { RegisterArtifactInput } from "../state/index.js";
 import { upsertArtifacts, updateArtifactId } from "../state/index.js";

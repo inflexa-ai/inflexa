@@ -628,7 +628,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
                 { name: "mark-canceled" },
             );
             // Unreachable — the runStep above raises DBOSWorkflowCancelledError.
-            throw new Error("unreachable: mark-canceled did not raise");
+            throw new Error("unreachable: mark-canceled did not raise", { cause: err });
         }
 
         // Non-resumable failure — tear down, mark failed (scrubbed), re-raise so

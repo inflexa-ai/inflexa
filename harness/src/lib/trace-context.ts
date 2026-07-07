@@ -26,9 +26,9 @@ export const traceContextMiddleware: MiddlewareHandler = async (c, next) => {
     }
 
     const carrier: Record<string, string> = {};
-    c.req.raw.headers.forEach((value, key) => {
+    for (const [key, value] of c.req.raw.headers) {
         carrier[key] = value;
-    });
+    }
 
     const parentCtx = propagation.extract(context.active(), carrier);
 

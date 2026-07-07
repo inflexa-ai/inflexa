@@ -25,7 +25,7 @@
  */
 
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
-import { Pool } from "pg";
+import { Pool, type PoolConfig } from "pg";
 import { initCortexState } from "../../state/init.js";
 
 const PG_IMAGE = "pgvector/pgvector:pg18";
@@ -125,7 +125,7 @@ export async function withSchema(testName: string): Promise<{
 
     // Each test gets its own scoped pool so search_path sticks on every
     // connection pulled from it.
-    const cfg: any = (base as any).options ?? {};
+    const cfg: PoolConfig = (base as unknown as { options?: PoolConfig }).options ?? {};
     const pool = new Pool({
         host: cfg.host,
         port: cfg.port,

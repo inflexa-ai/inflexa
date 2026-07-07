@@ -3,10 +3,10 @@
  * toxicological hazard data on a chemical.
  */
 
-import { ok } from "neverthrow";
+import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { defineTool } from "../define-tool.js";
+import { defineTool, type ToolError } from "../define-tool.js";
 import { apiFetch, describeApiError } from "../lib/api-utils.js";
 import { EPA_CCTE_BASE, getEpaCcteHeaders } from "../lib/toxcast-config.js";
 
@@ -36,6 +36,61 @@ interface GenetoxSummary {
     year: number | null;
 }
 
+interface CancerSummary {
+    source: string;
+    classification: string;
+    url: string;
+}
+
+interface CtxHazardOutput {
+    found: true;
+    dtxsid: string;
+    preferredName: string;
+    toxval?: ToxValEntry[];
+    genetox?: GenetoxSummary[];
+    cancer?: CancerSummary[];
+}
+
+type CtxHazardResult = { found: false; query: string } | CtxHazardOutput;
+
+interface CtxChemicalSearchRow {
+    dtxsid: string;
+    preferredName?: string;
+}
+
+interface RawToxValRow {
+    source?: string;
+    toxvalType?: string;
+    toxvalNumeric?: unknown;
+    toxvalUnits?: string;
+    studyType?: string;
+    studyDurationClass?: string;
+    speciesCommon?: string;
+    exposureRoute?: string;
+    toxicologicalEffect?: string;
+    riskAssessmentClass?: string;
+    humanEco?: string;
+    year?: unknown;
+    quality?: string;
+}
+
+interface RawGenetoxRow {
+    source?: string;
+    assayCategory?: string;
+    assayType?: string;
+    metabolicActivation?: string;
+    species?: string;
+    overallResult?: string;
+    year?: unknown;
+}
+
+interface RawCancerRow {
+    source?: string;
+    classification?: string;
+    cancerClassification?: string;
+    url?: string;
+}
+
 export function createSearchCtxHazardTool(deps: { apiKey: string }) {
     return defineTool({
         id: "search_ctx_hazard",
@@ -58,15 +113,15 @@ export function createSearchCtxHazardTool(deps: { apiKey: string }) {
                 ),
             limit: z.number().int().min(1).max(100).default(30).describe("Max results per category"),
         }),
-        execute: async ({ query, dataType = "all", limit = 30 }) => {
+        execute: async ({ query, dataType = "all", limit = 30 }): Promise<Result<CtxHazardResult, ToolError>> => {
             const headers = getEpaCcteHeaders(deps.apiKey);
             const resolved = await resolveDtxsid(query, headers);
             // "No chemical found" is an expected outcome — a data variant, not an error.
             if (!resolved) return ok({ found: false as const, query });
 
             const { dtxsid, preferredName } = resolved;
-            const result: Record<string, any> = {
-                found: true as const,
+            const result: CtxHazardOutput = {
+                found: true,
                 dtxsid,
                 preferredName,
             };
@@ -108,7 +163,7 @@ async function resolveDtxsid(query: string, headers: Record<string, string>): Pr
     }
 
     const url = `${EPA_CCTE_BASE}/chemical/search/equal/${encodeURIComponent(query)}`;
-    const res = await apiFetch<any[]>(url, { headers });
+    const res = await apiFetch<CtxChemicalSearchRow[]>(url, { headers });
     if (res.isErr()) throw new Error(describeApiError(res.error));
     if (!res.value?.length) return null;
 
@@ -121,10 +176,10 @@ async function resolveDtxsid(query: string, headers: Record<string, string>): Pr
 
 async function fetchToxval(dtxsid: string, headers: Record<string, string>, limit: number): Promise<ToxValEntry[]> {
     const url = `${EPA_CCTE_BASE}/hazard/toxval/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<any[]>(url, { headers });
+    const res = await apiFetch<RawToxValRow[]>(url, { headers });
     if (res.isErr() || !Array.isArray(res.value)) return [];
 
-    return res.value.slice(0, limit).map((r: any) => ({
+    return res.value.slice(0, limit).map((r) => ({
         source: r.source ?? "",
         toxvalType: r.toxvalType ?? "",
         toxvalNumeric: toNumberOrNull(r.toxvalNumeric),
@@ -149,10 +204,10 @@ function toNumberOrNull(v: unknown): number | null {
 
 async function fetchGenetox(dtxsid: string, headers: Record<string, string>, limit: number): Promise<GenetoxSummary[]> {
     const url = `${EPA_CCTE_BASE}/hazard/genetox/summary/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<any[]>(url, { headers });
+    const res = await apiFetch<RawGenetoxRow[]>(url, { headers });
     if (res.isErr() || !Array.isArray(res.value)) return [];
 
-    return res.value.slice(0, limit).map((r: any) => ({
+    return res.value.slice(0, limit).map((r) => ({
         source: r.source ?? "",
         assayCategory: r.assayCategory ?? "",
         assayType: r.assayType ?? "",
@@ -163,12 +218,12 @@ async function fetchGenetox(dtxsid: string, headers: Record<string, string>, lim
     }));
 }
 
-async function fetchCancer(dtxsid: string, headers: Record<string, string>): Promise<{ source: string; classification: string; url: string }[]> {
+async function fetchCancer(dtxsid: string, headers: Record<string, string>): Promise<CancerSummary[]> {
     const url = `${EPA_CCTE_BASE}/hazard/cancer-summary/search/by-dtxsid/${dtxsid}`;
-    const res = await apiFetch<any[]>(url, { headers });
+    const res = await apiFetch<RawCancerRow[]>(url, { headers });
     if (res.isErr() || !Array.isArray(res.value)) return [];
 
-    return res.value.map((r: any) => ({
+    return res.value.map((r) => ({
         source: r.source ?? "",
         classification: r.classification ?? r.cancerClassification ?? "",
         url: r.url ?? "",

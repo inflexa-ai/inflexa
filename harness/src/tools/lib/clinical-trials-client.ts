@@ -81,6 +81,99 @@ export interface SearchOptions {
     limit?: number;
 }
 
+// Raw shapes for the ClinicalTrials.gov v2 study JSON — only the fields the
+// mappers below read are modelled; every field is optional (the API omits
+// modules that carry no data).
+interface CtIntervention {
+    name?: string;
+    type?: string;
+    description?: string;
+    otherNames?: unknown;
+}
+interface CtOutcome {
+    measure?: string;
+    description?: string;
+    timeFrame?: string;
+}
+interface CtIdentificationModule {
+    nctId?: string;
+    briefTitle?: string;
+    officialTitle?: string;
+}
+interface CtStatusModule {
+    overallStatus?: string;
+    whyStopped?: string;
+    startDateStruct?: { date?: string };
+    primaryCompletionDateStruct?: { date?: string };
+}
+interface CtDesignModule {
+    phases?: string[];
+    studyType?: string;
+    designInfo?: { primaryPurpose?: string };
+    enrollmentInfo?: { count?: number };
+}
+interface CtDescriptionModule {
+    briefSummary?: string;
+    detailedDescription?: string;
+}
+interface CtOutcomesModule {
+    primaryOutcomes?: CtOutcome[];
+    secondaryOutcomes?: CtOutcome[];
+    otherOutcomes?: CtOutcome[];
+}
+interface CtProtocolSection {
+    identificationModule?: CtIdentificationModule;
+    statusModule?: CtStatusModule;
+    designModule?: CtDesignModule;
+    descriptionModule?: CtDescriptionModule;
+    conditionsModule?: { conditions?: string[] };
+    armsInterventionsModule?: { interventions?: CtIntervention[] };
+    sponsorCollaboratorsModule?: { leadSponsor?: { name?: string } };
+    outcomesModule?: CtOutcomesModule;
+}
+interface CtResultsMeasurement {
+    value?: string;
+    lowerLimit?: string;
+    upperLimit?: string;
+}
+interface CtResultsMeasure {
+    title?: string;
+    unitOfMeasure?: string;
+    classes?: Array<{ categories?: Array<{ measurements?: CtResultsMeasurement[] }> }>;
+}
+interface CtAdverseEventGroupRaw {
+    id?: string;
+    title?: string;
+    description?: string;
+}
+interface CtAdverseEventStat {
+    groupId?: string;
+    numAffected?: number;
+    numAtRisk?: number;
+}
+interface CtAdverseEventRaw {
+    term?: string;
+    organSystem?: string;
+    stats?: CtAdverseEventStat[];
+}
+interface CtAdverseEventsModule {
+    eventGroups?: CtAdverseEventGroupRaw[];
+    seriousEvents?: CtAdverseEventRaw[];
+    otherEvents?: CtAdverseEventRaw[];
+}
+interface CtResultsSection {
+    outcomeMeasuresModule?: { outcomeMeasures?: CtResultsMeasure[] };
+    adverseEventsModule?: CtAdverseEventsModule;
+}
+interface CtStudy {
+    protocolSection?: CtProtocolSection;
+    resultsSection?: CtResultsSection;
+}
+interface CtSearchResponse {
+    studies?: CtStudy[];
+    totalCount?: number;
+}
+
 const STUDY_FIELDS = [
     "NCTId",
     "BriefTitle",
@@ -103,14 +196,14 @@ const STUDY_FIELDS = [
     "LeadSponsorName",
 ].join(",");
 
-export function mapClinicalTrialStudy(s: any): ClinicalTrial {
-    const proto = s.protocolSection ?? {};
-    const id = proto.identificationModule ?? {};
-    const status_ = proto.statusModule ?? {};
-    const design = proto.designModule ?? {};
-    const description = proto.descriptionModule ?? {};
+export function mapClinicalTrialStudy(s: CtStudy): ClinicalTrial {
+    const proto: CtProtocolSection = s.protocolSection ?? {};
+    const id: CtIdentificationModule = proto.identificationModule ?? {};
+    const status_: CtStatusModule = proto.statusModule ?? {};
+    const design: CtDesignModule = proto.designModule ?? {};
+    const description: CtDescriptionModule = proto.descriptionModule ?? {};
     const conditions = proto.conditionsModule?.conditions ?? [];
-    const interventionDetails: ClinicalTrialIntervention[] = (proto.armsInterventionsModule?.interventions ?? []).map((i: any) => ({
+    const interventionDetails: ClinicalTrialIntervention[] = (proto.armsInterventionsModule?.interventions ?? []).map((i) => ({
         name: i.name ?? "Unknown",
         type: i.type ?? null,
         description: i.description ?? null,
@@ -150,7 +243,7 @@ export async function searchTrials(query: string, options: SearchOptions = {}): 
     if (options.phase) params.set("filter.phase", options.phase);
     if (options.status) params.set("filter.overallStatus", options.status);
 
-    const res = await apiFetch<any>(`${CT_BASE}/studies?${params.toString()}`, {
+    const res = await apiFetch<CtSearchResponse>(`${CT_BASE}/studies?${params.toString()}`, {
         headers: CT_HEADERS,
     });
     if (res.isErr()) throw new Error(describeApiError(res.error));
@@ -220,20 +313,20 @@ export async function searchFailedTrialsForDrugNames(drugNames: string[], option
  * Extract the first numeric measurement from a results-section outcome
  * measure's classes/categories/measurements tree.
  */
-function extractEffect(resultsMeasure: any): OutcomeEffect {
-    const classes: any[] = resultsMeasure?.classes ?? [];
+function extractEffect(resultsMeasure: CtResultsMeasure | undefined): OutcomeEffect {
+    const classes = resultsMeasure?.classes ?? [];
     if (classes.length === 0) {
         return { kind: "not_extracted", reason: "ctgov_no_result_groups" };
     }
     for (const cls of classes) {
         for (const cat of cls.categories ?? []) {
             for (const m of cat.measurements ?? []) {
-                const num = parseFloat(m.value);
+                const num = parseFloat(m.value ?? "");
                 if (!isNaN(num)) {
                     return {
                         kind: "quantitative",
                         value: num,
-                        units: resultsMeasure.unitOfMeasure ?? "",
+                        units: resultsMeasure?.unitOfMeasure ?? "",
                         ...(m.lowerLimit !== undefined && m.lowerLimit !== null && !isNaN(parseFloat(m.lowerLimit))
                             ? { ci_low: parseFloat(m.lowerLimit) }
                             : {}),
@@ -251,7 +344,7 @@ function extractEffect(resultsMeasure: any): OutcomeEffect {
 /** Fetch full study details including outcomes and adverse events. */
 export async function getTrialDetails(nctId: string): Promise<TrialDetails | null> {
     const url = `${CT_BASE}/studies/${encodeURIComponent(nctId)}?format=json`;
-    const res = await apiFetch<any>(url, { headers: CT_HEADERS });
+    const res = await apiFetch<CtStudy>(url, { headers: CT_HEADERS });
     if (res.isErr()) {
         if (res.error.type === "http_status" && res.error.status === 404) return null;
         throw new Error(describeApiError(res.error));
@@ -259,20 +352,20 @@ export async function getTrialDetails(nctId: string): Promise<TrialDetails | nul
 
     const study = res.value;
     const trial = mapClinicalTrialStudy(study);
-    const proto = study.protocolSection ?? {};
-    const results = study.resultsSection ?? {};
+    const proto: CtProtocolSection = study.protocolSection ?? {};
+    const results: CtResultsSection = study.resultsSection ?? {};
     const whyStopped = proto.statusModule?.whyStopped ?? null;
 
     // Build a title→measure map from the results section so protocol-level
     // outcomes can be matched to their numeric measurements.
-    const resultsMeasures: any[] = results.outcomeMeasuresModule?.outcomeMeasures ?? [];
-    const resultsByTitle = new Map<string, any>();
+    const resultsMeasures = results.outcomeMeasuresModule?.outcomeMeasures ?? [];
+    const resultsByTitle = new Map<string, CtResultsMeasure>();
     for (const m of resultsMeasures) {
         if (m.title) resultsByTitle.set(m.title, m);
     }
 
     const outcomes: OutcomeMeasure[] = [];
-    const om = proto.outcomesModule ?? {};
+    const om: CtOutcomesModule = proto.outcomesModule ?? {};
     for (const o of om.primaryOutcomes ?? []) {
         const measure = o.measure ?? "";
         outcomes.push({
@@ -304,19 +397,19 @@ export async function getTrialDetails(nctId: string): Promise<TrialDetails | nul
         });
     }
 
-    const aeModule = results.adverseEventsModule ?? {};
-    const adverseEventGroups: AdverseEventGroup[] = (aeModule.eventGroups ?? []).map((g: any) => ({
+    const aeModule: CtAdverseEventsModule = results.adverseEventsModule ?? {};
+    const adverseEventGroups: AdverseEventGroup[] = (aeModule.eventGroups ?? []).map((g) => ({
         groupId: g.id ?? "",
         title: g.title ?? "",
         description: g.description ?? null,
     }));
 
-    function mapAEs(events: any[], serious: boolean): AdverseEvent[] {
-        return events.map((e: any) => ({
+    function mapAEs(events: CtAdverseEventRaw[], serious: boolean): AdverseEvent[] {
+        return events.map((e) => ({
             serious,
             term: e.term ?? "",
             organSystem: e.organSystem ?? null,
-            counts: (e.stats ?? []).map((s: any) => ({
+            counts: (e.stats ?? []).map((s) => ({
                 groupId: s.groupId ?? "",
                 numAffected: typeof s.numAffected === "number" ? s.numAffected : null,
                 numAtRisk: typeof s.numAtRisk === "number" ? s.numAtRisk : null,

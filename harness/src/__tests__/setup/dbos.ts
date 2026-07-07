@@ -195,7 +195,7 @@ export async function setupDbosForTests(testName: string): Promise<DbosTestRig> 
         pool,
         schemaName,
         nextWorkflowId(prefix?: string): string {
-            const p = (prefix ?? "wf-").replace(/[^a-zA-Z0-9_.\-]/g, "-");
+            const p = (prefix ?? "wf-").replace(/[^a-zA-Z0-9_.-]/g, "-");
             return `${p}${randomUUID()}`;
         },
         drop: safeDrop,

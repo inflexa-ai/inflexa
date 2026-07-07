@@ -383,7 +383,9 @@ describe("k8s createSandbox failure cleanup", () => {
             mintSandboxIdentity("run-1"),
         );
         expect(result.isErr()).toBe(true);
-        expect(result._unsafeUnwrapErr().type).toBe("container_create_failed");
+        if (result.isErr()) {
+            expect(result.error.type).toBe("container_create_failed");
+        }
         const created = stub.createdJobs[0]!.metadata!.name!;
         expect(stub.deletedJobs).toEqual([created]);
     });
@@ -493,7 +495,9 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             mintSandboxIdentity("run-1"),
         );
         expect(result.isErr()).toBe(true);
-        expect(result._unsafeUnwrapErr().type).toBe("name_conflict");
+        if (result.isErr()) {
+            expect(result.error.type).toBe("name_conflict");
+        }
         expect(stub.deletedJobs).toEqual([]); // sibling's Job untouched
     });
 });
@@ -614,7 +618,9 @@ describe("k8s teardown", () => {
             callbackSecret: "x",
         });
         expect(result.isErr()).toBe(true);
-        expect(result._unsafeUnwrapErr().type).toBe("teardown_failed");
+        if (result.isErr()) {
+            expect(result.error.type).toBe("teardown_failed");
+        }
     });
 });
 

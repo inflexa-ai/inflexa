@@ -98,7 +98,7 @@ export function dedupModulatorsByParent<
                 // Require a word-boundary character (whitespace or hyphen) immediately
                 // after the prefix — prevents "CALC" from matching "CALCITONIN".
                 const boundary = longName.charAt(shortName.length);
-                return /[\s\-]/.test(boundary);
+                return /[\s-]/.test(boundary);
             });
 
             if (longerMatches.length === 1) {

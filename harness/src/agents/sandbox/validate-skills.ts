@@ -29,6 +29,7 @@ export function validateAgentSkills(skillsDir: string, catalog: Readonly<Record<
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(
             `SKILLS_DIR "${skillsDir}" is not accessible: ${msg}. ` + `Set SKILLS_DIR to a directory containing skill subfolders (one SKILL.md each).`,
+            { cause: err },
         );
     }
 

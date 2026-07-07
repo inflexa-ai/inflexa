@@ -4,6 +4,54 @@ import { HIGH_EXPRESSION_TPM_THRESHOLD } from "./expression-constants.js";
 
 const FAERS_TOP_SIGNAL_THRESHOLD = 1000;
 
+// Loose structural view over a raw dossier body. At this stage the body is a
+// partial, possibly-malformed JSON tree — schema validation happens later at
+// the persist boundary — so every field is optional and every section wraps
+// its payload as `{ coverage?, data? }`. This view names only the fields these
+// derived-field helpers actually read; it deliberately drops the persisted
+// schema's coverage discriminated union so the defensive `?.` walks type
+// cleanly. The exported entrypoints accept `unknown` and cast to this view.
+type Section<T> = { coverage?: string; data?: T };
+
+type TrialBuckets = {
+    rows?: Array<{ nct_id?: unknown }>;
+    excluded_rows?: Array<{ nct_id?: unknown }>;
+};
+
+type IndicationRow = {
+    composite_score: number;
+    disease_name?: string;
+    evidence?: Array<{ predicate?: unknown }>;
+};
+
+interface DossierBodyView {
+    safety_profile?: {
+        faers?: Section<{
+            top_signals?: Array<{ report_count: number; meddra_term: string }>;
+            seriousness?: { coverage?: string; by_seriousness?: { death?: number } };
+        }>;
+        trial_aes?: Section<{ serious?: Array<{ term?: string | null; organ?: string | null }> }>;
+        off_target_panel?: Section<{ rows?: Array<{ organ_system?: string; is_safety_panel_target?: unknown }> }>;
+        organ_rollup?: Section<{ rows?: Array<{ organ: string; risk_level: string }> }>;
+        class_precedent?: Section<{ per_organ?: Array<{ is_class_liability?: unknown }>; drugs_in_class?: unknown[] }>;
+        [section: string]: { coverage?: string } | undefined;
+    };
+    reference_biology?: {
+        key_papers?: Section<{ rows?: Array<{ pmid?: unknown }> }>;
+        normal_tissue_expression?: Section<{ rows?: Array<{ value?: number; tissue?: string }> }>;
+        preclinical?: { expression_heatmap?: Section<{ cells?: Array<{ rank?: string; tissue?: string; species?: string }> }> };
+    };
+    clinical_development?: {
+        trials?: Section<TrialBuckets>;
+        failed_trials?: Section<TrialBuckets>;
+        outcomes?: Section<{ rows?: Array<{ nct_id?: unknown }> }>;
+    };
+    analytics?: { discovery_trials?: Section<TrialBuckets> };
+    indications?: { coverage?: string; data?: { rows?: IndicationRow[] } };
+    off_tissue_risk?: Section<{ rows?: Array<{ organ?: unknown }> }>;
+    liability_summary?: { liability_bullets?: Array<{ category?: string }> };
+}
+
 /**
  * Derive the set of organs that should appear in the organ rollup based on
  * available safety signals (FAERS top signals, serious trial AEs, and
@@ -13,7 +61,8 @@ const FAERS_TOP_SIGNAL_THRESHOLD = 1000;
  * organ_rollup rows — ensuring the set of "expected" organs is identical at
  * assembly time and at derived-validation time.
  */
-export function expectedOrgansFromBody(body: any): string[] {
+export function expectedOrgansFromBody(bodyInput: unknown): string[] {
+    const body = bodyInput as DossierBodyView;
     const expected = new Set<string>();
 
     const top = body?.safety_profile?.faers?.data?.top_signals ?? [];
@@ -38,22 +87,22 @@ export function expectedOrgansFromBody(body: any): string[] {
     return [...expected].sort();
 }
 
-function presentOrgans(body: any): string[] {
+function presentOrgans(body: DossierBodyView): string[] {
     const rows = body?.safety_profile?.organ_rollup?.data?.rows ?? [];
     return rows
-        .map((r: any) => r.organ)
-        .filter((o: any): o is string => typeof o === "string")
+        .map((r) => r.organ)
+        .filter((o): o is string => typeof o === "string")
         .sort();
 }
 
-function countDistinctPapers(body: any): number {
+function countDistinctPapers(body: DossierBodyView): number {
     const set = new Set<string>();
     const keyPapers = body?.reference_biology?.key_papers?.data?.rows ?? [];
     for (const p of keyPapers) if (p.pmid) set.add(String(p.pmid));
     return set.size;
 }
 
-function countDistinctTrials(body: any): number {
+function countDistinctTrials(body: DossierBodyView): number {
     const set = new Set<string>();
     // V5 partitions ineligible trials into `excluded_rows`, so the distinct
     // count must union both buckets for trials, failed_trials, and
@@ -76,58 +125,61 @@ function countDistinctTrials(body: any): number {
 // Walk the entire body tree counting all `evidence` array entries to produce
 // a total evidence item count. This is intentionally recursive and treats every
 // nested `evidence` array as contributing to the total.
-function countTotalEvidenceItems(body: any): number {
+function countTotalEvidenceItems(body: DossierBodyView): number {
     let total = 0;
-    const walk = (v: any) => {
+    const walk = (v: unknown) => {
         if (Array.isArray(v)) {
-            v.forEach(walk);
+            for (const item of v) walk(item);
         } else if (v && typeof v === "object") {
-            if (Array.isArray((v as any).evidence)) total += (v as any).evidence.length;
-            for (const k of Object.keys(v)) walk((v as any)[k]);
+            const node = v as Record<string, unknown>;
+            if (Array.isArray(node.evidence)) total += node.evidence.length;
+            for (const k of Object.keys(v)) walk(node[k]);
         }
     };
     walk(body);
     return total;
 }
 
-function hasHumanEvidence(body: any): boolean {
-    let any = false;
-    const walk = (v: any) => {
-        if (any) return;
+function hasHumanEvidence(body: DossierBodyView): boolean {
+    let found = false;
+    const walk = (v: unknown) => {
+        if (found) return;
         if (Array.isArray(v)) {
-            v.forEach(walk);
+            for (const item of v) walk(item);
         } else if (v && typeof v === "object") {
-            if ((v as any).has_human_evidence === true || (v as any).is_human === true) {
-                any = true;
+            const node = v as Record<string, unknown>;
+            if (node.has_human_evidence === true || node.is_human === true) {
+                found = true;
                 return;
             }
-            for (const k of Object.keys(v)) walk((v as any)[k]);
+            for (const k of Object.keys(v)) walk(node[k]);
         }
     };
     walk(body);
-    return any;
+    return found;
 }
 
-function hasClinicalEvidence(body: any): boolean {
-    let any = false;
-    const walk = (v: any) => {
-        if (any) return;
+function hasClinicalEvidence(body: DossierBodyView): boolean {
+    let found = false;
+    const walk = (v: unknown) => {
+        if (found) return;
         if (Array.isArray(v)) {
-            v.forEach(walk);
+            for (const item of v) walk(item);
         } else if (v && typeof v === "object") {
-            if ((v as any).has_clinical_evidence === true || (v as any).is_clinical === true) {
-                any = true;
+            const node = v as Record<string, unknown>;
+            if (node.has_clinical_evidence === true || node.is_clinical === true) {
+                found = true;
                 return;
             }
-            for (const k of Object.keys(v)) walk((v as any)[k]);
+            for (const k of Object.keys(v)) walk(node[k]);
         }
     };
     walk(body);
-    return any;
+    return found;
 }
 
-function highestRiskOrgan(body: any): string | null {
-    const rows: { organ: string; risk_level: string }[] = body?.safety_profile?.organ_rollup?.data?.rows ?? [];
+function highestRiskOrgan(body: DossierBodyView): string | null {
+    const rows = body?.safety_profile?.organ_rollup?.data?.rows ?? [];
     const high = rows.find((r) => r.risk_level === "high");
     if (high) return high.organ;
     const med = rows.find((r) => r.risk_level === "medium");
@@ -135,16 +187,16 @@ function highestRiskOrgan(body: any): string | null {
     return null;
 }
 
-function topIndicationSummary(body: any): {
+function topIndicationSummary(body: DossierBodyView): {
     highest_score: number | null;
     strongest_strength_label: string | null;
     highest_score_is_conflicted: boolean;
 } {
-    const rows: any[] = body?.indications?.coverage === "available" ? (body.indications.data?.rows ?? []) : [];
+    const rows = body?.indications?.coverage === "available" ? (body.indications?.data?.rows ?? []) : [];
     if (rows.length === 0) {
         return { highest_score: null, strongest_strength_label: null, highest_score_is_conflicted: false };
     }
-    let top: any = null;
+    let top: IndicationRow | null = null;
     for (const r of rows) {
         if (typeof r.composite_score !== "number") continue;
         if (!top || r.composite_score > top.composite_score) top = r;
@@ -152,7 +204,7 @@ function topIndicationSummary(body: any): {
     if (!top) {
         return { highest_score: null, strongest_strength_label: null, highest_score_is_conflicted: false };
     }
-    const conflicted = Array.isArray(top.evidence) ? top.evidence.some((e: any) => e?.predicate === "direction_mismatch") : false;
+    const conflicted = Array.isArray(top.evidence) ? top.evidence.some((e) => e?.predicate === "direction_mismatch") : false;
     return {
         highest_score: top.composite_score ?? null,
         strongest_strength_label: top.disease_name ?? null,
@@ -164,7 +216,7 @@ function topIndicationSummary(body: any): {
 // (normal_tissue_expression, keyed as "human") and the cross-species expression
 // heatmap. Deduplication uses `${tissue}::${species}` pairs so the same tissue
 // in different species counts as separate entries.
-function countHighExpressionTissues(body: any): number {
+function countHighExpressionTissues(body: DossierBodyView): number {
     const set = new Set<string>();
 
     const consensusRows = body?.reference_biology?.normal_tissue_expression?.data?.rows ?? [];
@@ -192,28 +244,29 @@ function countHighExpressionTissues(body: any): number {
  * missing/partial bodies — always returns a best-effort result and never throws.
  * Schema validation happens at the persist boundary (Task 11), not here.
  */
-export function computeDerivedFields(body: any): DerivedV4 {
+export function computeDerivedFields(bodyInput: unknown): DerivedV4 {
+    const body = bodyInput as DossierBodyView;
     const classLiabilityRows =
         body?.safety_profile?.class_precedent?.coverage === "available"
-            ? (body.safety_profile.class_precedent.data.per_organ ?? []).filter((o: any) => o.is_class_liability)
+            ? (body.safety_profile?.class_precedent?.data?.per_organ ?? []).filter((o) => o.is_class_liability)
             : [];
     const classLiabilityCount = classLiabilityRows.length;
 
     const sameClassDrugCount =
-        body?.safety_profile?.class_precedent?.coverage === "available" ? (body.safety_profile.class_precedent.data.drugs_in_class ?? []).length : 0;
+        body?.safety_profile?.class_precedent?.coverage === "available" ? (body.safety_profile?.class_precedent?.data?.drugs_in_class ?? []).length : 0;
 
     const offTargetRows = body?.safety_profile?.off_target_panel?.data?.rows ?? [];
-    const safetyHits = offTargetRows.filter((r: any) => r.is_safety_panel_target === true).length;
+    const safetyHits = offTargetRows.filter((r) => r.is_safety_panel_target === true).length;
 
     const offTissueRows = body?.off_tissue_risk?.data?.rows ?? [];
-    const offTissueOrganCount = new Set(offTissueRows.map((r: any) => r.organ).filter(Boolean)).size;
+    const offTissueOrganCount = new Set(offTissueRows.map((r) => r.organ).filter(Boolean)).size;
 
     const expected = expectedOrgansFromBody(body);
     const present = presentOrgans(body);
     const missing = expected.filter((o) => !present.includes(o));
 
     const seriousness = body?.safety_profile?.faers?.data?.seriousness;
-    const fatalBullet = (body?.liability_summary?.liability_bullets ?? []).some((b: any) => b?.category === "fatal_post_market");
+    const fatalBullet = (body?.liability_summary?.liability_bullets ?? []).some((b) => b?.category === "fatal_post_market");
     const anyFatal: boolean | "unknown" =
         seriousness?.coverage === "available" ? (seriousness.by_seriousness?.death ?? 0) > 0 || fatalBullet : fatalBullet ? true : "unknown";
 

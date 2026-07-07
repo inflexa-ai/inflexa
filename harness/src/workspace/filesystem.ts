@@ -285,13 +285,11 @@ function readHeadLines(absolute: string, headLines: number, maxBytes: number | u
             const content = Buffer.from(collected.join("\n"));
             if (truncated) {
                 // Total size is unknown without a full stat; report it as a separate read.
-                return (await safeStat(absolute)).map(
-                    (s): ReadFileResult => ({
-                        kind: "truncated",
-                        content,
-                        totalSize: s?.size ?? content.length,
-                    }),
-                );
+                return (await safeStat(absolute)).map((s): ReadFileResult => ({
+                    kind: "truncated",
+                    content,
+                    totalSize: s?.size ?? content.length,
+                }));
             }
             // Whether the loop exhausted the file or hit the line cap, the agent asked
             // for exactly this window, so this is `ok` not `truncated`. The tool layer

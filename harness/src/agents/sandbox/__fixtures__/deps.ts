@@ -68,7 +68,7 @@ export function makeFakeChatProvider(): ChatProvider {
         chat() {
             throw new Error("fake chat provider — not exercised in these tests");
         },
-        async *chatStream() {
+        chatStream() {
             throw new Error("fake chat provider — not exercised in these tests");
         },
     };

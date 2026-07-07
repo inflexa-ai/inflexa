@@ -105,7 +105,13 @@ export type { Pool } from "pg";
 // `tryRetryDataProfile` and then started with `runDataProfile` (the managed
 // retry route's shape — embedders mirror it).
 export { registerDataProfileWorkflow, triggerDataProfile, runDataProfile } from "./tasks/data-profile.js";
-export type { DataProfileDeps, DataProfileWorkflowInput, DataProfileTriggerDeps, DataProfileTriggerParams, DataProfileTriggerResult } from "./tasks/data-profile.js";
+export type {
+    DataProfileDeps,
+    DataProfileWorkflowInput,
+    DataProfileTriggerDeps,
+    DataProfileTriggerParams,
+    DataProfileTriggerResult,
+} from "./tasks/data-profile.js";
 
 // Ledger surface the embedder needs around a trigger: schema init at boot,
 // the analysis-state seed (the trigger's CAS transitions the row this creates

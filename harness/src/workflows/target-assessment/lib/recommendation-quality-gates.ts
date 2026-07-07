@@ -22,7 +22,7 @@ function appendNote(current: string, addition: string): string {
 
 export function applyRecommendationQualityGates(input: ApplyRecommendationQualityGatesInput): ApplyRecommendationQualityGatesResult {
     const quality_gates: QualityGateStatus[] = [];
-    let executive_recommendation = structuredClone(input.executive_recommendation);
+    const executive_recommendation = structuredClone(input.executive_recommendation);
 
     const unresolved = input.recommendation_audit?.citations_unresolved ?? [];
     const visibleRecommendationText =
@@ -34,15 +34,15 @@ export function applyRecommendationQualityGates(input: ApplyRecommendationQualit
                   ...input.executive_recommendation.data.key_risks,
               ].join("\n")
             : "";
-    const blockingCitationCount = unresolved.filter((u: { surface: string }) => {
-        // The unresolved-citation entries are an untyped audit payload statically
-        // narrowed only to `{ surface }`; the `as any` reads optional fields
-        // (`excerpt`) that exist on some surfaces, guarded by the `in` check.
-        if ((u as any).surface === "organ_claim_without_probe_pass" && "excerpt" in (u as any)) {
-            const excerpt = String((u as any).excerpt ?? "");
+    const blockingCitationCount = unresolved.filter((u: { surface: string; excerpt?: unknown }) => {
+        // The unresolved-citation entries are an untyped audit payload narrowed
+        // here to the fields these gates read; `excerpt` exists only on some
+        // surfaces, guarded by the `in` presence check.
+        if (u.surface === "organ_claim_without_probe_pass" && "excerpt" in u) {
+            const excerpt = String(u.excerpt ?? "");
             return excerpt.length > 0 && visibleRecommendationText.includes(excerpt.slice(0, Math.min(80, excerpt.length)));
         }
-        return ["external_missing", "nct_wrong_class", "organ_claim_without_probe_pass", "off_topic_citation"].includes((u as any).surface);
+        return ["external_missing", "nct_wrong_class", "organ_claim_without_probe_pass", "off_topic_citation"].includes(u.surface);
     }).length;
     if (blockingCitationCount > 0) {
         quality_gates.push({

@@ -35,7 +35,7 @@ export async function backfillAiSdkMessageEnvelopes(client: PoolClient): Promise
             ]);
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            throw new Error(`Failed to backfill AI SDK message envelope for ${identity}: ${message}`);
+            throw new Error(`Failed to backfill AI SDK message envelope for ${identity}: ${message}`, { cause: err });
         }
     }
 

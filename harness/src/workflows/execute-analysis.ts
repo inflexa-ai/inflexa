@@ -725,8 +725,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         inFlight.delete(childId);
 
         let settled:
-            | { childId: string; stepId: string; kind: "result"; result: SandboxStepResult }
-            | { childId: string; stepId: string; kind: "error"; err: unknown };
+            { childId: string; stepId: string; kind: "result"; result: SandboxStepResult } | { childId: string; stepId: string; kind: "error"; err: unknown };
         try {
             const result = await entry.handle.getResult();
             settled = { childId, stepId: entry.stepId, kind: "result", result };

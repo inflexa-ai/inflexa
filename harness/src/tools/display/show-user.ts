@@ -49,7 +49,7 @@ export const showUserTool = defineTool({
         // Non-null: the input passed Zod validation, so `kind` is present.
         const card = buildPresentationCardData(input)!;
 
-        ctx.emit({
+        await ctx.emit({
             type: "data-presentation",
             source: ctx.session.provenance,
             data: card,

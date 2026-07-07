@@ -19,9 +19,7 @@
 import type { Coverage, SerializedError } from "./coverage.js";
 
 type CoverageEnvelope<T> =
-    | { coverage: "available"; data: T }
-    | { coverage: "queried_no_data"; error?: SerializedError }
-    | { coverage: "not_loaded"; reason?: string };
+    { coverage: "available"; data: T } | { coverage: "queried_no_data"; error?: SerializedError } | { coverage: "not_loaded"; reason?: string };
 
 export interface CorrectionInput<T> {
     initial: CoverageEnvelope<T>;

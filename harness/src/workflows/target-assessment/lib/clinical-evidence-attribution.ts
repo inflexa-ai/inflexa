@@ -214,7 +214,6 @@ export function classifyClinicalEvidenceTrial(trial: TrialLike, ctx: ClinicalEvi
         }
     }
 
-    const text = trialText(trial);
     if (targetBiomarkerMention(trial, ctx.assessmentSymbol)) {
         const resolved = details.map((i) => toResolvedIntervention(i, "ctgov"));
         return excluded(

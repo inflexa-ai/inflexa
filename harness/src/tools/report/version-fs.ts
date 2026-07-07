@@ -25,9 +25,7 @@ type EditFileOutput =
     | { status: "ok"; bytesWritten: number };
 
 type ReadFileOutput =
-    | { status: "out_of_scope"; reason: string }
-    | { status: "not_found" }
-    | { status: "ok"; content: string; truncated: boolean; totalBytes: number };
+    { status: "out_of_scope"; reason: string } | { status: "not_found" } | { status: "ok"; content: string; truncated: boolean; totalBytes: number };
 
 type MkdirOutput = { status: "out_of_scope"; reason: string } | { status: "ok" };
 

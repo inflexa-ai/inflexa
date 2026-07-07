@@ -14,35 +14,70 @@ import { defineTool } from "../define-tool.js";
 import { apiFetch, describeApiError } from "../lib/api-utils.js";
 import { GWAS_BASE, GWAS_HEADERS } from "../lib/gwas-catalog-config.js";
 
-const GwasAssociationSchema = z.object({
-    rsId: z.string(),
-    pValue: z.number(),
-    pValueMantissa: z.number(),
-    pValueExponent: z.number(),
-    riskAllele: z.string(),
-    riskFrequency: z.string(),
-    orBeta: z.number().nullable(),
-    ci: z.string(),
-    trait: z.string(),
-    mappedGenes: z.array(z.string()),
-    studyAccession: z.string(),
-    pubmedId: z.string(),
-    sampleSize: z.string(),
-});
+interface GwasAssociation {
+    rsId: string;
+    pValue: number;
+    pValueMantissa: number;
+    pValueExponent: number;
+    riskAllele: string;
+    riskFrequency: string;
+    orBeta: number | null;
+    ci: string;
+    trait: string;
+    mappedGenes: string[];
+    studyAccession: string;
+    pubmedId: string;
+    sampleSize: string;
+}
 
-type GwasAssociation = z.infer<typeof GwasAssociationSchema>;
+interface RawGwasStudy {
+    accessionId?: string;
+    pubmedId?: string;
+    initialSampleSize?: string;
+}
+
+interface RawGwasAssociation {
+    _snpRsId?: string;
+    loci?: {
+        strongestRiskAlleles?: { riskAlleleName?: string | null }[];
+        authorReportedGenes?: { geneName?: string | null }[];
+    }[];
+    efoTraits?: { trait?: string | null }[];
+    study?: RawGwasStudy;
+    pvalueMantissa?: number;
+    pvalueExponent?: number;
+    riskFrequency?: string;
+    orPerCopyNum?: number | null;
+    betaNum?: number | null;
+    range?: string;
+}
 
 interface GwasEmbedded {
-    _embedded?: { associations?: any[] };
+    _embedded?: { associations?: RawGwasAssociation[] };
     page?: { totalElements?: number };
 }
 
-function mapAssociation(a: any): GwasAssociation {
+interface GwasTraitSearchResponse {
+    _embedded?: {
+        efoTraits?: { _links?: { self?: { href?: string } } }[];
+    };
+}
+
+interface GwasSnpSearchResponse {
+    _embedded?: {
+        singleNucleotidePolymorphisms?: {
+            rsId?: string;
+            _links?: { associations?: { href?: string } };
+        }[];
+    };
+}
+
+function mapAssociation(a: RawGwasAssociation): GwasAssociation {
     const loci = a.loci ?? [];
-    const riskAlleles: string[] = loci.flatMap((l: any) => l.strongestRiskAlleles?.map((ra: any) => String(ra.riskAlleleName ?? "")) ?? []);
-    const genes: string[] = loci.flatMap((l: any) => l.authorReportedGenes?.map((g: any) => String(g.geneName ?? "")) ?? []);
-    const traits = (a.efoTraits ?? []).map((t: any) => String(t.trait ?? ""));
-    const study = a.study ?? {};
+    const riskAlleles: string[] = loci.flatMap((l) => l.strongestRiskAlleles?.map((ra) => String(ra.riskAlleleName ?? "")) ?? []);
+    const genes: string[] = loci.flatMap((l) => l.authorReportedGenes?.map((g) => String(g.geneName ?? "")) ?? []);
+    const traits = (a.efoTraits ?? []).map((t) => String(t.trait ?? ""));
+    const study: RawGwasStudy = a.study ?? {};
     const pMantissa: number = a.pvalueMantissa ?? 0;
     const pExponent: number = a.pvalueExponent ?? 0;
 
@@ -90,7 +125,7 @@ export const searchGwasCatalogTool = defineTool({
         }
 
         if (searchType === "trait") {
-            const traitRes = await apiFetch<any>(url, { headers: GWAS_HEADERS });
+            const traitRes = await apiFetch<GwasTraitSearchResponse>(url, { headers: GWAS_HEADERS });
             if (traitRes.isErr()) throw new Error(describeApiError(traitRes.error));
 
             const traits = traitRes.value?._embedded?.efoTraits ?? [];
@@ -108,11 +143,11 @@ export const searchGwasCatalogTool = defineTool({
         }
 
         if (searchType === "gene") {
-            const snpRes = await apiFetch<any>(url, { headers: GWAS_HEADERS });
+            const snpRes = await apiFetch<GwasSnpSearchResponse>(url, { headers: GWAS_HEADERS });
             if (snpRes.isErr()) throw new Error(describeApiError(snpRes.error));
 
             const snps = snpRes.value?._embedded?.singleNucleotidePolymorphisms ?? [];
-            const allAssocs: any[] = [];
+            const allAssocs: RawGwasAssociation[] = [];
 
             for (const snp of snps.slice(0, Math.min(limit, 10))) {
                 const assocLink = snp?._links?.associations?.href;
@@ -142,7 +177,7 @@ export const searchGwasCatalogTool = defineTool({
         const totalFound = res.value?.page?.totalElements ?? rawAssocs.length;
 
         const filtered = rawAssocs
-            .filter((a: any) => {
+            .filter((a) => {
                 const p = (a.pvalueMantissa ?? 1) * Math.pow(10, a.pvalueExponent ?? 0);
                 return p <= pValueThreshold;
             })

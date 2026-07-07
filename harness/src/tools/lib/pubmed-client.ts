@@ -74,18 +74,19 @@ export async function searchPubmed(
 /** Fetch full PubMed article details (efetch + ID Converter for PMC). */
 export async function getArticleDetails(ncbiApiKey: string | undefined, pmids: string[]): Promise<{ articles: ArticleDetail[]; notFound: string[] }> {
     const idString = pmids.join(",");
-    const [efetchResult, idConvResult] = await Promise.all([
-        apiFetch<string>(
-            ncbiUrl(ncbiApiKey, `${NCBI_BASE}/efetch.fcgi`, {
-                db: "pubmed",
-                id: idString,
-                rettype: "xml",
-                retmode: "xml",
-            }),
-            { parseAs: "text" },
-        ),
-        apiFetch<unknown>(ncbiUrl(ncbiApiKey, NCBI_IDCONV, { ids: idString, format: "json" })),
-    ]);
+    const efetchAsync = apiFetch<string>(
+        ncbiUrl(ncbiApiKey, `${NCBI_BASE}/efetch.fcgi`, {
+            db: "pubmed",
+            id: idString,
+            rettype: "xml",
+            retmode: "xml",
+        }),
+        { parseAs: "text" },
+    );
+    const idConvAsync = apiFetch<unknown>(ncbiUrl(ncbiApiKey, NCBI_IDCONV, { ids: idString, format: "json" }));
+    // Both requests run concurrently; each Result is awaited and handled below.
+    const efetchResult = await efetchAsync;
+    const idConvResult = await idConvAsync;
 
     if (efetchResult.isErr()) throw new Error(describeApiError(efetchResult.error));
 

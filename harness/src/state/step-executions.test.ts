@@ -1,26 +1,25 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
-import { unwrapOrThrow } from "../lib/result.js";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { insertStepExecution, queryStepsByRun, updateStepExecution } from "./step-executions.js";
 import { createBlockerHolder, createReportBlockerTool } from "../tools/sandbox/report-blocker.js";
 import type { ToolContext } from "../tools/define-tool.js";
 
 async function seedRunning(pool: Pool, runId: string, stepId: string): Promise<void> {
-    unwrapOrThrow(
+    (
         await insertStepExecution(pool, {
             runId,
             stepId,
             analysisId: "analysis-1",
             wave: 0,
             agentId: "scientific-executor",
-        }),
-    );
+        })
+    )._unsafeUnwrap();
 }
 
 async function readStep(pool: Pool, runId: string, stepId: string) {
-    const rows = unwrapOrThrow(await queryStepsByRun(pool, runId));
+    const rows = (await queryStepsByRun(pool, runId))._unsafeUnwrap();
     return rows.find((r) => r.stepId === stepId);
 }
 
@@ -40,7 +39,7 @@ describe("step-executions: blocked status", () => {
 
     it("round-trips a blocked status + blocked_reason", async () => {
         await seedRunning(pool, "run-blocked", "step-1");
-        unwrapOrThrow(
+        (
             await updateStepExecution(pool, "run-blocked", "step-1", {
                 status: "blocked",
                 durationMs: 1234,
@@ -50,8 +49,8 @@ describe("step-executions: blocked status", () => {
                 lastErrorClass: "blocked",
                 finishReason: "end_turn",
                 hitMaxSteps: false,
-            }),
-        );
+            })
+        )._unsafeUnwrap();
 
         const row = await readStep(pool, "run-blocked", "step-1");
         expect(row?.status).toBe("blocked");
@@ -64,14 +63,14 @@ describe("step-executions: blocked status", () => {
 
     it("leaves blocked_reason null for non-blocked terminal statuses", async () => {
         await seedRunning(pool, "run-completed", "step-1");
-        unwrapOrThrow(
+        (
             await updateStepExecution(pool, "run-completed", "step-1", {
                 status: "completed",
                 durationMs: 10,
                 finishReason: "end_turn",
                 hitMaxSteps: false,
-            }),
-        );
+            })
+        )._unsafeUnwrap();
 
         const row = await readStep(pool, "run-completed", "step-1");
         expect(row?.status).toBe("completed");

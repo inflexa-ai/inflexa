@@ -9,39 +9,22 @@
  * under `evidence: [...]` arrays.
  */
 
-import type {
-    DossierV4Body,
-    Entity,
-    TractabilitySection,
-    EvidenceItem,
-    TractabilityV4Section,
-    RegulatoryActionRow,
-} from "@inflexa-ai/harness/contracts/target-dossier.js";
-import { expectedOrgansFromBody } from "../lib/compute-derived.js";
+import type { DossierV4Body, Entity, EvidenceItem, TractabilityV4Section } from "@inflexa-ai/harness/contracts/target-dossier.js";
 import type { Phase2Bundle } from "../steps/phase2-aggregate.js";
 import type { Phase3Bundle } from "../steps/phase3-aggregate.js";
 import type { ResolvedTarget } from "../schemas.js";
 import { inferTherapeuticArea, getBenchmarks, getDatasetAttribution } from "../../../tools/lib/clinical-benchmarks-client.js";
 import { inferModalityFromFamily } from "../../../tools/lib/protein-family-modality.js";
-import { SafetyPanelFileSchema, type SafetyTarget } from "../../../data/safety-panel-schema.js";
-import safetyPanelData from "../../../data/safety-panel.json" with { type: "json" };
-import { classifyTrialAttribution, isOnTargetChemblId, resolveFamilySiblingUniprots, resolveOnTargetChemblIds } from "../lib/target-identity-filter.js";
-import { isIntendedCoTarget } from "../lib/intended-polypharm-filter.js";
-import { makeHeterodimerOfAssessmentFilter } from "../lib/heterodimer-filter.js";
-import { buildFamilyComplexSupplement } from "../lib/family-complex-supplement.js";
-import type { FamilyComplexesBundle } from "../schemas.js";
-import { computeSelectivity } from "../lib/compute-selectivity.js";
+import { resolveFamilySiblingUniprots, resolveOnTargetChemblIds } from "../lib/target-identity-filter.js";
 import { getDrugPrimaryTargetUniprots } from "../../../tools/lib/chembl-client.js";
 import type { Pool } from "pg";
 import { annotateOffTargetPanel } from "../lib/clinical-consequence-annotator.js";
 import type { ClinicalConsequenceAnnotatorDeps } from "../lib/clinical-consequence-annotator.js";
 import { coverageFromRows } from "../coverage.js";
 import { fetchRegulatoryActions } from "../lib/regulatory-actions.js";
-import { classifyOrgan, classifyPolypharmOrgan, classifyTrialAe, type CanonicalOrgan } from "../lib/meddra-organ-map.js";
-import { HIGH_EXPRESSION_TPM_THRESHOLD, CNS_REGION_TPM_FLOOR, MUSCULOSKELETAL_TPM_FLOOR } from "../lib/expression-constants.js";
+import { HIGH_EXPRESSION_TPM_THRESHOLD } from "../lib/expression-constants.js";
 export { HIGH_EXPRESSION_TPM_THRESHOLD };
 import { resolveModulatorMoleculeType } from "../lib/dedup-modulators.js";
-import type { ChemblModulator } from "../../../tools/lib/chembl-client.js";
 import { searchFailedTrialsForDrugNames } from "../../../tools/lib/clinical-trials-client.js";
 
 import {
@@ -333,7 +316,7 @@ export async function assembleDossier(
     const internalRefCounts = tallyInternalReferences([
         koSupportingLiterature,
         ...(organRollupRows ?? []).map((r) => r.evidence),
-        ...(offTargetRows ?? []).map((r: any) => r.evidence),
+        ...(offTargetRows ?? []).map((r) => r.evidence),
     ]);
     const keyPapersRows = assembleKeyPapers(phase2, internalRefCounts);
     const evidenceTimeline = assembleEvidenceTimeline(phase2);

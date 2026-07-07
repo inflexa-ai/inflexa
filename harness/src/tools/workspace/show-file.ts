@@ -95,7 +95,7 @@ export const showFileTool = defineTool({
             };
         });
 
-        ctx.emit({
+        await ctx.emit({
             type: "data-file-reference",
             source: ctx.session.provenance,
             data: { id, ...(title !== undefined ? { title } : {}), files: entries },

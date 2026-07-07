@@ -10,6 +10,29 @@ import { apiFetch, describeApiError } from "../lib/api-utils.js";
 
 const ESEARCH_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 
+interface GeoEsearchResponse {
+    esearchresult?: {
+        idlist?: string[];
+        count?: string;
+    };
+}
+
+interface GeoDatasetSummary {
+    accession?: string;
+    gse?: string;
+    title?: string;
+    summary?: string;
+    gpl?: string | null;
+    platform?: string | null;
+    n_samples?: string | number;
+    taxon?: string | null;
+    pubmedids?: (string | number)[];
+}
+
+interface GeoEsummaryResponse {
+    result?: Record<string, GeoDatasetSummary | undefined>;
+}
+
 export const searchGeoDatasetsTool = defineTool({
     id: "search_geo_datasets",
     description:
@@ -29,17 +52,17 @@ export const searchGeoDatasetsTool = defineTool({
         searchQuery += typeFilter;
 
         const searchUrl = `${ESEARCH_BASE}/esearch.fcgi?db=${db}&term=${encodeURIComponent(searchQuery)}&retmax=${limit}&retmode=json`;
-        const searchRes = await apiFetch<any>(searchUrl);
+        const searchRes = await apiFetch<GeoEsearchResponse>(searchUrl);
         if (searchRes.isErr()) throw new Error(describeApiError(searchRes.error));
 
         const ids: string[] = searchRes.value?.esearchresult?.idlist ?? [];
         if (ids.length === 0) return ok({ totalFound: 0, datasets: [] });
 
         const summaryUrl = `${ESEARCH_BASE}/esummary.fcgi?db=${db}&id=${ids.join(",")}&retmode=json`;
-        const summaryRes = await apiFetch<any>(summaryUrl);
+        const summaryRes = await apiFetch<GeoEsummaryResponse>(summaryUrl);
         if (summaryRes.isErr()) throw new Error(describeApiError(summaryRes.error));
 
-        const result = summaryRes.value?.result ?? {};
+        const result: Record<string, GeoDatasetSummary | undefined> = summaryRes.value?.result ?? {};
         const datasets = ids
             .map((id) => {
                 const r = result[id];

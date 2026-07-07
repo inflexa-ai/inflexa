@@ -42,8 +42,7 @@ export interface StructuredLlmCallOptions<TSchema extends z.ZodType> {
 }
 
 export type StructuredLlmResult<TSchema extends z.ZodType> =
-    | { readonly kind: "ok"; readonly value: z.infer<TSchema> }
-    | { readonly kind: "budget-exceeded"; readonly sentinel: typeof BUDGET_EXCEEDED_SENTINEL };
+    { readonly kind: "ok"; readonly value: z.infer<TSchema> } | { readonly kind: "budget-exceeded"; readonly sentinel: typeof BUDGET_EXCEEDED_SENTINEL };
 
 /**
  * Thrown when the model returned a structured-output payload that does

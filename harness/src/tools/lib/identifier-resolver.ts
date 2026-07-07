@@ -81,6 +81,9 @@ interface HgncResponse {
     };
 }
 
+/** A single doc from the HGNC search payload — every field is optional. */
+type HgncDoc = NonNullable<NonNullable<HgncResponse["response"]>["docs"]>[number];
+
 interface UniprotResponse {
     results?: Array<{
         primaryAccession?: string;
@@ -168,36 +171,35 @@ export async function resolveTarget(input: string): Promise<ResolvedTarget> {
     }
 
     // Step 1: HGNC anchor.
-    // `hgncDoc` holds a single doc from the untyped HGNC search payload. The `fetchHgncBy`
-    // results and every `(hgncDoc as any).<field>` read below are casts on that upstream
-    // shape; each field access is optional-chained / defaulted, so a missing or renamed
-    // field degrades to null rather than throwing — safe because the resolver never relies
-    // on any single HGNC field being present.
-    let hgncDoc: HgncResponse["response"] extends infer R ? (R extends { docs?: infer D } ? (D extends Array<infer X> ? X | null : null) : null) : null = null;
+    // `hgncDoc` holds a single doc from the HGNC search payload (all fields are
+    // optional on `HgncDoc`); every read below is optional-chained / defaulted, so
+    // a missing or renamed field degrades to null rather than throwing — the
+    // resolver never relies on any single HGNC field being present.
+    let hgncDoc: HgncDoc | null = null;
     if (seedSymbol) {
-        hgncDoc = (await fetchHgncBy("symbol", seedSymbol)) as any;
+        hgncDoc = await fetchHgncBy("symbol", seedSymbol);
         if (!hgncDoc) {
-            hgncDoc = (await fetchHgncBy("alias_symbol", seedSymbol)) as any;
+            hgncDoc = await fetchHgncBy("alias_symbol", seedSymbol);
         }
         if (!hgncDoc) {
-            hgncDoc = (await fetchHgncBy("prev_symbol", seedSymbol)) as any;
+            hgncDoc = await fetchHgncBy("prev_symbol", seedSymbol);
         }
     } else if (seedHgncId) {
-        hgncDoc = (await fetchHgncBy("hgnc_id", seedHgncId.replace(/^HGNC:/, ""))) as any;
+        hgncDoc = await fetchHgncBy("hgnc_id", seedHgncId.replace(/^HGNC:/, ""));
     } else if (seedEnsemblId) {
-        hgncDoc = (await fetchHgncBy("ensembl_gene_id", seedEnsemblId)) as any;
+        hgncDoc = await fetchHgncBy("ensembl_gene_id", seedEnsemblId);
     } else if (seedUniprot) {
-        hgncDoc = (await fetchHgncBy("uniprot_ids", seedUniprot)) as any;
+        hgncDoc = await fetchHgncBy("uniprot_ids", seedUniprot);
     }
 
     // Step 2: UniProt
     let uniprotDoc: NonNullable<UniprotResponse["results"]>[number] | null = null;
-    const uniprotFromHgnc = hgncDoc && (hgncDoc as any).uniprot_ids ? (hgncDoc as any).uniprot_ids[0] : null;
+    const uniprotFromHgnc = hgncDoc?.uniprot_ids?.[0] ?? null;
     const uniprotSeed = seedUniprot ?? uniprotFromHgnc ?? null;
     if (uniprotSeed) {
         uniprotDoc = await fetchUniprotByAccession(uniprotSeed);
-    } else if (hgncDoc && (hgncDoc as any).symbol) {
-        uniprotDoc = await fetchUniprotBySymbol((hgncDoc as any).symbol);
+    } else if (hgncDoc?.symbol) {
+        uniprotDoc = await fetchUniprotBySymbol(hgncDoc.symbol);
     } else if (seedSymbol) {
         uniprotDoc = await fetchUniprotBySymbol(seedSymbol);
     }
@@ -205,12 +207,12 @@ export async function resolveTarget(input: string): Promise<ResolvedTarget> {
     // Backfill HGNC if it was empty but UniProt produced a primary gene name.
     const uniprotPrimaryGene = uniprotDoc?.genes?.[0]?.geneName?.value ?? null;
     if (!hgncDoc && uniprotPrimaryGene) {
-        hgncDoc = (await fetchHgncBy("symbol", uniprotPrimaryGene)) as any;
+        hgncDoc = await fetchHgncBy("symbol", uniprotPrimaryGene);
     }
 
     // Step 3: Ensembl
-    let ensemblId: string | null = seedEnsemblId ?? (hgncDoc as any)?.ensembl_gene_id ?? null;
-    const symbolForEnsembl = (hgncDoc as any)?.symbol ?? uniprotPrimaryGene ?? seedSymbol;
+    let ensemblId: string | null = seedEnsemblId ?? hgncDoc?.ensembl_gene_id ?? null;
+    const symbolForEnsembl = hgncDoc?.symbol ?? uniprotPrimaryGene ?? seedSymbol;
     if (!ensemblId && symbolForEnsembl) {
         ensemblId = await resolveSymbolToEnsemblId(symbolForEnsembl);
     }
@@ -224,13 +226,13 @@ export async function resolveTarget(input: string): Promise<ResolvedTarget> {
     }
 
     // Final canonical anchor — HGNC preferred, then Ensembl.
-    const hgncId = (hgncDoc as any)?.hgnc_id ?? null;
-    const finalSymbol = (hgncDoc as any)?.symbol ?? uniprotPrimaryGene ?? seedSymbol;
-    const finalName = uniprotDoc?.proteinDescription?.recommendedName?.fullName?.value ?? (hgncDoc as any)?.name ?? finalSymbol ?? null;
+    const hgncId = hgncDoc?.hgnc_id ?? null;
+    const finalSymbol = hgncDoc?.symbol ?? uniprotPrimaryGene ?? seedSymbol;
 
     if (!finalSymbol) {
         throw new Error(`Could not resolve target "${trimmed}" to a canonical human gene/protein identity`);
     }
+    const finalName = uniprotDoc?.proteinDescription?.recommendedName?.fullName?.value ?? hgncDoc?.name ?? finalSymbol;
     // The canonicalOntology field is the entity-resolution anchor for
     // downstream collectors — falling back to a ChEMBL id (or worse, the
     // raw input string) while labelling it "ensembl" would silently route
@@ -245,8 +247,8 @@ export async function resolveTarget(input: string): Promise<ResolvedTarget> {
     }
 
     const synonyms = new Set<string>();
-    for (const s of (hgncDoc as any)?.alias_symbol ?? []) synonyms.add(String(s));
-    for (const s of (hgncDoc as any)?.prev_symbol ?? []) synonyms.add(String(s));
+    for (const s of hgncDoc?.alias_symbol ?? []) synonyms.add(String(s));
+    for (const s of hgncDoc?.prev_symbol ?? []) synonyms.add(String(s));
     for (const g of uniprotDoc?.genes ?? []) {
         for (const syn of g.synonyms ?? []) {
             if (syn.value) synonyms.add(syn.value);
@@ -269,7 +271,7 @@ export async function resolveTarget(input: string): Promise<ResolvedTarget> {
             ensembl: ensemblId,
             uniprot: uniprotDoc?.primaryAccession ?? uniprotSeed,
             chembl: chemblId,
-            entrez: (hgncDoc as any)?.entrez_id ?? null,
+            entrez: hgncDoc?.entrez_id ?? null,
         },
         synonyms: [...synonyms].filter(Boolean).sort(),
         proteinSynonyms: [...proteinSynonyms].filter(Boolean).sort(),

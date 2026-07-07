@@ -18,7 +18,34 @@ export type StructuralEvidenceConflict = {
     evidence: never[];
 };
 
-function checkFaersCoverage(body: any): StructuralEvidenceConflict | null {
+// Loose structural view over a raw dossier body. Every field is optional and
+// every section wraps its payload as `{ coverage?, data? }` — these rules are
+// deliberately defensive against a partial/malformed body (schema validation
+// runs at the persist boundary). Names only the fields these checks read; the
+// exported entrypoint accepts `unknown` and casts to this view.
+type Section<T> = { coverage?: string; data?: T };
+
+interface EvidenceBodyView {
+    safety_profile?: {
+        faers?: { coverage?: string };
+        class_precedent?: Section<{ per_organ?: Array<{ top_aes?: Array<{ report_count?: number }> }> }>;
+    };
+    derived?: {
+        risk_summary?: { any_fatal_signal?: unknown };
+        liability_summary?: { expression_breadth?: { high_expression_tissue_count?: unknown } };
+    };
+    liability_summary?: { liability_bullets?: Array<{ category?: string }> };
+    clinical_development?: {
+        trials?: { coverage?: string };
+        outcomes?: Section<{ rows?: unknown[] }>;
+    };
+    reference_biology?: {
+        normal_tissue_expression?: Section<{ rows?: Array<{ value?: number; tissue?: string }> }>;
+        preclinical?: { expression_heatmap?: Section<{ cells?: Array<{ rank?: string; tissue?: string; species?: string }> }> };
+    };
+}
+
+function checkFaersCoverage(body: EvidenceBodyView): StructuralEvidenceConflict | null {
     const faers = body?.safety_profile?.faers;
     const cp = body?.safety_profile?.class_precedent;
     if (faers?.coverage !== "queried_no_data") return null;
@@ -37,11 +64,11 @@ function checkFaersCoverage(body: any): StructuralEvidenceConflict | null {
     };
 }
 
-function checkFatalSignal(body: any): StructuralEvidenceConflict | null {
+function checkFatalSignal(body: EvidenceBodyView): StructuralEvidenceConflict | null {
     const signal = body?.derived?.risk_summary?.any_fatal_signal;
     if (signal !== "unknown") return null;
     const bullets = body?.liability_summary?.liability_bullets ?? [];
-    const fatal = bullets.find((b: any) => b?.category === "fatal_post_market");
+    const fatal = bullets.find((b) => b?.category === "fatal_post_market");
     if (!fatal) return null;
     return {
         evidence_item_id: "structural:fatal_signal",
@@ -52,7 +79,7 @@ function checkFatalSignal(body: any): StructuralEvidenceConflict | null {
     };
 }
 
-function checkTrialCount(body: any): StructuralEvidenceConflict | null {
+function checkTrialCount(body: EvidenceBodyView): StructuralEvidenceConflict | null {
     const trials = body?.clinical_development?.trials;
     const outcomes = body?.clinical_development?.outcomes;
     if (trials?.coverage !== "queried_no_data") return null;
@@ -67,7 +94,7 @@ function checkTrialCount(body: any): StructuralEvidenceConflict | null {
     };
 }
 
-function checkHighExpressionCount(body: any): StructuralEvidenceConflict | null {
+function checkHighExpressionCount(body: EvidenceBodyView): StructuralEvidenceConflict | null {
     const reported = body?.derived?.liability_summary?.expression_breadth?.high_expression_tissue_count;
     if (typeof reported !== "number") return null;
     const set = new Set<string>();
@@ -91,7 +118,8 @@ function checkHighExpressionCount(body: any): StructuralEvidenceConflict | null 
     };
 }
 
-export function detectStructuralEvidenceConflicts(body: any): StructuralEvidenceConflict[] {
+export function detectStructuralEvidenceConflicts(bodyInput: unknown): StructuralEvidenceConflict[] {
+    const body = bodyInput as EvidenceBodyView;
     const out: StructuralEvidenceConflict[] = [];
     for (const fn of [checkFaersCoverage, checkFatalSignal, checkTrialCount, checkHighExpressionCount]) {
         const row = fn(body);

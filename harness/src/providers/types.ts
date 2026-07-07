@@ -33,9 +33,7 @@ export interface ChatResponse {
     readonly rawFinishReason?: string;
 }
 
-export type ChatStreamEvent =
-    | { readonly type: "text-delta"; readonly text: string }
-    | { readonly type: "done"; readonly response: ChatResponse };
+export type ChatStreamEvent = { readonly type: "text-delta"; readonly text: string } | { readonly type: "done"; readonly response: ChatResponse };
 
 export interface AgentChat {
     readonly capabilities: ProviderCapabilities;

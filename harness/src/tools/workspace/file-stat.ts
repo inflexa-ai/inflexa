@@ -14,9 +14,7 @@ import { unwrapOrThrow } from "../../lib/result.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
 
 type FileStatOutput =
-    | { status: "ok"; path: string; type: "file" | "directory"; size: number }
-    | { status: "not_found"; path: string }
-    | { status: "out_of_scope"; path: string };
+    { status: "ok"; path: string; type: "file" | "directory"; size: number } | { status: "not_found"; path: string } | { status: "out_of_scope"; path: string };
 
 const FileStatInputSchema = z.object({
     path: z

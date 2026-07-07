@@ -32,7 +32,7 @@ function makeProvider(responses: ReadonlyArray<ChatResponse | Error>): { provide
             if (!r) throw new Error(`scripted provider exhausted at call ${i}`);
             return okAsync(r);
         },
-        async *chatStream() {
+        chatStream() {
             throw new Error("not used");
         },
     };

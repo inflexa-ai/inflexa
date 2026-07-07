@@ -50,10 +50,12 @@ describe("db-result", () => {
                 return null;
             });
             expect(result.isErr()).toBe(true);
-            const e = result._unsafeUnwrapErr();
-            expect(e.type).toBe("query_failed");
-            expect(e.op).toBe("dbr.badSql");
-            expect(e.cause).toBeDefined();
+            if (result.isErr()) {
+                const e = result.error;
+                expect(e.type).toBe("query_failed");
+                expect(e.op).toBe("dbr.badSql");
+                expect(e.cause).toBeDefined();
+            }
         });
     });
 
@@ -74,12 +76,14 @@ describe("db-result", () => {
                 return rowCount ?? 0;
             });
             expect(result.isErr()).toBe(true);
-            const e = result._unsafeUnwrapErr();
-            expect(e.type).toBe("constraint_violation");
-            if (e.type === "constraint_violation") {
-                // pg reports the PK constraint name (dbr_items_pkey).
-                expect(e.constraint).toContain("dbr_items");
-                expect(e.op).toBe("dbr.insertDup");
+            if (result.isErr()) {
+                const e = result.error;
+                expect(e.type).toBe("constraint_violation");
+                if (e.type === "constraint_violation") {
+                    // pg reports the PK constraint name (dbr_items_pkey).
+                    expect(e.constraint).toContain("dbr_items");
+                    expect(e.op).toBe("dbr.insertDup");
+                }
             }
         });
     });
@@ -119,8 +123,9 @@ describe("db-result", () => {
             );
 
             expect(result.isErr()).toBe(true);
-            const e = result._unsafeUnwrapErr();
-            expect(e.type).toBe("constraint_violation");
+            if (result.isErr()) {
+                expect(result.error.type).toBe("constraint_violation");
+            }
 
             // The good insert must have rolled back — proves the sentinel fired and
             // the transaction did NOT silently commit the first statement.
