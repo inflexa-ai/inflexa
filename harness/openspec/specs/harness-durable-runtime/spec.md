@@ -114,7 +114,10 @@ local realizations, so it runs with filesystem/no-op defaults and no
 hosted-service dependency. The five external seams SHALL be `RunAuthorizer`
 (the sole constructor of a `RunSession`; OSS `createLocalRunAuthorizer`),
 `ResolveBilling` (attribution headers at the wire call; OSS noop returns `{}`),
-`ArtifactRegistry` (post-step recording; OSS `createFilesystemArtifactRegistry`),
+`ArtifactRegistry` (post-step recording; OSS `createNoopArtifactRegistry` —
+registers nothing externally and reports zero failures, because the local
+`cortex_artifacts` ledger is written by the harness itself around the seam and
+an embedder without an external provenance system has nothing to register),
 `RunCharge` (run-level billing bracket; OSS `createNoopRunCharge`), and
 `PreviewPublisher` (report preview URLs; OSS `UnavailablePreviewPublisher`). The
 shared `RunLauncher` seam (single realization `createDbosRunLauncher`) SHALL be
@@ -132,6 +135,12 @@ is bound.
 - **GIVEN** the `execute_plan` and `run_ephemeral` tools
 - **WHEN** they start a durable run
 - **THEN** they call `RunLauncher` (`launch` / `launchAndAwait`) and never import the DBOS engine directly
+
+#### Scenario: The OSS ArtifactRegistry realization never fails a registration
+
+- **GIVEN** a runtime assembled with `createNoopArtifactRegistry`
+- **WHEN** a step registers its artifacts through the seam
+- **THEN** `register` returns `{ registered: [], failed: [], failedCount: 0 }` and `sync` resolves without effect, so the post-step fail-fast gate never trips on the local default
 
 ### Requirement: Step scheduling is dependency-gated and fails fast
 

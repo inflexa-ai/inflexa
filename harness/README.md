@@ -33,7 +33,7 @@ import {
     createLocalRunAuthorizer,   // RunAuthorizer  seam (local default)
     createNoopBillingResolver,  // ResolveBilling seam
     createNoopRunCharge,        // RunCharge      seam
-    createFilesystemArtifactRegistry, // ArtifactRegistry seam
+    createNoopArtifactRegistry,       // ArtifactRegistry seam
     UnavailablePreviewPublisher,      // PreviewPublisher seam
     createDbosRunLauncher,      // shared RunLauncher
     defineTool,

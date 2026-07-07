@@ -7,17 +7,14 @@
  * write path is sandbox-coupled: a write is one `SandboxClient` exec, not a
  * host `fs` call. The seam owns the whole gauntlet that `write_file` and
  * `edit_file` previously each re-implemented inline — resolve + confine to the
- * working directory, derive the in-sandbox path, write the bytes through the
- * sandbox, and record best-effort provenance — so the confinement invariant is
- * concentrated in one place instead of being a per-tool convention.
+ * working directory, derive the in-sandbox path, and write the bytes through
+ * the sandbox — so the confinement invariant is concentrated in one place
+ * instead of being a per-tool convention.
  */
-
-import { createHash } from "node:crypto";
 
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { SandboxRef } from "../../sandbox/types.js";
 import { resolveForWrite } from "../../workspace/paths.js";
-import type { ProvenanceCollector } from "../../workspace/provenance-collector.js";
 import type { EmitFn } from "../define-tool.js";
 import { boundExecResult, type BoundedExecResult } from "./result-bounds.js";
 import { runSandboxExec } from "./run-exec.js";
@@ -29,21 +26,12 @@ export type WriteFileResult =
     | { readonly status: "out_of_prefix"; readonly path: string }
     | ({ readonly status: "write_failed"; readonly path: string } & BoundedExecResult);
 
-export interface MutatorLogger {
-    warn(message: string, err: unknown): void;
-}
-
-const defaultLogger: MutatorLogger = {
-    warn: (message, err) => console.warn(`[workspace-mutator] ${message}:`, err),
-};
-
 export interface WorkspaceMutatorDeps {
     readonly sandboxClient: SandboxClient;
     readonly sandbox: SandboxRef;
     /** Host-side base path containing per-analysis subtrees — used by the resolver. */
     readonly sessionsBasePath: string;
     readonly analysisId: string;
-    readonly runId: string;
     readonly stepId: string;
     readonly workflowId: string;
     /** Absolute host working directory: relative paths resolve here AND writes are confined here. */
@@ -58,15 +46,13 @@ export interface WorkspaceMutatorDeps {
     readonly sandboxWorkingDir: string;
     readonly nextFunctionId: () => string;
     readonly deadlineMs: () => number;
-    readonly provenance?: ProvenanceCollector;
-    readonly logger?: MutatorLogger;
 }
 
 export interface WorkspaceMutator {
     /**
      * Resolve `path` against the working directory (relative) or analysis root
      * (absolute `/{analysisId}/...`), confine the result to the working
-     * directory, write `content` through the sandbox, and record provenance.
+     * directory, and write `content` through the sandbox.
      */
     writeFile(args: { readonly path: string; readonly content: string; readonly emit: EmitFn }): Promise<WriteFileResult>;
 }
@@ -79,8 +65,6 @@ const WRITE_BYTES_PROGRAM = [
 ].join("\n");
 
 export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMutator {
-    const logger = deps.logger ?? defaultLogger;
-
     return {
         async writeFile({ path, content, emit }) {
             const scoped = resolveForWrite({
@@ -108,22 +92,6 @@ export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMut
 
             if (result.exitCode !== 0) {
                 return { status: "write_failed", path: sandboxPath, ...boundExecResult(result) };
-            }
-
-            if (deps.provenance) {
-                try {
-                    await deps.provenance.recordSnapshot({
-                        analysisId: deps.analysisId,
-                        runId: deps.runId,
-                        stepId: deps.stepId,
-                        path: sandboxPath,
-                        sha256: createHash("sha256").update(contentBytes).digest("hex"),
-                        bytes: contentBytes.length,
-                        timestamp: Date.now(),
-                    });
-                } catch (err) {
-                    logger.warn("provenance.recordSnapshot failed", err);
-                }
             }
 
             return { status: "ok", path: sandboxPath, bytesWritten: contentBytes.length };

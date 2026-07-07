@@ -35,7 +35,7 @@ The `anchors`, `projects`, and `analyses` tables SHALL store one typed column pe
 #### Scenario: Analyses table shape and FKs
 
 - **WHEN** the migration has been applied
-- **THEN** `analyses` has columns `id`, `created_at`, `updated_at`, `name`, `slug`, `output_directory`, `anchor_id`, `project_id` in that order
+- **THEN** `analyses` has columns `id`, `created_at`, `updated_at`, `name`, `slug`, `output_directory`, `provenance`, `provenance_chain_hash`, `provenance_signature`, `provenance_prev_chain_hash`, `anchor_id`, `project_id` in that order
 - **AND** `anchor_id` is `NOT NULL` and references `anchors(id)`; `project_id` is nullable and references `projects(id)`
 - **AND** there is no `data`, `goals`, `synced_analysis_id`, or `archived_at` column
 
@@ -83,32 +83,33 @@ The migration SHALL create the indexes `idx_analyses_project` on `analyses(proje
 - **WHEN** the migration has been applied
 - **THEN** all seven named indexes exist over their stated columns
 
-### Requirement: Migration v3 adds provenance integrity columns
+### Requirement: Provenance integrity columns in the baseline schema
 
-The system SHALL define a `version: 3` migration in `src/db/primary_migrations.ts` that adds `provenance_chain_hash TEXT` and `provenance_signature TEXT` columns to the `analyses` table via `ALTER TABLE`. Existing rows receive `NULL`, treated as "unsigned".
+The `version: 1` baseline in `src/db/primary_migrations.ts` SHALL declare four provenance columns on the `analyses` table — `provenance TEXT`, `provenance_chain_hash TEXT`, `provenance_signature TEXT`, and `provenance_prev_chain_hash TEXT` — in that order. There is no separate `ALTER TABLE` / `version: 2` / `version: 3` migration; the columns exist from the first migration. Per the house column order they sit as core data: after `output_directory` and before the `anchor_id`/`project_id` foreign keys. A row has `NULL` in all four until its first signed flush.
 
-#### Scenario: Migration v3 is applied after v2
+#### Scenario: Baseline creates all four provenance columns
 
-- **WHEN** the migration runner executes against a database at version 2
-- **THEN** version 3 is applied
-- **AND** `analyses` gains `provenance_chain_hash` and `provenance_signature` columns
+- **WHEN** the migration runner executes against a fresh database
+- **THEN** migration 1 is applied and `analyses` has `provenance`, `provenance_chain_hash`, `provenance_signature`, and `provenance_prev_chain_hash` columns
+- **AND** the `_migrations` ledger records exactly `[1]`
 
 #### Scenario: Column ordering follows house convention
 
-- **WHEN** the migration adds columns
-- **THEN** `provenance_chain_hash` and `provenance_signature` are added after `provenance` (core data, not FK columns)
+- **WHEN** the baseline SQL is read
+- **THEN** the four provenance columns appear after `output_directory` (core data) and before `anchor_id`/`project_id` (foreign keys)
 
 ### Requirement: DB accessors for integrity columns
 
-The system SHALL provide `getAnalysisIntegrity(id): Result<{ chainHash: string | null, signature: string | null }, DbError>` in `src/db/primary_query.ts` and extend `updateAnalysisProvenance` in `src/db/primary_mutation.ts` to accept optional `chainHash` and `signature` parameters, writing all three columns in a single `UPDATE`.
+The system SHALL provide `getAnalysisIntegrity(id): Result<AnalysisIntegrity | null, DbError>` in `src/db/primary_query.ts`, where `AnalysisIntegrity` carries all four integrity columns — `{ provenance, prevChainHash, chainHash, signature }`, each `string | null` — read in a single query (the verifier's one DB round-trip); an unknown id resolves to `null` on the ok channel. `updateAnalysisProvenance(id, provenance, chainHash, signature)` in `src/db/primary_mutation.ts` SHALL require all three values (unsigned provenance is never written) and persist them in a single `UPDATE` that atomically rotates the chain — copying the current `provenance_chain_hash` into `provenance_prev_chain_hash` before the new values land — returning rows changed.
 
 #### Scenario: Read integrity columns
 
 - **WHEN** `getAnalysisIntegrity(id)` is called for an analysis with stored integrity data
-- **THEN** it returns the `provenance_chain_hash` and `provenance_signature` values
+- **THEN** it returns `provenance`, `provenance_prev_chain_hash`, `provenance_chain_hash`, and `provenance_signature` from one query
+- **AND** an unknown id yields `ok(null)`, not an error
 
 #### Scenario: Write provenance with integrity
 
 - **WHEN** `updateAnalysisProvenance(id, prov, chainHash, signature)` is called
-- **THEN** `provenance`, `provenance_chain_hash`, and `provenance_signature` are updated in one statement
+- **THEN** `provenance`, `provenance_chain_hash`, and `provenance_signature` are updated and `provenance_prev_chain_hash` receives the prior chain hash, all in one statement
 

@@ -10,8 +10,9 @@
  *      Phantoms are dropped from the manifest and removed from the
  *      collector so the structured registration payload agrees.
  *
- *   2. Hash + size every surviving entry from disk. The frame-time hash
- *      captured by `processProvenanceFrame` is racy with respect to what
+ *   2. Hash + size every surviving entry from disk. The exec frame that
+ *      `feedExecFrame` folds in reports write paths without a content hash,
+ *      and any hash taken at frame time would be racy with respect to what
  *      the file becomes by the time it's registered (long-running scripts
  *      flush after the frame fires; atomic-rename patterns swap content
  *      under a stable byte count). Hashing here makes

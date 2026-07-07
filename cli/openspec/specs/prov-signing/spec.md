@@ -24,12 +24,12 @@ The system SHALL generate an Ed25519 keypair via `crypto.subtle.generateKey("Ed2
 - **THEN** the system generates a fresh keypair and overwrites the file
 - **AND** the flush proceeds to sign with the new key
 
-#### Scenario: Structurally valid but wrong JWK degrades to unsigned
+#### Scenario: Structurally valid but unimportable JWK fails signing — never unsigned
 
 - **WHEN** `prov_key.json` parses as JSON but the JWK cannot be imported (wrong algorithm, missing fields)
-- **THEN** the flush still writes the `provenance` column
-- **AND** `provenance_chain_hash` and `provenance_signature` remain `NULL`
-- **AND** a warning is logged
+- **THEN** `loadOrGenerateKeypair` returns `err({ type: "keypair_corrupt" })` and latches an in-process `importFailed` flag so subsequent flushes short-circuit without re-attempting the import
+- **AND** the flush writes NO column — `provenance`, `provenance_chain_hash`, and `provenance_signature` are all left unchanged — and the analysis stays dirty so a later append retries it
+- **AND** the failure is logged (`signing key unavailable; provenance not persisted`)
 
 ### Requirement: Signing operation over chain hash
 

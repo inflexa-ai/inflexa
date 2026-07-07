@@ -25,13 +25,12 @@ export { createNoopRunCharge } from "./billing/noop-run-charge.js";
 export type { RunCharge } from "./billing/run-charge.js";
 
 // Seam: artifact registration.
-export { createFilesystemArtifactRegistry } from "./execution/filesystem-artifact-registry.js";
-export type { FilesystemArtifactRegistryDeps } from "./execution/filesystem-artifact-registry.js";
+export { createNoopArtifactRegistry } from "./execution/noop-artifact-registry.js";
 export type { ArtifactRegistry, ArtifactRegistrationInput, ArtifactSyncInput, ExternalRegistrationResult } from "./execution/artifact-registry.js";
 // The `ArtifactRegistrationInput` payload types an embedder's `register` seam
-// destructures: the reconciled manifest entries and the step-level provenance
-// collector (the `provenance/collector.js` class — distinct from the workspace
-// seam of the same name in `workspace/provenance-collector.js`).
+// destructures: the reconciled manifest entries and the step-level lineage
+// collector (the `provenance/collector.js` class that tracks a step's
+// input/output edges).
 export type { ArtifactManifestEntry } from "./schemas/artifact-manifest.js";
 export type { ProvenanceCollector } from "./provenance/collector.js";
 

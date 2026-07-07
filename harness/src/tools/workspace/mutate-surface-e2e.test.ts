@@ -20,7 +20,6 @@ import { createWriteFileTool } from "./write-file.js";
 import { createWorkspaceMutator } from "./mutator.js";
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { stepWritePrefix, toSandboxPath } from "../../workspace/paths.js";
-import type { ProvenanceCollector, ProvenanceSnapshot } from "../../workspace/provenance-collector.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
 import { EXEC_STREAM_BYTE_CAP } from "./result-bounds.js";
@@ -92,13 +91,6 @@ function makeFakeClient(opts: { sessionsBasePath: string; lsResult?: { stdout: s
     };
 }
 
-class CollectingProvenance implements ProvenanceCollector {
-    readonly snapshots: ProvenanceSnapshot[] = [];
-    async recordSnapshot(s: ProvenanceSnapshot) {
-        this.snapshots.push(s);
-    }
-}
-
 describe("mutate surface — end-to-end", () => {
     let sessionsBasePath: string;
 
@@ -117,14 +109,13 @@ describe("mutate surface — end-to-end", () => {
             runId: RUN,
             stepId: STEP,
         });
-        const prov = new CollectingProvenance();
         const fs = createWorkspaceFilesystem({ sessionsBasePath });
         const sandboxWorkingDir = toSandboxPath(sessionsBasePath, workingDir);
-        return { sandbox, workingDir, sandboxWorkingDir, prov, fs };
+        return { sandbox, workingDir, sandboxWorkingDir, fs };
     }
 
-    it("relative write resolves into the working dir; read_file agrees; single provenance snapshot", async () => {
-        const { sandbox, workingDir, sandboxWorkingDir, prov, fs } = setup();
+    it("relative write resolves into the working dir; read_file agrees", async () => {
+        const { sandbox, workingDir, sandboxWorkingDir, fs } = setup();
         const client = makeFakeClient({ sessionsBasePath });
 
         const mutator = createWorkspaceMutator({
@@ -132,14 +123,12 @@ describe("mutate surface — end-to-end", () => {
             sandbox,
             sessionsBasePath,
             analysisId: ANALYSIS,
-            runId: RUN,
             stepId: STEP,
             workflowId: "wf1",
             workingDir,
             sandboxWorkingDir,
             nextFunctionId: () => "fn1",
             deadlineMs: () => 9_999_999,
-            provenance: prov,
         });
         const writeTool = createWriteFileTool({ mutator });
         const readTool = createReadFileTool(fs);
@@ -152,7 +141,6 @@ describe("mutate surface — end-to-end", () => {
         const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/output/result.csv` }, ctx))._unsafeUnwrap();
         expect(read.status).toBe("ok");
         if (read.status === "ok") expect(read.content).toBe("id,value\n1,42\n");
-        expect(prov.snapshots.length).toBe(1);
     });
 
     it("execute_command runs a command and the result is bounded as expected", async () => {
@@ -191,7 +179,6 @@ describe("mutate surface — end-to-end", () => {
             sandbox,
             sessionsBasePath,
             analysisId: ANALYSIS,
-            runId: RUN,
             stepId: STEP,
             workflowId: "wf1",
             workingDir,

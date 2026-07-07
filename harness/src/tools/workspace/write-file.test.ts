@@ -9,10 +9,8 @@ import { createWriteFileTool } from "./write-file.js";
 import { createWorkspaceMutator } from "./mutator.js";
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { stepWritePrefix, toSandboxPath } from "../../workspace/paths.js";
-import type { ProvenanceCollector, ProvenanceSnapshot } from "../../workspace/provenance-collector.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
-import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const ANALYSIS = "analysis-001";
@@ -84,19 +82,6 @@ function makeFakeClient(opts: { sessionsBasePath: string }): FakeClient {
     };
 }
 
-class CollectingProvenance implements ProvenanceCollector {
-    readonly snapshots: ProvenanceSnapshot[] = [];
-    async recordSnapshot(snapshot: ProvenanceSnapshot) {
-        this.snapshots.push(snapshot);
-    }
-}
-
-class ThrowingProvenance implements ProvenanceCollector {
-    async recordSnapshot() {
-        throw new Error("collector down");
-    }
-}
-
 describe("write_file tool", () => {
     let sessionsBasePath: string;
 
@@ -107,13 +92,7 @@ describe("write_file tool", () => {
         rmSync(sessionsBasePath, { recursive: true, force: true });
     });
 
-    function buildTool(
-        opts: {
-            provenance?: ProvenanceCollector;
-            logger?: { warn(msg: string, err: unknown): void };
-            nextFunctionId?: () => string;
-        } = {},
-    ) {
+    function buildTool(opts: { nextFunctionId?: () => string } = {}) {
         const client = makeFakeClient({ sessionsBasePath });
         const workingDir = stepWritePrefix({
             sessionsBasePath,
@@ -126,15 +105,12 @@ describe("write_file tool", () => {
             sandbox: makeSandboxRef(),
             sessionsBasePath,
             analysisId: ANALYSIS,
-            runId: RUN,
             stepId: STEP,
             workflowId: "wf1",
             workingDir,
             sandboxWorkingDir: toSandboxPath(sessionsBasePath, workingDir),
             nextFunctionId: opts.nextFunctionId ?? (() => "fn1"),
             deadlineMs: () => 9_999_999,
-            ...(opts.provenance ? { provenance: opts.provenance } : {}),
-            ...(opts.logger ? { logger: opts.logger } : {}),
         });
         const tool = createWriteFileTool({ mutator });
         return { tool, client };
@@ -198,48 +174,6 @@ describe("write_file tool", () => {
         const out = (await tool.execute({ path: `/${ANALYSIS}/runs/run-other/${STEP}/output/x.csv`, content: "evil" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("out_of_prefix");
         expect(client.submits.length).toBe(0);
-    });
-
-    it("records a provenance snapshot with sha256(content) and bytes==content.length", async () => {
-        const prov = new CollectingProvenance();
-        const { tool } = buildTool({ provenance: prov });
-        const { ctx } = makeToolContext();
-
-        const content = "id,value\n1,42\n";
-        const out = (await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/result.csv`, content }, ctx))._unsafeUnwrap();
-        expect(out.status).toBe("ok");
-
-        expect(prov.snapshots.length).toBe(1);
-        const snap = prov.snapshots[0]!;
-        expect(snap.analysisId).toBe(ANALYSIS);
-        expect(snap.runId).toBe(RUN);
-        expect(snap.stepId).toBe(STEP);
-        expect(snap.path).toBe(`/${ANALYSIS}/runs/${RUN}/${STEP}/output/result.csv`);
-        expect(snap.bytes).toBe(Buffer.byteLength(content, "utf8"));
-        expect(snap.sha256).toBe(createHash("sha256").update(content, "utf8").digest("hex"));
-    });
-
-    it("returns ok even when the provenance collector throws (best-effort)", async () => {
-        const warns: { msg: string; err: unknown }[] = [];
-        const { tool } = buildTool({
-            provenance: new ThrowingProvenance(),
-            logger: {
-                warn: (msg: string, err: unknown) => warns.push({ msg, err }),
-            },
-        });
-        const { ctx } = makeToolContext();
-
-        const out = (await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/x.csv`, content: "hello" }, ctx))._unsafeUnwrap();
-        expect(out.status).toBe("ok");
-        expect(warns.length).toBe(1);
-    });
-
-    it("does not call the provenance collector when none is provided", async () => {
-        const { tool, client } = buildTool();
-        const { ctx } = makeToolContext();
-        const out = (await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/x.csv`, content: "ok" }, ctx))._unsafeUnwrap();
-        expect(out.status).toBe("ok");
-        expect(client.submits.length).toBe(1);
     });
 
     it("write/read agreement also holds for binary-ish content via UTF-8 buffer round-trip", async () => {

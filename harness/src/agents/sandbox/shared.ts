@@ -24,7 +24,6 @@ import type { SandboxClient } from "../../sandbox/client.js";
 import type { SandboxRef } from "../../sandbox/types.js";
 import type { Tool } from "../../tools/define-tool.js";
 import type { WorkspaceFilesystem } from "../../workspace/filesystem.js";
-import type { ProvenanceCollector } from "../../workspace/provenance-collector.js";
 import type { ProvenanceCollector as LineageCollector } from "../../provenance/collector.js";
 
 import { sandboxOrientCorePrompt, sandboxAnalysisStepStandardsPrompt } from "../../prompts/sandbox-standards.js";
@@ -116,11 +115,9 @@ export interface SandboxAgentDeps {
     readonly workspaceFs: WorkspaceFilesystem;
     /** Embedding provider for in-sandbox semantic `workspace_search`. Omit to skip that tool. */
     readonly embedding?: EmbeddingProvider;
-    readonly provenance?: ProvenanceCollector;
     /**
      * Step-scoped lineage collector fed by each `execute_command`'s
-     * `ExecResult.provenance` frame. Distinct from `provenance` (the
-     * write-snapshot seam) — this records the input/script edges post-step
+     * `ExecResult.provenance` frame. Records the input/script edges post-step
      * registration translates into provenance parents.
      */
     readonly lineageCollector?: LineageCollector;
@@ -221,7 +218,7 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
  *  `readOnly` mode the write_file/edit_file pair is omitted; execute_command
  *  and the read tools stay. */
 function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] {
-    const { step, sandboxClient, workspaceFs, provenance, pool, embedding, lineageCollector } = deps;
+    const { step, sandboxClient, workspaceFs, pool, embedding, lineageCollector } = deps;
     // Registry tagging is a best-effort watchdog backstop (`run-exec.ts` already
     // swallows a throw here); fold a `DbError` into a no-op so a registry write
     // failure neither fails the exec nor surfaces as an unhandled rejection.
@@ -247,14 +244,12 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] 
                   sandbox: step.sandbox,
                   sessionsBasePath: step.sessionsBasePath,
                   analysisId: step.analysisId,
-                  runId: step.runId,
                   stepId: step.stepId,
                   workflowId: step.workflowId,
                   workingDir: hostWorkingDir,
                   sandboxWorkingDir,
                   nextFunctionId: step.nextFunctionId,
                   deadlineMs: step.deadlineMs,
-                  ...(provenance ? { provenance } : {}),
               });
               return [createWriteFileTool({ mutator }), createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, workingDir: hostWorkingDir })];
           })();
