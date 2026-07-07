@@ -32,7 +32,7 @@ describe("readMarker", () => {
 
     test("returns ok(marker) when present and valid", () => {
         const dir = tmp();
-        writeMarker(dir, "anchor-1");
+        writeMarker(dir, "anchor-1")._unsafeUnwrap();
         const result = readMarker(dir);
         expect(result._unsafeUnwrap()).toEqual({ schemaVersion: 1, anchorId: "anchor-1" });
     });
@@ -40,17 +40,27 @@ describe("readMarker", () => {
     test("returns err on a present-but-corrupt marker (malformed JSON) — never silently re-minted", () => {
         const dir = tmp();
         writeRawMarker(dir, "{ not json");
-        const result = readMarker(dir);
-        expect(result.isErr()).toBe(true);
-        expect(result._unsafeUnwrapErr().type).toBe("marker_corrupt");
+        readMarker(dir).match(
+            () => {
+                throw new Error("expected a marker_corrupt error on malformed JSON");
+            },
+            (e) => {
+                expect(e.type).toBe("marker_corrupt");
+            },
+        );
     });
 
     test("returns err on a marker that fails the schema (wrong schemaVersion)", () => {
         const dir = tmp();
         writeRawMarker(dir, JSON.stringify({ schemaVersion: 2, anchorId: "x" }));
-        const result = readMarker(dir);
-        expect(result.isErr()).toBe(true);
-        expect(result._unsafeUnwrapErr().type).toBe("marker_corrupt");
+        readMarker(dir).match(
+            () => {
+                throw new Error("expected a marker_corrupt error on a schema-invalid marker");
+            },
+            (e) => {
+                expect(e.type).toBe("marker_corrupt");
+            },
+        );
     });
 });
 
@@ -64,7 +74,7 @@ describe("writeMarker", () => {
 
     test("is write-once: an existing marker's UUID wins and the file is not rewritten", () => {
         const dir = tmp();
-        writeMarker(dir, "first-uuid");
+        writeMarker(dir, "first-uuid")._unsafeUnwrap();
         const result = writeMarker(dir, "second-uuid");
         expect(result._unsafeUnwrap().anchorId).toBe("first-uuid");
     });
@@ -80,7 +90,7 @@ describe("writeMarker", () => {
 describe("findMarkerUpwards", () => {
     test("finds a marker in the start directory itself", () => {
         const dir = tmp();
-        writeMarker(dir, "anchor-1");
+        writeMarker(dir, "anchor-1")._unsafeUnwrap();
         const result = findMarkerUpwards(dir);
         const found = result._unsafeUnwrap();
         expect(found?.dir).toBe(dir);
@@ -89,7 +99,7 @@ describe("findMarkerUpwards", () => {
 
     test("walks up to the nearest ancestor that holds a marker", () => {
         const dir = tmp();
-        writeMarker(dir, "anchor-1");
+        writeMarker(dir, "anchor-1")._unsafeUnwrap();
         const deep = join(dir, "a", "b", "c");
         mkdirSync(deep, { recursive: true });
         const result = findMarkerUpwards(deep);

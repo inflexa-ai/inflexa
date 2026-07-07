@@ -56,33 +56,38 @@ export function TextInput(props: TextInputProps): JSX.Element {
 
     const isBare = () => props.chrome === "bare";
 
-    function handleRef(r: InputRenderable): void {
-        ref = r;
-        // opentui defaults scrollMargin to 0.2 (20% of viewport width), which wastes ~17 columns in
-        // a typical dialog — text scrolls left before filling the available space. 0.02 (~2 cols)
-        // keeps a minimal look-ahead for the cursor while reclaiming the wasted space. Going to 0
-        // causes the input's content width to push the dialog wider (yoga's measureFunc reports the
-        // full text width when no scroll margin absorbs it).
-        r.editorView.setScrollMargin(0.02);
-        // eslint-disable-next-line solid/reactivity -- opentui renderable event handler; r.on() is an event subscription, not a reactive scope
-        r.on("focused", () => {
-            setFocused(true);
-            props.onFocusChange?.(true);
-        });
-        r.on("blurred", () => {
-            setFocused(false);
-            props.onFocusChange?.(false);
-        });
-        props.onRef?.(r);
-    }
-
     function handleClick(): void {
         ref?.focus();
     }
 
     const input = (
         <input
-            ref={handleRef}
+            // Inline ref callback (not a named function) so the reactive reads below stay inside a
+            // scope the lint rule recognizes — a named `ref={handleRef}` is flagged as a reactive
+            // variable used in JSX. The `r.on(...)` subscriptions are imperative opentui event
+            // registrations, not a Solid tracked scope: their handlers read props lazily at
+            // focus/blur time (staying current), so no reactive dependency is dropped.
+            ref={(r: InputRenderable) => {
+                ref = r;
+                // opentui defaults scrollMargin to 0.2 (20% of viewport width), which wastes ~17
+                // columns in a typical dialog — text scrolls left before filling the available
+                // space. 0.02 (~2 cols) keeps a minimal look-ahead for the cursor while reclaiming
+                // the wasted space. Going to 0 causes the input's content width to push the dialog
+                // wider (yoga's measureFunc reports the full text width when no scroll margin
+                // absorbs it).
+                r.editorView.setScrollMargin(0.02);
+                // eslint-disable-next-line solid/reactivity -- r.on() is an event subscription, not a tracked scope; the prop read fires at focus time
+                r.on("focused", () => {
+                    setFocused(true);
+                    props.onFocusChange?.(true);
+                });
+                // eslint-disable-next-line solid/reactivity -- r.on() is an event subscription, not a tracked scope; the prop read fires at blur time
+                r.on("blurred", () => {
+                    setFocused(false);
+                    props.onFocusChange?.(false);
+                });
+                props.onRef?.(r);
+            }}
             focused={props.autoFocus ?? true}
             width="100%"
             value={props.initialValue}

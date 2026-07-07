@@ -75,27 +75,31 @@ export function TextArea(props: TextAreaProps): JSX.Element {
     const modeWord = () => (focused() ? "INSERT" : "NORMAL");
     const isBare = () => props.chrome === "bare";
 
-    function handleRef(r: TextareaRenderable): void {
-        ref = r;
-        // eslint-disable-next-line solid/reactivity -- opentui renderable event handler; r.on() is an event subscription, not a reactive scope
-        r.on("focused", () => {
-            setFocused(true);
-            props.onFocusChange?.(true);
-        });
-        r.on("blurred", () => {
-            setFocused(false);
-            props.onFocusChange?.(false);
-        });
-        props.onRef?.(r);
-    }
-
     function handleClick(): void {
         ref?.focus();
     }
 
     const textarea = (
         <textarea
-            ref={handleRef}
+            // Inline ref callback (not a named function) so the reactive reads below stay inside a
+            // scope the lint rule recognizes — a named `ref={handleRef}` is flagged as a reactive
+            // variable used in JSX. The `r.on(...)` subscriptions are imperative opentui event
+            // registrations, not a Solid tracked scope: their handlers read props lazily at
+            // focus/blur time (staying current), so no reactive dependency is dropped.
+            ref={(r: TextareaRenderable) => {
+                ref = r;
+                // eslint-disable-next-line solid/reactivity -- r.on() is an event subscription, not a tracked scope; the prop read fires at focus time
+                r.on("focused", () => {
+                    setFocused(true);
+                    props.onFocusChange?.(true);
+                });
+                // eslint-disable-next-line solid/reactivity -- r.on() is an event subscription, not a tracked scope; the prop read fires at blur time
+                r.on("blurred", () => {
+                    setFocused(false);
+                    props.onFocusChange?.(false);
+                });
+                props.onRef?.(r);
+            }}
             focused={props.autoFocus ?? true}
             width="100%"
             height={props.height}

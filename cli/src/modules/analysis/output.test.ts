@@ -53,7 +53,7 @@ describe("resolveOutputDir", () => {
 
     test("case 2 — a resolvable, writable anchor → beside the data under .inflexa/analyses/<slug>", () => {
         const home = tmp();
-        writeMarker(home, "A1");
+        writeMarker(home, "A1")._unsafeUnwrap();
         insertAnchorAt("A1", home);
         expect(resolveOutputDir(analysis())._unsafeUnwrap()).toBe(join(home, ".inflexa", "analyses", "myslug"));
     });
