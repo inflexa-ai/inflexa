@@ -384,13 +384,6 @@ export async function bootHarnessRuntime(
         // the same batch. All of it lands before `launch`, which is the invariant
         // that matters: DBOS recovery at launch resolves in-flight workflows by
         // their registered name, so nothing the cli can trigger may register after.
-        //
-        // TODO(robustness): live kill/resume is verified for the analysis-run path
-        // (executeAnalysis parent/child) but NOT separately for the data-profile
-        // workflow registered just below — both share this single recovery path
-        // (one runtime, executor "local", reclaimed at launch by registered name),
-        // so the run-path proof exercises the identical mechanism, but the
-        // data-profile path has not been exercised live. Tracked in issue #28.
         const sandboxStepCallable = seams.registerSandboxStep(buildSandboxStepDeps(composition));
         const executeAnalysis = seams.registerExecuteAnalysis(buildExecuteAnalysisDeps(composition, sandboxStepCallable, runAuthorizer));
 

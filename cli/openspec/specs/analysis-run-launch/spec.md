@@ -109,15 +109,20 @@ resume-on-next-boot note.
 
 The change SHALL verify DBOS crash recovery live for the embedded runtime: kill the
 cli mid-workflow, boot again, and confirm the workflow resumes to a terminal state
-and the status views reflect it. This is verified for the analysis-run path
-(`executeAnalysis`). The data-profile path (`runDataProfile`) shares the identical
-recovery path — one runtime, executor `local`, workflows reclaimed at launch by
-registered name — so the run-path proof exercises the same mechanism; a separate
-live data-profile kill/resume (which would also close the archived
-`embed-harness-runtime` change's unexecuted verification task 6.2) is deferred to
-issue #28.
+and the status views reflect it. This is verified end-to-end for both durable
+workflow types — the analysis-run path (`executeAnalysis`) and the data-profile path
+(`runDataProfile`). Both are reclaimed by one recovery path — one runtime, executor
+`local`, in-flight workflows resolved at launch by registered name — so a killed
+workflow of either type is adopted on the next boot (`recovery_attempts` increments)
+and driven to a terminal state under its original id, with the status views
+reflecting the outcome.
 
 #### Scenario: Killed run resumes on next boot
 
 - **WHEN** the cli is killed while a run workflow is in flight and the cli later boots the runtime again
 - **THEN** DBOS recovery resumes the run under the same run id, it reaches a terminal state, and the status view shows the outcome
+
+#### Scenario: Killed data profile resumes on next boot
+
+- **WHEN** the cli is killed while a data-profile workflow is in flight and the cli later boots the runtime again
+- **THEN** DBOS recovery resumes the profile under the same workflow id, it reaches a terminal state, and `inflexa profile --status` shows the outcome
