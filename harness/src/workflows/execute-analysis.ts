@@ -200,8 +200,13 @@ export type RunProvenanceEvent =
           type: "run_completed";
           analysisId: string;
           runId: string;
-          /** The body's terminal status — `RunStatus` minus `"running"`. */
-          status: "completed" | "partial" | "failed" | "canceled" | "suspended_insufficient_funds";
+          /**
+           * The body's terminal status. Both boundary sites resolve it through `deriveFinalStatus`,
+           * which records a budget pause as `"canceled"` — so `"suspended_insufficient_funds"` (a
+           * `RunStatus` member) is never emitted here and is deliberately absent from this narrower
+           * `ExecuteAnalysisFinalStatus`-minus-`"running"` set.
+           */
+          status: Exclude<ExecuteAnalysisFinalStatus, "running">;
           atMs: number;
           /** `atMs − run_started.atMs`: the workflow-observed run span in ms. */
           durationMs: number;
@@ -916,6 +921,26 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                 ? "workflow-suspended"
                 : "workflow-canceled";
 
+    // Terminal clock read + run-completion provenance, emitted BEFORE the `cortex_runs`
+    // status write below — and thus before any of the terminal cleanup steps. The CLI
+    // watches the run by POLLING that row (`run.ts` `waitForRunTerminal`) and shuts down
+    // the instant it leaves `running`, flushing provenance and then `process.exit()`ing;
+    // emitting the record only after the status write races that shutdown and can drop
+    // the run's terminal provenance entirely. Emitting first makes the record dirty
+    // (synchronously, via the bus) before the row can be observed terminal, so the CLI's
+    // flush always captures it. Not step-wrapped — a DBOS recovery replay must re-fire it;
+    // `DBOS.now()` is checkpointed, so the span stays replay-stable (see `RunProvenanceEvent`).
+    // The duration measures from the `run_started` read threaded in as `startedAtMs`.
+    const terminalAtMs = await DBOS.now();
+    emitProvenanceGuarded(deps, {
+        type: "run_completed",
+        analysisId: input.analysisId,
+        runId,
+        status,
+        atMs: terminalAtMs,
+        durationMs: terminalAtMs - startedAtMs,
+    });
+
     try {
         await DBOS.runStep(
             async () => {
@@ -972,11 +997,9 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         console.error(`[executeAnalysis] revokeRunAuthorization failed for run ${runId} (reason=${revokeReason}):`, err);
     }
 
-    // Single terminal clock read shared by both `run_completed` emissions; the
-    // duration measures from the `run_started` read threaded in as `startedAtMs`.
-    // Checkpointed → replay-stable (see `RunProvenanceEvent`).
-    const terminalAtMs = await DBOS.now();
-
+    // The `run_completed` provenance was already emitted above (before the status write, to
+    // beat the CLI's poll-and-shutdown). These branches only fan out the UI stream part, whose
+    // completed/failed shapes genuinely differ — the provenance record does not.
     if (status === "completed" || status === "partial") {
         const artifactCount = await DBOS.runStep(() => countArtifactsForRun(deps.pool, input.analysisId, runId), { name: "count-run-artifacts" }).catch(
             () => 0,
@@ -998,28 +1021,12 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                   }
                 : {}),
         });
-        emitProvenanceGuarded(deps, {
-            type: "run_completed",
-            analysisId: input.analysisId,
-            runId,
-            status,
-            atMs: terminalAtMs,
-            durationMs: terminalAtMs - startedAtMs,
-        });
     } else {
         await emitStreamPart({
             type: "data-run-failed",
             runId,
             error: failureReason ?? (budgetExceeded ? "Run paused: insufficient budget" : "Run canceled before completion"),
             ...(budgetExceeded ? { reason: "budget_exceeded" } : {}),
-        });
-        emitProvenanceGuarded(deps, {
-            type: "run_completed",
-            analysisId: input.analysisId,
-            runId,
-            status,
-            atMs: terminalAtMs,
-            durationMs: terminalAtMs - startedAtMs,
         });
     }
 

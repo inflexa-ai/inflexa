@@ -20,7 +20,7 @@ afterEach(() => {
     Bus.off("inflexa", spy);
 });
 
-// The input/record shapes the reworked adapter reads off the collector — the subset of the harness's
+// The input/record shapes the adapter reads off the collector — the subset of the harness's
 // `InputRef`/`ProvenanceRecord` the adapter touches. Neither is re-exported from the barrel, and the `as
 // unknown as` stub below never needs the full shape, so these structural mirrors are honest.
 type FakeInputRef = { path: string; hash: string; source: "data" | "upstream" | "prior" | "artifacts"; fileId?: string };
@@ -106,7 +106,7 @@ describe("createBusArtifactRegistry — register", () => {
         const files = fileEvents();
         expect(files.map((f) => f.generation)).toEqual(["command", "command"]);
         expect(files.map((f) => f.file.producer)).toEqual(["command", "command"]);
-        // Result shape unchanged: both files register with their QN externalIds; nothing failed.
+        // Both files register with their QN externalIds and nothing failed — a clean, fully-attested result.
         expect(result.failedCount).toBe(0);
         expect(result.failed).toEqual([]);
         expect(result.registered).toEqual(files.map((f) => ({ path: f.file.path, externalId: fileQName(f.file) })));

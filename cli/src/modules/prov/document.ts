@@ -510,7 +510,7 @@ export function serializeProvenance(analysis: Analysis, format: BuiltinProvForma
             loadDocument(analysis, json)
                 // Same last-write-wins merge as the flush ({@link PROV_UNIFY_OPTIONS}), so the export and
                 // the signed column resolve any re-emitted record to the same survivor. A conflict never
-                // throws, so a writer defect can no longer make an analysis permanently un-exportable.
+                // throws, so a writer defect can never make an analysis permanently un-exportable.
                 .map((doc) => doc.unified(PROV_UNIFY_OPTIONS).serialize(format))
                 .mapErr((e): DbError => ({ type: "query_failed", op: "serializeProvenance:deserialize", cause: e.cause }))
         );

@@ -121,46 +121,54 @@ function onEvent(event: StampedEvent): void {
     const doc = liveDocForAnalysis(event.analysisId);
     if (!doc) return;
 
-    switch (event.type) {
-        case "prov.analysis_created":
-            appendCreation(doc, event.analysisId, event.actor);
-            break;
-        case "prov.input_added":
-            appendInputAdded(doc, event.analysisId, event.actor, event.input, event.derivedFromAnalysisId);
-            break;
-        case "prov.input_removed":
-            appendInputRemoved(doc, event.analysisId, event.actor, event.input);
-            break;
-        case "prov.run_started":
-            appendRunStarted(doc, event.analysisId, event.actor, event.run);
-            break;
-        case "prov.run_completed":
-            appendRunCompleted(doc, event.analysisId, event.actor, event.outcome);
-            break;
-        case "prov.step_completed":
-            appendStepCompleted(doc, event.analysisId, event.actor, event.outcome);
-            break;
-        case "prov.command_executed":
-            appendCommandExecuted(doc, event.analysisId, event.actor, event.step, event.command);
-            break;
-        case "prov.file_written":
-            appendFileWritten(doc, event.analysisId, event.actor, event.file, event.step, event.generation);
-            break;
-        case "prov.input_used":
-            appendInputUsed(doc, event.analysisId, event.actor, event.step, event.input);
-            break;
-        default:
-            // `event satisfies never`: every prov.* variant is handled above, so a NEW one added to
-            // BusEvent without a case here fails to compile at this line — a forgotten wiring is a build
-            // error, not a silently dropped record. Runtime-unreachable for a well-typed emit; the branch
-            // exists because the recorder is a bus subscriber and MUST NOT throw into the emitter (Bus is a
-            // raw EventEmitter that runs listeners un-isolated, and several prov emit sites are unguarded),
-            // so on the impossible path it logs and skips rather than crash the emitting mutation/step.
-            event satisfies never;
-            // `event.type` is statically `never` here but holds the real event's discriminant at runtime,
-            // naming which unhandled variant was dropped.
-            log.error({ type: (event as StampedEvent).type }, "unhandled prov event — not recorded");
-            return;
+    // A builder throw MUST NOT unwind into the emitter. Bus is a raw EventEmitter that runs listeners
+    // un-isolated, and several prov emit sites are UNGUARDED — notably the ArtifactRegistry `register()`
+    // path (`prov_bridge.ts`), whose harness caller treats a throw as an attestation failure and fails
+    // the step, orphaning its outputs. So a defect in one builder must drop that single record (log +
+    // skip the dirty-mark), never crash the emitting mutation/step. The builders don't call `unified()`
+    // today, so this is defense-in-depth against a future append-time invariant, not a live path.
+    try {
+        switch (event.type) {
+            case "prov.analysis_created":
+                appendCreation(doc, event.analysisId, event.actor);
+                break;
+            case "prov.input_added":
+                appendInputAdded(doc, event.analysisId, event.actor, event.input, event.derivedFromAnalysisId);
+                break;
+            case "prov.input_removed":
+                appendInputRemoved(doc, event.analysisId, event.actor, event.input);
+                break;
+            case "prov.run_started":
+                appendRunStarted(doc, event.analysisId, event.actor, event.run);
+                break;
+            case "prov.run_completed":
+                appendRunCompleted(doc, event.analysisId, event.actor, event.outcome);
+                break;
+            case "prov.step_completed":
+                appendStepCompleted(doc, event.analysisId, event.actor, event.outcome);
+                break;
+            case "prov.command_executed":
+                appendCommandExecuted(doc, event.analysisId, event.actor, event.step, event.command);
+                break;
+            case "prov.file_written":
+                appendFileWritten(doc, event.analysisId, event.actor, event.file, event.step, event.generation);
+                break;
+            case "prov.input_used":
+                appendInputUsed(doc, event.analysisId, event.actor, event.step, event.input);
+                break;
+            default:
+                // `event satisfies never`: every prov.* variant is handled above, so a NEW one added to
+                // BusEvent without a case here fails to compile at this line — a forgotten wiring is a
+                // build error, not a silently dropped record.
+                event satisfies never;
+                // `event.type` is statically `never` here but holds the real event's discriminant at
+                // runtime, naming which unhandled variant was dropped.
+                log.error({ type: (event as StampedEvent).type }, "unhandled prov event — not recorded");
+                return;
+        }
+    } catch (err) {
+        log.error({ type: event.type, analysisId: event.analysisId, err }, "prov builder threw; record dropped");
+        return;
     }
 
     markDirty(event.analysisId);
@@ -286,7 +294,20 @@ async function runFlush(): Promise<void> {
                 // one survivor rather than throwing, so a conflict can never leave the analysis dirty
                 // and permanently unpersistable.
                 const snapshotRevision = revision.get(analysisId) ?? 0;
-                const json = doc.unified(PROV_UNIFY_OPTIONS).serialize("json");
+                let json: string;
+                try {
+                    json = doc.unified(PROV_UNIFY_OPTIONS).serialize("json");
+                } catch (err) {
+                    // Isolate a serialize/unify fault to its own analysis. This runs SYNCHRONOUSLY in the
+                    // pass loop, so an uncaught throw would abort the whole pass (skipping every other
+                    // dirty analysis) AND reject `pending` — which, in the timer-driven path (`launchFlush`
+                    // sets `pending` with no `.catch`), surfaces as an unhandled rejection that can crash
+                    // the process. Leave the doc dirty (as a sign/persist failure does) so a later append
+                    // retries it, and press on; a persistently-poisoned doc simply stops making progress,
+                    // which `flushProvenanceAsync`'s no-progress guard already tolerates.
+                    log.error({ analysisId, err }, "provenance serialize failed; leaving dirty for retry");
+                    continue;
+                }
                 wg.go(persistSnapshot(analysisId, json, snapshotRevision));
             }
             await wg.wait();
