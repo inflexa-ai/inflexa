@@ -9,6 +9,7 @@
  */
 
 import { ResultAsync, err, ok, type Result } from "neverthrow";
+import { z } from "zod";
 
 import { sleep } from "../../lib/async-utils.js";
 
@@ -26,7 +27,8 @@ export interface ApiFetchOptions {
 export type ApiError =
     | { readonly type: "http_status"; readonly status: number; readonly body: string }
     | { readonly type: "timeout"; readonly timeoutMs: number }
-    | { readonly type: "exhausted"; readonly attempts: number; readonly lastError: string };
+    | { readonly type: "exhausted"; readonly attempts: number; readonly lastError: string }
+    | { readonly type: "invalid_response"; readonly issues: string };
 
 const RETRYABLE_STATUSES = new Set([429, 503]);
 
@@ -38,6 +40,46 @@ const RETRYABLE_STATUSES = new Set([429, 503]);
  */
 export function apiFetch<T = unknown>(url: string, options: ApiFetchOptions = {}): ResultAsync<T, ApiError> {
     return new ResultAsync(runFetch<T>(url, options));
+}
+
+/**
+ * `apiFetch` that validates the JSON response against a Zod `schema` before
+ * returning it. The success value is the schema's parsed output, so callers
+ * receive a payload whose shape has been checked rather than an unchecked
+ * `apiFetch<T>` cast that trusts the wire.
+ *
+ * A response the schema rejects — the upstream API changed its contract, or
+ * returned an error envelope where data was expected — resolves to an
+ * `invalid_response` err. That is deliberately an *unexpected* `ApiError`
+ * (`isUnexpectedApiError` returns true for it): a contract break should
+ * surface, not silently become empty/garbage results downstream. To keep a
+ * tool's graceful degradation, model genuinely-optional fields as
+ * `.optional()`/`.nullable()` in the schema so a partial-but-valid response
+ * still parses; reserve rejection for real type/shape drift.
+ *
+ * JSON only — `parseAs` is forced to `"json"`, since a schema over raw text is
+ * just `z.string()`, which `apiFetch<string>` already covers.
+ */
+export function apiFetchValidated<S extends z.ZodType>(
+    url: string,
+    schema: S,
+    options: Omit<ApiFetchOptions, "parseAs"> = {},
+): ResultAsync<z.infer<S>, ApiError> {
+    return apiFetch<unknown>(url, { ...options, parseAs: "json" }).andThen((data): Result<z.infer<S>, ApiError> => {
+        const parsed = schema.safeParse(data);
+        if (parsed.success) return ok(parsed.data);
+        return err({ type: "invalid_response", issues: summarizeZodIssues(parsed.error) });
+    });
+}
+
+/** Compact one-line rendering of a Zod validation failure (first few issues). */
+function summarizeZodIssues(error: z.ZodError): string {
+    const issues = error.issues.slice(0, 5).map((issue) => {
+        const path = issue.path.map((segment) => String(segment)).join(".");
+        return path ? `${path}: ${issue.message}` : issue.message;
+    });
+    const remaining = error.issues.length - issues.length;
+    return remaining > 0 ? `${issues.join("; ")} (+${remaining} more)` : issues.join("; ");
 }
 
 async function runFetch<T>(url: string, options: ApiFetchOptions): Promise<Result<T, ApiError>> {
@@ -91,6 +133,8 @@ export function describeApiError(e: ApiError): string {
             return `Request timed out after ${e.timeoutMs}ms`;
         case "exhausted":
             return `Failed after ${e.attempts} attempts: ${e.lastError}`;
+        case "invalid_response":
+            return `Response did not match the expected schema: ${e.issues}`;
     }
 }
 
@@ -100,8 +144,9 @@ export function describeApiError(e: ApiError): string {
  * A concrete 4xx means the request itself was wrong — a bad identifier, a
  * resource that does not exist — an expected outcome the caller models as
  * data (an empty result, a `notFound` entry). Everything else — 5xx, a
- * timeout, retry exhaustion, a transport failure — is unexpected and the
- * caller should surface it by throwing (or returning `err`).
+ * timeout, retry exhaustion, a transport failure, or a schema mismatch
+ * (`invalid_response`) — is unexpected and the caller should surface it by
+ * throwing (or returning `err`).
  */
 export function isUnexpectedApiError(e: ApiError): boolean {
     return !(e.type === "http_status" && e.status >= 400 && e.status < 500);

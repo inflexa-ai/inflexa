@@ -9,61 +9,53 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
-import { apiFetch, describeApiError } from "../lib/api-utils.js";
+import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 import { DRUGBANK_BASE, getDrugbankHeaders } from "../lib/drugbank-config.js";
 
-interface DrugResult {
-    drugbankId: string;
-    name: string;
-    description: string;
-    type: string;
-    groups: string[];
-    categories: string[];
-    indication: string;
-    pharmacodynamics: string;
-    mechanismOfAction: string;
-    toxicity: string;
-    halfLife: string;
-    targets: {
-        name: string;
-        geneSymbol: string;
-        actions: string[];
-        knownAction: string;
-    }[];
-    interactions: {
-        drugbankId: string;
-        name: string;
-        description: string;
-    }[];
-}
-
-interface RawDrug {
-    drugbank_id?: string;
-    name?: string;
-    description?: string;
-    type?: string;
-    groups?: string[];
-    categories?: { category?: string }[];
-    indication?: string;
-    pharmacodynamics?: string;
-    mechanism_of_action?: string;
-    toxicity?: string;
-    half_life?: string;
-    targets?: {
-        name?: string;
-        gene_name?: string;
-        actions?: string[];
-        known_action?: string;
-    }[];
-    drug_interactions?: {
-        drugbank_id?: string;
-        name?: string;
-        description?: string;
-    }[];
-}
-
-function mapDrug(raw: RawDrug): DrugResult {
-    return {
+// A single schema that both validates and normalizes one DrugBank record.
+// The `.object(...)` half is the snake_case wire shape (every field optional —
+// the API omits absent values); the `.transform(...)` half maps it into the
+// camelCase result we return. Parsing IS the validation: `apiFetchValidated`
+// runs this schema over the JSON, so a payload whose field TYPES drift (an
+// object where the API used to send an array, a number for a string) is
+// rejected as `invalid_response` instead of being silently mis-mapped. Because
+// the schema carries the transform, `z.infer` below is the OUTPUT (camelCase)
+// type callers receive — there is no separate raw interface or mapper to keep
+// in sync.
+const DrugResultSchema = z
+    .object({
+        drugbank_id: z.string().optional(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        type: z.string().optional(),
+        groups: z.array(z.string()).optional(),
+        categories: z.array(z.object({ category: z.string().optional() })).optional(),
+        indication: z.string().optional(),
+        pharmacodynamics: z.string().optional(),
+        mechanism_of_action: z.string().optional(),
+        toxicity: z.string().optional(),
+        half_life: z.string().optional(),
+        targets: z
+            .array(
+                z.object({
+                    name: z.string().optional(),
+                    gene_name: z.string().optional(),
+                    actions: z.array(z.string()).optional(),
+                    known_action: z.string().optional(),
+                }),
+            )
+            .optional(),
+        drug_interactions: z
+            .array(
+                z.object({
+                    drugbank_id: z.string().optional(),
+                    name: z.string().optional(),
+                    description: z.string().optional(),
+                }),
+            )
+            .optional(),
+    })
+    .transform((raw) => ({
         drugbankId: raw.drugbank_id ?? "",
         name: raw.name ?? "",
         description: (raw.description ?? "").slice(0, 500),
@@ -86,8 +78,12 @@ function mapDrug(raw: RawDrug): DrugResult {
             name: i.name ?? "",
             description: (i.description ?? "").slice(0, 200),
         })),
-    };
-}
+    }));
+type DrugResult = z.infer<typeof DrugResultSchema>;
+
+// The /drugs endpoint returns a single object (by-id lookup) or an array
+// (query/target lookups); accept either, transforming each element.
+const DrugResponseSchema = z.union([DrugResultSchema, z.array(DrugResultSchema)]);
 
 export function createSearchDrugbankTool(deps: { apiKey: string }) {
     return defineTool({
@@ -113,14 +109,13 @@ export function createSearchDrugbankTool(deps: { apiKey: string }) {
                 url = `${DRUGBANK_BASE}/drugs?q=${encodeURIComponent(query)}&limit=${limit}`;
             }
 
-            const res = await apiFetch<RawDrug | RawDrug[]>(url, { headers });
+            const res = await apiFetchValidated(url, DrugResponseSchema, { headers });
             if (res.isErr()) throw new Error(describeApiError(res.error));
 
-            const rawDrugs: RawDrug[] = Array.isArray(res.value) ? res.value : [res.value];
+            // Already validated + normalized by DrugResultSchema's transform.
+            const drugs: DrugResult[] = Array.isArray(res.value) ? res.value : [res.value];
 
-            return ok({
-                drugs: rawDrugs.slice(0, limit).map(mapDrug),
-            });
+            return ok({ drugs: drugs.slice(0, limit) });
         },
     });
 }

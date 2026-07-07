@@ -108,6 +108,12 @@ A tool's `execute` SHALL return `Promise<Result<Output, ToolError>>`. Expected o
 - **WHEN** `execute` runs
 - **THEN** it throws or returns `err(ToolError)` rather than an `ok` carrying `{ success: false }`
 
+#### Scenario: A response that violates the expected schema surfaces as an unexpected failure
+
+- **GIVEN** a bio-API tool that fetches a JSON response through the schema-validating fetch helper (`apiFetchValidated`)
+- **WHEN** the upstream returns a payload whose shape or field types do not match the declared Zod schema (a changed contract, or an error envelope where data was expected)
+- **THEN** the fetch resolves to an unexpected `invalid_response` `ApiError` — which the tool surfaces as an error rather than mapping malformed data into an `ok` result. A partial-but-valid response (fields the schema marks optional are absent) still parses and is handled as data.
+
 ### Requirement: Input sanitization redacts secrets without corrupting biological sequences
 
 `redactSecrets` SHALL redact structured, prefixed secret formats (`AKIA…`, `sk-ant-…`, `sk-…`, `gh[psoru]_…`, `eyJ…` JWTs, `Bearer …`, database connection URIs). It SHALL NOT use the 40-character generic pattern or a loose `key:value` pattern, because those false-positive on nucleotide and protein sequences.
