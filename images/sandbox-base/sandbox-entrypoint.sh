@@ -18,6 +18,16 @@ if [ "${SANDBOX_EGRESS_FIREWALL:-0}" = "1" ]; then
     iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     iptables -P OUTPUT DROP
 
+    # iptables governs IPv4 only. If the container has an IPv6 stack (a
+    # dual-stack bridge), the same egress-deny must be mirrored there or v6 is
+    # a hole through the firewall. `set -e` keeps this fail-closed: an IPv6
+    # stack whose rules cannot be installed aborts the start.
+    if [ -f /proc/net/if_inet6 ]; then
+        ip6tables -A OUTPUT -o lo -j ACCEPT
+        ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+        ip6tables -P OUTPUT DROP
+    fi
+
     # Drop to uid/gid 1000 with an empty capability bounding+inheritable set, so
     # the workload cannot regain CAP_NET_ADMIN and flush the rules above.
     exec setpriv --reuid=1000 --regid=1000 --init-groups \

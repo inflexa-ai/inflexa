@@ -14,6 +14,7 @@ const (
 	envTreeDiffRoot     = "SANDBOX_TREE_DIFF_ROOT"
 	envTreeDiffInterval = "SANDBOX_TREE_DIFF_INTERVAL_MS"
 	envTransport        = "SANDBOX_TRANSPORT"
+	envEgressFirewall   = "SANDBOX_EGRESS_FIREWALL"
 )
 
 // transportMode selects how a command's progress events and terminal result
@@ -82,6 +83,24 @@ func loadTransport() transportMode {
 		log.Printf("WARNING: invalid SANDBOX_TRANSPORT=%q, falling back to poll", raw)
 		return transportPoll
 	}
+}
+
+// verifyPrivilegeDrop fails closed on a broken egress-confinement chain.
+//
+// SANDBOX_EGRESS_FIREWALL=1 is a promise that the image's root entrypoint
+// installed the egress firewall and `setpriv`-dropped to the workload uid
+// before exec'ing this server. If the server still holds euid 0, that chain
+// did not run — an image that overrides the entrypoint, say — and the
+// container is root, holds CAP_NET_ADMIN, and has unconfined egress while
+// looking perfectly healthy from the host. Refusing to start turns that
+// silent degradation into a loud create-time failure.
+//
+// Without the flag (callback mode, K8s) the uid is not this check's concern.
+func verifyPrivilegeDrop(firewallFlag string, euid int) error {
+	if firewallFlag == "1" && euid == 0 {
+		return errors.New("SANDBOX_EGRESS_FIREWALL=1 but the server is running as root: the entrypoint's firewall+privilege-drop did not run (does the image override ENTRYPOINT?)")
+	}
+	return nil
 }
 
 func decodeSecret(raw string) ([]byte, error) {

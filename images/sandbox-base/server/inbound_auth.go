@@ -3,20 +3,20 @@ package main
 // Inbound requests are authenticated the same way outbound callbacks are —
 // by signature, not by a shared bearer token.
 //
-// The distinction is load-bearing under the gateway topology. The gateway
-// forwards these bytes in cleartext, so any static credential sent inbound
-// (an `Authorization: Bearer <secret>` header, say) would be exposed to it,
-// handing the transport the very key it must never hold. A signature is not a
-// reusable credential: the gateway sees it, cannot mint another, and so keeps
-// the property that it can forward or drop a request but never forge one.
+// The distinction is load-bearing because these requests ride cleartext HTTP.
+// Any static credential sent inbound (an `Authorization: Bearer <secret>`
+// header, say) would be exposed to every hop able to observe the bytes,
+// handing the transport a reusable key. A signature is not a reusable
+// credential: an observer sees it, cannot mint another, and so any hop can
+// forward or drop a request but never forge one.
 //
 // The construction is identical to the callbacks, run in the opposite
 // direction: the harness signs `HMAC-SHA256(callbackSecret,
 // "${execId}:${timestamp}:${sha256Hex(body)}")` and this server verifies it
 // against a freshness window. Because possession of the per-sandbox secret is
-// what the check tests, it also confines lateral movement: a sibling sandbox on
-// the shared analysis network cannot drive this one's `/exec`, holding only its
-// own secret, not this one's.
+// what the check tests, it also confines lateral movement: a sibling sandbox
+// that can reach this one on the shared bridge cannot drive its `/exec`,
+// holding only its own secret, not this one's.
 
 import (
 	"crypto/hmac"

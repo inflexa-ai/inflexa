@@ -86,3 +86,30 @@ func TestLoadServerConfig_Base64Invalid(t *testing.T) {
 		t.Fatalf("expected base64 decode error")
 	}
 }
+
+func TestVerifyPrivilegeDrop_FirewallFlagAsRootRefused(t *testing.T) {
+	// SANDBOX_EGRESS_FIREWALL=1 promises the entrypoint installed the egress
+	// firewall and dropped to the workload uid before the server started. Still
+	// being root proves the drop never happened (an image that overrode the
+	// entrypoint) — the container would run privileged and unconfined while
+	// appearing healthy. Refuse to start.
+	if err := verifyPrivilegeDrop("1", 0); err == nil {
+		t.Fatalf("expected refusal when the firewall flag is set but the server runs as root")
+	}
+}
+
+func TestVerifyPrivilegeDrop_FirewallFlagDroppedUidOk(t *testing.T) {
+	if err := verifyPrivilegeDrop("1", 1000); err != nil {
+		t.Fatalf("unexpected error after a completed privilege drop: %v", err)
+	}
+}
+
+func TestVerifyPrivilegeDrop_NoFirewallFlagIgnoresUid(t *testing.T) {
+	// Callback mode and K8s never set the flag; who the workload runs as is the
+	// image's/cluster's concern there, not this check's.
+	for _, flag := range []string{"", "0"} {
+		if err := verifyPrivilegeDrop(flag, 0); err != nil {
+			t.Fatalf("unexpected error with flag %q as root: %v", flag, err)
+		}
+	}
+}

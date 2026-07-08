@@ -72,11 +72,24 @@ const MAX_RECV_TIMEOUT_SECONDS = 5;
 
 /**
  * Poll cadence in poll mode: how long the loop sleeps between two
- * `GET /exec/{execId}?since={cursor}` fetches. ~1.5s trades a small progress
- * latency for far fewer durable steps over a minutes-to-hours analysis; the
- * terminal result still returns within one interval of the exec finishing.
+ * `GET /exec/{execId}?since={cursor}` fetches, in two phases. Every poll writes
+ * a durable step row (plus a durable sleep), so cadence is a direct multiplier
+ * on DBOS system-table growth for the life of the exec.
+ *
+ *   - Fast phase: {@link DEFAULT_POLL_INTERVAL_MS} (~1.5s) for the first
+ *     {@link DEFAULT_FAST_POLL_ATTEMPTS} attempts (~the exec's first minute) —
+ *     short commands, the common case, return within one snappy interval.
+ *   - Slow phase: {@link DEFAULT_SLOW_POLL_INTERVAL_MS} thereafter — an
+ *     hours-long analysis polls sustainably (~720 rows/hour instead of ~4,800)
+ *     at the cost of up to 10s of terminal-result latency, noise against the
+ *     runtime of anything that reaches this phase.
+ *
+ * Attempt-derived, so the schedule is a pure function of the checkpointed step
+ * sequence and replays identically.
  */
 const DEFAULT_POLL_INTERVAL_MS = 1_500;
+const DEFAULT_FAST_POLL_ATTEMPTS = 40;
+const DEFAULT_SLOW_POLL_INTERVAL_MS = 10_000;
 
 /**
  * Silent recv slices to tolerate before pulling. At `MAX_RECV_TIMEOUT_SECONDS`
@@ -204,13 +217,23 @@ export interface AwaitExecOptions {
      * composition root passes the same value it hands the container.
      */
     transport?: SandboxTransport;
-    /** Poll-mode inter-poll sleep. Defaults to {@link DEFAULT_POLL_INTERVAL_MS}. */
+    /** Poll-mode fast-phase inter-poll sleep. Defaults to {@link DEFAULT_POLL_INTERVAL_MS}. */
     pollIntervalMs?: number;
+    /** Poll attempts before the cadence backs off. Defaults to {@link DEFAULT_FAST_POLL_ATTEMPTS}. */
+    fastPollAttempts?: number;
+    /** Poll-mode slow-phase inter-poll sleep. Defaults to {@link DEFAULT_SLOW_POLL_INTERVAL_MS}. */
+    slowPollIntervalMs?: number;
     /**
      * Injected for tests: replaces the durable inter-poll sleep. Production code
      * passes nothing and `DBOS.sleepms` is used.
      */
     sleep?: (ms: number) => Promise<void>;
+    /**
+     * Sink for advisory warnings (poll-mode progress-event loss). Defaults to
+     * `DBOS.logger.warn`. Advisory only: the terminal result — not the event
+     * stream — is the authoritative outcome.
+     */
+    warn?: (message: string) => void;
 }
 
 /**
@@ -406,13 +429,14 @@ export async function awaitExecPoll(ref: SandboxRef, execId: string, emit: ExecE
     const runStep = options.runStep ?? (<T>(fn: () => Promise<T>, c: { name: string }) => DBOS.runStep(fn, c));
     const sleep = options.sleep ?? ((ms: number) => DBOS.sleepms(ms));
     const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    const fastPollAttempts = options.fastPollAttempts ?? DEFAULT_FAST_POLL_ATTEMPTS;
+    const slowPollIntervalMs = options.slowPollIntervalMs ?? DEFAULT_SLOW_POLL_INTERVAL_MS;
+    const warn = options.warn ?? ((message: string) => DBOS.logger.warn(message));
 
     let cursor = 0;
     let pollAttempt = 0;
 
     while (true) {
-        if ((await now()) >= deadlineMs) throw new ExecTimeoutError(execId);
-
         pollAttempt += 1;
         const polled = await runStep(() => pollExecOnce(fetchImpl, ref, execId, cursor), {
             name: `sandbox.poll-exec-result.${execId}.${pollAttempt}`,
@@ -435,17 +459,37 @@ export async function awaitExecPoll(ref: SandboxRef, execId: string, emit: ExecE
             }
 
             const resp = PollResponseSchema.parse(JSON.parse(polled.raw));
-            // Forward new events before returning, so trailing progress lands
-            // ahead of the terminal result.
-            for (const ev of resp.events) {
+            // Forward only events past the local cursor, before returning, so
+            // trailing progress lands ahead of the terminal result. The filter is
+            // load-bearing: the signature covers the body but not the request's
+            // `since`, so any validly-signed snapshot verifies against any poll —
+            // a replayed or crossed response must not re-emit delivered events.
+            const newEvents = resp.events.filter((ev) => ev.seq > cursor);
+            // Sequence numbers are per-exec contiguous, so a hole between the
+            // local cursor and the next delivered (or high-water) seq is exact
+            // proof the ring shed events before the host saw them. Advisory: the
+            // terminal result, not the event stream, is the authoritative outcome.
+            const nextSeq = newEvents.length > 0 ? newEvents[0]!.seq : resp.cursor > cursor ? resp.cursor + 1 : cursor + 1;
+            const lost = nextSeq - cursor - 1;
+            if (lost > 0) {
+                warn(
+                    `awaitExecPoll[${execId}]: ${lost} progress event(s) (seq ${cursor + 1}-${cursor + lost}) shed by the sandbox ring before delivery; the terminal result is unaffected`,
+                );
+            }
+            for (const ev of newEvents) {
                 await emit(ev.payload);
             }
             if (resp.cursor > cursor) cursor = resp.cursor;
             if (resp.result !== undefined) return resp.result;
         }
 
+        // The deadline gate sits AFTER the poll so the loop always asks once more
+        // before declaring a timeout — same reasoning as the callback loop's
+        // deadline pull: a lost poll window is not a slow command, and reporting
+        // a timeout would discard a completed analysis.
         const remainingMs = deadlineMs - (await now());
         if (remainingMs <= 0) throw new ExecTimeoutError(execId);
-        await sleep(Math.min(pollIntervalMs, remainingMs));
+        const intervalMs = pollAttempt <= fastPollAttempts ? pollIntervalMs : slowPollIntervalMs;
+        await sleep(Math.min(intervalMs, remainingMs));
     }
 }

@@ -487,6 +487,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("startup config error: %v", err)
 	}
+	if err := verifyPrivilegeDrop(os.Getenv(envEgressFirewall), os.Geteuid()); err != nil {
+		log.Fatalf("startup confinement error: %v", err)
+	}
 
 	log.Printf("sandbox-server config: transport=%s cortex=%s callback_secret_bytes=%d", cfg.transport, cfg.cortexBaseURL, len(cfg.callbackSecret))
 

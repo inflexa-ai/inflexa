@@ -29,13 +29,26 @@ OSS default SHALL be `poll`. Inbound request signing SHALL apply in both modes.
 
 In poll mode `awaitExec` SHALL NOT use `DBOS.recv` or a per-exec topic. It SHALL
 loop durable pull steps named `sandbox.poll-exec-result.${execId}.${n}` on a
-bounded cadence, each fetching `GET /exec/{execId}?since={cursor}` and receiving a
-signed `{ status, events[], cursor, result? }`. It SHALL verify the body with the
+two-phase cadence — a fast interval for the first attempts (short execs return
+within one snappy interval) backing off to a slower interval thereafter (an
+hours-long exec polls sustainably) — derived from the attempt counter alone so
+the schedule replays identically. Each poll fetches
+`GET /exec/{execId}?since={cursor}` and receives a signed
+`{ status, events[], cursor, result? }`. The loop SHALL verify the body with the
 per-sandbox HMAC exactly as a pulled result is verified, forward events newer than
-`cursor` via `emit`, advance `cursor`, and return `result` when terminal. A forged
-or stale signature SHALL throw `HardCancelError`. The loop SHALL be bounded by
-`step.timeout`. A recovered workflow SHALL resume polling from its current host
-identity without a lost result — the recovery wedge (#41) does not apply to poll.
+`cursor` via `emit`, advance `cursor`, and return `result` when terminal. The
+newer-than-cursor filter SHALL be applied by the loop itself: the signature covers
+the response body but not the request's `since`, so any validly-signed snapshot
+verifies against any poll, and a replayed or crossed response MUST NOT re-emit
+already-delivered events. A gap between the local cursor and the next served
+sequence — events shed by the sandbox's bounded ring before delivery — SHALL be
+surfaced as an advisory warning; the terminal result, not the event stream,
+remains the authoritative outcome. A forged or stale signature SHALL throw
+`HardCancelError`. The loop SHALL be bounded by `step.timeout`, and SHALL poll
+once more upon crossing the deadline before declaring a timeout, so a result
+sitting completed in the sandbox is returned rather than discarded. A recovered
+workflow SHALL resume polling from its current host identity without a lost
+result — the recovery wedge (#41) does not apply to poll.
 
 #### Scenario: Poll returns the terminal result
 
@@ -60,6 +73,30 @@ identity without a lost result — the recovery wedge (#41) does not apply to po
 - **GIVEN** a poll-mode exec whose host restarts mid-run
 - **WHEN** the workflow recovers under the same `executorID`
 - **THEN** the poll loop SHALL continue against the sandbox from the recovered host, and the terminal result SHALL still be retrieved
+
+#### Scenario: A replayed snapshot does not duplicate events
+
+- **GIVEN** a validly-signed poll response re-serving events at or below the loop's local cursor
+- **WHEN** `awaitExec` processes it
+- **THEN** only events newer than the local cursor SHALL be emitted
+
+#### Scenario: Events shed by the ring are surfaced
+
+- **GIVEN** a poll response whose first served sequence leaves a gap above the local cursor (or whose cursor advanced with no events served)
+- **WHEN** `awaitExec` processes it
+- **THEN** the loop SHALL emit an advisory warning naming the lost range and continue
+
+#### Scenario: The deadline check polls once more before timing out
+
+- **GIVEN** a poll-mode exec whose deadline has been crossed
+- **WHEN** the loop observes the crossing
+- **THEN** it SHALL issue one more poll and return the terminal result if that poll carries one, throwing `ExecTimeoutError` only otherwise
+
+#### Scenario: The cadence backs off for long execs
+
+- **GIVEN** a poll-mode exec still running after the fast-phase attempts are spent
+- **WHEN** the loop schedules its next poll
+- **THEN** it SHALL sleep the slow-phase interval, and the schedule SHALL be a pure function of the attempt counter
 
 ## MODIFIED Requirements
 

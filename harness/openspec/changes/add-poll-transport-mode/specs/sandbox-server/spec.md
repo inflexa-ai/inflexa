@@ -101,13 +101,22 @@ sandbox-server as the unprivileged workload uid. It SHALL:
 
 1. Install `iptables` rules allowing loopback (`-o lo`) and established/related
    return traffic, then set the `OUTPUT` policy to `DROP`.
-2. Drop `CAP_NET_ADMIN` from the process before exec'ing the workload, so the
+2. Mirror the same rules with `ip6tables` when the container has an IPv6 stack
+   (a dual-stack bridge), so IPv6 is not a hole through the IPv4 firewall; a
+   present IPv6 stack whose rules cannot be installed SHALL abort the start.
+3. Drop `CAP_NET_ADMIN` from the process before exec'ing the workload, so the
    uid-1000 sandbox-server cannot alter or flush the rules.
-3. Exec sandbox-server as uid 1000 (the entrypoint holds no long-lived privilege).
+4. Exec sandbox-server as uid 1000 (the entrypoint holds no long-lived privilege).
 
 When the flag is unset (K8s, or callback mode where confinement is by
 NetworkPolicy) the entrypoint SHALL exec sandbox-server directly without touching
 iptables. `iptables` SHALL be present in the image.
+
+sandbox-server SHALL enforce the flag's promise fail-closed: when the firewall
+flag is set but the server finds itself running as root — proof the entrypoint's
+firewall-and-drop chain did not run, e.g. an image that overrides `ENTRYPOINT` —
+it SHALL refuse to start, turning a silently unconfined container into a loud
+create-time failure.
 
 #### Scenario: Firewall installed then workload de-privileged (Docker poll)
 
@@ -127,6 +136,18 @@ iptables. `iptables` SHALL be present in the image.
 - **GIVEN** the Docker-poll firewall flag is unset
 - **WHEN** the container starts
 - **THEN** the entrypoint SHALL exec sandbox-server directly without installing iptables rules
+
+#### Scenario: Firewall flag with an unexecuted drop refuses startup
+
+- **GIVEN** the firewall flag is set but the entrypoint chain did not run (the server starts as root)
+- **WHEN** sandbox-server starts
+- **THEN** it SHALL exit with a fatal confinement error instead of serving
+
+#### Scenario: IPv6 stack gets the same egress deny
+
+- **GIVEN** the firewall flag is set and the container has an IPv6 stack
+- **WHEN** the container starts
+- **THEN** the `ip6tables` `OUTPUT` policy SHALL be `DROP` with loopback and established traffic allowed, mirroring IPv4
 
 ## MODIFIED Requirements
 

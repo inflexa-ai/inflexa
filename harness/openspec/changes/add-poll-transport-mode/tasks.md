@@ -43,6 +43,16 @@ core (B2/B3/hardening/signed GET); replace the gateway with two transport modes.
 - [x] `images/sandbox-base/README.md`: endpoints + transport modes + firewall entrypoint
 - [ ] Close #27 and #41 with a comment pointing at the mechanism (at land time)
 
+## 5b. Review hardening (PR #47 review round)
+
+- [x] Poll loop: newer-than-cursor filter applied client-side (replayed signed snapshots cannot duplicate events)
+- [x] Poll loop: seq-gap detection surfaces ring-shed events via an advisory warn (injectable, defaults to `DBOS.logger.warn`)
+- [x] Poll loop: one final poll upon crossing the deadline before `ExecTimeoutError` (parity with the callback loop's deadline pull)
+- [x] Poll loop: two-phase attempt-derived cadence (1.5s × 40 attempts, then 10s) to bound DBOS step-row growth on long execs
+- [x] sandbox-server: fatal startup refusal when `SANDBOX_EGRESS_FIREWALL=1` but euid is 0 (entrypoint drop bypassed)
+- [x] Entrypoint: `ip6tables` mirror of the egress deny when the container has an IPv6 stack
+- [x] Stale gateway topology text purged from `PULL_REQUEST_TEMPLATE.md`, `CONTRIBUTING.md`, `inbound_auth.go`; `SECURITY.md` reachability claims qualified per mode
+
 ## 6. Verify
 
 - [x] `bun test src/sandbox` (147 pass) + `tsc` green; `go test ./...` (ok) + `gofmt` green (changed files)

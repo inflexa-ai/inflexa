@@ -31,5 +31,5 @@ Closes #<!-- issue number, if any -->
 <!-- Delete this section if it does not apply. -->
 
 - [ ] **Methods:** the method is stated, relevant literature cited where appropriate, and tool/library versions are pinned.
-- [ ] **Sandbox:** the security model is preserved (non-root, all capabilities dropped, `no-new-privileges`, an internal network whose only reachable peer is the credential-less gateway, read-only analysis tree with writes confined to the step's output directory, resource limits, and no host credentials in spawned commands); any loosening is called out and justified.
+- [ ] **Sandbox:** the security model is preserved (unprivileged uid-1000 workload, all capabilities dropped, `no-new-privileges`; no network egress in poll mode — the in-container firewall on Docker, a NetworkPolicy on K8s; signature-authenticated exec endpoints; read-only analysis tree with writes confined to the step's output directory; resource limits; and no host credentials in spawned commands); any loosening is called out and justified.
 - [ ] **Provenance:** prior analyses remain reproducible (or the expected variance is documented).

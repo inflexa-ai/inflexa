@@ -668,6 +668,112 @@ describe("awaitExecPoll", () => {
         expect(urls[1]).toContain("?since=2");
     });
 
+    test("events at or below the local cursor are never re-emitted", async () => {
+        // The poll signature covers the body, not the request's `since`, so any
+        // validly-signed snapshot verifies against any poll. A replayed or
+        // crossed response re-serving delivered events must be deduped locally.
+        const emitted: unknown[] = [];
+        await awaitExecPoll(
+            REF,
+            EXEC_ID,
+            (e) => {
+                emitted.push(e);
+            },
+            DEADLINE,
+            {
+                ...POLL_BASE,
+                fetch: pollFetch([
+                    {
+                        status: "running",
+                        events: [
+                            { seq: 1, payload: { kind: "phase", phase: "setup" } },
+                            { seq: 2, payload: { kind: "phase", phase: "run" } },
+                        ],
+                        cursor: 2,
+                    },
+                    // A stale snapshot for since=0: seqs 1-2 again plus the new seq 3.
+                    {
+                        status: "completed",
+                        events: [
+                            { seq: 1, payload: { kind: "phase", phase: "setup" } },
+                            { seq: 2, payload: { kind: "phase", phase: "run" } },
+                            { seq: 3, payload: { kind: "phase", phase: "done" } },
+                        ],
+                        cursor: 3,
+                        result: okResult,
+                    },
+                ]),
+            },
+        );
+        expect(emitted).toEqual([
+            { kind: "phase", phase: "setup" },
+            { kind: "phase", phase: "run" },
+            { kind: "phase", phase: "done" },
+        ]);
+    });
+
+    test("the cadence backs off after the fast-phase attempts are spent", async () => {
+        // Each durable poll writes a step row; a fixed 1.5s cadence over an
+        // hours-long exec floods the DBOS system tables. Fast early (short execs
+        // return promptly), slow later (long execs poll sustainably).
+        const sleeps: number[] = [];
+        const running = { status: "running", events: [], cursor: 0 };
+        await awaitExecPoll(REF, EXEC_ID, () => {}, DEADLINE, {
+            now: () => NOW_MS,
+            runStep: passthroughStep,
+            sleep: async (ms) => {
+                sleeps.push(ms);
+            },
+            pollIntervalMs: 1_500,
+            fastPollAttempts: 2,
+            slowPollIntervalMs: 10_000,
+            fetch: pollFetch([running, running, running, running, { status: "completed", events: [], cursor: 0, result: okResult }]),
+        });
+        expect(sleeps).toEqual([1_500, 1_500, 10_000, 10_000]);
+    });
+
+    test("a seq gap above the cursor — events shed by ring overflow — is surfaced via warn", async () => {
+        const warnings: string[] = [];
+        await awaitExecPoll(REF, EXEC_ID, () => {}, DEADLINE, {
+            ...POLL_BASE,
+            warn: (m) => warnings.push(m),
+            fetch: pollFetch([
+                // The ring shed seqs 1-40 before the host's first poll.
+                { status: "running", events: [{ seq: 41, payload: { kind: "phase", phase: "run" } }], cursor: 41, truncated: true },
+                { status: "completed", events: [], cursor: 41, result: okResult },
+            ]),
+        });
+        expect(warnings.length).toBe(1);
+        expect(warnings[0]).toContain("40");
+    });
+
+    test("a fully-shed ring — cursor advanced past events never served — is surfaced via warn", async () => {
+        const warnings: string[] = [];
+        await awaitExecPoll(REF, EXEC_ID, () => {}, DEADLINE, {
+            ...POLL_BASE,
+            warn: (m) => warnings.push(m),
+            fetch: pollFetch([
+                { status: "running", events: [], cursor: 7, truncated: true },
+                { status: "completed", events: [], cursor: 7, result: okResult },
+            ]),
+        });
+        expect(warnings.length).toBe(1);
+        expect(warnings[0]).toContain("7");
+    });
+
+    test("contiguous events never warn", async () => {
+        const warnings: string[] = [];
+        await awaitExecPoll(REF, EXEC_ID, () => {}, DEADLINE, {
+            ...POLL_BASE,
+            warn: (m) => warnings.push(m),
+            fetch: pollFetch([
+                { status: "running", events: [{ seq: 1, payload: { kind: "phase", phase: "setup" } }], cursor: 1 },
+                { status: "completed", events: [{ seq: 2, payload: { kind: "phase", phase: "done" } }], cursor: 2, result: okResult },
+            ]),
+        });
+        expect(warnings).toEqual([]);
+    });
+
     test("a forged poll response hard-cancels", async () => {
         const forgedFetch: typeof fetch = async () =>
             new Response(JSON.stringify({ status: "running", events: [], cursor: 0 }), {
@@ -692,6 +798,16 @@ describe("awaitExecPoll", () => {
             ]),
         });
         expect(names).toEqual([`sandbox.poll-exec-result.${EXEC_ID}.1`, `sandbox.poll-exec-result.${EXEC_ID}.2`]);
+    });
+
+    test("a deadline already crossed still polls once — a finished exec is returned, not timed out", async () => {
+        // Mirrors the callback loop's ask-once-before-timeout: a lost poll window
+        // is not a slow command, and the result may be sitting in the sandbox.
+        const result = await awaitExecPoll(REF, EXEC_ID, () => {}, NOW_MS - 1, {
+            ...POLL_BASE,
+            fetch: pollFetch([{ status: "completed", events: [], cursor: 0, result: okResult }]),
+        });
+        expect(result.exitCode).toBe(0);
     });
 
     test("an unreachable sandbox keeps polling until the deadline, then times out", async () => {
