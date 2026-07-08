@@ -6,7 +6,10 @@
  *     `GET /exec/{execId}?since={cursor}`. The sandbox initiates nothing; the
  *     host asks. Inherently restart-proof — a recovered workflow just resumes
  *     polling from its current identity — so the recovery wedge (#41) does not
- *     apply.
+ *     apply. A machine that dies mid-exec fast-fails in-loop: sustained
+ *     `unavailable` polls escalate to a backend-inspect probe (`liveness.ts`)
+ *     and an observably dead machine returns the synthetic-failure result
+ *     instead of waiting out the deadline.
  *   - `callback`: {@link awaitExecCallback} is the recv loop below, with the
  *     pull as its recovery backstop.
  *
@@ -55,6 +58,7 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import { signCallback, verifyCallback } from "./hmac.js";
+import { createEscalationPolicy, probeLiveness, syntheticFailureReason, syntheticFailureResult } from "./liveness.js";
 import {
     ExecResultSchema,
     isDoneMarker,
@@ -63,6 +67,7 @@ import {
     type ExecEmit,
     type ExecEventMessage,
     type ExecResult,
+    type SandboxLiveness,
     type SandboxRef,
     type SandboxTransport,
 } from "./types.js";
@@ -216,6 +221,14 @@ export interface AwaitExecOptions {
      * stream — is the authoritative outcome.
      */
     warn?: (message: string) => void;
+    /**
+     * Backend inspect for the poll loop's liveness escalation (`liveness.ts`).
+     * Wired by `createSandboxClient` from its backend ops; when absent the
+     * loop skips escalation and stays purely deadline-bounded. Throws on
+     * transient backend API errors — the escalation treats a throw as an
+     * inconclusive probe, never a failed exec.
+     */
+    isAlive?: (ref: SandboxRef) => Promise<SandboxLiveness>;
 }
 
 /**
@@ -394,12 +407,19 @@ async function pollExecOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: st
  * `sandbox.poll-exec-result.${execId}.${n}`, each fetching the signed
  * `{ status, events, cursor, result? }`, verifying it exactly as a pushed
  * completion is verified, forwarding new events via `emit`, advancing the
- * cursor, and returning `result` once terminal. `sleep`, `now`, `fetch`, and
- * `runStep` are injectable so the loop is testable without DBOS.
+ * cursor, and returning `result` once terminal. `sleep`, `now`, `fetch`,
+ * `runStep`, and `isAlive` are injectable so the loop is testable without DBOS.
  *
- * The `cursor` and `pollAttempt` counters are pure functions of the cached step
- * sequence, so a replay issues the same polls in the same order and the DBOS
- * function-ID sequence stays stable.
+ * Liveness: when the `isAlive` seam is wired (the client always wires it),
+ * consecutive `unavailable` polls past the module threshold escalate to a
+ * durable probe step `sandbox.probe-liveness.${execId}.${k}`; a dead verdict
+ * returns the synthetic-failure result in-loop — the poll-mode analogue of the
+ * watchdog's synthetic-complete, minus the topic and the race gate, since the
+ * verdict is produced and consumed by the same workflow in sequence.
+ *
+ * The `cursor`, `pollAttempt`, and `probeAttempt` counters are pure functions
+ * of the cached step sequence, so a replay issues the same polls and probes in
+ * the same order and the DBOS function-ID sequence stays stable.
  */
 export async function awaitExecPoll(ref: SandboxRef, execId: string, emit: ExecEmit, deadlineMs: number, options: AwaitExecOptions = {}): Promise<ExecResult> {
     const callbackSecret = ref.callbackSecret;
@@ -408,9 +428,18 @@ export async function awaitExecPoll(ref: SandboxRef, execId: string, emit: ExecE
     const runStep = options.runStep ?? (<T>(fn: () => Promise<T>, c: { name: string }) => DBOS.runStep(fn, c));
     const sleep = options.sleep ?? ((ms: number) => DBOS.sleepms(ms));
     const warn = options.warn ?? ((message: string) => DBOS.logger.warn(message));
+    const isAlive = options.isAlive;
 
     let cursor = 0;
     let pollAttempt = 0;
+    // Sustained-unavailability escalation (`liveness.ts`): consecutive
+    // `unavailable` polls arm a backend-inspect probe; poll failures alone
+    // never fail the exec (`unavailable` conflates unreachable with unknown
+    // execId / non-200). Policy state and the probe counter are pure functions
+    // of the checkpointed poll outcomes, so replays walk the identical
+    // poll/probe step sequence.
+    const escalation = createEscalationPolicy();
+    let probeAttempt = 0;
 
     while (true) {
         pollAttempt += 1;
@@ -457,6 +486,21 @@ export async function awaitExecPoll(ref: SandboxRef, execId: string, emit: ExecE
             }
             if (resp.cursor > cursor) cursor = resp.cursor;
             if (resp.result !== undefined) return resp.result;
+        }
+
+        if (isAlive && escalation.onPoll(polled.kind === "ok" ? "ok" : "unavailable")) {
+            probeAttempt += 1;
+            const verdict = await runStep(() => probeLiveness(isAlive, ref), {
+                name: `sandbox.probe-liveness.${execId}.${probeAttempt}`,
+            });
+            // Only an observably dead machine fails the exec — the result lives
+            // in that machine and nowhere else, so it is unrecoverable and the
+            // synthetic failure races nothing. `alive` (live-but-slow exec,
+            // evicted execId) and `inconclusive` (backend API error) both
+            // resume polling, bounded by the deadline.
+            if (verdict.kind === "dead") {
+                return syntheticFailureResult(execId, syntheticFailureReason({ oomKilled: verdict.oomKilled }));
+            }
         }
 
         // The deadline gate sits AFTER the poll so the loop always asks once more

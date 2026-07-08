@@ -7,7 +7,8 @@
 import { describe, expect, test } from "bun:test";
 import { awaitExec, awaitExecCallback, awaitExecPoll, ExecTimeoutError, HardCancelError } from "./await-exec.js";
 import { signCallback, verifyCallback } from "./hmac.js";
-import type { ExecEventMessage, ExecResult, SandboxRef } from "./types.js";
+import { PROBE_AFTER_UNAVAILABLE_POLLS } from "./liveness.js";
+import type { ExecEventMessage, ExecResult, SandboxLiveness, SandboxRef } from "./types.js";
 
 const EXEC_ID = "wf-1:step-a:fn-0";
 const SECRET = "base64:" + Buffer.from("01234567890123456789012345678901").toString("base64");
@@ -779,6 +780,145 @@ describe("awaitExecPoll", () => {
                 fetch: noPullFetch,
             }),
         ).rejects.toBeInstanceOf(ExecTimeoutError);
+    });
+});
+
+describe("awaitExecPoll liveness escalation", () => {
+    const T = PROBE_AFTER_UNAVAILABLE_POLLS;
+
+    /** Canned poll bodies interleaved with `"unavailable"` (a 404), latching on the last. */
+    function mixedPollFetch(items: (Record<string, unknown> | "unavailable")[]): typeof fetch {
+        let i = 0;
+        return (async () => {
+            const item = i < items.length ? items[i++] : items[items.length - 1];
+            return item === "unavailable" ? new Response("unknown execId", { status: 404 }) : signedPoll(item);
+        }) as typeof fetch;
+    }
+
+    /** Sleep that advances the mock clock so a deadline-bounded loop terminates. */
+    function tickingClock(stepMs = 1000) {
+        const clock = { nowMs: NOW_MS };
+        return {
+            clock,
+            now: () => clock.nowMs,
+            sleep: async () => {
+                clock.nowMs += stepMs;
+            },
+        };
+    }
+
+    test("a dead machine fast-fails with a synthetic failure instead of waiting out the deadline", async () => {
+        const { now, sleep, clock } = tickingClock();
+        let probes = 0;
+        const result = await awaitExecPoll(REF, EXEC_ID, () => {}, DEADLINE, {
+            now,
+            sleep,
+            runStep: passthroughStep,
+            fetch: noPullFetch,
+            isAlive: async () => {
+                probes++;
+                return { alive: false, oomKilled: false };
+            },
+        });
+        expect(result.syntheticFailure?.reason).toBe("sandbox-dead");
+        expect(result.execId).toBe(EXEC_ID);
+        expect(probes).toBe(1);
+        // Fast-fail: the loop returned after the threshold polls, nowhere near the deadline.
+        expect(clock.nowMs).toBeLessThan(DEADLINE - 30_000);
+    });
+
+    test("an OOM-killed machine carries the OOM reason", async () => {
+        const { now, sleep } = tickingClock();
+        const result = await awaitExecPoll(REF, EXEC_ID, () => {}, DEADLINE, {
+            now,
+            sleep,
+            runStep: passthroughStep,
+            fetch: noPullFetch,
+            isAlive: async () => ({ alive: false, oomKilled: true }),
+        });
+        expect(result.syntheticFailure?.reason).toBe("sandbox-oom-killed");
+    });
+
+    test("a live-but-slow machine never escalates to failure — the deadline still bounds", async () => {
+        const { now, sleep } = tickingClock();
+        let probes = 0;
+        await expect(
+            awaitExecPoll(REF, EXEC_ID, () => {}, NOW_MS + 6000, {
+                now,
+                sleep,
+                runStep: passthroughStep,
+                fetch: noPullFetch,
+                isAlive: async () => {
+                    probes++;
+                    return { alive: true, oomKilled: false };
+                },
+            }),
+        ).rejects.toBeInstanceOf(ExecTimeoutError);
+        expect(probes).toBe(1);
+    });
+
+    test("an ok poll resets the streak — no probe ever runs", async () => {
+        let probes = 0;
+        const result = await awaitExecPoll(REF, EXEC_ID, () => {}, DEADLINE, {
+            ...POLL_BASE,
+            fetch: mixedPollFetch([
+                ...Array.from({ length: T - 1 }, () => "unavailable" as const),
+                { status: "running", events: [], cursor: 0 },
+                ...Array.from({ length: T - 1 }, () => "unavailable" as const),
+                { status: "completed", events: [], cursor: 0, result: okResult },
+            ]),
+            isAlive: async () => {
+                probes++;
+                return { alive: true, oomKilled: false };
+            },
+        });
+        expect(result.exitCode).toBe(0);
+        expect(probes).toBe(0);
+    });
+
+    test("a thrown probe is inconclusive — the loop resumes and the deadline bounds", async () => {
+        const { now, sleep } = tickingClock();
+        let probes = 0;
+        await expect(
+            awaitExecPoll(REF, EXEC_ID, () => {}, NOW_MS + 6000, {
+                now,
+                sleep,
+                runStep: passthroughStep,
+                fetch: noPullFetch,
+                isAlive: async () => {
+                    probes++;
+                    throw new Error("docker daemon unreachable");
+                },
+            }),
+        ).rejects.toBeInstanceOf(ExecTimeoutError);
+        expect(probes).toBe(1);
+    });
+
+    test("probe steps get distinct, replay-stable names in the attempt sequence", async () => {
+        const names: string[] = [];
+        const { now, sleep } = tickingClock();
+        const verdicts: SandboxLiveness[] = [
+            { alive: true, oomKilled: false },
+            { alive: false, oomKilled: false },
+        ];
+        let probe = 0;
+        const result = await awaitExecPoll(REF, EXEC_ID, () => {}, DEADLINE, {
+            now,
+            sleep,
+            runStep: async (fn, config) => {
+                names.push(config.name);
+                return fn();
+            },
+            fetch: noPullFetch,
+            isAlive: async () => verdicts[probe++]!,
+        });
+        expect(result.syntheticFailure?.reason).toBe("sandbox-dead");
+        expect(names).toEqual([
+            ...Array.from({ length: T }, (_, i) => `sandbox.poll-exec-result.${EXEC_ID}.${i + 1}`),
+            `sandbox.probe-liveness.${EXEC_ID}.1`,
+            ...Array.from({ length: T }, (_, i) => `sandbox.poll-exec-result.${EXEC_ID}.${T + i + 1}`),
+            `sandbox.probe-liveness.${EXEC_ID}.2`,
+        ]);
     });
 });
 

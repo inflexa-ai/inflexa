@@ -140,7 +140,7 @@ The submit + result protocol ([harness-sandbox-exec](openspec/specs/harness-sand
 **Two distinct lifetimes** (do not conflate):
 
 - **Exec command** — one `submit → recv result`. Many per sandbox; most are near-instant. `execId = "${workflowId}:${stepId}:${functionId}"`. Bounded by `step.timeout`. **No per-exec heartbeats.**
-- **Sandbox machine** — one per step, long-lived; the sandbox-agent loop issues many commands into the same container. Liveness is checked at a per-sandbox-machine cadence by a `@DBOS.scheduled` workflow (`SandboxClient.isAlive(sandboxRef)`); dead + no completion recorded → synthetic failure-`complete` unblocks the recv.
+- **Sandbox machine** — one per step, long-lived; the sandbox-agent loop issues many commands into the same container. Liveness is checked at a per-sandbox-machine cadence by a `@DBOS.scheduled` workflow (`SandboxClient.isAlive(sandboxRef)`); dead + no completion recorded → synthetic failure-`complete` unblocks the recv (callback mode). In poll mode the await loop fail-fasts itself: sustained `unavailable` polls escalate to a durable `isAlive` probe (`sandbox/liveness.ts`) and a dead machine returns the synthetic failure in-loop.
 
 **Single base image**: One `sandbox-base` image for all sandbox agents. R, Python, Node.js runtimes + system libraries; no R/Python packages baked in. Packages live in the shared library store mounted read-only at `/mnt/libs`.
 

@@ -97,6 +97,21 @@ export interface CreateSandboxClientConfig {
     awaitOptions?: AwaitExecOptions;
 }
 
+/**
+ * Assemble `awaitExec`'s options: the liveness probe self-wires from the
+ * backend ops (the poll loop's escalation always has its arbiter under the
+ * client), explicit seam injections in `base` win over the self-wired probe,
+ * and the transport is client-owned — never overridable through the seam bag.
+ * Exported for tests.
+ */
+export function composeAwaitOptions(
+    base: AwaitExecOptions | undefined,
+    transport: SandboxTransport,
+    isAlive: NonNullable<AwaitExecOptions["isAlive"]>,
+): AwaitExecOptions {
+    return { isAlive, ...base, transport };
+}
+
 export function createSandboxClient(config: CreateSandboxClientConfig): SandboxClient {
     const backend = config.backend ?? config.env.backend;
     const transport = config.transport ?? "poll";
@@ -168,6 +183,10 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
         );
     };
 
+    // One arbiter for both surfaces: the client's `isAlive` method and the
+    // poll loop's escalation probe are the same backend inspect.
+    const isAlive = async (ref: SandboxRef) => unwrapOrThrow(await ops.isAlive(ref));
+
     return {
         createSandbox: async (meta, identity) => {
             await precreateStepTree(meta);
@@ -182,8 +201,8 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
             return unwrapOrThrow(await ops.createSandbox({ ...meta, resources }, identity));
         },
         submitExec: async (ref, body) => submitExec(ref, body, config.submitDeps),
-        awaitExec: (ref, execId, emit, deadline) => awaitExec(ref, execId, emit, deadline, { ...config.awaitOptions, transport }),
-        isAlive: async (ref) => unwrapOrThrow(await ops.isAlive(ref)),
+        awaitExec: (ref, execId, emit, deadline) => awaitExec(ref, execId, emit, deadline, composeAwaitOptions(config.awaitOptions, transport, isAlive)),
+        isAlive,
         teardown,
         teardownById: async (sandboxId) => unwrapOrThrow(await ops.teardownById(sandboxId)),
         listManagedSandboxes: async () => unwrapOrThrow(await ops.listManagedSandboxes()),
