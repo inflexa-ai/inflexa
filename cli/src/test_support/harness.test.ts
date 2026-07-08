@@ -7,6 +7,7 @@ import { dirname } from "node:path";
 import { env } from "../lib/env.ts";
 import { runCli } from "./cli.ts";
 import { freshDb, resetDb } from "./db.ts";
+import { assertTestSandbox } from "./sandbox.ts";
 import { withRoot } from "./solid.ts";
 
 // Pin the three harness seams (env sandbox, temp DB, Solid root) so a refactor that breaks isolation
@@ -47,6 +48,15 @@ describe("freshDb / resetDb", () => {
     });
 
     test("refuses to delete when the sandbox marker is absent", () => {
+        // This test writes a sentinel to and then rmSyncs env.dbPath DIRECTLY (raw fs, not resetDb),
+        // while it has deliberately removed the marker below — so those raw ops bypass every guard.
+        // At the monorepo root (no sandbox) env.dbPath is the developer's REAL agent.db, so without
+        // this line the test itself overwrites+deletes it (that IS incident 2's "emptied DB"). Assert
+        // the sandbox is active FIRST, while the marker is still present, so a root run throws here —
+        // before any mkdir/write/rm touches the real DB. Inside the sandbox this passes and the test
+        // proceeds to delete the marker and prove resetDb refuses.
+        assertTestSandbox(env.dbPath);
+
         // Simulate `bun test` run from the repo root: the preload never stamps INFLEXA_TEST_SANDBOX,
         // so resetDb must THROW before any rmSync rather than delete whatever env.dbPath points at
         // (the developer's real DB, in that scenario). Save/restore the marker so the sibling tests

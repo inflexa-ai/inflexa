@@ -1,19 +1,31 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { readConfig, writeConfig, type Config } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
+import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { ensureEmbedderReady, runEmbeddingSetup } from "./setup.ts";
 
 // The test preload sandboxes XDG_DATA_HOME/XDG_CONFIG_HOME, so env.configPath
 // and env.embeddingModelPath point into a temp dir — safe to create/delete here.
+
+// At the monorepo root the preload never runs: env.configPath and env.embeddingModelPath then resolve
+// to the developer's REAL config.json and models dir, and this file writes/deletes BOTH. Guard both,
+// first, in the hooks — a root run throws before writeConfigWith / the fake-gguf writeFileSync can
+// clobber real data (data-loss guard — see test_support/sandbox.ts).
+beforeEach(() => {
+    assertTestSandbox(env.configPath);
+    assertTestSandbox(env.embeddingModelPath);
+});
 
 function writeConfigWith(embedding: Config["embedding"]): void {
     writeConfig({ telemetry: false, theme: "tokyo-night", runtime: "docker", leaderTimeout: 2000, embedding })._unsafeUnwrap();
 }
 
 afterEach(() => {
+    assertTestSandbox(env.configPath);
+    assertTestSandbox(env.embeddingModelPath);
     rmSync(env.configPath, { force: true });
     rmSync(env.embeddingModelPath, { force: true });
 });

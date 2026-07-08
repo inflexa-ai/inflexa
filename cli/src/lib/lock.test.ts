@@ -1,14 +1,24 @@
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
 import { randomUUIDv7 } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { acquireInstanceLock, instanceLockPath, releaseInstanceLock, releaseHeldInstanceLocks } from "./lock.ts";
+import { env } from "./env.ts";
+import { assertTestSandbox } from "../test_support/sandbox.ts";
 
 // preload.ts (bunfig [test].preload) already redirects XDG_DATA_HOME to a per-suite temp sandbox
 // before any import, so env.locksDir resolves into it. We deliberately do NOT touch process.env
 // here: the suite runs in one process and the e2e harness's runCli spawns children with the live
 // env, so clobbering XDG_DATA_HOME would leak and break those tests.
+
+// Every test writes/deletes lock files under env.locksDir (directly, and via acquire/release). At the
+// monorepo root that is the developer's REAL ~/.local/share/inflexa/locks; refuse to run there rather
+// than seed/delete real lock files (data-loss guard — see test_support/sandbox.ts). beforeEach runs
+// first, so a root run throws before any lock op fires.
+beforeEach(() => {
+    assertTestSandbox(env.locksDir);
+});
 
 // Write a lock file for `key` owned by `pid`, faking another instance's hold.
 function seedForeignLock(key: string, pid: number): void {
