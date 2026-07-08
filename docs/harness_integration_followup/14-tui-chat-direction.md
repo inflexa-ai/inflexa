@@ -66,8 +66,9 @@ ready → streamed turn rendered through the emit adapter → profile parity tri
 consumed by both the TUI and the REPL), the boot-state store + normal-stdio preamble
 gates + boot animation, the emit adapter over the harness `contracts/` vocabulary with
 `plan-card`/`run-card` blocks (design gallery entered), `threadId := sessionId` binding
-(D1), the analysis-swap lock exchange, and the parity profile auto-trigger. 514 tests
-pass. The proxy engine lost its last TUI caller (its deletion is change 3).
+(D1), the analysis-swap lock exchange, and the parity profile auto-trigger. 535 cli
+tests pass (0 fail) after the adversarial-verify and PR-review fix passes. The proxy
+engine lost its last TUI caller (its deletion is change 3).
 
 - **Turn engine extraction.** Lift the headless turn core out of
   `modules/harness/chat.ts` (`runTurn`'s prepare → runAgent → append, the session

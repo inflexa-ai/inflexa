@@ -35,7 +35,8 @@ later:    ┌─ record-plan-lineage (the RQ6 provenance rider, deferred out of 
 parity. Shared turn engine (TUI + REPL), boot-state store + gate + animation, emit
 adapter over the harness contracts with plan/run-card blocks, `threadId := sessionId`,
 analysis-swap lock exchange, parity profile auto-trigger. Live-verified (PTY pass, exit
-0); 514 tests pass. Next: `tui-sidebar-live` (data-profile section + real runs).
+0); 535 cli tests pass after the verify + PR-review fix passes. Next: `tui-sidebar-live`
+(data-profile section + real runs).
 
 **Course correction (2026-07-08, user decision — BINDING):** the daemon-first staging
 (13 §4: skeleton → #33 M1/M2 → TUI as M3/M4) postponed the actual product goal and is

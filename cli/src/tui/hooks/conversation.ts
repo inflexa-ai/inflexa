@@ -43,6 +43,12 @@ export type UIMessage = {
 // The most-recent turns the UI mounts. Layout cost scales with mounted message count (the scrollbox
 // clips painting, not layout), so we cap what's mounted rather than virtualize — 200 turns ≈ 100
 // exchanges, comfortably more than a screenful. Older turns stay in the pg thread; just not mounted.
+//
+// One constant, two units by design: it caps the LIVE store by MESSAGES (`pushUserMessage`/
+// `startAssistantTurn` shift once the store exceeds it) and doubles as `loadPage`'s `perPage`, which
+// counts TURNS. That coupling is load-bearing: `loadPage` clamps `perPage` to 200, so MESSAGE_CAP
+// must never exceed 200 — a larger value would silently drop the turns past the clamp on each page,
+// and `loadMessages` would mount a window missing the thread's tail rather than error.
 const MESSAGE_CAP = 200;
 
 const [messages, setMessages] = createStore<UIMessage[]>([]);
@@ -96,6 +102,10 @@ function commitStream(): void {
                 for (const msg of msgs) {
                     const idx = msg.parts.findIndex((p) => p.id === pid);
                     if (idx !== -1) {
+                        // `streamPartId` only ever names a text part: `startAssistantTurn` mints it and
+                        // `beginStreamSegment` (the FIX-2 mid-turn remint) re-points it, and both push a
+                        // fresh text part — no other writer touches it. So the found part is a TextPart;
+                        // the spread keeps its id/session/message ceremony and swaps in the sealed text.
                         msg.parts[idx] = { ...(msg.parts[idx] as TextPart), text };
                         break;
                     }
@@ -105,6 +115,17 @@ function commitStream(): void {
     }
     setStreamPartId(null);
     setStreamText("");
+}
+
+/**
+ * Seal any prose still accumulating in `streamText` into its part BEFORE a non-text part (a tool
+ * chip, a card, a tagged mention) joins the turn, so the transcript renders in emission order rather
+ * than merging post-part prose above the part it followed (FIX 2 mid-turn interleaving). Only flushes
+ * when text is actually pending; an empty buffer leaves the current (possibly the turn's pre-minted)
+ * streaming part untouched, so no premature empty part is committed (the S1 empty-part discipline).
+ */
+function flushPendingText(): void {
+    if (streamText().length > 0) commitStream();
 }
 
 /** Append one part to the in-flight assistant message, if a turn is active. */
@@ -117,6 +138,22 @@ function appendPart(part: Part): void {
             if (msg) msg.parts.push(part);
         }),
     );
+}
+
+/**
+ * Begin a fresh streaming text segment on the in-flight assistant message and point `streamPartId` at
+ * it. Called when a `text-delta` resumes after {@link flushPendingText} sealed and cleared the prior
+ * segment (FIX 2): the resumed prose becomes its OWN part, appended AFTER the tool/card that
+ * interrupted it, so live rendering matches {@link cortexToUiMessage}'s in-order reload. Minted lazily
+ * (only on a real delta, never eagerly on flush) so a turn that ends on a card leaves no trailing
+ * empty text part.
+ */
+function beginStreamSegment(): void {
+    const id = currentAssistantId;
+    if (!id) return;
+    const partId = randomUUIDv7();
+    setStreamPartId(partId);
+    appendPart({ id: partId, sessionId: currentSessionId ?? "", messageId: id, type: "text", text: "", createdAt: Date.now() });
 }
 
 /**
@@ -133,6 +170,9 @@ function updateToolPart(toolUseId: string, name: string, status: "ok" | "error",
             if (!msg) return;
             const idx = msg.parts.findIndex((p) => p.id === toolUseId && p.type === "tool-call");
             if (idx !== -1) {
+                // The findIndex predicate already matched `type === "tool-call"`, so the part at idx is
+                // a ToolCallPart; the cast only restates that for the spread (findIndex widens it back
+                // to Part). Fresh object so Solid reconciles the status/duration edit.
                 msg.parts[idx] = { ...(msg.parts[idx] as ToolCallPart), status, durationMs };
             } else {
                 msg.parts.push({
@@ -159,7 +199,9 @@ type EmitEventArg = Parameters<EmitFn>[0];
  * shapes) and writes the store rather than a terminal.
  *
  *   - sub-agent traffic (deeper `callPath`) is dropped — the shared depth filter;
- *   - `text-delta` accumulates in `streamText` and flushes on turn completion, never per delta;
+ *   - `text-delta` accumulates in `streamText`; it flushes into its part at turn completion AND
+ *     whenever a non-text part interrupts, so prose emitted after a tool/card renders as its own
+ *     segment BELOW that part (in-order interleaving) rather than merged into the segment above it;
  *   - `tool-started`/`tool-finished` become one live tool part paired by tool-use id, with a
  *     duration and error outcome on finish;
  *   - `data-plan`/`data-run-card` become card parts via the shared readers;
@@ -175,13 +217,22 @@ export function applyEmitEvent(event: EmitEventArg): void {
 
     switch (event.type) {
         case "text-delta":
+            // A delta with no active streaming part means a preceding non-text part (tool/card) flushed
+            // and cleared the prior segment — begin a fresh text part so the resumed prose renders AFTER
+            // that part, matching the reload path's in-order interleaving (FIX 2). Lazy: minting only on
+            // a real delta leaves no trailing empty part when a turn ends on a card (S1 discipline).
+            if (streamPartId() === null) beginStreamSegment();
             setStreamText((prev) => prev + event.text);
             return;
         case "done":
         case "iteration":
             // Stream terminal marker / loop iteration boundary — orchestration, not transcript content.
+            // Deliberately NO flush here: the turn's final segment is sealed by finishTurn, not by these.
             return;
         case "tool-started": {
+            // FIX 2: seal prose streamed before this chip into its own part so parts render in emission
+            // order (text above the tool it preceded), never merged into the first segment above it.
+            flushPendingText();
             // Extract primitives at receipt; never retain the event.
             const toolUseId = event.toolUseId;
             const name = event.name;
@@ -198,6 +249,9 @@ export function applyEmitEvent(event: EmitEventArg): void {
             return;
         }
         case "tool-finished": {
+            // Seal pending prose before the chip resolves — matters on the unpaired-finish path, where
+            // updateToolPart appends a fresh finished part that must land after the prose (FIX 2).
+            flushPendingText();
             const toolUseId = event.toolUseId;
             const name = event.name;
             const isError = event.isError;
@@ -208,6 +262,8 @@ export function applyEmitEvent(event: EmitEventArg): void {
             return;
         }
         default:
+            // FIX 2: seal preceding prose so the card/mention this becomes renders after it, in order.
+            flushPendingText();
             // Only `ChatDataPart` remains (its `type` is `data-${string}`).
             renderDataPart(event.type, event.data);
             return;
@@ -401,6 +457,10 @@ export type CortexMsg = Awaited<ReturnType<typeof contentToCortexMessages>>[numb
  * the part is passed straight through.
  */
 function cortexToUiMessage(m: CortexMsg, sessionId: string): UIMessage {
+    // TODO(extend): content-fidelity gap, deliberately deferred. Any non-user role collapses onto
+    // "assistant" here because UIMessage.role is a two-value union — a `system` turn loses its framing
+    // and reads as the assistant. Widen UIMessage.role (and MessageBlock) to carry system turns
+    // honestly when the transcript needs to distinguish them.
     const role: "user" | "assistant" = m.role === "user" ? "user" : "assistant";
     const parts: Part[] = [];
     for (const part of m.parts) {
@@ -435,6 +495,10 @@ function cortexToUiMessage(m: CortexMsg, sessionId: string): UIMessage {
                 break;
             }
             default:
+                // TODO(extend): observe-don't-swallow, but low fidelity. A reconstructed part the UI
+                // has no first-class renderer for (e.g. `data-presentation`, `data-preview`) collapses
+                // to a one-line `[part:<type>]` mention instead of its real content. Add real renderers
+                // for these kinds so a reload shows their substance rather than just their tag.
                 parts.push({ id: randomUUIDv7(), sessionId, messageId: m.id, type: "text", text: `[part:${part.type}]`, createdAt: 0 });
                 break;
         }
@@ -474,11 +538,15 @@ let loadGeneration = 0;
 
 /**
  * Load a session's transcript from the pg thread history (design D9), replacing whatever was mounted.
- * The thread id equals the session id (design D1). `loadPage` paginates by whole turns; page 0
- * reveals the turn `total`, and when the thread spans more than one page we fetch the LAST page so
- * the store holds the newest window, then clamp to the {@link MESSAGE_CAP} oldest-first. A missing pg
- * thread (legacy session, or the runtime not yet booted) renders empty — correct and expected: the
- * legacy SQLite transcript is frozen and not shown here.
+ * The thread id equals the session id (design D1). `loadPage` paginates by whole TURNS; page 0 reveals
+ * the turn `total`. When the thread spans more than one page we take the last TWO pages (reusing page
+ * 0 when it is one of them, never re-reading it) and concatenate their rows so a thread that has just
+ * crossed a page boundary still mounts a full window — fetching only the last page would strand the
+ * store on the boundary's remainder (a 201-turn thread would show the single 201st turn). The
+ * concatenated rows map to UIMessages, then a trailing {@link MESSAGE_CAP} slice keeps the newest
+ * MESSAGES. Note the unit shift: pages window TURNS, the trailing slice caps MESSAGES (the live-append
+ * cap's unit). A missing pg thread (legacy session, or the runtime not yet booted) renders empty —
+ * correct and expected: the legacy SQLite transcript is frozen and not shown here.
  *
  * Concurrency: each call claims a {@link loadGeneration} token at entry and re-checks it after every
  * await; a load superseded by a newer swap silently drops rather than writing a stale transcript.
@@ -495,22 +563,39 @@ export async function loadMessages(sessionId: string, analysisId: string, seams:
         setChatStatus("error");
         return;
     }
-    let page = firstRes.value;
-    const lastPage = Math.max(0, Math.ceil(page.total / MESSAGE_CAP) - 1);
-    if (lastPage > 0) {
-        const lastRes = await seams.loadPage(runtime.pool, sessionId, lastPage, MESSAGE_CAP);
+    const firstPage = firstRes.value;
+
+    // The window is the last one or two TURN pages. `total` counts turns; `MESSAGE_CAP` is the per-page
+    // turn budget (clamped to 200 inside `loadPage`). One page holds the whole thread; past that, pages
+    // [lastPage-1, lastPage] give a full newest window across the boundary. Page 0 is already in hand,
+    // so it is reused (never re-read) when it is one of the two — the only overlap possible, since 0 is
+    // in the window iff lastPage === 1.
+    const lastPage = Math.max(0, Math.ceil(firstPage.total / MESSAGE_CAP) - 1);
+    const windowPages = lastPage === 0 ? [0] : [lastPage - 1, lastPage];
+
+    const rowPages: (typeof firstPage.messages)[] = [];
+    for (const p of windowPages) {
+        if (p === 0) {
+            rowPages.push(firstPage.messages);
+            continue;
+        }
+        const res = await seams.loadPage(runtime.pool, sessionId, p, MESSAGE_CAP);
         if (myLoad !== loadGeneration) return;
-        if (lastRes.isErr()) {
-            setErrorMsg(`Failed to load the conversation: ${lastRes.error.type}`);
+        if (res.isErr()) {
+            setErrorMsg(`Failed to load the conversation: ${res.error.type}`);
             setChatStatus("error");
             return;
         }
-        page = lastRes.value;
+        rowPages.push(res.value.messages);
     }
+    const rows = rowPages.flat();
 
-    const mapped = await ResultAsync.fromPromise(seams.toCortex(runtime.pool, analysisId, page.messages), (e): unknown => e);
+    const mapped = await ResultAsync.fromPromise(seams.toCortex(runtime.pool, analysisId, rows), (e): unknown => e);
     if (myLoad !== loadGeneration) return;
     mapped.match(
+        // Trailing cap is in MESSAGES (see the unit note in {@link loadMessages}'s doc and on
+        // MESSAGE_CAP): two full turn pages can carry more than MESSAGE_CAP messages, so keep only the
+        // newest MESSAGE_CAP so the mounted window matches the live-append cap.
         (cortex) => setMessages(cortex.map((m) => cortexToUiMessage(m, sessionId)).slice(-MESSAGE_CAP)),
         (cause) => {
             setErrorMsg(`Failed to load the conversation: ${errText(cause)}`);

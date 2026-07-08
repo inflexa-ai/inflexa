@@ -14,10 +14,10 @@ import { messages, streamText, streamPartId, errorMsg, loadMessages, resetHotSta
 
 /**
  * The live conversation: the sticky message stream plus the error banner. State (the message store,
- * the streaming buffer, the error) lives in `hooks/conversation.ts`; the harness emit adapter writes
- * it directly (no bus subscription — the TUI no longer drives the proxy engine), and this component
- * owns only the reactive transcript load tied to the open session and the runtime boot. The
- * `Sidebar` reads the same store's `messageCount`, so the store is shared rather than private here.
+ * the streaming buffer, the error) lives in `hooks/conversation.ts`; the transcript arrives through
+ * that store's harness emit adapter, not the bus (the bus carries only prov events, for the sidebar),
+ * and this component owns only the reactive transcript load tied to the open session and the runtime
+ * boot. The `Sidebar` reads the same store's `messageCount`, so the store is shared rather than private here.
  */
 export type ChatProps = {
     /**

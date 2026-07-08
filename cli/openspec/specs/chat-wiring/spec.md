@@ -20,21 +20,29 @@ The system SHALL provide `createSession(opts: { title?: string; analysisId: stri
 
 ### Requirement: Analysis-aware chat launcher
 
-The system SHALL provide `launchChat({ analysis, resumeSessionId? })` in `src/tui/app.launch.tsx` (the presentation/app-shell layer, which may import module logic) that ensures the proxy is ready, resolves the session, seeds the theme, and renders the TUI with `workingDir` set to the analysis's resolved anchor path. Session resolution order SHALL be: the given `resumeSessionId`; else the analysis's most-recent session; else a newly created session linked to the analysis. Before rendering, it SHALL run passive `recoverAnchors([workingDir])` to heal a moved anchor — recovery only, never creation (no-litter policy). The launcher SHALL pass the active `analysis` to `App` so in-app commands can read the current analysis through `CommandContext`.
+The system SHALL provide analysis-aware launchers in `src/tui/app.launch.tsx` (the
+presentation/app-shell layer, which may import module logic) — `launchNew`, `launchResume`, and
+`launchDefault` — each resolving its `ChatTarget` through the headless resolvers in
+`src/modules/analysis/launch.ts` and rendering the TUI through the one shared `renderChat` path,
+with `workingDir` set to the analysis's resolved anchor path. Session resolution order SHALL be: an
+explicit resume target; else the analysis's most-recent session; else a newly created session
+linked to the analysis. Resolution SHALL heal a moved anchor passively (recovery only, never
+creation — no-litter policy). The launcher SHALL pass the active `analysis` to `App` so in-app
+commands can read the current analysis through the workspace context.
 
 #### Scenario: Resume an explicit session
 
-- **WHEN** `launchChat({ analysis, resumeSessionId })` is given a session id
+- **WHEN** a launcher resolves a target carrying an explicit resume session id
 - **THEN** that session is loaded and rendered
 
 #### Scenario: Resume the most-recent session
 
-- **WHEN** `launchChat({ analysis })` is called and the analysis has prior sessions
+- **WHEN** a launcher opens an analysis with prior sessions and no explicit resume target
 - **THEN** the most-recently-updated session is reused
 
 #### Scenario: Create a session when none exist
 
-- **WHEN** `launchChat({ analysis })` is called and the analysis has no sessions
+- **WHEN** a launcher opens an analysis that has no sessions
 - **THEN** a new session is created linked to the analysis, titled from the analysis name
 
 #### Scenario: Working directory is the anchor path
@@ -44,7 +52,7 @@ The system SHALL provide `launchChat({ analysis, resumeSessionId? })` in `src/tu
 
 #### Scenario: Passive launch never litters
 
-- **WHEN** `launchChat` runs in a folder whose anchor moved
+- **WHEN** a launcher runs in a folder whose anchor moved
 - **THEN** the anchor is recovered (re-pointed) but no marker or anchors row is created by the launch
 
 #### Scenario: App receives the active analysis
