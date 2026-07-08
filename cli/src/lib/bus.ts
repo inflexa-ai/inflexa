@@ -50,9 +50,10 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
             };
         case "part.updated":
             return {
-                // The live proxy bus only ever emits persisted text parts (which carry these), but the
-                // Part union now includes UI-only card kinds without `sessionId`/`messageId`/`text`, so
-                // narrow before reading each. `id`/`type` are on every Part.
+                // The live proxy bus only ever emits persisted text parts (which carry these); UI-only
+                // card kinds in the Part union carry no session/message linkage (no
+                // `sessionId`/`messageId`/`text`), hence the narrowing here before reading each.
+                // `id`/`type` are on every Part.
                 sessionId: "sessionId" in event.part ? event.part.sessionId : undefined,
                 messageId: "messageId" in event.part ? event.part.messageId : undefined,
                 partId: event.part.id,

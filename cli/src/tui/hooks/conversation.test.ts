@@ -140,6 +140,20 @@ describe("send() drives the adapter + engine", () => {
         expect(tool?.status).toBe("error");
     });
 
+    test("an unpaired tool-finished appends a finished part (no prior tool-started)", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            // No tool-started for this id — the finish must still render as a finished chip via the
+            // fallback append path in updateToolPart, not vanish.
+            void emit({ type: "tool-finished", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "orphan", name: "grep", isError: false });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        const tool = findPart((p): p is ToolCallPart => p.type === "tool-call");
+        expect(tool?.name).toBe("grep");
+        expect(tool?.status).toBe("ok");
+        // No matching tool-started → no start timestamp, so the duration is honestly unknown.
+        expect(tool?.durationMs).toBeUndefined();
+    });
+
     test("data-plan becomes a plan-card via readPlanCard", async () => {
         const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
             void emit({
@@ -261,6 +275,65 @@ describe("applyEmitEvent outside a turn", () => {
     });
 });
 
+describe("send() interleaves mid-turn prose and non-text parts in emission order (FIX 2)", () => {
+    // The assistant turn's parts, in mounted order, with each part's kind + text for text parts.
+    function assistantParts(): { type: string; text?: string }[] {
+        const parts = messages[1]?.parts ?? [];
+        return parts.map((p) => (p.type === "text" ? { type: p.type, text: p.text } : { type: p.type }));
+    }
+
+    test("text -> tool -> text renders three parts in order [text][tool][text]", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({ type: "text-delta", text: "Reading the schema. " });
+            void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "read_file", input: {} });
+            void emit({ type: "tool-finished", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "read_file", isError: false });
+            void emit({ type: "text-delta", text: "It carries a slug column." });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        expect(assistantParts()).toEqual([
+            { type: "text", text: "Reading the schema. " },
+            { type: "tool-call" },
+            { type: "text", text: "It carries a slug column." },
+        ]);
+    });
+
+    test("text -> plan-card with no trailing prose renders [text][plan-card] and no empty part", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({ type: "text-delta", text: "Here is the plan." });
+            void emit({
+                type: "data-plan",
+                source: { agentId: "tui-chat", callPath: ["tui-chat"] },
+                data: { planId: "plan-1", title: "DE analysis", steps: [{ id: "s1", name: "QC", agent: "prep" }] },
+            });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        // Exactly two parts, in order — the card sits AFTER the prose, and nothing minted a trailing
+        // empty text part for the (absent) post-card prose.
+        expect(assistantParts()).toEqual([{ type: "text", text: "Here is the plan." }, { type: "plan-card" }]);
+    });
+
+    test("deltas after a card flow into a NEW text part, not the pre-card one", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({ type: "text-delta", text: "before" });
+            void emit({
+                type: "data-plan",
+                source: { agentId: "tui-chat", callPath: ["tui-chat"] },
+                data: { planId: "plan-1", title: "t", steps: [] },
+            });
+            void emit({ type: "text-delta", text: "after" });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        const textParts = (messages[1]?.parts ?? []).filter((p): p is Part & { type: "text" } => p.type === "text");
+        // Two DISTINCT text parts — the pre-card prose and the post-card prose never merged.
+        expect(textParts.map((p) => p.text)).toEqual(["before", "after"]);
+        expect(textParts[0]?.id).not.toBe(textParts[1]?.id);
+        expect(assistantParts()).toEqual([{ type: "text", text: "before" }, { type: "plan-card" }, { type: "text", text: "after" }]);
+    });
+});
+
 describe("send() turn-generation guard (C1)", () => {
     test("a superseded turn's outcome and late events never touch the new turn's state", async () => {
         // Send A: a slow engine that streams a delta, blocks until released (modelling the old turn
@@ -345,6 +418,91 @@ describe("send() turn cleanup (W1/W2/S1)", () => {
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "thread_gone" }));
         expect(messages.length).toBe(1);
         expect(messages[0]?.role).toBe("user");
+    });
+});
+
+describe("loadMessages windows the newest turns past one page (FIX 1)", () => {
+    // A faithful page-slicing fake: the fixture is N single-message turns (turn t -> message "m<t>"),
+    // and loadPage slices whole turns by page/perPage exactly as the harness does — so the test drives
+    // the real concatenate-last-two-pages + trailing message cap, not a blind stub that ignores `page`.
+    // The page indices fetched are recorded so a test can assert page 0 is never re-read redundantly.
+    type Row = { seq: number; role: "user" | "assistant"; text: string };
+
+    function turns(n: number): Row[][] {
+        const out: Row[][] = [];
+        for (let t = 0; t < n; t++) out.push([{ seq: t, role: t % 2 === 0 ? "user" : "assistant", text: `m${t}` }]);
+        return out;
+    }
+
+    function pagingSeams(fixture: Row[][]): LoadSeams & { fetched: () => number[] } {
+        const fetched: number[] = [];
+        return {
+            runtime: () => stubRuntime,
+            loadPage: (_pool, _threadId, page, perPage) => {
+                fetched.push(page);
+                const safePerPage = Math.min(Math.max(perPage, 1), 200);
+                const safePage = Math.max(page, 0);
+                const offset = safePage * safePerPage;
+                const pageTurns = fixture.slice(offset, offset + safePerPage);
+                const result: MessagePage = {
+                    messages: pageTurns.flat() as unknown as MessagePage["messages"],
+                    total: fixture.length,
+                    page: safePage,
+                    perPage: safePerPage,
+                    hasMore: offset + pageTurns.length < fixture.length,
+                };
+                return okAsync(result);
+            },
+            // Faithful reconstruction: each stored row (a fixture Row, cast through the StoredMessage
+            // seam type) becomes one CortexMsg carrying its text, so the trailing message cap is exercised.
+            toCortex: async (_pool, _analysisId, rows) =>
+                (rows as unknown as Row[]).map((r) => ({ id: `id-${r.seq}`, role: r.role, parts: [{ type: "text", text: r.text }] })) as unknown as CortexMsg[],
+            fetched: () => fetched,
+        };
+    }
+
+    function textAt(i: number): string | undefined {
+        const p = messages[i]?.parts[0];
+        return p?.type === "text" ? p.text : undefined;
+    }
+
+    test("exactly 200 turns mount as one page (no second fetch)", async () => {
+        const seams = pagingSeams(turns(200));
+        await loadMessages(SID, AID, seams);
+        expect(messages.length).toBe(200);
+        expect(textAt(0)).toBe("m0");
+        expect(textAt(199)).toBe("m199");
+        // One page holds the whole thread — the last-two-pages branch never runs.
+        expect(seams.fetched()).toEqual([0]);
+    });
+
+    test("201 turns mount the newest 200 messages, NOT the boundary remainder", async () => {
+        const seams = pagingSeams(turns(201));
+        await loadMessages(SID, AID, seams);
+        // The old code fetched only the last page (1 turn) and rendered a single message; the window
+        // must instead hold the newest 200 messages (turns 1..200), dropping only the oldest turn.
+        expect(messages.length).toBe(200);
+        expect(textAt(0)).toBe("m1");
+        expect(textAt(199)).toBe("m200");
+    });
+
+    test("250 turns mount the newest 200 messages across the last two pages", async () => {
+        const seams = pagingSeams(turns(250));
+        await loadMessages(SID, AID, seams);
+        expect(messages.length).toBe(200);
+        expect(textAt(0)).toBe("m50");
+        expect(textAt(199)).toBe("m249");
+    });
+
+    test("a total divisible by the page size reuses page 0 without re-fetching it", async () => {
+        const seams = pagingSeams(turns(400));
+        await loadMessages(SID, AID, seams);
+        expect(messages.length).toBe(200);
+        expect(textAt(0)).toBe("m200");
+        expect(textAt(199)).toBe("m399");
+        // Window pages are [0, 1]: page 0 is already in hand from the total probe, so it is reused —
+        // exactly two loadPage calls, page 0 never read twice.
+        expect(seams.fetched()).toEqual([0, 1]);
     });
 });
 
