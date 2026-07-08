@@ -2,9 +2,9 @@ import { createSignal, For, Match, onMount, Show, Switch } from "solid-js";
 import type { JSX } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import type { ResultAsync } from "neverthrow";
-import type { CortexRunRow, DbError, RunStatus, StepExecutionRow } from "@inflexa-ai/harness";
+import type { CortexRunRow, DbError, StepExecutionRow } from "@inflexa-ai/harness";
 
-import { GLYPHS, space, type ThemeColors } from "../../../lib/design_system.ts";
+import { GLYPHS, space } from "../../../lib/design_system.ts";
 import { theme } from "../../theme.ts";
 import { KEYS, chordLabel } from "../../keymap.ts";
 import { Bold, Fg } from "../emphasis.tsx";
@@ -12,7 +12,8 @@ import { useDialogBindings, useDialogCancel, useDialogEntry } from "./dialog_hos
 import { DialogPanel } from "./dialog_panel.tsx";
 import { ScrollPane, SCROLL_HINT } from "../scroll_pane.tsx";
 import { RunBlock, type RunStepView } from "../run_block.tsx";
-import type { RunsSnapshot } from "../../hooks/sidebar_live.ts";
+import { runMark, shortRunName } from "../../layout/sidebar.tsx";
+import { relAge, type RunsSnapshot } from "../../hooks/sidebar_live.ts";
 
 /**
  * Map a harness step-execution status onto the design-system run-step state (design D5). Pure and
@@ -45,6 +46,9 @@ export function stepStateOf(status: StepExecutionRow["status"]): RunStepView["st
             return "failed";
         default: {
             const _exhaustive: never = status;
+            // Unreachable: the `never` assignment above proves every status is handled. The cast only
+            // satisfies the return type on this dead branch — if it ever runs, the harness added a
+            // status the switch does not cover, and we surface its raw string rather than crash.
             return String(_exhaustive) as RunStepView["state"];
         }
     }
@@ -72,46 +76,9 @@ export type RunsDialogProps = {
     onClose: () => void;
 };
 
-/** Relative age of an ISO timestamp, or an em dash when absent/unparseable — never a raw date. */
-function relAge(iso: string | null): string {
-    if (iso === null) return GLYPHS.emDash;
-    const t = Date.parse(iso);
-    return Number.isNaN(t) ? GLYPHS.emDash : Date.relativeAge(t);
-}
-
 /** A short, human-scannable tail of a uuid (dashes stripped). */
 function idTail(id: string): string {
     return id.replace(/-/g, "").slice(-6);
-}
-
-/** A run's short label: the workflow name, else the plan id tail, else the run id tail. */
-function runName(run: CortexRunRow): string {
-    if (run.workflowName.length > 0) return run.workflowName;
-    return idTail(run.planId ?? run.runId);
-}
-
-/**
- * The themed glyph + color role for a run's status (running=warn, completed=success,
- * failed/canceled=error, else muted). A local copy of the sidebar's `runMark`: that one is not
- * exported and `sidebar.tsx` is pinned, so the two agree by convention on the design-system roles.
- */
-function runMark(status: RunStatus): { glyph: string; role: keyof ThemeColors } {
-    switch (status) {
-        case "running":
-            return { glyph: GLYPHS.circleHalf, role: "warning" };
-        case "completed":
-            return { glyph: GLYPHS.check, role: "success" };
-        case "failed":
-        case "canceled":
-            return { glyph: GLYPHS.cross, role: "error" };
-        case "partial":
-        case "suspended_insufficient_funds":
-            return { glyph: GLYPHS.circle, role: "fgMuted" };
-        default: {
-            const _exhaustive: never = status;
-            return { glyph: GLYPHS.circle, role: "fgMuted" };
-        }
-    }
 }
 
 /**
@@ -140,6 +107,7 @@ export function RunsDialog(props: RunsDialogProps): JSX.Element {
     onMount(() => {
         const snap = props.runs;
         if (snap.kind !== "loaded" || snap.runs.length === 0) return;
+        // Non-null: the guard one line above returned unless `runs` is a loaded, non-empty array.
         const latest = snap.runs[0]!;
         void props.loadSteps(latest.runId).match(
             (rows) => setSteps({ kind: "loaded", views: rows.map((r) => ({ label: r.stepId, state: stepStateOf(r.status) })) }),
@@ -194,11 +162,14 @@ export function RunsDialog(props: RunsDialogProps): JSX.Element {
                                         </Match>
                                         <Match when={steps().kind === "loaded"}>
                                             <RunBlock
-                                                name={runName(run)}
+                                                name={shortRunName(run)}
                                                 tag={idTail(run.runId)}
                                                 done={loadedViews().filter((v) => v.state === "done").length}
                                                 total={loadedViews().length}
                                                 steps={loadedViews()}
+                                                // esc closes the dialog here (not the run) and no abort chord is bound,
+                                                // so the detach/abort footer would advertise keys this view does not own.
+                                                hint={false}
                                             />
                                         </Match>
                                     </Switch>

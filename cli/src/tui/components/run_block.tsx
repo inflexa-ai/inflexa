@@ -24,6 +24,13 @@ export type RunBlockProps = {
     total: number;
     /** Ordered steps. */
     steps: RunStepView[];
+    /**
+     * Whether to show the `esc detach · ctrl+c abort` footer. Defaults to `true` (the gallery + any
+     * live run view). Set `false` where those keys are NOT the block's to own — e.g. inside the runs
+     * dialog, where `esc` closes the dialog (not the run) and no abort chord is bound, so the footer
+     * would advertise an affordance that does not exist.
+     */
+    hint?: boolean;
 };
 
 /** The themed glyph + color role for a step's state. */
@@ -65,7 +72,7 @@ export function RunBlock(props: RunBlockProps) {
                     }}
                 </For>
             </box>
-            <text fg={theme().fgSubtle}>esc detach {GLYPHS.middot} ctrl+c abort</text>
+            {(props.hint ?? true) ? <text fg={theme().fgSubtle}>esc detach {GLYPHS.middot} ctrl+c abort</text> : null}
         </box>
     );
 }

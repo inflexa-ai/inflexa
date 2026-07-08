@@ -37,12 +37,12 @@
 
 ## 5. Verification
 
-- [ ] 5.1 `bun run typecheck` + `bun run lint` clean; scoped `bun test` green; `format:file` on
+- [x] 5.1 `bun run typecheck` + `bun run lint` clean; scoped `bun test` green; `format:file` on
       touched files.
-- [ ] 5.2 Cheap live check (no model turns): open the E2E analysis in the TUI; assert the sidebar
+- [x] 5.2 Cheap live check (no model turns): open the E2E analysis in the TUI; assert the sidebar
       renders the real profile state and at least one real run id from the ledger; record in
       findings.md.
 
 ## 6. Docs
 
-- [ ] 6.1 `00-progress.md` + doc 14 change-2 status updated.
+- [x] 6.1 `00-progress.md` + doc 14 change-2 status updated.

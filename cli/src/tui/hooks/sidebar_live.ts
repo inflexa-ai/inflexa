@@ -10,6 +10,7 @@ import {
     type RunStatus,
 } from "@inflexa-ai/harness";
 
+import { GLYPHS } from "../../lib/design_system.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import { bootState, harnessRuntime } from "./boot.ts";
@@ -50,6 +51,71 @@ export const profileSnapshot = profile;
 /** The runs snapshot — read in a tracking scope to repaint on refresh. */
 export const runsSnapshot = runs;
 
+/**
+ * Relative age of an ISO timestamp, or an em dash when absent/unparseable — never a raw date. The
+ * em-dash fallback (not the raw ISO string) is the shared choice across every caller: the sidebar
+ * rail, the runs dialog, and the data-profile detail lines all render into fixed-width surfaces where
+ * a raw timestamp would overflow, so an absent/bad time collapses to the em dash uniformly.
+ *
+ * Homed in this hooks module (not `layout/sidebar.tsx`) because {@link profileDetailLines} below also
+ * needs it AND `sidebar.tsx` imports this module — a `relAge` living in `sidebar.tsx` would force this
+ * module to import back into the layout, an import cycle. This is the lowest layer all callers share.
+ */
+export function relAge(iso: string | null): string {
+    if (iso === null) return GLYPHS.emDash;
+    const t = Date.parse(iso);
+    return Number.isNaN(t) ? GLYPHS.emDash : Date.relativeAge(t);
+}
+
+/**
+ * Compose the DATA PROFILE details view's lines from a {@link ProfileSnapshot} (design D5). Pure
+ * (snapshot → string[]) so every kind is unit-testable: the degraded kinds each yield one placeholder
+ * line, and `loaded` yields the ledger truth — a status line, the started/completed relative times,
+ * the error (on failure), the summary split into lines, the per-file `path — description`, and the
+ * seed-input count. Rendered verbatim by `ResultsDialog` (the design gallery drives it over a mock).
+ */
+export function profileDetailLines(snap: ProfileSnapshot): string[] {
+    switch (snap.kind) {
+        case "not_ready":
+            return ["runtime not ready"];
+        case "absent":
+            return ["not profiled yet"];
+        case "unavailable":
+            return ["profile status unavailable"];
+        case "loaded": {
+            const p = snap.profile;
+            const lines: string[] = [`status: ${p.status}`];
+            if (p.startedAt) lines.push(`started ${relAge(p.startedAt)}`);
+            if (p.completedAt) lines.push(`completed ${relAge(p.completedAt)}`);
+            if (p.status === "failed" && p.error) {
+                lines.push("");
+                for (const line of p.error.split("\n")) lines.push(line);
+            }
+            if (p.result) {
+                if (p.result.summary.trim().length > 0) {
+                    lines.push("");
+                    for (const line of p.result.summary.split("\n")) lines.push(line);
+                }
+                if (p.result.files.length > 0) {
+                    lines.push("");
+                    lines.push(`files (${p.result.files.length}):`);
+                    for (const f of p.result.files) lines.push(`  ${f.path} ${GLYPHS.emDash} ${f.description}`);
+                }
+            }
+            // `seedInputFileIds` is the desired-parity set; fall back to the profiled inputs when the
+            // seed set was not recorded (older rows), else 0.
+            const seedCount = p.seedInputFileIds?.length ?? p.result?.inputFileIds.length ?? 0;
+            lines.push("");
+            lines.push(`${seedCount} seed input${seedCount === 1 ? "" : "s"}`);
+            return lines;
+        }
+        default: {
+            const _exhaustive: never = snap;
+            return [String(_exhaustive)];
+        }
+    }
+}
+
 /** How many run rows a refresh pulls. The sidebar renders the newest few; the store holds the head. */
 const RUNS_LIMIT = 10;
 
@@ -76,14 +142,22 @@ const RUN_STATUS_TERMINAL: Record<RunStatus, boolean> = {
 };
 
 /**
- * Whether the snapshots show active work: a pending/running data profile, or any run in a
- * non-terminal status. This is the sole gate on the bounded poll — pure so the arming decision is
- * unit-testable without a reactive root.
+ * Whether the snapshots should keep the bounded poll armed: a pending/running data profile, any run
+ * in a non-terminal status, OR an `unavailable` snapshot. This is the sole gate on the poll — pure so
+ * the arming decision is unit-testable without a reactive root.
+ *
+ * `unavailable` arms because it is the `DbError` degrade: a transient DB blip mid-profile/mid-run
+ * would otherwise tear the poll down on an idle screen and nothing would ever re-read to recover, so
+ * the section would stay stuck at "unavailable" until the next lifecycle edge. Re-arming lets the
+ * SAME cheap 5s poll self-heal the moment the read succeeds again. A persistent outage keeps that one
+ * failing read alive — accepted, exactly like a genuinely wedged non-terminal run (design D2): it is
+ * bounded, cheap (≤10 rows), and the alternative (guessing transient-vs-persistent) is worse.
  */
 export function hasActiveWork(profileSnap: ProfileSnapshot, runsSnap: RunsSnapshot): boolean {
+    const anyUnavailable = profileSnap.kind === "unavailable" || runsSnap.kind === "unavailable";
     const profileActive = profileSnap.kind === "loaded" && (profileSnap.profile.status === "pending" || profileSnap.profile.status === "running");
     const runsActive = runsSnap.kind === "loaded" && runsSnap.runs.some((r) => !RUN_STATUS_TERMINAL[r.status]);
-    return profileActive || runsActive;
+    return anyUnavailable || profileActive || runsActive;
 }
 
 /**

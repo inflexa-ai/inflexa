@@ -19,24 +19,36 @@ The `Part` union in `src/types/session.ts` SHALL be a discriminated union on `ty
 
 ### Requirement: Mock run and token-cost models
 
-The system SHALL define mock model types for a run and its steps (run id/name, status, step list with per-step state of done/running/queued, and progress) and for context accounting (token count, percent-of-window, cost), with JSDoc. These models SHALL be in-memory only — NOT persisted, NOT queried from SQLite, and NOT emitted by the live event bus or chat engine.
+The system SHALL keep mock model types only where the design gallery still showcases them: a mock
+model that has lost its last consumer is deleted, not kept "just in case". Remaining mock models
+(e.g. the run/step model backing gallery exhibits) SHALL stay in-memory only — NOT persisted, NOT
+queried from SQLite or the harness ledger, and NOT emitted by any live path. The token-cost model
+is removed together with the sidebar's CONTEXT section unless a gallery exhibit consumes it.
 
 #### Scenario: Models are in-memory, not persisted
 
-- **WHEN** the run or token-cost models are used
-- **THEN** they are read from fixtures, with no SQLite table, migration, or query backing them
+- **WHEN** a remaining mock model is used
+- **THEN** it is read from fixtures by a gallery exhibit, with no table, migration, query, or live emission backing it
+
+#### Scenario: Orphaned fixtures are deleted
+
+- **WHEN** a mock model's last consumer is removed
+- **THEN** the model and its fixtures are deleted in the same change
 
 ### Requirement: Mock fixtures are identifiable as mock
 
-The system SHALL provide sample fixtures for the extended part kinds, the run/step model, and the token-cost model in a clearly-named mock module (e.g. a `mock`-prefixed file or namespace), each commented as sample data. No consumer SHALL present mock fixture values as live telemetry, and the live `conversation` store / event-bus path SHALL NOT be wired to the mock fixtures. Removing or replacing the fixtures with real engine output SHALL be possible without changing the block components (the data source is the only seam).
+The system SHALL confine sample fixtures to the clearly-named mock module, each commented as
+sample data, consumed ONLY by design-gallery exhibits (and tests) — never by a product surface.
+The sidebar SHALL NOT import the mock module. No consumer SHALL present mock fixture values as
+live telemetry, and the live conversation/ledger paths SHALL NOT be wired to the mock fixtures.
 
-#### Scenario: Fixtures are clearly mock
+#### Scenario: Fixtures are gallery-only
 
-- **WHEN** a developer reads a fixture used by a block or the sidebar
-- **THEN** it resides in the named mock module and is commented as sample data, not produced by the live engine
+- **WHEN** the mock module's importers are listed
+- **THEN** they are design-gallery exhibits or tests — no product surface (sidebar, chat stream, status bar) imports it
 
-#### Scenario: Swapping to live data touches only the data source
+#### Scenario: Swapping showcase data touches only the exhibit
 
-- **WHEN** real engine emission later replaces a fixture
-- **THEN** the change is confined to the data source; the block component that renders it is unchanged
+- **WHEN** a gallery exhibit's sample data changes
+- **THEN** the change is confined to the fixture/exhibit; the block component that renders it is unchanged
 

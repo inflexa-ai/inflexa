@@ -105,7 +105,17 @@ engine lost its last TUI caller (its deletion is change 3).
   in chat) and surface its state; the exact chat-gating while profiling matches what
   `chat-context` implies — verify against Cortex during the change.
 
-### 2. `tui-sidebar-live` — the sidebar tells the truth
+### 2. `tui-sidebar-live` — the sidebar tells the truth — LANDED 2026-07-08
+
+**Status: landed.** Live-verified via tmux screen capture: `DATA PROFILE ✓ 1 file`
+rendered from the ledger, truthful `no runs`, and `ctrl+x d` opening the profile
+details dialog with the agent's real summary. The live pass caught and fixed a real
+integration bug (the parity trigger now pokes the sidebar store — the one ledger
+edge outside its refresh triggers). Shipped: the `sidebar_live` store (staleness
+guard; poll armed only while work is active), the four truthful sections (CONTEXT
+deleted with the mock fixtures), profile/runs details dialogs reusing
+ResultsDialog/RunBlock (+ failed-step state), leader keys `d`/`r` + section click,
+gallery exhibits. Zero harness changes.
 
 - **DATA PROFILE section** (new): status from `loadDataProfileStatus`, clickable and
   keybound (keymap layer + dialog subsystem) to open a details view — profile summary,

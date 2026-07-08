@@ -8,7 +8,7 @@
 fixed-width, full-height column with a divider against the chat column. Its width SHALL be sourced
 from `size.railWidth` (the design-tokens layer), NOT an inline integer, and it is NOT
 mouse-resizable. SESSION SHALL show the short session id (`S·` + the first 4 hex of the id), the
-session age as a relative duration (e.g. `6m ago`), and the message count from live data. ANALYSIS
+session age as a relative duration (e.g. `6m`, the `Date.relativeAge` rendering), and the message count from live data. ANALYSIS
 SHALL show the analysis name, the anchor path with a ✓/⚠ badge derived from the anchor's
 `markerWritten`, the input count, and the project name when the analysis has one. DATA PROFILE and
 RUNS SHALL render live ledger data per the `sidebar-live` capability (states, refresh, details
