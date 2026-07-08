@@ -1,35 +1,20 @@
-// TODO(extend): `inflexa chat` is a deliberately temporary walking-skeleton dev
-// surface — a clack/stdout REPL that drives the harness conversation agent so the
-// whole embedded loop (assemble → prepareChatTurn → runAgent → appendTurn) can be
-// exercised end-to-end before a real client exists. Its named replacement is the
-// daemon chat engine + TUI client (#33 M3/M4): once that lands, this command and
-// its printer are deleted and the conversation moves onto the daemon transport.
-// Everything this file exercises transfers verbatim — the turn halves, the session
-// scope that stamps `cortex_runs.thread_id`, the emit categories — only the
-// transport (a clack line prompt + a coarse stdout printer) is throwaway. The
-// standing record to clear is the `chat-command` spec (the delta lives in
-// `openspec/changes/embed-conversation-agent/specs/chat-command/spec.md` until it
-// syncs to `openspec/specs/chat-command/spec.md`). Do NOT grow this into a product
-// surface: rendering, reconnect, and multi-client behavior are #33's, not here.
+// TODO(extend): `inflexa chat` is a dev/E2E surface — a clack/stdout REPL that
+// drives the harness conversation agent so the whole embedded loop
+// (assemble → prepareChatTurn → runAgent → appendTurn) can be exercised
+// end-to-end WITHOUT a TUI. Its product replacement is the TUI chat (capability
+// `tui-harness-chat`), the landed user-facing conversation surface; this command
+// is kept only to exercise the harness loop headlessly. Its pending disposition
+// is demotion under a dev umbrella — excluded from production builds — by a
+// follow-up change, at which point that capability records this command's status.
+// The turn body it drives is the shared engine (`turn.ts`) the TUI chat runs too,
+// so what stays here is only the REPL transport: a clack line prompt and the
+// coarse stdout printer. The spec-level record is
+// `openspec/specs/chat-command/spec.md`.
 
 import { randomUUIDv7 } from "bun";
 import { intro, log, outro, spinner, text, isCancel } from "@clack/prompts";
-import { ResultAsync } from "neverthrow";
-import {
-    createStreamingChat,
-    createThreadHistory,
-    createThreadStore,
-    finalText,
-    makeLocalAuth,
-    passthroughStep,
-    prepareChatTurn,
-    runAgent,
-    type AgentChat,
-    type AgentSession,
-    type DbError,
-    type ModelMessage,
-    type Thread,
-} from "@inflexa-ai/harness";
+import { type ResultAsync } from "neverthrow";
+import { createStreamingChat, createThreadHistory, createThreadStore, type AgentChat, type AgentSession, type DbError, type Thread } from "@inflexa-ai/harness";
 
 import { fail } from "../../lib/cli.ts";
 import { acquireInstanceLock } from "../../lib/lock.ts";
@@ -39,6 +24,7 @@ import { resolveHarnessConfig } from "./config.ts";
 import { createChatPrinter, type ChatSink } from "./chat_printer.ts";
 import { describeBootError, ensureSandboxImage, resolveSingleAnalysis } from "./profile.ts";
 import { bootHarnessRuntime, type HarnessRuntime } from "./runtime.ts";
+import { buildChatSession, runChatTurn } from "./turn.ts";
 
 /** The `empty`-context hint specific to `inflexa chat`. */
 const CHAT_EMPTY_HINT = "No analysis here. Run `inflexa` to start one, add inputs, then `inflexa chat`.";
@@ -194,18 +180,11 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
     // Abort semantics are untouched: the wrapper re-throws an AbortError verbatim.
     const chat = createStreamingChat(runtime.provider, (text) => void printer.emit({ type: "text-delta", text }));
 
-    // The session carries `threadId` IN scope — load-bearing: `execute_plan`
-    // reads `session.scope.threadId` and stamps `cortex_runs.thread_id` from it,
-    // so a plan launched from this chat carries thread lineage (design D4). The
-    // top-level `callPath` has length 1, so the printer's sub-agent depth filter
-    // (drop `callPath.length > 1`) keeps this agent's events and drops planner /
-    // literature-reviewer traffic.
-    const session: AgentSession = {
-        identity: { user: "local" },
-        scope: { kind: "analysis", analysisId, threadId },
-        provenance: { agentId: "cli-chat", callPath: ["cli-chat"] },
-        auth: makeLocalAuth(),
-    };
+    // The REPL runs as the `"cli-chat"` agent. `buildChatSession` puts `threadId`
+    // in scope (so a chat-launched plan stamps `cortex_runs.thread_id`) and gives
+    // a length-1 callPath (so this agent's events pass the printer's sub-agent
+    // depth filter) — see its docs for the full rationale (design D2).
+    const session: AgentSession = buildChatSession("cli-chat", analysisId, threadId);
 
     for (;;) {
         const answer = await text({ message: "you", placeholder: "Type a message — Ctrl+C to exit" });
@@ -232,14 +211,17 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
  * One chat turn under a turn-scoped `AbortController` (design D7). Returns
  * `"continue"` to keep the REPL prompting or `"stop"` to end it — the loop, not
  * this function, owns teardown, which is exactly what makes the second-SIGINT
- * path race-free.
+ * path race-free. The prepare→run→append body itself is the shared headless
+ * engine (`runChatTurn` in `turn.ts`); this function owns only the REPL-specific
+ * shell around it: the turn-scoped SIGINT wiring and the mapping of the engine's
+ * `TurnOutcome` onto the sink's user-visible lines.
  *
  * The SIGINT handler is installed for the turn's duration only, so the idle
  * prompt keeps clack's own Ctrl+C handling (isCancel → clean exit):
  *
- *   - FIRST SIGINT: abort the turn. `runAgent` throws its AbortError, the turn
- *     unwinds through `appendTurn`/`finishTurn`, and we return `"continue"` — back
- *     to the prompt.
+ *   - FIRST SIGINT: abort the turn. `runChatTurn` sees the aborted signal, returns
+ *     an `aborted` outcome (having persisted `[userMessage]`), and we return
+ *     `"continue"` — back to the prompt.
  *   - SECOND SIGINT (while the first is still unwinding): flag `forceStop` and do
  *     nothing else. We deliberately do NOT call `shutdown()` from the handler:
  *     `shutdown()` runs `pool.end()` in an onShutdown hook, and a fire-and-forget
@@ -253,18 +235,13 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
  * it returns on its own, so a stuck turn delays the stop — a harness/tool concern,
  * out of scope here.
  *
- * `appendTurn` ALWAYS runs on every `runAgent`-reaching path — even on abort or a
- * thrown turn — so the turn persists. On a clean return that is
- * `[userMessage, ...loopOutput]`; on a throw/abort the harness's `runAgent` throws
- * BEFORE returning its message array (the AbortError propagates out of the
- * streaming `chat`), so the partial loop output is structurally unavailable and
- * only `[userMessage]` can be persisted — though the tokens streamed before the
- * abort remain visible on the terminal.
- *
+ * Outcome mapping is byte-for-byte the pre-extraction behavior. The engine persists
+ * `[userMessage, ...loopOutput]` on a clean turn and `[userMessage]` on abort/throw,
+ * surfacing any `appendTurn` fault as `outcome.appendError` — reported here on every
+ * `runAgent`-reaching branch, exactly where the old inline `appendTurn.match` did.
  * On a clean turn the answer already streamed live through `chat`'s onText, so
- * `finishTurn(fallbackText)` suppresses its duplicate final render (the deltas
- * and `finalText` are the same content); the fallback prints only for a turn
- * that produced no deltas at all.
+ * `finishTurn(fallbackText)` suppresses its duplicate final render; the fallback
+ * prints only for a turn that produced no deltas at all.
  */
 async function runTurn(
     runtime: HarnessRuntime,
@@ -291,54 +268,54 @@ async function runTurn(
         controller.abort();
     };
     process.on("SIGINT", onSigint);
+    // Report an `appendTurn` fault identically on each runAgent-reaching branch —
+    // a single closure so the three sites cannot drift from the original one line.
+    const reportAppendError = (e: DbError | undefined): void => {
+        if (e) sink.errLine(`Could not save the turn to the thread (${e.type}).`);
+    };
     try {
-        const prepared = await ResultAsync.fromPromise(prepareChatTurn({ pool: runtime.pool }, { analysisId, threadId, userInput }), (e): unknown => e).match(
-            (r) => r,
-            (cause) => ({ kind: "prepare_failed" as const, cause }),
-        );
-        if (prepared.kind === "prepare_failed") {
-            sink.errLine(`Could not assemble the turn (is Postgres reachable?): ${errText(prepared.cause)}`);
-            // Emit the per-turn separator + reset state on this pre-`runAgent` bail
-            // too, so output shape stays uniform with the streamed path (nothing
-            // streamed here, so there is no double print).
-            printer.finishTurn();
-            return forceStop ? "stop" : "continue";
+        const outcome = await runChatTurn({
+            pool: runtime.pool,
+            conversationAgent: runtime.conversationAgent,
+            chat,
+            history,
+            session,
+            emit: printer.emit,
+            signal: controller.signal,
+            analysisId,
+            threadId,
+            userInput,
+        });
+        switch (outcome.kind) {
+            case "ok":
+                reportAppendError(outcome.appendError);
+                printer.finishTurn(outcome.fallbackText);
+                break;
+            case "aborted":
+                sink.out("\n  [interrupted]\n");
+                reportAppendError(outcome.appendError);
+                printer.finishTurn();
+                break;
+            case "failed":
+                sink.errLine(`The turn failed: ${errText(outcome.cause)}`);
+                reportAppendError(outcome.appendError);
+                printer.finishTurn();
+                break;
+            case "prepare_failed":
+                sink.errLine(`Could not assemble the turn (is Postgres reachable?): ${errText(outcome.cause)}`);
+                // Emit the per-turn separator + reset state on this pre-`runAgent`
+                // bail too, so output shape stays uniform with the streamed path.
+                printer.finishTurn();
+                break;
+            case "thread_gone":
+                sink.errLine("This conversation thread is no longer available.");
+                printer.finishTurn();
+                break;
+            default: {
+                const exhaustive: never = outcome;
+                throw new Error(`unhandled turn outcome: ${JSON.stringify(exhaustive)}`);
+            }
         }
-        if (prepared.kind === "not_found") {
-            // Reachable only if the thread was deleted mid-session (the resume
-            // pre-check already refused foreign/absent ids before the REPL began).
-            sink.errLine("This conversation thread is no longer available.");
-            printer.finishTurn();
-            return forceStop ? "stop" : "continue";
-        }
-
-        const initial = prepared.messages;
-        const { toPersist, fallbackText } = await ResultAsync.fromPromise(
-            runAgent(runtime.conversationAgent, initial, session, {
-                provider: chat,
-                signal: controller.signal,
-                emit: printer.emit,
-                runStep: passthroughStep,
-            }),
-            (e): unknown => e,
-        ).match(
-            (result) => ({
-                toPersist: [prepared.userMessage, ...result.messages.slice(initial.length)] as ModelMessage[],
-                fallbackText: finalText(result.messages),
-            }),
-            (cause) => {
-                if (controller.signal.aborted) sink.out("\n  [interrupted]\n");
-                else sink.errLine(`The turn failed: ${errText(cause)}`);
-                return { toPersist: [prepared.userMessage] as ModelMessage[], fallbackText: "" };
-            },
-        );
-
-        // Persist unconditionally — the partial turn must survive an abort/throw.
-        (await history.appendTurn(threadId, toPersist)).match(
-            () => {},
-            (e) => sink.errLine(`Could not save the turn to the thread (${e.type}).`),
-        );
-        printer.finishTurn(fallbackText);
         // A second SIGINT during the turn requests a deterministic stop; report it
         // up so `runRepl` tears down after the turn has fully unwound (the `finally`
         // below still runs first, removing this turn's SIGINT listener).

@@ -19,6 +19,13 @@ export type ChatBarProps = {
      * INSERT/NORMAL footer display.
      */
     onFocusChange?: (focused: boolean) => void;
+    /**
+     * When true, the runtime is still booting (or boot failed) and submits are refused by the host —
+     * the bar surfaces the closed gate in its empty-buffer placeholder so the affordance itself
+     * explains why typing goes nowhere yet. The textarea stays editable so a first message can be
+     * pre-typed while booting; only the host's submit is gated.
+     */
+    gated?: boolean;
 };
 
 /**
@@ -41,7 +48,7 @@ export function ChatBar(props: ChatBarProps) {
                 chrome="full"
                 minHeight={3}
                 maxHeight={8}
-                placeholder={`Type a message${GLYPHS.ellipsis}`}
+                placeholder={props.gated ? `Booting harness runtime${GLYPHS.ellipsis}` : `Type a message${GLYPHS.ellipsis}`}
                 onRef={(r) => props.onTextareaRef(r)}
                 onSubmit={() => props.onSubmit()}
                 onFocusChange={(f) => {

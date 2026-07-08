@@ -6,15 +6,23 @@
 
 ### Requirement: Data-profile launch is a deliberate action
 
-The system SHALL provide a dedicated text command that runs a data profile for a
-resolved analysis. Only this action (and no passive flow) SHALL stage files, boot the
-harness runtime, or trigger workflows. Bare `inflexa`, `inflexa new`/`resume`, and TUI
-startup SHALL remain free of staging writes and runtime boots.
+The system SHALL provide a dedicated text command that runs a data profile for a resolved analysis.
+Staging files, booting the harness runtime, and triggering workflows SHALL happen only on deliberate
+actions: this command, the run/chat commands, and opening an analysis chat in the TUI — which
+auto-triggers the profile at managed parity when the analysis has resolvable inputs and no completed
+or running profile (see `tui-harness-chat`). Flows that resolve to no analysis chat — bare `inflexa`
+resolving to nothing, the welcome screen, `--status` views, `inflexa ls`/`status` — SHALL remain
+free of staging writes and runtime boots.
 
-#### Scenario: Passive launch stays side-effect free
+#### Scenario: No-analysis flows stay side-effect free
 
-- **WHEN** the user runs bare `inflexa` on an analysis that has never been profiled
+- **WHEN** the user runs bare `inflexa` and it resolves to no analysis (welcome/no-op path)
 - **THEN** no session tree is created, no files are staged, and DBOS is not launched
+
+#### Scenario: Opening an analysis chat is a deliberate profile trigger
+
+- **WHEN** the TUI opens an analysis chat for an analysis with inputs and no completed or running profile
+- **THEN** the same stage → seed → trigger sequence runs (non-blocking), per `tui-harness-chat`
 
 #### Scenario: The command performs the run
 

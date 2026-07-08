@@ -1,4 +1,5 @@
 import { intro, log, outro, spinner } from "@clack/prompts";
+import type { ResultAsync } from "neverthrow";
 import {
     loadDataProfileStatus,
     makeLocalAuth,
@@ -8,6 +9,8 @@ import {
     tryRetryDataProfile,
     upsertAnalysis,
     createPool,
+    type DataProfileTriggerParams,
+    type DbError,
     type Pool,
 } from "@inflexa-ai/harness";
 
@@ -21,7 +24,7 @@ import { shutdown } from "../../lib/shutdown.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { resolveContext, type ContextFlags } from "../analysis/context.ts";
 import { sessionTreeDataDir } from "../staging/paths.ts";
-import { stageInputs } from "../staging/staging.ts";
+import { stageInputs, type StagedInput } from "../staging/staging.ts";
 import { resolveHarnessConfig } from "./config.ts";
 import { bootHarnessRuntime, activeHarnessRuntime, type HarnessBootError } from "./runtime.ts";
 
@@ -163,6 +166,25 @@ export async function ensureSandboxImage(image: string): Promise<void> {
     if (code !== 0) fail(`Failed to pull ${image} (\`${rt.bin} pull\` exited ${code}). Check your network and that ghcr.io is reachable.`);
 }
 
+/**
+ * Seed the harness ledger row and build the {@link DataProfileTriggerParams} for `staged` — the ONE
+ * construction shared by `inflexa profile` ({@link runProfile}) and the TUI parity auto-trigger
+ * (`ensureProfileAtParity` in `profile_trigger.ts`). The field mapping IS the ledger contract, so it
+ * lives in exactly one place: drift between the two callers would corrupt the ledger. `context` and
+ * `billingContext` stay null (neither caller has goal text at profile time, and fabricating one would
+ * pollute the agent prompt); `inputFileIds` is the staged manifest's file ids; the auth is the local
+ * OSS value; the manifest rides into the trigger params verbatim.
+ */
+export function seedProfileLedger(pool: Pool, analysisId: string, staged: readonly StagedInput[]): ResultAsync<DataProfileTriggerParams, DbError> {
+    return upsertAnalysis(
+        pool,
+        analysisId,
+        null,
+        null,
+        staged.map((f) => f.fileId),
+    ).map(() => ({ auth: makeLocalAuth(), analysisId, stagedInputs: staged }));
+}
+
 /** `inflexa profile` — stage the analysis's inputs and run a data profile on them. */
 export async function runProfile(flags: ContextFlags): Promise<void> {
     const analysis = resolveSingleAnalysis(flags, "No analysis here. Run `inflexa` to start one, add inputs, then profile.");
@@ -229,23 +251,13 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
     }
     s.stop(`Staged ${staged.length} file(s)`);
 
-    // Seed the harness ledger row the trigger's CAS transitions — without it
-    // every trigger reports "failed". Context stays null: the cli has no goal
-    // text at profile time, and fabricating one would pollute the agent prompt.
-    (
-        await upsertAnalysis(
-            runtime.pool,
-            analysis.id,
-            null,
-            null,
-            staged.map((f) => f.fileId),
-        )
-    ).match(
-        () => {},
+    // Seed the harness ledger row the trigger's CAS transitions (without it every trigger reports
+    // "failed") and build the trigger params — one shared construction with the TUI parity path, so
+    // the two callers can never drift on what the ledger row and the trigger see (see seedProfileLedger).
+    const params = (await seedProfileLedger(runtime.pool, analysis.id, staged)).match(
+        (p) => p,
         (e) => fail("Failed to seed the harness analysis state", e),
     );
-
-    const params = { auth: makeLocalAuth(), analysisId: analysis.id, stagedInputs: staged };
     const outcome = await triggerDataProfile(runtime.triggerDeps, params);
     switch (outcome) {
         case "started":

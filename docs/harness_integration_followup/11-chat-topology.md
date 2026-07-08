@@ -288,13 +288,13 @@ reads a different stream key, `"progress"`, and is likewise not exported).
 
 ## 6. Open user decisions (RQ1/RQ3 slice)
 
-- [ ] **Proxy-chat fate** — §3.5: retire at TUI cutover (recommended) vs keep as an
-      explicit no-analysis "quick chat" mode. Decides whether
-      `sessions`/`messages`/`parts` is legacy-frozen or stays a live store.
-- [ ] **Existing SQLite chat history** — leave readable in place (recommended; zero
-      migration, `inflexa sessions` keeps working) vs one-time import into pg threads
-      (costly: the proxy transcripts have no ModelMessage envelopes or tool calls, so
-      the import is text-only).
+- [x] **Proxy-chat fate** — DECIDED 2026-07-08 (user, `14-tui-chat-direction.md`):
+      retire — option (a). One chat, the conversation agent; the cutover is 14's
+      change 1 (not #33 M3), engine deletion completes in change 3.
+      `sessions`/`messages`/`parts` is legacy-frozen.
+- [x] **Existing SQLite chat history** — leave readable in place (per 14 change 3;
+      zero migration — the proxy transcripts have no ModelMessage envelopes or tool
+      calls, so an import would be text-only anyway).
 - [ ] **Wire contract versioning** — the contracts are TypeScript-only today; #33 M1's
       shared zod contract module must decide whether chat frames get an explicit
       version field (per #36 §5.3's payload-versioning note) before clients ship.

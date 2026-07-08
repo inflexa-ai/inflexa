@@ -15,6 +15,7 @@ import { ExportOptionsDialog } from "../components/dialog/export_options_dialog.
 import { Welcome } from "../components/welcome.tsx";
 import { ThinkingBlock } from "../components/thinking_block.tsx";
 import { ThinkingIndicator } from "../components/thinking_indicator.tsx";
+import { BootIndicator } from "../components/boot_indicator.tsx";
 import { ToolBlock } from "../components/tool_block.tsx";
 import { DiffBlock } from "../components/diff_block.tsx";
 import { RunBlock } from "../components/run_block.tsx";
@@ -27,7 +28,7 @@ import { ScrollPane } from "../components/scroll_pane.tsx";
 import { FixedList } from "../components/fixed_list.tsx";
 import { SelectDialog } from "../components/dialog/select_dialog.tsx";
 import { FilePicker } from "../components/dialog/file_picker.tsx";
-import { mockUserText, mockAssistantText, mockThinking, mockToolCall, mockFileEdit, mockRun } from "../../lib/mock_fixtures.ts";
+import { mockUserText, mockAssistantText, mockThinking, mockToolCall, mockFileEdit, mockRun, mockPlanCard, mockRunCard } from "../../lib/mock_fixtures.ts";
 
 // Nothing streams in the gallery — MessageBlock's streaming accessors are constant stubs.
 const noStreamId = (): string | null => null;
@@ -277,6 +278,29 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <text>
                         <Reverse> reverse </Reverse> <Fg role="fgMuted">— selection / cursor row</Fg>
                     </text>
+                </State>
+                <State n="14" label="harness boot — live indicator + failed gate">
+                    <text fg={theme().fgMuted}>booting (self-animating spinner + elapsed, shown while the runtime boots and the input is gated):</text>
+                    {/* Self-animating: it owns its spinner interval, so it spins live in the gallery. */}
+                    <BootIndicator />
+                    <text fg={theme().fgMuted}>failed (the boot-error taxonomy's actionable message, terminal state — never a hang):</text>
+                    <BootIndicator
+                        message={[
+                            `The proxy's default model "gpt-4o" is not a Claude model, but data profiling drives the proxy over the Anthropic protocol.`,
+                            "Authenticate a Claude provider via `inflexa setup`, or set `harness.model` in config.json to a Claude model the proxy serves.",
+                        ].join("\n")}
+                    />
+                </State>
+                <State n="15" label="live tool activity — running / done (with duration) / error">
+                    {/* The harness emit adapter mints these from tool-started/tool-finished: no
+                        result panel (live events carry no output), just name + outcome + timing. */}
+                    <ToolBlock name="grep" target="src/**/*.ts" status="running" />
+                    <ToolBlock name="read_file" target="src/db/types.ts :55-105" status="ok" durationMs={1240} />
+                    <ToolBlock name="write_file" target="out/report.html" status="error" durationMs={320} />
+                </State>
+                <State n="16" label="harness cards — plan card & run card">
+                    <MessageBlock index={1} role="assistant" parts={[mockPlanCard]} streamPartId={noStreamId} streamText={noStreamText} />
+                    <MessageBlock index={2} role="assistant" parts={[mockRunCard]} streamPartId={noStreamId} streamText={noStreamText} />
                 </State>
             </ScrollPane>
         </DialogPanel>

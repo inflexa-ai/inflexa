@@ -1,7 +1,6 @@
-import { For, Show, onMount, onCleanup, createEffect, createMemo, on } from "solid-js";
+import { For, Show, createEffect, createMemo, on } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 
-import { Bus } from "../../lib/bus.ts";
 import { theme } from "../theme.ts";
 import { MessageBlock } from "../layout/message_block.tsx";
 import { Welcome } from "./welcome.tsx";
@@ -10,14 +9,15 @@ import { ScrollPane } from "./scroll_pane.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { getAnchor } from "../../db/primary_query.ts";
 import { chatStatus } from "../hooks/status.ts";
-import { messages, streamText, streamPartId, errorMsg, applyBusEvent, loadMessages, resetHotState } from "../hooks/conversation.ts";
-import type { BusEvent } from "../../types/events.ts";
+import { bootState } from "../hooks/boot.ts";
+import { messages, streamText, streamPartId, errorMsg, loadMessages, resetHotState } from "../hooks/conversation.ts";
 
 /**
  * The live conversation: the sticky message stream plus the error banner. State (the message store,
- * the streaming buffer, the error) lives in `hooks/conversation.ts`; this component owns the bus
- * subscription that feeds it and the reactive load/reset tied to the open session. The `Sidebar`
- * reads the same store's `messageCount`, so the store is shared rather than private here.
+ * the streaming buffer, the error) lives in `hooks/conversation.ts`; the harness emit adapter writes
+ * it directly (no bus subscription — the TUI no longer drives the proxy engine), and this component
+ * owns only the reactive transcript load tied to the open session and the runtime boot. The
+ * `Sidebar` reads the same store's `messageCount`, so the store is shared rather than private here.
  */
 export type ChatProps = {
     /**
@@ -31,23 +31,20 @@ export type ChatProps = {
 export function Chat(props: ChatProps) {
     const ws = useWorkspace();
 
-    // The bus drives all message/stream mutations; filter each event by the currently-open session
-    // (read fresh per event — `ws.sessionId` is a reactive store field that a swap updates in place).
-    const handler = (event: BusEvent): void => applyBusEvent(event, ws.sessionId);
-    onMount(() => {
-        Bus.on("inflexa", handler);
-        onCleanup(() => Bus.off("inflexa", handler));
-    });
-
-    // Load on mount, and on an in-place session swap reset the hot state before loading the new
-    // session — the reactive replacement for the old imperative `onOpenSession` reset hook. `on`
-    // runs once immediately (prev === undefined → load only), then on each `ws.sessionId` change.
+    // Load the transcript from the pg thread, reacting to BOTH the open session AND the runtime boot
+    // reaching `ready` — the pg thread read needs the booted pool, so a session opened while booting
+    // loads once boot flips to `ready` (design D9). On an in-place session swap, reset the hot state
+    // before loading the new thread. `on` runs once immediately, then on each session/phase change.
     createEffect(
         on(
-            () => ws.sessionId,
-            (sessionId, prev) => {
-                if (prev !== undefined) resetHotState();
-                loadMessages(sessionId);
+            () => [ws.sessionId, bootState().phase] as const,
+            ([sessionId, phase], prev) => {
+                const prevSessionId = prev?.[0];
+                if (prevSessionId !== undefined && prevSessionId !== sessionId) resetHotState();
+                // Legacy/unscoped chats have no analysis to key the pg thread's card resolver on;
+                // they render empty (SQLite history is frozen, not shown here).
+                const analysis = ws.analysis;
+                if (phase === "ready" && analysis) void loadMessages(sessionId, analysis.id);
             },
         ),
     );

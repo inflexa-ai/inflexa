@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { EmitFn, EventSource } from "@inflexa-ai/harness";
 
-import { createChatPrinter, type ChatSink } from "./chat_printer.ts";
+import { createChatPrinter, isSubAgentEvent, readPlanCard, readRunCard, type ChatSink } from "./chat_printer.ts";
 
 /**
  * A recording sink + printer. `out()` accumulates conversation output; `errs`
@@ -195,5 +195,67 @@ describe("createChatPrinter", () => {
         expect(snapshot).toContain("[run] run-xyz: Original (3 step(s))");
         expect(snapshot).not.toContain("MUTATED");
         expect(snapshot).not.toContain("99");
+    });
+});
+
+// The classification pieces the TUI adapter reuses instead of duplicating (D3).
+describe("isSubAgentEvent", () => {
+    test("top-level provenance (callPath length 1) is NOT sub-agent", () => {
+        expect(isSubAgentEvent({ type: "tool-started", source: TOP, toolUseId: "t1", name: "grep", input: {} })).toBe(false);
+    });
+
+    test("deeper provenance (callPath length > 1) IS sub-agent", () => {
+        expect(isSubAgentEvent({ type: "tool-started", source: SUB, toolUseId: "t1", name: "grep", input: {} })).toBe(true);
+    });
+
+    test("an event with no source (a text delta) is never sub-agent", () => {
+        expect(isSubAgentEvent({ type: "text-delta", text: "hi" })).toBe(false);
+    });
+
+    test("a malformed source lacking a callPath array falls through as top-level", () => {
+        // `callPath` is external/loop-owned; a non-array must be treated as
+        // top-level rather than throwing (the Array.isArray guard).
+        const malformed = {
+            type: "tool-started",
+            source: { agentId: "x", callPath: undefined },
+            toolUseId: "t1",
+            name: "grep",
+            input: {},
+        } as unknown as Parameters<EmitFn>[0];
+        expect(isSubAgentEvent(malformed)).toBe(false);
+    });
+});
+
+describe("readPlanCard", () => {
+    test("extracts planId, title, and per-step fields", () => {
+        const card = readPlanCard({ id: "pres-1", planId: "pln-abc", title: "DE", steps: [{ id: "S1", name: "align", agent: "exec" }] });
+        expect(card).toEqual({ planId: "pln-abc", title: "DE", steps: [{ id: "S1", name: "align", agent: "exec" }] });
+    });
+
+    test("coerces missing/mistyped fields to empty rather than throwing", () => {
+        // Missing title/steps and a non-string planId all collapse to empties.
+        const card = readPlanCard({ planId: 42, steps: "not-an-array" });
+        expect(card).toEqual({ planId: "", title: "", steps: [] });
+    });
+
+    test("copies each step — no reference to the source data survives", () => {
+        const steps = [{ id: "S1", name: "one", agent: "a1" }];
+        const card = readPlanCard({ planId: "pln-abc", steps });
+        steps[0]!.name = "MUTATED";
+        expect(card.steps[0]!.name).toBe("one");
+    });
+});
+
+describe("readRunCard", () => {
+    test("extracts runId, title, and stepCount", () => {
+        expect(readRunCard({ id: "pres-r", runId: "run-xyz", planId: "pln-abc", title: "DE run", stepCount: 3 })).toEqual({
+            runId: "run-xyz",
+            title: "DE run",
+            stepCount: 3,
+        });
+    });
+
+    test("coerces missing/mistyped fields to empty/zero rather than throwing", () => {
+        expect(readRunCard({ runId: 7 })).toEqual({ runId: "", title: "", stepCount: 0 });
     });
 });

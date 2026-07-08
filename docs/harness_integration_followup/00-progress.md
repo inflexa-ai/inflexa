@@ -23,11 +23,27 @@ shape since `06-change-graph.md` sketched it).
 ## Where the program stands (2026-07-08)
 
 ```
-landed:   C ──► F ──► D ──► D2 ──► D3 ──► E ──► embed-conversation-agent (skeleton, 2026-07-08)
-next:     ┌─ #33 M1/M2 (daemon skeleton + run engine behind the server)
-          ├─ record-plan-lineage (the RQ6 provenance rider, deferred out of the skeleton)
+landed:   … ──► embed-conversation-agent (skeleton) ──► tui-harness-chat (TUI chat ships, 2026-07-08)
+next:     tui-sidebar-live ──► retire-proxy-chat-dev-umbrella   (14 — BINDING)
+later:    ┌─ record-plan-lineage (the RQ6 provenance rider, deferred out of the skeleton)
+          ├─ #33 daemon (a transport swap under the unchanged TUI — NOT a prerequisite; see 14)
           └─ durability hardening ────────── framed in 01, largely lands via #33 M2
 ```
+
+**`tui-harness-chat` LANDED 2026-07-08** (change 1 of doc 14): the TUI chat (plain
+`inflexa`) now talks to the harness conversation agent — one chat, at Cortex-managed
+parity. Shared turn engine (TUI + REPL), boot-state store + gate + animation, emit
+adapter over the harness contracts with plan/run-card blocks, `threadId := sessionId`,
+analysis-swap lock exchange, parity profile auto-trigger. Live-verified (PTY pass, exit
+0); 514 tests pass. Next: `tui-sidebar-live` (data-profile section + real runs).
+
+**Course correction (2026-07-08, user decision — BINDING):** the daemon-first staging
+(13 §4: skeleton → #33 M1/M2 → TUI as M3/M4) postponed the actual product goal and is
+superseded. The TUI chat ships NOW, embedded — one chat (the conversation agent; the
+proxy engine retires), Cortex-managed parity (profile → plan → execute → inspect), the
+sidebar wired to real profile/run data, boot behind an animation + input gate, and the
+`chat`/`profile`/`run` text commands demoted to a dev umbrella. The binding direction
+and change sequence live in `14-tui-chat-direction.md`.
 
 The Ordering-C walking skeleton (`13-sequencing-memo.md` §3) is **landed and archived**:
 `cli/openspec/changes/archive/2026-07-08-embed-conversation-agent/`. It adopts
@@ -46,12 +62,15 @@ It also took the #37 interim per-analysis lock across `run`/`profile`/`chat` and
 | Sandbox recovery wedge (leaked-container recv hang) | #41 (filed from 01 in this folder) | issue filed — observed live 2× |
 | Data-profile kill/resume verification | #28 | done — verified live 2026-07-07 (clean resume, `recovery_attempts` 1→2) |
 | Linux Docker ingress reachability | #27 | open; proposed bridge-gateway bind |
-| Daemon architecture (one runtime, many clients) | #33 | decided + milestoned (M1–M4) |
+| TUI chat = conversation agent (parity with Cortex managed) | `14-tui-chat-direction.md` change 1 (`tui-harness-chat`) | **LANDED + archived 2026-07-08**; live-verified (PTY, exit 0) |
+| Sidebar: data-profile section + real runs (mocks out) | `14-tui-chat-direction.md` change 2 (`tui-sidebar-live`) | **next up** |
+| Proxy-chat retirement + `dev` command umbrella | `14-tui-chat-direction.md` change 3 | queued behind change 2 |
+| Daemon architecture (one runtime, many clients) | #33 | decided + milestoned (M1–M4); demoted 2026-07-08 — a later transport swap, NOT a prerequisite (14) |
 | State ownership under the daemon | #36 | open; 4 decision areas with recommendations |
 | Provenance chain-fork (two recorders, one analysis) | #37 | open bug; structurally closed by #33 M2/M3 |
 | Plan-intake reframe (author/replay split) | #32 | stage 1 LANDED (docs-only inversion in embed-conversation-agent, 2026-07-08); `run.ts` trigger absorbed by #33 M2; `plan export` = post-M3 change |
-| Conversation-agent adoption | **02 in this folder** | skeleton LANDED + archived 2026-07-08 (`embed-conversation-agent`); artifacts 10–13 drove it; #33 M1/M2 next |
-| Plan-authorship provenance rider (plan entity + `threadId` + `SoftwareAgent` actor) | `record-plan-lineage` (unfiled successor) | deferred out of the skeleton per 13 §6; precedes #33 M1 |
+| Conversation-agent adoption | **02 in this folder** | skeleton LANDED + archived 2026-07-08 (`embed-conversation-agent`); artifacts 10–13 drove it; TUI integration next per 14 |
+| Plan-authorship provenance rider (plan entity + `threadId` + `SoftwareAgent` actor) | `record-plan-lineage` (unfiled successor) | deferred out of the skeleton per 13 §6; later — no longer sequenced before the TUI work (14) |
 | Chat-model boot probe gap (dead-but-Claude model passes the guard) | embed-conversation-agent `findings.md` F1 | surfaced live 2026-07-08; boot probes the embedder but not the chat model — candidate follow-up |
 | Tool-read lineage gap (`read_file` invisible to lineage) | `harness_integration-new/00-progress.md` §D2 findings | unfiled |
 | Tool-write lineage gap (`recordFileToolWrite` uncalled) | change E design D2 names it out-of-scope | unfiled |
@@ -194,9 +213,10 @@ The `embed-conversation-agent` change resolved these as its recommendations pred
 Still open (deferred deliberately, not decided here):
 
 - [ ] Plan-lineage provenance rider — **split into a `record-plan-lineage` successor**
-      (the D/D2/D3 precedent); precedes #33 M1. Not bundled into the skeleton.
-- [ ] Proxy-chat fate + existing SQLite chat history — decided at the TUI cutover
-      (#33 M3), not the skeleton (11 §3.5/§6).
+      (the D/D2/D3 precedent). Later — no longer sequenced before the TUI work (14).
+- [x] Proxy-chat fate — DECIDED 2026-07-08 (user, 14): retire the engine; one chat
+      (the conversation agent). SQLite chat history freezes legacy-readable; the
+      cutover is 14's change 1, deletion completes in change 3 — not #33 M3.
 - [ ] `templatesDir` packaging for an installed cli — same open question change C left
       for `skillsDir` (10 §7); recorded in the change's design, checkout-run supported.
 - [ ] Chat-model boot probe — findings F1; boot probes the embedder but not the chat

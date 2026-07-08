@@ -1,8 +1,7 @@
-# chat-view Specification
+# chat-view — Delta
 
-## Purpose
-The TUI conversation view: the hot-state store (`src/tui/hooks/conversation.ts`) holding the transcript, streaming signals, and turn lifecycle over the shared harness turn engine, and the `Chat` component rendering it. The transcript's source of truth is the pg conversation thread (see `tui-harness-chat`).
-## Requirements
+## MODIFIED Requirements
+
 ### Requirement: Conversation hot state lives in a dedicated store
 
 The chat's hot state SHALL live in a module singleton at `src/tui/hooks/conversation.ts` (mirroring
@@ -34,11 +33,6 @@ are not reachable in-app; the full history remains in the thread store.
 - **WHEN** the turn engine reports a failed turn (provider error, prepare failure)
 - **THEN** `errorMsg` carries an actionable message and `chatStatus` is `error`
 
-#### Scenario: Sidebar reads the message count from the store
-
-- **WHEN** the conversation gains or loses messages
-- **THEN** `messageCount()` reflects the new length and the `Sidebar` repaints from it
-
 #### Scenario: Initial load is capped to the most-recent window
 
 - **WHEN** `loadMessages` runs for a thread with more than 200 persisted messages
@@ -62,25 +56,6 @@ component SHALL live in `tui/` (not `tui/layout/`) and SHALL NOT be placed in `s
 - **WHEN** a turn fails
 - **THEN** the error banner renders the message and `chatStatus` is `error`
 
-### Requirement: Chat follows in-place session swaps reactively
-
-The `Chat` component SHALL load and reset its state by reacting to `workspace.sessionId` (a reactive `createStore` field) via a `createEffect` keyed on that id: on first run it loads the session's messages, and on a later change it aborts any in-flight request, resets the hot state, and loads the new session — replacing the imperative `onOpenSession` reset callback, which SHALL be removed from `WorkspaceInit` and `createWorkspace` in `src/tui/contexts/workspace.ts`. The `openSession` capability on the `Workspace` store SHALL remain the sole writer of the chat scope.
-
-#### Scenario: Swap reloads without restart
-
-- **WHEN** `workspace.openSession` swaps to a different session
-- **THEN** `Chat` reloads that session's messages in the same process and prior streaming/error state is cleared
-
-#### Scenario: In-flight request aborted on swap
-
-- **WHEN** a swap occurs while a response is streaming
-- **THEN** the in-flight turn is aborted before the new session loads
-
-#### Scenario: No imperative reset seam remains
-
-- **WHEN** the workspace scope is swapped
-- **THEN** the reset is driven by `Chat`'s reactive effect and `WorkspaceInit` no longer carries an `onOpenSession` callback
-
 ### Requirement: app.tsx composes the chat rather than owning it
 
 `src/tui/app.tsx` SHALL NOT declare the `messages` store, the streaming/error signals, the reducer,
@@ -98,4 +73,3 @@ delegate sending to `conversation.send`, pointing the abort keybinding at `conve
 
 - **WHEN** the abort keybinding fires while a turn is busy
 - **THEN** `conversation.abort()` aborts the in-flight turn
-

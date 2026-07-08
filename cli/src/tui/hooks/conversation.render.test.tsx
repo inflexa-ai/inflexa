@@ -3,22 +3,26 @@ import { For } from "solid-js";
 import { testRender } from "@opentui/solid";
 
 import { MessageBlock } from "../layout/message_block.tsx";
-import { applyBusEvent, messages, streamText, streamPartId, resetHotState } from "./conversation.ts";
-import type { BusEvent } from "../../types/events.ts";
+import { messages, send, streamText, streamPartId, resetHotState, type SendSeams } from "./conversation.ts";
+import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 
 // Render-level regression for "streamed text vanishes when the turn finishes" (the symptom: live
-// tokens show, then blank at idle). This class of bug only manifests under the real renderer's
-// scheduling — a store-only unit test passes even when broken — so it MUST drive testRender. It
-// exercises the exact engine pattern: ONE Part object reused across emits and mutated `.text`
-// out-of-band before the final emit (chat.ts). The store must own copies, or the finalized text
-// strands off-screen. The markdown parse is async, so we poll frames for the expected text.
+// tokens show, then blank at completion). This class of bug only manifests under the real renderer's
+// scheduling — a store-only unit test passes even when broken — so it MUST drive testRender. It now
+// exercises the harness path: `send` mints the assistant message + streaming text part, the adapter
+// accumulates deltas into `streamText`, and the ok outcome flushes a FRESH object into the store. The
+// markdown parse is async, so we poll frames for the expected text.
 const SID = "s1";
-const ev = (e: BusEvent): void => applyBusEvent(e, SID);
+const AID = "a1";
+
+// A stub runtime whose pool/provider are never dereferenced (the fake engine never touches them);
+// `createStreamingChat` reads only `provider.capabilities` at construction.
+const stubRuntime = { pool: {}, provider: { capabilities: { toolCalling: true } }, conversationAgent: {} } as unknown as HarnessRuntime;
 
 afterEach(() => resetHotState());
 
 describe("streamed assistant text survives finalization (rendered)", () => {
-    test("the reply is visible after session.status idle, not just mid-stream", async () => {
+    test("the reply is visible mid-stream and after the turn completes", async () => {
         resetHotState();
         const setup = await testRender(
             () => (
@@ -42,26 +46,28 @@ describe("streamed assistant text survives finalization (rendered)", () => {
             }
         };
         try {
-            ev({ type: "message.created", message: { id: "a1", sessionId: SID, role: "assistant", createdAt: 0 } });
-            // Same object reused across emits, exactly as the engine does.
-            const pa: { id: string; sessionId: string; messageId: string; type: "text"; text: string; createdAt: number } = {
-                id: "pa1",
-                sessionId: SID,
-                messageId: "a1",
-                type: "text",
-                text: "",
-                createdAt: 0,
+            // Hold the turn open so we can render mid-stream, then release it to finalize.
+            let releaseEngine!: () => void;
+            const gate = new Promise<void>((resolve) => {
+                releaseEngine = resolve;
+            });
+            const seams: SendSeams = {
+                runtime: () => stubRuntime,
+                runChatTurn: async (args) => {
+                    void args.emit({ type: "text-delta", text: "streamed reply" });
+                    await gate;
+                    return { kind: "ok", fallbackText: "" };
+                },
             };
-            ev({ type: "part.updated", part: pa });
-            ev({ type: "part.delta", sessionId: SID, messageId: "a1", partId: "pa1", delta: "streamed reply" });
+            const pending = send({ sessionId: SID, analysisId: AID, userText: "hello" }, seams);
 
             expect(await frameWith("streamed reply")).toContain("streamed reply"); // live streaming visible
 
-            pa.text = "streamed reply"; // out-of-band mutate (chat.ts persists via this object)
-            ev({ type: "part.updated", part: pa });
-            ev({ type: "session.status", sessionId: SID, status: "idle" });
+            releaseEngine();
+            await pending;
 
             expect(await frameWith("streamed reply")).toContain("streamed reply"); // STILL visible after finalize
+            expect(streamPartId()).toBeNull();
         } finally {
             setup.renderer.destroy();
         }
