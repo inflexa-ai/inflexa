@@ -5,10 +5,14 @@ import { warmGrammars } from "./grammars/register.ts";
 import { ensureProxyReadyOrExit } from "../modules/infra/setup.ts";
 import { resolveNewTarget, resolveResumeTarget, resolveDefaultTarget, type ChatTarget } from "../modules/analysis/launch.ts";
 import { acquireInstanceLock } from "../lib/lock.ts";
+import { fail } from "../lib/cli.ts";
 import type { ContextFlags } from "../modules/analysis/context.ts";
 import { readConfig } from "../lib/config.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import type { IdOrName } from "../lib/types.ts";
+import { resolveHarnessConfig } from "../modules/harness/config.ts";
+import { describeBootError, ensureSandboxImage } from "../modules/harness/profile.ts";
+import { startHarnessBoot } from "./hooks/boot.ts";
 import { App } from "./app.tsx";
 import { setTheme } from "./theme.ts";
 
@@ -25,6 +29,17 @@ import { setTheme } from "./theme.ts";
  */
 async function renderChat(target: ChatTarget): Promise<void> {
     await ensureProxyReadyOrExit();
+
+    // Harness pre-flight gates that need normal stdio — resolved once here and reused by the
+    // post-render boot below, so the model/image/policy are computed a single time. The config gate
+    // mirrors `inflexa profile`: a bad `harness` field must surface as its real problem, not a
+    // misleading downstream boot error (resolveHarnessConfig collapses every field to a default on a
+    // config error, so a later image check would inspect the wrong tag). `ensureSandboxImage` is
+    // INTERACTIVE (confirm/pull a multi-GB image), so its prompt has to run on normal stdio, before
+    // render() takes the terminal — never inside the alternate screen.
+    const cfg = resolveHarnessConfig();
+    if (cfg.configError) fail(describeBootError({ type: "harness_config_invalid", issues: cfg.configError.issues }));
+    await ensureSandboxImage(cfg.sandboxImage);
 
     // Claim the analysis before the alternate screen takes over, so a conflict surfaces as a plain
     // stderr line and a clean exit — no flash of TUI. Acquiring here (not in the headless resolvers)
@@ -55,6 +70,13 @@ async function renderChat(target: ChatTarget): Promise<void> {
     // an error — running this post-render keeps that log inside the TUI console overlay instead of over
     // the launch/picker output, and warmGrammars swallows the failure so it never breaks startup.
     void warmGrammars();
+
+    // Boot the embedded harness runtime AFTER render() has the terminal (fire-and-forget, the same
+    // territory as warmGrammars): boot is the longest phase (Postgres, DBOS, the composition root),
+    // so it runs async behind the boot animation with the input gated — hooks/boot.ts drives the
+    // boot-state store the App reads. Reached ONLY from renderChat: the passive
+    // bare-`inflexa`-resolves-to-nothing path returns before renderChat and boots nothing (no-litter).
+    void startHarnessBoot(cfg);
 }
 
 /** `inflexa new [name] [paths...]` — create an analysis (anchor = cwd) and open its chat. */

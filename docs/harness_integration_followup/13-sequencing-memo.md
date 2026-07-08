@@ -11,6 +11,15 @@ Grounded in artifacts 10–12; the RQ6 provenance constraints are folded in (§5
 > line 388 shift by −7 there (a removed `TODO(robustness)` block); nothing else this
 > memo cites changed. #41 replaces "file the wedge issue" wherever 01 §5 is referenced.
 
+> **SUPERSEDED IN PART (2026-07-08, user decision — see `14-tui-chat-direction.md`):**
+> the daemon-first staging this memo recommends (§2 Ordering C's "then M1/M2, then
+> adoption's product surface as M3+M4", and §4's sequence) is overridden — the TUI
+> chat ships now, embedded, with #33 demoted to a later transport swap. What survives:
+> the §1 portability decomposition (the reason the embedded build is safe), the landed
+> skeleton (§3), and §5's provenance constraints. Ordering B's rejection no longer
+> stands as written: its costs are now explicitly accepted trade-offs (14 §"Accepted
+> trade-offs"), with the boot cost handled as UX (animation + input gate), not avoided.
+
 ---
 
 ## 1. What "adoption" decomposes into (portability analysis)

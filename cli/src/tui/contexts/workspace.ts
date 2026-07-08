@@ -3,8 +3,10 @@ import { createStore } from "solid-js/store";
 import type { JSX } from "solid-js";
 
 import { projectForAnalysis } from "../../modules/project/project.ts";
-import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
+import { acquireInstanceLock, releaseInstanceLock, type LockOutcome } from "../../lib/lock.ts";
+import { abort as abortConversationTurn } from "../hooks/conversation.ts";
 import { notify } from "../hooks/notice.ts";
+import type { Notice } from "../theme.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { Project } from "../../types/project.ts";
 
@@ -52,6 +54,30 @@ export type WorkspaceInit = {
 };
 
 /**
+ * The effectful edges {@link openSession}'s swap decision drives, injectable so the swap-decision
+ * tests run offline (no lock files, no second process, no live turn) — the same seam pattern the boot
+ * store and the send path use. Production callers omit it and get the real per-analysis instance lock,
+ * the conversation abort, and the notice channel.
+ */
+export type WorkspaceSeams = {
+    /** Claim the target analysis's instance lock (real: {@link acquireInstanceLock}). */
+    readonly acquireLock: (key: string) => LockOutcome;
+    /** Release an analysis's instance lock (real: {@link releaseInstanceLock}). */
+    readonly releaseLock: (key: string) => void;
+    /** Abort any in-flight chat turn (real: `abort` from `hooks/conversation.ts`). */
+    readonly abortTurn: () => void;
+    /** Raise a transient toast (real: {@link notify}). */
+    readonly notify: (notice: Notice) => void;
+};
+
+const realWorkspaceSeams: WorkspaceSeams = {
+    acquireLock: acquireInstanceLock,
+    releaseLock: releaseInstanceLock,
+    abortTurn: abortConversationTurn,
+    notify,
+};
+
+/**
  * Build the workspace store. The store lives HERE, not in `app.tsx`, because the context owns its
  * reactivity: a Solid context only transports a value down the tree — it is NOT itself reactive, so
  * for the sidebar/status bar to repaint on an in-place swap the value must be a reactive primitive.
@@ -59,9 +85,9 @@ export type WorkspaceInit = {
  * is the mechanism. `openSession` is the SOLE writer of the scope: it sets the four data fields
  * (project re-resolved from the new analysis). The chat hot state is reset reactively by the `Chat`
  * component watching `sessionId`, not by a host callback here. The capability fields are never
- * written through the store.
+ * written through the store. `seams` is injected only by tests.
  */
-export function createWorkspace(init: WorkspaceInit): Workspace {
+export function createWorkspace(init: WorkspaceInit, seams: WorkspaceSeams = realWorkspaceSeams): Workspace {
     const [store, setStore] = createStore<Workspace>({
         analysis: init.analysis,
         sessionId: init.sessionId,
@@ -79,13 +105,23 @@ export function createWorkspace(init: WorkspaceInit): Workspace {
             const prev = store.analysis;
             // A same-analysis session switch (prev.id === analysis.id) needs no re-key — we already
             // hold this analysis's lock (acquire would re-entrantly succeed, release would drop the
-            // lock we still want), so skip it entirely and just swap the session.
+            // lock we still want), so skip the exchange entirely and just swap the session. The abort
+            // for that case is handled reactively by the Chat effect on `sessionId` (resetHotState).
             if (!prev || prev.id !== analysis.id) {
-                if (!acquireInstanceLock(analysis.id).acquired) {
-                    notify({ kind: "warn", text: `"${analysis.name}" is already open in another instance.` });
-                    return; // keep the current analysis open and its lock held; abort the swap
+                const outcome = seams.acquireLock(analysis.id);
+                if (!outcome.acquired) {
+                    // Refused: the target is live in another process. Name the holder pid so the notice
+                    // is actionable, and abort the swap whole — the current scope and its lock are
+                    // untouched (no partial state), matching the analysis-swap-refusal spec scenario.
+                    seams.notify({ kind: "warn", text: `"${analysis.name}" is already open in another instance (pid ${outcome.holderPid}).` });
+                    return;
                 }
-                if (prev) releaseInstanceLock(prev.id);
+                // Abort any in-flight turn BEFORE releasing the old analysis's lock, so no turn keeps
+                // running against an analysis this instance is about to stop holding. The reactive Chat
+                // reset (on the `sessionId` change below) re-aborts and reloads — this only fixes the
+                // ordering (abort → release → swap) that the reactive path alone can't guarantee.
+                seams.abortTurn();
+                if (prev) seams.releaseLock(prev.id);
             }
             setStore({ analysis, sessionId, workingDir, project: projectForAnalysis(analysis) });
         },

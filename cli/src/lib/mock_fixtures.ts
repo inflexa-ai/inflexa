@@ -8,7 +8,7 @@
 // Ids are literal `mock-*` sentinels (not `randomUUIDv7()`) precisely so a reader
 // can tell at a glance that a value is fixture data, never a real row.
 
-import type { TextPart, ThinkingPart, ToolCallPart, FileEditPart } from "../types/session.ts";
+import type { TextPart, ThinkingPart, ToolCallPart, FileEditPart, PlanCardPart, RunCardPart } from "../types/session.ts";
 
 /** A run step's lifecycle state. */
 export type StepState = "done" | "running" | "queued";
@@ -114,6 +114,28 @@ export const mockFileEdit: FileEditPart = {
     added: 2,
     removed: 1,
     createdAt: 0,
+};
+
+/** MOCK sample: a drafted plan card (as the harness emit adapter would mint it). */
+export const mockPlanCard: PlanCardPart = {
+    id: "mock-plan-card",
+    type: "plan-card",
+    planId: "plan-8f21",
+    title: "Differential expression across conditions",
+    steps: [
+        { id: "s1", name: "QC & normalize counts", agent: "rna-preprocess" },
+        { id: "s2", name: "Fit DE model", agent: "deseq2" },
+        { id: "s3", name: "Pathway enrichment on DE genes", agent: "pathway" },
+    ],
+};
+
+/** MOCK sample: a launched run card (identity + step count; no live status field, per the contract). */
+export const mockRunCard: RunCardPart = {
+    id: "mock-run-card",
+    type: "run-card",
+    runId: "run-3c07",
+    title: "Differential expression across conditions",
+    stepCount: 3,
 };
 
 /** MOCK sample: a live run with a mix of step states. */

@@ -7,6 +7,7 @@ import { shutdown } from "../lib/shutdown.ts";
 import { writeClipboard } from "../lib/clipboard.ts";
 import { theme, themeVariant, noticeColor, type Notice } from "./theme.ts";
 import { chatStatus } from "./hooks/status.ts";
+import { bootState } from "./hooks/boot.ts";
 import * as conversation from "./hooks/conversation.ts";
 import { currentNotice, notify } from "./hooks/notice.ts";
 import { commands } from "./commands.tsx";
@@ -15,10 +16,12 @@ import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./componen
 import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, leaderSeq, KEYS } from "./keymap.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { Chat } from "./components/chat.tsx";
+import { BootIndicator } from "./components/boot_indicator.tsx";
 import { ChatBar } from "./layout/chat_bar.tsx";
 import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
 import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
+import { watchProfileParity } from "./hooks/profile_parity.ts";
 import type { Analysis } from "../types/analysis.ts";
 
 type AppProps = {
@@ -62,6 +65,11 @@ export function App(props: AppProps) {
         quit,
     });
     /* eslint-enable solid/reactivity */
+
+    // Auto-trigger the data profile at parity (design D8): fires once boot is `ready` and again on an
+    // in-place analysis swap, fire-and-forget, mapping the outcome to a notice. An app-level reactive
+    // hook so the boot/analysis watch runs under App's reactive owner; never fires before `ready`.
+    watchProfileParity(workspace);
 
     // The single root keyboard handler that drives the keymap engine. Every binding below is a
     // declarative layer; the dispatcher picks the winner — no hand-branched if/else here.
@@ -207,6 +215,7 @@ export function App(props: AppProps) {
         if (text.startsWith("/")) {
             const name = text.slice(1).split(/\s+/)[0]?.toLowerCase();
             if (name && QUIT_ALIASES.has(name)) {
+                // A non-empty `text` was read off `textareaRef.editBuffer` above, so the ref is mounted.
                 textareaRef!.setText("");
                 if (chatStatus() === "busy") {
                     conversation.abort();
@@ -220,19 +229,46 @@ export function App(props: AppProps) {
         }
 
         if (chatStatus() === "busy") return;
+        // Gate normal turns behind a ready runtime: before boot completes there is no conversation
+        // agent to drive, so a submit is a no-op (return BEFORE clearing the buffer so a message typed
+        // while booting survives to send once ready). The boot animation + gated input affordance
+        // already tell the user why. Quit still works — the three-way ctrl+c chord and the /quit alias
+        // above both bypass this gate.
+        if (bootState().phase !== "ready") return;
+        // A ready runtime is always analysis-scoped (boot only fires for an analysis chat), so this
+        // guards an unreachable state rather than crashing on `analysis!.id`. Refuse the turn with an
+        // error banner and keep the typed text (return before clearing the buffer).
+        const analysis = workspace.analysis;
+        if (!analysis) {
+            conversation.setError("No analysis is open — cannot start a turn.");
+            return;
+        }
+        // A non-empty `text` was read off `textareaRef.editBuffer` above, so the ref is mounted.
         textareaRef!.setText("");
 
-        // The conversation store owns the request lifecycle (the AbortController + the chat() call);
-        // its bus events drive the stream, so App only hands off the user text.
-        await conversation.send({ sessionId: workspace.sessionId, userText: text });
+        // The conversation store owns the request lifecycle (the turn-scoped AbortController + the
+        // shared turn engine); the harness emit adapter writes the stream, so App only hands off the text.
+        await conversation.send({ sessionId: workspace.sessionId, analysisId: analysis.id, userText: text });
     }
 
-    const statusState = (): { text: string; tone: "success" | "warn" | "error" } =>
-        chatStatus() === "busy"
+    // The failed message the boot gate surfaces in the chat column; `undefined` while merely booting.
+    const bootFailureMessage = (): string | undefined => {
+        const boot = bootState();
+        return boot.phase === "failed" ? boot.message : undefined;
+    };
+
+    const statusState = (): { text: string; tone: "success" | "warn" | "error" } => {
+        const boot = bootState();
+        if (boot.phase === "failed") return { text: `${GLYPHS.cross} boot failed`, tone: "error" };
+        // Until the runtime is ready (idle before the boot fires, or booting), no turn can run — show
+        // the boot state rather than a misleading "ready". Once ready, the turn-scoped status wins.
+        if (boot.phase !== "ready") return { text: `${GLYPHS.circleHalf} booting${GLYPHS.ellipsis}`, tone: "warn" };
+        return chatStatus() === "busy"
             ? { text: `${GLYPHS.circleHalf} thinking${GLYPHS.ellipsis}`, tone: "warn" }
             : chatStatus() === "error"
               ? { text: `${GLYPHS.cross} error`, tone: "error" }
               : { text: `${GLYPHS.circle} ready`, tone: "success" };
+    };
 
     return (
         <WorkspaceContext.Provider value={workspace}>
@@ -252,8 +288,21 @@ export function App(props: AppProps) {
                         {/* The live conversation: stream + error banner, all state in hooks/conversation.ts */}
                         <Chat onScrollPaneRef={(r: ScrollBoxRenderable) => (scrollPaneRef = r)} />
 
-                        {/* Input area */}
+                        {/* Boot animation / failed-boot message, shown until the runtime is ready. A
+                        full-width box painted with the app background and flexShrink={0}: it sits
+                        directly below the Chat stream's flexGrow scrollbox, so it must opaquely reclaim
+                        its rows (the documented 1-cell scrollbox bleed) and keep them on a short
+                        terminal — the Chat stream yields the squeeze instead. paddingLeft aligns it with
+                        the stream content. */}
+                        <Show when={bootState().phase === "booting" || bootState().phase === "failed"}>
+                            <box width="100%" flexShrink={0} backgroundColor={theme().bg} paddingLeft={1} paddingRight={1}>
+                                <BootIndicator message={bootFailureMessage()} />
+                            </box>
+                        </Show>
+
+                        {/* Input area — gated (submits refused, gate shown in the affordance) until boot is ready. */}
                         <ChatBar
+                            gated={bootState().phase !== "ready"}
                             onTextareaRef={(r: TextareaRenderable) => {
                                 textareaRef = r;
                                 queueMicrotask(() => r.focus());

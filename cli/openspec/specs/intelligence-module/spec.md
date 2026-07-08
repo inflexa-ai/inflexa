@@ -1,7 +1,7 @@
 # intelligence-module Specification
 
 ## Purpose
-TBD - created by archiving change intelligence-module. Update Purpose after archive.
+The legacy proxy-chat slice at `src/modules/intelligence/`: the SQLite-backed model-streaming `chat()` engine (no remaining TUI caller — the TUI chat drives the harness conversation agent, see `tui-harness-chat`), the `inflexa sessions` command, and the proxy helpers the harness boot consumes (`readApiKey`/`resolveModelId`/`pickDefaultModel`). Pending retirement/relocation by the dev-umbrella demotion change.
 ## Requirements
 ### Requirement: AI interaction is owned by the intelligence module
 
@@ -39,13 +39,23 @@ The `src/modules/intelligence/` module SHALL contain no `.tsx` files and SHALL N
 
 ### Requirement: Presentation and CLI import the engine from intelligence
 
-The chat UI and the CLI registry SHALL reference the engine at its new home. `src/tui/app.tsx` SHALL import `chat` from `../modules/intelligence/chat.ts`, and `src/cli/index.ts` SHALL lazy-import `listSessions` from `../modules/intelligence/sessions.ts`. No importer SHALL reference the old `modules/session/` path.
+The TUI SHALL NOT import the proxy chat engine: `src/tui/` contains no import of `chat` from
+`src/modules/intelligence/chat.ts` (the TUI conversation drives the shared harness turn engine
+instead — see `tui-harness-chat`). The engine and its SQLite persistence remain in place as a legacy
+surface (its boot-consumed helpers `readApiKey`/`resolveModelId` keep their current importers), and
+`src/cli/index.ts` SHALL keep lazy-importing `listSessions` from
+`src/modules/intelligence/sessions.ts`. The engine's retirement/relocation is the follow-up
+demotion change, not this one.
 
-#### Scenario: Importers point at the new path
+#### Scenario: The TUI does not reach the proxy engine
 
-- **WHEN** the project is type-checked after the change
-- **THEN** `src/tui/app.tsx` and `src/cli/index.ts` resolve their imports from `src/modules/intelligence/`
-- **AND** a search for `modules/session/` across `src/` returns no matches
+- **WHEN** `src/tui/` is searched for imports of the intelligence chat engine
+- **THEN** no file imports `chat` from `modules/intelligence/chat.ts`
+
+#### Scenario: Sessions command unchanged
+
+- **WHEN** the `sessions` CLI command action runs
+- **THEN** it loads `listSessions` from `src/modules/intelligence/sessions.ts` and lists saved sessions unchanged
 
 ### Requirement: Assistant part is broadcast before streaming
 

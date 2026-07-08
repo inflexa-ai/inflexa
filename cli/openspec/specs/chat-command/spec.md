@@ -1,27 +1,28 @@
 # chat-command Specification
 
 ## Purpose
-The `inflexa chat <analysis>` command — a deliberately temporary walking-skeleton dev surface (a clack/stdout REPL, not a TUI) that converses with the harness conversation agent scoped to a resolved analysis. It exercises the whole embedded conversational loop (`assembleCoreRuntime` → `prepareChatTurn` → `runAgent` → `appendTurn`) end-to-end before a real client exists; its named replacement is the daemon chat engine + TUI client (#33 M3/M4), at which point this capability is cleared. Lives in `src/modules/harness/chat.ts` (+ `chat_printer.ts`).
+The `inflexa chat <analysis>` command — a dev/E2E surface (a clack/stdout REPL, not a TUI) that converses with the harness conversation agent scoped to a resolved analysis, exercising the whole embedded conversational loop headlessly. Its product replacement is the TUI chat (capability `tui-harness-chat`, landed); the REPL remains for exercising the harness loop without a TUI, pending demotion under a dev umbrella (excluded from production builds) by a follow-up change. Both surfaces drive the same shared turn engine (`src/modules/harness/turn.ts`). Lives in `src/modules/harness/chat.ts` (+ `chat_printer.ts`).
 
 ## Requirements
 
 ### Requirement: Chat is a deliberate, temporary walking-skeleton surface
 
-The system SHALL provide a dedicated `inflexa chat <analysis>` command — a clack/stdout
-REPL, not a TUI surface — that converses with the harness conversation agent scoped to
-a resolved analysis. The command module SHALL carry a `TODO(extend)` comment block
-stating its clearing contract: it is a deliberately temporary dev surface whose named
-replacement is the daemon chat engine and TUI client (#33 M3/M4), and this capability
-is the spec-level record to clear when that replacement lands. No passive flow (bare
-`inflexa` launch, TUI startup) SHALL boot the runtime or start a chat. The command
-SHALL run the same pre-flight prerequisite gates as the run/profile launches before
-booting, and SHALL acquire the per-analysis instance lock (see `analysis-lock`) after
+The system SHALL provide a dedicated `inflexa chat <analysis>` command — a clack/stdout REPL, not a
+TUI surface — that converses with the harness conversation agent scoped to a resolved analysis. The
+command module SHALL carry a `TODO(extend)` comment block stating its clearing contract: its product
+replacement is the TUI chat (capability `tui-harness-chat`, landed by change `tui-harness-chat`);
+the command remains a dev/E2E surface for exercising the harness loop without a TUI, to be gated
+under a dev umbrella (excluded from production builds) by the follow-up demotion change, at which
+point this capability records that status. No passive flow SHALL boot the runtime or start a chat —
+deliberate boot actions are this command, the profile/run commands, and opening an analysis chat in
+the TUI (see `tui-harness-chat`). The command SHALL run the same pre-flight prerequisite gates as
+the run/profile launches before booting, and SHALL acquire the per-analysis instance lock after
 resolution and before boot.
 
-#### Scenario: The temporary surface is marked in code
+#### Scenario: The dev surface is marked in code
 
 - **WHEN** the chat command module is inspected
-- **THEN** it carries a `TODO(extend)` block naming #33 M3 as the replacement and this capability as the record to clear
+- **THEN** it carries a `TODO(extend)` block naming the TUI chat as the product replacement and the dev-umbrella demotion as its pending disposition
 
 #### Scenario: Failed prerequisite is reported before side effects
 
@@ -35,14 +36,15 @@ resolution and before boot.
 
 ### Requirement: The turn loop runs through the harness app-fn seam
 
-Each turn SHALL be exactly the harness's transport-free sequence: `prepareChatTurn`
-(ownership check, title seed, analysis-status load, message assembly) → `runAgent` with
-the assembled conversation agent, the booted runtime's provider, a turn-scoped abort
-signal, the command's emit sink, and the pass-through run step → `appendTurn` persisting
-`[userMessage, ...loopOutput]` to the pg thread store. The agent session SHALL carry the
-thread id in scope, so a plan executed from chat stamps `cortex_runs.thread_id`. The cli
-SHALL NOT import the DBOS SDK or issue raw SQL against harness-owned tables anywhere in
-the chat path.
+Each turn SHALL be exactly the harness's transport-free sequence: `prepareChatTurn` (ownership
+check, title seed, analysis-status load, message assembly) → `runAgent` with the assembled
+conversation agent, the booted runtime's provider, a turn-scoped abort signal, the surface's emit
+sink, and the pass-through run step → `appendTurn` persisting `[userMessage, ...loopOutput]` to the
+pg thread store. This sequence SHALL live in ONE shared turn-engine module consumed by both this
+REPL and the TUI chat — the REPL SHALL NOT carry its own copy of the turn body. The agent session
+SHALL carry the thread id in scope, so a plan executed from chat stamps `cortex_runs.thread_id`. The
+cli SHALL NOT import the DBOS SDK or issue raw SQL against harness-owned tables anywhere in the chat
+path.
 
 #### Scenario: A turn round-trips the thread machinery
 
@@ -53,6 +55,11 @@ the chat path.
 
 - **WHEN** the agent executes an approved plan during a chat
 - **THEN** the resulting run row's `thread_id` equals the chat's thread id
+
+#### Scenario: One turn engine serves both surfaces
+
+- **WHEN** the REPL and the TUI each run a turn
+- **THEN** both drive the same exported turn-engine function; neither carries a private prepare→run→append sequence
 
 ### Requirement: Thread selection is new-by-default with explicit resume
 

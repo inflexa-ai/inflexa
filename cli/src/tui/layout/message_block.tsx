@@ -6,6 +6,8 @@ import { space, GLYPHS, MARKERS } from "../../lib/design_system.ts";
 import { ThinkingBlock } from "../components/thinking_block.tsx";
 import { ToolBlock } from "../components/tool_block.tsx";
 import { DiffBlock } from "../components/diff_block.tsx";
+import { PlanCardBlock } from "../components/plan_card_block.tsx";
+import { RunCardBlock } from "../components/run_card_block.tsx";
 import { Bold, Fg } from "../components/emphasis.tsx";
 import type { Part } from "../../types/session.ts";
 
@@ -20,7 +22,7 @@ export type MessageBlockProps = {
     role: MessageRole;
     /** Assistant-only turn duration in ms; shown beside the number. Omitted on user turns and before the turn finishes. */
     durationMs?: number;
-    /** The turn's parts (text, plus the mock thinking/tool/file-edit kinds). */
+    /** The turn's parts (text, tool-call, plan-card, run-card, plus the mock thinking/file-edit kinds). */
     parts: Part[];
     /** The part id currently streaming, or null — read reactively. */
     streamPartId: Accessor<string | null>;
@@ -78,9 +80,22 @@ export function MessageBlock(props: MessageBlockProps) {
                         case "thinking":
                             return <ThinkingBlock text={part.text} durationMs={part.durationMs} />;
                         case "tool-call":
-                            return <ToolBlock name={part.name} target={part.target} result={part.result} filetype={part.filetype} status={part.status} />;
+                            return (
+                                <ToolBlock
+                                    name={part.name}
+                                    target={part.target}
+                                    result={part.result}
+                                    filetype={part.filetype}
+                                    status={part.status}
+                                    durationMs={part.durationMs}
+                                />
+                            );
                         case "file-edit":
                             return <DiffBlock path={part.path} diff={part.diff} added={part.added} removed={part.removed} />;
+                        case "plan-card":
+                            return <PlanCardBlock planId={part.planId} title={part.title} steps={part.steps} />;
+                        case "run-card":
+                            return <RunCardBlock runId={part.runId} title={part.title} stepCount={part.stepCount} />;
                         default: {
                             // Exhaustive: a new Part kind without a case fails the build here.
                             const _exhaustive: never = part;

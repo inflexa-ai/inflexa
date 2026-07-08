@@ -50,12 +50,13 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
             };
         case "part.updated":
             return {
-                sessionId: event.part.sessionId,
-                messageId: event.part.messageId,
+                // The live proxy bus only ever emits persisted text parts (which carry these), but the
+                // Part union now includes UI-only card kinds without `sessionId`/`messageId`/`text`, so
+                // narrow before reading each. `id`/`type` are on every Part.
+                sessionId: "sessionId" in event.part ? event.part.sessionId : undefined,
+                messageId: "messageId" in event.part ? event.part.messageId : undefined,
                 partId: event.part.id,
                 partType: event.part.type,
-                // Only text/thinking parts carry `text`; the live bus only ever emits text parts,
-                // but the Part union now includes mock kinds without it, so narrow before reading.
                 textLength: "text" in event.part ? event.part.text.length : undefined,
             };
         case "part.delta":

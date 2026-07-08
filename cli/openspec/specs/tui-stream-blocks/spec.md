@@ -35,12 +35,32 @@ Each block SHALL map to a single built-in opentui renderable (no custom drawing)
 
 ### Requirement: Message block renders all part kinds exhaustively
 
-`MessageBlock` SHALL render an assistant turn's parts by switching on the part discriminant (`part.type`) for each kind in the extended `Part` union (text, thinking, tool-call, file-edit), delegating to the matching block renderer. The switch SHALL have a `never`-typed default branch so that adding a new part kind without a renderer fails compilation.
+`MessageBlock` SHALL render an assistant turn's parts by switching on the part discriminant
+(`part.type`) for each kind in the extended `Part` union — text, thinking, tool-call, file-edit,
+plan-card, run-card — delegating to the matching block renderer. The harness-sourced kinds render
+live data: the tool-call block renders real tool activity (name, running/finished/error outcome,
+duration), the plan-card block renders plan id, title, and per-step lines, and the run-card block
+renders run id, title, and step count (the fields the harness contract carries — it has no
+run-status field). Card parts carry only primitive fields extracted at receipt, never harness
+objects. A conversation part with no dedicated renderer SHALL render a one-line tagged mention
+(observed, not silently swallowed). The switch SHALL have a `never`-typed default branch so that
+adding a new part kind without a renderer fails compilation. New block visuals SHALL enter the
+design gallery.
 
 #### Scenario: Each part kind renders its block
 
-- **WHEN** a message contains a text, thinking, tool-call, or file-edit part
-- **THEN** `MessageBlock` renders the corresponding block (markdown / thinking / tool-call / diff)
+- **WHEN** a message contains a text, thinking, tool-call, file-edit, plan-card, or run-card part
+- **THEN** `MessageBlock` renders the corresponding block
+
+#### Scenario: Live tool activity renders as a block
+
+- **WHEN** the agent runs a tool during a turn
+- **THEN** the stream shows the tool block with the tool's name while running and its outcome (with duration) when finished
+
+#### Scenario: A plan part renders readably
+
+- **WHEN** the agent presents a plan
+- **THEN** the stream renders the plan's id, title, and per-step lines in the plan-card block
 
 #### Scenario: Unhandled part kind breaks the build
 

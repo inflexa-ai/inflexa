@@ -71,6 +71,22 @@ function eventSource(event: Parameters<EmitFn>[0]): EventSource | undefined {
     return "source" in event && event.source ? event.source : undefined;
 }
 
+/**
+ * True when `event` originates from a SUB-AGENT loop (planner, literature
+ * reviewer) — its `source.callPath` is deeper than the top-level agent — so the
+ * transcript drops it (the same depth filter the managed SSE route applies). The
+ * top-level chat agent's `callPath` has length 1; anything longer is sub-agent
+ * traffic. Events without a `source` (stream text deltas) are never sub-agent, so
+ * they always pass. Exported so the TUI adapter shares this exact ruleset instead
+ * of re-deriving it (design D3). `callPath` is external/loop-owned, so it is
+ * guarded with `Array.isArray` (matching every other untrusted read here) — a
+ * malformed source lacking the array is treated as top-level rather than throwing.
+ */
+export function isSubAgentEvent(event: Parameters<EmitFn>[0]): boolean {
+    const src = eventSource(event);
+    return src !== undefined && Array.isArray(src.callPath) && src.callPath.length > 1;
+}
+
 /** ms as a compact human string for the tool-chip completion line. */
 function formatMs(ms: number): string {
     return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
@@ -81,8 +97,10 @@ function formatMs(ms: number): string {
  * payload is the harness's `PlanCardData` (flat: `{id, planId, title?, steps}`),
  * but `ChatDataPart.data` is typed `unknown`, so this narrows defensively and
  * copies every field it keeps — no reference to `data` survives the call.
+ * Exported so the TUI adapter extracts card fields with this exact reader rather
+ * than duplicating the coercion (design D3).
  */
-function readPlanCard(data: unknown): { planId: string; title: string; steps: { id: string; name: string; agent: string }[] } {
+export function readPlanCard(data: unknown): { planId: string; title: string; steps: { id: string; name: string; agent: string }[] } {
     // `data` is external/loop-owned; treat it as a loose record and pull only
     // what renders, coercing missing/mistyped fields to empty rather than throwing.
     const d = (data ?? {}) as Record<string, unknown>;
@@ -109,8 +127,10 @@ function readPlanCard(data: unknown): { planId: string; title: string; steps: { 
  * harness's `RunCardData`). Note the contract carries NO run status field
  * (design D5 says "runId + status", but `RunCardData`/`RunCardPart` expose
  * `{runId, planId, title, stepCount}`), so this renders identity + step count.
+ * Exported alongside {@link readPlanCard} so the TUI adapter shares the reader
+ * (design D3).
  */
-function readRunCard(data: unknown): { runId: string; title: string; stepCount: number } {
+export function readRunCard(data: unknown): { runId: string; title: string; stepCount: number } {
     // `data` is external/loop-owned; cast to a loose record and read-and-coerce
     // every field (missing/mistyped → empty), never trusting the shape.
     const d = (data ?? {}) as Record<string, unknown>;
@@ -133,12 +153,9 @@ export function createChatPrinter(sink: ChatSink): ChatPrinter {
     const openTools = new Map<string, { name: string; startedAt: number }>();
 
     const emit: EmitFn = (event) => {
-        // Rule 2: sub-agent traffic stays out of the transcript. `callPath` is
-        // typed as an array, but this data is external/loop-owned, so guard with
-        // `Array.isArray` (matching every other untrusted read below) — a malformed
-        // source lacking the array falls through as top-level rather than throwing.
-        const src = eventSource(event);
-        if (src && Array.isArray(src.callPath) && src.callPath.length > 1) return;
+        // Rule 2: sub-agent traffic (planner, literature reviewer) stays out of the
+        // transcript — the shared depth filter, so the TUI adapter drops the same set.
+        if (isSubAgentEvent(event)) return;
 
         switch (event.type) {
             case "text-delta":

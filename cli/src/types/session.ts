@@ -42,8 +42,11 @@ export type ThinkingPart = {
 };
 
 /**
- * MOCK part: a tool/verb invocation and its result. Not produced by the live
- * engine and not persisted — drives the "tool call" stream state from fixtures.
+ * A tool/verb invocation and its outcome. The harness emit adapter mints this
+ * from live `tool-started`/`tool-finished` events (name + status + duration);
+ * the fixture-driven gallery also fills `target`/`result`/`filetype` to show the
+ * richer result panel. Those three are OPTIONAL because live harness tool events
+ * carry no target/result/filetype — only the name, outcome, and timing.
  */
 export type ToolCallPart = {
     id: string;
@@ -52,15 +55,49 @@ export type ToolCallPart = {
     type: "tool-call";
     /** Tool/verb name, e.g. `read_file`. */
     name: string;
-    /** What the tool acted on, e.g. a file path with a line range. */
-    target: string;
-    /** The tool's textual result/output, rendered in a `<code>` block. */
-    result: string;
-    /** Source filetype for syntax highlighting of `result` (e.g. `ts`). */
-    filetype: string;
-    /** Lifecycle of the call. */
+    /** What the tool acted on, e.g. a file path with a line range. Absent for live harness tool events. */
+    target?: string;
+    /** The tool's textual result/output, rendered in a `<code>` block. Absent for live harness tool events. */
+    result?: string;
+    /** Source filetype for syntax highlighting of `result` (e.g. `ts`). Absent for live harness tool events. */
+    filetype?: string;
+    /** Lifecycle of the call — `running` on start, `ok`/`error` on finish. */
     status: "running" | "ok" | "error";
+    /** Wall-clock duration in ms, stamped when the call finishes; absent while running. */
+    durationMs?: number;
     createdAt: number;
+};
+
+/**
+ * A drafted analysis plan the conversation agent presented. Carries ONLY the
+ * primitive fields the harness `readPlanCard` reader extracts — never a harness
+ * object — so nothing mutable from the in-process emit stream reaches the store.
+ */
+export type PlanCardPart = {
+    id: string;
+    type: "plan-card";
+    /** The stored plan's id. */
+    planId: string;
+    /** Plan title (empty when the harness card carried none). */
+    title: string;
+    /** Ordered plan steps, each a flat primitive triple. */
+    steps: { id: string; name: string; agent: string }[];
+};
+
+/**
+ * A launched run the conversation agent started from an approved plan. Primitive
+ * fields only (via `readRunCard`). The harness run-card contract carries no live
+ * run-status field, so this holds identity + step count only.
+ */
+export type RunCardPart = {
+    id: string;
+    type: "run-card";
+    /** The launched run's id (stamped with the chat thread id in `cortex_runs`). */
+    runId: string;
+    /** Run title (empty when the harness card carried none). */
+    title: string;
+    /** How many steps the launched plan holds. */
+    stepCount: number;
 };
 
 /**
@@ -84,11 +121,13 @@ export type FileEditPart = {
 };
 
 /**
- * A message part. `TextPart` is the only kind the live engine produces or
- * persists; the remaining kinds are MOCK (fixture-driven) so the stream can
- * render every design-system state. Discriminated on `type`.
+ * A message part. `TextPart` is the only kind persisted to SQLite; `tool-call`,
+ * `plan-card`, and `run-card` are produced live by the harness emit adapter (and
+ * reconstructed on transcript reload); `thinking`/`file-edit` remain MOCK
+ * (fixture-driven) so the gallery can render every design-system state.
+ * Discriminated on `type`.
  */
-export type Part = TextPart | ThinkingPart | ToolCallPart | FileEditPart;
+export type Part = TextPart | ThinkingPart | ToolCallPart | FileEditPart | PlanCardPart | RunCardPart;
 
 export type StoredMessage = {
     info: Message;
