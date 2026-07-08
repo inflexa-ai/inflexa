@@ -12,7 +12,7 @@ import { chatStatus } from "./hooks/status.ts";
 import { bootState, harnessRuntime } from "./hooks/boot.ts";
 import * as conversation from "./hooks/conversation.ts";
 import { currentNotice, notify } from "./hooks/notice.ts";
-import { profileSnapshot, runsSnapshot, watchSidebarData, type ProfileSnapshot } from "./hooks/sidebar_live.ts";
+import { profileSnapshot, runsSnapshot, watchSidebarData, profileDetailLines } from "./hooks/sidebar_live.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
@@ -34,61 +34,6 @@ type AppProps = {
     workingDir: string;
     analysis: Analysis;
 };
-
-/** Relative age of an ISO timestamp, or the raw string when unparseable — the details view never shows a raw date. */
-function relAge(iso: string): string {
-    const t = Date.parse(iso);
-    return Number.isNaN(t) ? iso : Date.relativeAge(t);
-}
-
-/**
- * Compose the DATA PROFILE details view's lines from a sidebar {@link ProfileSnapshot} (design D5).
- * Pure (snapshot → string[]) so every kind is unit-testable: the degraded kinds each yield one
- * placeholder line, and `loaded` yields the ledger truth — a status line, the started/completed
- * relative times, the error (on failure), the summary split into lines, the per-file
- * `path — description`, and the seed-input count. Reused verbatim by `ResultsDialog`.
- */
-export function profileDetailLines(snap: ProfileSnapshot): string[] {
-    switch (snap.kind) {
-        case "not_ready":
-            return ["runtime not ready"];
-        case "absent":
-            return ["not profiled yet"];
-        case "unavailable":
-            return ["profile status unavailable"];
-        case "loaded": {
-            const p = snap.profile;
-            const lines: string[] = [`status: ${p.status}`];
-            if (p.startedAt) lines.push(`started ${relAge(p.startedAt)}`);
-            if (p.completedAt) lines.push(`completed ${relAge(p.completedAt)}`);
-            if (p.status === "failed" && p.error) {
-                lines.push("");
-                for (const line of p.error.split("\n")) lines.push(line);
-            }
-            if (p.result) {
-                if (p.result.summary.trim().length > 0) {
-                    lines.push("");
-                    for (const line of p.result.summary.split("\n")) lines.push(line);
-                }
-                if (p.result.files.length > 0) {
-                    lines.push("");
-                    lines.push(`files (${p.result.files.length}):`);
-                    for (const f of p.result.files) lines.push(`  ${f.path} ${GLYPHS.emDash} ${f.description}`);
-                }
-            }
-            // `seedInputFileIds` is the desired-parity set; fall back to the profiled inputs when the
-            // seed set was not recorded (older rows), else 0.
-            const seedCount = p.seedInputFileIds?.length ?? p.result?.inputFileIds.length ?? 0;
-            lines.push("");
-            lines.push(`${seedCount} seed input${seedCount === 1 ? "" : "s"}`);
-            return lines;
-        }
-        default: {
-            const _exhaustive: never = snap;
-            return [String(_exhaustive)];
-        }
-    }
-}
 
 export function App(props: AppProps) {
     const dims = useTerminalDimensions();

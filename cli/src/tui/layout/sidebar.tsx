@@ -6,7 +6,7 @@ import { theme } from "../theme.ts";
 import { GLYPHS, size } from "../../lib/design_system.ts";
 import type { ThemeColors } from "../../lib/design_system.ts";
 import { Bold, Fg } from "../components/emphasis.tsx";
-import { profileSnapshot, runsSnapshot } from "../hooks/sidebar_live.ts";
+import { profileSnapshot, runsSnapshot, relAge } from "../hooks/sidebar_live.ts";
 import { getSession, getAnchor, listAnalysisInputs } from "../../db/primary_query.ts";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { Bus } from "../../lib/bus.ts";
@@ -37,13 +37,6 @@ function shortId(id: string): string {
  * exhaustive place rather than scattered across JSX branches.
  */
 type LiveLine = { glyph: string | null; role: keyof ThemeColors; text: string };
-
-/** Relative age of an ISO timestamp, or an em dash when absent/unparseable — the sidebar never shows a raw date. */
-function relAge(iso: string | null): string {
-    if (iso === null) return GLYPHS.emDash;
-    const t = Date.parse(iso);
-    return Number.isNaN(t) ? GLYPHS.emDash : Date.relativeAge(t);
-}
 
 /** First non-empty line of an error, clamped to the rail's one-line budget (design D3); a sane label when empty. */
 function firstLine(error: string | null): string {
@@ -85,8 +78,14 @@ function profileLineOf(snap: ReturnType<typeof profileSnapshot>): LiveLine {
     }
 }
 
-/** The themed glyph + color role for a run's status (design D4: running=warn, completed=success, failed/canceled=error, else muted). */
-function runMark(status: RunStatus): { glyph: string; role: keyof ThemeColors } {
+/**
+ * The themed glyph + color role for a run's status (design D4). The single exhaustive `runMark`,
+ * shared by the sidebar rail and the runs dialog (both need the identical status→glyph/role mapping).
+ * running=warn, completed=success, failed/canceled=error, `suspended_insufficient_funds`=warn,
+ * `partial`=muted. A `never`-typed default breaks the build if the harness enum grows, forcing a new
+ * status to be classified rather than silently mis-toned.
+ */
+export function runMark(status: RunStatus): { glyph: string; role: keyof ThemeColors } {
     switch (status) {
         case "running":
             return { glyph: GLYPHS.circleHalf, role: "warning" };
@@ -95,8 +94,12 @@ function runMark(status: RunStatus): { glyph: string; role: keyof ThemeColors } 
         case "failed":
         case "canceled":
             return { glyph: GLYPHS.cross, role: "error" };
-        case "partial":
         case "suspended_insufficient_funds":
+            // Actionable, not just terminal: the run is paused awaiting funds/resume, so it warrants
+            // the "needs attention" warn tone rather than the muted grey of `partial` (which is simply
+            // a finished-with-gaps end state the user cannot act on).
+            return { glyph: GLYPHS.circle, role: "warning" };
+        case "partial":
             return { glyph: GLYPHS.circle, role: "fgMuted" };
         default: {
             const _exhaustive: never = status;
@@ -106,7 +109,7 @@ function runMark(status: RunStatus): { glyph: string; role: keyof ThemeColors } 
 }
 
 /** A run's short label: the workflow name, else the plan id tail, else the run id tail (design D4). */
-function shortRunName(run: CortexRunRow): string {
+export function shortRunName(run: CortexRunRow): string {
     if (run.workflowName.length > 0) return run.workflowName;
     const id = run.planId ?? run.runId;
     return id.replace(/-/g, "").slice(-6);
@@ -130,8 +133,8 @@ function Section(props: { label: string; children: JSX.Element; onActivate?: () 
  * Fixed width (`size.railWidth`), NOT mouse-resizable. Four sections in fixed order — SESSION, DATA
  * PROFILE, ANALYSIS, RUNS. SESSION and ANALYSIS render live SQLite-backed data; DATA PROFILE and RUNS
  * render live harness-ledger data from the `sidebar_live` store (its snapshots degrade gracefully
- * before boot / on a read failure). Nothing here is mock — the CONTEXT/token-cost section was deleted
- * (no real accounting exists; design D1).
+ * before boot / on a read failure). Nothing here is mock. There is deliberately no CONTEXT/token-cost
+ * section — no real accounting source exists to render (design D1).
  * Reads the pure `getAnchor` (NOT `resolveAnchor`, which writes a sighting heartbeat), so
  * rendering the sidebar never touches disk — the no-litter rule for passive flows.
  */

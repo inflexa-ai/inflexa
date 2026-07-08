@@ -8,7 +8,7 @@
 // Ids are literal `mock-*` sentinels (not `randomUUIDv7()`) precisely so a reader
 // can tell at a glance that a value is fixture data, never a real row.
 
-import type { CortexRunRow, StepExecutionRow } from "@inflexa-ai/harness";
+import type { CortexRunRow, DataProfileStatus, StepExecutionRow } from "@inflexa-ai/harness";
 
 import type { TextPart, ThinkingPart, ToolCallPart, FileEditPart, PlanCardPart, RunCardPart } from "../types/session.ts";
 
@@ -199,6 +199,28 @@ export const mockCortexRuns: CortexRunRow[] = [
         attemptCount: 1,
     },
 ];
+
+/**
+ * MOCK sample: a completed data-profile status row. The gallery drives the DATA PROFILE details
+ * exhibit through the REAL `profileDetailLines` over this fixture, so what it shows is exactly what a
+ * loaded profile snapshot composes — no hand-kept line list to drift from the composer.
+ */
+export const mockDataProfile: DataProfileStatus = {
+    status: "completed",
+    error: null,
+    startedAt: ago(5 * 60_000),
+    completedAt: ago(4 * 60_000),
+    result: {
+        summary: "12 samples across 2 conditions; counts pass QC with no dropped libraries.",
+        files: [
+            { path: "data/counts.tsv", description: "gene-by-sample raw counts" },
+            { path: "data/meta.csv", description: "sample metadata (condition, batch)" },
+        ],
+        inputFileIds: ["mock-input-counts", "mock-input-meta"],
+        profiledAt: ago(4 * 60_000),
+    },
+    seedInputFileIds: ["mock-input-counts", "mock-input-meta"],
+};
 
 /** MOCK sample: the newest run's step ledger — one of each state the RUNS view renders (incl. a failure). */
 export const mockRunSteps: StepExecutionRow[] = [

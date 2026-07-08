@@ -31,6 +31,7 @@ import { FixedList } from "../components/fixed_list.tsx";
 import { SelectDialog } from "../components/dialog/select_dialog.tsx";
 import { FilePicker } from "../components/dialog/file_picker.tsx";
 import { RunsDialog } from "../components/dialog/runs_dialog.tsx";
+import { profileDetailLines } from "../hooks/sidebar_live.ts";
 import {
     mockUserText,
     mockAssistantText,
@@ -42,6 +43,7 @@ import {
     mockRunCard,
     mockCortexRuns,
     mockRunSteps,
+    mockDataProfile,
 } from "../../lib/mock_fixtures.ts";
 
 // Nothing streams in the gallery — MessageBlock's streaming accessors are constant stubs.
@@ -317,25 +319,14 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <MessageBlock index={2} role="assistant" parts={[mockRunCard]} streamPartId={noStreamId} streamText={noStreamText} />
                 </State>
                 <State n="17" label="sidebar details — data profile & runs (inert exhibits)">
-                    {/* Profile details reuse ResultsDialog verbatim; these lines are what
-                        `profileDetailLines` composes from a loaded profile snapshot. */}
+                    {/* Profile details reuse ResultsDialog verbatim; the lines are composed by the REAL
+                        `profileDetailLines` over a loaded mock snapshot, so the exhibit cannot drift from
+                        production output. */}
                     <text fg={theme().fgMuted}>ResultsDialog — data-profile details (composed from a loaded profile snapshot):</text>
                     <DialogShowcase>
                         <ResultsDialog
                             title={`Data profile ${GLYPHS.emDash} rna-seq-2026`}
-                            lines={[
-                                "status: completed",
-                                "started 5m",
-                                "completed 4m",
-                                "",
-                                "12 samples across 2 conditions; counts pass QC with no dropped libraries.",
-                                "",
-                                "files (2):",
-                                `  data/counts.tsv ${GLYPHS.emDash} gene-by-sample raw counts`,
-                                `  data/meta.csv ${GLYPHS.emDash} sample metadata (condition, batch)`,
-                                "",
-                                "2 seed inputs",
-                            ]}
+                            lines={profileDetailLines({ kind: "loaded", profile: mockDataProfile })}
                             emptyText="no profile data"
                             onClose={noop}
                         />

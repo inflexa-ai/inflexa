@@ -1,12 +1,13 @@
 import { createEffect, on } from "solid-js";
 
 import { GLYPHS } from "../../lib/design_system.ts";
-import { ensureProfileAtParity } from "../../modules/harness/profile_trigger.ts";
+import { ensureProfileAtParity, type ProfileParityOutcome } from "../../modules/harness/profile_trigger.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import { bootState, harnessRuntime } from "./boot.ts";
 import { notify } from "./notice.ts";
+import { refreshSidebarData } from "./sidebar_live.ts";
 
 // The data-profile parity auto-trigger's reactive side (design D8), held here (not inside app.tsx) so
 // the wiring lives beside the boot/notice hooks it reads. `watchProfileParity` is an app-level hook
@@ -51,12 +52,41 @@ export function watchProfileParity(workspace: Workspace): void {
     );
 }
 
-/** Run the helper and map its outcome onto the notice channel; skips stay silent (design D8). */
-async function driveProfileParity(runtime: HarnessRuntime, analysis: Analysis): Promise<void> {
-    const outcome = await ensureProfileAtParity(runtime, analysis);
+/**
+ * The parity driver's effectful edges, injectable so the outcome→side-effect mapping is unit-testable
+ * offline — mirrors the seam bundles in `sidebar_live.ts` (`WatchSeams`) and `profile_trigger.ts`.
+ * Production callers omit the argument and get the real edges.
+ */
+export type ParityDriverSeams = {
+    /** Produce the parity outcome for this analysis. Real: {@link ensureProfileAtParity}. */
+    readonly check: (runtime: HarnessRuntime, analysis: Analysis) => Promise<ProfileParityOutcome>;
+    /** Re-read the sidebar's ledger snapshots for an analysis. Real: {@link refreshSidebarData}. */
+    readonly refreshSidebar: (analysisId: string) => Promise<void>;
+};
+
+const realParityDriverSeams: ParityDriverSeams = {
+    check: ensureProfileAtParity,
+    refreshSidebar: refreshSidebarData,
+};
+
+/**
+ * Run the helper and map its outcome onto the notice channel; skips stay silent (design D8). Exported
+ * for the unit test — production calls it via {@link watchProfileParity} with the real seams.
+ */
+export async function driveProfileParity(runtime: HarnessRuntime, analysis: Analysis, seams: ParityDriverSeams = realParityDriverSeams): Promise<void> {
+    const outcome = await seams.check(runtime, analysis);
     switch (outcome.kind) {
         case "triggered":
             notify({ kind: "info", text: `Profiling "${analysis.name}" data${GLYPHS.ellipsis}` });
+            // `triggered` is the ONE lifecycle edge that changes ledger state outside the sidebar's own
+            // refresh triggers: the check just seeded a pending/running data-profile row, but the
+            // sidebar snapshotted this analysis as `absent` before the row existed, and on an idle
+            // screen no later edge (turn completion, analysis swap) re-reads it — so `hasActiveWork`
+            // never arms the poll and the DATA PROFILE section sits on "not profiled" forever. Poke the
+            // store ourselves (fire-and-forget) so the running snapshot lands, `hasActiveWork` arms the
+            // poll, and the poll flips the section to completed when the workflow finishes. Skips and
+            // failures change no ledger state the sidebar needs, so they deliberately do NOT refresh.
+            void seams.refreshSidebar(analysis.id);
             return;
         case "failed":
             notify({ kind: "warn", text: `Could not start profiling "${analysis.name}": ${outcome.reason}` });

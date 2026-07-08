@@ -102,32 +102,37 @@ Because focus is always on some widget, the dialog host's focus save/restore SHA
 
 ### Requirement: Toggleable four-section sidebar
 
-`Sidebar` SHALL render four sections in fixed order — SESSION, CONTEXT, ANALYSIS, RUNS — as a fixed-width, full-height column with a divider against the chat column. Its width SHALL be sourced from `size.railWidth` (the design-tokens layer), NOT an inline integer, and it is NOT mouse-resizable. SESSION SHALL show the short session id (`S·` + the first 4 hex of the id), the session age as a relative duration (e.g. `6m ago`), and the message count from live data. ANALYSIS SHALL show the analysis name, the anchor path with a ✓/⚠ badge derived from the anchor's `markerWritten`, the input count, and the project name when the analysis has one. CONTEXT (tokens · % · cost) and RUNS (live/completed rows) SHALL render values from the mock data models supplied by the `tui-mock-data` capability; that data SHALL be identifiable as mock/sample (sourced from the named mock module, never presented as live telemetry), and the sidebar MUST NOT display values fabricated inline at the render site. The sidebar's data SHALL update when the open analysis or session changes (an in-place `openSession` swap).
+`Sidebar` SHALL render four sections in fixed order — SESSION, DATA PROFILE, ANALYSIS, RUNS — as a
+fixed-width, full-height column with a divider against the chat column. Its width SHALL be sourced
+from `size.railWidth` (the design-tokens layer), NOT an inline integer, and it is NOT
+mouse-resizable. SESSION SHALL show the short session id (`S·` + the first 4 hex of the id), the
+session age as a relative duration (e.g. `6m`, the `Date.relativeAge` rendering), and the message
+count from live data. ANALYSIS SHALL show the analysis name, the anchor path with a ✓/⚠ badge
+derived from the anchor's `markerWritten`, the input count, and the project name when the analysis
+has one. DATA PROFILE and RUNS SHALL render live ledger data per the `sidebar-live` capability
+(states, refresh, details views) — the sidebar MUST NOT display mock fixtures or values fabricated
+inline at the render site. The sidebar's data SHALL update when the open analysis or session
+changes (an in-place `openSession` swap).
 
-#### Scenario: Real data for SESSION and ANALYSIS
+#### Scenario: Sidebar renders live sections for an open analysis
 
 - **WHEN** the sidebar renders for an open analysis
-- **THEN** SESSION shows id/age/message-count and ANALYSIS shows name, anchor path, inputs, and project from live queries
+- **THEN** SESSION/ANALYSIS show live SQLite-backed data and DATA PROFILE/RUNS show live ledger-backed states per `sidebar-live` — nothing rendered is mock
 
 #### Scenario: Anchor badge reflects marker state
 
 - **WHEN** the analysis's anchor has `markerWritten = false`
 - **THEN** the ANALYSIS section shows the ⚠ badge rather than ✓
 
-#### Scenario: CONTEXT and RUNS render mock data from the mock module
-
-- **WHEN** the sidebar renders CONTEXT and RUNS
-- **THEN** they show token/cost and run rows from the `tui-mock-data` fixtures (not inline-fabricated values), and the source is the named mock module
-
 #### Scenario: Sidebar width comes from a token
 
 - **WHEN** the sidebar is rendered
 - **THEN** its column width is `size.railWidth`, not a raw integer literal
 
-#### Scenario: Sidebar follows an in-place switch
+#### Scenario: Sidebar follows an in-place swap
 
-- **WHEN** the user switches to a different analysis via the palette
-- **THEN** the sidebar's SESSION and ANALYSIS sections update to the new analysis without a process restart
+- **WHEN** `openSession` swaps the analysis or session
+- **THEN** every section re-renders from the new scope's data
 
 ### Requirement: Sidebar toggle keybinding
 
