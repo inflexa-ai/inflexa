@@ -12,7 +12,7 @@ Code is grouped by feature, not by layer — a module owns its logic, its text c
 
 - **`auth/`** — Auth0 device flow + `login` / `logout` / `whoami`. Config seeded from `.env` (`INFLEXA_AUTH0_*`).
 - **`proxy/`** — CLIProxyAPI lifecycle + `setup` (the local model proxy).
-- **`intelligence/`** — the model-interaction chat engine + `sessions`.
+- **`analysis/`** — analysis lifecycle + the `sessions` command (live launch-identity rows; message history is frozen legacy data).
 - **`anchor/`** — invisible folder-identity markers (`.inflexa/id`) and lazy path reconciliation.
 
 ## Shared infrastructure

@@ -1,7 +1,7 @@
 import { Command } from "commander";
 
 import pkg from "../../package.json";
-import { env, envDoc, type EnvDocEntry } from "../lib/env.ts";
+import { devCommandsEnabled, env, envDoc, type EnvDocEntry } from "../lib/env.ts";
 
 /** The root command. `src/index.ts` wires telemetry/logging, then calls `cli.parseAsync()`. */
 export const cli = new Command();
@@ -76,7 +76,7 @@ cli.option("--analysis <id|name>", "Operate on a specific analysis")
 cli.command("sessions")
     .description("List saved sessions")
     .action(async () => {
-        const { listSessions } = await import("../modules/intelligence/sessions.ts");
+        const { listSessions } = await import("../modules/analysis/sessions.ts");
         await listSessions();
     });
 
@@ -129,42 +129,50 @@ cli.command("status")
         runStatus({ analysis: options.analysis, project: options.project });
     });
 
-// The deliberate harness entry point: stages files and boots the embedded
-// runtime, which no passive flow may do (no-litter policy).
-cli.command("profile")
-    .description("Stage the analysis's inputs and run a data profile in the harness sandbox")
-    .option("--analysis <id|name>", "Operate on a specific analysis")
-    .option("--status", "Show the profile run state instead of starting a run")
-    .action(async (options: { analysis?: string; status?: boolean }) => {
-        const { runProfile, runProfileStatus } = await import("../modules/harness/profile.ts");
-        const flags = { analysis: options.analysis };
-        if (options.status) await runProfileStatus(flags);
-        else await runProfile(flags);
-    });
+// Dev/E2E command surface — `profile`, `run`, and `chat` boot the embedded harness runtime and
+// exist to exercise the loop headlessly; the product conversation surface is the TUI chat. They
+// register ONLY in the dev channel, so a release binary's commands are the product alone: the gate
+// is at registration — an absent command is not in --help and invoking it fails non-zero as an
+// unrecognized argument — never a runtime refusal inside a registered command. `INFLEXA_DEV=1`
+// re-enables them on a shipped binary. See the dev-commands spec and env.ts's `devCommandsEnabled`.
+if (devCommandsEnabled()) {
+    // The deliberate harness entry point: stages files and boots the embedded
+    // runtime, which no passive flow may do (no-litter policy).
+    cli.command("profile")
+        .description("Stage the analysis's inputs and run a data profile in the harness sandbox")
+        .option("--analysis <id|name>", "Operate on a specific analysis")
+        .option("--status", "Show the profile run state instead of starting a run")
+        .action(async (options: { analysis?: string; status?: boolean }) => {
+            const { runProfile, runProfileStatus } = await import("../modules/harness/profile.ts");
+            const flags = { analysis: options.analysis };
+            if (options.status) await runProfileStatus(flags);
+            else await runProfile(flags);
+        });
 
-// The other deliberate harness entry point: launches a full `executeAnalysis` run
-// from a validated plan file (boots the embedded runtime — no passive flow may).
-cli.command("run [analysis]")
-    .description("Launch an analysis run from a validated plan file in the harness sandbox")
-    .option("--plan <file>", "Path to the JSON analysis plan to execute")
-    .option("--status", "Show this analysis's run history instead of launching a run")
-    .action(async (analysis: string | undefined, options: { plan?: string; status?: boolean }) => {
-        const { runAnalysis, runAnalysisStatus } = await import("../modules/harness/run.ts");
-        const flags = { analysis };
-        if (options.status) await runAnalysisStatus(flags);
-        else await runAnalysis(flags, options.plan);
-    });
+    // The other deliberate harness entry point: launches a full `executeAnalysis` run
+    // from a validated plan file (boots the embedded runtime — no passive flow may).
+    cli.command("run [analysis]")
+        .description("Launch an analysis run from a validated plan file in the harness sandbox")
+        .option("--plan <file>", "Path to the JSON analysis plan to execute")
+        .option("--status", "Show this analysis's run history instead of launching a run")
+        .action(async (analysis: string | undefined, options: { plan?: string; status?: boolean }) => {
+            const { runAnalysis, runAnalysisStatus } = await import("../modules/harness/run.ts");
+            const flags = { analysis };
+            if (options.status) await runAnalysisStatus(flags);
+            else await runAnalysis(flags, options.plan);
+        });
 
-// The conversational harness entry point: boots the embedded runtime and drives
-// the conversation agent in a stdout REPL (a deliberately temporary dev surface —
-// see chat.ts's TODO(extend); no passive flow may boot the runtime).
-cli.command("chat [analysis]")
-    .description("Chat with the analysis agent (plan, execute, and inspect runs conversationally)")
-    .option("--thread <id>", "Resume an existing conversation thread")
-    .action(async (analysis: string | undefined, options: { thread?: string }) => {
-        const { runChat } = await import("../modules/harness/chat.ts");
-        await runChat({ analysis }, options.thread);
-    });
+    // The conversational harness entry point: boots the embedded runtime and drives
+    // the conversation agent in a stdout REPL (a dev-channel surface — see chat.ts's
+    // TODO(extend); no passive flow may boot the runtime).
+    cli.command("chat [analysis]")
+        .description("Chat with the analysis agent (plan, execute, and inspect runs conversationally)")
+        .option("--thread <id>", "Resume an existing conversation thread")
+        .action(async (analysis: string | undefined, options: { thread?: string }) => {
+            const { runChat } = await import("../modules/harness/chat.ts");
+            await runChat({ analysis }, options.thread);
+        });
+}
 
 const analysisCmd = cli.command("analysis").description("Manage analyses (grouping)");
 

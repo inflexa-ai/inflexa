@@ -1,9 +1,6 @@
-# event-bus Specification
+# event-bus — Delta
 
-## Purpose
-The in-process event bus (`Bus`) and its `BusEvent` contract — a single typed channel modules publish to and subscribe from without circular imports.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: BusEvent type lives in src/types/events.ts
 
@@ -29,7 +26,6 @@ harness conversation path writes the Solid store directly and never used the bus
 - **WHEN** the `BusEvent` union is inspected
 - **THEN** every member has an emitter and a consumer in `src/` — no vocabulary kept for a deleted engine
 
-
 ### Requirement: Callers publish via Bus.emit
 
 Callers SHALL publish events using `Bus.emit("inflexa", event)` where `event` conforms to
@@ -40,22 +36,3 @@ Callers SHALL publish events using `Bus.emit("inflexa", event)` where `event` co
 - **WHEN** a caller invokes `Bus.emit("inflexa", { type: "prov.input_added", analysisId: "a1", ... })`
 - **THEN** the event is delivered to all listeners registered on the `"inflexa"` channel
 - **AND** the event is stamped with `__infId` by the emit override
-
-
-### Requirement: Callers subscribe via Bus.on and unsubscribe via Bus.off
-Callers SHALL subscribe using `Bus.on("inflexa", handler)` and unsubscribe using `Bus.off("inflexa", handler)`.
-
-#### Scenario: Subscribing and receiving events
-- **WHEN** a caller registers a handler with `Bus.on("inflexa", handler)`
-- **THEN** the handler SHALL be invoked for every subsequent `Bus.emit("inflexa", event)` call
-
-#### Scenario: Unsubscribing stops delivery
-- **WHEN** a caller calls `Bus.off("inflexa", handler)` with the same function reference
-- **THEN** that handler SHALL no longer receive events
-
-### Requirement: Single bus instance exported as Bus
-The bus module SHALL export a singleton instance named `Bus` (capital B). The class itself is not part of the public API.
-
-#### Scenario: Import the singleton
-- **WHEN** a module imports from `src/lib/bus.ts`
-- **THEN** it SHALL receive the `Bus` instance as a named export

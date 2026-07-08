@@ -1,28 +1,32 @@
 # chat-command Specification
 
 ## Purpose
-The `inflexa chat <analysis>` command — a dev/E2E surface (a clack/stdout REPL, not a TUI) that converses with the harness conversation agent scoped to a resolved analysis, exercising the whole embedded conversational loop headlessly. Its product replacement is the TUI chat (capability `tui-harness-chat`, landed); the REPL remains for exercising the harness loop without a TUI, pending demotion under a dev umbrella (excluded from production builds) by a follow-up change. Both surfaces drive the same shared turn engine (`src/modules/harness/turn.ts`). Lives in `src/modules/harness/chat.ts` (+ `chat_printer.ts`).
+The `inflexa chat <analysis>` command — a dev/E2E surface (a clack/stdout REPL, not a TUI) that converses with the harness conversation agent scoped to a resolved analysis, exercising the whole embedded conversational loop headlessly. The product conversation surface is the TUI chat (capability `tui-harness-chat`); this REPL is registered only in the dev channel (see `dev-commands`) and is absent from release builds. Both surfaces drive the same shared turn engine (`src/modules/harness/turn.ts`). Lives in `src/modules/harness/chat.ts` (+ `chat_printer.ts`).
 
 ## Requirements
 
-### Requirement: Chat is a deliberate, temporary walking-skeleton surface
+### Requirement: Chat is a dev-channel harness REPL
 
 The system SHALL provide a dedicated `inflexa chat <analysis>` command — a clack/stdout REPL, not a
-TUI surface — that converses with the harness conversation agent scoped to a resolved analysis. The
-command module SHALL carry a `TODO(extend)` comment block stating its clearing contract: its product
-replacement is the TUI chat (capability `tui-harness-chat`, landed by change `tui-harness-chat`);
-the command remains a dev/E2E surface for exercising the harness loop without a TUI, to be gated
-under a dev umbrella (excluded from production builds) by the follow-up demotion change, at which
-point this capability records that status. No passive flow SHALL boot the runtime or start a chat —
-deliberate boot actions are this command, the profile/run commands, and opening an analysis chat in
-the TUI (see `tui-harness-chat`). The command SHALL run the same pre-flight prerequisite gates as
-the run/profile launches before booting, and SHALL acquire the per-analysis instance lock after
-resolution and before boot.
+TUI surface — that converses with the harness conversation agent scoped to a resolved analysis,
+registered ONLY in the dev channel (see `dev-commands`): release builds do not carry it. The
+command module SHALL carry a `TODO(extend)` comment block stating its standing role: the product
+conversation surface is the TUI chat (capability `tui-harness-chat`); this REPL exists to exercise
+the harness loop headlessly (dev/E2E) and is excluded from production builds by the channel gate.
+No passive flow SHALL boot the runtime or start a chat — deliberate boot actions are this command,
+the profile/run commands (dev channel), and opening an analysis chat in the TUI. The command SHALL
+run the same pre-flight prerequisite gates as the run/profile launches before booting, and SHALL
+acquire the per-analysis instance lock after resolution and before boot.
 
 #### Scenario: The dev surface is marked in code
 
 - **WHEN** the chat command module is inspected
-- **THEN** it carries a `TODO(extend)` block naming the TUI chat as the product replacement and the dev-umbrella demotion as its pending disposition
+- **THEN** it carries a `TODO(extend)` block naming the TUI chat as the product surface and the dev-channel gate as this command's standing disposition
+
+#### Scenario: Absent from release builds
+
+- **WHEN** a release-channel build runs `inflexa chat`
+- **THEN** the invocation fails non-zero as an unrecognized argument (the command is not registered), per `dev-commands`
 
 #### Scenario: Failed prerequisite is reported before side effects
 
@@ -33,6 +37,7 @@ resolution and before boot.
 
 - **WHEN** the analysis is already held by another live inflexa process
 - **THEN** the command prints the conflict to stderr and exits non-zero without booting the runtime
+
 
 ### Requirement: The turn loop runs through the harness app-fn seam
 

@@ -126,7 +126,17 @@ gallery exhibits. Zero harness changes.
 - **CONTEXT section**: `mockContext` (`sidebar.tsx:110-115`) is dropped or replaced
   with something real — no fake data remains visible anywhere.
 
-### 3. `retire-proxy-chat-dev-umbrella` — one chat, clean tree
+### 3. `retire-proxy-chat-dev-umbrella` — one chat, clean tree — LANDED 2026-07-08
+
+**Status: landed + archived — THE DOC-14 SEQUENCE IS COMPLETE.** The proxy engine and
+`modules/intelligence/` are gone (pure subtraction; the engine's only importer was the
+boot-helpers line): helpers live in `modules/proxy/models.ts`, the `sessions` command in
+`modules/analysis/`, the bus contract shrank to `prov.*`. The dev umbrella gates
+`chat`/`profile`/`run` behind the `INFLEXA_BUILD_CHANNEL` baked constant (release builds
+omit them; `INFLEXA_DEV=1` is the shipped-binary escape hatch) — truth-table verified at
+the source runtime. Binary-level proof is blocked by a PRE-EXISTING build break (DBOS
+SDK telemetry lazy-requires unresolvable under Bun.build — reproduced on unmodified
+HEAD; tracked as its own follow-up).
 
 - Delete the proxy engine (`intelligence/chat.ts` `chat()`/`toModelMessages` and the
   bus streaming path); relocate `readApiKey`/`resolveModelId`/`pickDefaultModel` to a

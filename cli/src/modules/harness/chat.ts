@@ -3,10 +3,12 @@
 // (assemble → prepareChatTurn → runAgent → appendTurn) can be exercised
 // end-to-end WITHOUT a TUI. Its product replacement is the TUI chat (capability
 // `tui-harness-chat`), the landed user-facing conversation surface; this command
-// is kept only to exercise the harness loop headlessly. Its pending disposition
-// is demotion under a dev umbrella — excluded from production builds — by a
-// follow-up change, at which point that capability records this command's status.
-// The turn body it drives is the shared engine (`turn.ts`) the TUI chat runs too,
+// is kept only to exercise the harness loop headlessly. Its standing disposition is
+// the dev-channel gate: `src/cli/index.ts` registers it only when `devCommandsEnabled()`
+// is true, so a release build never carries it (absent from --help; invoking the name
+// fails non-zero as an unrecognized argument); `INFLEXA_DEV=1` re-enables it on a
+// shipped binary for support. See the
+// `dev-commands` spec. The turn body it drives is the shared engine (`turn.ts`) the TUI chat runs too,
 // so what stays here is only the REPL transport: a clack line prompt and the
 // coarse stdout printer. The spec-level record is
 // `openspec/specs/chat-command/spec.md`.

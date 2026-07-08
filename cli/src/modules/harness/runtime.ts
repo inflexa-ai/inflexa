@@ -47,7 +47,7 @@ import { onShutdown } from "../../lib/shutdown.ts";
 import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
-import { readApiKey, resolveModelId, type ChatSetupError } from "../intelligence/chat.ts";
+import { readApiKey, resolveModelId, type ChatSetupError } from "../proxy/models.ts";
 import { resolveHarnessConfig, type ResolvedHarnessConfig } from "./config.ts";
 import { noopExecIngress, startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
 import { buildEphemeralDeps, buildExecuteAnalysisDeps, buildExecuteTargetAssessmentDeps, buildSandboxStepDeps, type RunEngineComposition } from "./run_deps.ts";
