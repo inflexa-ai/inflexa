@@ -303,8 +303,15 @@ function removeSandboxAndGateway(docker: Docker, sandboxId: string): ResultAsync
         })(),
     )
         .andThen((analysisId) =>
-            removeContainerIgnoreMissing(docker, sandboxId)
-                .andThen(() => removeContainerIgnoreMissing(docker, gatewayContainerName(sandboxId)))
+            // Remove the gateway FIRST, the sandbox LAST. The reaper rediscovers orphans
+            // by the sandbox's `cortex/sandbox-id` label — a label the gateway lacks — so
+            // the sandbox must be the last thing to go. If either removal errors (a real
+            // daemon fault, not a 404, which is swallowed as success), the chain stops
+            // with the sandbox still present and the next sweep retries the whole teardown.
+            // The reverse order would let a gateway outlive its sandbox and leak
+            // unreapably.
+            removeContainerIgnoreMissing(docker, gatewayContainerName(sandboxId))
+                .andThen(() => removeContainerIgnoreMissing(docker, sandboxId))
                 .map(() => analysisId),
         )
         .andThen((analysisId) =>
@@ -594,11 +601,19 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     const oomKilled = info.State.OOMKilled === true;
                     if (info.State.Running !== true) return { alive: false, oomKilled };
 
-                    // A sandbox whose gateway has died is unreachable in both directions:
-                    // no exec can be submitted to it and no completion can leave it. It is
-                    // alive only in the sense that a process still runs. Reporting it alive
-                    // would leave the watchdog waiting on a recv that can never unblock —
-                    // the very wedge this topology exists inside of.
+                    // A sandbox created before this topology shipped has no gateway and
+                    // reaches the host through its own published port, so its liveness is
+                    // just the container's. Requiring a gateway of it would report a running,
+                    // reachable sandbox dead across a binary upgrade with an in-flight run.
+                    // Only gateway-fronted sandboxes carry the analysis-id label.
+                    const gatewayFronted = info.Config?.Labels?.[ANALYSIS_ID_LABEL] !== undefined;
+                    if (!gatewayFronted) return { alive: true, oomKilled };
+
+                    // For a gateway-fronted sandbox, a dead gateway means unreachable in both
+                    // directions — no exec can be submitted, no completion can leave. It is
+                    // alive only in the sense that a process still runs, and reporting it alive
+                    // would leave the watchdog waiting on a recv that can never unblock, which
+                    // is the very wedge this topology exists inside of.
                     const gateway = await docker
                         .getContainer(gatewayContainerName(ref.sandboxId))
                         .inspect()

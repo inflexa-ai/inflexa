@@ -198,7 +198,12 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         );
 
         try {
-            const deadlineAbs = Date.now() + DEFAULT_DEADLINE_MS;
+            // Checkpointed clock, not `Date.now()`: `awaitExec` gates on this absolute
+            // deadline and its recovery-pull is a durable step, so a wall-clock deadline
+            // that grew on replay would shift which loop iteration crosses the deadline
+            // and desynchronise the recorded function-ID sequence (see sandbox-step.ts,
+            // which captures its step deadline the same way).
+            const deadlineAbs = (await DBOS.now()) + DEFAULT_DEADLINE_MS;
             const nextFunctionId = makeNextFunctionId();
 
             const sandboxAgentDeps: SandboxAgentDeps = {

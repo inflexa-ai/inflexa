@@ -97,6 +97,8 @@ function stubDocker(): {
     oomKilled: Set<string>;
     networks: Map<string, { internal: boolean; members: Set<string> }>;
     removedNetworks: string[];
+    /** Container name → labels its inspect reports. Seed directly to model a container not created through the ops. */
+    labelsByName: Map<string, Record<string, string>>;
 } {
     const created: CreatedContainer[] = [];
     const removed: string[] = [];
@@ -195,7 +197,7 @@ function stubDocker(): {
         }),
     } as unknown as Docker;
 
-    return { docker, created, removed, running, oomKilled, networks, removedNetworks };
+    return { docker, created, removed, running, oomKilled, networks, removedNetworks, labelsByName };
 }
 
 describe("docker createSandbox / teardown / isAlive", () => {
@@ -376,6 +378,11 @@ describe("docker createSandbox / teardown / isAlive", () => {
 
         expect(removed).toContain(ref.sandboxId);
         expect(removed).toContain(`${ref.sandboxId}-gw`);
+        // The gateway must go FIRST, the sandbox LAST: the reaper rediscovers orphans
+        // by the sandbox's label, so a partial teardown that stops after the gateway
+        // must leave the sandbox present to be retried. The reverse order would leak a
+        // gateway the reaper cannot find.
+        expect(removed.indexOf(`${ref.sandboxId}-gw`)).toBeLessThan(removed.indexOf(ref.sandboxId));
         // Left unswept, one internal network per analysis exhausts Docker's default
         // address pool after roughly thirty analyses.
         expect(removedNetworks).toEqual([NETWORK]);
@@ -802,8 +809,8 @@ describe("docker createSandbox / teardown / isAlive", () => {
         ).toEqual({ alive: false, oomKilled: false });
     });
 
-    test("a sandbox whose gateway is gone reports dead", async () => {
-        const { docker, running } = stubDocker();
+    test("a gateway-fronted sandbox whose gateway is gone reports dead", async () => {
+        const { docker, running, labelsByName } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
@@ -813,6 +820,8 @@ describe("docker createSandbox / teardown / isAlive", () => {
         });
 
         const ref = { sandboxId: "orphan", host: "h", port: 1, backend: "docker" as const, callbackSecret: "x" };
+        // The analysis-id label is what marks a sandbox gateway-fronted.
+        labelsByName.set("orphan", { "cortex/analysis-id": "an-1" });
 
         // The sandbox process still runs, but nothing can reach it and nothing it
         // sends can leave. Calling that "alive" leaves the watchdog waiting forever
@@ -826,6 +835,28 @@ describe("docker createSandbox / teardown / isAlive", () => {
 
         running.set("orphan-gw", true);
         expect((await ops.isAlive(ref))._unsafeUnwrap()).toEqual({ alive: true, oomKilled: false });
+    });
+
+    test("a pre-upgrade sandbox with no gateway is judged by its own liveness", async () => {
+        const { docker, running } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            sessionsBasePath: "/sessions",
+            docker,
+            registerSandbox: async () => {},
+        });
+
+        // A sandbox created before this topology shipped carries none of the new
+        // labels and has no `-gw` container. Requiring a gateway of it would report
+        // a running, reachable sandbox dead across a binary upgrade — lost work for
+        // an in-flight run. It reaches the host through its own published port.
+        const ref = { sandboxId: "legacy", host: "h", port: 1, backend: "docker" as const, callbackSecret: "x" };
+        running.set("legacy", true);
+        expect((await ops.isAlive(ref))._unsafeUnwrap()).toEqual({ alive: true, oomKilled: false });
+
+        running.set("legacy", false);
+        expect((await ops.isAlive(ref))._unsafeUnwrap()).toEqual({ alive: false, oomKilled: false });
     });
 
     test("isAlive reports an OOM-killed container as dead with the OOM cause", async () => {
