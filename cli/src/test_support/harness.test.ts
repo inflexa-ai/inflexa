@@ -43,6 +43,20 @@ describe("freshDb / resetDb", () => {
         const probe = second.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='harness_probe'").get();
         expect(probe).toBeNull();
     });
+
+    test("refuses to delete when the sandbox marker is absent", () => {
+        // Simulate `bun test` run from the repo root: the preload never stamps INFLEXA_TEST_SANDBOX,
+        // so resetDb must THROW before any rmSync rather than delete whatever env.dbPath points at
+        // (the developer's real DB, in that scenario). Save/restore the marker so the sibling tests
+        // sharing this process keep their destructive-reset authorization.
+        const saved = process.env.INFLEXA_TEST_SANDBOX;
+        delete process.env.INFLEXA_TEST_SANDBOX;
+        try {
+            expect(() => resetDb()).toThrow("test sandbox not active");
+        } finally {
+            if (saved !== undefined) process.env.INFLEXA_TEST_SANDBOX = saved;
+        }
+    });
 });
 
 describe("withRoot", () => {

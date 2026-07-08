@@ -1,17 +1,22 @@
 import { createSignal, Show } from "solid-js";
 import type { Renderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
+import { errAsync } from "neverthrow";
+import { queryStepsByRun, type StepExecutionRow, type DbError } from "@inflexa-ai/harness";
 
 import { GLYPHS, zIndex } from "../lib/design_system.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { writeClipboard } from "../lib/clipboard.ts";
 import { theme, themeVariant, noticeColor, type Notice } from "./theme.ts";
 import { chatStatus } from "./hooks/status.ts";
-import { bootState } from "./hooks/boot.ts";
+import { bootState, harnessRuntime } from "./hooks/boot.ts";
 import * as conversation from "./hooks/conversation.ts";
 import { currentNotice, notify } from "./hooks/notice.ts";
+import { profileSnapshot, runsSnapshot, watchSidebarData, type ProfileSnapshot } from "./hooks/sidebar_live.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
+import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
+import { RunsDialog } from "./components/dialog/runs_dialog.tsx";
 import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./components/dialog/dialog_host.tsx";
 import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, leaderSeq, KEYS } from "./keymap.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
@@ -29,6 +34,61 @@ type AppProps = {
     workingDir: string;
     analysis: Analysis;
 };
+
+/** Relative age of an ISO timestamp, or the raw string when unparseable — the details view never shows a raw date. */
+function relAge(iso: string): string {
+    const t = Date.parse(iso);
+    return Number.isNaN(t) ? iso : Date.relativeAge(t);
+}
+
+/**
+ * Compose the DATA PROFILE details view's lines from a sidebar {@link ProfileSnapshot} (design D5).
+ * Pure (snapshot → string[]) so every kind is unit-testable: the degraded kinds each yield one
+ * placeholder line, and `loaded` yields the ledger truth — a status line, the started/completed
+ * relative times, the error (on failure), the summary split into lines, the per-file
+ * `path — description`, and the seed-input count. Reused verbatim by `ResultsDialog`.
+ */
+export function profileDetailLines(snap: ProfileSnapshot): string[] {
+    switch (snap.kind) {
+        case "not_ready":
+            return ["runtime not ready"];
+        case "absent":
+            return ["not profiled yet"];
+        case "unavailable":
+            return ["profile status unavailable"];
+        case "loaded": {
+            const p = snap.profile;
+            const lines: string[] = [`status: ${p.status}`];
+            if (p.startedAt) lines.push(`started ${relAge(p.startedAt)}`);
+            if (p.completedAt) lines.push(`completed ${relAge(p.completedAt)}`);
+            if (p.status === "failed" && p.error) {
+                lines.push("");
+                for (const line of p.error.split("\n")) lines.push(line);
+            }
+            if (p.result) {
+                if (p.result.summary.trim().length > 0) {
+                    lines.push("");
+                    for (const line of p.result.summary.split("\n")) lines.push(line);
+                }
+                if (p.result.files.length > 0) {
+                    lines.push("");
+                    lines.push(`files (${p.result.files.length}):`);
+                    for (const f of p.result.files) lines.push(`  ${f.path} ${GLYPHS.emDash} ${f.description}`);
+                }
+            }
+            // `seedInputFileIds` is the desired-parity set; fall back to the profiled inputs when the
+            // seed set was not recorded (older rows), else 0.
+            const seedCount = p.seedInputFileIds?.length ?? p.result?.inputFileIds.length ?? 0;
+            lines.push("");
+            lines.push(`${seedCount} seed input${seedCount === 1 ? "" : "s"}`);
+            return lines;
+        }
+        default: {
+            const _exhaustive: never = snap;
+            return [String(_exhaustive)];
+        }
+    }
+}
 
 export function App(props: AppProps) {
     const dims = useTerminalDimensions();
@@ -70,6 +130,44 @@ export function App(props: AppProps) {
     // in-place analysis swap, fire-and-forget, mapping the outcome to a notice. An app-level reactive
     // hook so the boot/analysis watch runs under App's reactive owner; never fires before `ready`.
     watchProfileParity(workspace);
+
+    // Wire the sidebar's live-data lifecycle (design D2): lifecycle-edge refreshes + the bounded,
+    // active-work-gated poll. One call, under App's reactive owner (the store holds the snapshots the
+    // Sidebar renders and the details views below snapshot on open).
+    watchSidebarData(workspace);
+
+    // Open the DATA PROFILE details view (design D5/D6). Snapshots the profile as of open (a
+    // point-in-time view) and hands the composed lines to `ResultsDialog`, reused verbatim.
+    function openProfile(): void {
+        const snap = profileSnapshot();
+        const name = workspace.analysis?.name;
+        const title = name ? `Data profile ${GLYPHS.emDash} ${name}` : "Data profile";
+        dialogPush(() => <ResultsDialog title={title} lines={profileDetailLines(snap)} emptyText="no profile data" onClose={() => dialogClose()} />);
+    }
+
+    // Open the RUNS details view (design D5/D6). Snapshots the runs as of open; `loadSteps` fetches
+    // the latest run's steps once, over the booted pool.
+    function openRuns(): void {
+        const snap = runsSnapshot();
+        const name = workspace.analysis?.name;
+        const title = name ? `Runs ${GLYPHS.emDash} ${name}` : "Runs";
+        dialogPush(() => (
+            <RunsDialog
+                title={title}
+                runs={snap}
+                loadSteps={(runId) => {
+                    const rt = harnessRuntime();
+                    // A `loaded` runs snapshot implies boot completed (the store only loads post-boot),
+                    // so `rt` is non-null wherever the dialog reaches its step fetch; the err branch is
+                    // defensive-only and surfaces as the dialog's muted "steps unavailable" line.
+                    return rt
+                        ? queryStepsByRun(rt.pool, runId)
+                        : errAsync<StepExecutionRow[], DbError>({ type: "query_failed", op: "runs-dialog.loadSteps", cause: new Error("runtime not ready") });
+                }}
+                onClose={() => dialogClose()}
+            />
+        ));
+    }
 
     // The single root keyboard handler that drives the keymap engine. Every binding below is a
     // declarative layer; the dispatcher picks the winner — no hand-branched if/else here.
@@ -171,6 +269,8 @@ export function App(props: AppProps) {
             { chord: leaderSeq("b"), run: () => setSidebarOpen((open) => !open), desc: "Toggle sidebar", group: "App" },
             { chord: leaderSeq("a"), run: () => runCommandById("analysis.switch"), desc: "Switch analysis", group: "Analysis" },
             { chord: leaderSeq("n"), run: () => runCommandById("analysis.new"), desc: "New analysis", group: "Analysis" },
+            { chord: leaderSeq("d"), run: openProfile, desc: "Data profile", group: "Analysis" },
+            { chord: leaderSeq("r"), run: openRuns, desc: "Runs", group: "Analysis" },
             { chord: leaderSeq("s"), run: () => runCommandById("session.switch"), desc: "Switch session", group: "Session" },
             { chord: leaderSeq("t"), run: () => runCommandById("view.theme"), desc: "Change theme", group: "View" },
             { chord: leaderSeq("q"), run: () => void quit(), desc: "Quit", group: "App" },
@@ -342,7 +442,7 @@ export function App(props: AppProps) {
 
                     {/* Full-height sidebar: spans both the stream and the input; ctrl+b toggles it. */}
                     <Show when={sidebarOpen()}>
-                        <Sidebar messageCount={conversation.messageCount} />
+                        <Sidebar messageCount={conversation.messageCount} onOpenProfile={openProfile} onOpenRuns={openRuns} />
                     </Show>
                 </box>
 
