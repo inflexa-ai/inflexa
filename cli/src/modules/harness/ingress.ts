@@ -15,8 +15,11 @@ export type ExecIngress = {
     /** Loopback port actually bound (ephemeral — chosen by the OS). */
     readonly port: number;
     /**
-     * `CORTEX_BASE_URL` for sandbox containers. `host.docker.internal` resolves
-     * to the host on Docker Desktop even for loopback-bound listeners.
+     * The upstream this ingress is reachable at. Sandbox containers never dial it
+     * directly — the Docker backend rewrites the port to their gateway's outbound
+     * leg and pins this hostname to the gateway in their `/etc/hosts`, so only the
+     * gateway resolves it to the real host. `host.docker.internal` resolves to the
+     * host on Docker Desktop even for loopback-bound listeners.
      *
      * TODO(robustness): native Linux Docker Engine has no `host.docker.internal`
      * and cannot reach a host loopback listener from a container. The SECURE fix
@@ -25,7 +28,9 @@ export type ExecIngress = {
      * NOT to bind `0.0.0.0`, which would expose the callback endpoint to every
      * host on the network. Deferred because it needs runtime-aware bridge-address
      * discovery (docker vs podman, custom `bip`) and Linux testing. Tracked in
-     * inflexa-ai/inf-cli#27.
+     * inflexa-ai/inf-cli#27. Note the gateway narrows the blast radius of that
+     * eventual bridge bind: sandboxes sit on an internal network and cannot reach
+     * the bridge at all, so only gateway containers would gain reachability.
      */
     readonly cortexBaseUrl: string;
     /** Close the listener, dropping in-flight connections. */

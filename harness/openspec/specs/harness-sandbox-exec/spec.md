@@ -31,8 +31,64 @@ dumb: no secret, no verification, no DB read — it parses the workflowId out of
 the execId and forwards the `{payload, payloadRaw, signature, timestamp}`
 envelope. The workflow body — which holds the secret from the cached create
 step output — verifies the HMAC and timestamp freshness on each message; a bad
-or stale signature hard-cancels the run. Network isolation is the primary
-control; the HMAC is defense-in-depth.
+or stale signature hard-cancels the run.
+
+Network confinement and the HMAC guard *different* attackers, and neither is
+"defense-in-depth" for the other. Confinement stops everything except the
+sandbox itself from reaching the ingress — the LAN, the internet, another
+analysis. It cannot stop the sandbox, because the sandbox is the one party that
+must reach the ingress. Against a compromised sandbox the HMAC is the *only*
+control, which is why the secret is withheld from the commands sandbox-server
+spawns and from the gateway that forwards their bytes.
+
+**A completion is push-first, never push-only.** A pushed callback goes to an
+address baked into the container when it was created. A host that dies mid-exec
+returns on a different ingress port, so the push can never land: the sandbox
+retries into a void while the recovered recv waits for a message that will never
+arrive, and the run hangs in `running` forever. Therefore the exec table retains
+the completion bytes and `GET /exec/{execId}` serves them, **signed fresh at
+request time**. Whenever the topic falls quiet the recv loop stops waiting and
+asks. The served bytes are the ones the callback would have carried, so the
+provenance frame survives the recovery path and a single verification path
+serves both.
+
+The freshness window makes the signature's age load-bearing. A retry loop that
+minted one timestamp and reused it would, after the window elapsed, be posting a
+message the host is required to reject as `stale-timestamp` — a hard cancel, not
+a retryable condition — no matter how long it kept trying. So sandbox-server
+SHALL re-sign each attempt, and the pull endpoint SHALL sign at request time.
+
+**The Docker sandbox has exactly one door, and a gateway holds it.** The sandbox
+joins a per-analysis `--internal` Docker network and nothing else. `--internal`
+is not an egress filter: it removes every route off that bridge, and with it the
+published ports, so it disconnects the host from the sandbox as thoroughly as it
+disconnects the sandbox from the internet. What restores the two directions the
+protocol needs is a per-sandbox **gateway** container, running
+`sandbox-server gateway` out of the same image, attached to both the internal
+network and the default bridge:
+
+```
+host    --(127.0.0.1:ephemeral)-->  gateway :8765  --> sandbox:8765   (/exec, /exec/{execId})
+sandbox --(CORTEX_BASE_URL)------>  gateway :8766  --> Cortex ingress (callbacks)
+```
+
+The gateway forwards bytes between two fixed destinations and holds no
+`callbackSecret`; it can delay or drop a completion but never forge one. The
+sandbox's `CORTEX_BASE_URL` keeps its original scheme and hostname — only the
+port changes — with `ExtraHosts` pinning that hostname to the gateway inside the
+sandbox, so an upstream that terminates TLS still sees the SNI and `Host` it
+expects. (A DNS alias on the gateway is the obvious alternative and is a trap:
+the gateway is multi-homed, resolves its own alias, and forwards to itself.)
+
+The network is per-**analysis**, not per-sandbox, because that is the trust
+boundary that already exists: every step of an analysis receives a flat
+read-only mount of the whole analysis tree, so sibling steps are not isolated
+from one another by any measure today. Different analyses are mutually
+unreachable, which is the property that was missing. Per-sandbox networks would
+be tighter, but each internal network consumes a subnet from Docker's default
+address pool — roughly thirty are available — which would silently cap
+concurrent steps. The K8s backend reaches pods directly and confines egress with
+NetworkPolicy; it has no gateway.
 
 **Create is checkpoint-idempotent; a reaper is the sole orphan cleanup.** A
 single create step that minted the secret, spawned the machine, then
@@ -52,9 +108,11 @@ reconciles the stuck step row.
 
 The harness SHALL expose a `SandboxClient` interface with exactly seven
 operations: `createSandbox(meta, identity) → SandboxRef`, `submitExec(ref, body)
-→ void`, `awaitExec(execId, callbackSecret, emit, deadline) → ExecResult`,
+→ void`, `awaitExec(ref, execId, emit, deadline) → ExecResult`,
 `isAlive(ref) → boolean`, `teardown(ref) → void`, `teardownById(sandboxId) →
-void`, and `listManagedSandboxes() → ManagedSandbox[]`. A `createSandboxClient()`
+void`, and `listManagedSandboxes() → ManagedSandbox[]`. `awaitExec` takes the
+whole `ref` — not merely the `callbackSecret` it verifies with — because a quiet
+topic makes it pull the result from the sandbox directly. A `createSandboxClient()`
 factory SHALL select the Docker (dev) or K8s (prod) implementation based on the
 `SANDBOX_BACKEND` value. The client SHALL be injected at the composition root as
 a construction-time dependency; callers SHALL NOT import a backend
@@ -65,7 +123,7 @@ implementation directly, and the interface SHALL NOT leak backend-specific types
 - **GIVEN** `SANDBOX_BACKEND=docker`
 - **WHEN** `createSandboxClient()` is called
 - **THEN** the returned client SHALL be the Docker implementation
-- **AND** `createSandbox` SHALL launch a `sandbox-base` container with a host-port mapping
+- **AND** `createSandbox` SHALL launch a `sandbox-base` container on the analysis's internal network, reachable only through its gateway's loopback-bound host port
 
 #### Scenario: K8s backend selected in prod
 
@@ -202,8 +260,131 @@ verbatim from the durable recv output on replay.
 #### Scenario: Deadline bound by step.timeout
 
 - **GIVEN** an `awaitExec` invocation whose `deadline` is the step's absolute timeout
-- **WHEN** elapsed time exceeds `deadline` before any done marker arrives
+- **WHEN** elapsed time exceeds `deadline` and the sandbox has no terminal result to serve
 - **THEN** `awaitExec` SHALL throw a timeout error rather than block indefinitely
+
+### Requirement: A terminal result is retrievable after a lost callback
+
+Sandbox-server SHALL retain the exact completion bytes for every terminal exec
+(for `completedEntryTTL`, one hour) and SHALL expose them at
+`GET /exec/{execId}`, signed at **request time** with the same
+`HMAC-SHA256(callbackSecret, "${execId}:${timestamp}:${sha256Hex(body)}")`
+construction as a pushed callback. A still-running exec SHALL return
+`{"status":"running"}` **unsigned** — the presence of the signature header is
+what marks a response terminal. An unknown `execId` SHALL return 404.
+Sandbox-server SHALL record the completion bytes *before* attempting to POST
+them, and SHALL claim its at-most-once right to POST only for the duration of a
+delivery attempt: a failed attempt SHALL release the claim, never latch it, so a
+completion that was never delivered is never marked delivered.
+
+`awaitExec` SHALL, after a bounded run of silent recv slices and once more
+before declaring a deadline timeout, fetch `GET /exec/{execId}` as a DBOS step
+(not a bare `fetch`, whose result could vary between replays and desynchronise
+the recorded function-ID sequence). A terminal response SHALL be verified and
+parsed exactly as a pushed done-marker is: same secret, same freshness window,
+same `HardCancelError` on a bad or stale signature. Any other outcome —
+`running`, 404, an unreachable sandbox, a non-200 — SHALL be treated as "keep
+waiting" and SHALL NOT fail the exec, because a failed pull is not a failed
+command.
+
+#### Scenario: A completed exec survives a host that was never listening
+
+- **GIVEN** an exec that ran to completion while the Cortex ingress was down, so its callback never landed
+- **WHEN** a recovered `awaitExec` finds the topic quiet and pulls `GET /exec/{execId}`
+- **THEN** sandbox-server SHALL return the completion bytes with a signature minted at that moment
+- **AND** `awaitExec` SHALL verify them against the freshness window and return the `ExecResult`
+
+#### Scenario: The pulled result carries the provenance frame
+
+- **GIVEN** a terminal exec whose completion payload contains a populated `provenance` frame
+- **WHEN** the result is pulled rather than pushed
+- **THEN** the served bytes SHALL be byte-identical to the callback's, so `provenance` SHALL round-trip intact
+
+#### Scenario: A running exec is unsigned and does not terminate the loop
+
+- **GIVEN** an exec still executing
+- **WHEN** `GET /exec/{execId}` is fetched
+- **THEN** the response SHALL carry no signature header and `awaitExec` SHALL continue waiting
+
+#### Scenario: An unreachable sandbox does not fail the exec
+
+- **GIVEN** a pull that times out, is refused, or returns 404
+- **WHEN** `awaitExec` receives it
+- **THEN** the loop SHALL continue until the deadline, and the enclosing DBOS step SHALL NOT fail
+
+#### Scenario: A forged pulled result hard-cancels
+
+- **GIVEN** a pull whose signature does not verify against the `callbackSecret`
+- **WHEN** `awaitExec` receives it
+- **THEN** it SHALL throw `HardCancelError`, exactly as for a forged push
+
+### Requirement: Every callback attempt is signed afresh
+
+Sandbox-server SHALL mint the timestamp and signature inside its retry loop, once
+per attempt. The host verifies a symmetric freshness window and treats a stale
+timestamp as a hard cancel rather than a retryable condition, so a timestamp
+minted once and reused across retries would become permanently unacceptable the
+moment the window elapsed — the loop would then retry forever against a verdict
+that can never change.
+
+#### Scenario: A delivery delayed past the freshness window is still accepted
+
+- **GIVEN** a completion whose first ten delivery attempts fail over more than the freshness window
+- **WHEN** the eleventh attempt reaches the ingress
+- **THEN** it SHALL carry a timestamp minted for that attempt and SHALL verify
+
+#### Scenario: A failed delivery does not strand the result
+
+- **GIVEN** a completion POST that gives up on a 4xx
+- **WHEN** the exec's completion is later pulled
+- **THEN** the bytes SHALL still be served, because they were recorded before the POST was attempted
+
+### Requirement: The Docker backend confines the sandbox behind a gateway
+
+The Docker backend SHALL attach each sandbox to a per-analysis Docker network
+created with `Internal: true`, and SHALL NOT publish a port on the sandbox
+itself. It SHALL run one gateway container per sandbox — the same image, invoked
+as `sandbox-server gateway` — attached to both that internal network and the
+default bridge, publishing its inbound leg on `127.0.0.1` only. The gateway
+SHALL receive no bind mounts and no `SANDBOX_CALLBACK_SECRET`. The sandbox's
+`CORTEX_BASE_URL` SHALL preserve the upstream scheme and hostname and target the
+gateway's outbound port, with `ExtraHosts` resolving that hostname to the
+gateway's address on the internal network.
+
+Network creation SHALL tolerate a sibling step having created it first (409), and
+attaching SHALL tolerate an endpoint that already exists (403/409) and SHALL
+recreate the network once on a 404 — a sibling's teardown can remove an
+endpoint-less network in the window before this sandbox attaches. `teardown` and
+`teardownById` SHALL remove the gateway alongside the sandbox and SHALL then
+attempt to remove the analysis network, which Docker refuses (403) while any
+sibling still holds it.
+
+`isAlive` SHALL report a sandbox dead when its gateway is not running: such a
+sandbox can neither receive an exec nor deliver a result, and reporting it alive
+would leave the watchdog waiting on a recv that can never unblock.
+
+#### Scenario: The sandbox has no route off its network
+
+- **GIVEN** a running Docker sandbox
+- **WHEN** it attempts to reach the public internet, the LAN, or the host directly
+- **THEN** every attempt SHALL fail, and its only reachable peer SHALL be its gateway
+
+#### Scenario: A sandbox cannot reach another analysis's sandbox
+
+- **GIVEN** sandboxes belonging to two different analyses
+- **WHEN** one attempts to reach the other's `/exec`
+- **THEN** the attempt SHALL fail, the two networks being distinct
+
+#### Scenario: The gateway cannot forge a completion
+
+- **WHEN** the gateway container's environment is inspected
+- **THEN** it SHALL NOT contain `SANDBOX_CALLBACK_SECRET`, so it can forward a signed callback but never mint one
+
+#### Scenario: A sandbox whose gateway died is dead
+
+- **GIVEN** a running sandbox container whose gateway container has exited or been removed
+- **WHEN** `isAlive(ref)` is called
+- **THEN** the machine SHALL be reported dead so the watchdog can synthesise a failure
 
 ### Requirement: Callback delivery is dumb, pod-agnostic, and forward-only
 
@@ -237,11 +418,12 @@ machine is observably dead, and SHALL additionally report whether the death was
 a memory-limit kill when the backend exposes it. For K8s, "dead" means the pod
 phase is `Failed`/`Succeeded` or the pod no longer exists (404); an OOM kill is
 recognized from a container terminated state with reason `OOMKilled`. For
-Docker, "dead" means the container is not `running` or no longer exists; an OOM
-kill is recognized from `State.OOMKilled` on the same inspect response already
-used for liveness. Transient API errors SHALL throw rather than be reported as
-dead, so callers may retry. The check SHALL be liveness, not readiness: a
-starting sandbox is alive.
+Docker, "dead" means the container is not `running`, no longer exists, or its
+gateway is not running — an unreachable sandbox is dead as far as the protocol
+is concerned; an OOM kill is recognized from `State.OOMKilled` on the same
+inspect response already used for liveness. Transient API errors SHALL throw
+rather than be reported as dead, so callers may retry. The check SHALL be
+liveness, not readiness: a starting sandbox is alive.
 
 #### Scenario: K8s missing pod is dead
 

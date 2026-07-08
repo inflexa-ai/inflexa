@@ -105,25 +105,34 @@ Harness host process
   +- SandboxBase (abstract)
   |   +- Shared: HTTP submit + recv, provenance, abort handling
   |   |
-  |   +- DockerSandbox                     K8sSandbox
-  |       docker run sandbox-base            K8s Job sandbox-base
-  |       bind mounts (host dirs)            PVC mounts
-  |       dynamic port mapping               pod IP:8765
+  |   +- DockerSandbox                          K8sSandbox
+  |       docker run sandbox-base                 K8s Job sandbox-base
+  |       bind mounts (host dirs)                 PVC mounts
+  |       per-analysis --internal network         pod IP:8765
+  |       + per-sandbox gateway sidecar           + NetworkPolicy
   |
-  +- POST /exec  (submit, idempotent on execId)
+  +- POST /exec  (submit, idempotent on execId)   -- via the gateway, on Docker
   |   |
   |   sandbox runs in background
   |   |
   |   v
-  +- sandbox-server POSTs to Cortex:
+  +- sandbox-server POSTs to Cortex:              -- via the gateway, on Docker
   |     POST /sandbox/:execId/event     (progress; HMAC-verified at recv)
   |     POST /sandbox/:execId/complete  (final result; HMAC-verified at recv)
   |
   +- Cortex workflow body: DBOS.recv unblocks; forwards events to the run stream
-  +- Container removed on completion
+  |
+  +- ...and if the topic falls quiet, the body PULLS instead of waiting:
+  |     GET /exec/{execId}  -> the terminal result, signed fresh at request time
+  |
+  +- Container + gateway removed on completion
 ```
 
 The submit + recv + HMAC-callback protocol ([harness-sandbox-exec](openspec/specs/harness-sandbox-exec/spec.md)) is what makes long sandbox runs survive host restarts: the sandbox worker keeps running separately; the host callback handler forwards callbacks via `DBOS.send` to the per-exec topic.
+
+**Push is the fast path; pull is what makes it durable.** A callback is pushed to an address baked into the container at creation, so a host that dies mid-exec comes back on a new ingress port and the push can never land. `awaitExec` therefore fetches `GET /exec/{execId}` after a run of silent recv slices, and once more before declaring a deadline timeout. The served bytes are the ones the callback would have carried — provenance frame included — so one verification path serves both. Every signature (pushed retry or pulled response) is minted at the moment it is sent, because the host rejects a stale timestamp as a **hard cancel**, not a retryable condition.
+
+**On Docker, the sandbox has exactly one door.** It joins a per-analysis `--internal` network and nothing else — no internet, no LAN, no host. That also removes published ports, so a per-sandbox **gateway** container (the same image, run as `sandbox-server gateway`) bridges the internal network and the default bridge, forwarding host→`/exec` inbound and sandbox→ingress outbound. The gateway holds no `callbackSecret`: it can drop a completion but never forge one. The network is per-*analysis* because that is the boundary that already exists — sibling steps share a flat read-only mount of the whole analysis tree — while different analyses become mutually unreachable.
 
 **Two distinct lifetimes** (do not conflate):
 
@@ -132,7 +141,7 @@ The submit + recv + HMAC-callback protocol ([harness-sandbox-exec](openspec/spec
 
 **Single base image**: One `sandbox-base` image for all sandbox agents. R, Python, Node.js runtimes + system libraries; no R/Python packages baked in. Packages live in the shared library store mounted read-only at `/mnt/libs`.
 
-**sandbox-server**: Statically-linked Go binary at `images/sandbox-base/server/`. Endpoints: `GET /health`, `POST /exec` (idempotency-keyed submit), `POST /exec/{pid}/kill`.
+**sandbox-server**: Statically-linked Go binary at `images/sandbox-base/server/`. Endpoints: `GET /health`, `POST /exec` (idempotency-keyed submit), `GET /exec/{execId}` (terminal result, signed fresh at request time), `POST /exec/{pid}/kill`. A second mode, `sandbox-server gateway`, runs no exec machinery at all — two fixed-destination TCP forwarders and no callback secret.
 
 **Session storage**: Per-analysis data and artifacts live in the session directory. Each sandbox container gets a **flat read-only mount** of the full analysis tree at `/{resourceId}`, with a **nested read-write mount** at `/{resourceId}/runs/{runId}/{stepId}` for the step's artifacts. Workspace tools enforce write restriction via `allowedWritePrefix`.
 

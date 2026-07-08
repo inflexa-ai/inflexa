@@ -41,13 +41,43 @@ The server listens on `:8765` (override `SANDBOX_SERVER_PORT`) and exposes:
 
 - `GET  /health` — readiness probe.
 - `POST /exec` — submit a command; returns `202` immediately and runs it in the background.
+- `GET  /exec/{execId}` — the terminal result for an exec, or `{"status":"running"}` while it is still executing.
 - `POST /exec/{pid}/kill` — SIGTERM a running process (SIGKILL after a grace period).
 - `GET  /preview/...` — static file preview, only when `PREVIEW_ROOT` is set.
 
 Progress (`event`) and completion (`complete`) are POSTed to
 `{CORTEX_BASE_URL}/sandbox/{execId}/{kind}` as HMAC-SHA256-signed callbacks
 (`X-Sandbox-Signature`, `X-Sandbox-Timestamp`), keyed by `SANDBOX_CALLBACK_SECRET`,
-and retried with exponential backoff until a 2xx.
+and retried with exponential backoff until a 2xx. **Each attempt is signed
+afresh**: Cortex verifies the timestamp against a freshness window and treats a
+stale one as fatal, so a signature minted once and reused would become
+permanently unacceptable the moment that window elapsed.
+
+Delivery is push-first but never push-only. The completion bytes are recorded
+before the POST is attempted, and `GET /exec/{execId}` serves them **signed at
+request time** — so a Cortex that was not listening when the exec finished can
+still recover the result, with its provenance frame, whenever it comes back. A
+still-running exec answers unsigned; the signature's presence is what marks a
+response terminal.
+
+## Gateway mode
+
+`sandbox-server gateway` is a second program sharing this binary. It runs no exec
+machinery, mounts nothing, and is never given `SANDBOX_CALLBACK_SECRET` — it
+forwards TCP between two fixed destinations:
+
+| env | meaning |
+|---|---|
+| `GATEWAY_INBOUND_PORT` (default `8765`) | listen; forwards to `GATEWAY_INBOUND_TARGET` |
+| `GATEWAY_INBOUND_TARGET` | the sandbox's `host:port`, e.g. `sbx-abc123:8765` |
+| `GATEWAY_OUTBOUND_PORT` (default `8766`) | listen; forwards to `GATEWAY_OUTBOUND_TARGET` |
+| `GATEWAY_OUTBOUND_TARGET` | the Cortex ingress `host:port` |
+
+The Docker backend puts each sandbox on a per-analysis `--internal` network,
+which has no route to the internet, the LAN, or the host — and, because that also
+removes published ports, no route *from* the host either. The gateway is what
+restores both directions, one fixed hop each, and is the sandbox's only reachable
+peer. Holding no secret, it can drop a completion but never forge one.
 
 ## Build
 
