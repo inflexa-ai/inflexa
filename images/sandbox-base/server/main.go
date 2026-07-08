@@ -4,16 +4,28 @@
 // returns HTTP 202 immediately, and emits on-change tree-diff events plus a
 // completion callback to Cortex over signed callbacks.
 //
+// A completion is delivered push-first but never push-only. The exec table
+// retains the completion bytes, and `GET /exec/{execId}` serves them signed
+// fresh at request time, so a Cortex that was not listening when the exec
+// finished can still recover the result — with its provenance frame — when it
+// comes back. Push is the fast path; pull is what makes the protocol durable.
+//
 // Endpoints:
 //   GET  /health          → readiness probe
 //   POST /exec            → submit a command (returns 202); progress + result
 //                           flow to Cortex via outbound callbacks.
+//   GET  /exec/{execId}   → terminal result for an exec (fresh-signed), or
+//                           `{"status":"running"}` while it is still executing.
 //   POST /exec/{pid}/kill → kill a running process
 //   GET  /preview/...     → static file preview (when PREVIEW_ROOT is set)
 //
 // Required env:
 //   CORTEX_BASE_URL          base URL Cortex listens on for callbacks
 //   SANDBOX_CALLBACK_SECRET  per-sandbox HMAC secret (raw or base64:)
+//
+// A second mode, `sandbox-server gateway`, runs no exec machinery at all — see
+// gateway.go. It is the only process the sandbox container can reach off its
+// network, and it never receives the callback secret.
 package main
 
 import (
@@ -292,6 +304,72 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
+// execSubtreeHandler dispatches the two routes under `/exec/`:
+//
+//	POST /exec/{pid}/kill  → kill a running process
+//	GET  /exec/{execId}    → the terminal result for an exec
+//
+// They share a prefix because `execId` (`${workflowId}:${stepId}:${functionId}`)
+// contains colons but never slashes, so segment count plus method separates
+// them unambiguously.
+func execSubtreeHandler(pt *processTable, table *execTable, secret []byte) http.HandlerFunc {
+	kill := killHandler(pt)
+	result := execResultHandler(table, secret)
+	return func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		switch {
+		case len(parts) == 3 && parts[2] == "kill":
+			kill(w, r)
+		case len(parts) == 2:
+			result(w, r)
+		default:
+			writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
+		}
+	}
+}
+
+// execResultHandler serves the completion body for a terminal exec, signed
+// fresh at request time so it is accepted by Cortex's freshness window however
+// long after the exec finished it is fetched. This is the pull half of the
+// exec protocol: the push callback is the fast path, this is what makes a
+// completion survive a Cortex that was not listening when the exec ended.
+//
+// The bytes are the exact ones the completion callback carries, so a pulled
+// result is indistinguishable from a pushed one — provenance frame included.
+func execResultHandler(table *execTable, secret []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSONResponse(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		execID := strings.TrimPrefix(strings.Trim(r.URL.Path, "/"), "exec/")
+		if execID == "" {
+			writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "execId required"})
+			return
+		}
+
+		status, body, ok := table.completionSnapshot(execID)
+		if !ok {
+			writeJSONResponse(w, http.StatusNotFound, map[string]string{"error": "unknown execId"})
+			return
+		}
+		// A terminal status with no recorded body means the exec finished between
+		// `complete` and `setCompletionBody`. Report it as still running: the
+		// caller retries, and the body lands microseconds later.
+		if status == execStatusRunning || body == nil {
+			writeJSONResponse(w, http.StatusOK, map[string]string{"execId": execID, "status": string(execStatusRunning)})
+			return
+		}
+
+		ts := time.Now().Unix()
+		w.Header().Set(headerSignature, signCallback(secret, execID, ts, body))
+		w.Header().Set(headerTimestamp, strconv.FormatInt(ts, 10))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	}
+}
+
 func killHandler(pt *processTable) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -382,6 +460,16 @@ func writeJSONResponse(w http.ResponseWriter, status int, v any) {
 func main() {
 	initLogLevel()
 
+	// `sandbox-server gateway` is a wholly separate program sharing this binary
+	// (and therefore the sandbox-base image, which is already pulled). It has no
+	// exec machinery and no callback secret — see gateway.go.
+	if len(os.Args) > 1 && os.Args[1] == "gateway" {
+		if err := runGateway(loadGatewayConfig()); err != nil {
+			log.Fatalf("gateway: %v", err)
+		}
+		return
+	}
+
 	cfg, err := loadServerConfig()
 	if err != nil {
 		log.Fatalf("startup config error: %v", err)
@@ -405,7 +493,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.Handle("/exec", http.HandlerFunc(exe.handle))
-	mux.Handle("/exec/", killHandler(pt))
+	mux.Handle("/exec/", execSubtreeHandler(pt, table, cfg.callbackSecret))
 
 	previewRoot := os.Getenv("PREVIEW_ROOT")
 	if previewRoot != "" {

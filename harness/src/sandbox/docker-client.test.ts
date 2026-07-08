@@ -32,21 +32,16 @@ afterEach(async () => {
     await rm(libRoot, { recursive: true, force: true });
 });
 
-interface StubContainer {
-    id: string;
-    start: () => Promise<void>;
-    inspect: () => Promise<{
-        NetworkSettings: { Ports: Record<string, Array<{ HostPort: string }>> };
-        State: { Running: boolean };
-    }>;
-    stop: () => Promise<void>;
-    remove: () => Promise<void>;
-}
+/** The internal network the sandbox is confined to, for `analysisId: "an-1"`. */
+const NETWORK = "cortex-sbx-an-1";
 
 interface CreatedContainer {
     name: string;
+    image?: string;
+    cmd?: string[];
     env: string[];
     binds: string[];
+    labels?: Record<string, string>;
     workingDir?: string;
     platform?: string;
     /** Whether the `platform` key was present at all on createOpts — the config-unset case must OMIT it, not pass undefined. */
@@ -54,7 +49,44 @@ interface CreatedContainer {
     user?: string;
     capDrop?: string[];
     securityOpt?: string[];
+    networkMode?: string;
+    extraHosts?: string[];
     portBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>>;
+}
+
+interface CreateOpts {
+    name: string;
+    Image?: string;
+    Cmd?: string[];
+    Env: string[];
+    User?: string;
+    WorkingDir?: string;
+    platform?: string;
+    Labels?: Record<string, string>;
+    HostConfig?: {
+        Binds?: string[];
+        CapDrop?: string[];
+        SecurityOpt?: string[];
+        NetworkMode?: string;
+        ExtraHosts?: string[];
+        PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>>;
+    };
+}
+
+function notFound(): Error & { statusCode: number } {
+    const err = new Error("no such container") as Error & { statusCode: number };
+    err.statusCode = 404;
+    return err;
+}
+
+/** Find the sandbox (not the gateway) among the created containers. */
+function sandboxOf(created: CreatedContainer[]): CreatedContainer | undefined {
+    return created.find((c) => c.labels?.role === "sandbox");
+}
+
+/** Find the gateway among the created containers. */
+function gatewayOf(created: CreatedContainer[]): CreatedContainer | undefined {
+    return created.find((c) => c.labels?.role === "sandbox-gateway");
 }
 
 function stubDocker(): {
@@ -63,27 +95,34 @@ function stubDocker(): {
     removed: string[];
     running: Map<string, boolean>;
     oomKilled: Set<string>;
+    networks: Map<string, { internal: boolean; members: Set<string> }>;
+    removedNetworks: string[];
 } {
     const created: CreatedContainer[] = [];
     const removed: string[] = [];
     const running = new Map<string, boolean>();
     const oomKilled = new Set<string>();
+    const networks = new Map<string, { internal: boolean; members: Set<string> }>();
+    const removedNetworks: string[] = [];
+    const labelsByName = new Map<string, Record<string, string>>();
 
-    const makeContainer = (id: string): StubContainer => ({
+    const makeContainer = (id: string) => ({
         id,
         start: async () => {
             running.set(id, true);
         },
         inspect: async () => {
-            if (!running.has(id)) {
-                const err = new Error("no such container") as Error & {
-                    statusCode: number;
-                };
-                err.statusCode = 404;
-                throw err;
-            }
+            if (!running.has(id)) throw notFound();
+            // Only the gateway publishes a port; the sandbox sits on an internal
+            // network where Docker silently ignores port bindings.
+            const isGateway = labelsByName.get(id)?.role === "sandbox-gateway";
+            const attached = [...networks.entries()].filter(([, n]) => n.members.has(id));
             return {
-                NetworkSettings: { Ports: { "8765/tcp": [{ HostPort: "32100" }] } },
+                Config: { Labels: labelsByName.get(id) ?? {} },
+                NetworkSettings: {
+                    Ports: isGateway ? { "8765/tcp": [{ HostPort: "32100" }] } : {},
+                    Networks: Object.fromEntries(attached.map(([name]) => [name, { IPAddress: "172.24.0.2" }])),
+                },
                 State: { Running: running.get(id) === true, OOMKilled: oomKilled.has(id) },
             };
         },
@@ -97,41 +136,70 @@ function stubDocker(): {
     });
 
     const docker = {
-        createContainer: async (opts: {
-            name: string;
-            Env: string[];
-            User?: string;
-            WorkingDir?: string;
-            platform?: string;
-            HostConfig?: {
-                Binds?: string[];
-                CapDrop?: string[];
-                SecurityOpt?: string[];
-                PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>>;
-            };
-        }) => {
+        createContainer: async (opts: CreateOpts) => {
             created.push({
                 name: opts.name,
+                image: opts.Image,
+                cmd: opts.Cmd,
                 env: opts.Env,
                 binds: opts.HostConfig?.Binds ?? [],
+                labels: opts.Labels,
                 workingDir: opts.WorkingDir,
                 platform: opts.platform,
                 hasPlatformKey: Object.prototype.hasOwnProperty.call(opts, "platform"),
                 user: opts.User,
                 capDrop: opts.HostConfig?.CapDrop,
                 securityOpt: opts.HostConfig?.SecurityOpt,
+                networkMode: opts.HostConfig?.NetworkMode,
+                extraHosts: opts.HostConfig?.ExtraHosts,
                 portBindings: opts.HostConfig?.PortBindings,
             });
+            labelsByName.set(opts.name, opts.Labels ?? {});
+            // A sandbox names its network via NetworkMode; Docker attaches it at create.
+            const mode = opts.HostConfig?.NetworkMode;
+            if (mode) networks.get(mode)?.members.add(opts.name);
             return makeContainer(opts.name);
         },
         getContainer: (id: string) => makeContainer(id),
+        createNetwork: async (opts: { Name: string; Internal?: boolean }) => {
+            if (networks.has(opts.Name)) {
+                const err = new Error(`network ${opts.Name} already exists`) as Error & { statusCode: number };
+                err.statusCode = 409;
+                throw err;
+            }
+            networks.set(opts.Name, { internal: opts.Internal === true, members: new Set() });
+            return {};
+        },
+        getNetwork: (name: string) => ({
+            connect: async ({ Container }: { Container: string }) => {
+                const net = networks.get(name);
+                if (!net) {
+                    const err = new Error("network not found") as Error & { statusCode: number };
+                    err.statusCode = 404;
+                    throw err;
+                }
+                net.members.add(Container);
+            },
+            remove: async () => {
+                const net = networks.get(name);
+                if (!net) throw notFound();
+                // Docker refuses to drop a network that still has endpoints.
+                if ([...net.members].some((m) => running.has(m))) {
+                    const err = new Error("network has active endpoints") as Error & { statusCode: number };
+                    err.statusCode = 403;
+                    throw err;
+                }
+                networks.delete(name);
+                removedNetworks.push(name);
+            },
+        }),
     } as unknown as Docker;
 
-    return { docker, created, removed, running, oomKilled };
+    return { docker, created, removed, running, oomKilled, networks, removedNetworks };
 }
 
 describe("docker createSandbox / teardown / isAlive", () => {
-    test("createSandbox confines the container: dropped capabilities, no privilege escalation, non-root, loopback-only port", async () => {
+    test("createSandbox confines the container: dropped capabilities, no privilege escalation, non-root", async () => {
         const { docker, created } = stubDocker();
 
         const ops = createDockerSandboxOps({
@@ -157,14 +225,216 @@ describe("docker createSandbox / teardown / isAlive", () => {
             )
         )._unsafeUnwrap();
 
-        const container = created[0];
-        expect(container?.capDrop).toEqual(["ALL"]);
-        expect(container?.securityOpt).toEqual(["no-new-privileges"]);
-        expect(container?.user).toBe("1000:1000");
+        for (const container of [sandboxOf(created), gatewayOf(created)]) {
+            expect(container?.capDrop).toEqual(["ALL"]);
+            expect(container?.securityOpt).toEqual(["no-new-privileges"]);
+            expect(container?.user).toBe("1000:1000");
+        }
+    });
+
+    test("the sandbox is confined to an internal network and publishes no port", async () => {
+        const { docker, created, networks } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "http://host.docker.internal:53421",
+            sessionsBasePath: "/sessions",
+            docker,
+            fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        expect(networks.get(NETWORK)?.internal).toBe(true);
+
+        const sandbox = sandboxOf(created);
+        expect(sandbox?.networkMode).toBe(NETWORK);
+        // An internal network silently ignores port bindings, so publishing one here
+        // would be a lie. `/exec` is reachable only through the gateway.
+        expect(sandbox?.portBindings).toBeUndefined();
+    });
+
+    test("the gateway fronts the sandbox: loopback-only port, no callback secret, no mounts", async () => {
+        const { docker, created } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "http://host.docker.internal:53421",
+            sessionsBasePath: "/sessions",
+            docker,
+            fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
+            registerSandbox: async () => {},
+        });
+
+        const ref = (
+            await ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        const gateway = gatewayOf(created);
+        expect(gateway?.name).toBe(`${ref.sandboxId}-gw`);
+        expect(gateway?.cmd).toEqual(["sandbox-server", "gateway"]);
+        expect(gateway?.image).toBe("sandbox-base:latest");
 
         // The published port carries `/exec`, which is unauthenticated: it must not
         // be reachable from anywhere but this host.
-        expect(container?.portBindings?.["8765/tcp"]?.[0]?.HostIp).toBe("127.0.0.1");
+        expect(gateway?.portBindings?.["8765/tcp"]?.[0]?.HostIp).toBe("127.0.0.1");
+
+        // Possession of the callback secret is enough to forge a signed completion.
+        // The gateway moves bytes; it must never be able to mint a signature.
+        const gatewayEnv = gateway?.env.join("\n") ?? "";
+        expect(gatewayEnv).not.toContain("SANDBOX_CALLBACK_SECRET");
+        expect(gatewayEnv).not.toContain(ref.callbackSecret);
+        expect(gateway?.binds).toEqual([]);
+
+        // Both legs are pinned: inbound to the sandbox, outbound to the real ingress.
+        const gwEnvMap = Object.fromEntries(gateway!.env.map((e) => [e.slice(0, e.indexOf("=")), e.slice(e.indexOf("=") + 1)]));
+        expect(gwEnvMap.GATEWAY_INBOUND_TARGET).toBe(`${ref.sandboxId}:8765`);
+        expect(gwEnvMap.GATEWAY_OUTBOUND_TARGET).toBe("host.docker.internal:53421");
+    });
+
+    test("the sandbox reaches the ingress only through the gateway, with scheme and hostname preserved", async () => {
+        const { docker, created } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            // A TLS upstream: the sandbox must still see the hostname the cert is for.
+            cortexBaseUrl: "https://cortex.example.com:443",
+            sessionsBasePath: "/sessions",
+            docker,
+            fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 2, memoryGb: 4 } },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        const sandbox = sandboxOf(created);
+        const envMap = Object.fromEntries(sandbox!.env.map((e) => [e.slice(0, e.indexOf("=")), e.slice(e.indexOf("=") + 1)]));
+
+        // Scheme and host survive; only the port moves to the gateway's outbound leg.
+        expect(envMap.CORTEX_BASE_URL).toBe("https://cortex.example.com:8766");
+        // …and that hostname resolves to the gateway, not the real host. A DNS alias
+        // on the gateway would be the obvious alternative and is a trap: the gateway
+        // is multi-homed and would resolve its own alias, forwarding to itself.
+        expect(sandbox?.extraHosts).toEqual(["cortex.example.com:172.24.0.2"]);
+    });
+
+    test("siblings in one analysis share a network; a different analysis gets its own", async () => {
+        const { docker, networks } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "http://host.docker.internal:53421",
+            sessionsBasePath: "/sessions",
+            docker,
+            fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
+            registerSandbox: async () => {},
+        });
+
+        const base = { runId: "run-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } };
+        (await ops.createSandbox({ ...base, stepId: "step-a", analysisId: "an-1" }, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        // The second create must tolerate the network already existing (409).
+        (await ops.createSandbox({ ...base, stepId: "step-b", analysisId: "an-1" }, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox({ ...base, stepId: "step-c", analysisId: "an-2" }, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        expect([...networks.keys()].sort()).toEqual(["cortex-sbx-an-1", "cortex-sbx-an-2"]);
+    });
+
+    test("teardown removes the gateway with the sandbox and sweeps the empty network", async () => {
+        const { docker, removed, removedNetworks } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "http://host.docker.internal:53421",
+            sessionsBasePath: "/sessions",
+            docker,
+            fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
+            registerSandbox: async () => {},
+        });
+
+        const ref = (
+            await ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        (await ops.teardown(ref))._unsafeUnwrap();
+
+        expect(removed).toContain(ref.sandboxId);
+        expect(removed).toContain(`${ref.sandboxId}-gw`);
+        // Left unswept, one internal network per analysis exhausts Docker's default
+        // address pool after roughly thirty analyses.
+        expect(removedNetworks).toEqual([NETWORK]);
+    });
+
+    test("a create that fails after the gateway is up takes the gateway and network with it", async () => {
+        const { docker, removed, removedNetworks, networks } = stubDocker();
+
+        // The gateway is created first; make the *sandbox* create fail.
+        const realCreate = docker.createContainer.bind(docker);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- narrowly overriding one method on the stub
+        (docker as any).createContainer = async (opts: { Labels?: Record<string, string> }) => {
+            if (opts.Labels?.role === "sandbox") throw new Error("image pull failed");
+            return realCreate(opts as never);
+        };
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "http://host.docker.internal:53421",
+            sessionsBasePath: "/sessions",
+            docker,
+            fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
+            registerSandbox: async () => {},
+        });
+
+        const identity = mintSandboxIdentity("run-1");
+        const result = await ops.createSandbox(
+            { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } },
+            identity,
+        );
+        expect(result.isErr()).toBe(true);
+
+        // The reaper enumerates orphans by `cortex/sandbox-id`, which the gateway
+        // deliberately lacks — so an abandoned gateway would never be collected, and
+        // its endpoint would pin the analysis network forever.
+        expect(removed).toContain(`${identity.sandboxId}-gw`);
+        expect(removedNetworks).toEqual([NETWORK]);
+        expect(networks.has(NETWORK)).toBe(false);
+    });
+
+    test("teardown leaves the network alone while a sibling sandbox still holds it", async () => {
+        const { docker, removedNetworks } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "http://host.docker.internal:53421",
+            sessionsBasePath: "/sessions",
+            docker,
+            fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
+            registerSandbox: async () => {},
+        });
+
+        const base = { runId: "run-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } };
+        const a = (await ops.createSandbox({ ...base, stepId: "step-a", analysisId: "an-1" }, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox({ ...base, stepId: "step-b", analysisId: "an-1" }, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        (await ops.teardown(a))._unsafeUnwrap();
+
+        expect(removedNetworks).toEqual([]);
     });
 
     test("createSandbox launches with required env vars and returns a SandboxRef with callbackSecret", async () => {
@@ -206,20 +476,20 @@ describe("docker createSandbox / teardown / isAlive", () => {
         expect(ref.port).toBe(32100);
         expect(ref.callbackSecret.length).toBeGreaterThan(40);
 
-        expect(created).toHaveLength(1);
+        expect(created).toHaveLength(2); // gateway + sandbox
         const envMap = Object.fromEntries(
-            created[0]!.env.map((e) => {
+            sandboxOf(created)!.env.map((e) => {
                 const idx = e.indexOf("=");
                 return [e.slice(0, idx), e.slice(idx + 1)];
             }),
         );
-        expect(envMap.CORTEX_BASE_URL).toBe("https://cortex.example.com:443");
+        expect(envMap.CORTEX_BASE_URL).toBe("https://cortex.example.com:8766");
         expect(envMap.SANDBOX_CALLBACK_SECRET).toBe(ref.callbackSecret);
         expect(envMap.PROVENANCE_WATCH_DIRS).toBe("/an-1");
         expect(envMap.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
 
-        expect(created[0]!.workingDir).toBe("/an-1/runs/run-1/step-a");
-        expect(created[0]!.binds).toEqual([
+        expect(sandboxOf(created)!.workingDir).toBe("/an-1/runs/run-1/step-a");
+        expect(sandboxOf(created)!.binds).toEqual([
             "/sessions/an-1:/an-1:ro",
             "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw",
             `${libRoot}:/mnt/libs:ro`,
@@ -254,13 +524,13 @@ describe("docker createSandbox / teardown / isAlive", () => {
         )._unsafeUnwrap();
 
         const envMap = Object.fromEntries(
-            created[0]!.env.map((e) => {
+            sandboxOf(created)!.env.map((e) => {
                 const idx = e.indexOf("=");
                 return [e.slice(0, idx), e.slice(idx + 1)];
             }),
         );
-        expect(created[0]!.binds).toEqual(["/sessions/an-1:/an-1:ro", "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw"]);
-        expect(created[0]!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+        expect(sandboxOf(created)!.binds).toEqual(["/sessions/an-1:/an-1:ro", "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw"]);
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
         expect(envMap.R_LIBS_SITE).toBeUndefined();
         expect(envMap.NODE_PATH).toBeUndefined();
         expect(envMap.PROVENANCE_WATCH_DIRS).toBe("/an-1");
@@ -285,8 +555,8 @@ describe("docker createSandbox / teardown / isAlive", () => {
             )
         )._unsafeUnwrap();
 
-        expect(created[0]!.hasPlatformKey).toBe(true);
-        expect(created[0]!.platform).toBe("linux/arm64");
+        expect(sandboxOf(created)!.hasPlatformKey).toBe(true);
+        expect(sandboxOf(created)!.platform).toBe("linux/arm64");
     });
 
     test("omits the platform key entirely when no platform is configured", async () => {
@@ -309,8 +579,8 @@ describe("docker createSandbox / teardown / isAlive", () => {
 
         // Absent, not `platform: undefined` — the source spreads the key only when set, so a
         // default-platform host lets dockerode/Docker pick the daemon's native arch.
-        expect(created[0]!.hasPlatformKey).toBe(false);
-        expect(created[0]!.platform).toBeUndefined();
+        expect(sandboxOf(created)!.hasPlatformKey).toBe(false);
+        expect(sandboxOf(created)!.platform).toBeUndefined();
     });
 
     test("readOnly omits the rw step bind and pins WorkingDir to the RO tree", async () => {
@@ -340,10 +610,10 @@ describe("docker createSandbox / teardown / isAlive", () => {
         )._unsafeUnwrap();
 
         // Only the RO tree + lib store mount — no rw step bind.
-        expect(created[0]!.binds).toEqual(["/sessions/an-1:/an-1:ro", `${libRoot}:/mnt/libs:ro`]);
-        expect(created[0]!.binds.some((b) => b.endsWith(":rw"))).toBe(false);
+        expect(sandboxOf(created)!.binds).toEqual(["/sessions/an-1:/an-1:ro", `${libRoot}:/mnt/libs:ro`]);
+        expect(sandboxOf(created)!.binds.some((b) => b.endsWith(":rw"))).toBe(false);
         // WorkingDir falls back to the RO tree root.
-        expect(created[0]!.workingDir).toBe("/an-1");
+        expect(sandboxOf(created)!.workingDir).toBe("/an-1");
     });
 
     test("skips the /mnt/libs mount when the store's current pointer has vanished since boot (finding 4)", async () => {
@@ -371,12 +641,12 @@ describe("docker createSandbox / teardown / isAlive", () => {
         )._unsafeUnwrap();
 
         const envMap = Object.fromEntries(
-            created[0]!.env.map((e) => {
+            sandboxOf(created)!.env.map((e) => {
                 const idx = e.indexOf("=");
                 return [e.slice(0, idx), e.slice(idx + 1)];
             }),
         );
-        expect(created[0]!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
         expect(envMap.R_LIBS_SITE).toBeUndefined();
         expect(envMap.NODE_PATH).toBeUndefined();
     });
@@ -432,7 +702,7 @@ describe("docker createSandbox / teardown / isAlive", () => {
             )
         )._unsafeUnwrap();
 
-        expect(created[0]!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
     });
 
     test("skips the /mnt/libs mount when `current` resolves to an INCOMPLETE store (missing markers) (finding 5)", async () => {
@@ -460,7 +730,7 @@ describe("docker createSandbox / teardown / isAlive", () => {
             )
         )._unsafeUnwrap();
 
-        expect(created[0]!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
     });
 
     test("teardown of an already-gone container is a no-op success", async () => {
@@ -505,6 +775,7 @@ describe("docker createSandbox / teardown / isAlive", () => {
         ).toEqual({ alive: false, oomKilled: false });
 
         running.set("alive", true);
+        running.set("alive-gw", true);
         expect(
             (
                 await ops.isAlive({
@@ -529,6 +800,32 @@ describe("docker createSandbox / teardown / isAlive", () => {
                 })
             )._unsafeUnwrap(),
         ).toEqual({ alive: false, oomKilled: false });
+    });
+
+    test("a sandbox whose gateway is gone reports dead", async () => {
+        const { docker, running } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            sessionsBasePath: "/sessions",
+            docker,
+            registerSandbox: async () => {},
+        });
+
+        const ref = { sandboxId: "orphan", host: "h", port: 1, backend: "docker" as const, callbackSecret: "x" };
+
+        // The sandbox process still runs, but nothing can reach it and nothing it
+        // sends can leave. Calling that "alive" leaves the watchdog waiting forever
+        // on a recv that can never unblock.
+        running.set("orphan", true);
+        expect((await ops.isAlive(ref))._unsafeUnwrap()).toEqual({ alive: false, oomKilled: false });
+
+        // A stopped gateway is no better than a missing one.
+        running.set("orphan-gw", false);
+        expect((await ops.isAlive(ref))._unsafeUnwrap()).toEqual({ alive: false, oomKilled: false });
+
+        running.set("orphan-gw", true);
+        expect((await ops.isAlive(ref))._unsafeUnwrap()).toEqual({ alive: true, oomKilled: false });
     });
 
     test("isAlive reports an OOM-killed container as dead with the OOM cause", async () => {

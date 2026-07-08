@@ -60,7 +60,7 @@ function makeFakeClient(opts: { sessionsBasePath: string; lsResult?: { stdout: s
                 await writeFile(hostPath, contentBytes);
             }
         },
-        async awaitExec(execId: string, _secret: string, _emit: ExecEmit, _deadlineMs: number): Promise<ExecResult> {
+        async awaitExec(_ref: SandboxRef, execId: string, _emit: ExecEmit, _deadlineMs: number): Promise<ExecResult> {
             if (opts.lsResult) {
                 return {
                     execId,

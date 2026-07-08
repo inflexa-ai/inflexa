@@ -47,12 +47,16 @@ export interface SandboxClient {
 
     /**
      * Workflow-body recv loop. Loops `DBOS.recv("exec-event:${execId}",
-     * T)`, HMAC-verifies each message against `callbackSecret`, forwards
+     * T)`, HMAC-verifies each message against `ref.callbackSecret`, forwards
      * meaningful events via `emit`, and returns the final `ExecResult` when
      * a done-marker arrives. Bounded by `deadline` (absolute unix-ms
      * timestamp); `T` is liveness-agnostic pacing only.
+     *
+     * Takes the whole `ref` rather than just the secret because a quiet topic
+     * makes it pull the result from the sandbox directly — the recovery path
+     * that stops a lost callback from wedging the run.
      */
-    awaitExec(execId: string, callbackSecret: string, emit: ExecEmit, deadline: number): Promise<ExecResult>;
+    awaitExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadline: number): Promise<ExecResult>;
 
     /**
      * Per-sandbox-machine liveness. `alive: false` only when observably dead

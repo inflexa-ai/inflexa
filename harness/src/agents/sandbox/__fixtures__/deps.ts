@@ -27,7 +27,7 @@ export function makeFakeSandboxClient(): SandboxClient {
             return ref;
         },
         async submitExec(_ref: SandboxRef, _body: SubmitExecBody) {},
-        async awaitExec(execId: string, _secret: string, _emit: ExecEmit, _deadline: number): Promise<ExecResult> {
+        async awaitExec(_ref: SandboxRef, execId: string, _emit: ExecEmit, _deadline: number): Promise<ExecResult> {
             return {
                 execId,
                 exitCode: 0,

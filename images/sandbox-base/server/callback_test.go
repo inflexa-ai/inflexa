@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -58,7 +59,12 @@ func TestCallbackClient_HappyPath(t *testing.T) {
 	}
 }
 
-func TestCallbackClient_RetriesOn500WithSameSignature(t *testing.T) {
+// Cortex rejects a stale timestamp as a HARD CANCEL, not as a retryable
+// condition (harness/src/sandbox/await-exec.ts). A retry loop that reused one
+// timestamp would therefore become permanently un-acceptable once the delivery
+// exceeded the freshness window — retrying forever against a verdict that can
+// never change. Each attempt must carry its own timestamp and signature.
+func TestCallbackClient_ReSignsEveryAttempt(t *testing.T) {
 	var attempts int32
 	var firstSig, firstTs string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -69,23 +75,112 @@ func TestCallbackClient_RetriesOn500WithSameSignature(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		if r.Header.Get(headerSignature) != firstSig {
-			t.Errorf("signature changed across retries")
+		if r.Header.Get(headerTimestamp) == firstTs {
+			t.Errorf("timestamp was reused across retries: %s", firstTs)
 		}
-		if r.Header.Get(headerTimestamp) != firstTs {
-			t.Errorf("timestamp changed across retries")
+		if r.Header.Get(headerSignature) == firstSig {
+			t.Errorf("signature was reused across retries")
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
+	// Advance the clock a second per call so the retry lands on a later timestamp
+	// exactly as it would in a real backoff.
+	var ticks int64
 	c := newCallbackClient(srv.URL, []byte("s"))
 	c.sleep = func(context.Context, time.Duration) {}
+	c.now = func() time.Time {
+		ticks++
+		return time.Unix(1_700_000_000+ticks, 0)
+	}
+
 	if err := c.post(context.Background(), callbackKindEvent, "x1", []byte(`{}`)); err != nil {
 		t.Fatalf("expected success after retry, got %v", err)
 	}
 	if got := atomic.LoadInt32(&attempts); got != 2 {
 		t.Fatalf("expected 2 attempts, got %d", got)
+	}
+}
+
+// The signature must stay valid for the body it carries, on every attempt —
+// re-signing must not mean signing something else.
+func TestCallbackClient_EachAttemptSignatureVerifies(t *testing.T) {
+	secret := []byte("topsecret")
+	body := []byte(`{"exitCode":0}`)
+
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&attempts, 1)
+		got, _ := io.ReadAll(r.Body)
+		ts, err := strconv.ParseInt(r.Header.Get(headerTimestamp), 10, 64)
+		if err != nil {
+			t.Errorf("attempt %d: unparseable timestamp: %v", n, err)
+		}
+		if want := signCallback(secret, "x1", ts, got); r.Header.Get(headerSignature) != want {
+			t.Errorf("attempt %d: signature does not verify against (execId, ts, body)", n)
+		}
+		if n < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := newCallbackClient(srv.URL, secret)
+	c.sleep = func(context.Context, time.Duration) {}
+	if err := c.post(context.Background(), callbackKindComplete, "x1", body); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if got := atomic.LoadInt32(&attempts); got != 3 {
+		t.Fatalf("expected 3 attempts, got %d", got)
+	}
+}
+
+// A completion whose delivery outlasts Cortex's freshness window must still be
+// acceptable when it finally lands: the timestamp ages with the attempt, not
+// with the result. This is the regression that made the recovery wedge (#41)
+// unfixable by a stable callback address alone.
+func TestCallbackClient_DeliveryAfterFreshnessWindowCarriesFreshTimestamp(t *testing.T) {
+	const freshnessSec = 300
+
+	// A stand-in for Cortex: rejects anything older than its freshness window,
+	// exactly as `verifyCallback` does.
+	var attempts int32
+	var accepted bool
+	clock := time.Unix(1_700_000_000, 0)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&attempts, 1)
+		ts, _ := strconv.ParseInt(r.Header.Get(headerTimestamp), 10, 64)
+		if age := clock.Unix() - ts; age > freshnessSec {
+			t.Errorf("attempt %d arrived with a stale timestamp (age %ds) — Cortex would hard-cancel the run", n, age)
+		}
+		// The ingress is down for the first ten attempts; by then far more than
+		// the freshness window has elapsed.
+		if n <= 10 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		accepted = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := newCallbackClient(srv.URL, []byte("s"))
+	// Each backoff advances the shared clock by a full minute, so by attempt 11
+	// the exec finished ~10 minutes ago — twice the freshness window.
+	c.sleep = func(context.Context, time.Duration) { clock = clock.Add(time.Minute) }
+	c.now = func() time.Time { return clock }
+
+	if err := c.post(context.Background(), callbackKindComplete, "x1", []byte(`{}`)); err != nil {
+		t.Fatalf("expected eventual success, got %v", err)
+	}
+	if !accepted {
+		t.Fatalf("completion never accepted")
+	}
+	if elapsed := clock.Unix() - 1_700_000_000; elapsed <= freshnessSec {
+		t.Fatalf("test did not actually cross the freshness window (elapsed %ds)", elapsed)
 	}
 }
 

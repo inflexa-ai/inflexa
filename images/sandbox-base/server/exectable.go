@@ -24,13 +24,18 @@ type execResult struct {
 }
 
 type execState struct {
-	ExecID            string
-	Status            execStatus
-	PID               int
-	StartedAt         time.Time
-	TerminalAt        time.Time
-	Result            *execResult
-	CompletionPosted  bool
+	ExecID     string
+	Status     execStatus
+	PID        int
+	StartedAt  time.Time
+	TerminalAt time.Time
+	Result     *execResult
+	// CompletionBody is the exact JSON the completion callback carries, kept so
+	// `GET /exec/{execId}` can serve it verbatim. Serving the same bytes — not a
+	// re-marshalled `Result` — is what lets a pulled completion carry the
+	// provenance frame, which `execResult` does not model.
+	CompletionBody   []byte
+	CompletionPosted bool
 }
 
 type execTable struct {
@@ -94,9 +99,26 @@ func (t *execTable) complete(execID string, status execStatus, result *execResul
 	return true
 }
 
-// markCompletionPosted sets the at-most-once completion flag. Returns true if
-// the caller is the first to set it (i.e., should post); false if already set.
-func (t *execTable) markCompletionPosted(execID string) bool {
+// setCompletionBody records the exact bytes a completion callback would carry.
+// Called before the POST is attempted, so a completion whose delivery never
+// succeeds is still retrievable through `GET /exec/{execId}`.
+func (t *execTable) setCompletionBody(execID string, body []byte) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if st, ok := t.entries[execID]; ok {
+		st.CompletionBody = body
+	}
+}
+
+// claimCompletionPost takes the at-most-once right to POST the completion.
+// Returns true if the caller is the first to claim it; false if a claim is
+// already outstanding or the execId is unknown.
+//
+// The claim must be released (see releaseCompletionPost) when delivery fails.
+// Latching it permanently on a *failed* attempt would mark the completion
+// delivered when it never was, stranding the result: the exec table would hold
+// a terminal entry that nothing is allowed to send.
+func (t *execTable) claimCompletionPost(execID string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	st, ok := t.entries[execID]
@@ -108,6 +130,33 @@ func (t *execTable) markCompletionPosted(execID string) bool {
 	}
 	st.CompletionPosted = true
 	return true
+}
+
+// releaseCompletionPost surrenders a claim taken by claimCompletionPost.
+func (t *execTable) releaseCompletionPost(execID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if st, ok := t.entries[execID]; ok {
+		st.CompletionPosted = false
+	}
+}
+
+// completionSnapshot copies out the fields `GET /exec/{execId}` serves. Copying
+// under the lock keeps the handler off the live entry, which the exec's own
+// goroutine mutates.
+func (t *execTable) completionSnapshot(execID string) (status execStatus, body []byte, ok bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	st, found := t.entries[execID]
+	if !found {
+		return "", nil, false
+	}
+	if st.CompletionBody == nil {
+		return st.Status, nil, true
+	}
+	out := make([]byte, len(st.CompletionBody))
+	copy(out, st.CompletionBody)
+	return st.Status, out, true
 }
 
 // evictExpired removes terminal entries older than ttl.

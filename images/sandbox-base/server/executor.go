@@ -271,17 +271,25 @@ func (e *executor) failBeforeSpawn(execID, traceID, cmdStr, cwd string, startedA
 	})
 }
 
+// postCompletion delivers the terminal result to Cortex. Delivery is push-first
+// but never push-only: the completion bytes are recorded in the exec table
+// BEFORE the POST is attempted, so a host that was down for the whole retry
+// window can still pull the result (with its provenance frame) from
+// `GET /exec/{execId}` once it comes back.
 func (e *executor) postCompletion(execID string, payload completionPayload) {
-	if !e.table.markCompletionPosted(execID) {
-		return
-	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("[completion] marshal failed for %s: %v", execID, err)
 		return
 	}
+	e.table.setCompletionBody(execID, body)
+
+	if !e.table.claimCompletionPost(execID) {
+		return
+	}
 	if perr := e.callback.post(context.Background(), callbackKindComplete, execID, body); perr != nil {
 		log.Printf("[completion] post failed for %s: %v", execID, perr)
+		e.table.releaseCompletionPost(execID)
 	}
 }
 

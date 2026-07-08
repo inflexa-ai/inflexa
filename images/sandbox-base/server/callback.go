@@ -69,16 +69,25 @@ func signCallback(secret []byte, execID string, ts int64, body []byte) string {
 var errCallbackGiveup = errors.New("callback giveup (4xx)")
 
 // post sends a signed callback with exponential backoff retry until 2xx or
-// context cancellation. The same signature + timestamp are reused across retries.
+// context cancellation.
+//
+// Every attempt is signed afresh. Cortex verifies the timestamp against a
+// symmetric freshness window (`DEFAULT_FRESHNESS_SECONDS`, 300s, in
+// harness/src/sandbox/await-exec.ts) and treats a stale timestamp as a hard
+// cancel, not a retryable condition. Minting the timestamp once outside this
+// loop would therefore mean that any delivery delayed past that window — an
+// ingress that was down for six minutes, say — could never be accepted again,
+// no matter how long the retries continued. The signature must age with the
+// attempt, not with the result.
 func (c *callbackClient) post(ctx context.Context, kind callbackKind, execID string, body []byte) error {
 	url := fmt.Sprintf("%s/sandbox/%s/%s", c.baseURL, execID, kind)
-	ts := c.now().Unix()
-	sig := signCallback(c.secret, execID, ts, body)
 
 	attempt := 0
 	backoff := callbackBackoffBase
 	for {
 		attempt++
+		ts := c.now().Unix()
+		sig := signCallback(c.secret, execID, ts, body)
 		start := c.now()
 		status, err := c.send(ctx, url, body, ts, sig)
 		dur := c.now().Sub(start).Milliseconds()

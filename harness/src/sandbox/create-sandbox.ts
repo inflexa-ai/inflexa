@@ -173,7 +173,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
             return unwrapOrThrow(await ops.createSandbox({ ...meta, resources }, identity));
         },
         submitExec: async (ref, body) => submitExec(ref, body, config.submitDeps),
-        awaitExec: (execId, secret, emit, deadline) => awaitExec(execId, secret, emit, deadline, config.awaitOptions),
+        awaitExec: (ref, execId, emit, deadline) => awaitExec(ref, execId, emit, deadline, config.awaitOptions),
         isAlive: async (ref) => unwrapOrThrow(await ops.isAlive(ref)),
         teardown,
         teardownById: async (sandboxId) => unwrapOrThrow(await ops.teardownById(sandboxId)),
