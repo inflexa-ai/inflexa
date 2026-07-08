@@ -1,14 +1,23 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { readConfig, writeConfig, type Config } from "./config.ts";
 import { DEFAULT_THEME_ID } from "./design_system.ts";
 import { env } from "./env.ts";
+import { assertTestSandbox } from "../test_support/sandbox.ts";
 
 // Drives config through the public readConfig/writeConfig surface against the sandboxed
 // env.configPath (set by the test preload), so it exercises the real fail-closed + self-healing
 // paths rather than poking the private schema.
+
+// Every test in this file writes or deletes env.configPath (directly, or via writeConfig). Guard
+// once, first, in the hooks: at the monorepo root env.configPath is the developer's REAL config.json,
+// so refuse to run there rather than clobber it (data-loss guard — see test_support/sandbox.ts).
+// beforeEach runs before each body, so a root run throws before any writeConfig/writeRawConfig fires.
+beforeEach(() => {
+    assertTestSandbox(env.configPath);
+});
 
 function writeRawConfig(json: string): void {
     mkdirSync(dirname(env.configPath), { recursive: true });
@@ -16,6 +25,7 @@ function writeRawConfig(json: string): void {
 }
 
 afterEach(() => {
+    assertTestSandbox(env.configPath);
     rmSync(env.configPath, { force: true });
 });
 

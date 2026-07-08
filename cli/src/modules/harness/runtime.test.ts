@@ -8,6 +8,7 @@ import type { EmbeddingProvider } from "@inflexa-ai/harness";
 
 import { env } from "../../lib/env.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
+import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { bootHarnessRuntime, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
 import type { ResolvedHarnessConfig } from "./config.ts";
 import type { ExecIngress } from "./ingress.ts";
@@ -412,9 +413,13 @@ describe("bootHarnessRuntime", () => {
 
     test("a runtime lock held by a live foreign process blocks the boot before launch, having bound no ingress", async () => {
         const calls: string[] = [];
+        const lockPath = instanceLockPath("harness-runtime");
+        // lockPath is under env.locksDir — the developer's REAL ~/.local/share/inflexa/locks at the
+        // monorepo root. Refuse to write/rm it there (data-loss guard — sandbox.ts), before we even
+        // spawn the fake holder, so a root run leaves nothing behind.
+        assertTestSandbox(lockPath);
         // Fake another live inflexa process holding the machine-wide runtime lock.
         const holder = Bun.spawn(["sleep", "60"]);
-        const lockPath = instanceLockPath("harness-runtime");
         mkdirSync(dirname(lockPath), { recursive: true });
         writeFileSync(lockPath, String(holder.pid));
         try {

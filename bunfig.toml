@@ -1,0 +1,16 @@
+# WHY this file exists: DATA-LOSS PREVENTION, after TWO live incidents.
+#
+# `bun test` run from this monorepo ROOT does NOT apply cli/bunfig.toml's [test].preload — bun resolves
+# bunfig from the cwd only, it does not merge a subdirectory's config. Without cli's preload the XDG
+# sandbox is never established (see cli/src/test_support/preload.ts), so cli test files run against the
+# developer's REAL ~/.local/share/inflexa and ~/.config/inflexa. Twice this deleted live data: incident
+# 1 took agent.db + config.json + the models dir; incident 2 (a guard on resetDb alone proved too
+# narrow) still deleted config.json, emptied the models dir, and clobbered agent.db.
+#
+# This root [test].preload hard-exits (scripts/refuse-root-test.ts — process.exit, since bun 1.3.8
+# swallows a throwing preload and runs the suite anyway), so NO test is ever run from the root. Each
+# subsystem's suite must be run from its OWN dir (cd cli / cd harness), where that subsystem's bunfig
+# preload establishes the required sandbox. Bun resolves a subdirectory run's bunfig from that subdir,
+# so this file does not leak into `cd cli && bun test`.
+[test]
+preload = ["./scripts/refuse-root-test.ts"]

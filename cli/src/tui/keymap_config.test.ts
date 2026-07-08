@@ -3,6 +3,7 @@ import { rmSync } from "node:fs";
 
 import { __resetKeybindCache, dispatchKey, keybindLabel, leaderSeq, parseChord, resolveKeybind, useBindings, type KeyLike } from "./keymap.ts";
 import { withRoot } from "../test_support/solid.ts";
+import { assertTestSandbox } from "../test_support/sandbox.ts";
 import { writeConfig } from "../lib/config.ts";
 import { DEFAULT_THEME_ID } from "../lib/design_system.ts";
 import { env } from "../lib/env.ts";
@@ -18,13 +19,18 @@ function writeKeybinds(keybinds: Record<string, string>): void {
 }
 
 // Each case starts from no config (→ defaults) and a cleared cache, so resolution is deterministic
-// regardless of what other test files left in the process-global cache.
+// regardless of what other test files left in the process-global cache. The assertTestSandbox guard
+// refuses to touch env.configPath unless it's the sandboxed path — at the monorepo root it is the
+// developer's REAL config.json (data-loss guard — see test_support/sandbox.ts). beforeEach runs first,
+// so a root run throws before writeKeybinds → writeConfig can clobber it.
 beforeEach(() => {
+    assertTestSandbox(env.configPath);
     rmSync(env.configPath, { force: true });
     __resetKeybindCache();
 });
 
 afterEach(() => {
+    assertTestSandbox(env.configPath);
     rmSync(env.configPath, { force: true });
     __resetKeybindCache();
 });
