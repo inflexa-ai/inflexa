@@ -4,6 +4,7 @@ import { GLYPHS } from "../../lib/design_system.ts";
 import { ensureProfileAtParity, type ProfileParityOutcome } from "../../modules/harness/profile_trigger.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Analysis } from "../../types/analysis.ts";
+import type { Notice } from "../theme.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import { bootState, harnessRuntime } from "./boot.ts";
 import { notify } from "./notice.ts";
@@ -46,7 +47,9 @@ export function watchProfileParity(workspace: Workspace): void {
                 const analysis = workspace.analysis;
                 if (!runtime || !analysis) return;
                 lastTriggeredAnalysisId = analysisId;
-                void driveProfileParity(runtime, analysis);
+                // Hand the driver a LIVE read of the open analysis (not the captured `analysis`) so it
+                // can detect a mid-check swap when its async work resolves — see `driveProfileParity`.
+                void driveProfileParity(runtime, analysis, () => workspace.analysis?.id ?? null);
             },
         ),
     );
@@ -62,22 +65,40 @@ export type ParityDriverSeams = {
     readonly check: (runtime: HarnessRuntime, analysis: Analysis) => Promise<ProfileParityOutcome>;
     /** Re-read the sidebar's ledger snapshots for an analysis. Real: {@link refreshSidebarData}. */
     readonly refreshSidebar: (analysisId: string) => Promise<void>;
+    /** Raise a transient toast. Real: {@link notify}. Injected so the swap-guard test can observe it. */
+    readonly notify: (notice: Notice) => void;
 };
 
 const realParityDriverSeams: ParityDriverSeams = {
     check: ensureProfileAtParity,
     refreshSidebar: refreshSidebarData,
+    notify,
 };
 
 /**
  * Run the helper and map its outcome onto the notice channel; skips stay silent (design D8). Exported
  * for the unit test — production calls it via {@link watchProfileParity} with the real seams.
+ *
+ * `currentAnalysisId` is a LIVE read of the open analysis, checked once `check` resolves. `check` stages
+ * the analysis's inputs (hundreds of ms), during which the user can swap analyses. This is the ONE
+ * refresh path not naturally keyed to the current workspace: `refreshSidebarData`'s generation token is
+ * last-STARTED-wins, not analysis-keyed, so poking it with this now-stale captured id would tear the OLD
+ * analysis's snapshots into the shared store the user is viewing for the NEW one — and a toast about
+ * analysis A while B is on screen is the same class of bug. So if the open analysis changed while `check`
+ * was in flight, drop BOTH the poke and the notice.
  */
-export async function driveProfileParity(runtime: HarnessRuntime, analysis: Analysis, seams: ParityDriverSeams = realParityDriverSeams): Promise<void> {
+export async function driveProfileParity(
+    runtime: HarnessRuntime,
+    analysis: Analysis,
+    currentAnalysisId: () => string | null,
+    seams: ParityDriverSeams = realParityDriverSeams,
+): Promise<void> {
     const outcome = await seams.check(runtime, analysis);
+    // Swapped analyses while `check` staged files? Drop both the poke and the notice (see the doc above).
+    if (currentAnalysisId() !== analysis.id) return;
     switch (outcome.kind) {
         case "triggered":
-            notify({ kind: "info", text: `Profiling "${analysis.name}" data${GLYPHS.ellipsis}` });
+            seams.notify({ kind: "info", text: `Profiling "${analysis.name}" data${GLYPHS.ellipsis}` });
             // `triggered` is the ONE lifecycle edge that changes ledger state outside the sidebar's own
             // refresh triggers: the check just seeded a pending/running data-profile row, but the
             // sidebar snapshotted this analysis as `absent` before the row existed, and on an idle
@@ -89,7 +110,7 @@ export async function driveProfileParity(runtime: HarnessRuntime, analysis: Anal
             void seams.refreshSidebar(analysis.id);
             return;
         case "failed":
-            notify({ kind: "warn", text: `Could not start profiling "${analysis.name}": ${outcome.reason}` });
+            seams.notify({ kind: "warn", text: `Could not start profiling "${analysis.name}": ${outcome.reason}` });
             return;
         case "already_profiled":
         case "already_running":

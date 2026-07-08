@@ -11,6 +11,7 @@ import {
 } from "@inflexa-ai/harness";
 
 import { GLYPHS } from "../../lib/design_system.ts";
+import type { ThemeColors } from "../../lib/design_system.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Workspace } from "../contexts/workspace.ts";
 import { bootState, harnessRuntime } from "./boot.ts";
@@ -114,6 +115,46 @@ export function profileDetailLines(snap: ProfileSnapshot): string[] {
             return [String(_exhaustive)];
         }
     }
+}
+
+/**
+ * The themed glyph + color role for a run's status (design D4). The single exhaustive `runMark`,
+ * shared by the sidebar rail and the runs dialog (both need the identical status→glyph/role mapping).
+ * running=warn, completed=success, failed/canceled=error, `suspended_insufficient_funds`=warn,
+ * `partial`=muted. A `never`-typed default breaks the build if the harness enum grows, forcing a new
+ * status to be classified rather than silently mis-toned.
+ *
+ * Homed in this hooks module (not `layout/sidebar.tsx`) beside the other pure, non-JSX sidebar helpers
+ * so the runs dialog can share it without importing the JSX layout module.
+ */
+export function runMark(status: RunStatus): { glyph: string; role: keyof ThemeColors } {
+    switch (status) {
+        case "running":
+            return { glyph: GLYPHS.circleHalf, role: "warning" };
+        case "completed":
+            return { glyph: GLYPHS.check, role: "success" };
+        case "failed":
+        case "canceled":
+            return { glyph: GLYPHS.cross, role: "error" };
+        case "suspended_insufficient_funds":
+            // Actionable, not just terminal: the run is paused awaiting funds/resume, so it warrants
+            // the "needs attention" warn tone rather than the muted grey of `partial` (which is simply
+            // a finished-with-gaps end state the user cannot act on).
+            return { glyph: GLYPHS.circle, role: "warning" };
+        case "partial":
+            return { glyph: GLYPHS.circle, role: "fgMuted" };
+        default: {
+            const _exhaustive: never = status;
+            return { glyph: GLYPHS.circle, role: "fgMuted" };
+        }
+    }
+}
+
+/** A run's short label: the workflow name, else the plan id tail, else the run id tail (design D4). */
+export function shortRunName(run: CortexRunRow): string {
+    if (run.workflowName.length > 0) return run.workflowName;
+    const id = run.planId ?? run.runId;
+    return id.replace(/-/g, "").slice(-6);
 }
 
 /** How many run rows a refresh pulls. The sidebar renders the newest few; the store holds the head. */

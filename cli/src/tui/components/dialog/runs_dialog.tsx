@@ -12,8 +12,7 @@ import { useDialogBindings, useDialogCancel, useDialogEntry } from "./dialog_hos
 import { DialogPanel } from "./dialog_panel.tsx";
 import { ScrollPane, SCROLL_HINT } from "../scroll_pane.tsx";
 import { RunBlock, type RunStepView } from "../run_block.tsx";
-import { runMark, shortRunName } from "../../layout/sidebar.tsx";
-import { relAge, type RunsSnapshot } from "../../hooks/sidebar_live.ts";
+import { relAge, runMark, shortRunName, type RunsSnapshot } from "../../hooks/sidebar_live.ts";
 
 /**
  * Map a harness step-execution status onto the design-system run-step state (design D5). Pure and
@@ -103,7 +102,8 @@ export function RunsDialog(props: RunsDialogProps): JSX.Element {
 
     const [steps, setSteps] = createSignal<StepsState>({ kind: "loading" });
     // Fetch the latest run's steps exactly once, when the view opens (design D5: not in the sidebar
-    // poll). Reads the snapshot as of mount; the render below stays reactive to `props.runs`.
+    // poll). `props.runs` is itself a point-in-time capture taken at open (see its prop doc), so both
+    // this fetch and the render below reflect that fixed snapshot — not later sidebar-poll updates.
     onMount(() => {
         const snap = props.runs;
         if (snap.kind !== "loaded" || snap.runs.length === 0) return;
