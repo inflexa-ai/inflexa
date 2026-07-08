@@ -28,47 +28,11 @@ export const Bus = new BusEmitter();
 let subscribed = false;
 
 /**
- * Content fields (message text, part text, deltas) are deliberately reduced
- * to lengths — these records double as exportable telemetry events.
+ * Bulky payloads (command args, output lists) are deliberately reduced to identifiers
+ * and counts — these records double as exportable telemetry events.
  */
 function eventFields(event: StampedEvent): Record<string, unknown> {
     switch (event.type) {
-        case "session.status":
-            return { sessionId: event.sessionId, status: event.status };
-        case "message.created":
-            return {
-                sessionId: event.message.sessionId,
-                messageId: event.message.id,
-                role: event.message.role,
-            };
-        case "message.updated":
-            return {
-                sessionId: event.message.sessionId,
-                messageId: event.message.id,
-                role: event.message.role,
-                durationMs: event.message.durationMs,
-            };
-        case "part.updated":
-            return {
-                // The live proxy bus only ever emits persisted text parts (which carry these); UI-only
-                // card kinds in the Part union carry no session/message linkage (no
-                // `sessionId`/`messageId`/`text`), hence the narrowing here before reading each.
-                // `id`/`type` are on every Part.
-                sessionId: "sessionId" in event.part ? event.part.sessionId : undefined,
-                messageId: "messageId" in event.part ? event.part.messageId : undefined,
-                partId: event.part.id,
-                partType: event.part.type,
-                textLength: "text" in event.part ? event.part.text.length : undefined,
-            };
-        case "part.delta":
-            return {
-                sessionId: event.sessionId,
-                messageId: event.messageId,
-                partId: event.partId,
-                deltaLength: event.delta.length,
-            };
-        case "session.error":
-            return { sessionId: event.sessionId, error: event.error };
         case "prov.analysis_created":
             return { analysisId: event.analysisId, actorKind: event.actor.kind };
         case "prov.input_added":

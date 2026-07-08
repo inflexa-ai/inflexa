@@ -142,11 +142,40 @@ export const bakedEnv = Object.freeze({
     auth0Domain: process.env.INFLEXA_AUTH0_DOMAIN,
     auth0ClientId: process.env.INFLEXA_AUTH0_CLIENT_ID,
     auth0Audience: process.env.INFLEXA_AUTH0_AUDIENCE,
+    // Release channel, baked at build time so a shipped binary's command surface is fixed at
+    // compile. The literal `process.env.INFLEXA_BUILD_CHANNEL` dot access is load-bearing:
+    // scripts/build.ts scans this block for exactly that pattern to learn which vars to --define,
+    // and its missing-var guard rejects an empty/unset value — so a release build MUST declare
+    // `INFLEXA_BUILD_CHANNEL=release`. `bun run dev` leaves it unset (→ undefined → dev channel).
+    // Read by devCommandsEnabled below.
+    buildChannel: process.env.INFLEXA_BUILD_CHANNEL,
     get gitCommit(): string {
         if (_gitCommit === undefined) _gitCommit = resolveGitCommit();
         return _gitCommit;
     },
 });
+
+/**
+ * True when the dev/E2E command surface (`chat`, `profile`, `run`) should be registered.
+ * A release build bakes `INFLEXA_BUILD_CHANNEL=release` and gets a product-only surface; any
+ * other channel — notably the unset dev default of `bun run dev` — enables them. `INFLEXA_DEV=1`
+ * is a deliberate runtime escape hatch: it is intentionally NOT in `bakedEnv`, so it is never
+ * --define-inlined and stays a live `process.env` read even inside a compiled release binary,
+ * letting support re-enable the dev commands on a shipped build without a rebuild. See the
+ * dev-commands spec.
+ */
+export function devCommandsEnabled(): boolean {
+    return devChannelActive(bakedEnv.buildChannel, process.env.INFLEXA_DEV);
+}
+
+/**
+ * The pure decision behind {@link devCommandsEnabled}, split out only so its truth table is unit
+ * testable: `env`/`bakedEnv` freeze their `process.env` reads at import, so the accessor's own
+ * inputs cannot be varied within a test process.
+ */
+export function devChannelActive(channel: string | undefined, devOverride: string | undefined): boolean {
+    return channel !== "release" || devOverride === "1";
+}
 
 export type EnvDocEntry = { kind: "path"; label: string; description: string; baseVar: string } | { kind: "var"; name: string; description: string };
 

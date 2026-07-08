@@ -23,8 +23,9 @@ shape since `06-change-graph.md` sketched it).
 ## Where the program stands (2026-07-08)
 
 ```
-landed:   … ──► embed-conversation-agent ──► tui-harness-chat ──► tui-sidebar-live (2026-07-08)
-next:     retire-proxy-chat-dev-umbrella   (change 3 of 14 — BINDING)
+landed:   … ──► tui-harness-chat ──► tui-sidebar-live ──► retire-proxy-chat-dev-umbrella (2026-07-08)
+DOC-14 SEQUENCE COMPLETE — the TUI chat is the one product conversation surface.
+next:     (unsequenced follow-ups below; #33 daemon remains the future transport swap)
 later:    ┌─ record-plan-lineage (the RQ6 provenance rider, deferred out of the skeleton)
           ├─ #33 daemon (a transport swap under the unchanged TUI — NOT a prerequisite; see 14)
           └─ durability hardening ────────── framed in 01, largely lands via #33 M2
@@ -65,7 +66,9 @@ It also took the #37 interim per-analysis lock across `run`/`profile`/`chat` and
 | Linux Docker ingress reachability | #27 | open; proposed bridge-gateway bind |
 | TUI chat = conversation agent (parity with Cortex managed) | `14-tui-chat-direction.md` change 1 (`tui-harness-chat`) | **LANDED + archived 2026-07-08**; live-verified (PTY, exit 0) |
 | Sidebar: data-profile section + real runs (mocks out) | `14-tui-chat-direction.md` change 2 (`tui-sidebar-live`) | **LANDED 2026-07-08**; live-verified via tmux capture; found+fixed the trigger→sidebar refresh gap |
-| Proxy-chat retirement + `dev` command umbrella | `14-tui-chat-direction.md` change 3 | queued behind change 2 |
+| Proxy-chat retirement + `dev` command umbrella | `14-tui-chat-direction.md` change 3 | **LANDED 2026-07-08** — `modules/intelligence/` gone; bus = `prov.*` only; channel gate verified |
+| Release binary build BROKEN at HEAD (pre-existing) | retire-proxy-chat findings F1 | `bun run build` fails on DBOS-SDK telemetry lazy-requires (`winston`, otel-proto) unresolvable under Bun.build — reproduced on unmodified HEAD; needs externalize/stub or deps |
+| `INFLEXA_GIT_COMMIT` never actually baked (pre-existing) | retire-proxy-chat verify observation | build.ts sets it claiming the bakedEnv guard covers it, but the scan finds no literal dot-access (the getter is out-of-block) — a compiled binary would throw at first `gitCommit` use; masked by the build break |
 | Daemon architecture (one runtime, many clients) | #33 | decided + milestoned (M1–M4); demoted 2026-07-08 — a later transport swap, NOT a prerequisite (14) |
 | State ownership under the daemon | #36 | open; 4 decision areas with recommendations |
 | Provenance chain-fork (two recorders, one analysis) | #37 | open bug; structurally closed by #33 M2/M3 |

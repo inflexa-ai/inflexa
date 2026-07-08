@@ -1,4 +1,3 @@
-import type { Message, Part } from "./session.ts";
 import type { AnalysisId } from "./analysis.ts";
 import type {
     ProvActor,
@@ -13,20 +12,17 @@ import type {
 } from "./prov.ts";
 
 /**
- * The cross-process event contract. Session-scoped events carry `sessionId`;
- * provenance events carry `analysisId` and are ignored by session-scoped consumers.
+ * The cross-process event contract. Today every member is an analysis-scoped provenance
+ * event carrying `analysisId`; a future domain adds its own member here (see the event-bus
+ * spec). The union holds only members with a live emitter AND consumer — the session-scoped
+ * chat events retired with the proxy chat engine, and the harness conversation path writes
+ * the Solid store directly rather than through the bus.
  *
  * One event type per domain action — never a single "recorded" event discriminated
  * by an interior `action` field with nullable companions. Each member carries exactly
  * the fields its action needs, no more (see "Single bus, typed events" in CLAUDE.md).
  */
 export type BusEvent =
-    | { type: "session.status"; sessionId: string; status: "idle" | "busy" | "error" }
-    | { type: "message.created"; message: Message }
-    | { type: "message.updated"; message: Message }
-    | { type: "part.updated"; part: Part }
-    | { type: "part.delta"; sessionId: string; messageId: string; partId: string; delta: string }
-    | { type: "session.error"; sessionId: string; error: string }
     | { type: "prov.analysis_created"; analysisId: AnalysisId; actor: ProvActor }
     | {
           type: "prov.input_added";
