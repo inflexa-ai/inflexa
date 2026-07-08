@@ -10,18 +10,28 @@
 // finished can still recover the result — with its provenance frame — when it
 // comes back. Push is the fast path; pull is what makes the protocol durable.
 //
+// The exec endpoints are signature-authenticated: the caller signs
+// `HMAC-SHA256(SANDBOX_CALLBACK_SECRET, "${execId}:${timestamp}:${sha256Hex(body)}")`
+// into `X-Sandbox-Signature` / `X-Sandbox-Timestamp`, the same construction the
+// outbound callbacks use, and the server verifies it against a freshness window.
+// It is a request signature, not a bearer, on purpose: the gateway forwards
+// these bytes in cleartext, so a static credential would be exposed to it — see
+// inbound_auth.go.
+//
 // Endpoints:
-//   GET  /health          → readiness probe
-//   POST /exec            → submit a command (returns 202); progress + result
-//                           flow to Cortex via outbound callbacks.
-//   GET  /exec/{execId}   → terminal result for an exec (fresh-signed), or
-//                           `{"status":"running"}` while it is still executing.
-//   POST /exec/{pid}/kill → kill a running process
-//   GET  /preview/...     → static file preview (when PREVIEW_ROOT is set)
+//
+//	GET  /health          → readiness probe (unauthenticated)
+//	POST /exec            → submit a command (returns 202); signed. Progress +
+//	                        result flow to Cortex via outbound callbacks.
+//	GET  /exec/{execId}   → terminal result for an exec (fresh-signed), or
+//	                        `{"status":"running"}` while it is still executing; signed.
+//	GET  /preview/...     → static file preview (unauthenticated, and inert unless
+//	                        PREVIEW_ROOT is set — the shipped image never sets it).
 //
 // Required env:
-//   CORTEX_BASE_URL          base URL Cortex listens on for callbacks
-//   SANDBOX_CALLBACK_SECRET  per-sandbox HMAC secret (raw or base64:)
+//
+//	CORTEX_BASE_URL          base URL Cortex listens on for callbacks
+//	SANDBOX_CALLBACK_SECRET  per-sandbox HMAC secret (raw or base64:)
 //
 // A second mode, `sandbox-server gateway`, runs no exec machinery at all — see
 // gateway.go. It is the only process the sandbox container can reach off its
@@ -59,7 +69,7 @@ const (
 type logLevel int
 
 const (
-	logLevelInfo  logLevel = iota
+	logLevelInfo logLevel = iota
 	logLevelDebug
 )
 
@@ -304,47 +314,34 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
-// execSubtreeHandler dispatches the two routes under `/exec/`:
-//
-//	POST /exec/{pid}/kill  → kill a running process
-//	GET  /exec/{execId}    → the terminal result for an exec
-//
-// They share a prefix because `execId` (`${workflowId}:${stepId}:${functionId}`)
-// contains colons but never slashes, so segment count plus method separates
-// them unambiguously.
-func execSubtreeHandler(pt *processTable, table *execTable, secret []byte) http.HandlerFunc {
-	kill := killHandler(pt)
-	result := execResultHandler(table, secret)
-	return func(w http.ResponseWriter, r *http.Request) {
-		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-		switch {
-		case len(parts) == 3 && parts[2] == "kill":
-			kill(w, r)
-		case len(parts) == 2:
-			result(w, r)
-		default:
-			writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
-		}
-	}
-}
-
-// execResultHandler serves the completion body for a terminal exec, signed
-// fresh at request time so it is accepted by Cortex's freshness window however
-// long after the exec finished it is fetched. This is the pull half of the
-// exec protocol: the push callback is the fast path, this is what makes a
-// completion survive a Cortex that was not listening when the exec ended.
+// execResultHandler serves the completion body for a terminal exec at
+// `GET /exec/{execId}`, signed fresh at request time so it is accepted by
+// Cortex's freshness window however long after the exec finished it is fetched.
+// This is the pull half of the exec protocol: the push callback is the fast
+// path, this is what makes a completion survive a Cortex that was not listening
+// when the exec ended.
 //
 // The bytes are the exact ones the completion callback carries, so a pulled
 // result is indistinguishable from a pushed one — provenance frame included.
-func execResultHandler(table *execTable, secret []byte) http.HandlerFunc {
+//
+// The request itself is signature-authenticated: the disclosed result includes
+// the command's stdout/stderr, so an unauthenticated caller must not be able to
+// read it.
+func execResultHandler(table *execTable, auth inboundAuth) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeJSONResponse(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
 		execID := strings.TrimPrefix(strings.Trim(r.URL.Path, "/"), "exec/")
-		if execID == "" {
-			writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "execId required"})
+		if execID == "" || strings.Contains(execID, "/") {
+			// An execId never contains a slash, so any remaining path separator is
+			// an unroutable request (e.g. the retired `/exec/{pid}/kill`).
+			writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
+			return
+		}
+		if !auth.authentic(r, execID, nil) {
+			writeUnauthorized(w)
 			return
 		}
 
@@ -362,49 +359,11 @@ func execResultHandler(table *execTable, secret []byte) http.HandlerFunc {
 		}
 
 		ts := time.Now().Unix()
-		w.Header().Set(headerSignature, signCallback(secret, execID, ts, body))
+		w.Header().Set(headerSignature, signCallback(auth.secret, execID, ts, body))
 		w.Header().Set(headerTimestamp, strconv.FormatInt(ts, 10))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(body)
-	}
-}
-
-func killHandler(pt *processTable) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-			return
-		}
-
-		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-		if len(parts) != 3 || parts[0] != "exec" || parts[2] != "kill" {
-			http.Error(w, `{"error":"invalid path"}`, http.StatusBadRequest)
-			return
-		}
-		pid, err := strconv.Atoi(parts[1])
-		if err != nil {
-			http.Error(w, `{"error":"invalid pid"}`, http.StatusBadRequest)
-			return
-		}
-
-		entry, ok := pt.get(pid)
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"error":"process not found"}`))
-			return
-		}
-
-		_ = entry.cmd.Process.Signal(syscall.SIGTERM)
-		go func() {
-			time.Sleep(killEscalationWait)
-			if e, exists := pt.get(pid); exists {
-				_ = e.cmd.Process.Signal(syscall.SIGKILL)
-			}
-		}()
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"killed":true}`))
 	}
 }
 
@@ -488,12 +447,15 @@ func main() {
 	defer stopSweeper()
 
 	callback := newCallbackClient(cfg.cortexBaseURL, cfg.callbackSecret)
-	exe := newExecutor(table, callback, pt)
+	auth := newInboundAuth(cfg.callbackSecret)
+	exe := newExecutor(table, callback, pt, auth)
 
 	mux := http.NewServeMux()
+	// `/health` is intentionally unauthenticated: it is a readiness probe that
+	// exposes no data and performs no action. Every other endpoint is signed.
 	mux.HandleFunc("/health", healthHandler)
 	mux.Handle("/exec", http.HandlerFunc(exe.handle))
-	mux.Handle("/exec/", execSubtreeHandler(pt, table, cfg.callbackSecret))
+	mux.Handle("/exec/", execResultHandler(table, auth))
 
 	previewRoot := os.Getenv("PREVIEW_ROOT")
 	if previewRoot != "" {

@@ -40,7 +40,7 @@
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
-import { verifyCallback } from "./hmac.js";
+import { signCallback, verifyCallback } from "./hmac.js";
 import { ExecResultSchema, isDoneMarker, isSyntheticFailure, type ExecEmit, type ExecEventMessage, type ExecResult, type SandboxRef } from "./types.js";
 
 const DEFAULT_FRESHNESS_SECONDS = 300;
@@ -87,8 +87,18 @@ async function pullExecResult(fetchImpl: typeof fetch, ref: SandboxRef, execId: 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), PULL_HTTP_TIMEOUT_MS);
     try {
+        // The result discloses the command's output, so sandbox-server requires a
+        // signed request. Sign an empty body over the same construction as the
+        // callbacks. `Date.now()` is safe: this runs inside a `DBOS.runStep` whose
+        // cached result is replayed without re-executing the body.
+        const reqTimestamp = Math.floor(Date.now() / 1000);
+        const reqSignature = signCallback({ execId, body: "", timestamp: reqTimestamp, secret: ref.callbackSecret });
         const res = await fetchImpl(`http://${ref.host}:${ref.port}/exec/${encodeURIComponent(execId)}`, {
             method: "GET",
+            headers: {
+                "x-sandbox-signature": reqSignature,
+                "x-sandbox-timestamp": String(reqTimestamp),
+            },
             signal: controller.signal,
         });
         if (!res.ok) {

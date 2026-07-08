@@ -11,31 +11,34 @@ import (
 
 const testExecID = "wf-1:step-a:3"
 
-func newResultServer(t *testing.T, secret []byte) (*execTable, http.HandlerFunc) {
+// newResultServer returns the handler plus a getter that signs each GET with
+// `secret`, mirroring what the harness attaches to a pull.
+func newResultServer(t *testing.T, secret []byte) (*execTable, func(execID string) *httptest.ResponseRecorder) {
 	t.Helper()
 	table := newExecTable()
-	return table, execSubtreeHandler(newProcessTable(), table, secret)
-}
-
-func getResult(h http.HandlerFunc, execID string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet, "/exec/"+execID, nil)
-	rec := httptest.NewRecorder()
-	h(rec, req)
-	return rec
+	h := execResultHandler(table, newInboundAuth(secret))
+	get := func(execID string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/exec/"+execID, nil)
+		signInbound(req, execID, nil, secret)
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		return rec
+	}
+	return table, get
 }
 
 func TestExecResult_UnknownExecIdIs404(t *testing.T) {
-	_, h := newResultServer(t, []byte("s"))
-	if rec := getResult(h, "never-submitted"); rec.Code != http.StatusNotFound {
+	_, get := newResultServer(t, []byte("s"))
+	if rec := get("never-submitted"); rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for unknown execId, got %d", rec.Code)
 	}
 }
 
 func TestExecResult_RunningExecReportsRunningWithoutSignature(t *testing.T) {
-	table, h := newResultServer(t, []byte("s"))
+	table, get := newResultServer(t, []byte("s"))
 	table.reserve(testExecID)
 
-	rec := getResult(h, testExecID)
+	rec := get(testExecID)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
@@ -51,11 +54,11 @@ func TestExecResult_RunningExecReportsRunningWithoutSignature(t *testing.T) {
 // yet. Reporting `completed` with no body would hand the caller nothing to
 // verify; it must read as still-running so the caller retries.
 func TestExecResult_TerminalWithoutBodyReportsRunning(t *testing.T) {
-	table, h := newResultServer(t, []byte("s"))
+	table, get := newResultServer(t, []byte("s"))
 	table.reserve(testExecID)
 	table.complete(testExecID, execStatusCompleted, &execResult{ExitCode: 0})
 
-	rec := getResult(h, testExecID)
+	rec := get(testExecID)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"running"`) {
 		t.Fatalf("expected running, got %d %s", rec.Code, rec.Body.String())
 	}
@@ -66,7 +69,7 @@ func TestExecResult_TerminalWithoutBodyReportsRunning(t *testing.T) {
 // not model — and provenance is the whole point of observing the exec.
 func TestExecResult_ServesCompletionBodyVerbatimWithFreshSignature(t *testing.T) {
 	secret := []byte("topsecret")
-	table, h := newResultServer(t, secret)
+	table, get := newResultServer(t, secret)
 
 	body := []byte(`{"execId":"wf-1:step-a:3","exitCode":0,"provenance":{"reads":[{"path":"/in.csv"}]}}`)
 	table.reserve(testExecID)
@@ -74,7 +77,7 @@ func TestExecResult_ServesCompletionBodyVerbatimWithFreshSignature(t *testing.T)
 	table.setCompletionBody(testExecID, body)
 
 	before := time.Now().Unix()
-	rec := getResult(h, testExecID)
+	rec := get(testExecID)
 	after := time.Now().Unix()
 
 	if rec.Code != http.StatusOK {
@@ -104,16 +107,16 @@ func TestExecResult_ServesCompletionBodyVerbatimWithFreshSignature(t *testing.T)
 // pull path a recovery path rather than a second way to fail.
 func TestExecResult_SignatureIsFreshOnEveryFetch(t *testing.T) {
 	secret := []byte("topsecret")
-	table, h := newResultServer(t, secret)
+	table, get := newResultServer(t, secret)
 
 	body := []byte(`{"execId":"wf-1:step-a:3","exitCode":0}`)
 	table.reserve(testExecID)
 	table.complete(testExecID, execStatusCompleted, &execResult{})
 	table.setCompletionBody(testExecID, body)
 
-	first := getResult(h, testExecID)
+	first := get(testExecID)
 	time.Sleep(1100 * time.Millisecond)
-	second := getResult(h, testExecID)
+	second := get(testExecID)
 
 	if first.Header().Get(headerTimestamp) == second.Header().Get(headerTimestamp) {
 		t.Fatalf("timestamp did not advance between fetches")
@@ -127,10 +130,12 @@ func TestExecResult_SignatureIsFreshOnEveryFetch(t *testing.T) {
 }
 
 func TestExecResult_RejectsNonGet(t *testing.T) {
-	table, h := newResultServer(t, []byte("s"))
+	table, _ := newResultServer(t, []byte("s"))
 	table.reserve(testExecID)
+	h := execResultHandler(table, newInboundAuth([]byte("s")))
 
 	req := httptest.NewRequest(http.MethodPut, "/exec/"+testExecID, nil)
+	signInbound(req, testExecID, nil, []byte("s"))
 	rec := httptest.NewRecorder()
 	h(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
@@ -138,36 +143,72 @@ func TestExecResult_RejectsNonGet(t *testing.T) {
 	}
 }
 
-// `/exec/{execId}` and `/exec/{pid}/kill` share a prefix. An execId carries
-// colons but never slashes, so segment count separates them.
-func TestExecSubtree_RoutesKillAndResultApart(t *testing.T) {
-	table, h := newResultServer(t, []byte("s"))
+// The `/exec/{pid}/kill` route was retired; a colon-bearing execId reaches the
+// result route, and any path with an extra slash is an unroutable 400.
+func TestExecResult_RoutesExecIdAndRejectsExtraSegments(t *testing.T) {
+	secret := []byte("s")
+	table, get := newResultServer(t, secret)
 	table.reserve(testExecID)
 	table.complete(testExecID, execStatusCompleted, &execResult{})
 	table.setCompletionBody(testExecID, []byte(`{"exitCode":0}`))
 
+	h := execResultHandler(table, newInboundAuth(secret))
+
 	// Two segments + GET → the result route, colons and all.
-	if rec := getResult(h, testExecID); rec.Code != http.StatusOK || rec.Header().Get(headerSignature) == "" {
+	if rec := get(testExecID); rec.Code != http.StatusOK || rec.Header().Get(headerSignature) == "" {
 		t.Fatalf("colon-bearing execId did not reach the result route: %d", rec.Code)
 	}
 
-	// Three segments ending in `kill` + POST → the kill route, which 404s on an
-	// unknown pid rather than falling through to the result handler.
-	req := httptest.NewRequest(http.MethodPost, "/exec/99999/kill", nil)
-	rec := httptest.NewRecorder()
-	h(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected kill route (404 unknown pid), got %d", rec.Code)
+	// A slash-bearing path (an old `/exec/{pid}/kill`, or anything nested) is not
+	// a valid execId → 400, before any auth or table lookup.
+	for _, path := range []string{"/exec/99999/kill", "/exec/a/b/c/d"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for unroutable path %q, got %d", path, rec.Code)
+		}
 	}
-	if !strings.Contains(rec.Body.String(), "process not found") {
-		t.Fatalf("kill route not reached: %s", rec.Body.String())
+}
+
+// The result discloses the command's stdout/stderr, so an unauthenticated fetch
+// must be refused — before the table is even consulted.
+func TestExecResult_RejectsUnsignedAndForgedRequests(t *testing.T) {
+	secret := []byte("topsecret")
+	table, _ := newResultServer(t, secret)
+	table.reserve(testExecID)
+	table.complete(testExecID, execStatusCompleted, &execResult{})
+	table.setCompletionBody(testExecID, []byte(`{"execId":"wf-1:step-a:3","exitCode":0}`))
+	h := execResultHandler(table, newInboundAuth(secret))
+
+	call := func(mut func(r *http.Request)) int {
+		req := httptest.NewRequest(http.MethodGet, "/exec/"+testExecID, nil)
+		mut(req)
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		return rec.Code
 	}
 
-	// Anything else is a client error, not a silent match.
-	req = httptest.NewRequest(http.MethodGet, "/exec/a/b/c/d", nil)
-	rec = httptest.NewRecorder()
-	h(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for an unroutable path, got %d", rec.Code)
+	if code := call(func(*http.Request) {}); code != http.StatusUnauthorized {
+		t.Fatalf("unsigned request: expected 401, got %d", code)
+	}
+	if code := call(func(r *http.Request) { signInbound(r, testExecID, nil, []byte("wrong-secret")) }); code != http.StatusUnauthorized {
+		t.Fatalf("wrong-secret signature: expected 401, got %d", code)
+	}
+	// A stale timestamp is as unacceptable as a bad signature.
+	if code := call(func(r *http.Request) {
+		staleTs := time.Now().Unix() - (inboundFreshnessSeconds + 60)
+		r.Header.Set(headerSignature, signCallback(secret, testExecID, staleTs, nil))
+		r.Header.Set(headerTimestamp, strconv.FormatInt(staleTs, 10))
+	}); code != http.StatusUnauthorized {
+		t.Fatalf("stale timestamp: expected 401, got %d", code)
+	}
+	// A signature minted for a different execId must not authorise this one.
+	if code := call(func(r *http.Request) { signInbound(r, "some-other-exec", nil, secret) }); code != http.StatusUnauthorized {
+		t.Fatalf("cross-execId signature: expected 401, got %d", code)
+	}
+	// Sanity: the correctly-signed request still succeeds.
+	if code := call(func(r *http.Request) { signInbound(r, testExecID, nil, secret) }); code != http.StatusOK {
+		t.Fatalf("valid signature: expected 200, got %d", code)
 	}
 }

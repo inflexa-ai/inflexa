@@ -6,7 +6,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { awaitExec, ExecTimeoutError, HardCancelError } from "./await-exec.js";
-import { signCallback } from "./hmac.js";
+import { signCallback, verifyCallback } from "./hmac.js";
 import type { ExecEventMessage, ExecResult, SandboxRef } from "./types.js";
 
 const EXEC_ID = "wf-1:step-a:fn-0";
@@ -460,7 +460,8 @@ describe("awaitExec pull recovery", () => {
                 recv: silentRecv,
                 runStep: passthroughStep,
                 pullAfterSilentSlices: 1,
-                fetch: async () => completedResponse(okResult, Math.floor(NOW_MS / 1000), "base64:" + Buffer.from("a-different-32-byte-secret-value").toString("base64")),
+                fetch: async () =>
+                    completedResponse(okResult, Math.floor(NOW_MS / 1000), "base64:" + Buffer.from("a-different-32-byte-secret-value").toString("base64")),
             }),
         ).rejects.toBeInstanceOf(HardCancelError);
     });
@@ -565,5 +566,33 @@ describe("awaitExec pull recovery", () => {
             },
         });
         expect(seen).toBe(`http://127.0.0.1:8765/exec/${encodeURIComponent(EXEC_ID)}`);
+    });
+
+    test("the pull request carries a valid signature over the empty GET body", async () => {
+        let headers: Record<string, string> = {};
+        await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+            now: () => NOW_MS,
+            freshnessSec: FRESHNESS,
+            recv: silentRecv,
+            runStep: passthroughStep,
+            pullAfterSilentSlices: 1,
+            fetch: async (_input, init) => {
+                headers = (init?.headers ?? {}) as Record<string, string>;
+                return completedResponse(okResult);
+            },
+        });
+        // sandbox-server verifies the inbound GET the same way it verifies a
+        // callback: HMAC over `execId:ts:sha256("")`. Recompute and confirm.
+        const timestamp = Number.parseInt(headers["x-sandbox-timestamp"]!, 10);
+        const verdict = verifyCallback({
+            execId: EXEC_ID,
+            body: "",
+            signature: headers["x-sandbox-signature"]!,
+            timestamp,
+            secret: SECRET,
+            nowSec: timestamp,
+            freshnessSec: FRESHNESS,
+        });
+        expect(verdict.valid).toBe(true);
     });
 });

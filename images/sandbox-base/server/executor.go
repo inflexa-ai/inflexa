@@ -61,10 +61,11 @@ type executor struct {
 	table    *execTable
 	callback *callbackClient
 	procs    *processTable
+	auth     inboundAuth
 }
 
-func newExecutor(table *execTable, callback *callbackClient, procs *processTable) *executor {
-	return &executor{table: table, callback: callback, procs: procs}
+func newExecutor(table *execTable, callback *callbackClient, procs *processTable, auth inboundAuth) *executor {
+	return &executor{table: table, callback: callback, procs: procs, auth: auth}
 }
 
 // handle is the POST /exec submit handler. Validates the request, dedups by
@@ -75,13 +76,27 @@ func (e *executor) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Read the raw bytes: the signature covers them, and re-encoding the parsed
+	// struct to verify would diverge from what the harness signed.
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "could not read body"})
+		return
+	}
+
 	var req execSubmitRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 		return
 	}
 	if strings.TrimSpace(req.ExecID) == "" {
 		writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "execId required"})
+		return
+	}
+	// Authenticate before any work: the execId comes from the untrusted body, but
+	// a forged body cannot carry a signature that verifies against the secret.
+	if !e.auth.authentic(r, req.ExecID, body) {
+		writeUnauthorized(w)
 		return
 	}
 	if len(req.Command) == 0 {

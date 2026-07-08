@@ -90,6 +90,23 @@ address pool — roughly thirty are available — which would silently cap
 concurrent steps. The K8s backend reaches pods directly and confines egress with
 NetworkPolicy; it has no gateway.
 
+**The gateway forwards the door; the signature is the lock.** The exec endpoints
+— `POST /exec` and `GET /exec/{execId}` — reject any request that does not carry
+a fresh, correct `X-Sandbox-Signature`/`X-Sandbox-Timestamp` over the same
+construction the callbacks use, run inbound. This is a request signature and
+deliberately not a static bearer: the gateway forwards these bytes in cleartext,
+so a bearer would hand the transport a reusable credential, while a signature
+lets the gateway forward or drop a request but never mint another — the same
+property that keeps it from forging a *completion* now keeps it from forging a
+*submit*. It also closes the one gap the shared analysis network leaves open. A
+sibling step can reach this sandbox at the network layer, but it holds only its
+own per-sandbox secret, so it cannot sign for this one; the check that
+authenticates Cortex is the check that confines the sibling. `POST /exec` signs
+the request body and `GET /exec/{execId}` an empty one; a missing, forged, or
+stale signature is a `401`, refused before any command runs or any stdout is
+disclosed. `/health` stays unauthenticated (it exposes nothing), and the retired
+`POST /exec/{pid}/kill` route is gone.
+
 **Create is checkpoint-idempotent; a reaper is the sole orphan cleanup.** A
 single create step that minted the secret, spawned the machine, then
 checkpointed could leak a running machine nothing referenced if the process
@@ -385,6 +402,57 @@ would leave the watchdog waiting on a recv that can never unblock.
 - **GIVEN** a running sandbox container whose gateway container has exited or been removed
 - **WHEN** `isAlive(ref)` is called
 - **THEN** the machine SHALL be reported dead so the watchdog can synthesise a failure
+
+### Requirement: The exec endpoints authenticate inbound requests by signature
+
+The exec endpoints — `POST /exec` and `GET /exec/{execId}` — SHALL require a
+valid `X-Sandbox-Signature` / `X-Sandbox-Timestamp` pair computed as
+`HMAC-SHA256(callbackSecret, "${execId}:${timestamp}:${sha256Hex(body)}")`, the
+same construction as the outbound callbacks run inbound, and SHALL verify it
+against the callback freshness window. `POST /exec` SHALL sign over the exact
+request body; `GET /exec/{execId}` SHALL sign over an empty body. A missing,
+malformed, forged, or stale signature SHALL be rejected with `401` before any
+command is spawned or any result disclosed. Authentication SHALL be a request
+signature and SHALL NOT be a static bearer: the gateway forwards inbound bytes
+in cleartext, so a bearer would disclose a reusable credential to it, whereas a
+signature lets the gateway forward or drop a request but never mint another.
+Because the check tests possession of the per-sandbox secret, a sibling sandbox
+on the shared analysis network — holding only its own secret — SHALL NOT be able
+to authenticate to this sandbox's exec endpoints. The server SHALL expose no
+`POST /exec/{pid}/kill` route. `GET /health` SHALL remain unauthenticated.
+
+#### Scenario: An unsigned submit is rejected
+
+- **GIVEN** a running sandbox-server
+- **WHEN** `POST /exec` arrives with no signature headers
+- **THEN** the server SHALL respond `401` and SHALL NOT spawn the command
+
+#### Scenario: A forged submit is rejected
+
+- **WHEN** `POST /exec` arrives with a signature that does not match the recomputed HMAC over the request body
+- **THEN** the server SHALL respond `401` and SHALL NOT spawn the command
+
+#### Scenario: A correctly-signed submit is accepted
+
+- **WHEN** `POST /exec` arrives signed as `HMAC-SHA256(S, execId:timestamp:sha256Hex(body))` within the freshness window
+- **THEN** the server SHALL accept it and return `202`
+
+#### Scenario: An unsigned result fetch is rejected
+
+- **GIVEN** a terminal exec whose result is retained
+- **WHEN** `GET /exec/{execId}` arrives with no signature headers
+- **THEN** the server SHALL respond `401` and SHALL NOT disclose the command's stdout or stderr
+
+#### Scenario: A sibling cannot authenticate with its own secret
+
+- **GIVEN** two sandboxes of the same analysis, each with a distinct `callbackSecret`, sharing one internal network
+- **WHEN** one signs a request to the other's `/exec` with its own secret
+- **THEN** the signature SHALL NOT verify and the request SHALL be rejected with `401`
+
+#### Scenario: The kill route no longer exists
+
+- **WHEN** a request is made under `/exec/{pid}/kill`
+- **THEN** the server SHALL NOT kill a process, treating a slash-bearing `/exec/` path as unroutable
 
 ### Requirement: Callback delivery is dumb, pod-agnostic, and forward-only
 

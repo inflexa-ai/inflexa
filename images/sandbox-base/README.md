@@ -39,11 +39,22 @@ for `linux/amd64` and `linux/arm64` via
 
 The server listens on `:8765` (override `SANDBOX_SERVER_PORT`) and exposes:
 
-- `GET  /health` — readiness probe.
-- `POST /exec` — submit a command; returns `202` immediately and runs it in the background.
-- `GET  /exec/{execId}` — the terminal result for an exec, or `{"status":"running"}` while it is still executing.
-- `POST /exec/{pid}/kill` — SIGTERM a running process (SIGKILL after a grace period).
-- `GET  /preview/...` — static file preview, only when `PREVIEW_ROOT` is set.
+- `GET  /health` — readiness probe. Unauthenticated.
+- `POST /exec` — submit a command; returns `202` immediately and runs it in the background. Signed.
+- `GET  /exec/{execId}` — the terminal result for an exec, or `{"status":"running"}` while it is still executing. Signed.
+- `GET  /preview/...` — static file preview, only when `PREVIEW_ROOT` is set (the shipped image never sets it). Unauthenticated.
+
+The exec endpoints are **signature-authenticated**: the caller signs
+`HMAC-SHA256(SANDBOX_CALLBACK_SECRET, "${execId}:${timestamp}:${sha256Hex(body)}")`
+into `X-Sandbox-Signature`/`X-Sandbox-Timestamp` — the same construction the
+callbacks use, run inbound — and the server verifies it against a freshness
+window (`POST /exec` over the request body, `GET /exec/{execId}` over an empty
+body). It is a request signature rather than a bearer on purpose: the gateway
+forwards these bytes in cleartext, so a static credential would be exposed to
+it, whereas a signature it can forward or drop but never reuse. A missing,
+forged, or stale signature is a `401`. Because the check tests possession of the
+per-sandbox secret, a sibling sandbox sharing the analysis network — holding only
+its own secret — cannot drive this one's `/exec`. There is no `kill` route.
 
 Progress (`event`) and completion (`complete`) are POSTed to
 `{CORTEX_BASE_URL}/sandbox/{execId}/{kind}` as HMAC-SHA256-signed callbacks

@@ -141,7 +141,7 @@ The submit + recv + HMAC-callback protocol ([harness-sandbox-exec](openspec/spec
 
 **Single base image**: One `sandbox-base` image for all sandbox agents. R, Python, Node.js runtimes + system libraries; no R/Python packages baked in. Packages live in the shared library store mounted read-only at `/mnt/libs`.
 
-**sandbox-server**: Statically-linked Go binary at `images/sandbox-base/server/`. Endpoints: `GET /health`, `POST /exec` (idempotency-keyed submit), `GET /exec/{execId}` (terminal result, signed fresh at request time), `POST /exec/{pid}/kill`. A second mode, `sandbox-server gateway`, runs no exec machinery at all — two fixed-destination TCP forwarders and no callback secret.
+**sandbox-server**: Statically-linked Go binary at `images/sandbox-base/server/`. Endpoints: `GET /health` (unauthenticated), `POST /exec` (idempotency-keyed submit), `GET /exec/{execId}` (terminal result, signed fresh at request time). The two exec endpoints are **signature-authenticated inbound** — the caller signs each request with the per-sandbox secret over the same HMAC construction as the callbacks (a request signature, not a bearer, so the cleartext-forwarding gateway never holds a reusable credential); an unsigned, forged, or stale request is a `401`. There is no `kill` route. A second mode, `sandbox-server gateway`, runs no exec machinery at all — two fixed-destination TCP forwarders and no callback secret.
 
 **Session storage**: Per-analysis data and artifacts live in the session directory. Each sandbox container gets a **flat read-only mount** of the full analysis tree at `/{resourceId}`, with a **nested read-write mount** at `/{resourceId}/runs/{runId}/{stepId}` for the step's artifacts. Workspace tools enforce write restriction via `allowedWritePrefix`.
 
