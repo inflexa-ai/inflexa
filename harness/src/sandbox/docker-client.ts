@@ -29,6 +29,12 @@ import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLivenes
 
 const SANDBOX_SERVER_PORT = 8765;
 const HEALTH_TIMEOUT_MS = 30_000;
+
+/** Only this process dials the published port; binding it on every host interface would expose `/exec` to the LAN. */
+const SANDBOX_PORT_HOST_IP = "127.0.0.1";
+
+/** Matches `USER sandbox` (uid/gid 1000) in the sandbox images. Asserted at run time so a swapped `meta.image` cannot silently execute as root. */
+const SANDBOX_USER = "1000:1000";
 const HEALTH_POLL_MS = 250;
 
 const MANAGED_BY_LABEL = "app.kubernetes.io/managed-by";
@@ -178,6 +184,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         ...(config.platform !== undefined && { platform: config.platform }),
                         Image: meta.image ?? config.image,
                         Env: env,
+                        User: SANDBOX_USER,
                         WorkingDir: plan.workingDir,
                         Labels: {
                             [MANAGED_BY_LABEL]: MANAGED_BY_VALUE,
@@ -187,12 +194,19 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                             [RUN_ID_LABEL]: meta.runId,
                             [STEP_ID_LABEL]: meta.stepId,
                         },
+                        // No NetworkMode is set, so the container retains egress. That is not an
+                        // oversight: sandbox-server must reach CORTEX_BASE_URL to POST its callbacks,
+                        // and both `none` and `--internal` remove the published port and host
+                        // reachability along with the egress. Confining egress requires moving the
+                        // exec/callback transport off TCP first.
                         HostConfig: {
                             Binds: binds,
+                            CapDrop: ["ALL"],
+                            SecurityOpt: ["no-new-privileges"],
                             NanoCpus: Math.round(spec.cpu * 1e9),
                             Memory: spec.memoryGb * 1024 ** 3,
                             PortBindings: {
-                                [`${SANDBOX_SERVER_PORT}/tcp`]: [{ HostPort: "0" }],
+                                [`${SANDBOX_SERVER_PORT}/tcp`]: [{ HostIp: SANDBOX_PORT_HOST_IP, HostPort: "0" }],
                             },
                             AutoRemove: false,
                         },

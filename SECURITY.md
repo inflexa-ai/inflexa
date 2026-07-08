@@ -8,7 +8,9 @@ We take the security of Inflexa seriously. Because Inflexa is a local agent that
 
 Two facts shape what counts as a vulnerability:
 
-1. **The Docker sandbox is the containment boundary.** Generated code runs inside the sandbox image, which by default has **no network egress**, mounts **only your project working directory**, runs under **CPU/memory limits**, and has **no access to host credentials**. The most serious class of issue is anything that breaks this boundary. The sandbox protocol is implemented in [`harness/`](./harness) — see [`harness/CONTEXT.md`](./harness/CONTEXT.md).
+1. **The Docker sandbox is the containment boundary.** Generated code runs inside the sandbox image as a **non-root user (uid 1000)** with **all Linux capabilities dropped** and **`no-new-privileges`** set, under **CPU and memory limits**. It gets a **read-only** mount of the analysis tree and may write **only to the current step's output directory**; the library and reference stores are mounted read-only. It is **not given the sandbox callback secret or any other host credential**. The most serious class of issue is anything that breaks this boundary. The sandbox protocol is implemented in [`harness/`](./harness) — see [`harness/CONTEXT.md`](./harness/CONTEXT.md).
+
+   **Known limitation — network egress is not currently restricted.** The container runs on Docker's default bridge and can reach the network. This is a consequence of the exec/callback transport: sandbox-server must reach the host to POST its results, and Docker's `--network=none` and `--internal` remove the published port and host reachability along with the egress. Restricting egress requires moving that transport off TCP, which is tracked work. Until then, **do not treat the sandbox as an egress boundary**, and note that a prompt-injection payload reaching the agent could in principle direct generated code to exfiltrate data it can read. The analysis tree it can read is the data you pointed Inflexa at.
 2. **What leaves your machine depends on the model provider you configure.** With local models, Inflexa runs end-to-end offline. With bring-your-own-key (BYOK) to a cloud provider, the data you send to that provider leaves your machine *by design and by your configuration*.
 
 ## Supported versions
@@ -50,8 +52,9 @@ We practice **coordinated disclosure**: we ask that you give us a reasonable opp
 
 Given the architecture, the highest-value reports concern:
 
-- **Sandbox escape** - generated or executed code escaping the Docker sandbox to reach the host filesystem, host processes, or the network.
-- **Isolation weaknesses** - the sandbox running with more access than documented: unexpected network egress when it should be disabled, mounts beyond the working directory, or access to host credentials or environment.
+- **Sandbox escape** - generated or executed code escaping the Docker sandbox to reach the host filesystem or host processes.
+- **Isolation weaknesses** - the sandbox running with more access than documented: writes outside the current step's output directory, reads outside the analysis tree, capability or privilege escalation, or access to host credentials or environment. (Network egress from the sandbox is a documented limitation, not a vulnerability - see the security model above.)
+- **Forging the exec or provenance channel** - code running inside the sandbox producing a completion callback, exit code, stdout, or provenance frame that the harness accepts as authentic. The callback secret is deliberately withheld from spawned commands; a way to recover it, or to sign without it, is a serious report.
 - **Prompt-injection-to-execution** - content embedded in a dataset, file, metadata, or model response that induces the agent to run harmful code or attempt data exfiltration **beyond what the documented sandbox containment would prevent**. (Inducing the agent to *generate* questionable code that the sandbox still contains is interesting, but the security boundary is the sandbox; tell us when that boundary fails to hold.)
 - **Provenance integrity** - tampering with, forging, or silently corrupting the SQLite lineage/audit record.
 - **Unexpected data egress** - data leaving the machine in a mode where it should not (e.g. data sent to a provider while in a local-only configuration).

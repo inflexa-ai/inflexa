@@ -31,5 +31,5 @@ Closes #<!-- issue number, if any -->
 <!-- Delete this section if it does not apply. -->
 
 - [ ] **Methods:** the method is stated, relevant literature cited where appropriate, and tool/library versions are pinned.
-- [ ] **Sandbox:** the security model is preserved (default no network egress, working-directory-only mounts, resource limits); any loosening is called out and justified.
+- [ ] **Sandbox:** the security model is preserved (non-root, all capabilities dropped, `no-new-privileges`, read-only analysis tree with writes confined to the step's output directory, resource limits, and no host credentials in spawned commands); any loosening is called out and justified.
 - [ ] **Provenance:** prior analyses remain reproducible (or the expected variance is documented).

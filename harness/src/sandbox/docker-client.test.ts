@@ -51,6 +51,10 @@ interface CreatedContainer {
     platform?: string;
     /** Whether the `platform` key was present at all on createOpts — the config-unset case must OMIT it, not pass undefined. */
     hasPlatformKey: boolean;
+    user?: string;
+    capDrop?: string[];
+    securityOpt?: string[];
+    portBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>>;
 }
 
 function stubDocker(): {
@@ -93,7 +97,19 @@ function stubDocker(): {
     });
 
     const docker = {
-        createContainer: async (opts: { name: string; Env: string[]; WorkingDir?: string; platform?: string; HostConfig?: { Binds?: string[] } }) => {
+        createContainer: async (opts: {
+            name: string;
+            Env: string[];
+            User?: string;
+            WorkingDir?: string;
+            platform?: string;
+            HostConfig?: {
+                Binds?: string[];
+                CapDrop?: string[];
+                SecurityOpt?: string[];
+                PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>>;
+            };
+        }) => {
             created.push({
                 name: opts.name,
                 env: opts.Env,
@@ -101,6 +117,10 @@ function stubDocker(): {
                 workingDir: opts.WorkingDir,
                 platform: opts.platform,
                 hasPlatformKey: Object.prototype.hasOwnProperty.call(opts, "platform"),
+                user: opts.User,
+                capDrop: opts.HostConfig?.CapDrop,
+                securityOpt: opts.HostConfig?.SecurityOpt,
+                portBindings: opts.HostConfig?.PortBindings,
             });
             return makeContainer(opts.name);
         },
@@ -111,6 +131,42 @@ function stubDocker(): {
 }
 
 describe("docker createSandbox / teardown / isAlive", () => {
+    test("createSandbox confines the container: dropped capabilities, no privilege escalation, non-root, loopback-only port", async () => {
+        const { docker, created } = stubDocker();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://cortex.example.com:443",
+            sessionsBasePath: "/sessions",
+            libStorePath: libRoot,
+            docker,
+            fetch: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                {
+                    runId: "run-1",
+                    stepId: "step-a",
+                    analysisId: "an-1",
+                    childWorkflowId: "run-1-0",
+                    resources: { cpu: 2, memoryGb: 4 },
+                },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        const container = created[0];
+        expect(container?.capDrop).toEqual(["ALL"]);
+        expect(container?.securityOpt).toEqual(["no-new-privileges"]);
+        expect(container?.user).toBe("1000:1000");
+
+        // The published port carries `/exec`, which is unauthenticated: it must not
+        // be reachable from anywhere but this host.
+        expect(container?.portBindings?.["8765/tcp"]?.[0]?.HostIp).toBe("127.0.0.1");
+    });
+
     test("createSandbox launches with required env vars and returns a SandboxRef with callbackSecret", async () => {
         const { docker, created } = stubDocker();
         const registered: Array<{ runId: string; stepId: string; sandboxId: string }> = [];

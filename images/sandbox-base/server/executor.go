@@ -355,6 +355,38 @@ func treeDiffRootForExec(cwd string) string {
 	return ""
 }
 
+// sensitiveEnvKeys are the host-privileged variables that reach sandbox-server
+// through its own environment and MUST NOT reach the commands it spawns.
+//
+// Possession of the callback secret is sufficient to forge a signed `/complete`
+// callback for any exec — fabricating its exit code, stdout, and provenance
+// frame. Leaving it in a spawned command's environment would place the integrity
+// of the provenance record inside the trust domain of the very code that record
+// is meant to observe.
+//
+// Stripping them here is safe because loadServerConfig reads both once, at
+// startup, before any exec is accepted.
+var sensitiveEnvKeys = map[string]struct{}{
+	envCallbackSecret: {},
+	envCortexBaseURL:  {},
+}
+
+// sanitizedEnviron is the server's environment with sensitiveEnvKeys removed.
+func sanitizedEnviron() []string {
+	src := os.Environ()
+	out := make([]string, 0, len(src))
+	for _, kv := range src {
+		name, _, found := strings.Cut(kv, "=")
+		if found {
+			if _, sensitive := sensitiveEnvKeys[name]; sensitive {
+				continue
+			}
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
 // buildCommand wraps a single-string command in `sh -c` (matching the prior
 // behavior); multi-element commands invoke execve directly.
 func buildCommand(ctx context.Context, req execSubmitRequest) *exec.Cmd {
@@ -367,7 +399,7 @@ func buildCommand(ctx context.Context, req execSubmitRequest) *exec.Cmd {
 	if req.Cwd != "" {
 		cmd.Dir = req.Cwd
 	}
-	cmd.Env = os.Environ()
+	cmd.Env = sanitizedEnviron()
 	for k, v := range req.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}

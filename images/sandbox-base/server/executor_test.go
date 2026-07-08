@@ -380,3 +380,59 @@ func TestExecHandler_SubmittedLogDedupHitFlag(t *testing.T) {
 	}
 }
 
+
+// A spawned command must never inherit the callback credentials: whoever holds
+// the secret can forge a signed completion — including its provenance frame —
+// for any exec.
+func TestBuildCommand_StripsCallbackCredentialsFromChildEnv(t *testing.T) {
+	t.Setenv(envCallbackSecret, "base64:c3VwZXItc2VjcmV0LXZhbHVl")
+	t.Setenv(envCortexBaseURL, "http://host.docker.internal:9999")
+	t.Setenv("SANDBOX_UNRELATED_VAR", "kept")
+
+	cmd := buildCommand(context.Background(), execSubmitRequest{
+		Command: []string{"true"},
+		Env:     map[string]string{"STEP_SCOPED": "also-kept"},
+	})
+
+	var sawUnrelated, sawStepScoped bool
+	for _, kv := range cmd.Env {
+		name, _, _ := strings.Cut(kv, "=")
+		if _, sensitive := sensitiveEnvKeys[name]; sensitive {
+			t.Fatalf("child env leaks %s", name)
+		}
+		switch kv {
+		case "SANDBOX_UNRELATED_VAR=kept":
+			sawUnrelated = true
+		case "STEP_SCOPED=also-kept":
+			sawStepScoped = true
+		}
+	}
+	if !sawUnrelated {
+		t.Error("unrelated host env var was dropped; only the callback credentials should be stripped")
+	}
+	if !sawStepScoped {
+		t.Error("request-supplied env var was dropped")
+	}
+}
+
+func TestSanitizedEnviron_DropsOnlyTheNamedKeys(t *testing.T) {
+	t.Setenv(envCallbackSecret, "base64:c2VjcmV0")
+	t.Setenv(envCortexBaseURL, "http://example.invalid")
+
+	for _, kv := range sanitizedEnviron() {
+		name, _, _ := strings.Cut(kv, "=")
+		if name == envCallbackSecret || name == envCortexBaseURL {
+			t.Fatalf("sanitizedEnviron returned %s", name)
+		}
+	}
+	// PATH is set in every sane environment and must survive.
+	var sawPath bool
+	for _, kv := range sanitizedEnviron() {
+		if name, _, _ := strings.Cut(kv, "="); name == "PATH" {
+			sawPath = true
+		}
+	}
+	if !sawPath {
+		t.Error("PATH was stripped from the child environment")
+	}
+}
