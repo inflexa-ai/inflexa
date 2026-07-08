@@ -114,6 +114,21 @@ export function App(props: AppProps) {
         ));
     }
 
+    // A text-selection drag released over a Sidebar Section fires its `onMouseUp` (→ open dialog) on the
+    // SAME release the root `onMouseUp={copySelection}` handles — so a drag ending on DATA PROFILE/RUNS
+    // would both copy AND pop the dialog. When a selection is live, treat the release as the tail of that
+    // drag and suppress the open (mirrors the selection-aware ctrl+c guard above). Only the mouse path is
+    // guarded: the leader keys below invoke the unguarded `openProfile`/`openRuns` — a deliberate ctrl+x
+    // d/r keypress carries no drag context and should always open.
+    function openProfileFromSidebar(): void {
+        if (renderer.getSelection()?.getSelectedText()) return;
+        openProfile();
+    }
+    function openRunsFromSidebar(): void {
+        if (renderer.getSelection()?.getSelectedText()) return;
+        openRuns();
+    }
+
     // The single root keyboard handler that drives the keymap engine. Every binding below is a
     // declarative layer; the dispatcher picks the winner — no hand-branched if/else here.
     useKeymapRoot();
@@ -387,7 +402,7 @@ export function App(props: AppProps) {
 
                     {/* Full-height sidebar: spans both the stream and the input; ctrl+b toggles it. */}
                     <Show when={sidebarOpen()}>
-                        <Sidebar messageCount={conversation.messageCount} onOpenProfile={openProfile} onOpenRuns={openRuns} />
+                        <Sidebar messageCount={conversation.messageCount} onOpenProfile={openProfileFromSidebar} onOpenRuns={openRunsFromSidebar} />
                     </Show>
                 </box>
 

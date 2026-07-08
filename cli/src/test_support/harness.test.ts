@@ -1,6 +1,8 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { onCleanup } from "solid-js";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { dirname } from "node:path";
 
 import { env } from "../lib/env.ts";
 import { runCli } from "./cli.ts";
@@ -51,10 +53,18 @@ describe("freshDb / resetDb", () => {
         // sharing this process keep their destructive-reset authorization.
         const saved = process.env.INFLEXA_TEST_SANDBOX;
         delete process.env.INFLEXA_TEST_SANDBOX;
+        // A sentinel at the EXACT path resetDb would rmSync. Asserting only the throw would stay green
+        // if the guard were ever reordered BELOW the rmSync loop — the precise data-loss regression it
+        // exists to prevent. The sentinel proves the guard bailed BEFORE any deletion: it must survive.
+        // (env.dbPath is inside the test sandbox here, so writing/removing it is safe.)
+        mkdirSync(dirname(env.dbPath), { recursive: true });
+        writeFileSync(env.dbPath, "sentinel");
         try {
             expect(() => resetDb()).toThrow("test sandbox not active");
+            expect(existsSync(env.dbPath)).toBe(true);
         } finally {
             if (saved !== undefined) process.env.INFLEXA_TEST_SANDBOX = saved;
+            rmSync(env.dbPath, { force: true });
         }
     });
 });
