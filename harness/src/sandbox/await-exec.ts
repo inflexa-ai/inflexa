@@ -71,21 +71,13 @@ const DEFAULT_FRESHNESS_SECONDS = 300;
 const MAX_RECV_TIMEOUT_SECONDS = 5;
 
 /**
- * Poll cadence in poll mode: how long the loop sleeps between two
- * `GET /exec/{execId}?since={cursor}` fetches, in two phases. Every poll writes
- * a durable step row (plus a durable sleep), so cadence is a direct multiplier
- * on DBOS system-table growth for the life of the exec.
- *
- *   - Fast phase: {@link DEFAULT_POLL_INTERVAL_MS} (~1.5s) for the first
- *     {@link DEFAULT_FAST_POLL_ATTEMPTS} attempts (~the exec's first minute) —
- *     short commands, the common case, return within one snappy interval.
- *   - Slow phase: {@link DEFAULT_SLOW_POLL_INTERVAL_MS} thereafter — an
- *     hours-long analysis polls sustainably (~720 rows/hour instead of ~4,800)
- *     at the cost of up to 10s of terminal-result latency, noise against the
- *     runtime of anything that reaches this phase.
- *
- * Attempt-derived, so the schedule is a pure function of the checkpointed step
- * sequence and replays identically.
+ * Two-phase poll cadence. Every poll writes a durable step row (plus a durable
+ * sleep), so the interval is a direct multiplier on DBOS system-table growth
+ * for the life of the exec: 1.5s for the first 40 attempts (~the exec's first
+ * minute) keeps short commands snappy; 10s thereafter keeps an hours-long
+ * exec's row growth bounded, at a terminal-latency cost that is noise at that
+ * runtime. Attempt-derived, so the schedule is a pure function of the
+ * checkpointed step sequence and replays identically.
  */
 const DEFAULT_POLL_INTERVAL_MS = 1_500;
 const DEFAULT_FAST_POLL_ATTEMPTS = 40;
@@ -190,43 +182,33 @@ export class ExecTimeoutError extends Error {
     }
 }
 
+/**
+ * Dependency seams of the await loops — every member is an injectable effect
+ * (clock, recv, fetch, durable step, durable sleep, warn sink) plus the
+ * transport selector. Tuning values (freshness window, pull threshold, poll
+ * cadence) are module constants, not options.
+ */
 export interface AwaitExecOptions {
-    /** Symmetric HMAC freshness window. Defaults to 5 minutes. */
-    freshnessSec?: number;
     /**
      * Clock source for the deadline check and HMAC freshness. Defaults to the
      * checkpointed `DBOS.now()` so the loop's recv count is replay-stable (a raw
      * `Date.now()` here drifts the recorded `DBOS.recv` function-ID sequence on
-     * recovery — see the harness-durable-runtime spec). Overridable as a testing hook.
+     * recovery — see the harness-durable-runtime spec).
      */
     now?: () => number | Promise<number>;
-    /**
-     * Injected for tests: replaces `DBOS.recv`. Production code passes
-     * nothing and the real `DBOS.recv` is used.
-     */
+    /** Replaces `DBOS.recv` (callback mode). */
     recv?: <T>(topic: string, timeoutSec: number) => Promise<T | null>;
-    /** Injected for tests. Defaults to `globalThis.fetch`. */
+    /** Defaults to `globalThis.fetch`. */
     fetch?: typeof fetch;
-    /** Injected for tests. Defaults to `DBOS.runStep`. */
+    /** Defaults to `DBOS.runStep`. */
     runStep?: <T>(fn: () => Promise<T>, config: { name: string }) => Promise<T>;
-    /** Silent recv slices before the loop pulls (callback mode). Defaults to {@link PULL_AFTER_SILENT_SLICES}. */
-    pullAfterSilentSlices?: number;
     /**
      * Result transport. `poll` (default) runs the durable poll loop; `callback`
      * runs the `DBOS.recv` loop with the pull as its recovery backstop. The
      * composition root passes the same value it hands the container.
      */
     transport?: SandboxTransport;
-    /** Poll-mode fast-phase inter-poll sleep. Defaults to {@link DEFAULT_POLL_INTERVAL_MS}. */
-    pollIntervalMs?: number;
-    /** Poll attempts before the cadence backs off. Defaults to {@link DEFAULT_FAST_POLL_ATTEMPTS}. */
-    fastPollAttempts?: number;
-    /** Poll-mode slow-phase inter-poll sleep. Defaults to {@link DEFAULT_SLOW_POLL_INTERVAL_MS}. */
-    slowPollIntervalMs?: number;
-    /**
-     * Injected for tests: replaces the durable inter-poll sleep. Production code
-     * passes nothing and `DBOS.sleepms` is used.
-     */
+    /** Replaces the durable inter-poll sleep. Defaults to `DBOS.sleepms`. */
     sleep?: (ms: number) => Promise<void>;
     /**
      * Sink for advisory warnings (poll-mode progress-event loss). Defaults to
@@ -259,12 +241,10 @@ export async function awaitExecCallback(
 ): Promise<ExecResult> {
     const topic = `exec-event:${execId}`;
     const callbackSecret = ref.callbackSecret;
-    const freshnessSec = options.freshnessSec ?? DEFAULT_FRESHNESS_SECONDS;
     const now = options.now ?? (() => DBOS.now());
     const recv = options.recv ?? (async <T>(t: string, sec: number) => DBOS.recv<T>(t, sec));
     const fetchImpl = options.fetch ?? fetch;
     const runStep = options.runStep ?? (<T>(fn: () => Promise<T>, c: { name: string }) => DBOS.runStep(fn, c));
-    const pullAfterSilentSlices = options.pullAfterSilentSlices ?? PULL_AFTER_SILENT_SLICES;
 
     // Both counters are pure functions of the checkpointed recv sequence, so a
     // replay issues exactly the same pulls in exactly the same order — which is
@@ -289,7 +269,7 @@ export async function awaitExecCallback(
             timestamp: pulled.timestamp,
             secret: callbackSecret,
             nowSec: Math.floor((await now()) / 1000),
-            freshnessSec,
+            freshnessSec: DEFAULT_FRESHNESS_SECONDS,
         });
         if (!verified.valid) {
             throw new HardCancelError(execId, verified.reason, "pulled result");
@@ -312,7 +292,7 @@ export async function awaitExecCallback(
         const msg = await recv<ExecEventMessage>(topic, timeoutSec);
         if (msg === null) {
             silentSlices += 1;
-            if (silentSlices >= pullAfterSilentSlices) {
+            if (silentSlices >= PULL_AFTER_SILENT_SLICES) {
                 silentSlices = 0;
                 const pulled = await pull();
                 if (pulled !== null) return pulled;
@@ -340,7 +320,7 @@ export async function awaitExecCallback(
             timestamp: msg.timestamp,
             secret: callbackSecret,
             nowSec: Math.floor((await now()) / 1000),
-            freshnessSec,
+            freshnessSec: DEFAULT_FRESHNESS_SECONDS,
         });
         if (!result.valid) {
             throw new HardCancelError(execId, result.reason);
@@ -423,14 +403,10 @@ async function pollExecOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: st
  */
 export async function awaitExecPoll(ref: SandboxRef, execId: string, emit: ExecEmit, deadlineMs: number, options: AwaitExecOptions = {}): Promise<ExecResult> {
     const callbackSecret = ref.callbackSecret;
-    const freshnessSec = options.freshnessSec ?? DEFAULT_FRESHNESS_SECONDS;
     const now = options.now ?? (() => DBOS.now());
     const fetchImpl = options.fetch ?? fetch;
     const runStep = options.runStep ?? (<T>(fn: () => Promise<T>, c: { name: string }) => DBOS.runStep(fn, c));
     const sleep = options.sleep ?? ((ms: number) => DBOS.sleepms(ms));
-    const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-    const fastPollAttempts = options.fastPollAttempts ?? DEFAULT_FAST_POLL_ATTEMPTS;
-    const slowPollIntervalMs = options.slowPollIntervalMs ?? DEFAULT_SLOW_POLL_INTERVAL_MS;
     const warn = options.warn ?? ((message: string) => DBOS.logger.warn(message));
 
     let cursor = 0;
@@ -452,7 +428,7 @@ export async function awaitExecPoll(ref: SandboxRef, execId: string, emit: ExecE
                 timestamp: polled.timestamp,
                 secret: callbackSecret,
                 nowSec: Math.floor((await now()) / 1000),
-                freshnessSec,
+                freshnessSec: DEFAULT_FRESHNESS_SECONDS,
             });
             if (!verified.valid) {
                 throw new HardCancelError(execId, verified.reason, "poll response");
@@ -489,7 +465,7 @@ export async function awaitExecPoll(ref: SandboxRef, execId: string, emit: ExecE
         // a timeout would discard a completed analysis.
         const remainingMs = deadlineMs - (await now());
         if (remainingMs <= 0) throw new ExecTimeoutError(execId);
-        const intervalMs = pollAttempt <= fastPollAttempts ? pollIntervalMs : slowPollIntervalMs;
+        const intervalMs = pollAttempt <= DEFAULT_FAST_POLL_ATTEMPTS ? DEFAULT_POLL_INTERVAL_MS : DEFAULT_SLOW_POLL_INTERVAL_MS;
         await sleep(Math.min(intervalMs, remainingMs));
     }
 }

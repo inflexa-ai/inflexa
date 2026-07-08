@@ -354,7 +354,7 @@ func execResultHandler(table *execTable, auth inboundAuth) http.HandlerFunc {
 		execID := strings.TrimPrefix(strings.Trim(r.URL.Path, "/"), "exec/")
 		if execID == "" || strings.Contains(execID, "/") {
 			// An execId never contains a slash, so any remaining path separator is
-			// an unroutable request (e.g. the retired `/exec/{pid}/kill`).
+			// an unroutable request.
 			writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
 			return
 		}

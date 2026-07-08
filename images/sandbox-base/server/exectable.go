@@ -21,8 +21,8 @@ const completedEntryTTL = time.Hour
 // the oldest event is dropped and a sticky `truncated` marker is set so a poll
 // response can signal that earlier events were shed. Sized generously: progress
 // events are coalesced on-change, so an exec rarely emits hundreds between two
-// ~1.5s polls, and the terminal result — not the event stream — is the
-// authoritative outcome.
+// polls even at the host's slowest poll cadence, and the terminal result — not
+// the event stream — is the authoritative outcome.
 const eventRingCapacity = 256
 
 type execResult struct {

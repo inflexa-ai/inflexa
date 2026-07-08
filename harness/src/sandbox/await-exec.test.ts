@@ -84,7 +84,6 @@ describe("awaitExec", () => {
             DEADLINE,
             {
                 now: () => NOW_MS,
-                freshnessSec: FRESHNESS,
                 ...NO_PULL,
                 recv: stubRecv([envelope({ kind: "file-tree", added: ["/x.txt"] }), envelope(doneMarker(okResult))]),
             },
@@ -127,7 +126,6 @@ describe("awaitExec", () => {
             DEADLINE,
             {
                 now: () => NOW_MS,
-                freshnessSec: FRESHNESS,
                 ...NO_PULL,
                 recv: stubRecv([env, envelope(doneMarker(okResult))]),
             },
@@ -139,7 +137,6 @@ describe("awaitExec", () => {
         await expect(
             awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
                 now: () => NOW_MS,
-                freshnessSec: FRESHNESS,
                 ...NO_PULL,
                 recv: stubRecv([badEnvelope({ kind: "phase", phase: "running" })]),
             }),
@@ -151,7 +148,6 @@ describe("awaitExec", () => {
         try {
             await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
                 now: () => NOW_MS,
-                freshnessSec: FRESHNESS,
                 ...NO_PULL,
                 recv: stubRecv([envelope({ kind: "phase" }, stale)]),
             });
@@ -174,7 +170,6 @@ describe("awaitExec", () => {
         };
         const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
-            freshnessSec: FRESHNESS,
             ...NO_PULL,
             recv: stubRecv([
                 nullSigEnvelope({
@@ -192,7 +187,6 @@ describe("awaitExec", () => {
         try {
             await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
                 now: () => NOW_MS,
-                freshnessSec: FRESHNESS,
                 ...NO_PULL,
                 recv: stubRecv([nullSigEnvelope({ done: true, result: okResult })]),
             });
@@ -211,7 +205,6 @@ describe("awaitExec", () => {
         await expect(
             awaitExecCallback(REF, EXEC_ID, () => {}, NOW_MS + 1000, {
                 now: () => mockNow,
-                freshnessSec: FRESHNESS,
                 ...NO_PULL,
                 recv: async () => {
                     calls++;
@@ -235,7 +228,6 @@ describe("awaitExec", () => {
         };
         const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
-            freshnessSec: FRESHNESS,
             ...NO_PULL,
             recv: stubRecv([envelope(doneMarker(withProv))]),
         });
@@ -246,7 +238,6 @@ describe("awaitExec", () => {
     test("done-marker omitting provenance parses without throwing", async () => {
         const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
-            freshnessSec: FRESHNESS,
             ...NO_PULL,
             recv: stubRecv([envelope(doneMarker(okResult))]),
         });
@@ -264,7 +255,6 @@ describe("awaitExec", () => {
             DEADLINE,
             {
                 now: () => NOW_MS,
-                freshnessSec: FRESHNESS,
                 ...NO_PULL,
                 recv: stubRecv([
                     envelope({ kind: "file-tree", added: ["/a.txt"] }),
@@ -309,10 +299,8 @@ describe("awaitExec pull recovery", () => {
     test("a quiet topic pulls the result and returns it", async () => {
         const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
-            freshnessSec: FRESHNESS,
             recv: silentRecv,
             runStep: passthroughStep,
-            pullAfterSilentSlices: 2,
             fetch: async () => completedResponse(okResult),
         });
         expect(result.exitCode).toBe(0);
@@ -331,10 +319,8 @@ describe("awaitExec pull recovery", () => {
         };
         const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
-            freshnessSec: FRESHNESS,
             recv: silentRecv,
             runStep: passthroughStep,
-            pullAfterSilentSlices: 1,
             fetch: async () => completedResponse(withProv),
         });
         // A pull that re-marshalled the result instead of serving the callback's
@@ -343,20 +329,18 @@ describe("awaitExec pull recovery", () => {
         expect(result.provenance?.writes).toEqual([{ path: "/r/runs/run/step/output/y.csv", layers: ["inotify"] }]);
     });
 
-    test("pulls only after the configured run of silent slices", async () => {
+    test("pulls only after a full run of silent slices", async () => {
         let fetches = 0;
         await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
-            freshnessSec: FRESHNESS,
             recv: silentRecv,
             runStep: passthroughStep,
-            pullAfterSilentSlices: 4,
             fetch: async () => {
                 fetches += 1;
                 return completedResponse(okResult);
             },
         });
-        // Four null recvs, then exactly one pull — not one pull per slice.
+        // Six null recvs, then exactly one pull — not one pull per slice.
         expect(fetches).toBe(1);
     });
 
@@ -364,10 +348,8 @@ describe("awaitExec pull recovery", () => {
         let fetches = 0;
         const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
-            freshnessSec: FRESHNESS,
             recv: stubRecv([null, envelope(doneMarker(okResult))]),
             runStep: passthroughStep,
-            pullAfterSilentSlices: 5,
             fetch: async () => {
                 fetches += 1;
                 return completedResponse(okResult);
@@ -381,12 +363,10 @@ describe("awaitExec pull recovery", () => {
         let fetches = 0;
         const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
-            freshnessSec: FRESHNESS,
-            // Two silences, an event, two more silences, then the done-marker.
-            // With a threshold of 3 the run never reaches it.
+            // Two silences, an event, two more silences, then the done-marker:
+            // no silent run ever reaches the pull threshold.
             recv: stubRecv([null, null, envelope({ kind: "phase", phase: "running" }), null, null, envelope(doneMarker(okResult))]),
             runStep: passthroughStep,
-            pullAfterSilentSlices: 3,
             fetch: async () => {
                 fetches += 1;
                 return completedResponse(okResult);
@@ -399,10 +379,9 @@ describe("awaitExec pull recovery", () => {
     test("a running exec keeps waiting; a later push still wins", async () => {
         const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
-            freshnessSec: FRESHNESS,
-            recv: stubRecv([null, null, envelope(doneMarker(okResult))]),
+            // Six silences trigger a pull (running); the push then lands.
+            recv: stubRecv([null, null, null, null, null, null, envelope(doneMarker(okResult))]),
             runStep: passthroughStep,
-            pullAfterSilentSlices: 1,
             fetch: async () => runningResponse(),
         });
         expect(result.exitCode).toBe(0);
@@ -414,13 +393,11 @@ describe("awaitExec pull recovery", () => {
         await expect(
             awaitExecCallback(REF, EXEC_ID, () => {}, NOW_MS + 3000, {
                 now: () => mockNow,
-                freshnessSec: FRESHNESS,
                 recv: async () => {
                     mockNow += 1000;
                     return null;
                 },
                 runStep: passthroughStep,
-                pullAfterSilentSlices: 1,
                 fetch: async () => {
                     fetches += 1;
                     throw new TypeError("connect ECONNREFUSED");
@@ -438,15 +415,11 @@ describe("awaitExec pull recovery", () => {
         let mockNow = NOW_MS;
         const result = await awaitExecCallback(REF, EXEC_ID, () => {}, NOW_MS + 1000, {
             now: () => mockNow,
-            freshnessSec: FRESHNESS,
             recv: async () => {
                 mockNow += 2000; // blow past the deadline in one slice
                 return null;
             },
             runStep: passthroughStep,
-            // High enough that the silent-slice path never fires: the only pull
-            // that can happen is the one guarding the deadline.
-            pullAfterSilentSlices: 1000,
             fetch: async () => completedResponse(okResult, Math.floor(mockNow / 1000)),
         });
         expect(result.exitCode).toBe(0);
@@ -456,10 +429,8 @@ describe("awaitExec pull recovery", () => {
         await expect(
             awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
                 now: () => NOW_MS,
-                freshnessSec: FRESHNESS,
                 recv: silentRecv,
                 runStep: passthroughStep,
-                pullAfterSilentSlices: 1,
                 fetch: async () =>
                     completedResponse(okResult, Math.floor(NOW_MS / 1000), "base64:" + Buffer.from("a-different-32-byte-secret-value").toString("base64")),
             }),
@@ -471,10 +442,8 @@ describe("awaitExec pull recovery", () => {
         try {
             await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
                 now: () => NOW_MS,
-                freshnessSec: FRESHNESS,
                 recv: silentRecv,
                 runStep: passthroughStep,
-                pullAfterSilentSlices: 1,
                 fetch: async () => completedResponse(okResult, stale),
             });
             throw new Error("expected throw");
@@ -489,13 +458,11 @@ describe("awaitExec pull recovery", () => {
         await expect(
             awaitExecCallback(REF, EXEC_ID, () => {}, NOW_MS + 2000, {
                 now: () => mockNow,
-                freshnessSec: FRESHNESS,
                 recv: async () => {
                     mockNow += 1000;
                     return null;
                 },
                 runStep: passthroughStep,
-                pullAfterSilentSlices: 1,
                 // An unsigned body claiming success must never be accepted: the
                 // signature's presence is what marks a response terminal.
                 fetch: async () => new Response(JSON.stringify(okResult), { status: 200 }),
@@ -512,10 +479,8 @@ describe("awaitExec pull recovery", () => {
 
         const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
-            freshnessSec: FRESHNESS,
             recv: silentRecv,
             runStep: passthroughStep,
-            pullAfterSilentSlices: 1,
             fetch: async () =>
                 new Response(raw, {
                     status: 200,
@@ -529,9 +494,8 @@ describe("awaitExec pull recovery", () => {
         const names: string[] = [];
         let mockNow = NOW_MS;
         await expect(
-            awaitExecCallback(REF, EXEC_ID, () => {}, NOW_MS + 3000, {
+            awaitExecCallback(REF, EXEC_ID, () => {}, NOW_MS + 13_000, {
                 now: () => mockNow,
-                freshnessSec: FRESHNESS,
                 recv: async () => {
                     mockNow += 1000;
                     return null;
@@ -540,7 +504,6 @@ describe("awaitExec pull recovery", () => {
                     names.push(config.name);
                     return fn();
                 },
-                pullAfterSilentSlices: 1,
                 fetch: async () => runningResponse(),
             }),
         ).rejects.toBeInstanceOf(ExecTimeoutError);
@@ -556,10 +519,8 @@ describe("awaitExec pull recovery", () => {
         let seen = "";
         await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
-            freshnessSec: FRESHNESS,
             recv: silentRecv,
             runStep: passthroughStep,
-            pullAfterSilentSlices: 1,
             fetch: async (input) => {
                 seen = String(input);
                 return completedResponse(okResult);
@@ -572,10 +533,8 @@ describe("awaitExec pull recovery", () => {
         let headers: Record<string, string> = {};
         await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
-            freshnessSec: FRESHNESS,
             recv: silentRecv,
             runStep: passthroughStep,
-            pullAfterSilentSlices: 1,
             fetch: async (_input, init) => {
                 headers = (init?.headers ?? {}) as Record<string, string>;
                 return completedResponse(okResult);
@@ -591,7 +550,6 @@ describe("awaitExec pull recovery", () => {
             timestamp,
             secret: SECRET,
             nowSec: timestamp,
-            freshnessSec: FRESHNESS,
         });
         expect(verdict.valid).toBe(true);
     });
@@ -713,9 +671,8 @@ describe("awaitExecPoll", () => {
     });
 
     test("the cadence backs off after the fast-phase attempts are spent", async () => {
-        // Each durable poll writes a step row; a fixed 1.5s cadence over an
-        // hours-long exec floods the DBOS system tables. Fast early (short execs
-        // return promptly), slow later (long execs poll sustainably).
+        // Fast early (short execs return promptly), slow later (long execs
+        // poll sustainably instead of writing a step row every 1.5s).
         const sleeps: number[] = [];
         const running = { status: "running", events: [], cursor: 0 };
         await awaitExecPoll(REF, EXEC_ID, () => {}, DEADLINE, {
@@ -724,12 +681,11 @@ describe("awaitExecPoll", () => {
             sleep: async (ms) => {
                 sleeps.push(ms);
             },
-            pollIntervalMs: 1_500,
-            fastPollAttempts: 2,
-            slowPollIntervalMs: 10_000,
-            fetch: pollFetch([running, running, running, running, { status: "completed", events: [], cursor: 0, result: okResult }]),
+            fetch: pollFetch([...Array.from({ length: 41 }, () => running), { status: "completed", events: [], cursor: 0, result: okResult }]),
         });
-        expect(sleeps).toEqual([1_500, 1_500, 10_000, 10_000]);
+        expect(sleeps.length).toBe(41);
+        expect(sleeps.slice(0, 40)).toEqual(Array.from({ length: 40 }, () => 1_500));
+        expect(sleeps[40]).toBe(10_000);
     });
 
     test("a seq gap above the cursor — events shed by ring overflow — is surfaced via warn", async () => {

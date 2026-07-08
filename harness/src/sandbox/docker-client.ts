@@ -26,9 +26,7 @@
  *     no firewall.
  *
  * Either way the workload ends as uid 1000 with `no-new-privileges` and no
- * effective capabilities. There is no gateway sidecar and no `--internal`
- * network: two transports removed the contradiction (carry a callback *and*
- * block egress) that the gateway existed to reconcile.
+ * effective capabilities.
  */
 
 import { existsSync, statSync } from "node:fs";
@@ -57,9 +55,9 @@ const SANDBOX_USER = "1000:1000";
 /**
  * Poll mode starts the container as root so the entrypoint can install the
  * egress firewall; the entrypoint then `setpriv`-drops to uid 1000, so the
- * workload still runs unprivileged. The entrypoint is baked into the base image
- * (and its per-step variants build FROM it), so a `meta.image` override cannot
- * escape the drop.
+ * workload still runs unprivileged. sandbox-server refuses to start as root
+ * when the firewall flag is set, so an image whose entrypoint skips the drop
+ * fails at create time rather than running privileged and unconfined.
  */
 const SANDBOX_ROOT_USER = "0:0";
 const HEALTH_POLL_MS = 250;
@@ -376,8 +374,8 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                 async () => {
                     const info = await docker.getContainer(ref.sandboxId).inspect();
                     const oomKilled = info.State.OOMKilled === true;
-                    // Liveness is the container's: with no gateway sidecar, a running
-                    // sandbox is a reachable sandbox (the host dials its published port).
+                    // A running container is a reachable sandbox: the host dials its
+                    // published loopback port directly.
                     return { alive: info.State.Running === true, oomKilled };
                 },
                 (status, cause) => ({

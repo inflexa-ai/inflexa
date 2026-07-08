@@ -92,7 +92,7 @@ export interface CreateSandboxClientConfig {
      * observable rather than a silent mount drop. No-op when unset.
      */
     logger?: Pick<pino.Logger, "info" | "warn" | "error">;
-    /** Injectables for tests / non-production environments. */
+    /** Dependency seams (fetch, durable step/sleep, clock, recv, warn sink) forwarded to submit/await. */
     submitDeps?: SubmitExecDeps;
     awaitOptions?: AwaitExecOptions;
 }
@@ -182,7 +182,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
             return unwrapOrThrow(await ops.createSandbox({ ...meta, resources }, identity));
         },
         submitExec: async (ref, body) => submitExec(ref, body, config.submitDeps),
-        awaitExec: (ref, execId, emit, deadline) => awaitExec(ref, execId, emit, deadline, { transport, ...config.awaitOptions }),
+        awaitExec: (ref, execId, emit, deadline) => awaitExec(ref, execId, emit, deadline, { ...config.awaitOptions, transport }),
         isAlive: async (ref) => unwrapOrThrow(await ops.isAlive(ref)),
         teardown,
         teardownById: async (sandboxId) => unwrapOrThrow(await ops.teardownById(sandboxId)),

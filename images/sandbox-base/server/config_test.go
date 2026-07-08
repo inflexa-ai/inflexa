@@ -88,11 +88,8 @@ func TestLoadServerConfig_Base64Invalid(t *testing.T) {
 }
 
 func TestVerifyPrivilegeDrop_FirewallFlagAsRootRefused(t *testing.T) {
-	// SANDBOX_EGRESS_FIREWALL=1 promises the entrypoint installed the egress
-	// firewall and dropped to the workload uid before the server started. Still
-	// being root proves the drop never happened (an image that overrode the
-	// entrypoint) — the container would run privileged and unconfined while
-	// appearing healthy. Refuse to start.
+	// Root under the firewall flag proves the entrypoint's drop never ran —
+	// the container would be privileged and unconfined while appearing healthy.
 	if err := verifyPrivilegeDrop("1", 0); err == nil {
 		t.Fatalf("expected refusal when the firewall flag is set but the server runs as root")
 	}
