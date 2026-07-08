@@ -4,12 +4,12 @@ import { theme } from "../theme.ts";
 import { GLYPHS, space, MARKERS } from "../../lib/design_system.ts";
 import { Fg } from "./emphasis.tsx";
 
-/** A run step's display shape (domain-agnostic; the mock model maps onto this). */
+/** A run step's display shape (domain-agnostic; the mock model + the harness step ledger map onto this). */
 export type RunStepView = {
     /** Human label shown in the step list. */
     label: string;
     /** Lifecycle state, selecting the step glyph + color. */
-    state: "done" | "running" | "queued";
+    state: "done" | "running" | "failed" | "queued";
 };
 
 /** Props for {@link RunBlock}. */
@@ -27,9 +27,10 @@ export type RunBlockProps = {
 };
 
 /** The themed glyph + color role for a step's state. */
-function stepMark(state: RunStepView["state"]): { glyph: string; role: "success" | "warning" | "fgSubtle" } {
+function stepMark(state: RunStepView["state"]): { glyph: string; role: "success" | "warning" | "error" | "fgSubtle" } {
     if (state === "done") return { glyph: GLYPHS.check, role: "success" };
     if (state === "running") return { glyph: GLYPHS.triangleRight, role: "warning" };
+    if (state === "failed") return { glyph: GLYPHS.cross, role: "error" };
     return { glyph: GLYPHS.circleHollow, role: "fgSubtle" };
 }
 

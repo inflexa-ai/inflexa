@@ -1,17 +1,19 @@
-// MOCK fixtures for the design-system stream blocks and the sidebar's CONTEXT/RUNS
-// slots. EVERYTHING here is sample data — NOT produced by the live engine, NOT
-// persisted, NOT queried from SQLite, and NOT wired into the conversation store or
-// event bus. It exists only so every design-system state can be rendered faithfully
-// (see the design gallery). Swapping these for real engine output later touches only
-// this module; the block components that consume it stay unchanged.
+// MOCK fixtures for the design-system stream blocks shown in the design gallery.
+// EVERYTHING here is sample data — NOT produced by the live engine, NOT persisted,
+// NOT queried from SQLite, and NOT wired into the conversation store or event bus.
+// It exists only so every design-system state can be rendered faithfully (see the
+// design gallery). Swapping these for real engine output later touches only this
+// module; the block components that consume it stay unchanged.
 //
 // Ids are literal `mock-*` sentinels (not `randomUUIDv7()`) precisely so a reader
 // can tell at a glance that a value is fixture data, never a real row.
 
+import type { CortexRunRow, StepExecutionRow } from "@inflexa-ai/harness";
+
 import type { TextPart, ThinkingPart, ToolCallPart, FileEditPart, PlanCardPart, RunCardPart } from "../types/session.ts";
 
-/** A run step's lifecycle state. */
-export type StepState = "done" | "running" | "queued";
+/** A run step's lifecycle state (mirrors `RunStepView.state`). */
+export type StepState = "done" | "running" | "failed" | "queued";
 
 /** MOCK: one step within a run. */
 export type RunStep = {
@@ -37,16 +39,6 @@ export type Run = {
     done: number;
     /** Total step count (denominator of the progress bar). */
     total: number;
-};
-
-/** MOCK: context-window accounting for the sidebar CONTEXT slot. */
-export type ContextUsage = {
-    /** Tokens consumed so far. */
-    tokens: number;
-    /** Percent of the context window used (0–100). */
-    percent: number;
-    /** Spend in USD. */
-    costUsd: number;
 };
 
 /** MOCK sample: a user text turn. */
@@ -149,16 +141,145 @@ export const mockRun: Run = {
     steps: [
         { id: "mock-step-12", label: "rank consensus", state: "done" },
         { id: "mock-step-13", label: "build report", state: "running" },
-        { id: "mock-step-14", label: "queued", state: "queued" },
+        { id: "mock-step-14", label: "score targets", state: "failed" },
+        { id: "mock-step-15", label: "queued", state: "queued" },
     ],
 };
 
-/** MOCK sample: the run rows shown in the sidebar RUNS slot. */
-export const mockRuns: Run[] = [{ id: "mock-run-done", name: "bulk-transcriptomics", tag: "T1S1", status: "done", done: 8, total: 8, steps: [] }, mockRun];
+/** Sample age helper: an ISO timestamp `ms` in the past, so gallery exhibits show fresh relative ages. */
+function ago(ms: number): string {
+    return new Date(Date.now() - ms).toISOString();
+}
 
-/** MOCK sample: the context accounting shown in the sidebar CONTEXT slot. */
-export const mockContext: ContextUsage = {
-    tokens: 12100,
-    percent: 6,
-    costUsd: 0.04,
-};
+/** MOCK sample: the harness run ledger for the RUNS details view (newest-first, mixed statuses). */
+export const mockCortexRuns: CortexRunRow[] = [
+    {
+        runId: "mock-run-9a3f4c21",
+        analysisId: "mock-analysis",
+        threadId: null,
+        workflowName: "executeAnalysis",
+        status: "running",
+        startedAt: ago(4 * 60_000),
+        completedAt: null,
+        error: null,
+        parts: null,
+        mandateJti: null,
+        mandateExpiresAt: null,
+        planId: "mock-plan-8f21",
+        attemptCount: 0,
+    },
+    {
+        runId: "mock-run-71bd0e55",
+        analysisId: "mock-analysis",
+        threadId: null,
+        workflowName: "executeAnalysis",
+        status: "completed",
+        startedAt: ago(3 * 3_600_000),
+        completedAt: ago(2 * 3_600_000),
+        error: null,
+        parts: null,
+        mandateJti: null,
+        mandateExpiresAt: null,
+        planId: "mock-plan-6b0c",
+        attemptCount: 0,
+    },
+    {
+        runId: "mock-run-2c07af90",
+        analysisId: "mock-analysis",
+        threadId: null,
+        workflowName: "executeAnalysis",
+        status: "failed",
+        startedAt: ago(2 * 86_400_000),
+        completedAt: ago(2 * 86_400_000 - 5 * 60_000),
+        error: "step_failed",
+        parts: null,
+        mandateJti: null,
+        mandateExpiresAt: null,
+        planId: null,
+        attemptCount: 1,
+    },
+];
+
+/** MOCK sample: the newest run's step ledger — one of each state the RUNS view renders (incl. a failure). */
+export const mockRunSteps: StepExecutionRow[] = [
+    {
+        runId: "mock-run-9a3f4c21",
+        stepId: "qc-normalize",
+        analysisId: "mock-analysis",
+        wave: 0,
+        agentId: "rna-preprocess",
+        status: "completed",
+        startedAt: ago(4 * 60_000),
+        completedAt: ago(3 * 60_000),
+        durationMs: 60_000,
+        error: null,
+        attempts: 1,
+        lastErrorClass: null,
+        finishReason: "stop",
+        hitMaxSteps: false,
+        blockedReason: null,
+        sandboxRef: null,
+        execId: null,
+        childWorkflowId: null,
+    },
+    {
+        runId: "mock-run-9a3f4c21",
+        stepId: "fit-de-model",
+        analysisId: "mock-analysis",
+        wave: 1,
+        agentId: "deseq2",
+        status: "running",
+        startedAt: ago(2 * 60_000),
+        completedAt: null,
+        durationMs: null,
+        error: null,
+        attempts: 1,
+        lastErrorClass: null,
+        finishReason: null,
+        hitMaxSteps: false,
+        blockedReason: null,
+        sandboxRef: null,
+        execId: null,
+        childWorkflowId: null,
+    },
+    {
+        runId: "mock-run-9a3f4c21",
+        stepId: "pathway-enrichment",
+        analysisId: "mock-analysis",
+        wave: 1,
+        agentId: "pathway",
+        status: "failed",
+        startedAt: ago(90_000),
+        completedAt: ago(60_000),
+        durationMs: 30_000,
+        error: "sandbox exited non-zero (exit 1)",
+        attempts: 2,
+        lastErrorClass: "runtime",
+        finishReason: null,
+        hitMaxSteps: false,
+        blockedReason: null,
+        sandboxRef: null,
+        execId: null,
+        childWorkflowId: null,
+    },
+    {
+        runId: "mock-run-9a3f4c21",
+        stepId: "synthesis",
+        analysisId: "mock-analysis",
+        wave: 2,
+        agentId: "synthesis",
+        status: "pending",
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
+        error: null,
+        attempts: 1,
+        lastErrorClass: null,
+        finishReason: null,
+        hitMaxSteps: false,
+        blockedReason: null,
+        sandboxRef: null,
+        execId: null,
+        childWorkflowId: null,
+    },
+];

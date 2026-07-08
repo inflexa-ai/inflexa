@@ -17,6 +17,14 @@ const sandbox = mkdtempSync(join(tmpdir(), "inflexa-test-"));
 process.env.XDG_DATA_HOME = join(sandbox, "data");
 process.env.XDG_CONFIG_HOME = join(sandbox, "config");
 
+// The destructive-reset authorization for src/test_support/db.ts's resetDb(). It stamps the sandbox
+// root so resetDb can prove env.dbPath lives INSIDE it before rmSync'ing the DB + WAL sidecars. XDG
+// redirection alone is too ambiguous to gate on — a developer may legitimately export XDG_DATA_HOME
+// for their own reasons; only this marker, set here beside the redirect, means "this process's paths
+// were sandboxed by the test preload". Its absence is the signal that the preload never ran (e.g.
+// `bun test` from the repo root, which skips cli/bunfig.toml) and the reset must refuse.
+process.env.INFLEXA_TEST_SANDBOX = sandbox;
+
 // bun test runs the whole suite in a single process, so one exit hook reaps the sandbox (the temp
 // DB plus its -wal/-shm sidecars) after the last test file.
 process.on("exit", () => {

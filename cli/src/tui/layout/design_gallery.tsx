@@ -1,6 +1,8 @@
 import type { JSX } from "solid-js";
 import { TextareaRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/solid";
+import { okAsync } from "neverthrow";
+import type { DbError, StepExecutionRow } from "@inflexa-ai/harness";
 
 import { GLYPHS, space } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
@@ -28,7 +30,19 @@ import { ScrollPane } from "../components/scroll_pane.tsx";
 import { FixedList } from "../components/fixed_list.tsx";
 import { SelectDialog } from "../components/dialog/select_dialog.tsx";
 import { FilePicker } from "../components/dialog/file_picker.tsx";
-import { mockUserText, mockAssistantText, mockThinking, mockToolCall, mockFileEdit, mockRun, mockPlanCard, mockRunCard } from "../../lib/mock_fixtures.ts";
+import { RunsDialog } from "../components/dialog/runs_dialog.tsx";
+import {
+    mockUserText,
+    mockAssistantText,
+    mockThinking,
+    mockToolCall,
+    mockFileEdit,
+    mockRun,
+    mockPlanCard,
+    mockRunCard,
+    mockCortexRuns,
+    mockRunSteps,
+} from "../../lib/mock_fixtures.ts";
 
 // Nothing streams in the gallery — MessageBlock's streaming accessors are constant stubs.
 const noStreamId = (): string | null => null;
@@ -301,6 +315,40 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                 <State n="16" label="harness cards — plan card & run card">
                     <MessageBlock index={1} role="assistant" parts={[mockPlanCard]} streamPartId={noStreamId} streamText={noStreamText} />
                     <MessageBlock index={2} role="assistant" parts={[mockRunCard]} streamPartId={noStreamId} streamText={noStreamText} />
+                </State>
+                <State n="17" label="sidebar details — data profile & runs (inert exhibits)">
+                    {/* Profile details reuse ResultsDialog verbatim; these lines are what
+                        `profileDetailLines` composes from a loaded profile snapshot. */}
+                    <text fg={theme().fgMuted}>ResultsDialog — data-profile details (composed from a loaded profile snapshot):</text>
+                    <DialogShowcase>
+                        <ResultsDialog
+                            title={`Data profile ${GLYPHS.emDash} rna-seq-2026`}
+                            lines={[
+                                "status: completed",
+                                "started 5m",
+                                "completed 4m",
+                                "",
+                                "12 samples across 2 conditions; counts pass QC with no dropped libraries.",
+                                "",
+                                "files (2):",
+                                `  data/counts.tsv ${GLYPHS.emDash} gene-by-sample raw counts`,
+                                `  data/meta.csv ${GLYPHS.emDash} sample metadata (condition, batch)`,
+                                "",
+                                "2 seed inputs",
+                            ]}
+                            emptyText="no profile data"
+                            onClose={noop}
+                        />
+                    </DialogShowcase>
+                    <text fg={theme().fgMuted}>RunsDialog — recent runs + the latest run's steps (done / running / failed / queued):</text>
+                    <DialogShowcase>
+                        <RunsDialog
+                            title={`Runs ${GLYPHS.emDash} rna-seq-2026`}
+                            runs={{ kind: "loaded", runs: mockCortexRuns }}
+                            loadSteps={() => okAsync<StepExecutionRow[], DbError>(mockRunSteps)}
+                            onClose={noop}
+                        />
+                    </DialogShowcase>
                 </State>
             </ScrollPane>
         </DialogPanel>

@@ -112,9 +112,13 @@ export default defineConfig([
     },
     {
         files: ["src/**/*.{ts,tsx}"],
-        // env.ts owns the canonical reads; the test preload is the one place allowed to *set* the
-        // XDG_* sandbox before env.ts freezes its paths (src/test_support/preload.ts).
-        ignores: ["src/lib/env.ts", "src/test_support/preload.ts"],
+        // env.ts owns the canonical reads; the test-support env-sandbox plumbing is the deliberate
+        // exception. The preload *sets* the XDG_* sandbox and stamps the INFLEXA_TEST_SANDBOX marker
+        // before env.ts freezes its paths (preload.ts); resetDb *reads* that marker to authorize its
+        // destructive delete (db.ts); and the harness test toggles it to prove the guard refuses when
+        // absent (harness.test.ts). The marker can't route through the frozen env because it gates the
+        // reset lifecycle, not env's path derivation.
+        ignores: ["src/lib/env.ts", "src/test_support/preload.ts", "src/test_support/db.ts", "src/test_support/harness.test.ts"],
         rules: {
             "no-restricted-properties": [
                 "error",
