@@ -92,7 +92,7 @@ func newTestExecutor(t *testing.T, secret []byte) (*executor, *callbackReceiver,
 	srv := httptest.NewServer(rec.handler())
 	cb := newCallbackClient(srv.URL, secret)
 	cb.sleep = func(context.Context, time.Duration) {}
-	exe := newExecutor(newExecTable(), cb, newProcessTable(), newInboundAuth(secret))
+	exe := newExecutor(newExecTable(), cb, newProcessTable(), newInboundAuth(secret), transportCallback)
 	return exe, rec, srv.Close
 }
 
@@ -356,7 +356,7 @@ func TestExecHandler_RetryPreservesSignatureAcrossAttempts(t *testing.T) {
 
 	cb := newCallbackClient(srv.URL, []byte("s"))
 	cb.sleep = func(context.Context, time.Duration) {}
-	exe := newExecutor(newExecTable(), cb, newProcessTable(), newInboundAuth([]byte("s")))
+	exe := newExecutor(newExecTable(), cb, newProcessTable(), newInboundAuth([]byte("s")), transportCallback)
 
 	submit(t, exe, map[string]any{
 		"command": []string{"sh", "-c", "echo hi"},

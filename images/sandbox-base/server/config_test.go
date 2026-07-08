@@ -5,12 +5,39 @@ import (
 	"testing"
 )
 
-func TestLoadServerConfig_MissingCortexBaseURL(t *testing.T) {
+func TestLoadServerConfig_MissingCortexBaseURL_CallbackMode(t *testing.T) {
+	t.Setenv(envTransport, string(transportCallback))
 	t.Setenv(envCortexBaseURL, "")
 	t.Setenv(envCallbackSecret, "topsecret")
 	_, err := loadServerConfig()
 	if err == nil {
-		t.Fatalf("expected error for missing CORTEX_BASE_URL")
+		t.Fatalf("expected error for missing CORTEX_BASE_URL in callback mode")
+	}
+}
+
+func TestLoadServerConfig_PollModeDefaultsWithoutCortexBaseURL(t *testing.T) {
+	t.Setenv(envTransport, "")
+	t.Setenv(envCortexBaseURL, "")
+	t.Setenv(envCallbackSecret, "topsecret")
+	cfg, err := loadServerConfig()
+	if err != nil {
+		t.Fatalf("poll mode must start without CORTEX_BASE_URL: %v", err)
+	}
+	if cfg.transport != transportPoll {
+		t.Fatalf("expected default transport poll, got %q", cfg.transport)
+	}
+}
+
+func TestLoadServerConfig_InvalidTransportFallsBackToPoll(t *testing.T) {
+	t.Setenv(envTransport, "carrier-pigeon")
+	t.Setenv(envCortexBaseURL, "")
+	t.Setenv(envCallbackSecret, "topsecret")
+	cfg, err := loadServerConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.transport != transportPoll {
+		t.Fatalf("expected fallback to poll, got %q", cfg.transport)
 	}
 }
 

@@ -51,7 +51,7 @@ import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
 import { readApiKey, resolveModelId, type ChatSetupError } from "../intelligence/chat.ts";
 import { resolveHarnessConfig, type ResolvedHarnessConfig } from "./config.ts";
-import { startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
+import { noopExecIngress, startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
 import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition } from "./run_deps.ts";
 
 // The embedded-harness composition root. Boots lazily on the first profile
@@ -220,6 +220,14 @@ const realSeams: BootSeams = {
  */
 const RUNTIME_LOCK_KEY = "harness-runtime";
 
+/**
+ * Result transport for local sandboxes. The CLI is a poll-mode embedder: the
+ * host polls the sandbox for results, so the sandbox needs no egress and no
+ * callback ingress (dissolving #27/#41 locally). Callback mode is a managed-
+ * embedder concern; flip this only to exercise that path locally.
+ */
+const SANDBOX_TRANSPORT: "poll" | "callback" = "poll";
+
 let active: HarnessRuntime | null = null;
 
 /** The booted runtime, if any — passive callers (status views) may read, never boot. */
@@ -301,9 +309,18 @@ export async function bootHarnessRuntime(
     if (pgResult.isErr()) return err({ type: "postgres_unavailable", cause: pgResult.error });
     const conn = pgResult.value;
 
-    const ingressResult = seams.startIngress();
-    if (ingressResult.isErr()) return err({ type: "ingress_failed", cause: ingressResult.error });
-    const ingress = ingressResult.value;
+    // The local CLI is a POLL-mode embedder: the host polls the sandbox for
+    // results, the sandbox initiates nothing, and there is no callback listener to
+    // bind (which is what closes #27/#41 locally). Callback mode — an ingress plus
+    // an advertised CORTEX_BASE_URL — exists for a managed embedder, not here.
+    let ingress: ExecIngress;
+    if (SANDBOX_TRANSPORT === "callback") {
+        const ingressResult = seams.startIngress();
+        if (ingressResult.isErr()) return err({ type: "ingress_failed", cause: ingressResult.error });
+        ingress = ingressResult.value;
+    } else {
+        ingress = noopExecIngress();
+    }
 
     // Serialize the DBOS-owning section: every process launches DBOS as executor
     // "local", so a second concurrent boot's launch-time recovery would adopt and
@@ -349,6 +366,9 @@ export async function bootHarnessRuntime(
         const sandboxClient = createSandboxClient({
             pool,
             env: { backend: "docker", namespace: "" },
+            transport: SANDBOX_TRANSPORT,
+            // Empty in poll mode (the no-op ingress advertises no URL); the sandbox
+            // never dials out, so the harness ignores it.
             cortexBaseUrl: ingress.cortexBaseUrl,
             // The sandbox image bakes the library store at /mnt/libs/current, so
             // the local path creates no `/mnt/libs` bind mount and forces no

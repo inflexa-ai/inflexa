@@ -15,7 +15,7 @@ import { ResultAsync, err, ok } from "neverthrow";
 
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { buildMountPlan } from "./mount-plan.js";
-import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef } from "./types.js";
+import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SandboxTransport } from "./types.js";
 
 /** Read the originating HTTP status off any `SandboxError` variant that carries one. */
 function statusOf(e: SandboxError): number | undefined {
@@ -56,6 +56,12 @@ export function sanitizeLabelValue(value: string): string {
 export interface K8sClientConfig {
     image: string;
     cortexBaseUrl: string;
+    /**
+     * Result transport, threaded to the pod as `SANDBOX_TRANSPORT`. Poll-mode
+     * confinement on K8s is a cluster-side NetworkPolicy, not an in-pod firewall.
+     * Defaults to `poll`.
+     */
+    transport?: SandboxTransport;
     namespace: string;
     /** PVC claim backing the shared session-tree volume. */
     sessionPvc?: string;
@@ -119,6 +125,7 @@ function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity
     });
 
     const env = [
+        { name: "SANDBOX_TRANSPORT", value: config.transport ?? "poll" },
         { name: "CORTEX_BASE_URL", value: config.cortexBaseUrl },
         { name: "SANDBOX_CALLBACK_SECRET", value: identity.callbackSecret },
         ...Object.entries(plan.env).map(([name, value]) => ({ name, value })),

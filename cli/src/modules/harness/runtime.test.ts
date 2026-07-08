@@ -134,7 +134,7 @@ afterEach(() => {
 });
 
 describe("bootHarnessRuntime", () => {
-    test("boots in the contract order: prereqs → postgres → ingress → schema init → registration cohort → launch", async () => {
+    test("boots in the contract order: prereqs → postgres → schema init → registration cohort → launch", async () => {
         const calls: string[] = [];
         const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
 
@@ -143,13 +143,13 @@ describe("bootHarnessRuntime", () => {
         // ahead of the proxy key), then the whole registration cohort lands
         // between schema init and the single launch, child (sandbox-step) before
         // parent (execute-analysis), then the profile workflow, then the three
-        // sandbox-hygiene crons (design D1/D5).
+        // sandbox-hygiene crons (design D1/D5). The CLI is a poll-mode embedder,
+        // so it binds NO callback ingress — `startIngress` is never called.
         expect(calls).toEqual([
             "resolveEmbedding",
             "readKey",
             "probeEmbedding",
             "postgres",
-            "ingress",
             "initState",
             "registerSandboxStep",
             "registerExecuteAnalysis",
@@ -159,6 +159,7 @@ describe("bootHarnessRuntime", () => {
             "registerNotificationSweep",
             "launch",
         ]);
+        expect(calls).not.toContain("ingress");
         expect(runtime.model).toBe("claude-test-model");
         expect(runtime.triggerDeps.workflow).toBeInstanceOf(Function);
     });
@@ -353,7 +354,7 @@ describe("bootHarnessRuntime", () => {
         expect(calls).toEqual([]);
     });
 
-    test("a throwing launch releases the ingress and reports runtime_boot_failed", async () => {
+    test("a throwing launch is bridged to runtime_boot_failed", async () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
@@ -364,11 +365,14 @@ describe("bootHarnessRuntime", () => {
         };
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
+        // The DBOS-SDK throw is bridged to a Result. Poll mode bound no ingress, so
+        // the failure path has nothing to tear down but the (in-process-reclaimable)
+        // runtime lock.
         expect(result._unsafeUnwrapErr()).toMatchObject({ type: "runtime_boot_failed" });
-        expect(calls).toContain("ingress.stop");
+        expect(calls).toContain("launch");
     });
 
-    test("a runtime lock held by a live foreign process blocks the boot and releases the ingress", async () => {
+    test("a runtime lock held by a live foreign process blocks the boot before launch, having bound no ingress", async () => {
         const calls: string[] = [];
         // Fake another live inflexa process holding the machine-wide runtime lock.
         const holder = Bun.spawn(["sleep", "60"]);
@@ -378,8 +382,9 @@ describe("bootHarnessRuntime", () => {
         try {
             const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
             expect(result._unsafeUnwrapErr()).toMatchObject({ type: "runtime_already_active", holderPid: holder.pid });
-            // The ingress bound just before the lock check must be torn down.
-            expect(calls).toContain("ingress.stop");
+            // Poll mode never bound an ingress, so there is nothing to leak, and the
+            // boot must stop before launching DBOS.
+            expect(calls).not.toContain("ingress");
             expect(calls).not.toContain("launch");
         } finally {
             rmSync(lockPath, { force: true });

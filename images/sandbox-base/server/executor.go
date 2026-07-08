@@ -56,16 +56,20 @@ type provenancePayload struct {
 	Deletes  []ProvenanceEntry `json:"deletes,omitempty"`
 }
 
-// executor wires the dedup table to the callback client. One executor per server.
+// executor wires the dedup table to the result-delivery path. One executor per
+// server. In callback mode `callback` POSTs events/completions; in poll mode
+// `callback` is nil and results are buffered in the exec table for the host to
+// pull.
 type executor struct {
-	table    *execTable
-	callback *callbackClient
-	procs    *processTable
-	auth     inboundAuth
+	table     *execTable
+	callback  *callbackClient
+	procs     *processTable
+	auth      inboundAuth
+	transport transportMode
 }
 
-func newExecutor(table *execTable, callback *callbackClient, procs *processTable, auth inboundAuth) *executor {
-	return &executor{table: table, callback: callback, procs: procs, auth: auth}
+func newExecutor(table *execTable, callback *callbackClient, procs *processTable, auth inboundAuth, transport transportMode) *executor {
+	return &executor{table: table, callback: callback, procs: procs, auth: auth, transport: transport}
 }
 
 // handle is the POST /exec submit handler. Validates the request, dedups by
@@ -286,11 +290,12 @@ func (e *executor) failBeforeSpawn(execID, traceID, cmdStr, cwd string, startedA
 	})
 }
 
-// postCompletion delivers the terminal result to Cortex. Delivery is push-first
-// but never push-only: the completion bytes are recorded in the exec table
-// BEFORE the POST is attempted, so a host that was down for the whole retry
-// window can still pull the result (with its provenance frame) from
-// `GET /exec/{execId}` once it comes back.
+// postCompletion records the terminal result and, in callback mode, delivers it
+// to Cortex. Recording the completion bytes in the exec table BEFORE any POST is
+// what makes the result retrievable in both modes: poll mode serves them from
+// `GET /exec/{execId}` and never dials out; callback mode additionally pushes,
+// but a host that was down for the whole retry window can still pull the same
+// bytes (provenance frame included) once it comes back.
 func (e *executor) postCompletion(execID string, payload completionPayload) {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -299,6 +304,10 @@ func (e *executor) postCompletion(execID string, payload completionPayload) {
 	}
 	e.table.setCompletionBody(execID, body)
 
+	// Poll mode never initiates a connection — the host pulls the recorded body.
+	if e.transport != transportCallback {
+		return
+	}
 	if !e.table.claimCompletionPost(execID) {
 		return
 	}
@@ -355,6 +364,11 @@ func (e *executor) emitTreeEvent(execID string, delta treeDiff) {
 	})
 	if err != nil {
 		log.Printf("[event] marshal failed for %s: %v", execID, err)
+		return
+	}
+	// Poll mode buffers the event for the host to pull; callback mode POSTs it.
+	if e.transport != transportCallback {
+		e.table.appendEvent(execID, body)
 		return
 	}
 	if perr := e.callback.post(context.Background(), callbackKindEvent, execID, body); perr != nil {

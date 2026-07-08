@@ -1,41 +1,42 @@
 // sandbox-server is an HTTP server embedded in Inflexa sandbox containers.
 // It exposes a submit-and-return command-execution protocol: POST /exec
-// accepts {command, execId, ...}, spawns the command in the background,
-// returns HTTP 202 immediately, and emits on-change tree-diff events plus a
-// completion callback to Cortex over signed callbacks.
+// accepts {command, execId, ...}, spawns the command in the background, and
+// returns HTTP 202 immediately. Progress events (on-change tree-diffs) and the
+// terminal result reach the host by one of two transports, selected by
+// SANDBOX_TRANSPORT:
 //
-// A completion is delivered push-first but never push-only. The exec table
-// retains the completion bytes, and `GET /exec/{execId}` serves them signed
-// fresh at request time, so a Cortex that was not listening when the exec
-// finished can still recover the result — with its provenance frame — when it
-// comes back. Push is the fast path; pull is what makes the protocol durable.
+//   - poll (default): the server never dials out. Events accumulate in a
+//     bounded per-exec ring and both events and the terminal result are served,
+//     signed, from GET /exec/{execId}?since={cursor}. The host asks; the sandbox
+//     initiates nothing and needs no egress.
+//   - callback: the server POSTs signed event and completion callbacks to
+//     CORTEX_BASE_URL (the push path). The completion bytes are still recorded
+//     in the exec table first, so GET /exec/{execId} remains the recovery
+//     backstop for a push that never lands.
 //
-// The exec endpoints are signature-authenticated: the caller signs
+// The exec endpoints are signature-authenticated in BOTH modes: the caller signs
 // `HMAC-SHA256(SANDBOX_CALLBACK_SECRET, "${execId}:${timestamp}:${sha256Hex(body)}")`
-// into `X-Sandbox-Signature` / `X-Sandbox-Timestamp`, the same construction the
-// outbound callbacks use, and the server verifies it against a freshness window.
-// It is a request signature, not a bearer, on purpose: the gateway forwards
-// these bytes in cleartext, so a static credential would be exposed to it — see
-// inbound_auth.go.
+// into `X-Sandbox-Signature` / `X-Sandbox-Timestamp` — the same construction the
+// served/pushed bodies use — and the server verifies it against a freshness
+// window. It is a request signature, not a bearer, so any cleartext hop can drop
+// a request but never mint another — see inbound_auth.go.
 //
 // Endpoints:
 //
 //	GET  /health          → readiness probe (unauthenticated)
-//	POST /exec            → submit a command (returns 202); signed. Progress +
-//	                        result flow to Cortex via outbound callbacks.
-//	GET  /exec/{execId}   → terminal result for an exec (fresh-signed), or
-//	                        `{"status":"running"}` while it is still executing; signed.
+//	POST /exec            → submit a command (returns 202); signed.
+//	GET  /exec/{execId}   → terminal result, fresh-signed (or `{"status":"running"}`
+//	                        while executing); signed. With `?since={cursor}` (poll
+//	                        mode) returns `{status, events, cursor, truncated?, result?}`,
+//	                        always signed.
 //	GET  /preview/...     → static file preview (unauthenticated, and inert unless
 //	                        PREVIEW_ROOT is set — the shipped image never sets it).
 //
-// Required env:
+// Env:
 //
-//	CORTEX_BASE_URL          base URL Cortex listens on for callbacks
-//	SANDBOX_CALLBACK_SECRET  per-sandbox HMAC secret (raw or base64:)
-//
-// A second mode, `sandbox-server gateway`, runs no exec machinery at all — see
-// gateway.go. It is the only process the sandbox container can reach off its
-// network, and it never receives the callback secret.
+//	SANDBOX_TRANSPORT        `poll` (default) | `callback`
+//	SANDBOX_CALLBACK_SECRET  per-sandbox HMAC secret (raw or base64:); required in both modes
+//	CORTEX_BASE_URL          base URL Cortex listens on for callbacks; required in callback mode only
 package main
 
 import (
@@ -113,7 +114,7 @@ func truncateCommand(cmd []string, maxLen int) string {
 	return joined
 }
 
-// ── Process tracking (kill endpoint only) ───────────────────────────
+// ── Process tracking (graceful-shutdown child reaping) ──────────────
 
 type processEntry struct {
 	cmd    *exec.Cmd
@@ -314,19 +315,36 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
-// execResultHandler serves the completion body for a terminal exec at
-// `GET /exec/{execId}`, signed fresh at request time so it is accepted by
-// Cortex's freshness window however long after the exec finished it is fetched.
-// This is the pull half of the exec protocol: the push callback is the fast
-// path, this is what makes a completion survive a Cortex that was not listening
-// when the exec ended.
+// pollResponseBody is the poll-mode body for `GET /exec/{execId}?since={cursor}`:
+// the events newer than the caller's cursor, the new high-water cursor, whether
+// events were ever shed, and the terminal completion `result` (present only once
+// the exec is terminal). The whole body is signed, so the host verifies it
+// exactly as it verifies a pushed completion.
+type pollResponseBody struct {
+	Status    string          `json:"status"`
+	Events    []ringEvent     `json:"events"`
+	Cursor    int64           `json:"cursor"`
+	Truncated bool            `json:"truncated,omitempty"`
+	Result    json.RawMessage `json:"result,omitempty"`
+}
+
+// execResultHandler serves an exec's result at `GET /exec/{execId}`, signed
+// fresh at request time so it is accepted by the host's freshness window however
+// long after the exec finished it is fetched. It has two shapes:
 //
-// The bytes are the exact ones the completion callback carries, so a pulled
-// result is indistinguishable from a pushed one — provenance frame included.
+//   - `?since={cursor}` present (poll mode): the {status, events, cursor,
+//     result?} body above, ALWAYS signed — the host verifies every poll and
+//     reads terminality from `result`.
+//   - `?since` absent (callback-mode recovery pull, and the legacy shape): the
+//     raw completion body when terminal, signed; `{"status":"running"}`
+//     (unsigned) while executing.
+//
+// Either way the served result bytes are the exact ones a completion callback
+// carries, so a pulled result is indistinguishable from a pushed one —
+// provenance frame included.
 //
 // The request itself is signature-authenticated: the disclosed result includes
-// the command's stdout/stderr, so an unauthenticated caller must not be able to
-// read it.
+// the command's stdout/stderr, so an unauthenticated caller must not read it.
 func execResultHandler(table *execTable, auth inboundAuth) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -342,6 +360,11 @@ func execResultHandler(table *execTable, auth inboundAuth) http.HandlerFunc {
 		}
 		if !auth.authentic(r, execID, nil) {
 			writeUnauthorized(w)
+			return
+		}
+
+		if r.URL.Query().Has("since") {
+			servePollResult(w, r, table, auth, execID)
 			return
 		}
 
@@ -365,6 +388,47 @@ func execResultHandler(table *execTable, auth inboundAuth) http.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(body)
 	}
+}
+
+// servePollResult answers the `?since={cursor}` poll: an atomic snapshot of the
+// events past the cursor plus the terminal result if the exec has finished,
+// signed fresh over the whole body.
+func servePollResult(w http.ResponseWriter, r *http.Request, table *execTable, auth inboundAuth, execID string) {
+	// An absent, empty, or unparseable `since` reads as 0 — serve from the start
+	// of the ring rather than erroring on a cursor the host controls.
+	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
+	if since < 0 {
+		since = 0
+	}
+
+	snap, ok := table.pollSnapshotFor(execID, since)
+	if !ok {
+		writeJSONResponse(w, http.StatusNotFound, map[string]string{"error": "unknown execId"})
+		return
+	}
+
+	events := snap.events
+	if events == nil {
+		events = []ringEvent{}
+	}
+	body, err := json.Marshal(pollResponseBody{
+		Status:    string(snap.status),
+		Events:    events,
+		Cursor:    snap.cursor,
+		Truncated: snap.truncated,
+		Result:    json.RawMessage(snap.body),
+	})
+	if err != nil {
+		writeJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "marshal failed"})
+		return
+	}
+
+	ts := time.Now().Unix()
+	w.Header().Set(headerSignature, signCallback(auth.secret, execID, ts, body))
+	w.Header().Set(headerTimestamp, strconv.FormatInt(ts, 10))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 // ── Logging middleware ──────────────────────────────────────────────
@@ -419,22 +483,12 @@ func writeJSONResponse(w http.ResponseWriter, status int, v any) {
 func main() {
 	initLogLevel()
 
-	// `sandbox-server gateway` is a wholly separate program sharing this binary
-	// (and therefore the sandbox-base image, which is already pulled). It has no
-	// exec machinery and no callback secret — see gateway.go.
-	if len(os.Args) > 1 && os.Args[1] == "gateway" {
-		if err := runGateway(loadGatewayConfig()); err != nil {
-			log.Fatalf("gateway: %v", err)
-		}
-		return
-	}
-
 	cfg, err := loadServerConfig()
 	if err != nil {
 		log.Fatalf("startup config error: %v", err)
 	}
 
-	log.Printf("sandbox-server config: cortex=%s callback_secret_bytes=%d", cfg.cortexBaseURL, len(cfg.callbackSecret))
+	log.Printf("sandbox-server config: transport=%s cortex=%s callback_secret_bytes=%d", cfg.transport, cfg.cortexBaseURL, len(cfg.callbackSecret))
 
 	port := os.Getenv("SANDBOX_SERVER_PORT")
 	if port == "" {
@@ -446,9 +500,14 @@ func main() {
 	stopSweeper := table.startTTLSweeper(5*time.Minute, completedEntryTTL)
 	defer stopSweeper()
 
-	callback := newCallbackClient(cfg.cortexBaseURL, cfg.callbackSecret)
+	// Poll mode never initiates a connection, so it constructs no callback client;
+	// the executor buffers results in the exec table for the host to pull instead.
+	var callback *callbackClient
+	if cfg.transport == transportCallback {
+		callback = newCallbackClient(cfg.cortexBaseURL, cfg.callbackSecret)
+	}
 	auth := newInboundAuth(cfg.callbackSecret)
-	exe := newExecutor(table, callback, pt, auth)
+	exe := newExecutor(table, callback, pt, auth, cfg.transport)
 
 	mux := http.NewServeMux()
 	// `/health` is intentionally unauthenticated: it is a readiness probe that

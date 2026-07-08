@@ -29,7 +29,7 @@ import { createDockerSandboxOps } from "./docker-client.js";
 import { createK8sSandboxOps } from "./k8s-client.js";
 import { STEP_SUBDIRS } from "./mount-plan.js";
 import { submitExec, type SubmitExecDeps } from "./submit-exec.js";
-import { toPersistedRef, type CreateSandboxMeta, type SandboxRef } from "./types.js";
+import { toPersistedRef, type CreateSandboxMeta, type SandboxRef, type SandboxTransport } from "./types.js";
 
 /**
  * Narrow config slice the sandbox factory reads off `Env` — the backend
@@ -48,6 +48,12 @@ export interface CreateSandboxClientConfig {
     env: SandboxBackendConfig;
     /** Cortex base URL injected into sandbox-server's env for callbacks. */
     cortexBaseUrl: string;
+    /**
+     * Result transport for every sandbox this client creates. Threaded to the
+     * container as `SANDBOX_TRANSPORT` and to `awaitExec`'s loop selection.
+     * Defaults to `poll`.
+     */
+    transport?: SandboxTransport;
     /** Default sandbox-base image when the workflow doesn't override per-step. */
     image: string;
     /** Cluster resource ceilings; every sandbox request is clamped to these. */
@@ -93,6 +99,7 @@ export interface CreateSandboxClientConfig {
 
 export function createSandboxClient(config: CreateSandboxClientConfig): SandboxClient {
     const backend = config.backend ?? config.env.backend;
+    const transport = config.transport ?? "poll";
 
     const registerSandbox = async (meta: CreateSandboxMeta, ref: SandboxRef) => {
         unwrapOrThrow(await setSandboxRef(config.pool, meta.runId, meta.stepId, toPersistedRef(ref), meta.execId ?? null));
@@ -103,6 +110,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
             ? createK8sSandboxOps({
                   image: config.image,
                   cortexBaseUrl: config.cortexBaseUrl,
+                  transport,
                   namespace: config.namespace ?? config.env.namespace,
                   sessionPvc: config.sessionPvc,
                   libStorePvc: config.libStorePvc,
@@ -115,6 +123,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
             : createDockerSandboxOps({
                   image: config.image,
                   cortexBaseUrl: config.cortexBaseUrl,
+                  transport,
                   sessionsBasePath: config.sessionsBasePath,
                   libStorePath: config.libStorePath,
                   refStorePath: config.refStorePath,
@@ -173,7 +182,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
             return unwrapOrThrow(await ops.createSandbox({ ...meta, resources }, identity));
         },
         submitExec: async (ref, body) => submitExec(ref, body, config.submitDeps),
-        awaitExec: (ref, execId, emit, deadline) => awaitExec(ref, execId, emit, deadline, config.awaitOptions),
+        awaitExec: (ref, execId, emit, deadline) => awaitExec(ref, execId, emit, deadline, { transport, ...config.awaitOptions }),
         isAlive: async (ref) => unwrapOrThrow(await ops.isAlive(ref)),
         teardown,
         teardownById: async (sandboxId) => unwrapOrThrow(await ops.teardownById(sandboxId)),

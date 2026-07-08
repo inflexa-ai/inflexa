@@ -18,6 +18,19 @@ export const SandboxBackend = z.enum(["docker", "k8s"]);
 export type SandboxBackend = z.infer<typeof SandboxBackend>;
 
 /**
+ * How a command's progress events and terminal result reach the host. Chosen by
+ * the embedder at its composition root and carried into the container as
+ * `SANDBOX_TRANSPORT`; backend-independent. The OSS default is `poll`.
+ *
+ * - `poll`: the host polls `GET /exec/{execId}?since={cursor}`; the sandbox
+ *   never dials out and needs no egress.
+ * - `callback`: the sandbox POSTs signed event/completion callbacks; the
+ *   embedder runs an ingress. `GET /exec/{execId}` stays the recovery backstop.
+ */
+export const SandboxTransportSchema = z.enum(["poll", "callback"]);
+export type SandboxTransport = z.infer<typeof SandboxTransportSchema>;
+
+/**
  * Per-sandbox-machine liveness verdict. `oomKilled` is meaningful only when
  * `alive` is false: true when the backend reports the machine was killed for
  * exceeding its memory limit (Docker `State.OOMKilled`; K8s container
@@ -132,6 +145,34 @@ export const ExecEventMessageSchema = z.object({
     timestamp: z.number().int().nullable(),
 });
 export type ExecEventMessage = z.infer<typeof ExecEventMessageSchema>;
+
+/**
+ * One buffered progress event in a poll response: the sandbox's monotonic
+ * per-exec sequence number (the poll cursor) plus the event payload the host
+ * forwards via `emit` — the same payload a callback-mode event POST carries.
+ */
+export const PollEventSchema = z.object({
+    seq: z.number().int(),
+    payload: z.unknown(),
+});
+export type PollEvent = z.infer<typeof PollEventSchema>;
+
+/**
+ * Body of `GET /exec/{execId}?since={cursor}` in poll mode. Mirrors Go's
+ * `pollResponseBody`: the events newer than the caller's cursor, the new
+ * high-water `cursor`, a `truncated` marker set once the ring shed an event,
+ * and — once the exec is terminal — the completion `result` (with its
+ * provenance frame). The whole body is HMAC-signed, verified exactly as a
+ * pushed completion is.
+ */
+export const PollResponseSchema = z.object({
+    status: z.string(),
+    events: z.array(PollEventSchema).default([]),
+    cursor: z.number().int(),
+    truncated: z.boolean().default(false),
+    result: ExecResultSchema.optional(),
+});
+export type PollResponse = z.infer<typeof PollResponseSchema>;
 
 /**
  * Done-marker shape the recv loop unwraps. Both real completion POSTs

@@ -41,54 +41,63 @@ The server listens on `:8765` (override `SANDBOX_SERVER_PORT`) and exposes:
 
 - `GET  /health` — readiness probe. Unauthenticated.
 - `POST /exec` — submit a command; returns `202` immediately and runs it in the background. Signed.
-- `GET  /exec/{execId}` — the terminal result for an exec, or `{"status":"running"}` while it is still executing. Signed.
+- `GET  /exec/{execId}` — the terminal result for an exec, or `{"status":"running"}` while it is still executing. Signed. With `?since={cursor}` (poll mode) it returns `{ status, events[], cursor, truncated?, result? }`, always signed.
 - `GET  /preview/...` — static file preview, only when `PREVIEW_ROOT` is set (the shipped image never sets it). Unauthenticated.
 
-The exec endpoints are **signature-authenticated**: the caller signs
+The exec endpoints are **signature-authenticated** in both transport modes: the
+caller signs
 `HMAC-SHA256(SANDBOX_CALLBACK_SECRET, "${execId}:${timestamp}:${sha256Hex(body)}")`
 into `X-Sandbox-Signature`/`X-Sandbox-Timestamp` — the same construction the
-callbacks use, run inbound — and the server verifies it against a freshness
-window (`POST /exec` over the request body, `GET /exec/{execId}` over an empty
-body). It is a request signature rather than a bearer on purpose: the gateway
-forwards these bytes in cleartext, so a static credential would be exposed to
-it, whereas a signature it can forward or drop but never reuse. A missing,
-forged, or stale signature is a `401`. Because the check tests possession of the
-per-sandbox secret, a sibling sandbox sharing the analysis network — holding only
+served/pushed bodies use, run inbound — and the server verifies it against a
+freshness window (`POST /exec` over the request body, `GET /exec/{execId}` over an
+empty body). It is a request signature rather than a bearer on purpose: any
+cleartext hop can drop a request but never mint one, whereas a static credential
+would be reusable. A missing, forged, or stale signature is a `401`. Because the
+check tests possession of the per-sandbox secret, a sibling sandbox — holding only
 its own secret — cannot drive this one's `/exec`. There is no `kill` route.
 
-Progress (`event`) and completion (`complete`) are POSTed to
-`{CORTEX_BASE_URL}/sandbox/{execId}/{kind}` as HMAC-SHA256-signed callbacks
-(`X-Sandbox-Signature`, `X-Sandbox-Timestamp`), keyed by `SANDBOX_CALLBACK_SECRET`,
-and retried with exponential backoff until a 2xx. **Each attempt is signed
-afresh**: Cortex verifies the timestamp against a freshness window and treats a
-stale one as fatal, so a signature minted once and reused would become
-permanently unacceptable the moment that window elapsed.
+## Transport modes
 
-Delivery is push-first but never push-only. The completion bytes are recorded
-before the POST is attempted, and `GET /exec/{execId}` serves them **signed at
-request time** — so a Cortex that was not listening when the exec finished can
-still recover the result, with its provenance frame, whenever it comes back. A
-still-running exec answers unsigned; the signature's presence is what marks a
-response terminal.
+`SANDBOX_TRANSPORT` selects how a command's progress events and terminal result
+reach the host. It changes nothing about execution, idempotency, provenance, or
+inbound auth. `SANDBOX_CALLBACK_SECRET` is required in both modes.
 
-## Gateway mode
+**`poll`** (default) — the server never dials out; `CORTEX_BASE_URL` is neither
+read nor required. Progress events accumulate in a bounded per-exec ring, and both
+events and the terminal result are served, signed, from
+`GET /exec/{execId}?since={cursor}`. The host polls; the sandbox initiates nothing.
 
-`sandbox-server gateway` is a second program sharing this binary. It runs no exec
-machinery, mounts nothing, and is never given `SANDBOX_CALLBACK_SECRET` — it
-forwards TCP between two fixed destinations:
+**`callback`** — progress (`event`) and completion (`complete`) are POSTed to
+`{CORTEX_BASE_URL}/sandbox/{execId}/{kind}` as HMAC-SHA256-signed callbacks,
+retried with exponential backoff until a 2xx. **Each attempt is signed afresh**:
+the host verifies the timestamp against a freshness window and treats a stale one
+as fatal, so a signature minted once and reused would become permanently
+unacceptable the moment that window elapsed. Delivery is push-first but never
+push-only — the completion bytes are recorded before the POST, so
+`GET /exec/{execId}` remains the signed-at-request-time recovery backstop for a
+push that never lands.
 
-| env | meaning |
-|---|---|
-| `GATEWAY_INBOUND_PORT` (default `8765`) | listen; forwards to `GATEWAY_INBOUND_TARGET` |
-| `GATEWAY_INBOUND_TARGET` | the sandbox's `host:port`, e.g. `sbx-abc123:8765` |
-| `GATEWAY_OUTBOUND_PORT` (default `8766`) | listen; forwards to `GATEWAY_OUTBOUND_TARGET` |
-| `GATEWAY_OUTBOUND_TARGET` | the Cortex ingress `host:port` |
+Either way the served result bytes carry the provenance frame, so a pulled result
+is indistinguishable from a pushed one.
 
-The Docker backend puts each sandbox on a per-analysis `--internal` network,
-which has no route to the internet, the LAN, or the host — and, because that also
-removes published ports, no route *from* the host either. The gateway is what
-restores both directions, one fixed hop each, and is the sandbox's only reachable
-peer. Holding no secret, it can drop a completion but never forge one.
+## Egress firewall (Docker poll mode)
+
+In poll mode the sandbox needs no egress. The Docker backend sets
+`SANDBOX_EGRESS_FIREWALL=1` and grants `CAP_NET_ADMIN`; the image's root entrypoint
+(`sandbox-entrypoint.sh`) then installs, before the workload runs:
+
+```
+iptables -A OUTPUT -o lo -j ACCEPT
+iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -P OUTPUT DROP
+```
+
+and `setpriv`-drops to uid 1000 with an empty capability set, so the workload can
+neither open a new outbound connection nor flush the rules. The host's inbound poll
+rides the established connection, so polling works with egress hard-blocked; `lo`
+survives for local tooling. When the flag is unset (callback mode, or K8s where
+confinement is a NetworkPolicy) the entrypoint execs the server directly. There is
+no gateway sidecar.
 
 ## Build
 

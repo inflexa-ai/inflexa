@@ -7,45 +7,28 @@
  * `/mnt/libs` / `/mnt/refs` when their host paths are configured. Container
  * paths and lib-store env come from the shared mount plan (`mount-plan.ts`).
  *
- * The container is launched with `CORTEX_BASE_URL` and
- * `SANDBOX_CALLBACK_SECRET` env so sandbox-server's outbound callback
- * client can sign and POST events back.
+ * ## Transport and confinement
  *
- * ## Network topology
+ * The container joins the default bridge and publishes sandbox-server's port to
+ * `127.0.0.1` only, so the host can reach `/exec` but the LAN cannot. What the
+ * sandbox may do *outbound* depends on the transport:
  *
- * The sandbox is attached to a per-analysis `--internal` network and nothing
- * else, which removes every route off that bridge — no internet, no LAN, no
- * host. `--internal` is not an egress filter: it also removes published ports,
- * so it disconnects the host from the sandbox just as thoroughly. What restores
- * the two directions the exec protocol needs is a **gateway** sidecar, one per
- * sandbox, running `sandbox-server gateway` out of the same image:
+ *   - **poll** (default): the sandbox initiates nothing, so it needs no egress.
+ *     The container is created as root with `CAP_NET_ADMIN` and the
+ *     `SANDBOX_EGRESS_FIREWALL` flag; the image's root entrypoint installs
+ *     `iptables -P OUTPUT DROP` (allowing loopback and established return
+ *     traffic) and then `setpriv`-drops to the uid-1000 workload, which can
+ *     neither reach the network nor flush the rules. The host polls
+ *     `GET /exec/{execId}?since={cursor}` over the published port; the reply
+ *     rides the established connection, so polling works with egress hard-blocked.
+ *   - **callback**: the sandbox is *allowed* egress and POSTs signed callbacks to
+ *     `CORTEX_BASE_URL`. It runs as uid 1000 throughout with no `NET_ADMIN` and
+ *     no firewall.
  *
- *   host    --(127.0.0.1:ephemeral)-->  gateway :8765 --> sandbox:8765   (/exec)
- *   sandbox --(CORTEX_BASE_URL)------>  gateway :8766 --> Cortex ingress (callbacks)
- *
- * The sandbox therefore keeps exactly one reachable peer, and that peer forwards
- * to exactly one place. The gateway is never handed `SANDBOX_CALLBACK_SECRET`:
- * it moves bytes and cannot mint a signature, so it can delay or drop a
- * completion but never forge one.
- *
- * `CORTEX_BASE_URL` keeps its original scheme and hostname — only the port
- * changes. The sandbox's `/etc/hosts` (`HostConfig.ExtraHosts`) pins that
- * hostname to the gateway's address on the internal network, which preserves
- * TLS SNI and the `Host` header for an upstream that cares. A DNS alias on the
- * gateway would have been the obvious alternative and is a trap: the gateway is
- * multi-homed, so it resolves its own alias and forwards to itself.
- *
- * ## Why the network is per-analysis and not per-sandbox
- *
- * Two sandboxes on the same internal network can reach each other, and
- * `/exec` is unauthenticated. Per-analysis is nonetheless the right boundary,
- * because it is the boundary that already exists: every step of an analysis
- * receives a flat read-only mount of the entire analysis tree, so steps within
- * one analysis are not isolated from each other today by any measure. Different
- * analyses are mutually unreachable, which is the property that was missing.
- * (Per-sandbox networks would be tighter, but each internal network consumes a
- * subnet from Docker's default address pool — roughly thirty are available —
- * which would silently cap concurrent steps.)
+ * Either way the workload ends as uid 1000 with `no-new-privileges` and no
+ * effective capabilities. There is no gateway sidecar and no `--internal`
+ * network: two transports removed the contradiction (carry a callback *and*
+ * block egress) that the gateway existed to reconcile.
  */
 
 import { existsSync, statSync } from "node:fs";
@@ -61,66 +44,38 @@ import { buildMountPlan } from "./mount-plan.js";
 function statusOf(e: SandboxError): number | undefined {
     return "status" in e ? e.status : undefined;
 }
-import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef } from "./types.js";
+import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SandboxTransport } from "./types.js";
 
 const SANDBOX_SERVER_PORT = 8765;
 const HEALTH_TIMEOUT_MS = 30_000;
 
-/** The gateway's inbound leg: published to loopback, forwards to the sandbox's `/exec`. */
-const GATEWAY_INBOUND_PORT = 8765;
-
-/** The gateway's outbound leg: the sandbox's only route to the Cortex ingress. */
-const GATEWAY_OUTBOUND_PORT = 8766;
-
 /** Only this process dials the published port; binding it on every host interface would expose `/exec` to the LAN. */
 const SANDBOX_PORT_HOST_IP = "127.0.0.1";
 
-/** Matches `USER sandbox` (uid/gid 1000) in the sandbox images. Asserted at run time so a swapped `meta.image` cannot silently execute as root. */
+/** Matches `USER sandbox` (uid/gid 1000) in the sandbox images — the callback-mode workload user. */
 const SANDBOX_USER = "1000:1000";
-const HEALTH_POLL_MS = 250;
-
 /**
- * The gateway shuttles bytes between two sockets. A cap this size is generous
- * for a statically-linked Go binary with no allocations per connection beyond
- * `io.Copy` buffers, and it bounds the blast radius of a runaway forwarder.
+ * Poll mode starts the container as root so the entrypoint can install the
+ * egress firewall; the entrypoint then `setpriv`-drops to uid 1000, so the
+ * workload still runs unprivileged. The entrypoint is baked into the base image
+ * (and its per-step variants build FROM it), so a `meta.image` override cannot
+ * escape the drop.
  */
-const GATEWAY_MEMORY_BYTES = 128 * 1024 ** 2;
+const SANDBOX_ROOT_USER = "0:0";
+const HEALTH_POLL_MS = 250;
 
 const MANAGED_BY_LABEL = "app.kubernetes.io/managed-by";
 const MANAGED_BY_VALUE = "cortex";
 const OWNER_WORKFLOW_LABEL = "cortex/owner-workflow-id";
 const RUN_ID_LABEL = "cortex/run-id";
 const STEP_ID_LABEL = "cortex/step-id";
-const GATEWAY_FOR_LABEL = "cortex/gateway-for";
-/** Carried by both the sandbox and its gateway so teardown can find the network to sweep. */
-const ANALYSIS_ID_LABEL = "cortex/analysis-id";
-
-/**
- * The internal network shared by every sandbox of one analysis. Naming it after
- * the analysis is what makes creation idempotent across the steps that share it.
- */
-function analysisNetworkName(analysisId: string): string {
-    return `cortex-sbx-${analysisId}`;
-}
-
-function gatewayContainerName(sandboxId: string): string {
-    return `${sandboxId}-gw`;
-}
-
-/** Where the gateway's outbound leg forwards to: the real Cortex ingress. */
-function upstreamIngress(cortexBaseUrl: string): { host: string; port: string; protocol: string } {
-    const url = new URL(cortexBaseUrl);
-    return {
-        host: url.hostname,
-        port: url.port !== "" ? url.port : url.protocol === "https:" ? "443" : "80",
-        protocol: url.protocol,
-    };
-}
 
 export interface DockerClientConfig {
     image: string;
-    /** Cortex base URL injected into the sandbox env so callbacks land here. */
+    /** Cortex base URL injected into the sandbox env in callback mode so callbacks land here. Unused in poll mode. */
     cortexBaseUrl: string;
+    /** Result transport. `poll` (default) confines the sandbox with the egress firewall; `callback` permits egress. */
+    transport?: SandboxTransport;
     /** Host session-tree root; bind source for the analysis-tree mounts. */
     sessionsBasePath: string;
     /** Host lib store; bind-mounted read-only at `/mnt/libs` when set. */
@@ -183,63 +138,9 @@ async function pollHealth(fetchImpl: typeof fetch, url: string, timeoutMs: numbe
     throw new Error(`sandbox /health did not return 200 within ${timeoutMs}ms: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 }
 
-/** Docker reports an already-created object as a 409, and an already-joined network endpoint as a 403. */
+/** Docker reports an already-created object as a 409. */
 function statusCodeOf(cause: unknown): number | undefined {
     return typeof cause === "object" && cause !== null && "statusCode" in cause && typeof cause.statusCode === "number" ? cause.statusCode : undefined;
-}
-
-/**
- * Create the analysis's internal network, tolerating the common case where a
- * sibling step created it first. `Internal: true` is the whole control: it
- * withholds the default route and the masquerade rule, so a container on this
- * network can reach only its own subnet.
- */
-async function ensureAnalysisNetwork(docker: Docker, name: string): Promise<void> {
-    try {
-        await docker.createNetwork({
-            Name: name,
-            Driver: "bridge",
-            Internal: true,
-            Labels: { [MANAGED_BY_LABEL]: MANAGED_BY_VALUE },
-        });
-    } catch (cause) {
-        if (statusCodeOf(cause) !== 409) throw cause;
-    }
-}
-
-/**
- * Attach a container to the analysis network.
- *
- * Tolerates an endpoint that already exists (403/409 — a recovery re-run), and
- * recreates the network once on a 404. That 404 is not hypothetical: a sibling
- * step's teardown can remove the network in the window between our
- * `ensureAnalysisNetwork` and this call, when it holds no endpoints yet.
- */
-async function connectToNetwork(docker: Docker, networkName: string, containerName: string): Promise<void> {
-    try {
-        await docker.getNetwork(networkName).connect({ Container: containerName });
-        return;
-    } catch (cause) {
-        const status = statusCodeOf(cause);
-        if (status === 403 || status === 409) return;
-        if (status !== 404) throw cause;
-    }
-    await ensureAnalysisNetwork(docker, networkName);
-    await docker.getNetwork(networkName).connect({ Container: containerName });
-}
-
-/**
- * Drop the analysis network once its last sandbox is gone. Docker refuses with
- * a 403 while endpoints remain, which is precisely the signal that a sibling
- * step is still running — so a failure here is the expected outcome, not an
- * error. Left unswept, these networks would exhaust Docker's default address
- * pool after about thirty analyses.
- */
-async function removeNetworkIfUnused(docker: Docker, name: string): Promise<void> {
-    await docker
-        .getNetwork(name)
-        .remove()
-        .catch(() => {});
 }
 
 /**
@@ -278,47 +179,6 @@ async function createOrAdopt(
     return ok({ container: recreated.value, alreadyRunning: false });
 }
 
-/**
- * Remove a sandbox and the gateway that fronts it, then drop the analysis
- * network if this was its last member. Every step is idempotent: teardown runs
- * on the happy path, on failure, and again from the reaper.
- */
-function removeSandboxAndGateway(docker: Docker, sandboxId: string): ResultAsync<void, SandboxError> {
-    return ResultAsync.fromSafePromise(
-        (async () => {
-            // Read the analysis before the containers go, or we lose the network's
-            // name with them. Either container carries the label; the sandbox may
-            // already be gone when the reaper gets here.
-            let analysisId: string | undefined;
-            for (const name of [sandboxId, gatewayContainerName(sandboxId)]) {
-                try {
-                    const info = await docker.getContainer(name).inspect();
-                    analysisId = info.Config?.Labels?.[ANALYSIS_ID_LABEL];
-                    if (analysisId) break;
-                } catch {
-                    // Already gone — try the other one.
-                }
-            }
-            return analysisId;
-        })(),
-    )
-        .andThen((analysisId) =>
-            // Remove the gateway FIRST, the sandbox LAST. The reaper rediscovers orphans
-            // by the sandbox's `cortex/sandbox-id` label — a label the gateway lacks — so
-            // the sandbox must be the last thing to go. If either removal errors (a real
-            // daemon fault, not a 404, which is swallowed as success), the chain stops
-            // with the sandbox still present and the next sweep retries the whole teardown.
-            // The reverse order would let a gateway outlive its sandbox and leak
-            // unreapably.
-            removeContainerIgnoreMissing(docker, gatewayContainerName(sandboxId))
-                .andThen(() => removeContainerIgnoreMissing(docker, sandboxId))
-                .map(() => analysisId),
-        )
-        .andThen((analysisId) =>
-            ResultAsync.fromSafePromise(analysisId === undefined ? Promise.resolve() : removeNetworkIfUnused(docker, analysisNetworkName(analysisId))),
-        );
-}
-
 function removeContainerIgnoreMissing(docker: Docker, sandboxId: string): ResultAsync<void, SandboxError> {
     return trySandbox(
         async () => {
@@ -348,6 +208,8 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
 } {
     const docker = config.docker ?? new Docker();
     const fetchImpl = config.fetch ?? fetch;
+    const transport: SandboxTransport = config.transport ?? "poll";
+    const pollMode = transport === "poll";
 
     return {
         createSandbox(meta, identity) {
@@ -390,112 +252,14 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     });
 
                     const image = meta.image ?? config.image;
-                    const networkName = analysisNetworkName(meta.analysisId);
-                    const gatewayName = gatewayContainerName(sandboxId);
-                    const upstream = upstreamIngress(config.cortexBaseUrl);
 
-                    const sharedLabels = {
-                        [MANAGED_BY_LABEL]: MANAGED_BY_VALUE,
-                        [OWNER_WORKFLOW_LABEL]: meta.childWorkflowId,
-                        [ANALYSIS_ID_LABEL]: meta.analysisId,
-                        [RUN_ID_LABEL]: meta.runId,
-                        [STEP_ID_LABEL]: meta.stepId,
-                    };
-
-                    const network = await trySandbox(() => ensureAnalysisNetwork(docker, networkName), createFailed);
-                    if (network.isErr()) return err(network.error);
-
-                    // The gateway is created on the default bridge, which is the only way it
-                    // can both publish a port to the host and reach the Cortex ingress; it
-                    // joins the internal network afterwards. It carries no callback secret and
-                    // no mounts — it forwards bytes and nothing else.
-                    const gatewayOpts: Docker.ContainerCreateOptions = {
-                        name: gatewayName,
-                        ...(config.platform !== undefined && { platform: config.platform }),
-                        Image: image,
-                        Cmd: ["sandbox-server", "gateway"],
-                        Env: [
-                            `GATEWAY_INBOUND_PORT=${GATEWAY_INBOUND_PORT}`,
-                            `GATEWAY_INBOUND_TARGET=${sandboxId}:${SANDBOX_SERVER_PORT}`,
-                            `GATEWAY_OUTBOUND_PORT=${GATEWAY_OUTBOUND_PORT}`,
-                            `GATEWAY_OUTBOUND_TARGET=${upstream.host}:${upstream.port}`,
-                        ],
-                        User: SANDBOX_USER,
-                        Labels: { ...sharedLabels, role: "sandbox-gateway", [GATEWAY_FOR_LABEL]: sandboxId },
-                        HostConfig: {
-                            CapDrop: ["ALL"],
-                            SecurityOpt: ["no-new-privileges"],
-                            Memory: GATEWAY_MEMORY_BYTES,
-                            PortBindings: {
-                                [`${GATEWAY_INBOUND_PORT}/tcp`]: [{ HostIp: SANDBOX_PORT_HOST_IP, HostPort: "0" }],
-                            },
-                            AutoRemove: false,
-                        },
-                        ExposedPorts: { [`${GATEWAY_INBOUND_PORT}/tcp`]: {} },
-                    };
-
-                    // An adopted gateway keeps the outbound target it was created with, which
-                    // after a host restart points at a dead ingress port. That is survivable
-                    // and deliberately not repaired here: recreating it would move its
-                    // published port, invalidating the `SandboxRef` already checkpointed in
-                    // the `createSandbox` step cache. Push may be dead; `awaitExec` pulls.
-                    const gateway = await createOrAdopt(docker, gatewayOpts, gatewayName, meta.childWorkflowId, createFailed);
-                    if (gateway.isErr()) return err(gateway.error);
-
-                    /**
-                     * Abandon a create that has already brought the gateway up.
-                     *
-                     * The reaper collects orphans by enumerating containers that carry a
-                     * `cortex/sandbox-id` label, and the gateway deliberately carries none —
-                     * so nothing will ever collect it, nor the network its endpoint pins.
-                     * Every failure between here and the sandbox container's creation must
-                     * therefore take the gateway with it. Once the sandbox container exists it
-                     * is labelled, the reaper can see it, and `teardownById` removes both.
-                     */
-                    const abandon = async (e: SandboxError): Promise<Result<SandboxRef, SandboxError>> => {
-                        // Best-effort. The create has already failed and `e` is the error worth
-                        // reporting; a cleanup that also fails leaves an orphan for an operator,
-                        // which beats masking the cause with a teardown error.
-                        (await removeContainerIgnoreMissing(docker, gatewayName)).unwrapOr(undefined);
-                        await removeNetworkIfUnused(docker, networkName);
-                        return err(e);
-                    };
-
-                    if (!gateway.value.alreadyRunning) {
-                        const started = await trySandbox(() => gateway.value.container.start(), createFailed);
-                        if (started.isErr()) return abandon(started.error);
-                    }
-
-                    // Attaching the gateway before the sandbox is created is load-bearing, not
-                    // incidental: from here on the network has an endpoint, so a sibling step's
-                    // teardown gets a 403 from `removeNetworkIfUnused` and leaves it standing.
-                    // The only window where the network can be swept out from under us is the
-                    // one this call closes, which is why it — and not the sandbox create —
-                    // carries the recreate-on-404 retry.
-                    const joined = await trySandbox(() => connectToNetwork(docker, networkName, gatewayName), createFailed);
-                    if (joined.isErr()) return abandon(joined.error);
-
-                    const gatewayInspected = await trySandbox(() => gateway.value.container.inspect(), createFailed);
-                    if (gatewayInspected.isErr()) return abandon(gatewayInspected.error);
-                    const gatewayInfo = gatewayInspected.value;
-
-                    const gatewayIp = gatewayInfo.NetworkSettings.Networks?.[networkName]?.IPAddress;
-                    if (!gatewayIp) {
-                        return abandon(createFailed(undefined, new Error(`DockerSandbox: gateway ${gatewayName} has no address on ${networkName}`)));
-                    }
-                    const hostPort = gatewayInfo.NetworkSettings.Ports[`${GATEWAY_INBOUND_PORT}/tcp`]?.[0]?.HostPort;
-                    if (!hostPort) {
-                        return abandon(
-                            createFailed(undefined, new Error(`DockerSandbox: no host port mapped for ${GATEWAY_INBOUND_PORT}/tcp on ${gatewayName}`)),
-                        );
-                    }
-
+                    // Poll mode never dials out and carries no CORTEX_BASE_URL; it sets the
+                    // firewall flag so the root entrypoint installs the egress block before
+                    // dropping to uid 1000. Callback mode is the inverse.
                     const env = [
-                        // Scheme and hostname are preserved so an upstream that terminates TLS
-                        // still sees the SNI and Host it expects; only the port moves. The
-                        // hostname resolves to the gateway via ExtraHosts below.
-                        `CORTEX_BASE_URL=${upstream.protocol}//${upstream.host}:${GATEWAY_OUTBOUND_PORT}`,
+                        `SANDBOX_TRANSPORT=${transport}`,
                         `SANDBOX_CALLBACK_SECRET=${callbackSecret}`,
+                        ...(pollMode ? ["SANDBOX_EGRESS_FIREWALL=1"] : [`CORTEX_BASE_URL=${config.cortexBaseUrl}`]),
                         ...Object.entries(plan.env).map(([k, v]) => `${k}=${v}`),
                         ...Object.entries(meta.extraEnv ?? {}).map(([k, v]) => `${k}=${v}`),
                     ];
@@ -506,19 +270,27 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         ...(config.platform !== undefined && { platform: config.platform }),
                         Image: image,
                         Env: env,
-                        User: SANDBOX_USER,
+                        User: pollMode ? SANDBOX_ROOT_USER : SANDBOX_USER,
                         WorkingDir: plan.workingDir,
-                        Labels: { ...sharedLabels, role: "sandbox", "cortex/sandbox-id": sandboxId },
+                        Labels: {
+                            [MANAGED_BY_LABEL]: MANAGED_BY_VALUE,
+                            [OWNER_WORKFLOW_LABEL]: meta.childWorkflowId,
+                            [RUN_ID_LABEL]: meta.runId,
+                            [STEP_ID_LABEL]: meta.stepId,
+                            role: "sandbox",
+                            "cortex/sandbox-id": sandboxId,
+                        },
+                        ExposedPorts: { [`${SANDBOX_SERVER_PORT}/tcp`]: {} },
                         HostConfig: {
                             Binds: binds,
-                            // The whole confinement: an internal network has no default route, so
-                            // this container can reach nothing but its own subnet — where the only
-                            // thing it can usefully talk to is its gateway. It publishes no port
-                            // (an internal network silently ignores port bindings), so `/exec` is
-                            // reachable only through the gateway's loopback-bound one.
-                            NetworkMode: networkName,
-                            ExtraHosts: [`${upstream.host}:${gatewayIp}`],
+                            // Published to loopback only: the host reaches `/exec`, the LAN cannot.
+                            PortBindings: {
+                                [`${SANDBOX_SERVER_PORT}/tcp`]: [{ HostIp: SANDBOX_PORT_HOST_IP, HostPort: "0" }],
+                            },
                             CapDrop: ["ALL"],
+                            // Poll mode grants NET_ADMIN to the ROOT entrypoint only, to install
+                            // the egress firewall; `setpriv` drops it before the workload runs.
+                            ...(pollMode ? { CapAdd: ["NET_ADMIN"] } : {}),
                             SecurityOpt: ["no-new-privileges"],
                             NanoCpus: Math.round(spec.cpu * 1e9),
                             Memory: spec.memoryGb * 1024 ** 3,
@@ -526,18 +298,23 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         },
                     };
 
-                    // The last point at which the gateway is still an orphan-in-waiting. Past
-                    // this line the sandbox container exists and carries `cortex/sandbox-id`,
-                    // so the reaper can find it and `teardownById` will collect both.
                     const sandbox = await createOrAdopt(docker, createOpts, sandboxId, meta.childWorkflowId, createFailed);
-                    if (sandbox.isErr()) return abandon(sandbox.error);
+                    if (sandbox.isErr()) return err(sandbox.error);
                     if (!sandbox.value.alreadyRunning) {
                         const started = await trySandbox(() => sandbox.value.container.start(), createFailed);
                         if (started.isErr()) return err(started.error);
                     }
 
-                    // Probing the sandbox's own `/health` *through* the gateway proves the whole
-                    // ingress chain, not merely that a forwarder is listening.
+                    const inspected = await trySandbox(() => sandbox.value.container.inspect(), createFailed);
+                    if (inspected.isErr()) return err(inspected.error);
+                    const hostPort = inspected.value.NetworkSettings.Ports?.[`${SANDBOX_SERVER_PORT}/tcp`]?.[0]?.HostPort;
+                    if (!hostPort) {
+                        // A container we cannot reach is useless; stop and remove it so a retry
+                        // starts clean rather than colliding with an unroutable name.
+                        (await removeContainerIgnoreMissing(docker, sandboxId)).unwrapOr(undefined);
+                        return err(createFailed(undefined, new Error(`DockerSandbox: no host port mapped for ${SANDBOX_SERVER_PORT}/tcp on ${sandboxId}`)));
+                    }
+
                     const host = SANDBOX_PORT_HOST_IP;
                     const port = Number(hostPort);
                     const healthy = await trySandbox(() => pollHealth(fetchImpl, `http://${host}:${port}/health`, HEALTH_TIMEOUT_MS), createFailed);
@@ -559,11 +336,11 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
         },
 
         teardown(ref) {
-            return removeSandboxAndGateway(docker, ref.sandboxId);
+            return removeContainerIgnoreMissing(docker, ref.sandboxId);
         },
 
         teardownById(sandboxId) {
-            return removeSandboxAndGateway(docker, sandboxId);
+            return removeContainerIgnoreMissing(docker, sandboxId);
         },
 
         listManagedSandboxes() {
@@ -599,29 +376,9 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                 async () => {
                     const info = await docker.getContainer(ref.sandboxId).inspect();
                     const oomKilled = info.State.OOMKilled === true;
-                    if (info.State.Running !== true) return { alive: false, oomKilled };
-
-                    // A sandbox created before this topology shipped has no gateway and
-                    // reaches the host through its own published port, so its liveness is
-                    // just the container's. Requiring a gateway of it would report a running,
-                    // reachable sandbox dead across a binary upgrade with an in-flight run.
-                    // Only gateway-fronted sandboxes carry the analysis-id label.
-                    const gatewayFronted = info.Config?.Labels?.[ANALYSIS_ID_LABEL] !== undefined;
-                    if (!gatewayFronted) return { alive: true, oomKilled };
-
-                    // For a gateway-fronted sandbox, a dead gateway means unreachable in both
-                    // directions — no exec can be submitted, no completion can leave. It is
-                    // alive only in the sense that a process still runs, and reporting it alive
-                    // would leave the watchdog waiting on a recv that can never unblock, which
-                    // is the very wedge this topology exists inside of.
-                    const gateway = await docker
-                        .getContainer(gatewayContainerName(ref.sandboxId))
-                        .inspect()
-                        .catch((cause: unknown) => {
-                            if (statusCodeOf(cause) === 404) return null;
-                            throw cause;
-                        });
-                    return { alive: gateway?.State.Running === true, oomKilled };
+                    // Liveness is the container's: with no gateway sidecar, a running
+                    // sandbox is a reachable sandbox (the host dials its published port).
+                    return { alive: info.State.Running === true, oomKilled };
                 },
                 (status, cause) => ({
                     type: "liveness_failed",

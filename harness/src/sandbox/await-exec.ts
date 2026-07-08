@@ -1,8 +1,22 @@
 /**
- * `awaitExec` — the workflow-body recv loop on the per-exec DBOS topic.
+ * `awaitExec` — awaits a submitted exec's terminal result, forwarding progress
+ * events, under one of two transports selected by `options.transport`:
  *
- * Runs in the workflow body (NOT a DBOS step) because `DBOS.recv` and
- * `DBOS.writeStream` are body-only. On each received envelope:
+ *   - `poll` (default): {@link awaitExecPoll} loops durable pull steps against
+ *     `GET /exec/{execId}?since={cursor}`. The sandbox initiates nothing; the
+ *     host asks. Inherently restart-proof — a recovered workflow just resumes
+ *     polling from its current identity — so the recovery wedge (#41) does not
+ *     apply.
+ *   - `callback`: {@link awaitExecCallback} is the recv loop below, with the
+ *     pull as its recovery backstop.
+ *
+ * Both run in the workflow body (NOT a step) — `DBOS.recv`, `DBOS.writeStream`,
+ * and `DBOS.sleepms` are body-only — and both verify every result against the
+ * per-sandbox HMAC, treating a bad/stale signature as a hard cancel.
+ *
+ * ## Callback mode: the recv loop
+ *
+ * On each received envelope:
  *
  *   1. If it carries `signature: null` and the payload is a
  *      `synthetic-failure` done-marker, accept it — the watchdog is an
@@ -41,10 +55,28 @@
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import { signCallback, verifyCallback } from "./hmac.js";
-import { ExecResultSchema, isDoneMarker, isSyntheticFailure, type ExecEmit, type ExecEventMessage, type ExecResult, type SandboxRef } from "./types.js";
+import {
+    ExecResultSchema,
+    isDoneMarker,
+    isSyntheticFailure,
+    PollResponseSchema,
+    type ExecEmit,
+    type ExecEventMessage,
+    type ExecResult,
+    type SandboxRef,
+    type SandboxTransport,
+} from "./types.js";
 
 const DEFAULT_FRESHNESS_SECONDS = 300;
 const MAX_RECV_TIMEOUT_SECONDS = 5;
+
+/**
+ * Poll cadence in poll mode: how long the loop sleeps between two
+ * `GET /exec/{execId}?since={cursor}` fetches. ~1.5s trades a small progress
+ * latency for far fewer durable steps over a minutes-to-hours analysis; the
+ * terminal result still returns within one interval of the exec finishing.
+ */
+const DEFAULT_POLL_INTERVAL_MS = 1_500;
 
 /**
  * Silent recv slices to tolerate before pulling. At `MAX_RECV_TIMEOUT_SECONDS`
@@ -164,15 +196,44 @@ export interface AwaitExecOptions {
     fetch?: typeof fetch;
     /** Injected for tests. Defaults to `DBOS.runStep`. */
     runStep?: <T>(fn: () => Promise<T>, config: { name: string }) => Promise<T>;
-    /** Silent recv slices before the loop pulls. Defaults to {@link PULL_AFTER_SILENT_SLICES}. */
+    /** Silent recv slices before the loop pulls (callback mode). Defaults to {@link PULL_AFTER_SILENT_SLICES}. */
     pullAfterSilentSlices?: number;
+    /**
+     * Result transport. `poll` (default) runs the durable poll loop; `callback`
+     * runs the `DBOS.recv` loop with the pull as its recovery backstop. The
+     * composition root passes the same value it hands the container.
+     */
+    transport?: SandboxTransport;
+    /** Poll-mode inter-poll sleep. Defaults to {@link DEFAULT_POLL_INTERVAL_MS}. */
+    pollIntervalMs?: number;
+    /**
+     * Injected for tests: replaces the durable inter-poll sleep. Production code
+     * passes nothing and `DBOS.sleepms` is used.
+     */
+    sleep?: (ms: number) => Promise<void>;
 }
 
 /**
- * Body of the recv loop. Hoisted so it's testable without spinning up
- * DBOS — `recv` is injectable and `now` is overridable.
+ * Await a submitted exec's terminal result. Dispatches on transport — `poll`
+ * (default) or `callback`. Both verify every result against the per-sandbox
+ * HMAC and are bounded by `deadlineMs`.
  */
 export async function awaitExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadlineMs: number, options: AwaitExecOptions = {}): Promise<ExecResult> {
+    const transport = options.transport ?? "poll";
+    return transport === "callback" ? awaitExecCallback(ref, execId, emit, deadlineMs, options) : awaitExecPoll(ref, execId, emit, deadlineMs, options);
+}
+
+/**
+ * Body of the recv loop (callback transport). Hoisted so it's testable without
+ * spinning up DBOS — `recv` is injectable and `now` is overridable.
+ */
+export async function awaitExecCallback(
+    ref: SandboxRef,
+    execId: string,
+    emit: ExecEmit,
+    deadlineMs: number,
+    options: AwaitExecOptions = {},
+): Promise<ExecResult> {
     const topic = `exec-event:${execId}`;
     const callbackSecret = ref.callbackSecret;
     const freshnessSec = options.freshnessSec ?? DEFAULT_FRESHNESS_SECONDS;
@@ -266,5 +327,125 @@ export async function awaitExec(ref: SandboxRef, execId: string, emit: ExecEmit,
             return ExecResultSchema.parse(msg.payload.result);
         }
         await emit(msg.payload);
+    }
+}
+
+/**
+ * One poll of `GET /exec/{execId}?since={cursor}`.
+ *
+ * Never throws: like the callback pull, a failed poll is not a failed exec, so
+ * every failure collapses to `unavailable` and the loop keeps waiting (bounded
+ * by the deadline). A poll response is ALWAYS signed — even while running —
+ * because the host verifies every poll before trusting its events; a 200 with
+ * no signature is therefore treated as unavailable rather than trusted.
+ */
+type PolledSnapshot =
+    | { readonly kind: "ok"; readonly raw: string; readonly signature: string; readonly timestamp: number | null }
+    | { readonly kind: "unavailable"; readonly detail: string };
+
+async function pollExecOnce(fetchImpl: typeof fetch, ref: SandboxRef, execId: string, cursor: number): Promise<PolledSnapshot> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PULL_HTTP_TIMEOUT_MS);
+    try {
+        // The response discloses the command's output, so the request is signed
+        // over an empty body — the same construction as the callbacks. `Date.now()`
+        // is safe: this runs inside a `DBOS.runStep` whose cached result is
+        // replayed without re-executing the body.
+        const reqTimestamp = Math.floor(Date.now() / 1000);
+        const reqSignature = signCallback({ execId, body: "", timestamp: reqTimestamp, secret: ref.callbackSecret });
+        const res = await fetchImpl(`http://${ref.host}:${ref.port}/exec/${encodeURIComponent(execId)}?since=${cursor}`, {
+            method: "GET",
+            headers: {
+                "x-sandbox-signature": reqSignature,
+                "x-sandbox-timestamp": String(reqTimestamp),
+            },
+            signal: controller.signal,
+        });
+        if (!res.ok) {
+            await res.text().catch(() => "");
+            return { kind: "unavailable", detail: `status ${res.status}` };
+        }
+
+        const signature = res.headers.get("x-sandbox-signature");
+        const raw = await res.text();
+        if (signature === null) return { kind: "unavailable", detail: "poll response missing signature" };
+
+        const tsHeader = res.headers.get("x-sandbox-timestamp");
+        const parsedTs = tsHeader === null ? null : Number.parseInt(tsHeader, 10);
+        return {
+            kind: "ok",
+            raw,
+            signature,
+            timestamp: parsedTs === null || Number.isNaN(parsedTs) ? null : parsedTs,
+        };
+    } catch (cause) {
+        return { kind: "unavailable", detail: cause instanceof Error ? cause.message : String(cause) };
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/**
+ * Body of the poll loop (poll transport). No `DBOS.recv`, no per-exec topic, no
+ * callback handler: a sequence of durable pull steps named
+ * `sandbox.poll-exec-result.${execId}.${n}`, each fetching the signed
+ * `{ status, events, cursor, result? }`, verifying it exactly as a pushed
+ * completion is verified, forwarding new events via `emit`, advancing the
+ * cursor, and returning `result` once terminal. `sleep`, `now`, `fetch`, and
+ * `runStep` are injectable so the loop is testable without DBOS.
+ *
+ * The `cursor` and `pollAttempt` counters are pure functions of the cached step
+ * sequence, so a replay issues the same polls in the same order and the DBOS
+ * function-ID sequence stays stable.
+ */
+export async function awaitExecPoll(ref: SandboxRef, execId: string, emit: ExecEmit, deadlineMs: number, options: AwaitExecOptions = {}): Promise<ExecResult> {
+    const callbackSecret = ref.callbackSecret;
+    const freshnessSec = options.freshnessSec ?? DEFAULT_FRESHNESS_SECONDS;
+    const now = options.now ?? (() => DBOS.now());
+    const fetchImpl = options.fetch ?? fetch;
+    const runStep = options.runStep ?? (<T>(fn: () => Promise<T>, c: { name: string }) => DBOS.runStep(fn, c));
+    const sleep = options.sleep ?? ((ms: number) => DBOS.sleepms(ms));
+    const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+
+    let cursor = 0;
+    let pollAttempt = 0;
+
+    while (true) {
+        if ((await now()) >= deadlineMs) throw new ExecTimeoutError(execId);
+
+        pollAttempt += 1;
+        const polled = await runStep(() => pollExecOnce(fetchImpl, ref, execId, cursor), {
+            name: `sandbox.poll-exec-result.${execId}.${pollAttempt}`,
+        });
+
+        if (polled.kind === "ok") {
+            // Identical treatment to a pushed completion: the bytes were signed by
+            // the same secret, so a forgery is as fatal here as it is there.
+            const verified = verifyCallback({
+                execId,
+                body: Buffer.from(polled.raw, "utf8"),
+                signature: polled.signature,
+                timestamp: polled.timestamp,
+                secret: callbackSecret,
+                nowSec: Math.floor((await now()) / 1000),
+                freshnessSec,
+            });
+            if (!verified.valid) {
+                throw new HardCancelError(execId, verified.reason, "poll response");
+            }
+
+            const resp = PollResponseSchema.parse(JSON.parse(polled.raw));
+            // Forward new events before returning, so trailing progress lands
+            // ahead of the terminal result.
+            for (const ev of resp.events) {
+                await emit(ev.payload);
+            }
+            if (resp.cursor > cursor) cursor = resp.cursor;
+            if (resp.result !== undefined) return resp.result;
+        }
+
+        const remainingMs = deadlineMs - (await now());
+        if (remainingMs <= 0) throw new ExecTimeoutError(execId);
+        await sleep(Math.min(pollIntervalMs, remainingMs));
     }
 }

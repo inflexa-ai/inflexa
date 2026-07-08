@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { awaitExec, ExecTimeoutError, HardCancelError } from "./await-exec.js";
+import { awaitExec, awaitExecCallback, awaitExecPoll, ExecTimeoutError, HardCancelError } from "./await-exec.js";
 import { signCallback, verifyCallback } from "./hmac.js";
 import type { ExecEventMessage, ExecResult, SandboxRef } from "./types.js";
 
@@ -75,7 +75,7 @@ const okResult: ExecResult = {
 describe("awaitExec", () => {
     test("verified event is forwarded to emit; done-marker returns the result", async () => {
         const emitted: unknown[] = [];
-        const result = await awaitExec(
+        const result = await awaitExecCallback(
             REF,
             EXEC_ID,
             (e) => {
@@ -118,7 +118,7 @@ describe("awaitExec", () => {
             timestamp: ts,
         };
         const emitted: unknown[] = [];
-        await awaitExec(
+        await awaitExecCallback(
             REF,
             EXEC_ID,
             (e) => {
@@ -137,7 +137,7 @@ describe("awaitExec", () => {
 
     test("bad signature hard-cancels", async () => {
         await expect(
-            awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+            awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
                 now: () => NOW_MS,
                 freshnessSec: FRESHNESS,
                 ...NO_PULL,
@@ -149,7 +149,7 @@ describe("awaitExec", () => {
     test("stale timestamp hard-cancels", async () => {
         const stale = Math.floor(NOW_MS / 1000) - (FRESHNESS + 10);
         try {
-            await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+            await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
                 now: () => NOW_MS,
                 freshnessSec: FRESHNESS,
                 ...NO_PULL,
@@ -172,7 +172,7 @@ describe("awaitExec", () => {
             timedOut: false,
             syntheticFailure: { reason: "sandbox-dead" },
         };
-        const result = await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+        const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
             freshnessSec: FRESHNESS,
             ...NO_PULL,
@@ -190,7 +190,7 @@ describe("awaitExec", () => {
 
     test("null-signature without synthetic-failure marker hard-cancels", async () => {
         try {
-            await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+            await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
                 now: () => NOW_MS,
                 freshnessSec: FRESHNESS,
                 ...NO_PULL,
@@ -209,7 +209,7 @@ describe("awaitExec", () => {
         let calls = 0;
         let mockNow = NOW_MS;
         await expect(
-            awaitExec(REF, EXEC_ID, () => {}, NOW_MS + 1000, {
+            awaitExecCallback(REF, EXEC_ID, () => {}, NOW_MS + 1000, {
                 now: () => mockNow,
                 freshnessSec: FRESHNESS,
                 ...NO_PULL,
@@ -233,7 +233,7 @@ describe("awaitExec", () => {
                 deletes: [],
             },
         };
-        const result = await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+        const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
             freshnessSec: FRESHNESS,
             ...NO_PULL,
@@ -244,7 +244,7 @@ describe("awaitExec", () => {
     });
 
     test("done-marker omitting provenance parses without throwing", async () => {
-        const result = await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+        const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
             freshnessSec: FRESHNESS,
             ...NO_PULL,
@@ -255,7 +255,7 @@ describe("awaitExec", () => {
 
     test("multiple events then a done-marker", async () => {
         const emitted: unknown[] = [];
-        const result = await awaitExec(
+        const result = await awaitExecCallback(
             REF,
             EXEC_ID,
             (e) => {
@@ -307,7 +307,7 @@ describe("awaitExec pull recovery", () => {
     const silentRecv = async <T>(): Promise<T | null> => null;
 
     test("a quiet topic pulls the result and returns it", async () => {
-        const result = await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+        const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
             freshnessSec: FRESHNESS,
             recv: silentRecv,
@@ -329,7 +329,7 @@ describe("awaitExec pull recovery", () => {
                 deletes: [],
             },
         };
-        const result = await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+        const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
             freshnessSec: FRESHNESS,
             recv: silentRecv,
@@ -345,7 +345,7 @@ describe("awaitExec pull recovery", () => {
 
     test("pulls only after the configured run of silent slices", async () => {
         let fetches = 0;
-        await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+        await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
             freshnessSec: FRESHNESS,
             recv: silentRecv,
@@ -362,7 +362,7 @@ describe("awaitExec pull recovery", () => {
 
     test("a push arriving before the pull threshold wins; no pull is issued", async () => {
         let fetches = 0;
-        const result = await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+        const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
             freshnessSec: FRESHNESS,
             recv: stubRecv([null, envelope(doneMarker(okResult))]),
@@ -379,7 +379,7 @@ describe("awaitExec pull recovery", () => {
 
     test("a silent run is reset by an event, so a chatty exec never pulls", async () => {
         let fetches = 0;
-        const result = await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+        const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
             freshnessSec: FRESHNESS,
             // Two silences, an event, two more silences, then the done-marker.
@@ -397,7 +397,7 @@ describe("awaitExec pull recovery", () => {
     });
 
     test("a running exec keeps waiting; a later push still wins", async () => {
-        const result = await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+        const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
             freshnessSec: FRESHNESS,
             recv: stubRecv([null, null, envelope(doneMarker(okResult))]),
@@ -412,7 +412,7 @@ describe("awaitExec pull recovery", () => {
         let mockNow = NOW_MS;
         let fetches = 0;
         await expect(
-            awaitExec(REF, EXEC_ID, () => {}, NOW_MS + 3000, {
+            awaitExecCallback(REF, EXEC_ID, () => {}, NOW_MS + 3000, {
                 now: () => mockNow,
                 freshnessSec: FRESHNESS,
                 recv: async () => {
@@ -436,7 +436,7 @@ describe("awaitExec pull recovery", () => {
         // The exec finished; only the callback was lost. Reporting a timeout here
         // would discard a completed analysis. This is the #41 wedge, unwedged.
         let mockNow = NOW_MS;
-        const result = await awaitExec(REF, EXEC_ID, () => {}, NOW_MS + 1000, {
+        const result = await awaitExecCallback(REF, EXEC_ID, () => {}, NOW_MS + 1000, {
             now: () => mockNow,
             freshnessSec: FRESHNESS,
             recv: async () => {
@@ -454,7 +454,7 @@ describe("awaitExec pull recovery", () => {
 
     test("a forged pulled result hard-cancels", async () => {
         await expect(
-            awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+            awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
                 now: () => NOW_MS,
                 freshnessSec: FRESHNESS,
                 recv: silentRecv,
@@ -469,7 +469,7 @@ describe("awaitExec pull recovery", () => {
     test("a stale pulled signature hard-cancels", async () => {
         const stale = Math.floor(NOW_MS / 1000) - (FRESHNESS + 10);
         try {
-            await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+            await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
                 now: () => NOW_MS,
                 freshnessSec: FRESHNESS,
                 recv: silentRecv,
@@ -487,7 +487,7 @@ describe("awaitExec pull recovery", () => {
     test("an unsigned 200 is treated as still-running, not as a completion", async () => {
         let mockNow = NOW_MS;
         await expect(
-            awaitExec(REF, EXEC_ID, () => {}, NOW_MS + 2000, {
+            awaitExecCallback(REF, EXEC_ID, () => {}, NOW_MS + 2000, {
                 now: () => mockNow,
                 freshnessSec: FRESHNESS,
                 recv: async () => {
@@ -510,7 +510,7 @@ describe("awaitExec pull recovery", () => {
         const ts = Math.floor(NOW_MS / 1000);
         const sig = signCallback({ execId: EXEC_ID, body: Buffer.from(raw, "utf8"), timestamp: ts, secret: SECRET });
 
-        const result = await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+        const result = await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
             freshnessSec: FRESHNESS,
             recv: silentRecv,
@@ -529,7 +529,7 @@ describe("awaitExec pull recovery", () => {
         const names: string[] = [];
         let mockNow = NOW_MS;
         await expect(
-            awaitExec(REF, EXEC_ID, () => {}, NOW_MS + 3000, {
+            awaitExecCallback(REF, EXEC_ID, () => {}, NOW_MS + 3000, {
                 now: () => mockNow,
                 freshnessSec: FRESHNESS,
                 recv: async () => {
@@ -554,7 +554,7 @@ describe("awaitExec pull recovery", () => {
 
     test("a pull URL escapes the execId's colons", async () => {
         let seen = "";
-        await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+        await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
             freshnessSec: FRESHNESS,
             recv: silentRecv,
@@ -570,7 +570,7 @@ describe("awaitExec pull recovery", () => {
 
     test("the pull request carries a valid signature over the empty GET body", async () => {
         let headers: Record<string, string> = {};
-        await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+        await awaitExecCallback(REF, EXEC_ID, () => {}, DEADLINE, {
             now: () => NOW_MS,
             freshnessSec: FRESHNESS,
             recv: silentRecv,
@@ -594,5 +594,150 @@ describe("awaitExec pull recovery", () => {
             freshnessSec: FRESHNESS,
         });
         expect(verdict.valid).toBe(true);
+    });
+});
+
+// ── Poll transport ──────────────────────────────────────────────────
+
+/** A signed poll response, mirroring the Go server's `pollResponseBody`. */
+function signedPoll(body: Record<string, unknown>, ts: number = Math.floor(NOW_MS / 1000)): Response {
+    const raw = JSON.stringify(body);
+    const sig = signCallback({ execId: EXEC_ID, body: Buffer.from(raw, "utf8"), timestamp: ts, secret: SECRET });
+    return new Response(raw, { status: 200, headers: { "x-sandbox-signature": sig, "x-sandbox-timestamp": String(ts) } });
+}
+
+/** Returns the canned poll bodies in order, latching on the last, recording URLs. */
+function pollFetch(bodies: Record<string, unknown>[], urls: string[] = []): typeof fetch {
+    let i = 0;
+    return (async (input: RequestInfo | URL) => {
+        urls.push(String(input));
+        const body = i < bodies.length ? bodies[i++] : bodies[bodies.length - 1];
+        return signedPoll(body);
+    }) as typeof fetch;
+}
+
+/** Poll-loop options that never really sleep or spin DBOS. */
+const POLL_BASE = { now: () => NOW_MS, runStep: passthroughStep, sleep: async () => {} } as const;
+
+describe("awaitExecPoll", () => {
+    test("returns the terminal result once the poll carries one", async () => {
+        const result = await awaitExecPoll(REF, EXEC_ID, () => {}, DEADLINE, {
+            ...POLL_BASE,
+            fetch: pollFetch([
+                { status: "running", events: [], cursor: 0 },
+                { status: "completed", events: [], cursor: 0, result: okResult },
+            ]),
+        });
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toBe("hello\n");
+    });
+
+    test("forwards incremental events once and advances the cursor", async () => {
+        const emitted: unknown[] = [];
+        const urls: string[] = [];
+        const result = await awaitExecPoll(
+            REF,
+            EXEC_ID,
+            (e) => {
+                emitted.push(e);
+            },
+            DEADLINE,
+            {
+                ...POLL_BASE,
+                fetch: pollFetch(
+                    [
+                        {
+                            status: "running",
+                            events: [
+                                { seq: 1, payload: { kind: "file-tree", added: ["/x"] } },
+                                { seq: 2, payload: { kind: "phase", phase: "run" } },
+                            ],
+                            cursor: 2,
+                        },
+                        { status: "completed", events: [{ seq: 3, payload: { kind: "phase", phase: "done" } }], cursor: 3, result: okResult },
+                    ],
+                    urls,
+                ),
+            },
+        );
+        expect(result.exitCode).toBe(0);
+        // 2 progress events from the first poll + 1 trailing event alongside the result.
+        expect(emitted.length).toBe(3);
+        // The first poll starts at cursor 0; the second must carry the advanced cursor.
+        expect(urls[0]).toContain("?since=0");
+        expect(urls[1]).toContain("?since=2");
+    });
+
+    test("a forged poll response hard-cancels", async () => {
+        const forgedFetch: typeof fetch = async () =>
+            new Response(JSON.stringify({ status: "running", events: [], cursor: 0 }), {
+                status: 200,
+                headers: { "x-sandbox-signature": "deadbeef".repeat(8), "x-sandbox-timestamp": String(Math.floor(NOW_MS / 1000)) },
+            });
+        await expect(awaitExecPoll(REF, EXEC_ID, () => {}, DEADLINE, { ...POLL_BASE, fetch: forgedFetch })).rejects.toBeInstanceOf(HardCancelError);
+    });
+
+    test("each poll gets a distinct, replay-stable step name", async () => {
+        const names: string[] = [];
+        await awaitExecPoll(REF, EXEC_ID, () => {}, DEADLINE, {
+            now: () => NOW_MS,
+            sleep: async () => {},
+            runStep: async (fn, config) => {
+                names.push(config.name);
+                return fn();
+            },
+            fetch: pollFetch([
+                { status: "running", events: [], cursor: 0 },
+                { status: "completed", events: [], cursor: 0, result: okResult },
+            ]),
+        });
+        expect(names).toEqual([`sandbox.poll-exec-result.${EXEC_ID}.1`, `sandbox.poll-exec-result.${EXEC_ID}.2`]);
+    });
+
+    test("an unreachable sandbox keeps polling until the deadline, then times out", async () => {
+        let mockNow = NOW_MS;
+        await expect(
+            awaitExecPoll(REF, EXEC_ID, () => {}, NOW_MS + 3000, {
+                now: () => mockNow,
+                runStep: passthroughStep,
+                sleep: async () => {
+                    mockNow += 1000;
+                },
+                // Every poll 404s (unavailable) — never terminal.
+                fetch: noPullFetch,
+            }),
+        ).rejects.toBeInstanceOf(ExecTimeoutError);
+    });
+});
+
+describe("awaitExec transport dispatch", () => {
+    test("defaults to poll — drives fetch, never recv", async () => {
+        let recvCalled = false;
+        const result = await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+            ...POLL_BASE,
+            recv: async () => {
+                recvCalled = true;
+                return null;
+            },
+            fetch: pollFetch([{ status: "completed", events: [], cursor: 0, result: okResult }]),
+        });
+        expect(result.exitCode).toBe(0);
+        expect(recvCalled).toBe(false);
+    });
+
+    test("transport:callback runs the recv loop — a done-marker returns without any pull", async () => {
+        let fetchCalled = false;
+        const result = await awaitExec(REF, EXEC_ID, () => {}, DEADLINE, {
+            transport: "callback",
+            now: () => NOW_MS,
+            runStep: passthroughStep,
+            fetch: async () => {
+                fetchCalled = true;
+                return new Response("unexpected", { status: 404 });
+            },
+            recv: stubRecv([envelope(doneMarker(okResult))]),
+        });
+        expect(result.exitCode).toBe(0);
+        expect(fetchCalled).toBe(false);
     });
 });
