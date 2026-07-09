@@ -30,13 +30,32 @@ export type ProviderError =
     | { readonly type: "provider"; readonly retryable: boolean; readonly message: string; readonly cause?: unknown };
 
 /**
+ * Structural guard for an already-constructed `ProviderError` value. A
+ * `ProviderError` is a plain object, not an `Error`, so it cannot be
+ * recognized by `instanceof`; this checks the discriminant plus the two
+ * always-present fields. Used by `toProviderError` to stay idempotent.
+ */
+export function isProviderError(value: unknown): value is ProviderError {
+    if (typeof value !== "object" || value === null) return false;
+    const v = value as { type?: unknown; retryable?: unknown; message?: unknown };
+    return (v.type === "budget" || v.type === "tenant-blocked" || v.type === "provider") && typeof v.retryable === "boolean" && typeof v.message === "string";
+}
+
+/**
  * Turn a caught SDK throwable into a `ProviderError` value. Routes through
  * `classifyProviderError` so the `provider` variant's `retryable` keeps the
  * transient (429 / 5xx / connection) classification. `cause` is the original
  * throwable verbatim — for the budget variant it MUST be the SDK error
  * carrying status 402, which is what `isBudgetExceeded` walks.
+ *
+ * Idempotent: `chatStream` throws a `ProviderError` value, which
+ * `streaming-chat`'s `catch` re-wraps by calling this again. Returning an
+ * already-constructed `ProviderError` unchanged stops that second pass from
+ * `String()`-ing the object (a `ProviderError` is not an `Error`) into a
+ * `"[object Object]"` message that would bury the real inner one.
  */
 export function toProviderError(e: unknown, workload: string): ProviderError {
+    if (isProviderError(e)) return e;
     const { kind, retryable } = classifyProviderError(e);
     const detail = e instanceof Error ? e.message : String(e);
     if (kind === "budget") {

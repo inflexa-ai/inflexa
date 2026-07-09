@@ -219,6 +219,49 @@ describe("loadRecent boundary snapping", () => {
     });
 });
 
+// --- numeric seq ordering ---------------------------------------------------
+
+describe("loadRecent numeric seq ordering", () => {
+    it("orders by numeric seq across the 9->10 boundary, keeping a tool pair intact", async () => {
+        // Fill seq 0..7 with four plain turns so the tool turn lands on seq 8..11
+        // — its assistant tool-call at seq 9 and matching tool-result at seq 10
+        // straddle the 9->10 boundary. A lexicographic ORDER BY seq (bug) sorts
+        // "10" before "2" and pushes "9" to the tail, separating the pair with
+        // user messages between them; a numeric ORDER BY keeps insertion order.
+        const plainTurns = [
+            [userText("first question here"), assistantText("first answer here")],
+            [userText("second question here"), assistantText("second answer here")],
+            [userText("third question here"), assistantText("third answer here")],
+            [userText("fourth question here"), assistantText("fourth answer here")],
+        ];
+        const toolTurn = [
+            userText("fifth question driving a tool call"),
+            assistantToolUse("toolu_boundary", "search_gene", { symbol: "BRCA1" }),
+            userToolResult("toolu_boundary", JSON.stringify({ hits: 7 })),
+            assistantText("fifth answer grounded in the tool result"),
+        ];
+        const inOrder = [...plainTurns, toolTurn];
+        for (const turn of inOrder) {
+            (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        }
+
+        // Budget far above the whole thread — every turn is included, so the only
+        // thing under test is the read's ordering.
+        const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+
+        // Ascending numeric seq == insertion order, which we control end to end.
+        expect(loaded).toEqual(inOrder.flat());
+        assertValidSequence(loaded);
+
+        const toolUseIdx = loaded.findIndex((m) => typeof m.content !== "string" && m.content.some((b) => b.type === "tool-call"));
+        const toolResultIdx = loaded.findIndex((m) => m.role === "tool" && typeof m.content !== "string" && m.content.some((b) => b.type === "tool-result"));
+        expect(toolUseIdx).toBeGreaterThanOrEqual(0);
+        // The tool-result sits immediately after its tool-call — no user/system
+        // message wedged between them by a scrambled order.
+        expect(toolResultIdx).toBe(toolUseIdx + 1);
+    });
+});
+
 // --- overflow metric --------------------------------------------------------
 
 describe("loadRecent overflow metric", () => {

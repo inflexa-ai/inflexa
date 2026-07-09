@@ -195,8 +195,13 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
     function loadRecent(threadId: string, tokenBudget: number): ResultAsync<ModelMessage[], DbError> {
         return tryQuery("thread-history.loadRecent", async () => {
             const { rows } = await pool.query<MessageRow>(
+                // ORDER BY must qualify `messages.seq` — a bare `seq` would bind to the
+                // `seq::text AS seq` output alias (Postgres resolves an unqualified
+                // ORDER BY name to the output column), sorting the bigint as text:
+                // "10" before "2". Scrambled order splits a tool-call/tool-result pair
+                // across an intervening turn. The qualified name forces the bigint column.
                 `SELECT seq::text AS seq, message_envelope, tokens
-         FROM messages WHERE thread_id = $1 ORDER BY seq ASC`,
+         FROM messages WHERE thread_id = $1 ORDER BY messages.seq ASC`,
                 [threadId],
             );
             const parsed = rows.map((row) => ({
