@@ -65,3 +65,6 @@ __pycache__/
 # Paper working directory — manuscript scaffold and reference PDFs, kept local
 # only (a journal treats a public preprint as prior publication).
 paper/
+
+# Anchor-marker dirs minted by running inflexa inside the repo (dev/E2E runs) — local workspace identity, never repo content
+.inflexa/
