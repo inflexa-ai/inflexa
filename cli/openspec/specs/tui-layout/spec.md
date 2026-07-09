@@ -102,9 +102,10 @@ Because focus is always on some widget, the dialog host's focus save/restore SHA
 
 ### Requirement: Toggleable four-section sidebar
 
-`Sidebar` SHALL render four sections in fixed order — SESSION, DATA PROFILE, ANALYSIS, RUNS — as a
-fixed-width, full-height column with a divider against the chat column. Its width SHALL be sourced
-from `size.railWidth` (the design-tokens layer), NOT an inline integer, and it is NOT
+`Sidebar` SHALL render four sections in fixed order — SESSION, ANALYSIS, DATA PROFILE, RUNS — as a
+fixed-width, full-height column with a divider against the chat column. The order is the pipeline
+order: the analysis's inputs feed the data profile, and the profile feeds runs. Its width SHALL be
+sourced from `size.railWidth` (the design-tokens layer), NOT an inline integer, and it is NOT
 mouse-resizable. SESSION SHALL show the short session id (`S·` + the first 4 hex of the id), the
 session age as a relative duration (e.g. `6m`, the `Date.relativeAge` rendering), and the message
 count from live data. ANALYSIS SHALL show the analysis name, the anchor path with a ✓/⚠ badge
@@ -118,6 +119,11 @@ changes (an in-place `openSession` swap).
 
 - **WHEN** the sidebar renders for an open analysis
 - **THEN** SESSION/ANALYSIS show live SQLite-backed data and DATA PROFILE/RUNS show live ledger-backed states per `sidebar-live` — nothing rendered is mock
+
+#### Scenario: Sections render in pipeline order
+
+- **WHEN** the sidebar renders
+- **THEN** the sections appear top-to-bottom as SESSION, ANALYSIS, DATA PROFILE, RUNS
 
 #### Scenario: Anchor badge reflects marker state
 

@@ -200,7 +200,10 @@ export { upsertAnalysis } from "./state/analyses.js";
 // `reconcileOrphanedDataProfile` heals a ledger row stuck at `running` with no
 // backing workflow (a host that died between the ledger CAS and the DBOS
 // insert) — the embedder calls it once after launch, when recovery has run.
-export { loadDataProfileStatus, tryRetryDataProfile, reconcileOrphanedDataProfile } from "./state/data-profile.js";
+// `clearDataProfile` nulls the whole profile ledger back to "no profile" when an
+// analysis's input set empties (deferring on a running workflow), so the UI
+// stops advertising a profile that describes files the analysis no longer has.
+export { clearDataProfile, loadDataProfileStatus, tryRetryDataProfile, reconcileOrphanedDataProfile } from "./state/data-profile.js";
 export type { DataProfileStatus } from "./state/data-profile.js";
 
 // Staged-input manifest contract (the embedder stages; the harness only reads).

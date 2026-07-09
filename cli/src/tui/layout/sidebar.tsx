@@ -93,9 +93,10 @@ function Section(props: { label: string; children: JSX.Element; onActivate?: () 
 
 /**
  * The toggleable sidebar (full-height; spans the main row beside both the stream and the input).
- * Fixed width (`size.railWidth`), NOT mouse-resizable. Four sections in fixed order — SESSION, DATA
- * PROFILE, ANALYSIS, RUNS. SESSION and ANALYSIS render live SQLite-backed data; DATA PROFILE and RUNS
- * render live harness-ledger data from the `sidebar_live` store (its snapshots degrade gracefully
+ * Fixed width (`size.railWidth`), NOT mouse-resizable. Four sections in fixed order — SESSION,
+ * ANALYSIS, DATA PROFILE, RUNS — following the pipeline: the analysis's inputs feed the DATA PROFILE,
+ * and the profile feeds the RUNS. SESSION and ANALYSIS render live SQLite-backed data; DATA PROFILE and
+ * RUNS render live harness-ledger data from the `sidebar_live` store (its snapshots degrade gracefully
  * before boot / on a read failure). Nothing here is mock. There is deliberately no CONTEXT/token-cost
  * section — no real accounting source exists to render (design D1).
  * Reads the pure `getAnchor` (NOT `resolveAnchor`, which writes a sighting heartbeat), so
@@ -174,13 +175,6 @@ export function Sidebar(props: SidebarProps) {
                 </Show>
             </Section>
 
-            <Section label="DATA PROFILE" onActivate={props.onOpenProfile}>
-                <text>
-                    {profileLine().glyph !== null ? <Fg role={profileLine().role}>{`${profileLine().glyph} `}</Fg> : null}
-                    <Fg role="fgMuted">{profileLine().text}</Fg>
-                </text>
-            </Section>
-
             <Section label="ANALYSIS">
                 <Show when={ws.analysis} keyed fallback={<text fg={theme().fgMuted}>no analysis</text>}>
                     {(a: Analysis) => <text fg={theme().fg}>{a.name}</text>}
@@ -195,6 +189,13 @@ export function Sidebar(props: SidebarProps) {
                 <text fg={theme().fgMuted}>
                     {inputCount()} input{inputCount() === 1 ? "" : "s"}
                     {ws.project ? ` ${GLYPHS.middot} proj: ${ws.project.name}` : ""}
+                </text>
+            </Section>
+
+            <Section label="DATA PROFILE" onActivate={props.onOpenProfile}>
+                <text>
+                    {profileLine().glyph !== null ? <Fg role={profileLine().role}>{`${profileLine().glyph} `}</Fg> : null}
+                    <Fg role="fgMuted">{profileLine().text}</Fg>
                 </text>
             </Section>
 

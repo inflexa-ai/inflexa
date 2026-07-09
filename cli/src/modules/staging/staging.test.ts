@@ -9,7 +9,7 @@ import { freshDb } from "../../test_support/db.ts";
 import { insertAnchor, insertAnalysis, insertAnalysisInput, deleteAnalysisInput } from "../../db/primary_mutation.ts";
 import { asStr256 } from "../../lib/types.ts";
 import type { Analysis, AnalysisInput } from "../../types/analysis.ts";
-import { stageInputs } from "./staging.ts";
+import { stageInputs, enumerateInputFileIds } from "./staging.ts";
 
 function sha256(content: string): string {
     return createHash("sha256").update(content).digest("hex");
@@ -295,5 +295,71 @@ describe("stageInputs", () => {
         const idsByKey = (list: typeof first) => new Map(list.map((s) => [s.key, s.fileId]));
         expect(idsByKey(second)).toEqual(idsByKey(first));
         expect(readFileSync(join(targetDir, "inputs", "local", "stable", "member.txt"), "utf-8")).toBe("v2");
+    });
+});
+
+describe("enumerateInputFileIds", () => {
+    test("returns exactly the fileId set stageInputs would materialize", async () => {
+        // Cover every input shape at once: an anchored single file, an anchorless
+        // absolute-path file, and a directory input whose subtree carries nested
+        // files plus a dangling symlink both paths must skip identically.
+        writeFileSync(join(anchorDir, "solo.csv"), "solo");
+
+        const looseDir = join(testDir, "loose");
+        mkdirSync(looseDir, { recursive: true });
+        const loosePath = join(looseDir, "ext.csv");
+        writeFileSync(loosePath, "ext");
+
+        const dirPath = join(anchorDir, "dir");
+        mkdirSync(join(dirPath, "sub"), { recursive: true });
+        writeFileSync(join(dirPath, "a.txt"), "aaa");
+        writeFileSync(join(dirPath, "sub", "b.txt"), "bbb");
+        symlinkSync(join(dirPath, "missing-target.txt"), join(dirPath, "broken.txt"));
+
+        insertAnalysisInput({ path: "solo.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        insertAnalysisInput({ path: loosePath, isDir: false, analysisId, anchorId: null })._unsafeUnwrap();
+        insertAnalysisInput({ path: "dir", isDir: true, analysisId, anchorId })._unsafeUnwrap();
+
+        const enumIds = enumerateInputFileIds(analysisId)._unsafeUnwrap();
+        const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        const manifestIds = new Set(staged.map((s) => s.fileId));
+
+        // solo.csv + ext.csv + dir/a.txt + dir/sub/b.txt (broken.txt skipped).
+        expect(enumIds.size).toBe(4);
+        expect([...enumIds].sort()).toEqual([...manifestIds].sort());
+    });
+
+    test("enumerates with no session tree, returns ok, and writes nothing", () => {
+        writeFileSync(join(anchorDir, "data.csv"), "x");
+        insertAnalysisInput({ path: "data.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+
+        // A session tree path staging would use, deliberately never created.
+        const absentTree = join(testDir, "absent-session-tree");
+
+        const result = enumerateInputFileIds(analysisId);
+        expect(result.isOk()).toBe(true);
+        expect(result._unsafeUnwrap().size).toBe(1);
+        // Read-only: enumeration neither needs the tree nor stages any file.
+        expect(existsSync(absentTree)).toBe(false);
+        expect(existsSync(join(targetDir, "inputs"))).toBe(false);
+    });
+
+    test("skips an unresolvable input identically to stageInputs", async () => {
+        writeFileSync(join(anchorDir, "real.csv"), "real");
+        insertAnalysisInput({ path: "real.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+
+        // A second input under an anchor whose cached path is gone and has no
+        // on-disk marker — unresolvable, so both paths must drop it.
+        const orphanAnchorId = "orphan-anchor-enum";
+        insertAnchor({ id: orphanAnchorId, createdAt: 1, updatedAt: 1, cachedPath: "/nonexistent/path", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysisInput({ path: "ghost.csv", isDir: false, analysisId, anchorId: orphanAnchorId })._unsafeUnwrap();
+
+        const enumIds = enumerateInputFileIds(analysisId)._unsafeUnwrap();
+        const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        const manifestIds = new Set(staged.map((s) => s.fileId));
+
+        expect(staged).toHaveLength(1);
+        expect(enumIds.size).toBe(1);
+        expect([...enumIds].sort()).toEqual([...manifestIds].sort());
     });
 });

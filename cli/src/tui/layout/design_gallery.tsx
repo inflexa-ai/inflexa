@@ -193,6 +193,16 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <DialogShowcase>
                         <ResultsDialog title="Projects" lines={["acme — 3 analyses", "demo — 1 analysis"]} emptyText="No projects yet" onClose={noop} />
                     </DialogShowcase>
+                    <text fg={theme().fgMuted}>ResultsDialog — with a single-key footer action affordance (inert here):</text>
+                    <DialogShowcase>
+                        <ResultsDialog
+                            title="Data profile"
+                            lines={["status: completed", "12 files"]}
+                            emptyText="no profile data"
+                            action={{ key: "r", label: "re-profile", enabled: true, onAction: noop }}
+                            onClose={noop}
+                        />
+                    </DialogShowcase>
                     <text fg={theme().fgMuted}>ExportOptionsDialog — text field + checkbox options:</text>
                     <DialogShowcase>
                         <ExportOptionsDialog

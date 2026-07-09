@@ -366,6 +366,12 @@ export async function initCortexState(pool: Pool): Promise<void> {
                 // and re-opens the charge closed on the 402 pause path.
                 "ALTER TABLE cortex_runs ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE cortex_analysis_state ADD COLUMN IF NOT EXISTS seed_input_file_ids JSONB",
+                // NULL data_profile_status is the honest "no profile" state — a
+                // profile cleared once its input set emptied is indistinguishable
+                // from one that never existed. The column keeps its 'pending'
+                // default; only the NOT NULL floor is relaxed so a clear can null
+                // the whole ledger. Idempotent: dropping an absent NOT NULL no-ops.
+                "ALTER TABLE cortex_analysis_state ALTER COLUMN data_profile_status DROP NOT NULL",
                 "ALTER TABLE messages ADD COLUMN IF NOT EXISTS message_envelope JSONB",
             ];
             for (const sql of addMigrations) {

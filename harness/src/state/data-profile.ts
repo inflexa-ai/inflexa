@@ -24,9 +24,16 @@ export interface DataProfileStatus {
 }
 
 /**
- * Try to claim the `pending → running` transition. `ok(true)` when this call
- * won the CAS, `ok(false)` when it lost (already claimed) — losing the race is
- * NOT an error, it stays in the ok channel.
+ * Try to claim a startable row into `running`. Startable means `'pending'`
+ * (seeded, not yet run) or NULL (no profile: never profiled, or cleared by
+ * `clearDataProfile`). `ok(true)` when this call won the CAS, `ok(false)` when
+ * it lost (already claimed) — losing the race is NOT an error, it stays in the
+ * ok channel.
+ *
+ * NULL must be claimable here or a cleared analysis whose inputs return can
+ * never be profiled again: the seed upsert's ON CONFLICT deliberately never
+ * rewrites profile status, so the row stays NULL — and NULL matches neither
+ * the rerun (`completed`) nor retry (`failed`) claims.
  */
 export function tryStartDataProfile(pool: Querier, analysisId: string): ResultAsync<boolean, DbError> {
     const now = new Date().toISOString();
@@ -34,7 +41,7 @@ export function tryStartDataProfile(pool: Querier, analysisId: string): ResultAs
         const result = await pool.query({
             text: `UPDATE cortex_analysis_state
             SET data_profile_status = 'running', data_profile_started_at = $1
-            WHERE analysis_id = $2 AND data_profile_status = 'pending'`,
+            WHERE analysis_id = $2 AND (data_profile_status = 'pending' OR data_profile_status IS NULL)`,
             values: [now, analysisId],
         });
         return (result.rowCount ?? 0) > 0;
@@ -159,10 +166,41 @@ export function reconcileOrphanedDataProfile(pool: Querier, analysisId: string):
     });
 }
 
+/**
+ * Clear an analysis's data profile back to the honest "no profile" state,
+ * nulling every `data_profile_*` column plus the `seed_input_file_ids` the
+ * profile was taken against. `ok(true)` when a row was cleared, `ok(false)`
+ * when the clear was skipped (no such analysis, or a live profile) — a skip
+ * stays in the ok channel, exactly like the sibling CAS ops.
+ *
+ * An emptied input set makes any existing profile a lie: it describes files
+ * the analysis no longer has, so the UI must fall back to "not profiled". The
+ * `IS DISTINCT FROM 'running'` guard exists because a live profiling workflow's
+ * completion write would resurrect half-cleared state (re-stamping `completed`
+ * over the freshly-nulled ledger). Rather than fight the workflow, clearing
+ * defers on a running row and leaves reconciliation to the caller's next
+ * parity check once that workflow has settled.
+ */
+export function clearDataProfile(pool: Querier, analysisId: string): ResultAsync<boolean, DbError> {
+    return tryMutation("dataProfile.clearDataProfile", async () => {
+        const result = await pool.query({
+            text: `UPDATE cortex_analysis_state
+            SET data_profile_status = NULL, data_profile_error = NULL,
+                data_profile_started_at = NULL, data_profile_completed_at = NULL,
+                data_profile_result = NULL, seed_input_file_ids = NULL
+            WHERE analysis_id = $1 AND data_profile_status IS DISTINCT FROM 'running'`,
+            values: [analysisId],
+        });
+        return (result.rowCount ?? 0) > 0;
+    });
+}
+
 export function loadDataProfileStatus(pool: Querier, analysisId: string): ResultAsync<DataProfileStatus | null, DbError> {
     return tryQuery("dataProfile.loadDataProfileStatus", async () => {
         const result = await pool.query<{
-            data_profile_status: DataProfileStatus["status"];
+            // A cleared profile leaves the status NULL — the same wire shape as a
+            // never-profiled analysis, deliberately indistinguishable to consumers.
+            data_profile_status: DataProfileStatus["status"] | null;
             data_profile_error: string | null;
             data_profile_started_at: string | null;
             data_profile_completed_at: string | null;
@@ -176,7 +214,7 @@ export function loadDataProfileStatus(pool: Querier, analysisId: string): Result
             values: [analysisId],
         });
         const row = result.rows[0];
-        if (!row) return null;
+        if (!row || row.data_profile_status === null) return null;
         return {
             status: row.data_profile_status,
             error: row.data_profile_error ?? null,

@@ -13,6 +13,8 @@ import { ConfigApp } from "./app_config.tsx";
 import { DesignGallery } from "./layout/design_gallery.tsx";
 import { setTheme } from "./theme.ts";
 import { notify } from "./hooks/notice.ts";
+import { bootState, harnessRuntime } from "./hooks/boot.ts";
+import { driveForceReprofile } from "./hooks/profile_parity.ts";
 import { keybindLabel } from "./keymap.ts";
 import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
 import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
@@ -618,6 +620,27 @@ export const commands: Command[] = [
         category: "Analysis",
         enabled: (ctx) => ctx.analysis !== null,
         run: (ctx) => ctx.openDialog(() => <RemoveInputDialog />),
+    },
+    {
+        id: "analysis.reprofile",
+        title: "Re-profile data",
+        description: "Force a fresh data profile of this analysis's inputs",
+        category: "Analysis",
+        enabled: (ctx) => ctx.analysis !== null,
+        run: (ctx) => {
+            const a = ctx.analysis;
+            if (!a) return;
+            // A deliberate manual action, but the force driver needs the booted runtime. When boot has
+            // not reached ready, refuse with a notice (matching the status bar's "booting…") rather than
+            // silently no-op'ing — the command is analysis-scoped via `enabled`, not boot-scoped, since
+            // the predicate only sees the workspace.
+            const runtime = harnessRuntime();
+            if (bootState().phase !== "ready" || !runtime) {
+                notify({ kind: "info", text: `Harness is still booting${GLYPHS.ellipsis}` });
+                return;
+            }
+            void driveForceReprofile(runtime, a, () => ctx.analysis?.id ?? null);
+        },
     },
     {
         id: "analysis.set-project",

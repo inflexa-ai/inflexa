@@ -26,7 +26,8 @@ import { ChatBar } from "./layout/chat_bar.tsx";
 import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
 import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
-import { watchProfileParity } from "./hooks/profile_parity.ts";
+import { watchProfileParity, driveForceReprofile } from "./hooks/profile_parity.ts";
+import { listAnalysisInputs } from "../db/primary_query.ts";
 import type { Analysis } from "../types/analysis.ts";
 
 type AppProps = {
@@ -82,12 +83,48 @@ export function App(props: AppProps) {
     watchSidebarData(workspace);
 
     // Open the DATA PROFILE details view (design D5/D6). Snapshots the profile as of open (a
-    // point-in-time view) and hands the composed lines to `ResultsDialog`, reused verbatim.
+    // point-in-time view) and hands the composed lines to `ResultsDialog`, reused verbatim. The
+    // optional `r re-profile` footer action drives a DELIBERATE force re-profile: offered only when
+    // one could actually start — boot ready (so a runtime exists), no profile currently running, and
+    // at least one input to profile. All three are snapshotted at open (the dialog does not track them
+    // changing after it opens); after firing it closes, so the sidebar + toast carry the live outcome.
     function openProfile(): void {
         const snap = profileSnapshot();
-        const name = workspace.analysis?.name;
+        const analysis = workspace.analysis;
+        const name = analysis?.name;
         const title = name ? `Data profile ${GLYPHS.emDash} ${name}` : "Data profile";
-        dialogPush(() => <ResultsDialog title={title} lines={profileDetailLines(snap)} emptyText="no profile data" onClose={() => dialogClose()} />);
+        const runtime = harnessRuntime();
+        const running = snap.kind === "loaded" && snap.profile.status === "running";
+        const hasInputs =
+            analysis !== null &&
+            listAnalysisInputs(analysis.id).match(
+                (xs) => xs.length > 0,
+                () => false,
+            );
+        const canReprofile = bootState().phase === "ready" && !running && hasInputs;
+        dialogPush(() => (
+            <ResultsDialog
+                title={title}
+                lines={profileDetailLines(snap)}
+                emptyText="no profile data"
+                // Present the action only when a runtime + analysis exist to close over; `enabled`
+                // gates whether it is actually offered (footer hint + key binding).
+                action={
+                    analysis && runtime
+                        ? {
+                              key: "r",
+                              label: "re-profile",
+                              enabled: canReprofile,
+                              onAction: () => {
+                                  void driveForceReprofile(runtime, analysis, () => workspace.analysis?.id ?? null);
+                                  dialogClose();
+                              },
+                          }
+                        : undefined
+                }
+                onClose={() => dialogClose()}
+            />
+        ));
     }
 
     // Open the RUNS details view (design D5/D6). Snapshots the runs as of open; `loadSteps` fetches
