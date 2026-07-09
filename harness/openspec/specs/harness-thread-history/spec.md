@@ -33,13 +33,19 @@ Defines the harness `messages` table — the single source of truth for conversa
 
 ### Requirement: loadRecent returns a valid AI SDK model-message sequence
 
-The window returned by `loadRecent` SHALL always begin on a genuine user-input turn and SHALL never split an AI SDK tool-call/tool-result continuation. The turn is the atomic unit; a turn is never half-loaded. If the most recent complete turn alone exceeds the budget, it SHALL be returned in full.
+The window returned by `loadRecent` SHALL always begin on a genuine user-input turn and SHALL never split an AI SDK tool-call/tool-result continuation. The turn is the atomic unit; a turn is never half-loaded. If the most recent complete turn alone exceeds the budget, it SHALL be returned in full. Messages SHALL be ordered by ascending numeric `seq` — the read MUST order on the `bigint` `seq` column, never on a textual projection of it (a lexicographic sort places `"10"` before `"2"`, reordering a thread past ten messages and splitting tool-call/tool-result pairs across an intervening turn).
 
 #### Scenario: The window is snapped past an orphan tool result
 
 - **GIVEN** a token cut that would start the window on a tool-result continuation
 - **WHEN** `loadRecent` snaps the boundary
 - **THEN** the returned window starts on a genuine user-input turn and contains no orphan tool result
+
+#### Scenario: A thread past ten messages keeps numeric order
+
+- **GIVEN** a thread with more than ten messages whose tool-call and tool-result straddle the `seq` 9→10 boundary
+- **WHEN** `loadRecent` returns the window
+- **THEN** the messages are in ascending numeric `seq` order and every tool-call is immediately followed by its matching tool-result, with no user message between them
 
 #### Scenario: An oversized turn is returned whole
 
