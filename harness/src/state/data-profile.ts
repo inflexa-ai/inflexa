@@ -195,11 +195,26 @@ export function clearDataProfile(pool: Querier, analysisId: string): ResultAsync
     });
 }
 
+/**
+ * Load an analysis's data-profile ledger state. Returns `null` for BOTH miss
+ * conditions, deliberately indistinguishable to consumers:
+ *   - the analysis row does not exist, AND
+ *   - the row exists but `data_profile_status IS NULL` — set by
+ *     {@link clearDataProfile} when the input set empties (the cleared state is
+ *     the same wire shape as a never-profiled analysis on purpose, so the UI
+ *     falls back to "not profiled" uniformly).
+ *
+ * This collapsed null is a public contract: a non-null `analysisId` does NOT
+ * guarantee a non-null status. Consumers must treat `null` uniformly as "no
+ * profile" — never assume "row exists ⇒ status non-null" — and never read
+ * `seedInputFileIds` from a `null` return (it rides along only on the non-null
+ * branch). The pre-clearance state to check seed is not exposed here; read
+ * `seed_input_file_ids` directly when a caller needs that distinction
+ * (e.g. the seed-first guard in `triggerDataProfile`).
+ */
 export function loadDataProfileStatus(pool: Querier, analysisId: string): ResultAsync<DataProfileStatus | null, DbError> {
     return tryQuery("dataProfile.loadDataProfileStatus", async () => {
         const result = await pool.query<{
-            // A cleared profile leaves the status NULL — the same wire shape as a
-            // never-profiled analysis, deliberately indistinguishable to consumers.
             data_profile_status: DataProfileStatus["status"] | null;
             data_profile_error: string | null;
             data_profile_started_at: string | null;

@@ -453,6 +453,28 @@ async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: Da
 export async function triggerDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): Promise<DataProfileTriggerResult> {
     const { analysisId } = params;
     try {
+        // Seed-first contract guard. `tryStartDataProfile` claims 'pending' OR NULL-status
+        // rows; a NULL-status row is the cleared-then-reseeded state — the seed write
+        // (seedProfileLedger -> upsertAnalysis) repopulated `seed_input_file_ids` via
+        // COALESCE on the way back, so a properly-orchestrated caller always arrives here
+        // with seed_input_file_ids non-null (whether status is 'pending' or NULL). A NULL
+        // seed here means the caller skipped seeding and would start a profile whose audit
+        // ledger records no input set ("running" with no recorded inputs); refuse it at
+        // this seam rather than in the CAS — `tryStartDataProfile` is a low-level primitive
+        // that takes a pool directly and is not bound to the seed-first orchestration.
+        // `loadDataProfileStatus` collapses NULL-status rows to null (by contract), so the
+        // precheck reads the seed column directly.
+        const seeded = await deps.pool
+            .query<{ seed: string[] | null }>({
+                text: "SELECT seed_input_file_ids AS seed FROM cortex_analysis_state WHERE analysis_id = $1",
+                values: [analysisId],
+            })
+            .then((r) => r.rows[0]?.seed ?? null);
+        if (seeded === null) {
+            console.error(`[data-profile] Trigger rejected for ${analysisId}: no seeded input set (caller skipped seeding)`);
+            return "failed";
+        }
+
         const started = unwrapOrThrow(await tryStartDataProfile(deps.pool, analysisId));
         if (started) {
             startDataProfileWorkflow(deps, params).catch((err) => compensateStartFailure(deps, analysisId, "Run", err));
