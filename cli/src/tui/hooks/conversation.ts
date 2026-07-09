@@ -29,7 +29,7 @@ import type { Part, TextPart, ToolCallPart } from "../../types/session.ts";
 // same split as `status.ts`. The `Chat` component (`tui/components/chat.tsx`) renders it and drives
 // the load on session/boot changes; the `Sidebar` reads `messageCount`; `app.tsx` only composes
 // them. The transcript arrives two ways, BOTH writing this store directly (no bus for the harness
-// path, per design D9/D10): `send` runs one shared turn and feeds every harness event through
+// path): `send` runs one shared turn and feeds every harness event through
 // `applyEmitEvent`, and `loadMessages` replays the pg thread on open. One chat screen is mounted at
 // a time, so a module singleton is correct. The coarse activity state stays in `status.ts`.
 
@@ -112,7 +112,7 @@ function commitStream(): void {
                     const idx = msg.parts.findIndex((p) => p.id === pid);
                     if (idx !== -1) {
                         // `streamPartId` only ever names a text part: `startAssistantTurn` mints it and
-                        // `beginStreamSegment` (the FIX-2 mid-turn remint) re-points it, and both push a
+                        // `beginStreamSegment` (the mid-turn remint) re-points it, and both push a
                         // fresh text part — no other writer touches it. So the found part is a TextPart;
                         // the spread keeps its id/session/message ceremony and swaps in the sealed text.
                         msg.parts[idx] = { ...(msg.parts[idx] as TextPart), text };
@@ -129,7 +129,7 @@ function commitStream(): void {
 /**
  * Seal any prose still accumulating in `streamText` into its part BEFORE a non-text part (a tool
  * chip, a card, a tagged mention) joins the turn, so the transcript renders in emission order rather
- * than merging post-part prose above the part it followed (FIX 2 mid-turn interleaving). Only flushes
+ * than merging post-part prose above the part it followed (mid-turn interleaving). Only flushes
  * when text is actually pending; an empty buffer leaves the current (possibly the turn's pre-minted)
  * streaming part untouched, so no premature empty part is committed (the S1 empty-part discipline).
  */
@@ -152,7 +152,7 @@ function appendPart(part: Part): void {
 /**
  * Begin a fresh streaming text segment on the in-flight assistant message and point `streamPartId` at
  * it. Called when a `text-delta` resumes after {@link flushPendingText} sealed and cleared the prior
- * segment (FIX 2): the resumed prose becomes its OWN part, appended AFTER the tool/card that
+ * segment: the resumed prose becomes its OWN part, appended AFTER the tool/card that
  * interrupted it, so live rendering matches {@link cortexToUiMessage}'s in-order reload. Minted lazily
  * (only on a real delta, never eagerly on flush) so a turn that ends on a card leaves no trailing
  * empty text part.
@@ -203,7 +203,7 @@ function updateToolPart(toolUseId: string, name: string, status: "ok" | "error",
 type EmitEventArg = Parameters<EmitFn>[0];
 
 /**
- * Reduce one harness turn event into the store (design D3). This is the TUI's counterpart to the
+ * Reduce one harness turn event into the store. This is the TUI's counterpart to the
  * REPL printer: it consumes the harness `contracts/` vocabulary directly (never the cli bus event
  * shapes) and writes the store rather than a terminal.
  *
@@ -228,8 +228,8 @@ export function applyEmitEvent(event: EmitEventArg): void {
         case "text-delta":
             // A delta with no active streaming part means a preceding non-text part (tool/card) flushed
             // and cleared the prior segment — begin a fresh text part so the resumed prose renders AFTER
-            // that part, matching the reload path's in-order interleaving (FIX 2). Lazy: minting only on
-            // a real delta leaves no trailing empty part when a turn ends on a card (S1 discipline).
+            // that part, matching the reload path's in-order interleaving. Lazy: minting only on
+            // a real delta leaves no trailing empty part when a turn ends on a card.
             if (streamPartId() === null) beginStreamSegment();
             setStreamText((prev) => prev + event.text);
             return;
@@ -239,7 +239,7 @@ export function applyEmitEvent(event: EmitEventArg): void {
             // Deliberately NO flush here: the turn's final segment is sealed by finishTurn, not by these.
             return;
         case "tool-started": {
-            // FIX 2: seal prose streamed before this chip into its own part so parts render in emission
+            // Seal prose streamed before this chip into its own part so parts render in emission
             // order (text above the tool it preceded), never merged into the first segment above it.
             flushPendingText();
             // Extract primitives at receipt; never retain the event.
@@ -259,7 +259,7 @@ export function applyEmitEvent(event: EmitEventArg): void {
         }
         case "tool-finished": {
             // Seal pending prose before the chip resolves — matters on the unpaired-finish path, where
-            // updateToolPart appends a fresh finished part that must land after the prose (FIX 2).
+            // updateToolPart appends a fresh finished part that must land after the prose.
             flushPendingText();
             const toolUseId = event.toolUseId;
             const name = event.name;
@@ -271,7 +271,7 @@ export function applyEmitEvent(event: EmitEventArg): void {
             return;
         }
         default:
-            // FIX 2: seal preceding prose so the card/mention this becomes renders after it, in order.
+            // Seal preceding prose so the card/mention this becomes renders after it, in order.
             flushPendingText();
             // Only `ChatDataPart` remains (its `type` is `data-${string}`).
             renderDataPart(event.type, event.data);
@@ -574,8 +574,8 @@ const realLoadSeams: LoadSeams = {
 let loadGeneration = 0;
 
 /**
- * Load a session's transcript from the pg thread history (design D9), replacing whatever was mounted.
- * The thread id equals the session id (design D1). `loadPage` paginates by whole TURNS; page 0 reveals
+ * Load a session's transcript from the pg thread history, replacing whatever was mounted.
+ * The thread id equals the session id. `loadPage` paginates by whole TURNS; page 0 reveals
  * the turn `total`. When the thread spans more than one page we take the last TWO pages (reusing page
  * 0 when it is one of them, never re-reading it) and concatenate their rows so a thread that has just
  * crossed a page boundary still mounts a full window — fetching only the last page would strand the
@@ -687,14 +687,14 @@ export type SendSeams = {
 const realSendSeams: SendSeams = { runtime: harnessRuntime, runChatTurn };
 
 /**
- * Send a user turn through the shared harness turn engine (design D1–D3). Owns the turn-scoped
+ * Send a user turn through the shared harness turn engine. Owns the turn-scoped
  * {@link AbortController} so {@link abort} (and a session swap) can cancel it. Flow: guard a booted
  * runtime → push the user message → open the assistant turn → drive `runChatTurn` with a per-turn
  * streaming wrapper whose deltas feed {@link applyEmitEvent} → reduce the outcome onto the store. The
  * thread id equals the session id, and the session carries a length-1 `callPath` identifying the TUI
  * surface so a chat-launched run stamps `cortex_runs.thread_id`.
  *
- * TURN-GENERATION GUARD (C1): the fresh {@link AbortController} instance IS this turn's identity
+ * TURN-GENERATION GUARD: the fresh {@link AbortController} instance IS this turn's identity
  * token. A session swap or {@link resetHotState} replaces (or nulls) the module `abortController`
  * mid-flight — while the OLD turn is still unwinding (`appendTurn`'s pg round-trip; a tool ignoring
  * its signal), a NEW turn can already be streaming into a new session. So every event this turn emits
@@ -728,7 +728,7 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
     const startedAt = Date.now();
 
     abortController = new AbortController();
-    // The controller instance is this turn's token (C1). Captured once; the module `abortController`
+    // The controller instance is this turn's token. Captured once; the module `abortController`
     // may be reassigned/nulled by a swap or reset while this turn is in flight.
     const myTurn = abortController;
 
@@ -740,7 +740,7 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
     };
 
     // Per-turn streaming wrapper: forward each provider text delta into the adapter as a `text-delta`
-    // event, so answers accumulate in `streamText` as they arrive (design D3). Only this top-level
+    // event, so answers accumulate in `streamText` as they arrive. Only this top-level
     // loop runs on the wrapper — sub-agent loops were wired to the plain provider at assembly.
     const chat = createStreamingChat(runtime.provider, (text) => void emitForTurn({ type: "text-delta", text }));
     const session = buildChatSession("tui-chat", opts.analysisId, opts.sessionId);
@@ -754,7 +754,7 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
         emit: emitForTurn,
         signal: myTurn.signal,
         analysisId: opts.analysisId,
-        // Design D1: the pg thread binds 1:1 to the session, so a plan launched here stamps its run.
+        // The pg thread binds 1:1 to the session, so a plan launched here stamps its run.
         threadId: opts.sessionId,
         userInput: opts.userText,
     });

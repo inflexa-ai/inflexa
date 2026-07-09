@@ -25,7 +25,7 @@ import { chatStatus, type ChatStatus } from "./status.ts";
 // module singleton is correct — and the two snapshots are the only reactive cells (the generation
 // token and the interval handle are plain infrastructure, nothing reacts to them).
 //
-// Design D2/D8: polling is the deliberate v1 transport — the harness run-event stream's read side is
+// Polling is the deliberate v1 transport — the harness run-event stream's read side is
 // not OSS-side yet, so this reads ledger rows on lifecycle edges and, ONLY while work is active, a
 // bounded interval. When the harness ships the stream read helper, `refreshSidebarData` is the one
 // swap point.
@@ -69,7 +69,7 @@ export function relAge(iso: string | null): string {
 }
 
 /**
- * Compose the DATA PROFILE details view's lines from a {@link ProfileSnapshot} (design D5). Pure
+ * Compose the DATA PROFILE details view's lines from a {@link ProfileSnapshot}. Pure
  * (snapshot → string[]) so every kind is unit-testable: the degraded kinds each yield one placeholder
  * line, and `loaded` yields the ledger truth — a status line, the started/completed relative times,
  * the error (on failure), the summary split into lines, the per-file `path — description`, and the
@@ -118,7 +118,7 @@ export function profileDetailLines(snap: ProfileSnapshot): string[] {
 }
 
 /**
- * The themed glyph + color role for a run's status (design D4). The single exhaustive `runMark`,
+ * The themed glyph + color role for a run's status. The single exhaustive `runMark`,
  * shared by the sidebar rail and the runs dialog (both need the identical status→glyph/role mapping).
  * running=warn, completed=success, failed/canceled=error, `suspended_insufficient_funds`=warn,
  * `partial`=muted. A `never`-typed default breaks the build if the harness enum grows, forcing a new
@@ -150,7 +150,7 @@ export function runMark(status: RunStatus): { glyph: string; role: keyof ThemeCo
     }
 }
 
-/** A run's short label: the workflow name, else the plan id tail, else the run id tail (design D4). */
+/** A run's short label: the workflow name, else the plan id tail, else the run id tail. */
 export function shortRunName(run: CortexRunRow): string {
     if (run.workflowName.length > 0) return run.workflowName;
     const id = run.planId ?? run.runId;
@@ -160,7 +160,7 @@ export function shortRunName(run: CortexRunRow): string {
 /** How many run rows a refresh pulls. The sidebar renders the newest few; the store holds the head. */
 const RUNS_LIMIT = 10;
 
-/** The bounded poll cadence while work is active (design D2). Idle sidebars issue zero queries. */
+/** The bounded poll cadence while work is active. Idle sidebars issue zero queries. */
 const POLL_INTERVAL_MS = 5_000;
 
 /**
@@ -170,7 +170,7 @@ const POLL_INTERVAL_MS = 5_000;
  * not a set literal) so adding a status to the harness enum is a compile error here until it is
  * classified — the arming rule must never silently mis-treat a new status as terminal.
  *
- * Trade-off (design D2 risk): a genuinely wedged non-terminal run keeps the 5s poll alive. Accepted
+ * Trade-off: a genuinely wedged non-terminal run keeps the 5s poll alive. Accepted
  * — it is bounded, cheap (≤10 rows), and visible; the alternative (guessing wedged-ness) is worse.
  */
 const RUN_STATUS_TERMINAL: Record<RunStatus, boolean> = {
@@ -191,7 +191,7 @@ const RUN_STATUS_TERMINAL: Record<RunStatus, boolean> = {
  * would otherwise tear the poll down on an idle screen and nothing would ever re-read to recover, so
  * the section would stay stuck at "unavailable" until the next lifecycle edge. Re-arming lets the
  * SAME cheap 5s poll self-heal the moment the read succeeds again. A persistent outage keeps that one
- * failing read alive — accepted, exactly like a genuinely wedged non-terminal run (design D2): it is
+ * failing read alive — accepted, exactly like a genuinely wedged non-terminal run: it is
  * bounded, cheap (≤10 rows), and the alternative (guessing transient-vs-persistent) is worse.
  */
 export function hasActiveWork(profileSnap: ProfileSnapshot, runsSnap: RunsSnapshot): boolean {
@@ -233,7 +233,7 @@ let refreshGeneration = 0;
 /**
  * Repopulate both snapshots for `analysisId` from the booted runtime's pool. No-ops to `not_ready`
  * (both snapshots) when the runtime is not booted — the sidebar renders a muted placeholder and no
- * query runs (design D2 no-op guard). Otherwise the two ledger reads are awaited in turn and each
+ * query runs (the no-op guard). Otherwise the two ledger reads are awaited in turn and each
  * `.match`es INDEPENDENTLY into its snapshot: a `DbError` becomes `unavailable` (never a crash), a
  * null profile row becomes `absent`, and every write is a fresh object so Solid always reconciles.
  *
@@ -295,7 +295,7 @@ const realWatchSeams: WatchSeams = {
 
 /**
  * Wire the sidebar's live-data lifecycle. Call once from `App` (inside its reactive root). Three
- * triggers, each an effect over the module's reactive sources (design D2):
+ * triggers, each an effect over the module's reactive sources:
  *
  *  1. **ready / analysis swap** — refresh when boot reaches `ready` and an analysis is open, and
  *     again whenever the open analysis changes.

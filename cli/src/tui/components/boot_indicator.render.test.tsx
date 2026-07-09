@@ -8,7 +8,7 @@ import { ChatBar } from "../layout/chat_bar.tsx";
 import { theme } from "../theme.ts";
 
 // Headless render coverage for the boot gate's visible surface (the store transitions are unit-tested
-// in hooks/boot.test.ts). Three observables the spec names: while booting the animation renders, the
+// in hooks/boot.test.ts). Three observables: while booting the animation renders, the
 // gated input affordance surfaces the closed gate (the render-observable proxy for "submit refused" —
 // the host's handleSubmit returns while not ready), and a failed boot shows its actionable message.
 

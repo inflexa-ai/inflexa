@@ -33,12 +33,12 @@ function shortId(id: string): string {
 /**
  * The DATA PROFILE / RUNS line descriptor: an optional status-colored glyph (`null` for the muted
  * placeholder states) beside muted meta text, mirroring the RUNS row + `RunBlock` step shape (colored
- * glyph, muted label). Keeping it a value the render maps over keeps the D3/D4 state ladder in one
+ * glyph, muted label). Keeping it a value the render maps over keeps the state ladder in one
  * exhaustive place rather than scattered across JSX branches.
  */
 type LiveLine = { glyph: string | null; role: keyof ThemeColors; text: string };
 
-/** First non-empty line of an error, clamped to the rail's one-line budget (design D3); a sane label when empty. */
+/** First non-empty line of an error, clamped to the rail's one-line budget; a sane label when empty. */
 function firstLine(error: string | null): string {
     const line = (error ?? "").split("\n", 1)[0]?.trim() ?? "";
     return line.length > 0 ? line : "failed";
@@ -80,7 +80,7 @@ function profileLineOf(snap: ReturnType<typeof profileSnapshot>): LiveLine {
 
 function Section(props: { label: string; children: JSX.Element; onActivate?: () => void }) {
     // The arrow reads `props.onActivate` at click time (reactive-safe, and the section activation is
-    // inert on the sections that pass none — only DATA PROFILE / RUNS supply a callback, per D6).
+    // inert on the sections that pass none — only DATA PROFILE / RUNS supply a callback).
     return (
         <box flexDirection="column" paddingTop={1} onMouseUp={() => props.onActivate?.()}>
             <text fg={theme().fgMuted}>
@@ -98,7 +98,7 @@ function Section(props: { label: string; children: JSX.Element; onActivate?: () 
  * and the profile feeds the RUNS. SESSION and ANALYSIS render live SQLite-backed data; DATA PROFILE and
  * RUNS render live harness-ledger data from the `sidebar_live` store (its snapshots degrade gracefully
  * before boot / on a read failure). Nothing here is mock. There is deliberately no CONTEXT/token-cost
- * section — no real accounting source exists to render (design D1).
+ * section — no real accounting source exists to render.
  * Reads the pure `getAnchor` (NOT `resolveAnchor`, which writes a sighting heartbeat), so
  * rendering the sidebar never touches disk — the no-litter rule for passive flows.
  */
@@ -149,7 +149,7 @@ export function Sidebar(props: SidebarProps) {
     const profileLine = createMemo(() => profileLineOf(profileSnapshot()));
     const recentRuns = createMemo((): CortexRunRow[] => {
         const s = runsSnapshot();
-        // ≤4 rows — the rail carries the summary; the details dialog carries the depth (design D4).
+        // ≤4 rows — the rail carries the summary; the details dialog carries the depth.
         return s.kind === "loaded" ? s.runs.slice(0, 4) : [];
     });
 

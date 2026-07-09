@@ -17,7 +17,7 @@ import {
 
 import { getLogger } from "../../lib/log.ts";
 
-// The headless chat turn engine (design D2). One transport-free sequence —
+// The headless chat turn engine. One transport-free sequence —
 // `prepareChatTurn → runAgent → unconditional appendTurn` — shared by BOTH the
 // clack/stdout REPL (`chat.ts`) and the TUI chat hook, so neither carries a
 // private copy of the prepare→run→append body (chat-command spec: "one turn
@@ -43,7 +43,8 @@ import { getLogger } from "../../lib/log.ts";
  *   AbortError before returning, so only `[userMessage]` was persisted.
  * - `failed` — `runAgent` threw for a non-abort reason; `cause` is the raw throw.
  * - `prepare_failed` — `prepareChatTurn` threw (e.g. Postgres unreachable).
- * - `thread_gone` — the thread was deleted / is owned by another analysis.
+ * - `thread_gone` — the thread belongs to another analysis (an absent id is re-created
+ *   by `prepareChatTurn`, so deletion never surfaces here).
  */
 export type TurnOutcome =
     | { readonly kind: "ok"; readonly fallbackText: string; readonly appendError?: DbError }
@@ -101,7 +102,7 @@ export type ChatTurnSeams = {
 const realTurnSeams: ChatTurnSeams = { prepare: prepareChatTurn, run: runAgent };
 
 /**
- * Build the {@link AgentSession} a chat turn runs under (design D2). Parameterized
+ * Build the {@link AgentSession} a chat turn runs under. Parameterized
  * by `agentId` so the surfaces are distinguishable in provenance yet identical in
  * shape: the REPL passes `"cli-chat"`, the TUI `"tui-chat"`. `callPath` is
  * `[agentId]` — length 1, so this top-level agent's events PASS the printer's
@@ -146,12 +147,13 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
     if (prepared.kind === "prepare_failed") {
         // pino serializes the whole structured cause into the file log; the surface renders only a
         // one-liner, so this record is the ONLY place the full failure detail survives for later
-        // inspection (the "[object Object]" hole this observability work closes).
+        // inspection.
         getLogger("harness").error({ cause: prepared.cause }, "chat turn prepare failed");
         return { kind: "prepare_failed", cause: prepared.cause };
     }
-    // The resume pre-check already refused foreign/absent ids before the loop
-    // began, so this is reachable only if the thread was deleted mid-session.
+    // `prepareChatTurn` refuses ONLY a thread owned by another analysis — an absent id is
+    // re-created there, not refused — so this branch is the ownership refusal. It reports as
+    // "gone" because callers deliberately do not distinguish foreign from vanished threads.
     if (prepared.kind === "not_found") return { kind: "thread_gone" };
 
     const initial = prepared.messages;

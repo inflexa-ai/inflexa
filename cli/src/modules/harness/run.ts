@@ -6,7 +6,7 @@
 // chat-route tool driven by a live `ToolContext` and an analysis-scoped
 // `RequestSession`; `inflexa run --plan <file>` is the model-free REPLAY path with no
 // chat turn to supply them, so it cannot call the tool and drives the run engine
-// through this mirror instead (design D2). The mirror STANDS: #33 M2 absorbs its
+// through this mirror instead. The mirror STANDS: #33 M2 absorbs its
 // internals into the daemon's trigger endpoint, so chat-executed and file-replayed
 // plans run one shared flow — the replica is folded into that endpoint, not deleted;
 // file replay is a first-class capability (`plan_intake.ts`'s `TODO(extend)` and the
@@ -64,7 +64,7 @@ import { bootHarnessRuntime, type RunTriggerDeps } from "./runtime.ts";
 
 type Spinner = ReturnType<typeof spinner>;
 
-// ── The replicated trigger flow (task 4.1 / design D2) ───────────────────────
+// ── The replicated trigger flow ───────────────────────
 
 /**
  * The harness calls the trigger flow makes, injected as one seams object so the
@@ -280,7 +280,7 @@ export async function triggerAnalysisRun(
     return ok({ kind: "started", runId });
 }
 
-// ── The `inflexa run` command (tasks 4.2 / 4.3 / 4.4) ────────────────────────
+// ── The `inflexa run` command ────────────────────────
 
 /** The `empty`-context hint specific to `inflexa run` (see {@link resolveSingleAnalysis}). */
 const RUN_EMPTY_HINT = "No analysis here. Run `inflexa` to start one, add inputs, then `inflexa run`.";

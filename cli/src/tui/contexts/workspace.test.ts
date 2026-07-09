@@ -7,7 +7,7 @@ import type { Analysis } from "../../types/analysis.ts";
 
 // The swap DECISION is exercised offline: the lock, the turn abort, and the notice channel are
 // injected as fakes (no lock files, no second process, no live turn), so the tests assert the
-// analysis-swap contract from design D7 — refused → scope unchanged; acquired → lock exchanged +
+// analysis-swap contract — refused → scope unchanged; acquired → lock exchanged +
 // turn aborted; same-analysis → no lock churn — without touching the real singletons.
 
 // Two analyses that differ by id (a real swap) — `projectId: null` so `projectForAnalysis` returns

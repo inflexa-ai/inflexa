@@ -15,7 +15,7 @@ import { RunBlock, type RunStepView } from "../run_block.tsx";
 import { relAge, runMark, shortRunName, type RunsSnapshot } from "../../hooks/sidebar_live.ts";
 
 /**
- * Map a harness step-execution status onto the design-system run-step state (design D5). Pure and
+ * Map a harness step-execution status onto the design-system run-step state. Pure and
  * exhaustive over {@link StepExecutionRow.status} — a `never`-typed default breaks the build if the
  * harness enum grows, so a new status is classified honestly rather than silently mis-bucketed.
  *
@@ -53,7 +53,7 @@ export function stepStateOf(status: StepExecutionRow["status"]): RunStepView["st
     }
 }
 
-/** The latest run's step-fetch state — fetched once on open (design D5), not by the sidebar poll. */
+/** The latest run's step-fetch state — fetched once on open, not by the sidebar poll. */
 type StepsState = { kind: "loading" } | { kind: "loaded"; views: RunStepView[] } | { kind: "unavailable" };
 
 /** Props for {@link RunsDialog}. */
@@ -82,7 +82,7 @@ function idTail(id: string): string {
 
 /**
  * The runs details view: a read-only, scrollable list of the analysis's recent runs plus the latest
- * run's steps rendered through {@link RunBlock} (design D5). Dialog-system compliant — no own esc
+ * run's steps rendered through {@link RunBlock}. Dialog-system compliant — no own esc
  * binding (the host owns it), cancel wired via {@link useDialogCancel}, initial focus declared on the
  * scroll pane, `lg` preset from `dialogSize`, and showcase-inert (its q/enter close keys gate on the
  * entry's `isTop`). Degrades pre-ready to the same muted not-ready line the sidebar shows, without
@@ -101,7 +101,7 @@ export function RunsDialog(props: RunsDialogProps): JSX.Element {
     }));
 
     const [steps, setSteps] = createSignal<StepsState>({ kind: "loading" });
-    // Fetch the latest run's steps exactly once, when the view opens (design D5: not in the sidebar
+    // Fetch the latest run's steps exactly once, when the view opens (not in the sidebar
     // poll). `props.runs` is itself a point-in-time capture taken at open (see its prop doc), so both
     // this fetch and the render below reflect that fixed snapshot — not later sidebar-poll updates.
     onMount(() => {

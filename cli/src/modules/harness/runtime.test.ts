@@ -94,7 +94,7 @@ function recordingSeams(calls: string[]): BootSeams {
             expect(workflows.sandboxStep.artifactRegistry.sync).toBeInstanceOf(Function);
             // The parent builder receives the registered child callable and wires the
             // bridge's run-lifecycle emitter as the optional provenance observer
-            // (design D1). Exercise it with a stand-in child callable.
+            //. Exercise it with a stand-in child callable.
             const child = async () => ({ status: "complete" as const, durationMs: 0, finishReason: null, error: null });
             const executeAnalysisDeps = workflows.buildExecuteAnalysis(child);
             expect(executeAnalysisDeps.sandboxStepCallable).toBe(child);
@@ -161,13 +161,13 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
 
         const runtime = result._unsafeUnwrap();
-        // The embedding provider resolves first (design: local-embeddings boots
+        // The embedding provider resolves first (local-embeddings boots
         // ahead of the proxy key). The ephemeral sweep runs strictly between schema
-        // init and assembly (design D2 — cancel stale rows before recovery can
+        // init and assembly (cancel stale rows before recovery can
         // re-dispatch them), then the composition root registers the whole workflow
         // cohort in one call, then the three sandbox-hygiene crons, all before the
-        // single launch (design D1/D5). The CLI is a poll-mode embedder, so it
-        // binds NO callback ingress — `startIngress` is never called.
+        // single launch. The CLI is a poll-mode embedder, so it binds NO
+        // callback ingress — `startIngress` is never called.
         expect(calls).toEqual([
             "resolveEmbedding",
             "readKey",
@@ -209,7 +209,7 @@ describe("bootHarnessRuntime", () => {
         const sweep = calls.indexOf("sweepEphemeral");
         const assemble = calls.indexOf("assemble");
         const launch = calls.indexOf("launch");
-        // The sweep is the single race-free pre-launch cancel point (design D2): it
+        // The sweep is the single race-free pre-launch cancel point: it
         // must follow schema init and precede assembly (which registers the ephemeral
         // workflow) — and, transitively, launch.
         expect(initState).toBeLessThan(sweep);
@@ -385,7 +385,7 @@ describe("bootHarnessRuntime", () => {
         const calls: string[] = [];
         const cfg = testConfig();
         // Skills tree stays present, so the templates gate (which sits right after it)
-        // is the one that fires — a distinct pre-flight prerequisite (design D3).
+        // is the one that fires — a distinct pre-flight prerequisite.
         rmSync(templatesDir, { recursive: true, force: true });
         const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: cfg });
 

@@ -92,7 +92,7 @@ describe("Sidebar input count follows the bus", () => {
     });
 });
 
-// The DATA PROFILE / RUNS sections render the `sidebar_live` store's snapshots (design D3/D4). These
+// The DATA PROFILE / RUNS sections render the `sidebar_live` store's snapshots. These
 // drive the store through `refreshSidebarData`'s injectable reads (no Postgres, no booted runtime)
 // and assert the rendered rail text — the truthfulness the change exists for. A null-analysis
 // workspace keeps the fixture minimal (getSession → null, no anchor/input reads), so only the two

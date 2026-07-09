@@ -13,7 +13,7 @@ import { bootState, harnessRuntime } from "./boot.ts";
 import { notify } from "./notice.ts";
 import { profileSnapshot, refreshSidebarData } from "./sidebar_live.ts";
 
-// The data-profile lifecycle's reactive side (design D8), held here (not inside app.tsx) so the
+// The data-profile lifecycle's reactive side, held here (not inside app.tsx) so the
 // wiring lives beside the boot/notice/sidebar hooks it reads. `watchProfileParity` is the one
 // app-level hook App calls in setup; it drives THREE managed-parity edges (boot ready / analysis
 // swap, a live input mutation on the open analysis, and a profile run completing) plus, alongside it,
@@ -99,7 +99,7 @@ const realParityWatchSeams: ParityWatchSeams = {
 };
 
 /**
- * Reactively keep the data profile at managed parity (design D8). Wires three edges, all fire-and-forget
+ * Reactively keep the data profile at managed parity. Wires three edges, all fire-and-forget
  * through {@link driveProfileParity}:
  *
  *  1. **boot ready / analysis swap** — fire when boot reaches `ready` with an analysis open, and again

@@ -154,7 +154,7 @@ export async function runChat(flags: ContextFlags, threadRef: string | undefined
  * The REPL. One `ThreadHistory`, one printer, and one `AgentSession` are built
  * ONCE and reused every turn (the thread is fixed for the invocation). Each turn
  * is the harness's transport-free sequence — `prepareChatTurn → runAgent →
- * appendTurn` — under a turn-scoped abort signal (design D7). The loop ends two
+ * appendTurn` — under a turn-scoped abort signal. The loop ends two
  * ways, both draining through `shutdown` from HERE (never from a signal handler):
  * a cancelled prompt (Ctrl+C / Ctrl+D at idle → `shutdown(0)`), or a turn that
  * returns `"stop"` because a second SIGINT arrived mid-turn (→ `shutdown(130)`,
@@ -181,7 +181,7 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
     // The REPL runs as the `"cli-chat"` agent. `buildChatSession` puts `threadId`
     // in scope (so a chat-launched plan stamps `cortex_runs.thread_id`) and gives
     // a length-1 callPath (so this agent's events pass the printer's sub-agent
-    // depth filter) — see its docs for the full rationale (design D2).
+    // depth filter) — see its docs for the full rationale.
     const session: AgentSession = buildChatSession("cli-chat", analysisId, threadId);
 
     for (;;) {
@@ -206,7 +206,7 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
 }
 
 /**
- * One chat turn under a turn-scoped `AbortController` (design D7). Returns
+ * One chat turn under a turn-scoped `AbortController`. Returns
  * `"continue"` to keep the REPL prompting or `"stop"` to end it — the loop, not
  * this function, owns teardown, which is exactly what makes the second-SIGINT
  * path race-free. The prepare→run→append body itself is the shared headless
@@ -233,10 +233,10 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
  * it returns on its own, so a stuck turn delays the stop — a harness/tool concern,
  * out of scope here.
  *
- * Outcome mapping is byte-for-byte the pre-extraction behavior. The engine persists
+ * Outcome mapping renders the shared engine contract — kept in lockstep with the TUI so both surfaces describe the same outcome identically. The engine persists
  * `[userMessage, ...loopOutput]` on a clean turn and `[userMessage]` on abort/throw,
  * surfacing any `appendTurn` fault as `outcome.appendError` — reported here on every
- * `runAgent`-reaching branch, exactly where the old inline `appendTurn.match` did.
+ * `runAgent`-reaching branch.
  * On a clean turn the answer already streamed live through `chat`'s onText, so
  * `finishTurn(fallbackText)` suppresses its duplicate final render; the fallback
  * prints only for a turn that produced no deltas at all.
@@ -267,7 +267,7 @@ async function runTurn(
     };
     process.on("SIGINT", onSigint);
     // Report an `appendTurn` fault identically on each runAgent-reaching branch —
-    // a single closure so the three sites cannot drift from the original one line.
+    // a single closure so the three sites cannot drift.
     const reportAppendError = (e: DbError | undefined): void => {
         if (e) sink.errLine(`Could not save the turn to the thread (${e.type}).`);
     };

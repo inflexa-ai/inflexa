@@ -112,7 +112,7 @@ export function createWorkspace(init: WorkspaceInit, seams: WorkspaceSeams = rea
                 if (!outcome.acquired) {
                     // Refused: the target is live in another process. Name the holder pid so the notice
                     // is actionable, and abort the swap whole — the current scope and its lock are
-                    // untouched (no partial state), matching the analysis-swap-refusal spec scenario.
+                    // untouched (no partial state).
                     seams.notify({ kind: "warn", text: `"${analysis.name}" is already open in another instance (pid ${outcome.holderPid}).` });
                     return;
                 }

@@ -208,11 +208,11 @@ export type BootSeams = {
      * pre-launch system-DB UPDATE.
      */
     readonly sweepEphemeral: typeof sweepEphemeralWorkflows;
-    /** Register the orphaned-container reaper scheduled workflow (design D5). */
+    /** Register the orphaned-container reaper scheduled workflow. */
     readonly registerReaper: (deps: RegisterReaperDeps) => void;
-    /** Register the dead-sandbox liveness watchdog scheduled workflow (design D5). */
+    /** Register the dead-sandbox liveness watchdog scheduled workflow. */
     readonly registerWatchdog: (deps: WatchdogDeps) => void;
-    /** Register the stale-notification sweep scheduled workflow (design D5). */
+    /** Register the stale-notification sweep scheduled workflow. */
     readonly registerNotificationSweep: (deps: RegisterNotificationSweepDeps) => void;
     readonly initState: (pool: Pool) => Promise<void>;
     readonly launch: (args: { config: DbosConfig; logger: pino.Logger }) => Promise<void>;
@@ -384,7 +384,7 @@ export async function bootHarnessRuntime(
         await seams.initState(pool);
 
         // Cancel this executor's stale PENDING `ephemeral:*` rows BEFORE launch
-        // (design D2). Once `assembleCoreRuntime` registers the ephemeral workflow
+        //. Once `assembleCoreRuntime` registers the ephemeral workflow
         // below, a prior crash's row becomes re-dispatchable by launch-time
         // recovery — a sandbox for a chat turn whose awaiter is long gone. The only
         // race-free cancel point is a direct system-DB UPDATE before launch, so the
@@ -444,7 +444,7 @@ export async function bootHarnessRuntime(
             bioKeys: cfg.bioKeys,
         };
 
-        // Registration cohort — ONE pre-launch call (design D1). `assembleCoreRuntime`
+        // Registration cohort — ONE pre-launch call. `assembleCoreRuntime`
         // registers all five durable workflows and builds the conversation agent over
         // the registered callables. Child-before-parent ordering is the harness's
         // invariant now: `buildExecuteAnalysis` receives the registered sandbox-step
@@ -452,7 +452,7 @@ export async function bootHarnessRuntime(
         // cli no longer hand-maintains a mirror of it. `executeTargetAssessment` is
         // registered DELIBERATELY UNTRIGGERABLE: no cli surface launches it, so it is
         // never recovered — harmless wiring the one-cohort discipline requires, not
-        // dead code (design D1). Everything lands before `launch`, the invariant that
+        // dead code. Everything lands before `launch`, the invariant that
         // matters: recovery resolves in-flight workflows by registered name, so
         // nothing the cli can trigger may register after.
         const workflows: CoreWorkflowDeps = {
@@ -481,7 +481,7 @@ export async function bootHarnessRuntime(
         // policy). Every backend is the shared instance; `templatesDir` is non-null
         // past the pre-flight gate; `chrome: {}` is the honest local default — with
         // the unavailable preview publisher, report preview short-circuits before any
-        // Chrome connection (design D3).
+        // Chrome connection.
         const conversation: ConversationAssemblyDeps = {
             provider,
             pool,

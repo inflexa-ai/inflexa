@@ -17,7 +17,7 @@ import { enumerateInputSignatures, inputSignature, stageInputs } from "../stagin
 import { seedProfileLedger } from "./profile.ts";
 import type { HarnessRuntime } from "./runtime.ts";
 
-// The headless data-profile parity checks (design D8). Two entry points, both writing NO terminal/TUI
+// The headless data-profile parity checks. Two entry points, both writing NO terminal/TUI
 // output — the reactive hook (`tui/hooks/profile_parity.ts`) maps their discriminated outcome to a
 // notice: `ensureProfileAtParity` is the managed auto-check the TUI fires when a chat opens on `ready`
 // (and after an analysis swap); `forceReprofile` is the deliberate re-profile the palette/dialog action
@@ -138,7 +138,7 @@ async function stageAndSeed(runtime: HarnessRuntime, analysis: Analysis, seams: 
 }
 
 /**
- * Auto-trigger the data profile at managed parity for `analysis`, fire-and-forget (design D8). The
+ * Auto-trigger the data profile at managed parity for `analysis`, fire-and-forget. The
  * ladder, cheapest gate first:
  *
  *   0. Reconcile an orphaned `running` ledger row (best-effort) — a prior run that died between the CAS
@@ -234,7 +234,7 @@ export async function ensureProfileAtParity(
 
 /**
  * Force a re-profile of `analysis`, fire-and-forget — the deliberate action the TUI's command palette /
- * dialog drives (design D8). Unlike {@link ensureProfileAtParity}, force is the user's explicit will, so
+ * dialog drives. Unlike {@link ensureProfileAtParity}, force is the user's explicit will, so
  * the drift comparison and the `failed`-state gate do NOT apply: past a live-run check it ALWAYS stages →
  * seeds → triggers. The ladder: reconcile (best-effort) → enumerate (an empty set is `no_inputs`; the
  * TUI words this as a refusal for the manual action, the headless module stays silent) → ledger read (a
