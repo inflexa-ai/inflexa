@@ -7,104 +7,78 @@ submit/recv protocol every sandbox-backed module sits on. A single base-image
 container per analysis step runs R/Python; the harness drives it over HTTP and
 recovers cleanly when the workflow-owning host process dies mid-run.
 
-**Submit + durable recv, not a long-lived stream.** The old protocol held one
+**Submit + durable await, not a long-lived stream.** The old protocol held one
 HTTP `POST /exec` open for hours while sandbox-server streamed `ndjson`; under
 multi-replica DBOS recovery a reassigned workflow could not resume that stream
 and would re-issue the command. So `/exec` is split into a `submitExec` DBOS
-step (POST, return after 202) and a workflow-body recv loop. Sandbox-server runs
-the command in the background and POSTs progress and the final result back to
-the host; whichever host process receives a callback forwards it via `DBOS.send`
-onto a **single per-exec DBOS topic** `exec-event:${execId}`, unblocking the
-recv on whatever process owns the workflow at that moment. There is no in-memory
-fast-path bus — delivery is `DBOS.send` only. (This rationale is owned by the
-harness's sandbox-submit/recv decision; the protocol flip and the
-`executeAnalysis` cutover shipped as one atomic deploy, with no dual-protocol
-sandbox-server carrying both the old stream and the new path.)
+step (POST, return after 202) and a workflow-body await, and the command's
+progress events and terminal result reach the host by one of two **transports**
+(`SandboxTransport = "poll" | "callback"`, chosen by the embedder; the OSS/CLI
+default is `poll`). In **poll** mode the host asks: `awaitExec` loops durable,
+signed `GET /exec/{execId}?since={cursor}` pull steps and the sandbox initiates
+nothing. In **callback** mode the sandbox pushes: sandbox-server POSTs progress
+and the final result to the host, and whichever host process receives a callback
+forwards it via `DBOS.send` onto a **single per-exec DBOS topic**
+`exec-event:${execId}`, unblocking the recv on whatever process owns the
+workflow at that moment. There is no in-memory fast-path bus — callback delivery
+is `DBOS.send` only.
 
-**Callbacks are HMAC-signed, verified in the workflow body at recv.** Because a
-callback may land on a process that is not executing the workflow body, the
-authentication cannot live at the host edge. A per-sandbox `callbackSecret` is
-minted once, handed to sandbox-server once, and never transmitted again;
-sandbox-server signs each callback `HMAC-SHA256(callbackSecret,
-"${execId}:${timestamp}:${sha256Hex(body)}")`. The host callback handler is
-dumb: no secret, no verification, no DB read — it parses the workflowId out of
-the execId and forwards the `{payload, payloadRaw, signature, timestamp}`
-envelope. The workflow body — which holds the secret from the cached create
-step output — verifies the HMAC and timestamp freshness on each message; a bad
-or stale signature hard-cancels the run.
+**Every result body is HMAC-signed, verified in the workflow body.** Because a
+result may be served to (or a callback may land on) a process that is not
+executing the workflow body, the authentication cannot live at the host edge. A
+per-sandbox `callbackSecret` is minted once, handed to sandbox-server once, and
+never transmitted again; sandbox-server signs every served poll snapshot and
+every pushed callback `HMAC-SHA256(callbackSecret,
+"${execId}:${timestamp}:${sha256Hex(body)}")`. The workflow body — which holds
+the secret from the cached create step output — verifies the HMAC and timestamp
+freshness on each body; a bad or stale signature hard-cancels the run. The
+callback-mode host handler is dumb: no secret, no verification, no DB read — it
+parses the workflowId out of the execId and forwards the
+`{payload, payloadRaw, signature, timestamp}` envelope.
 
 Network confinement and the HMAC guard *different* attackers, and neither is
-"defense-in-depth" for the other. Confinement stops everything except the
-sandbox itself from reaching the ingress — the LAN, the internet, another
-analysis. It cannot stop the sandbox, because the sandbox is the one party that
-must reach the ingress. Against a compromised sandbox the HMAC is the *only*
-control, which is why the secret is withheld from the commands sandbox-server
-spawns and from the gateway that forwards their bytes.
+"defense-in-depth" for the other. Confinement bounds who can exchange bytes
+with whom; against a compromised sandbox the HMAC is the *only* control, which
+is why the secret is withheld from the commands sandbox-server spawns. What
+confinement means differs per mode: in poll mode the Docker sandbox initiates
+nothing and an in-container egress firewall enforces it (see the
+`docker-sandbox-provider` spec); in callback mode the sandbox is *permitted*
+egress to push its callbacks, and the signature is what makes reaching an
+endpoint useless to anyone who cannot sign.
 
-**A completion is push-first, never push-only.** A pushed callback goes to an
-address baked into the container when it was created. A host that dies mid-exec
-returns on a different ingress port, so the push can never land: the sandbox
-retries into a void while the recovered recv waits for a message that will never
-arrive, and the run hangs in `running` forever. Therefore the exec table retains
-the completion bytes and `GET /exec/{execId}` serves them, **signed fresh at
-request time**. Whenever the topic falls quiet the recv loop stops waiting and
-asks. The served bytes are the ones the callback would have carried, so the
-provenance frame survives the recovery path and a single verification path
-serves both.
+**In callback mode a completion is push-first, never push-only.** A pushed
+callback goes to an address baked into the container when it was created. A
+host that dies mid-exec returns on a different ingress port, so the push can
+never land: the sandbox retries into a void while the recovered recv waits for
+a message that will never arrive, and the run hangs in `running` forever.
+Therefore the exec table retains the completion bytes and `GET /exec/{execId}`
+serves them, **signed fresh at request time**. Whenever the topic falls quiet
+the recv loop stops waiting and asks. The served bytes are the ones the
+callback would have carried, so the provenance frame survives the recovery path
+and a single verification path serves both. In poll mode this pull is not a
+backstop but the primary path, and a restarted host simply resumes polling from
+its current identity — the recovery wedge cannot occur.
 
 The freshness window makes the signature's age load-bearing. A retry loop that
 minted one timestamp and reused it would, after the window elapsed, be posting a
 message the host is required to reject as `stale-timestamp` — a hard cancel, not
 a retryable condition — no matter how long it kept trying. So sandbox-server
-SHALL re-sign each attempt, and the pull endpoint SHALL sign at request time.
+SHALL re-sign each attempt, and the served endpoints SHALL sign at request time.
 
-**The Docker sandbox has exactly one door, and a gateway holds it.** The sandbox
-joins a per-analysis `--internal` Docker network and nothing else. `--internal`
-is not an egress filter: it removes every route off that bridge, and with it the
-published ports, so it disconnects the host from the sandbox as thoroughly as it
-disconnects the sandbox from the internet. What restores the two directions the
-protocol needs is a per-sandbox **gateway** container, running
-`sandbox-server gateway` out of the same image, attached to both the internal
-network and the default bridge:
-
-```
-host    --(127.0.0.1:ephemeral)-->  gateway :8765  --> sandbox:8765   (/exec, /exec/{execId})
-sandbox --(CORTEX_BASE_URL)------>  gateway :8766  --> Cortex ingress (callbacks)
-```
-
-The gateway forwards bytes between two fixed destinations and holds no
-`callbackSecret`; it can delay or drop a completion but never forge one. The
-sandbox's `CORTEX_BASE_URL` keeps its original scheme and hostname — only the
-port changes — with `ExtraHosts` pinning that hostname to the gateway inside the
-sandbox, so an upstream that terminates TLS still sees the SNI and `Host` it
-expects. (A DNS alias on the gateway is the obvious alternative and is a trap:
-the gateway is multi-homed, resolves its own alias, and forwards to itself.)
-
-The network is per-**analysis**, not per-sandbox, because that is the trust
-boundary that already exists: every step of an analysis receives a flat
-read-only mount of the whole analysis tree, so sibling steps are not isolated
-from one another by any measure today. Different analyses are mutually
-unreachable, which is the property that was missing. Per-sandbox networks would
-be tighter, but each internal network consumes a subnet from Docker's default
-address pool — roughly thirty are available — which would silently cap
-concurrent steps. The K8s backend reaches pods directly and confines egress with
-NetworkPolicy; it has no gateway.
-
-**The gateway forwards the door; the signature is the lock.** The exec endpoints
-— `POST /exec` and `GET /exec/{execId}` — reject any request that does not carry
-a fresh, correct `X-Sandbox-Signature`/`X-Sandbox-Timestamp` over the same
-construction the callbacks use, run inbound. This is a request signature and
-deliberately not a static bearer: the gateway forwards these bytes in cleartext,
-so a bearer would hand the transport a reusable credential, while a signature
-lets the gateway forward or drop a request but never mint another — the same
-property that keeps it from forging a *completion* now keeps it from forging a
-*submit*. It also closes the one gap the shared analysis network leaves open. A
-sibling step can reach this sandbox at the network layer, but it holds only its
-own per-sandbox secret, so it cannot sign for this one; the check that
-authenticates Cortex is the check that confines the sibling. `POST /exec` signs
-the request body and `GET /exec/{execId}` an empty one; a missing, forged, or
-stale signature is a `401`, refused before any command runs or any stdout is
-disclosed. `/health` stays unauthenticated (it exposes nothing), and the retired
+**The signature is the lock on the exec endpoints.** `POST /exec` and
+`GET /exec/{execId}` reject any request that does not carry a fresh, correct
+`X-Sandbox-Signature`/`X-Sandbox-Timestamp` over the same construction the
+served/pushed bodies use, run inbound — in **both** transport modes. This is a
+request signature and deliberately not a static bearer: these bytes ride
+cleartext HTTP, so a bearer would hand any observing hop a reusable credential,
+while a signature lets a hop forward or drop a request but never mint another.
+Because the check tests possession of the per-sandbox secret, it also confines
+lateral movement: a network-adjacent sibling sandbox holds only its own secret
+and cannot sign for this one — the check that authenticates Cortex is the check
+that confines the sibling. `POST /exec` signs the request body and
+`GET /exec/{execId}` an empty one; a missing, forged, or stale signature is a
+`401`, refused before any command runs or any stdout is disclosed. `/health`
+stays unauthenticated (it exposes nothing), and the retired
 `POST /exec/{pid}/kill` route is gone.
 
 **Create is checkpoint-idempotent; a reaper is the sole orphan cleanup.** A
@@ -140,7 +114,7 @@ implementation directly, and the interface SHALL NOT leak backend-specific types
 - **GIVEN** `SANDBOX_BACKEND=docker`
 - **WHEN** `createSandboxClient()` is called
 - **THEN** the returned client SHALL be the Docker implementation
-- **AND** `createSandbox` SHALL launch a `sandbox-base` container on the analysis's internal network, reachable only through its gateway's loopback-bound host port
+- **AND** `createSandbox` SHALL launch a `sandbox-base` container with its exec port published to `127.0.0.1` only
 
 #### Scenario: K8s backend selected in prod
 
@@ -219,10 +193,182 @@ non-202 response SHALL throw.
 - **WHEN** the recovering process re-POSTs the same `execId`
 - **THEN** sandbox-server SHALL return the existing state without spawning a second command
 
-### Requirement: awaitExec is a workflow-body recv loop with HMAC verification
+### Requirement: Transport mode selects how exec results reach the host
 
-`awaitExec` SHALL run in the workflow body (not as a DBOS step) because
-`DBOS.recv` and `DBOS.writeStream` are body-only. It SHALL loop
+The harness SHALL expose `SandboxTransport = "poll" | "callback"`, selected by
+the embedder at its composition root, defaulting to `poll`. The value SHALL be
+carried to the sandbox container as `SANDBOX_TRANSPORT` and SHALL select the
+`awaitExec` implementation — the durable poll loop or the `DBOS.recv` loop.
+Backends SHALL be transport-agnostic: the same Docker/K8s backend runs in either
+mode, and only result delivery (and the confinement posture that follows from
+it) differs. Inbound request signing on the exec endpoints SHALL apply in both
+modes.
+
+#### Scenario: Embedder selects poll (default)
+
+- **GIVEN** a composition root that does not set a transport
+- **WHEN** the sandbox client is created and a sandbox is launched
+- **THEN** the container env SHALL carry `SANDBOX_TRANSPORT=poll` and `awaitExec` SHALL run the poll loop
+
+#### Scenario: Embedder selects callback
+
+- **GIVEN** a composition root that sets `transport: "callback"`
+- **WHEN** the sandbox client is created and a sandbox is launched
+- **THEN** the container env SHALL carry `SANDBOX_TRANSPORT=callback` and `awaitExec` SHALL run the recv loop with the pull backstop
+
+### Requirement: In poll mode awaitExec polls a signed cursor endpoint
+
+In poll mode `awaitExec` SHALL NOT use `DBOS.recv` or a per-exec topic. It SHALL
+loop durable pull steps named `sandbox.poll-exec-result.${execId}.${n}` on a
+two-phase cadence — a fast interval for the first attempts (short execs return
+within one snappy interval) backing off to a slower interval thereafter (an
+hours-long exec polls sustainably) — derived from the attempt counter alone so
+the schedule replays identically. Each poll fetches
+`GET /exec/{execId}?since={cursor}` and receives a signed
+`{ status, events[], cursor, result? }`. The loop SHALL verify the body with the
+per-sandbox HMAC exactly as a pulled result is verified, forward events newer than
+`cursor` via `emit`, advance `cursor`, and return `result` when terminal. The
+newer-than-cursor filter SHALL be applied by the loop itself: the signature covers
+the response body but not the request's `since`, so any validly-signed snapshot
+verifies against any poll, and a replayed or crossed response MUST NOT re-emit
+already-delivered events. A gap between the local cursor and the next served
+sequence — events shed by the sandbox's bounded ring before delivery — SHALL be
+surfaced as an advisory warning; the terminal result, not the event stream,
+remains the authoritative outcome. A forged or stale signature SHALL throw
+`HardCancelError`. The loop SHALL be bounded by `step.timeout`, and SHALL poll
+once more upon crossing the deadline before declaring a timeout, so a result
+sitting completed in the sandbox is returned rather than discarded. A recovered
+workflow SHALL resume polling from its current host identity without a lost
+result — the recovery wedge (#41) does not apply to poll.
+
+#### Scenario: Poll returns the terminal result
+
+- **GIVEN** a poll-mode exec that has completed
+- **WHEN** `awaitExec` polls `GET /exec/{execId}?since={cursor}`
+- **THEN** the signed response carries `result`, and `awaitExec` verifies and returns it
+
+#### Scenario: Incremental events are forwarded once
+
+- **GIVEN** a poll-mode exec emitting events between polls
+- **WHEN** `awaitExec` polls with the last `cursor`
+- **THEN** only events newer than `cursor` SHALL be emitted, and `cursor` advanced
+
+#### Scenario: A forged poll response hard-cancels
+
+- **GIVEN** a poll response whose signature does not verify against the per-sandbox secret
+- **WHEN** `awaitExec` receives it
+- **THEN** `awaitExec` SHALL throw `HardCancelError` and the workflow SHALL be cancelled without retry
+
+#### Scenario: A recovered workflow resumes polling
+
+- **GIVEN** a poll-mode exec whose host restarts mid-run
+- **WHEN** the workflow recovers under the same `executorID`
+- **THEN** the poll loop SHALL continue against the sandbox from the recovered host, and the terminal result SHALL still be retrieved
+
+#### Scenario: A replayed snapshot does not duplicate events
+
+- **GIVEN** a validly-signed poll response re-serving events at or below the loop's local cursor
+- **WHEN** `awaitExec` processes it
+- **THEN** only events newer than the local cursor SHALL be emitted
+
+#### Scenario: Events shed by the ring are surfaced
+
+- **GIVEN** a poll response whose first served sequence leaves a gap above the local cursor (or whose cursor advanced with no events served)
+- **WHEN** `awaitExec` processes it
+- **THEN** the loop SHALL emit an advisory warning naming the lost range and continue
+
+#### Scenario: The deadline check polls once more before timing out
+
+- **GIVEN** a poll-mode exec whose deadline has been crossed
+- **WHEN** the loop observes the crossing
+- **THEN** it SHALL issue one more poll and return the terminal result if that poll carries one, throwing `ExecTimeoutError` only otherwise
+
+#### Scenario: The cadence backs off for long execs
+
+- **GIVEN** a poll-mode exec still running after the fast-phase attempts are spent
+- **WHEN** the loop schedules its next poll
+- **THEN** it SHALL sleep the slow-phase interval, and the schedule SHALL be a pure function of the attempt counter
+
+### Requirement: In poll mode sustained unavailability escalates to a liveness probe
+
+The client-composed poll loop SHALL track consecutive `unavailable` poll
+outcomes: an `ok` poll resets the count. When the count reaches the escalation
+threshold (a module constant, like the poll cadence), the loop SHALL run one
+liveness probe — the backend inspect (`SandboxClient.isAlive(ref)`) — as a
+durable step named `sandbox.probe-liveness.${execId}.${k}` in the loop's
+existing attempt sequence. The probe schedule SHALL be a pure function of the
+checkpointed poll outcomes, so a replay issues the same polls and probes in the
+same order. The loop SHALL NOT use `DBOS.recv`, a per-exec topic, or any
+cross-workflow message for the verdict.
+
+The probe verdict SHALL be three-valued and the probe step SHALL never throw:
+
+- **dead** — the machine is observably dead and no completion has been
+  received: the loop SHALL return the synthetic-failure `ExecResult` instead of
+  waiting out the deadline, with reason `"sandbox-oom-killed"` when the backend
+  attributes the death to the machine's memory limit and `"sandbox-dead"`
+  otherwise. The synthetic result SHALL be built by the same constructor the
+  watchdog uses, so reasons and shape are identical across transports and
+  adjudicators.
+- **alive** — the machine is up (live-but-slow exec, evicted execId, non-200s):
+  the loop SHALL reset the consecutive count and resume polling, still bounded
+  by the deadline.
+- **inconclusive** — the underlying inspect threw (transient backend API
+  error): the loop SHALL reset the consecutive count and resume polling; a
+  failed probe is not a failed exec and SHALL NOT fail the workflow.
+
+Poll outcomes alone SHALL never fail an exec: `unavailable` conflates
+"unreachable" with "unknown execId / non-200", so the backend inspect is the
+sole arbiter of dead versus live-but-slow. When no `isAlive` seam is wired
+(bare loop invocation outside the client), the loop SHALL skip escalation and
+retain pure deadline-bounded behaviour.
+
+#### Scenario: Dead machine fast-fails the exec
+
+- **GIVEN** a poll-mode exec whose sandbox machine dies mid-exec
+- **WHEN** the threshold count of consecutive polls return `unavailable` and the probe step reports the machine observably dead
+- **THEN** `awaitExec` SHALL return a synthetic-failure `ExecResult` with reason `"sandbox-dead"` without waiting for the deadline
+
+#### Scenario: OOM-killed machine carries the OOM reason
+
+- **GIVEN** a poll-mode exec whose machine the backend reports as OOM-killed
+- **WHEN** the escalation probe runs
+- **THEN** the returned synthetic-failure result SHALL carry reason `"sandbox-oom-killed"`
+
+#### Scenario: Live-but-slow machine never escalates to failure
+
+- **GIVEN** a poll-mode exec whose polls return `unavailable` past the threshold but whose machine the probe reports alive
+- **WHEN** the probe verdict arrives
+- **THEN** the loop SHALL reset the consecutive count and resume polling, and the exec SHALL remain bounded by the deadline only
+
+#### Scenario: An ok poll resets the streak
+
+- **GIVEN** a run of `unavailable` polls one short of the threshold
+- **WHEN** the next poll returns a verified snapshot
+- **THEN** no probe SHALL run and the count SHALL restart from zero
+
+#### Scenario: A transient probe error is inconclusive
+
+- **GIVEN** an armed escalation whose backend inspect throws a transient API error
+- **WHEN** the probe step runs
+- **THEN** the step SHALL NOT throw, the exec SHALL NOT fail, and the loop SHALL resume polling with the count reset
+
+#### Scenario: Probes replay deterministically
+
+- **GIVEN** a recovered workflow replaying a poll sequence that had escalated
+- **WHEN** the loop replays over the checkpointed poll and probe steps
+- **THEN** the same probes SHALL be issued at the same positions with the same step names, keeping the DBOS function-ID sequence stable
+
+#### Scenario: No seam, no escalation
+
+- **GIVEN** a poll loop invoked without an `isAlive` seam
+- **WHEN** polls return `unavailable` past the threshold
+- **THEN** the loop SHALL keep polling bounded by the deadline alone
+
+### Requirement: In callback mode awaitExec is a workflow-body recv loop with HMAC verification
+
+In callback mode `awaitExec` SHALL run in the workflow body (not as a DBOS step)
+because `DBOS.recv` and `DBOS.writeStream` are body-only. It SHALL loop
 `DBOS.recv("exec-event:${execId}", T)` over a **single per-exec topic** carrying
 both progress events and the completion marker. Each received envelope is
 `{ payload, payloadRaw?, signature, timestamp }`. A message with `signature: null`
@@ -282,27 +428,46 @@ verbatim from the durable recv output on replay.
 
 ### Requirement: A terminal result is retrievable after a lost callback
 
+`GET /exec/{execId}` SHALL return the exec's terminal result signed fresh at
+request time so a host that was not listening when the exec finished — or that
+restarted onto a new identity — can still retrieve it; a still-running exec SHALL
+answer without a `result`. In **poll mode** the endpoint SHALL additionally accept
+`?since={cursor}` and return `{ status, events[], cursor, result? }`, where
+`events` are the buffered progress events newer than `cursor`, `cursor` is the new
+high-water mark, and events are served from a **bounded ring** that sets a
+`truncated` marker when it drops the oldest. In **callback mode** this endpoint
+remains the recovery backstop for a lost push. In both cases the served bytes are
+the ones a callback would have carried, so the provenance frame survives the
+retrieval path and one verification path serves poll and callback.
+
 Sandbox-server SHALL retain the exact completion bytes for every terminal exec
-(for `completedEntryTTL`, one hour) and SHALL expose them at
-`GET /exec/{execId}`, signed at **request time** with the same
-`HMAC-SHA256(callbackSecret, "${execId}:${timestamp}:${sha256Hex(body)}")`
-construction as a pushed callback. A still-running exec SHALL return
-`{"status":"running"}` **unsigned** — the presence of the signature header is
-what marks a response terminal. An unknown `execId` SHALL return 404.
-Sandbox-server SHALL record the completion bytes *before* attempting to POST
-them, and SHALL claim its at-most-once right to POST only for the duration of a
-delivery attempt: a failed attempt SHALL release the claim, never latch it, so a
+(for `completedEntryTTL`, one hour) and SHALL record them *before* attempting
+any callback POST. An unknown `execId` SHALL return 404. In callback mode it
+SHALL claim its at-most-once right to POST only for the duration of a delivery
+attempt: a failed attempt SHALL release the claim, never latch it, so a
 completion that was never delivered is never marked delivered.
 
-`awaitExec` SHALL, after a bounded run of silent recv slices and once more
-before declaring a deadline timeout, fetch `GET /exec/{execId}` as a DBOS step
-(not a bare `fetch`, whose result could vary between replays and desynchronise
-the recorded function-ID sequence). A terminal response SHALL be verified and
-parsed exactly as a pushed done-marker is: same secret, same freshness window,
-same `HardCancelError` on a bad or stale signature. Any other outcome —
-`running`, 404, an unreachable sandbox, a non-200 — SHALL be treated as "keep
-waiting" and SHALL NOT fail the exec, because a failed pull is not a failed
-command.
+In callback mode `awaitExec` SHALL, after a bounded run of silent recv slices
+and once more before declaring a deadline timeout, fetch `GET /exec/{execId}`
+as a DBOS step (not a bare `fetch`, whose result could vary between replays and
+desynchronise the recorded function-ID sequence). A terminal response SHALL be
+verified and parsed exactly as a pushed done-marker is: same secret, same
+freshness window, same `HardCancelError` on a bad or stale signature. Any other
+outcome — `running`, 404, an unreachable sandbox, a non-200 — SHALL be treated
+as "keep waiting" and SHALL NOT fail the exec, because a failed pull is not a
+failed command.
+
+#### Scenario: A completed exec is retrievable regardless of transport
+
+- **GIVEN** a completed exec
+- **WHEN** the host fetches `GET /exec/{execId}` (poll: with `?since`)
+- **THEN** the response SHALL be signed fresh and carry the terminal `result` with its provenance frame
+
+#### Scenario: A running exec is unsigned/without result and does not terminate the loop
+
+- **GIVEN** an exec still running
+- **WHEN** the host fetches the endpoint
+- **THEN** the response SHALL carry no `result`, and the loop SHALL keep waiting
 
 #### Scenario: A completed exec survives a host that was never listening
 
@@ -316,12 +481,6 @@ command.
 - **GIVEN** a terminal exec whose completion payload contains a populated `provenance` frame
 - **WHEN** the result is pulled rather than pushed
 - **THEN** the served bytes SHALL be byte-identical to the callback's, so `provenance` SHALL round-trip intact
-
-#### Scenario: A running exec is unsigned and does not terminate the loop
-
-- **GIVEN** an exec still executing
-- **WHEN** `GET /exec/{execId}` is fetched
-- **THEN** the response SHALL carry no signature header and `awaitExec` SHALL continue waiting
 
 #### Scenario: An unreachable sandbox does not fail the exec
 
@@ -356,70 +515,23 @@ that can never change.
 - **WHEN** the exec's completion is later pulled
 - **THEN** the bytes SHALL still be served, because they were recorded before the POST was attempted
 
-### Requirement: The Docker backend confines the sandbox behind a gateway
-
-The Docker backend SHALL attach each sandbox to a per-analysis Docker network
-created with `Internal: true`, and SHALL NOT publish a port on the sandbox
-itself. It SHALL run one gateway container per sandbox — the same image, invoked
-as `sandbox-server gateway` — attached to both that internal network and the
-default bridge, publishing its inbound leg on `127.0.0.1` only. The gateway
-SHALL receive no bind mounts and no `SANDBOX_CALLBACK_SECRET`. The sandbox's
-`CORTEX_BASE_URL` SHALL preserve the upstream scheme and hostname and target the
-gateway's outbound port, with `ExtraHosts` resolving that hostname to the
-gateway's address on the internal network.
-
-Network creation SHALL tolerate a sibling step having created it first (409), and
-attaching SHALL tolerate an endpoint that already exists (403/409) and SHALL
-recreate the network once on a 404 — a sibling's teardown can remove an
-endpoint-less network in the window before this sandbox attaches. `teardown` and
-`teardownById` SHALL remove the gateway alongside the sandbox and SHALL then
-attempt to remove the analysis network, which Docker refuses (403) while any
-sibling still holds it.
-
-`isAlive` SHALL report a sandbox dead when its gateway is not running: such a
-sandbox can neither receive an exec nor deliver a result, and reporting it alive
-would leave the watchdog waiting on a recv that can never unblock.
-
-#### Scenario: The sandbox has no route off its network
-
-- **GIVEN** a running Docker sandbox
-- **WHEN** it attempts to reach the public internet, the LAN, or the host directly
-- **THEN** every attempt SHALL fail, and its only reachable peer SHALL be its gateway
-
-#### Scenario: A sandbox cannot reach another analysis's sandbox
-
-- **GIVEN** sandboxes belonging to two different analyses
-- **WHEN** one attempts to reach the other's `/exec`
-- **THEN** the attempt SHALL fail, the two networks being distinct
-
-#### Scenario: The gateway cannot forge a completion
-
-- **WHEN** the gateway container's environment is inspected
-- **THEN** it SHALL NOT contain `SANDBOX_CALLBACK_SECRET`, so it can forward a signed callback but never mint one
-
-#### Scenario: A sandbox whose gateway died is dead
-
-- **GIVEN** a running sandbox container whose gateway container has exited or been removed
-- **WHEN** `isAlive(ref)` is called
-- **THEN** the machine SHALL be reported dead so the watchdog can synthesise a failure
-
 ### Requirement: The exec endpoints authenticate inbound requests by signature
 
-The exec endpoints — `POST /exec` and `GET /exec/{execId}` — SHALL require a
-valid `X-Sandbox-Signature` / `X-Sandbox-Timestamp` pair computed as
+The exec endpoints — `POST /exec` and `GET /exec/{execId}` — SHALL require a valid
+`X-Sandbox-Signature` / `X-Sandbox-Timestamp` pair computed as
 `HMAC-SHA256(callbackSecret, "${execId}:${timestamp}:${sha256Hex(body)}")`, the
-same construction as the outbound callbacks run inbound, and SHALL verify it
-against the callback freshness window. `POST /exec` SHALL sign over the exact
-request body; `GET /exec/{execId}` SHALL sign over an empty body. A missing,
+same construction as the results the sandbox returns, and SHALL verify it against
+the freshness window. This SHALL hold in **both** transport modes: it authenticates
+the host→sandbox direction independent of how results flow back. `POST /exec` SHALL
+sign the request body; `GET /exec/{execId}` SHALL sign an empty body. A missing,
 malformed, forged, or stale signature SHALL be rejected with `401` before any
 command is spawned or any result disclosed. Authentication SHALL be a request
-signature and SHALL NOT be a static bearer: the gateway forwards inbound bytes
-in cleartext, so a bearer would disclose a reusable credential to it, whereas a
-signature lets the gateway forward or drop a request but never mint another.
-Because the check tests possession of the per-sandbox secret, a sibling sandbox
-on the shared analysis network — holding only its own secret — SHALL NOT be able
-to authenticate to this sandbox's exec endpoints. The server SHALL expose no
-`POST /exec/{pid}/kill` route. `GET /health` SHALL remain unauthenticated.
+signature, not a static bearer, so any cleartext hop can forward or drop a request
+but never mint another. Because the check tests possession of the per-sandbox
+secret, a network-adjacent sibling sandbox — holding only its own secret — SHALL
+NOT be able to authenticate to this sandbox's exec endpoints. The server SHALL
+expose no `POST /exec/{pid}/kill` route. `GET /health` SHALL remain
+unauthenticated.
 
 #### Scenario: An unsigned submit is rejected
 
@@ -445,7 +557,7 @@ to authenticate to this sandbox's exec endpoints. The server SHALL expose no
 
 #### Scenario: A sibling cannot authenticate with its own secret
 
-- **GIVEN** two sandboxes of the same analysis, each with a distinct `callbackSecret`, sharing one internal network
+- **GIVEN** two network-adjacent sandboxes, each with a distinct `callbackSecret`
 - **WHEN** one signs a request to the other's `/exec` with its own secret
 - **THEN** the signature SHALL NOT verify and the request SHALL be rejected with `401`
 
@@ -456,7 +568,7 @@ to authenticate to this sandbox's exec endpoints. The server SHALL expose no
 
 ### Requirement: Callback delivery is dumb, pod-agnostic, and forward-only
 
-Sandbox-server callbacks SHALL reach the workflow exclusively by `DBOS.send` onto
+In callback transport mode, sandbox-server callbacks SHALL reach the workflow exclusively by `DBOS.send` onto
 the per-exec topic `exec-event:${execId}` — there is no in-memory exec bus and no
 dual delivery path. The host callback handler (an embedder concern; the harness
 ships no HTTP route layer) SHALL parse the `workflowId` from the `execId` by
@@ -486,9 +598,8 @@ machine is observably dead, and SHALL additionally report whether the death was
 a memory-limit kill when the backend exposes it. For K8s, "dead" means the pod
 phase is `Failed`/`Succeeded` or the pod no longer exists (404); an OOM kill is
 recognized from a container terminated state with reason `OOMKilled`. For
-Docker, "dead" means the container is not `running`, no longer exists, or its
-gateway is not running — an unreachable sandbox is dead as far as the protocol
-is concerned; an OOM kill is recognized from `State.OOMKilled` on the same
+Docker, "dead" means the container is not `running` or no longer exists; an OOM
+kill is recognized from `State.OOMKilled` on the same
 inspect response already used for liveness. Transient API errors SHALL throw
 rather than be reported as dead, so callers may retry. The check SHALL be
 liveness, not readiness: a starting sandbox is alive.
