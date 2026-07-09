@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, utimesSync, chmodSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
@@ -9,7 +9,7 @@ import { freshDb } from "../../test_support/db.ts";
 import { insertAnchor, insertAnalysis, insertAnalysisInput, deleteAnalysisInput } from "../../db/primary_mutation.ts";
 import { asStr256 } from "../../lib/types.ts";
 import type { Analysis, AnalysisInput } from "../../types/analysis.ts";
-import { stageInputs, enumerateInputFileIds } from "./staging.ts";
+import { stageInputs, enumerateInputSignatures, inputSignature } from "./staging.ts";
 
 function sha256(content: string): string {
     return createHash("sha256").update(content).digest("hex");
@@ -298,8 +298,8 @@ describe("stageInputs", () => {
     });
 });
 
-describe("enumerateInputFileIds", () => {
-    test("returns exactly the fileId set stageInputs would materialize", async () => {
+describe("enumerateInputSignatures", () => {
+    test("returns exactly the signature set stageInputs would materialize", async () => {
         // Cover every input shape at once: an anchored single file, an anchorless
         // absolute-path file, and a directory input whose subtree carries nested
         // files plus a dangling symlink both paths must skip identically.
@@ -320,13 +320,13 @@ describe("enumerateInputFileIds", () => {
         insertAnalysisInput({ path: loosePath, isDir: false, analysisId, anchorId: null })._unsafeUnwrap();
         insertAnalysisInput({ path: "dir", isDir: true, analysisId, anchorId })._unsafeUnwrap();
 
-        const enumIds = enumerateInputFileIds(analysisId)._unsafeUnwrap();
+        const enumSigs = enumerateInputSignatures(analysisId)._unsafeUnwrap();
         const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
-        const manifestIds = new Set(staged.map((s) => s.fileId));
+        const manifestSigs = new Set(staged.map((s) => inputSignature(s.fileId, s.size, s.mtimeMs)));
 
         // solo.csv + ext.csv + dir/a.txt + dir/sub/b.txt (broken.txt skipped).
-        expect(enumIds.size).toBe(4);
-        expect([...enumIds].sort()).toEqual([...manifestIds].sort());
+        expect(enumSigs.size).toBe(4);
+        expect([...enumSigs].sort()).toEqual([...manifestSigs].sort());
     });
 
     test("enumerates with no session tree, returns ok, and writes nothing", () => {
@@ -336,7 +336,7 @@ describe("enumerateInputFileIds", () => {
         // A session tree path staging would use, deliberately never created.
         const absentTree = join(testDir, "absent-session-tree");
 
-        const result = enumerateInputFileIds(analysisId);
+        const result = enumerateInputSignatures(analysisId);
         expect(result.isOk()).toBe(true);
         expect(result._unsafeUnwrap().size).toBe(1);
         // Read-only: enumeration neither needs the tree nor stages any file.
@@ -354,12 +354,88 @@ describe("enumerateInputFileIds", () => {
         insertAnchor({ id: orphanAnchorId, createdAt: 1, updatedAt: 1, cachedPath: "/nonexistent/path", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
         insertAnalysisInput({ path: "ghost.csv", isDir: false, analysisId, anchorId: orphanAnchorId })._unsafeUnwrap();
 
-        const enumIds = enumerateInputFileIds(analysisId)._unsafeUnwrap();
+        const enumSigs = enumerateInputSignatures(analysisId)._unsafeUnwrap();
         const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
-        const manifestIds = new Set(staged.map((s) => s.fileId));
+        const manifestSigs = new Set(staged.map((s) => inputSignature(s.fileId, s.size, s.mtimeMs)));
 
         expect(staged).toHaveLength(1);
-        expect(enumIds.size).toBe(1);
-        expect([...enumIds].sort()).toEqual([...manifestIds].sort());
+        expect(enumSigs.size).toBe(1);
+        expect([...enumSigs].sort()).toEqual([...manifestSigs].sort());
+    });
+
+    test("an in-place rewrite changes the signature but not the fileId", () => {
+        const src = join(anchorDir, "counts.csv");
+        writeFileSync(src, "aaa");
+        insertAnalysisInput({ path: "counts.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        utimesSync(src, 1, 1);
+
+        const before = [...enumerateInputSignatures(analysisId)._unsafeUnwrap()];
+        expect(before).toHaveLength(1);
+
+        // Rewrite the bytes at the SAME path and to the SAME length, so `size` cannot carry the drift
+        // and only `mtimeMs` can. `deriveFileId` hashes `anchorId|path` and nothing else, so identity
+        // is unchanged — which is precisely why the signature has to notice this edit.
+        writeFileSync(src, "bbb");
+        utimesSync(src, 2, 2);
+
+        const after = [...enumerateInputSignatures(analysisId)._unsafeUnwrap()];
+        expect(after).toHaveLength(1);
+        expect(after[0]).not.toBe(before[0]);
+
+        // The fileId is the signature's first `:`-separated field — unchanged across the edit.
+        expect(after[0]!.split(":")[0]).toBe(before[0]!.split(":")[0]);
+    });
+
+    test("two mtimes differing only below the millisecond yield different signatures", () => {
+        // A same-size rewrite frequently lands inside one millisecond (measured: 193 of 200 back-to-back
+        // rewrites shared a whole-ms mtime), so the sub-ms digits are the only thing separating the two
+        // versions. Rounding mtimeMs to whole milliseconds would silently collapse them into parity.
+        expect(inputSignature("f", 10, 1000.4192)).not.toBe(inputSignature("f", 10, 1000));
+        expect(inputSignature("f", 10, 1000.4192)).toBe("f:10:1000.4192");
+    });
+
+    test("the staged manifest records stat's mtimeMs verbatim", async () => {
+        // The ledger's comparand comes from here; `enumerateInputSignatures` re-stats the same file.
+        // If either side rounds and the other does not, every analysis reads as permanently drifted.
+        const src = join(anchorDir, "counts.csv");
+        writeFileSync(src, "aaa");
+        insertAnalysisInput({ path: "counts.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        // A deterministic sub-ms mtime (utimes takes fractional SECONDS). On a filesystem with coarser
+        // granularity this reads back whole and the assertion still holds — it just cannot bite there.
+        utimesSync(src, 1, 2.0005);
+
+        const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        expect(staged).toHaveLength(1);
+        expect(staged[0]!.mtimeMs).toBe(statSync(src).mtimeMs);
+
+        // The manifest and the enumeration must agree, or parity never converges.
+        const enumerated = [...enumerateInputSignatures(analysisId)._unsafeUnwrap()];
+        expect(enumerated).toEqual([inputSignature(staged[0]!.fileId, staged[0]!.size, staged[0]!.mtimeMs)]);
+    });
+
+    test("enumeration reads no file content", () => {
+        // The hash-free contract: enumeration must never open an input. A file whose bytes are
+        // unreadable (mode 000) still yields a signature, because stat does not need read permission.
+        const p = join(anchorDir, "unreadable.csv");
+        writeFileSync(p, "secret");
+        chmodSync(p, 0o000);
+        insertAnalysisInput({ path: "unreadable.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        try {
+            expect(enumerateInputSignatures(analysisId)._unsafeUnwrap().size).toBe(1);
+        } finally {
+            chmodSync(p, 0o644);
+        }
+    });
+
+    test("a file deleted between the walk and its stat is treated as removed, not an error", () => {
+        // The DB and the filesystem routinely disagree; a gone input is drift, never a hard failure.
+        writeFileSync(join(anchorDir, "kept.csv"), "k");
+        insertAnalysisInput({ path: "kept.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        insertAnalysisInput({ path: "vanished.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+
+        // `vanished.csv` was never created, so the walk resolves its path and the stat then misses.
+        const result = enumerateInputSignatures(analysisId);
+        expect(result.isOk()).toBe(true);
+        expect(result._unsafeUnwrap().size).toBe(1);
     });
 });

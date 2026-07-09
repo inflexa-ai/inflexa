@@ -29,9 +29,34 @@ export type StagedInput = {
     readonly hash: string;
     /** File size in bytes. */
     readonly size: number;
+    /** Source file's last-modification time, epoch ms. With `size` + `fileId`, the drift signature. */
+    readonly mtimeMs: number;
     /** Path relative to the data dir: `inputs/{mountName}/{key}`. */
     readonly relativePath: string;
 };
+
+/**
+ * The value a drift check compares: identity PLUS the two cheap facts that change when a
+ * file's bytes do. `fileId` alone is a path identity — `deriveFileId` hashes `anchorId|path`
+ * and nothing else — so two profiles taken over the same paths with different content compare
+ * equal, and an in-place edit is invisible.
+ *
+ * Deliberately NOT the content hash: `enumerateInputSignatures` runs on every chat open and
+ * every input mutation, and reading every input in full (these are genomics files) is the cost
+ * it exists to avoid. `stageInputs` pays the SHA-256; parity does not.
+ *
+ * `mtimeMs` is used at FULL precision, fraction included. Both comparands come from `statSync` on the
+ * same source file, and the recorded one round-trips JS → JSON → Postgres `jsonb` → JS exactly, so the
+ * fraction is stable on both sides. Rounding it away would be a real loss: a same-size rewrite lands
+ * inside one millisecond often enough to matter (measured: 193 of 200 back-to-back rewrites shared a
+ * whole-millisecond mtime), and the sub-millisecond digits are the only thing distinguishing them.
+ *
+ * Accepted miss: an edit preserving byte length AND mtime — a filesystem with coarse (1s) timestamp
+ * granularity, or a rewrite that restores the original mtime.
+ */
+export function inputSignature(fileId: string, size: number, mtimeMs: number): string {
+    return `${fileId}:${size}:${mtimeMs}`;
+}
 
 /**
  * Deterministic file identity from the input's anchor+path. Uses Bun.hash for
@@ -53,7 +78,9 @@ function deriveFileId(input: AnalysisInput, subpath?: string): string {
  * read-only into sandboxes); the copy fallback covers cross-filesystem boundaries.
  */
 function stageFile(src: string, dest: string): Result<void, FsError> {
-    return mkdirResult(dirname(dest), "stageFile:mkdir").andThen(() => {
+    // The callback's return type is annotated so the `err(...)` object literals below infer
+    // `type: "io_failed"` as the literal, not `string` — without it each would need an `as FsError`.
+    return mkdirResult(dirname(dest), "stageFile:mkdir").andThen((): Result<void, FsError> => {
         // Remove any stale destination before linking: re-staging must refresh, and a
         // stale dest is typically a hardlink OF src itself — linkSync would fail EEXIST
         // and copyFileSync onto the same inode truncates the source before reading it
@@ -61,7 +88,7 @@ function stageFile(src: string, dest: string): Result<void, FsError> {
         try {
             rmSync(dest, { force: true });
         } catch (cause) {
-            return err({ type: "io_failed", op: "stageFile:rm", cause } as FsError);
+            return err({ type: "io_failed", op: "stageFile:rm", cause });
         }
         try {
             linkSync(src, dest);
@@ -69,7 +96,7 @@ function stageFile(src: string, dest: string): Result<void, FsError> {
             try {
                 copyFileSync(src, dest);
             } catch (cause) {
-                return err({ type: "io_failed", op: "stageFile:copy", cause } as FsError);
+                return err({ type: "io_failed", op: "stageFile:copy", cause });
             }
         }
         return ok(undefined);
@@ -156,8 +183,10 @@ async function materializeStagedFile(file: InputFile, targetDir: string): Promis
     const hashResult = await sha256File(file.absPath);
     if (hashResult.isErr()) return err(hashResult.error);
 
-    const sizeResult = statResult(file.absPath, "materializeStagedFile:stat");
-    if (sizeResult.isErr()) return err(sizeResult.error);
+    // One stat yields both drift-signature components, so the manifest's signature is
+    // consistent with the one `enumerateInputSignatures` computes for the same file.
+    const statsResult = statResult(file.absPath, "materializeStagedFile:stat");
+    if (statsResult.isErr()) return err(statsResult.error);
 
     return ok({
         fileId: file.fileId,
@@ -165,7 +194,11 @@ async function materializeStagedFile(file: InputFile, targetDir: string): Promis
         key: file.key,
         fileName: basename(file.absPath),
         hash: hashResult.value,
-        size: sizeResult.value.size,
+        size: statsResult.value.size,
+        // Verbatim, fraction and all: this is the value the ledger records, and `enumerateInputSignatures`
+        // compares it against a fresh `statSync` of the same file. Rounding here and not there — or the
+        // reverse — would make every analysis read as permanently drifted.
+        mtimeMs: statsResult.value.mtimeMs,
         relativePath: file.relativePath,
     });
 }
@@ -344,26 +377,39 @@ export async function stageInputs(analysisId: string, targetDir: string): Promis
 }
 
 /**
- * The read-only, hash-free twin of {@link stageInputs}: the exact `fileId` set
+ * The read-only, hash-free twin of {@link stageInputs}: the {@link inputSignature} set
  * staging would produce for `analysisId`, in the SAME identity space, but without
  * touching content (no `sha256File`), linking, copying, or writing the session
  * tree — which need not even exist. Both funnel through {@link walkInputFiles}, so
  * the id spaces cannot diverge; the dedup by `relativePath` mirrors staging's
  * same-dest collision rule (last write wins) so the set equals the manifest's
- * fileIds exactly. Exists so profile-drift checks can run on every chat open /
+ * signatures exactly. Exists so profile-drift checks can run on every chat open /
  * input edit at stat/readdir cost, never content-size cost.
  *
+ * A file that vanished between the walk and its stat is SKIPPED, not an error: the
+ * database and the filesystem routinely disagree (a user may delete an input at any
+ * moment), and the honest reading of a gone file is "this input is no longer here" —
+ * which surfaces as drift and re-profiles. Failing parity outright would strand the
+ * chat on an error the user cannot escape.
+ *
  * @param analysisId - The analysis whose input identity space to enumerate.
- * @returns The fileIds staging would emit, or a `DbError` (input listing / anchor
+ * @returns The signatures staging would emit, or a `DbError` (input listing / anchor
  *   resolution) or `StagingError` (a directory-input walk that hit an I/O fault).
  */
-export function enumerateInputFileIds(analysisId: string): Result<ReadonlySet<string>, DbError | StagingError> {
+export function enumerateInputSignatures(analysisId: string): Result<ReadonlySet<string>, DbError | StagingError> {
     return walkInputFiles(analysisId).map((files) => {
         // Overlapping inputs can resolve to the same `relativePath`; staging keeps
-        // the LAST such entry, so collapse identically here before collecting ids —
+        // the LAST such entry, so collapse identically here before collecting signatures —
         // otherwise a clash would surface a fileId the manifest dropped.
         const byPath = new Map<string, string>();
-        for (const file of files) byPath.set(file.relativePath, file.fileId);
+        for (const file of files) {
+            const stats = statResult(file.absPath, "enumerateInputSignatures:stat");
+            if (stats.isErr()) {
+                getLogger("staging").warn({ absPath: file.absPath }, "input file disappeared between the walk and its stat — treating it as removed");
+                continue;
+            }
+            byPath.set(file.relativePath, inputSignature(file.fileId, stats.value.size, stats.value.mtimeMs));
+        }
         return new Set(byPath.values());
     });
 }

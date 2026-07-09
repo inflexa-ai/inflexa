@@ -376,3 +376,122 @@ describe("watchProfileParity — run-completion edge", () => {
         }
     });
 });
+
+// The profile-work queue. `stageInputs` rm/relinks one session tree and then deletes every on-disk file
+// absent from its own manifest, and the empty-branch clear nulls `seed_input_file_ids` — neither is
+// serialized by the harness's ledger CAS, which runs only after staging. So the drivers must exclude
+// each other in-process. Assertions are on enter/exit ORDER, never on timing.
+describe("profile drives serialize", () => {
+    afterEach(() => __resetProfileParityForTest());
+
+    /**
+     * Parity seams whose `check` records enter/exit around a gate the test releases. `label` identifies
+     * the drive in the trace, so an overlap shows up as `enter B` between `enter A` and `exit A`.
+     */
+    function gatedParitySeams(label: string, trace: string[]): { seams: ParityDriverSeams; release: () => void } {
+        let release!: () => void;
+        const gate = new Promise<void>((r) => {
+            release = r;
+        });
+        return {
+            seams: {
+                check: async () => {
+                    trace.push(`enter ${label}`);
+                    await gate;
+                    trace.push(`exit ${label}`);
+                    return { kind: "already_profiled" } as ProfileParityOutcome;
+                },
+                refreshSidebar: async () => {},
+                notify: () => {},
+            },
+            release: () => release(),
+        };
+    }
+
+    test("a second parity drive never enters while the first is staging", async () => {
+        const trace: string[] = [];
+        const a = gatedParitySeams("A", trace);
+        const b = gatedParitySeams("B", trace);
+
+        const driveA = driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, a.seams);
+        const driveB = driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, b.seams);
+
+        // B is queued behind A: releasing B's gate first must not let B enter.
+        b.release();
+        await Promise.resolve();
+        expect(trace).toEqual(["enter A"]);
+
+        a.release();
+        await driveA;
+        await driveB;
+        expect(trace).toEqual(["enter A", "exit A", "enter B", "exit B"]);
+    });
+
+    test("a force reprofile queued mid-parity waits for it — they share one session tree", async () => {
+        const trace: string[] = [];
+        const parity = gatedParitySeams("parity", trace);
+
+        let releaseForce!: () => void;
+        const forceGate = new Promise<void>((r) => {
+            releaseForce = r;
+        });
+        const forceSeams: ForceDriverSeams = {
+            force: async () => {
+                trace.push("enter force");
+                await forceGate;
+                trace.push("exit force");
+                return { kind: "triggered", restarted: true };
+            },
+            refreshSidebar: async () => {},
+            notify: () => {},
+        };
+
+        const p = driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, parity.seams);
+        const f = driveForceReprofile(RUNTIME, ANALYSIS, () => ANALYSIS.id, forceSeams);
+
+        releaseForce();
+        await Promise.resolve();
+        expect(trace).toEqual(["enter parity"]);
+
+        parity.release();
+        await p;
+        await f;
+        expect(trace).toEqual(["enter parity", "exit parity", "enter force", "exit force"]);
+    });
+
+    test("a rejected drive does not wedge the queue behind it", async () => {
+        const trace: string[] = [];
+        const boom: ParityDriverSeams = {
+            check: async () => {
+                trace.push("enter boom");
+                throw new Error("staging exploded");
+            },
+            refreshSidebar: async () => {},
+            notify: () => {},
+        };
+        const next = gatedParitySeams("next", trace);
+
+        const failing = driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, boom);
+        const queued = driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, next.seams);
+
+        // The caller still observes the failure — the queue swallows it only for the SUCCESSORS.
+        await expect(failing).rejects.toThrow("staging exploded");
+
+        next.release();
+        await queued;
+        expect(trace).toEqual(["enter boom", "enter next", "exit next"]);
+    });
+
+    test("drives queued after the tail settles still run", async () => {
+        const trace: string[] = [];
+        const first = gatedParitySeams("first", trace);
+        first.release();
+        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, first.seams);
+
+        const second = gatedParitySeams("second", trace);
+        second.release();
+        await driveProfileParity(RUNTIME, ANALYSIS, () => ANALYSIS.id, second.seams);
+
+        expect(trace).toEqual(["enter first", "exit first", "enter second", "exit second"]);
+    });
+});

@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { onCleanup } from "solid-js";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 import { env } from "../lib/env.ts";
 import { runCli } from "./cli.ts";
@@ -76,6 +76,32 @@ describe("freshDb / resetDb", () => {
             if (saved !== undefined) process.env.INFLEXA_TEST_SANDBOX = saved;
             rmSync(env.dbPath, { force: true });
         }
+    });
+});
+
+// The guard's containment test is lexical, so its one interesting failure mode is a path that merely
+// SHARES the sandbox's prefix. `mkdtempSync` names are attacker-free but not collision-free: a stale
+// `/tmp/inflexa-test-AbC123-old` from a previous run sits right beside a live `/tmp/inflexa-test-AbC123`.
+describe("assertTestSandbox containment", () => {
+    // Non-null is guaranteed upstream: env.ts refuses to evaluate under NODE_ENV=test without the
+    // marker, and the import of `env` at the top of this file would have thrown before we got here.
+    const sandbox = process.env.INFLEXA_TEST_SANDBOX as string;
+
+    test("a path inside the sandbox is authorized", () => {
+        expect(() => assertTestSandbox(join(sandbox, "data", "inflexa", "agent.db"))).not.toThrow();
+    });
+
+    test("the sandbox root itself is authorized (the preload's exit hook reaps it)", () => {
+        expect(() => assertTestSandbox(sandbox)).not.toThrow();
+    });
+
+    test("a sibling sharing the sandbox's prefix is REFUSED", () => {
+        expect(() => assertTestSandbox(`${sandbox}-real`)).toThrow("test sandbox not active");
+        expect(() => assertTestSandbox(`${sandbox}.bak`)).toThrow("test sandbox not active");
+    });
+
+    test("an unrelated real path is refused", () => {
+        expect(() => assertTestSandbox(join(homedir(), ".local", "share", "inflexa", "agent.db"))).toThrow("test sandbox not active");
     });
 });
 

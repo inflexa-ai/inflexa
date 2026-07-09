@@ -1,8 +1,7 @@
-# test-harness Specification
+# test-harness — Delta
 
-## Purpose
-TBD - created by archiving change add-test-suite. Update Purpose after archive.
-## Requirements
+## ADDED Requirements
+
 ### Requirement: The test sandbox is enforced structurally, not by convention
 
 `src/lib/env.ts` — the sole reader of `process.env` — SHALL refuse to resolve any XDG-derived path when
@@ -50,6 +49,8 @@ requirement's `env.ts` guard exists to backstop.
 - **WHEN** `assertTestSandbox` is called with a path under `<sandbox>DEF` while the marker names `<sandbox>`
 - **THEN** it SHALL throw
 
+## MODIFIED Requirements
+
 ### Requirement: Isolated environment preload
 
 A `bun:test` preload registered by `cli/bunfig.toml` SHALL redirect `XDG_DATA_HOME` and
@@ -66,14 +67,6 @@ Diagnostics for that abort SHALL name only directories that actually establish a
 has no `bunfig.toml` and no test preload; its suite is safe because no harness test touches an XDG path,
 not because a sandbox is established for it.
 
-#### Scenario: env resolves under the temp dir
-- **WHEN** a test reads `env.dbPath` after the preload has run
-- **THEN** the path is rooted under the per-process temp directory, not the real `XDG_DATA_HOME`
-
-#### Scenario: no writes leak to the real home
-- **WHEN** an integration test creates a DB and writes rows
-- **THEN** the developer's real `~/.local/share/inflexa` (or platform equivalent) is left untouched
-
 #### Scenario: Root test invocation aborts before any test body
 
 - **WHEN** `bun test` is invoked from the repository root, with or without an explicit test-file path
@@ -84,44 +77,3 @@ not because a sandbox is established for it.
 
 - **WHEN** `bun test` is invoked from `cli/`
 - **THEN** `cli/bunfig.toml` SHALL apply and the root refusal preload SHALL NOT run
-
-### Requirement: Migrated temp-DB helper
-The harness SHALL provide a helper that yields a freshly-migrated SQLite database for a test and
-resets the `db()` singleton (`_db`) between tests, and whose teardown removes the temp directory
-including the `-wal` and `-shm` sidecar files.
-
-#### Scenario: helper returns a migrated connection
-- **WHEN** a test requests the temp DB
-- **THEN** all migrations have run and the schema (tables, FKs) is present and queryable
-
-#### Scenario: isolation between tests
-- **WHEN** two tests each request the temp DB
-- **THEN** rows written by the first test are not visible to the second
-
-### Requirement: Solid createRoot test lifecycle
-The harness SHALL provide a way to run reactive code (signals/stores) inside a `createRoot` scope
-that is disposed after the test, and to reset the relevant process-global stores
-(`theme`, `notice`, `status`, `conversation`, keymap layers/mode stack) between cases.
-
-#### Scenario: store reset between cases
-- **WHEN** one test mutates a global store and a later test reads it
-- **THEN** the later test observes the default value, not the prior mutation
-
-### Requirement: Headless render helper
-The harness SHALL provide a helper that renders a component tree via `testRender` at a given
-`{ width, height }`, returns the trimmed `captureCharFrame()` text, and always calls
-`renderer.destroy()` even when the assertion throws.
-
-#### Scenario: frame captured and renderer destroyed
-- **WHEN** a component is rendered through the helper and the test body completes or throws
-- **THEN** the helper returns the captured frame text AND the renderer is destroyed in a `finally`
-
-### Requirement: CLI subprocess helper
-The harness SHALL provide a helper that invokes the CLI via `Bun.spawnSync(["bun", "run",
-"src/index.ts", ...args])` with `env` pinned to the temp directories, returning the exit code,
-stdout, and stderr as strings.
-
-#### Scenario: command observables captured
-- **WHEN** the helper runs a CLI command
-- **THEN** it returns `{ exitCode, stdout, stderr }` reflecting the real process result
-

@@ -417,9 +417,19 @@ function dropEmptyAssistant(assistantId: string): void {
 function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number): void {
     switch (outcome.kind) {
         case "ok":
-            // Streamed answers already sit in `streamText`; a delta-less turn (or a non-streaming
-            // loop) renders the engine's `fallbackText` instead — the same suppression the printer does.
-            if (streamText().length === 0 && outcome.fallbackText.trim().length > 0) setStreamText(outcome.fallbackText);
+            // An empty buffer means no delta arrived since the last seal, so the FINAL assistant
+            // message's text never streamed and `fallbackText` cannot duplicate anything on screen.
+            // (`fallbackText` is `finalText(result.messages)` — the last assistant message's text —
+            // and deltas for it are only cleared by a non-text part arriving after them.)
+            if (streamText().length === 0 && outcome.fallbackText.trim().length > 0) {
+                // `commitStream` writes into the part `streamPartId` names and no-ops when it is null.
+                // A mid-turn `flushPendingText` — every tool chip, plan card, run card — nulls it, so
+                // without reopening a segment the fallback would be assigned and immediately discarded.
+                // Reopening also puts it in emission order, below the part that interrupted the prose,
+                // which is where a transcript reload renders it.
+                if (streamPartId() === null) beginStreamSegment();
+                setStreamText(outcome.fallbackText);
+            }
             commitStream();
             drainOpenTools();
             stampDuration(assistantId, startedAt);
@@ -548,10 +558,19 @@ const realLoadSeams: LoadSeams = {
     toCortex: (pool, analysisId, messages) => contentToCortexMessages(messages, createCardResolver(pool, analysisId, env.sessionsDir)),
 };
 
-// Monotonic token identifying the newest loadMessages call. Two rapid session swaps interleave their
-// async page reads, and the older load can resolve LAST; without this it would clobber the newer
-// store. Every store/error write in the async path re-checks it still owns the latest token, so the
-// last load STARTED wins regardless of which finishes last. Module-private: only loadMessages touches it.
+// Monotonic token ordering EVERY asynchronous write to the message store. Two producers write it —
+// `loadMessages` (a replay of the durable pg thread) and `send` (the live turn) — and both interleave
+// freely: two rapid session swaps race their page reads, and a load started at the boot-ready edge is
+// still awaiting Postgres when the submit gate opens on that same edge. Each claims the token at entry
+// and re-checks it after every await, so the newest operation STARTED wins regardless of which finishes
+// last.
+//
+// The direction is deliberate: a turn supersedes a load. The load replays state the turn is about to
+// append to, while the turn carries the user's live input — dropping the load costs a re-read on the
+// next lifecycle edge, dropping the turn costs the user their message. `resetHotState` claims the token
+// too, so a load started for a swapped-away session can never repopulate the cleared store.
+//
+// Module-private: only loadMessages / send / resetHotState touch it.
 let loadGeneration = 0;
 
 /**
@@ -632,6 +651,9 @@ let abortController: AbortController | null = null;
  * Idempotent.
  */
 export function resetHotState(): void {
+    // Claim the store-write token so a transcript load still awaiting Postgres for the OLD session
+    // drops instead of repopulating the store we are about to clear.
+    loadGeneration++;
     abortController?.abort();
     // C1: null the token AFTER aborting so an in-flight turn's controller no longer matches its
     // captured `myTurn` — the outcome/late-event guards in `send` then drop everything that turn
@@ -692,6 +714,14 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
         return;
     }
 
+    // Claim the store-write token BEFORE the first store write. `Chat` fires `loadMessages` the instant
+    // boot reaches `ready` — the same instant `handleSubmit`'s gate opens — so a message pre-typed during
+    // the boot animation lands while that load is still awaiting its page read. Without this claim the
+    // load's trailing `setMessages` would replace the store wholesale, deleting the user's message and
+    // the in-flight assistant turn and stranding `currentAssistantId` on a message no longer mounted
+    // (every later part would then silently no-op). Same hazard on an in-place session swap.
+    const myTurnLoad = ++loadGeneration;
+
     pushUserMessage(opts.sessionId, opts.userText);
     const assistantId = startAssistantTurn(opts.sessionId);
     setChatStatus("busy");
@@ -731,8 +761,10 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
 
     // C1: the turn was superseded while the engine unwound — drop the outcome whole. Its `appendError`
     // toast is dropped too: it would otherwise fire over the new session's UI, and the persistence
-    // fault is already reflected on the old thread's state, not the surface's.
-    if (abortController !== myTurn) return;
+    // fault is already reflected on the old thread's state, not the surface's. The token re-check is
+    // the same rule from the other producer's side: any store-writing operation started after this turn
+    // owns the store now.
+    if (abortController !== myTurn || loadGeneration !== myTurnLoad) return;
 
     finishTurn(outcome, assistantId, startedAt);
 }

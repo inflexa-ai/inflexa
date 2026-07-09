@@ -567,3 +567,160 @@ describe("loadMessages staleness guard (W3)", () => {
         if (final?.type === "text") expect(final.text).toBe("new-msg");
     });
 });
+
+// One generation token orders BOTH store writers. `Chat` fires `loadMessages` the instant boot reaches
+// `ready` — the same instant `handleSubmit`'s gate opens — so a message pre-typed during the boot
+// animation is submitted while that load is still awaiting Postgres. A turn must supersede a load.
+describe("a turn supersedes a transcript load in flight", () => {
+    const emptyPage = (total: number): MessagePage => ({ messages: [], total, page: 0, perPage: 200, hasMore: false });
+    const cortexText = (id: string, text: string): CortexMsg[] => [{ id, role: "assistant", parts: [{ type: "text", text }] }] as unknown as CortexMsg[];
+
+    /** Load seams whose page read parks until the returned release is called. */
+    function gatedLoadSeams(): { seams: LoadSeams; release: () => void } {
+        let release!: () => void;
+        const gate = new Promise<void>((r) => {
+            release = r;
+        });
+        return {
+            seams: {
+                runtime: () => stubRuntime,
+                loadPage: () => ResultAsync.fromSafePromise(gate.then(() => emptyPage(1))),
+                toCortex: async () => cortexText("stale", "stale-transcript"),
+            },
+            release: () => release(),
+        };
+    }
+
+    test("a load resolving mid-send does not wipe the user message or the in-flight turn", async () => {
+        const { seams: loadSeams, release } = gatedLoadSeams();
+        const load = loadMessages(SID, AID, loadSeams); // parks on its page read
+
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({ type: "text-delta", text: "live answer" });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
+
+        expect(messages.length).toBe(2);
+
+        release();
+        await load;
+
+        // The load was superseded by the turn and dropped: user + assistant survive, and the assistant
+        // still carries the streamed text (a wipe would have stranded `currentAssistantId` off-store).
+        expect(messages.length).toBe(2);
+        expect(messages[0]?.role).toBe("user");
+        expect(messages[1]?.role).toBe("assistant");
+        const answer = messages[1]?.parts.find((p) => p.type === "text");
+        expect(answer?.type === "text" ? answer.text : undefined).toBe("live answer");
+    });
+
+    test("parts emitted after the superseded load resolves still reach the assistant message", async () => {
+        const { seams: loadSeams, release } = gatedLoadSeams();
+        const load = loadMessages(SID, AID, loadSeams);
+
+        // Release the load mid-turn: its trailing write must not land, so the adapter's later parts
+        // still find the assistant message they were minted against.
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({ type: "text-delta", text: "before" });
+            release();
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
+        await load;
+
+        expect(messages.length).toBe(2);
+        const answer = messages[1]?.parts.find((p) => p.type === "text");
+        expect(answer?.type === "text" ? answer.text : undefined).toBe("before");
+    });
+
+    test("resetHotState drops a load already in flight for the swapped-away session", async () => {
+        const { seams: loadSeams, release } = gatedLoadSeams();
+        const load = loadMessages(SID, AID, loadSeams);
+
+        resetHotState();
+        release();
+        await load;
+
+        // The cleared store stays cleared — the old session's transcript never repopulates it.
+        expect(messages.length).toBe(0);
+    });
+});
+
+// FIX: `commitStream` writes into the part `streamPartId` names and no-ops when it is null. Any
+// mid-turn seal (tool chip, plan card, run card) nulls it, so a delta-less final segment used to be
+// assigned to `streamText` and then silently discarded — the model's answer vanished.
+describe("a delta-less final segment renders after a mid-turn part", () => {
+    test("deltas -> tool -> no further deltas: the fallback renders as a trailing part", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "THE FINAL ANSWER" }, (emit) => {
+            void emit({ type: "text-delta", text: "thinking..." });
+            void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
+            void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", isError: false } as never);
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
+
+        // Emission order: the streamed prose, the tool chip it preceded, then the fallback BELOW it —
+        // exactly what a transcript reload renders.
+        const kinds = messages[1]?.parts.map((p) => p.type);
+        expect(kinds).toEqual(["text", "tool-call", "text"]);
+        const trailing = messages[1]?.parts[2];
+        expect(trailing?.type === "text" ? trailing.text : undefined).toBe("THE FINAL ANSWER");
+    });
+
+    test("deltas -> plan card -> no further deltas: the fallback renders below the card", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "here is the plan" }, (emit) => {
+            void emit({ type: "text-delta", text: "drafting" });
+            void emit({ type: "data-plan", data: { planId: "p1", title: "T", steps: [] } } as never);
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "plan it" }, seams);
+
+        const kinds = messages[1]?.parts.map((p) => p.type);
+        expect(kinds).toEqual(["text", "plan-card", "text"]);
+    });
+
+    test("a streamed final answer is not duplicated by the fallback", async () => {
+        // The buffer is non-empty at completion, so the final assistant text DID stream — rendering
+        // `fallbackText` on top of it would print the answer twice.
+        const seams = fakeSeams({ kind: "ok", fallbackText: "streamed answer" }, (emit) => {
+            void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
+            void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", isError: false } as never);
+            void emit({ type: "text-delta", text: "streamed answer" });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
+
+        const texts = messages[1]?.parts.filter((p) => p.type === "text") ?? [];
+        expect(texts.length).toBe(1);
+        expect(texts[0]?.type === "text" ? texts[0].text : undefined).toBe("streamed answer");
+    });
+
+    test("a turn ending on a card with no fallback leaves no trailing empty part", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({ type: "text-delta", text: "drafting" });
+            void emit({ type: "data-plan", data: { planId: "p1", title: "T", steps: [] } } as never);
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "plan it" }, seams);
+
+        const kinds = messages[1]?.parts.map((p) => p.type);
+        expect(kinds).toEqual(["text", "plan-card"]);
+    });
+});
+
+describe("MESSAGE_CAP is coupled to loadPage's perPage clamp", () => {
+    test("the mounted window never exceeds the harness's 200-turn page clamp", async () => {
+        // `loadPage` clamps `perPage` to 200 (harness/src/memory/thread-history.ts). MESSAGE_CAP doubles
+        // as that `perPage`, so a value above 200 would silently strand every turn past the clamp on each
+        // page — `loadMessages` would mount a window missing the thread's tail rather than error. There is
+        // no compile-time guard for the coupling, so pin it here.
+        const seams: LoadSeams & { perPage: () => number } = {
+            runtime: () => stubRuntime,
+            loadPage: (_pool, _threadId, _page, perPage) => {
+                seen = perPage;
+                return okAsync({ messages: [], total: 0, page: 0, perPage, hasMore: false } as MessagePage);
+            },
+            toCortex: async () => [],
+            perPage: () => seen,
+        };
+        let seen = 0;
+        await loadMessages(SID, AID, seams);
+        expect(seams.perPage()).toBeLessThanOrEqual(200);
+        expect(seams.perPage()).toBeGreaterThan(0);
+    });
+});

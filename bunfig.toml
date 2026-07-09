@@ -7,10 +7,15 @@
 # 1 took agent.db + config.json + the models dir; incident 2 (a guard on resetDb alone proved too
 # narrow) still deleted config.json, emptied the models dir, and clobbered agent.db.
 #
-# This root [test].preload hard-exits (scripts/refuse-root-test.ts — process.exit, since bun 1.3.8
-# swallows a throwing preload and runs the suite anyway), so NO test is ever run from the root. Each
-# subsystem's suite must be run from its OWN dir (cd cli / cd harness), where that subsystem's bunfig
-# preload establishes the required sandbox. Bun resolves a subdirectory run's bunfig from that subdir,
-# so this file does not leak into `cd cli && bun test`.
+# This root [test].preload hard-exits (scripts/refuse-root-test.ts), so NO test is ever run from the
+# root. Each subsystem's suite must be run from its OWN dir: `cd cli` picks up cli/bunfig.toml's preload,
+# the only place the XDG sandbox is established; `cd harness` needs no such preload — its suite is
+# Postgres-testcontainer-backed and touches no home-directory state. Bun resolves a subdirectory run's
+# bunfig from that subdir, so this file does not leak into `cd cli && bun test`.
+#
+# The root run is only the loudest bypass, not the only one: bun never walks up, so `bun test` from any
+# nested dir (cli/src/tui, …) applies no bunfig at all and this preload cannot see it. The structural
+# backstop for that case is cli/src/lib/env.ts, which refuses to resolve any path under NODE_ENV=test
+# without the sandbox marker.
 [test]
 preload = ["./scripts/refuse-root-test.ts"]

@@ -1,6 +1,50 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+/**
+ * True when this process is a `bun test` run whose sandbox preload never executed — the one condition
+ * under which importing this module is a data-loss hazard rather than ordinary configuration.
+ *
+ * Split out from the import-time guard below purely so the truth table is unit-testable: the guard
+ * reads `process.env` during module evaluation, so within a test process it has already run (or not)
+ * and cannot be re-driven.
+ */
+export function isUnsandboxedTestRun(nodeEnv: string | undefined, sandboxMarker: string | undefined): boolean {
+    return nodeEnv === "test" && !sandboxMarker;
+}
+
+// A `bun test` process that reaches this module without the sandbox marker resolves every `env.*` path
+// against the developer's REAL ~/.local/share/inflexa and ~/.config/inflexa. Two live incidents began
+// exactly there (agent.db, config.json and the models dir deleted). Bun resolves `bunfig.toml` from the
+// cwd and never walks up, so `cli/bunfig.toml`'s `[test].preload` — the thing that redirects XDG_* and
+// stamps INFLEXA_TEST_SANDBOX — silently does not apply to a run started anywhere but `cli/`. The repo
+// root refuses its own case (root bunfig's preload); this refuses every other, including a nested cwd.
+//
+// Deny the PATHS, not each destructive call: a test cannot reach a `rmSync` with a real path in hand if
+// the path never resolved. `assertTestSandbox` remains the per-site check for the narrower case of a test
+// that unsets the marker after this module is already imported.
+//
+// Inert outside a test run. A built binary has NODE_ENV --defined to its build channel
+// ("production" | "development", scripts/build.ts), so the comparison folds to a compile-time false and
+// the branch is eliminated. `bun run dev` leaves NODE_ENV unset. `runCli` forwards the parent's whole
+// environment, marker included, so its subprocess passes.
+//
+// `throw` at import rather than a Result: module evaluation has no error channel to return one on, and
+// aborting the process loudly IS the correct outcome — same class as `assertTestSandbox`, a test-harness
+// boundary whose failure must stop the suite rather than be swallowed by a careless caller.
+// The ONE sanctioned NODE_ENV read. The rule that bans it is right — NODE_ENV is not our product-mode
+// axis, INFLEXA_BUILD_CHANNEL is — and this is not a product gate: it asks "is this a `bun test`
+// process?", which the channel cannot answer (a source run and a test run both leave it unset) and only
+// NODE_ENV can. The dot access is load-bearing for exactly the reason the rule cites: scripts/build.ts
+// --defines NODE_ENV from the channel, so a shipped binary folds this to `"production" === "test"` and
+// eliminates the branch entirely.
+// eslint-disable-next-line no-restricted-syntax -- see above
+if (isUnsandboxedTestRun(process.env.NODE_ENV, process.env.INFLEXA_TEST_SANDBOX)) {
+    throw new Error(
+        "refusing to resolve inflexa paths: test sandbox not active — NODE_ENV=test but INFLEXA_TEST_SANDBOX is unset, so env.* would point at your real data. Run `bun test` from cli/ so bunfig's preload redirects XDG_* and stamps the marker.",
+    );
+}
+
 const dataVar = process.platform === "win32" ? "LOCALAPPDATA" : "XDG_DATA_HOME";
 const configVar = process.platform === "win32" ? "APPDATA" : "XDG_CONFIG_HOME";
 const logLevelVar = "INFLEXA_LOG_LEVEL";
@@ -45,18 +89,21 @@ const postgresPort = 8432;
  * just add its dot access here — scripts/build.ts derives the baked-var list
  * from this block, so there is nothing else to keep in sync.
  */
-// Deferred so the spawnSync only runs when the value is first read (provenance actor, --version),
-// not on every CLI startup. In release builds --define inlines process.env.INFLEXA_GIT_COMMIT as a
-// string literal, so the fallback is dead code. The fallback is dev-only: resolve from git. If
-// neither source produces a commit, the binary was not built correctly — crash rather than silently
-// stamping provenance with garbage.
+// Deferred so the spawnSync only runs when the value is first read (provenance actor, --version), not
+// on every CLI startup. INFLEXA_GIT_COMMIT is NOT in the bakedEnv block below — its requirement is
+// channel-conditional, and that block's scanner would demand it of every build — so scripts/build.ts
+// emits its --define explicitly, gated on a production channel. In a production binary that --define
+// makes the first read a string literal and the rest of this function unreachable.
 let _gitCommit: string | undefined;
 function resolveGitCommit(): string {
     if (process.env.INFLEXA_GIT_COMMIT) return process.env.INFLEXA_GIT_COMMIT;
-    // A production binary bakes INFLEXA_GIT_COMMIT (scripts/build.ts's missing-var guard enforces it),
-    // so reaching here in a production build means the bake was skipped — crash rather than shell out
-    // to git. Keyed on the baked channel, NOT NODE_ENV: the same --define makes this literal
-    // "production" === "production" in a shipped binary, whereas NODE_ENV would be an unguarded runtime read.
+    // Reaching here in a production build means the artifact bypassed scripts/build.ts (a hand-rolled
+    // `bun build`, a patched script). Its own gate already refuses that combination, so this is a
+    // backstop, not the enforcement point — but the failure it guards against is silently stamping
+    // provenance with a commit resolved from whatever tree the USER happens to be standing in, so it
+    // must still crash rather than shell out. Keyed on the baked channel, NOT NODE_ENV: the same
+    // --define makes this literal "production" === "production" in a shipped binary, whereas NODE_ENV
+    // would be an unguarded runtime read.
     if (process.env.INFLEXA_BUILD_CHANNEL === "production")
         throw new Error("INFLEXA_GIT_COMMIT is not set in a production build. This means the binary was not built correctly.");
 
