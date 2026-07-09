@@ -1,22 +1,6 @@
-# data-profile-rerun Specification
+# data-profile-rerun — Delta
 
-## Purpose
-
-Define re-profiling — recomputing an analysis's data profile after its input set
-changes (new files appended) — and clearance — removing the profile when the input
-set empties, so consumers return honestly to "not profiled". Re-profiling is driven
-by an atomic `completed → running` claim on the `data_profile_status` ledger so
-concurrent re-profile triggers dedup: only one CAS UPDATE wins and starts a workflow.
-Every claim into `running` also requires a non-empty seeded input set, so a running
-profile always names the inputs it is profiling. The prior `data_profile_result` is
-deliberately preserved during the re-profile so the API can keep serving the last
-profile while the new one runs. The result snapshot records which inputs were
-profiled (`inputFileIds`), their per-file drift signatures (`inputFiles`), and when
-(`profiledAt`) — so both staleness (files added since the last profile) and drift (an
-in-place edit of an already-profiled file) are detectable against the current
-staged-input manifest.
-
-## Requirements
+## ADDED Requirements
 
 ### Requirement: A running profile always names a non-empty seeded input set
 
@@ -73,6 +57,8 @@ is the enforcement.
 
 - **WHEN** `triggerDataProfile` runs for an analysis whose `seed_input_file_ids` is `[]`
 - **THEN** it SHALL return `"failed"` and the ledger row SHALL be untouched
+
+## MODIFIED Requirements
 
 ### Requirement: Atomic completed → running re-profile transition
 
@@ -162,17 +148,15 @@ limitation.
 ### Requirement: Profile clearance when the input set empties
 
 `clearDataProfile(querier, analysisId)` SHALL null the profile ledger columns
-(`data_profile_status`, `data_profile_error`, `data_profile_started_at`,
-`data_profile_completed_at`, `data_profile_result`, `seed_input_file_ids`) with a
-single UPDATE guarded by `data_profile_status IS DISTINCT FROM 'running'` — a live
-workflow's completion write would resurrect half-cleared state, so a running profile
-is never cleared and the caller re-evaluates parity after that run completes. It
-SHALL resolve to `ok(true)` when a row was cleared and `ok(false)` when nothing was
-(the profile is running, or no analysis-state row exists) — skipping stays in the ok
-channel, not the error channel. `data_profile_status` SHALL be nullable: a NULL
-status means "no profile", and `loadDataProfileStatus` SHALL return `null` for it —
-deliberately indistinguishable from the analysis-state row never having existed, so
-consumers have exactly one "not profiled" state.
+(`data_profile_status`, `data_profile_error`, `data_profile_started_at`, `data_profile_completed_at`,
+`data_profile_result`, `seed_input_file_ids`) with a single UPDATE guarded by `data_profile_status IS
+DISTINCT FROM 'running'` — a live workflow's completion write would resurrect half-cleared state, so a
+running profile is never cleared and the caller re-evaluates parity after that run completes. It SHALL
+resolve to `ok(true)` when a row was cleared and `ok(false)` when nothing was (the profile is running,
+or no analysis-state row exists) — skipping stays in the ok channel, not the error channel.
+`data_profile_status` SHALL be nullable: a NULL status means "no profile", and `loadDataProfileStatus`
+SHALL return `null` for it — deliberately indistinguishable from the analysis-state row never having
+existed, so consumers have exactly one "not profiled" state.
 
 A NULL-status row SHALL be claimable by the start transition — `tryStartDataProfile` claims the
 startable states (`'pending'` or NULL) into `running` — because the seed upsert's conflict branch
@@ -184,20 +168,7 @@ becomes claimable only once a later seed upsert has repopulated `seed_input_file
 #### Scenario: Clearing a completed profile
 
 - **WHEN** `clearDataProfile(querier, analysisId)` is called for an analysis with `data_profile_status = 'completed'`
-- **THEN** it resolves to `ok(true)`
-- **AND** all six profile columns SHALL be NULL
-- **AND** `loadDataProfileStatus` SHALL subsequently resolve to `null`
-
-#### Scenario: A running profile is never cleared
-
-- **WHEN** `clearDataProfile(querier, analysisId)` is called while `data_profile_status = 'running'`
-- **THEN** it resolves to `ok(false)`
-- **AND** every profile column SHALL retain its prior value
-
-#### Scenario: Clearing without an analysis-state row
-
-- **WHEN** `clearDataProfile(querier, analysisId)` is called for an analysis with no `cortex_analysis_state` row
-- **THEN** it resolves to `ok(false)`
+- **THEN** it SHALL resolve to `ok(true)` and every profile ledger column SHALL be NULL
 
 #### Scenario: A cleared row is not claimable until it is reseeded
 

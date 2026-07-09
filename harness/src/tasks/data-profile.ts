@@ -342,6 +342,9 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                         description: f.description,
                     })),
                     inputFileIds: stagedInputs.map((f) => f.fileId),
+                    // The drift comparand beside the audit record: `inputFileIds` says WHICH files
+                    // this profile covered, `inputFiles` says whether they held the same bytes.
+                    inputFiles: stagedInputs.map((f) => ({ fileId: f.fileId, size: f.size, mtimeMs: f.mtimeMs })),
                     profiledAt: new Date().toISOString(),
                 }),
             );
@@ -440,37 +443,35 @@ async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: Da
 }
 
 /**
- * Attempt to claim and run data profiling for an analysis.
+ * Attempt to claim and run data profiling for an analysis, then start the workflow
+ * fire-and-forget for whichever claim won. Safe to call from multiple sites
+ * concurrently: the claims are CAS UPDATEs, so at most one caller dispatches.
  *
- * Tries two transitions in sequence:
- *   1. `pending → running` (initial profiling)
- *   2. `completed → running` (re-profiling after new files appended)
+ * Every claim requires a non-empty `seed_input_file_ids` — a profile must always name
+ * the files it covers. The startable claim takes `'pending'` or a NULL status (NULL is
+ * the cleared-then-reseeded state); the rerun claim takes `'completed'`. A `'failed'`
+ * row is claimed by neither: retrying a failure is a deliberate act the caller drives
+ * through `tryRetryDataProfile` + `runDataProfile`.
  *
- * If either succeeds, starts the data-profile workflow fire-and-forget.
- * Returns what happened so the caller can surface it (e.g. in the seed
- * response). Safe to call from multiple sites concurrently.
+ * Returns what happened, so the caller can surface it (e.g. in the seed response).
  */
 export async function triggerDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): Promise<DataProfileTriggerResult> {
     const { analysisId } = params;
     try {
-        // Seed-first contract guard. `tryStartDataProfile` claims 'pending' OR NULL-status
-        // rows; a NULL-status row is the cleared-then-reseeded state — the seed write
-        // (seedProfileLedger -> upsertAnalysis) repopulated `seed_input_file_ids` via
-        // COALESCE on the way back, so a properly-orchestrated caller always arrives here
-        // with seed_input_file_ids non-null (whether status is 'pending' or NULL). A NULL
-        // seed here means the caller skipped seeding and would start a profile whose audit
-        // ledger records no input set ("running" with no recorded inputs); refuse it at
-        // this seam rather than in the CAS — `tryStartDataProfile` is a low-level primitive
-        // that takes a pool directly and is not bound to the seed-first orchestration.
-        // `loadDataProfileStatus` collapses NULL-status rows to null (by contract), so the
-        // precheck reads the seed column directly.
+        // ADVISORY pre-check, not the enforcement — the claim CAS carries the same seed
+        // conjunct (see `SEEDED` in state/data-profile.ts) and is what actually makes a
+        // seedless `running` row impossible. This read exists only to name the cause: on
+        // the ordinary non-racing path it turns an opaque "no claim matched" into a
+        // precise "the caller skipped seeding". An empty array is not a seed — it names
+        // zero files. `loadDataProfileStatus` collapses NULL-status rows to null by
+        // contract, so the seed column is read directly.
         const seeded = await deps.pool
             .query<{ seed: string[] | null }>({
                 text: "SELECT seed_input_file_ids AS seed FROM cortex_analysis_state WHERE analysis_id = $1",
                 values: [analysisId],
             })
             .then((r) => r.rows[0]?.seed ?? null);
-        if (seeded === null) {
+        if (seeded === null || seeded.length === 0) {
             console.error(`[data-profile] Trigger rejected for ${analysisId}: no seeded input set (caller skipped seeding)`);
             return "failed";
         }

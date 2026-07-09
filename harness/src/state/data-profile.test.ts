@@ -13,13 +13,36 @@ import {
     expireStaleDataProfile,
 } from "./data-profile.js";
 
-async function seedAnalysis(pool: Pool, analysisId: string, dpStatus = "pending"): Promise<void> {
+/**
+ * Insert an analysis-state row. `seed` defaults to a non-empty set because every claim
+ * into `running` requires one — a status-transition test that left it NULL would be
+ * asserting the seed conjunct, not the transition it names. Pass `null` or `[]`
+ * explicitly to exercise the unseeded refusals.
+ */
+async function seedAnalysis(pool: Pool, analysisId: string, dpStatus: string | null = "pending", seed: string[] | null = ["file-seed"]): Promise<void> {
     const now = new Date().toISOString();
     await pool.query({
         text: `INSERT INTO cortex_analysis_state
-           (analysis_id, status, context, data_profile_status, created_at, updated_at)
-           VALUES ($1, 'active', NULL, $2, $3, $4)`,
-        values: [analysisId, dpStatus, now, now],
+           (analysis_id, status, context, data_profile_status, seed_input_file_ids, created_at, updated_at)
+           VALUES ($1, 'active', NULL, $2, $3::jsonb, $4, $5)`,
+        values: [analysisId, dpStatus, seed === null ? null : JSON.stringify(seed), now, now],
+    });
+}
+
+/** Read `data_profile_status` straight off the row, bypassing `loadDataProfileStatus`'s NULL-collapse. */
+async function rawStatus(pool: Pool, analysisId: string): Promise<string | null> {
+    const res = await pool.query<{ data_profile_status: string | null }>({
+        text: "SELECT data_profile_status FROM cortex_analysis_state WHERE analysis_id = $1",
+        values: [analysisId],
+    });
+    return res.rows[0]?.data_profile_status ?? null;
+}
+
+/** Rewrite `seed_input_file_ids` directly — the column every claim's CAS conjunct reads. */
+async function setSeed(pool: Pool, analysisId: string, seed: string[] | null): Promise<void> {
+    await pool.query({
+        text: `UPDATE cortex_analysis_state SET seed_input_file_ids = $1::jsonb WHERE analysis_id = $2`,
+        values: [seed === null ? null : JSON.stringify(seed), analysisId],
     });
 }
 
@@ -30,6 +53,10 @@ const SAMPLE_RESULT = {
         { path: "data/inputs/f2/metadata.csv", description: "Sample metadata" },
     ],
     inputFileIds: ["file-aaa", "file-bbb"],
+    inputFiles: [
+        { fileId: "file-aaa", size: 1024, mtimeMs: 1_780_000_000_000 },
+        { fileId: "file-bbb", size: 2048, mtimeMs: 1_780_000_001_000 },
+    ],
     profiledAt: "2026-06-09T10:00:00.000Z",
 };
 
@@ -236,30 +263,108 @@ describe("data-profile state transitions", () => {
         expect(cleared).toBe(false);
     });
 
-    it("clear-then-reprofile lifecycle: cleared row is claimable by tryStartDataProfile", async () => {
+    it("clear-then-reseed-then-reprofile lifecycle: the cleared row is claimable once reseeded", async () => {
         await seedAnalysis(pool, "a-reprofile", "pending");
         (await tryStartDataProfile(pool, "a-reprofile"))._unsafeUnwrap();
         (await completeDataProfile(pool, "a-reprofile", SAMPLE_RESULT))._unsafeUnwrap();
         (await clearDataProfile(pool, "a-reprofile"))._unsafeUnwrap();
 
-        const claimed = (await tryStartDataProfile(pool, "a-reprofile"))._unsafeUnwrap();
-        expect(claimed).toBe(true);
+        // The clear nulled status AND seed. Status alone is claimable; the seed is not,
+        // so the row stays unclaimable until the inputs (and their seed) return.
+        expect((await tryStartDataProfile(pool, "a-reprofile"))._unsafeUnwrap()).toBe(false);
+
+        await setSeed(pool, "a-reprofile", ["file-returned"]);
+        expect((await tryStartDataProfile(pool, "a-reprofile"))._unsafeUnwrap()).toBe(true);
 
         const status = (await loadDataProfileStatus(pool, "a-reprofile"))._unsafeUnwrap();
         expect(status?.status).toBe("running");
         expect(status?.startedAt).not.toBeNull();
     });
 
-    it("tryStartDataProfile: claims a NULL-status row (seeded then cleared)", async () => {
+    it("tryStartDataProfile: claims a NULL-status row once it carries a seed", async () => {
         await seedAnalysis(pool, "a-start-null", "pending");
         (await clearDataProfile(pool, "a-start-null"))._unsafeUnwrap();
-        // The clear leaves status NULL — confirm the precondition, then claim.
+        // The clear leaves status NULL — confirm the precondition, then reseed and claim.
         expect((await loadDataProfileStatus(pool, "a-start-null"))._unsafeUnwrap()).toBeNull();
+        await setSeed(pool, "a-start-null", ["file-aaa"]);
 
         const claimed = (await tryStartDataProfile(pool, "a-start-null"))._unsafeUnwrap();
         expect(claimed).toBe(true);
 
         const status = (await loadDataProfileStatus(pool, "a-start-null"))._unsafeUnwrap();
         expect(status?.status).toBe("running");
+    });
+});
+
+// A `running` row must always name the files it is profiling. The conjunct lives in each
+// claim's CAS rather than in a caller's pre-read, because `clearDataProfile` can null the
+// seed of any non-`running` row at any moment — so a read-then-claim is a race. `[]` is a
+// real value meaning "zero files" (NULL means "leave the stored seed alone" to the upsert),
+// and is refused identically.
+describe("the seed conjunct on every claim into running", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_seed_conjunct");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    const claims = [
+        { name: "tryStartDataProfile", status: "pending", claim: tryStartDataProfile },
+        { name: "tryStartDataProfile (NULL status)", status: null, claim: tryStartDataProfile },
+        { name: "tryRerunDataProfile", status: "completed", claim: tryRerunDataProfile },
+        { name: "tryRetryDataProfile", status: "failed", claim: tryRetryDataProfile },
+    ] as const;
+
+    for (const { name, status, claim } of claims) {
+        const slug = name.replace(/\W+/g, "-").toLowerCase();
+
+        it(`${name}: refuses a NULL seed`, async () => {
+            const id = `null-${slug}`;
+            await seedAnalysis(pool, id, status, null);
+            expect((await claim(pool, id))._unsafeUnwrap()).toBe(false);
+            expect(await rawStatus(pool, id)).toBe(status);
+        });
+
+        it(`${name}: refuses an empty seed`, async () => {
+            const id = `empty-${slug}`;
+            await seedAnalysis(pool, id, status, []);
+            expect((await claim(pool, id))._unsafeUnwrap()).toBe(false);
+            expect(await rawStatus(pool, id)).toBe(status);
+        });
+
+        it(`${name}: claims a non-empty seed`, async () => {
+            const id = `ok-${slug}`;
+            await seedAnalysis(pool, id, status, ["file-aaa"]);
+            expect((await claim(pool, id))._unsafeUnwrap()).toBe(true);
+            expect(await rawStatus(pool, id)).toBe("running");
+        });
+    }
+
+    it("no claim can ever leave a running row with no recorded input set", async () => {
+        // The invariant, stated as a query. Seed every claimable status unseeded, fire every
+        // claim at it, then assert the forbidden state does not exist anywhere in the schema.
+        await seedAnalysis(pool, "inv-pending", "pending", null);
+        await seedAnalysis(pool, "inv-null", null, []);
+        await seedAnalysis(pool, "inv-completed", "completed", null);
+        await seedAnalysis(pool, "inv-failed", "failed", []);
+        for (const id of ["inv-pending", "inv-null", "inv-completed", "inv-failed"]) {
+            (await tryStartDataProfile(pool, id))._unsafeUnwrap();
+            (await tryRerunDataProfile(pool, id))._unsafeUnwrap();
+            (await tryRetryDataProfile(pool, id))._unsafeUnwrap();
+        }
+
+        const seedless = await pool.query<{ analysis_id: string }>(
+            `SELECT analysis_id FROM cortex_analysis_state
+             WHERE data_profile_status = 'running'
+               AND (seed_input_file_ids IS NULL OR jsonb_array_length(seed_input_file_ids) = 0)`,
+        );
+        expect(seedless.rows).toEqual([]);
     });
 });
