@@ -124,9 +124,13 @@ function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity
         refs: !!config.refStorePvc,
     });
 
+    const transport = config.transport ?? "poll";
     const env = [
-        { name: "SANDBOX_TRANSPORT", value: config.transport ?? "poll" },
-        { name: "CORTEX_BASE_URL", value: config.cortexBaseUrl },
+        { name: "SANDBOX_TRANSPORT", value: transport },
+        // Poll mode never dials out, so the URL is omitted (matching the Docker
+        // backend) — the pod spec itself then documents that no callback egress
+        // is expected. sandbox-server neither reads nor requires it in poll mode.
+        ...(transport === "callback" ? [{ name: "CORTEX_BASE_URL", value: config.cortexBaseUrl }] : []),
         { name: "SANDBOX_CALLBACK_SECRET", value: identity.callbackSecret },
         ...Object.entries(plan.env).map(([name, value]) => ({ name, value })),
         ...Object.entries(meta.extraEnv ?? {}).map(([k, v]) => ({

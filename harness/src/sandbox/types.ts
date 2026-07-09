@@ -169,6 +169,11 @@ export const PollResponseSchema = z.object({
     status: z.string(),
     events: z.array(PollEventSchema).default([]),
     cursor: z.number().int(),
+    /**
+     * Sticky ring-shed marker. Deliberately unused by the poll loop — the
+     * seq-gap arithmetic detects sheds without it — but kept on the wire for
+     * consumers that want the sandbox's own flag rather than deriving it.
+     */
     truncated: z.boolean().default(false),
     result: ExecResultSchema.optional(),
 });

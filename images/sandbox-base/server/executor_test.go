@@ -490,3 +490,33 @@ func TestSanitizedEnviron_DropsOnlyTheNamedKeys(t *testing.T) {
 		t.Error("PATH was stripped from the child environment")
 	}
 }
+
+// The body is buffered before its signature can be verified (the signature
+// covers the bytes), so the read cap is what bounds an unauthenticated peer's
+// memory cost. An oversized submit must be refused without spawning anything.
+func TestExecHandler_OversizedBodyRejected(t *testing.T) {
+	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
+	defer cleanup()
+
+	pad := strings.Repeat("a", maxExecBodyBytes)
+	body, _ := json.Marshal(map[string]any{
+		"command": []string{"true"},
+		"execId":  "oversized",
+		"env":     map[string]string{"PAD": pad},
+	})
+	if len(body) <= maxExecBodyBytes {
+		t.Fatalf("test body does not exceed the cap: %d <= %d", len(body), maxExecBodyBytes)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/exec", bytes.NewReader(body))
+	signInbound(req, "oversized", body, []byte("s"))
+	rw := httptest.NewRecorder()
+	exe.handle(rw, req)
+
+	if rw.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for an oversized submit, got %d", rw.Code)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := rec.completeCount(); got != 0 {
+		t.Fatalf("an oversized submit still ran: %d completions", got)
+	}
+}

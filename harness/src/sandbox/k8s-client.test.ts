@@ -75,7 +75,7 @@ function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: n
 }
 
 describe("k8s createSandbox", () => {
-    test("creates a Job carrying CORTEX_BASE_URL and SANDBOX_CALLBACK_SECRET env", async () => {
+    test("callback mode creates a Job carrying CORTEX_BASE_URL and SANDBOX_CALLBACK_SECRET env", async () => {
         const stub = stubApis([
             {
                 status: { phase: "Running", podIP: "10.0.0.1" },
@@ -87,6 +87,7 @@ describe("k8s createSandbox", () => {
         const ops = createK8sSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://cortex.example.com:443",
+            transport: "callback",
             namespace: "sandbox",
             sessionPvc: "cortex-sessions",
             libStorePvc: "cortex-libs",
@@ -121,6 +122,7 @@ describe("k8s createSandbox", () => {
         const container = podSpec.containers[0];
         const env = container.env ?? [];
         const envMap = Object.fromEntries(env.map((e) => [e.name, e.value]));
+        expect(envMap.SANDBOX_TRANSPORT).toBe("callback");
         expect(envMap.CORTEX_BASE_URL).toBe("https://cortex.example.com:443");
         expect(envMap.SANDBOX_CALLBACK_SECRET).toBe(ref.callbackSecret);
         expect(envMap.PROVENANCE_WATCH_DIRS).toBe("/an-1");
@@ -151,6 +153,44 @@ describe("k8s createSandbox", () => {
         expect(libs.readOnly).toBe(true);
 
         expect(registered).toEqual([ref.sandboxId]);
+    });
+
+    test("poll mode (default) omits CORTEX_BASE_URL — the pod spec documents that the sandbox never dials out", async () => {
+        const stub = stubApis([
+            {
+                status: { phase: "Running", podIP: "10.0.0.3" },
+                metadata: { name: "sbx-poll" },
+            },
+        ]);
+
+        const ops = createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://cortex.example.com:443",
+            namespace: "sandbox",
+            sessionPvc: "cortex-sessions",
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+
+        const ref = (
+            await ops.createSandbox(
+                {
+                    runId: "run-1",
+                    stepId: "step-a",
+                    analysisId: "an-1",
+                    childWorkflowId: "run-1-0",
+                    resources: { cpu: 1, memoryGb: 2 },
+                },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        const container = stub.createdJobs[0]!.spec!.template.spec!.containers[0];
+        const envMap = Object.fromEntries((container.env ?? []).map((e) => [e.name, e.value]));
+        expect(envMap.SANDBOX_TRANSPORT).toBe("poll");
+        expect(envMap.CORTEX_BASE_URL).toBeUndefined();
+        expect(envMap.SANDBOX_CALLBACK_SECRET).toBe(ref.callbackSecret);
     });
 
     test("readOnly omits the rw volumeMount and pins workingDir to the RO tree", async () => {

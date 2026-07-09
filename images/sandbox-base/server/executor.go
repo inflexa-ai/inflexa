@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,15 @@ import (
 	"sync"
 	"time"
 )
+
+// maxExecBodyBytes caps how much of a POST /exec body the server will buffer.
+// The body is read in full BEFORE its signature can be verified (the signature
+// covers the bytes), so this cap — not the auth check — is what bounds the
+// memory cost an unauthenticated peer able to reach the port can impose. Sized
+// generously because `write_file` ships whole files base64-inflated inside the
+// command array; 16 MiB is far above any LLM-written payload while still
+// bounding a garbage flood.
+const maxExecBodyBytes = 16 << 20
 
 // execSubmitRequest is the new submit-and-return body for POST /exec.
 type execSubmitRequest struct {
@@ -81,9 +91,16 @@ func (e *executor) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read the raw bytes: the signature covers them, and re-encoding the parsed
-	// struct to verify would diverge from what the harness signed.
+	// struct to verify would diverge from what the harness signed. The read is
+	// capped (see maxExecBodyBytes) since it happens before the auth check.
+	r.Body = http.MaxBytesReader(w, r.Body, maxExecBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeJSONResponse(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "body too large"})
+			return
+		}
 		writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "could not read body"})
 		return
 	}
