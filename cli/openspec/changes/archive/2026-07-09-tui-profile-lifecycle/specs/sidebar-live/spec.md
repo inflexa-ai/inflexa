@@ -1,33 +1,6 @@
-# sidebar-live Specification
+# sidebar-live Delta
 
-## Purpose
-The sidebar's live-data contract: the DATA PROFILE and RUNS sections source the harness ledger through the booted runtime (never mocks), degrade gracefully pre-ready, refresh on lifecycle edges plus a bounded active-work poll, and open details views (profile summary dialog — carrying the keybound re-profile action; runs-with-steps dialog) by section click and leader keybindings. Lives in `src/tui/hooks/sidebar_live.ts`, `src/tui/layout/sidebar.tsx`, and `src/tui/components/dialog/runs_dialog.tsx`.
-
-## Requirements
-
-### Requirement: The sidebar renders live ledger data with graceful degradation
-
-The sidebar SHALL source its DATA PROFILE and RUNS sections from the harness ledger through the
-booted runtime's pool — the data-profile status row and the analysis's newest runs — never from
-mock fixtures. Before the runtime is `ready` the sections SHALL render a muted placeholder (no
-reads are attempted); an unprofiled analysis renders "not profiled"; a read failure renders an
-unavailable state — none of these SHALL crash or block the sidebar. Every state distinguishes
-itself by glyph and tone from the design system.
-
-#### Scenario: Sections degrade before the runtime is ready
-
-- **WHEN** the sidebar renders while the harness runtime is still booting
-- **THEN** the DATA PROFILE and RUNS sections show muted placeholders and no ledger query runs
-
-#### Scenario: Profile states render truthfully
-
-- **WHEN** the analysis's ledger row is absent, running, completed, or failed
-- **THEN** the DATA PROFILE section shows the matching state (not-profiled / profiling / completed with file count and relative time / failed with a one-line error)
-
-#### Scenario: Real runs replace the mocks
-
-- **WHEN** the analysis has runs in the ledger
-- **THEN** the RUNS section lists the newest runs with their real status, name, and relative start time — and shows "no runs" when none exist
+## MODIFIED Requirements
 
 ### Requirement: Sidebar data refreshes on lifecycle edges and bounded polling
 

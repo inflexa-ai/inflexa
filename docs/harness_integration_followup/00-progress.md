@@ -20,16 +20,34 @@ shape since `06-change-graph.md` sketched it).
 
 ---
 
-## Where the program stands (2026-07-08)
+## Where the program stands (2026-07-09)
 
 ```
 landed:   … ──► tui-harness-chat ──► tui-sidebar-live ──► retire-proxy-chat-dev-umbrella (2026-07-08)
+              ──► tui-profile-lifecycle (2026-07-09, post-doc-14 polish)
 DOC-14 SEQUENCE COMPLETE — the TUI chat is the one product conversation surface.
 next:     (unsequenced follow-ups below; #33 daemon remains the future transport swap)
 later:    ┌─ record-plan-lineage (the RQ6 provenance rider, deferred out of the skeleton)
           ├─ #33 daemon (a transport swap under the unchanged TUI — NOT a prerequisite; see 14)
           └─ durability hardening ────────── framed in 01, largely lands via #33 M2
 ```
+
+**`tui-profile-lifecycle` LANDED 2026-07-09** (user-requested polish round on PR #45):
+the data profile now follows the analysis's input set instead of firing once. Drift-aware
+parity ladder (current enumerated `fileId` set vs the completed profile's
+`result.inputFileIds`; enumerate-first so checks cost stat/readdir, staging only on a
+decided trigger), live edges (debounced `prov.input_*` bus subscription + a
+running→completed completion watch), clear-on-empty (harness rider: `clearDataProfile`,
+nullable `data_profile_status`, NULL claimable by the start CAS — the wedge fix caught in
+orchestrator review: without it a cleared analysis could never be profiled again), manual
+re-profile (palette entry + `r` action in the profile dialog via a new optional
+`ResultsDialog` action affordance), and the sidebar reordered to pipeline order
+(SESSION → ANALYSIS → DATA PROFILE → RUNS). Full lifecycle live-verified in one tmux
+pass (4 profile runs: no-drift silent skip, drift re-profile, forced restart,
+clear + NULL row confirmed, re-add re-profiles through the widened CAS). harness 738 /
+cli 623 tests, 0 fail. Pre-existing finding (out of scope, untouched code):
+`resolveContext` ignores `--analysis <id|name>` on an anchor with multiple analyses, so
+`inflexa profile --analysis … --status` dies at the ambiguity picker.
 
 **`tui-harness-chat` LANDED 2026-07-08** (change 1 of doc 14): the TUI chat (plain
 `inflexa`) now talks to the harness conversation agent — one chat, at Cortex-managed

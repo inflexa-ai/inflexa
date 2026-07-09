@@ -142,28 +142,31 @@ function walkFiles(dir: string, ignoredDirs: ReadonlySet<string>): Result<string
 }
 
 /**
- * Stage a single file input: hash, link/copy into the target tree, return a `StagedInput`.
+ * The write half of staging: take one walked {@link InputFile}, hash its content,
+ * link/copy it into the target tree, and return its `StagedInput` manifest row.
+ * {@link walkInputFiles} has already decided WHICH files exist and their identity
+ * (`fileId`/`key`/`relativePath`); this only pays the content-size costs. Split out
+ * so {@link enumerateInputFileIds} can share the walk without any of them.
  */
-async function stageSingleFile(absPath: string, key: string, fileId: string, targetDir: string): Promise<Result<StagedInput, FsError>> {
-    const relPath = join("inputs", "local", key);
-    const dest = join(targetDir, relPath);
-    const stageResult = stageFile(absPath, dest);
+async function materializeStagedFile(file: InputFile, targetDir: string): Promise<Result<StagedInput, FsError>> {
+    const dest = join(targetDir, file.relativePath);
+    const stageResult = stageFile(file.absPath, dest);
     if (stageResult.isErr()) return err(stageResult.error);
 
-    const hashResult = await sha256File(absPath);
+    const hashResult = await sha256File(file.absPath);
     if (hashResult.isErr()) return err(hashResult.error);
 
-    const sizeResult = statResult(absPath, "stageSingleFile:stat");
+    const sizeResult = statResult(file.absPath, "materializeStagedFile:stat");
     if (sizeResult.isErr()) return err(sizeResult.error);
 
     return ok({
-        fileId,
+        fileId: file.fileId,
         mountName: "local",
-        key,
-        fileName: basename(absPath),
+        key: file.key,
+        fileName: basename(file.absPath),
         hash: hashResult.value,
         size: sizeResult.value.size,
-        relativePath: relPath,
+        relativePath: file.relativePath,
     });
 }
 
@@ -222,6 +225,70 @@ function reconcileStagedTree(targetDir: string, staged: StagedInput[]): Result<v
 }
 
 /**
+ * One file an input yields, its staging identity resolved but no content touched.
+ * The unit both {@link stageInputs} and {@link enumerateInputFileIds} consume:
+ * `absPath` is the source to read, `relativePath` its dest under `inputs/local`,
+ * and `key`/`fileId` its manifest identity. Only {@link walkInputFiles} mints
+ * these, so the two callers cannot disagree about which files an input yields.
+ */
+type InputFile = {
+    /** The owning input row — carries the anchor and the stored path. */
+    readonly input: AnalysisInput;
+    /** Absolute source path of this file on the host. */
+    readonly absPath: string;
+    /** Relative key within the `local` mount (directory members carry their subpath). */
+    readonly key: string;
+    /** Deterministic identity from {@link deriveFileId} — the space provenance also uses. */
+    readonly fileId: string;
+    /** Dest path relative to the data dir: `inputs/local/{key}`. */
+    readonly relativePath: string;
+};
+
+/**
+ * The shared read-only walk under both staging and id enumeration: list the
+ * analysis's inputs, resolve each to an absolute path (skipping any that can't
+ * resolve — e.g. an orphaned anchor), then expand every input into the files it
+ * yields — a directory input walks its subtree via {@link walkFiles} under the
+ * noise-dir skips and symlink rules; a file input yields itself. Cost is bounded
+ * by stat/readdir: no hashing, no tree writes. This is the SINGLE source of
+ * "which files an input yields"; {@link stageInputs} adds materialization on top
+ * and {@link enumerateInputFileIds} adds nothing, so their identity spaces are
+ * structurally unable to diverge.
+ */
+function walkInputFiles(analysisId: string): Result<InputFile[], DbError | StagingError> {
+    const inputsResult = listAnalysisInputs(analysisId);
+    if (inputsResult.isErr()) return err(inputsResult.error);
+
+    const resolveResult = Result.combine(inputsResult.value.map((input) => resolveInputPath(input).map((absPath) => ({ input, absPath }))));
+    if (resolveResult.isErr()) return err(resolveResult.error);
+
+    const resolvedInputs = resolveResult.value.filter((p): p is { input: AnalysisInput; absPath: string } => p.absPath !== null);
+
+    const files: InputFile[] = [];
+    for (const { input, absPath } of resolvedInputs) {
+        // Anchored inputs keep their human-readable anchor-relative path as the
+        // key. Anchorless inputs carry an ABSOLUTE host path — used verbatim it
+        // leaks the host filesystem into the sandbox layout and the agent
+        // prompt, and `join` silently collapses its leading slash so the
+        // on-disk path no longer matches the key. They stage under a stable
+        // fileId-prefixed basename instead (collision-free across same-named
+        // files from different locations, deterministic across runs).
+        const keyRoot = input.anchorId === null ? join(deriveFileId(input), basename(input.path)) : input.path;
+        if (input.isDir) {
+            const walkResult = walkFiles(absPath, IGNORED_WALK_DIRS);
+            if (walkResult.isErr()) return err({ type: "staging_failed", cause: walkResult.error });
+            for (const subpath of walkResult.value) {
+                const key = join(keyRoot, subpath);
+                files.push({ input, absPath: join(absPath, subpath), key, fileId: deriveFileId(input, subpath), relativePath: join("inputs", "local", key) });
+            }
+        } else {
+            files.push({ input, absPath, key: keyRoot, fileId: deriveFileId(input), relativePath: join("inputs", "local", keyRoot) });
+        }
+    }
+    return ok(files);
+}
+
+/**
  * Resolve an analysis's inputs to absolute paths, copy/link them into a staging tree,
  * compute content hashes, and return the `StagedInput[]` manifest the harness consumes.
  *
@@ -238,41 +305,14 @@ function reconcileStagedTree(targetDir: string, staged: StagedInput[]): Result<v
  * an input (or an ignore rule newly excluding a subtree) cleans up on the next run.
  */
 export async function stageInputs(analysisId: string, targetDir: string): Promise<Result<StagedInput[], DbError | StagingError>> {
-    const inputsResult = listAnalysisInputs(analysisId);
-    if (inputsResult.isErr()) return err(inputsResult.error);
-
-    const resolveResult = Result.combine(inputsResult.value.map((input) => resolveInputPath(input).map((absPath) => ({ input, absPath }))));
-    if (resolveResult.isErr()) return err(resolveResult.error);
-
-    const resolvedInputs = resolveResult.value.filter((p): p is { input: AnalysisInput; absPath: string } => p.absPath !== null);
+    const filesResult = walkInputFiles(analysisId);
+    if (filesResult.isErr()) return err(filesResult.error);
 
     const staged: StagedInput[] = [];
-    for (const { input, absPath } of resolvedInputs) {
-        // Anchored inputs keep their human-readable anchor-relative path as the
-        // key. Anchorless inputs carry an ABSOLUTE host path — used verbatim it
-        // leaks the host filesystem into the sandbox layout and the agent
-        // prompt, and `join` silently collapses its leading slash so the
-        // on-disk path no longer matches the key. They stage under a stable
-        // fileId-prefixed basename instead (collision-free across same-named
-        // files from different locations, deterministic across runs).
-        const keyRoot = input.anchorId === null ? join(deriveFileId(input), basename(input.path)) : input.path;
-        if (input.isDir) {
-            const filesResult = walkFiles(absPath, IGNORED_WALK_DIRS);
-            if (filesResult.isErr()) return err({ type: "staging_failed", cause: filesResult.error });
-            for (const subpath of filesResult.value) {
-                const fullPath = join(absPath, subpath);
-                const key = join(keyRoot, subpath);
-                const fileId = deriveFileId(input, subpath);
-                const result = await stageSingleFile(fullPath, key, fileId, targetDir);
-                if (result.isErr()) return err({ type: "staging_failed", cause: result.error });
-                staged.push(result.value);
-            }
-        } else {
-            const fileId = deriveFileId(input);
-            const result = await stageSingleFile(absPath, keyRoot, fileId, targetDir);
-            if (result.isErr()) return err({ type: "staging_failed", cause: result.error });
-            staged.push(result.value);
-        }
+    for (const file of filesResult.value) {
+        const result = await materializeStagedFile(file, targetDir);
+        if (result.isErr()) return err({ type: "staging_failed", cause: result.error });
+        staged.push(result.value);
     }
 
     // Overlapping inputs stage to the SAME dest path: a directory input plus a
@@ -301,4 +341,29 @@ export async function stageInputs(analysisId: string, targetDir: string): Promis
     if (reconcileResult.isErr()) return err({ type: "staging_failed", cause: reconcileResult.error });
 
     return ok(uniqueStaged);
+}
+
+/**
+ * The read-only, hash-free twin of {@link stageInputs}: the exact `fileId` set
+ * staging would produce for `analysisId`, in the SAME identity space, but without
+ * touching content (no `sha256File`), linking, copying, or writing the session
+ * tree — which need not even exist. Both funnel through {@link walkInputFiles}, so
+ * the id spaces cannot diverge; the dedup by `relativePath` mirrors staging's
+ * same-dest collision rule (last write wins) so the set equals the manifest's
+ * fileIds exactly. Exists so profile-drift checks can run on every chat open /
+ * input edit at stat/readdir cost, never content-size cost.
+ *
+ * @param analysisId - The analysis whose input identity space to enumerate.
+ * @returns The fileIds staging would emit, or a `DbError` (input listing / anchor
+ *   resolution) or `StagingError` (a directory-input walk that hit an I/O fault).
+ */
+export function enumerateInputFileIds(analysisId: string): Result<ReadonlySet<string>, DbError | StagingError> {
+    return walkInputFiles(analysisId).map((files) => {
+        // Overlapping inputs can resolve to the same `relativePath`; staging keeps
+        // the LAST such entry, so collapse identically here before collecting ids —
+        // otherwise a clash would surface a fileId the manifest dropped.
+        const byPath = new Map<string, string>();
+        for (const file of files) byPath.set(file.relativePath, file.fileId);
+        return new Set(byPath.values());
+    });
 }

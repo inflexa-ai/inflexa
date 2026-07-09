@@ -3,6 +3,7 @@ import type { Pool } from "pg";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
 import {
+    clearDataProfile,
     completeDataProfile,
     failDataProfile,
     loadDataProfileStatus,
@@ -168,6 +169,97 @@ describe("data-profile state transitions", () => {
         expect(expired).toBe(false);
 
         const status = (await loadDataProfileStatus(pool, "a-fresh"))._unsafeUnwrap();
+        expect(status?.status).toBe("running");
+    });
+
+    it("clearDataProfile: completed → cleared, nulls all six columns", async () => {
+        await seedAnalysis(pool, "a-clear-done", "pending");
+        (await tryStartDataProfile(pool, "a-clear-done"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-clear-done", SAMPLE_RESULT))._unsafeUnwrap();
+        // Seed the sixth column the clear must null — the seed helper leaves it null.
+        await pool.query({
+            text: `UPDATE cortex_analysis_state SET seed_input_file_ids = $1::jsonb WHERE analysis_id = $2`,
+            values: [JSON.stringify(["file-aaa", "file-bbb"]), "a-clear-done"],
+        });
+
+        const cleared = (await clearDataProfile(pool, "a-clear-done"))._unsafeUnwrap();
+        expect(cleared).toBe(true);
+
+        const raw = await pool.query({
+            text: `SELECT data_profile_status, data_profile_error, data_profile_started_at,
+                   data_profile_completed_at, data_profile_result, seed_input_file_ids
+            FROM cortex_analysis_state WHERE analysis_id = $1`,
+            values: ["a-clear-done"],
+        });
+        const row = raw.rows[0];
+        expect(row.data_profile_status).toBeNull();
+        expect(row.data_profile_error).toBeNull();
+        expect(row.data_profile_started_at).toBeNull();
+        expect(row.data_profile_completed_at).toBeNull();
+        expect(row.data_profile_result).toBeNull();
+        expect(row.seed_input_file_ids).toBeNull();
+
+        // A cleared profile reads back as "no profile" — the same null a
+        // never-profiled analysis returns.
+        const status = (await loadDataProfileStatus(pool, "a-clear-done"))._unsafeUnwrap();
+        expect(status).toBeNull();
+    });
+
+    it("clearDataProfile: failed → cleared", async () => {
+        await seedAnalysis(pool, "a-clear-failed", "failed");
+        const cleared = (await clearDataProfile(pool, "a-clear-failed"))._unsafeUnwrap();
+        expect(cleared).toBe(true);
+        expect((await loadDataProfileStatus(pool, "a-clear-failed"))._unsafeUnwrap()).toBeNull();
+    });
+
+    it("clearDataProfile: pending → cleared", async () => {
+        await seedAnalysis(pool, "a-clear-pending", "pending");
+        const cleared = (await clearDataProfile(pool, "a-clear-pending"))._unsafeUnwrap();
+        expect(cleared).toBe(true);
+        expect((await loadDataProfileStatus(pool, "a-clear-pending"))._unsafeUnwrap()).toBeNull();
+    });
+
+    it("clearDataProfile: running → skipped, changes nothing", async () => {
+        await seedAnalysis(pool, "a-clear-running", "pending");
+        (await tryStartDataProfile(pool, "a-clear-running"))._unsafeUnwrap();
+
+        const cleared = (await clearDataProfile(pool, "a-clear-running"))._unsafeUnwrap();
+        expect(cleared).toBe(false);
+
+        const status = (await loadDataProfileStatus(pool, "a-clear-running"))._unsafeUnwrap();
+        expect(status?.status).toBe("running");
+        expect(status?.startedAt).not.toBeNull();
+    });
+
+    it("clearDataProfile: absent row → skipped", async () => {
+        const cleared = (await clearDataProfile(pool, "a-clear-missing"))._unsafeUnwrap();
+        expect(cleared).toBe(false);
+    });
+
+    it("clear-then-reprofile lifecycle: cleared row is claimable by tryStartDataProfile", async () => {
+        await seedAnalysis(pool, "a-reprofile", "pending");
+        (await tryStartDataProfile(pool, "a-reprofile"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-reprofile", SAMPLE_RESULT))._unsafeUnwrap();
+        (await clearDataProfile(pool, "a-reprofile"))._unsafeUnwrap();
+
+        const claimed = (await tryStartDataProfile(pool, "a-reprofile"))._unsafeUnwrap();
+        expect(claimed).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-reprofile"))._unsafeUnwrap();
+        expect(status?.status).toBe("running");
+        expect(status?.startedAt).not.toBeNull();
+    });
+
+    it("tryStartDataProfile: claims a NULL-status row (seeded then cleared)", async () => {
+        await seedAnalysis(pool, "a-start-null", "pending");
+        (await clearDataProfile(pool, "a-start-null"))._unsafeUnwrap();
+        // The clear leaves status NULL — confirm the precondition, then claim.
+        expect((await loadDataProfileStatus(pool, "a-start-null"))._unsafeUnwrap()).toBeNull();
+
+        const claimed = (await tryStartDataProfile(pool, "a-start-null"))._unsafeUnwrap();
+        expect(claimed).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-start-null"))._unsafeUnwrap();
         expect(status?.status).toBe("running");
     });
 });

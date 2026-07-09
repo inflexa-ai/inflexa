@@ -1,7 +1,7 @@
 # input-staging Specification
 
 ## Purpose
-Materialize an analysis's selected inputs into the harness session tree (`{sessionsDir}/{analysisId}/data/inputs/local/…`) as the `StagedInput[]` manifest the embedded harness consumes verbatim — hardlink-first placement, noise-dir-aware directory walks, deterministic file identity, and staging-time mirroring so the tree always reflects the current inputs. Lives in `src/modules/staging/`; the session-tree base contract is owned by `harness-runtime`.
+Materialize an analysis's selected inputs into the harness session tree (`{sessionsDir}/{analysisId}/data/inputs/local/…`) as the `StagedInput[]` manifest the embedded harness consumes verbatim — hardlink-first placement, noise-dir-aware directory walks, deterministic file identity, staging-time mirroring so the tree always reflects the current inputs, and a read-only identity-only enumeration sharing the same walk (for profile-drift checks). Lives in `src/modules/staging/`; the session-tree base contract is owned by `harness-runtime`.
 ## Requirements
 
 ### Requirement: Stage an analysis's inputs into the session tree
@@ -120,3 +120,29 @@ derivation.
 
 - **WHEN** the same analysis is staged twice with unchanged inputs
 - **THEN** every file receives the same `fileId` in both manifests
+
+### Requirement: Identity-only input enumeration
+
+The system SHALL provide `enumerateInputFileIds(analysisId)` in `src/modules/staging/` returning the
+`Result`-typed set of deterministic `fileId`s that `stageInputs` would produce for the analysis's
+current inputs — the same derivation and the same walk rules (noise-directory skips, symlink
+handling, unresolvable inputs skipped) — while writing nothing to the session tree, hashing no file
+content, and not requiring the session tree to exist. Its cost SHALL be bounded by directory
+enumeration (stat/readdir), never by input content size, so parity drift checks can run on every
+chat open and every input mutation. The identity walk SHALL be single-sourced with staging's walk:
+the two MUST NOT be able to drift on which files an input yields.
+
+#### Scenario: Enumeration matches staging's identity set
+
+- **WHEN** `enumerateInputFileIds` and `stageInputs` run against the same inputs
+- **THEN** the enumerated set equals exactly the set of `fileId`s in the staged manifest
+
+#### Scenario: Enumeration performs no writes
+
+- **WHEN** `enumerateInputFileIds` runs for an analysis whose session tree does not exist
+- **THEN** it returns the identity set and creates no directory or file
+
+#### Scenario: Unresolvable inputs are skipped consistently
+
+- **WHEN** one input's anchor cannot be resolved
+- **THEN** the enumeration omits it, exactly as staging's walk would
