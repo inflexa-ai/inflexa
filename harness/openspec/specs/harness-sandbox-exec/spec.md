@@ -616,6 +616,12 @@ liveness, not readiness: a starting sandbox is alive.
 - **WHEN** `isAlive(ref)` is called
 - **THEN** the machine SHALL be reported dead
 
+#### Scenario: Docker missing container is dead
+
+- **GIVEN** a `ref` whose container no longer exists (inspect returns 404)
+- **WHEN** `isAlive(ref)` is called
+- **THEN** the machine SHALL be reported dead, with no OOM cause — a removed container is observably dead, not a transient API failure
+
 #### Scenario: Docker OOM-killed container reports the cause
 
 - **GIVEN** a Docker sandbox whose container was killed for exceeding its memory limit (`State.OOMKilled: true`)
