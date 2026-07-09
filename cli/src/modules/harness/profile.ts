@@ -74,7 +74,7 @@ export function resolveSingleAnalysis(flags: ContextFlags, emptyHint: string): A
 /**
  * Each boot error variant, as one actionable line naming the remedy. Exported so
  * `inflexa run` reuses the exact same mapping — the boot prerequisites are
- * identical for both deliberate harness entry points (task 4.2).
+ * identical for both deliberate harness entry points.
  */
 export function describeBootError(e: HarnessBootError): string {
     switch (e.type) {

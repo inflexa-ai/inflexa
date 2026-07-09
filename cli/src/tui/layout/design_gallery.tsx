@@ -44,7 +44,7 @@ import {
     mockCortexRuns,
     mockRunSteps,
     mockDataProfile,
-} from "../../lib/mock_fixtures.ts";
+} from "./design_gallery_fixtures.ts";
 
 // Nothing streams in the gallery — MessageBlock's streaming accessors are constant stubs.
 const noStreamId = (): string | null => null;
@@ -67,7 +67,7 @@ function State(props: { n: string; label: string; children: JSX.Element }): JSX.
 
 /**
  * A read-only showcase of every design-system stream-block state, rendered from the MOCK fixtures
- * (see `mock_fixtures`). This is the spec's "render all eight states faithfully" surface: it drives
+ * (see `design_gallery_fixtures`). Every state renders faithfully here: it drives
  * the block widgets directly, bypassing the live conversation store and event bus entirely, so no
  * mock data ever leaks into a real session. Esc/q close.
  */

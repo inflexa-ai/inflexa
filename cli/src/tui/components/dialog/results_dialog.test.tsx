@@ -87,7 +87,7 @@ describe("ResultsDialog footer", () => {
     });
 
     test("a DISABLED action renders byte-identically to no action at all", async () => {
-        // The prop doc's claim ("with no `action` prop the dialog is byte-identical to before"), extended
+        // The prop doc's claim (no `action` prop renders identically to an actionless dialog), extended
         // to the disabled case: the footer must leave behind no stray separator and no dimmed hint.
         const bareHost = await mount();
         let bare: string;

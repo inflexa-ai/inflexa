@@ -295,7 +295,7 @@ describe("applyEmitEvent outside a turn", () => {
     });
 });
 
-describe("send() interleaves mid-turn prose and non-text parts in emission order (FIX 2)", () => {
+describe("send() interleaves mid-turn prose and non-text parts in emission order", () => {
     // The assistant turn's parts, in mounted order, with each part's kind + text for text parts.
     function assistantParts(): { type: string; text?: string }[] {
         const parts = messages[1]?.parts ?? [];
@@ -354,7 +354,7 @@ describe("send() interleaves mid-turn prose and non-text parts in emission order
     });
 });
 
-describe("send() turn-generation guard (C1)", () => {
+describe("send() turn-generation guard", () => {
     test("a superseded turn's outcome and late events never touch the new turn's state", async () => {
         // Send A: a slow engine that streams a delta, blocks until released (modelling the old turn
         // still unwinding when a swap lands), then emits a LATE delta before returning ok.
@@ -405,8 +405,8 @@ describe("send() turn-generation guard (C1)", () => {
     });
 });
 
-describe("send() turn cleanup (W1/W2/S1)", () => {
-    test("aborting with an open tool resolves the chip to a terminal state (W1)", async () => {
+describe("send() turn cleanup", () => {
+    test("aborting with an open tool resolves the chip to a terminal state", async () => {
         const seams = fakeSeams({ kind: "aborted" }, (emit) => {
             // A tool-started with no matching tool-finished — still running when the turn aborts.
             void emit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "read_file", input: {} });
@@ -420,14 +420,14 @@ describe("send() turn cleanup (W1/W2/S1)", () => {
         expect(chatStatus()).toBe("idle");
     });
 
-    test("the assistant turn is stamped with a duration on ok (W2)", async () => {
+    test("the assistant turn is stamped with a duration on ok", async () => {
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "ok", fallbackText: "hi" }));
         expect(messages[1]?.role).toBe("assistant");
         expect(typeof messages[1]?.durationMs).toBe("number");
         expect(messages[1]?.durationMs).toBeGreaterThanOrEqual(0);
     });
 
-    test("a pre-run failure pops the empty assistant bubble (S1)", async () => {
+    test("a pre-run failure pops the empty assistant bubble", async () => {
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "prepare_failed", cause: new Error("pg down") }));
         // Only the user message remains — the empty assistant bubble was removed.
         expect(messages.length).toBe(1);
@@ -441,7 +441,7 @@ describe("send() turn cleanup (W1/W2/S1)", () => {
     });
 });
 
-describe("loadMessages windows the newest turns past one page (FIX 1)", () => {
+describe("loadMessages windows the newest turns past one page", () => {
     // A faithful page-slicing fake: the fixture is N single-message turns (turn t -> message "m<t>"),
     // and loadPage slices whole turns by page/perPage exactly as the harness does — so the test drives
     // the real concatenate-last-two-pages + trailing message cap, not a blind stub that ignores `page`.
@@ -499,8 +499,8 @@ describe("loadMessages windows the newest turns past one page (FIX 1)", () => {
     test("201 turns mount the newest 200 messages, NOT the boundary remainder", async () => {
         const seams = pagingSeams(turns(201));
         await loadMessages(SID, AID, seams);
-        // The old code fetched only the last page (1 turn) and rendered a single message; the window
-        // must instead hold the newest 200 messages (turns 1..200), dropping only the oldest turn.
+        // A page-aligned fetch of only the LAST page would collapse this thread to total mod 200 = 1
+        // message; the window must hold the newest 200 messages (turns 1..200), dropping only the oldest.
         expect(messages.length).toBe(200);
         expect(textAt(0)).toBe("m1");
         expect(textAt(199)).toBe("m200");
@@ -526,7 +526,7 @@ describe("loadMessages windows the newest turns past one page (FIX 1)", () => {
     });
 });
 
-describe("loadMessages staleness guard (W3)", () => {
+describe("loadMessages staleness guard", () => {
     // A full MessagePage (single turn, no rows — the toCortex fakes ignore the rows entirely).
     const emptyPage = (total: number): MessagePage => ({ messages: [], total, page: 0, perPage: 200, hasMore: false });
     // One assistant text message, shaped enough for cortexToUiMessage to read role/id/parts.
@@ -645,9 +645,9 @@ describe("a turn supersedes a transcript load in flight", () => {
     });
 });
 
-// FIX: `commitStream` writes into the part `streamPartId` names and no-ops when it is null. Any
-// mid-turn seal (tool chip, plan card, run card) nulls it, so a delta-less final segment used to be
-// assigned to `streamText` and then silently discarded — the model's answer vanished.
+// `commitStream` writes into the part `streamPartId` names and no-ops when it is null. Any mid-turn
+// seal (tool chip, plan card, run card) nulls it, so without the ok-fallback re-opening a segment, a
+// delta-less final answer would sit in `streamText` and never render.
 describe("a delta-less final segment renders after a mid-turn part", () => {
     test("deltas -> tool -> no further deltas: the fallback renders as a trailing part", async () => {
         const seams = fakeSeams({ kind: "ok", fallbackText: "THE FINAL ANSWER" }, (emit) => {

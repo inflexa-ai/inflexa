@@ -28,7 +28,7 @@ export type ResultsAction = {
 /**
  * A read-only, scrollable list of lines with an empty-state message. Esc (host) / q / Enter close. An
  * optional {@link ResultsAction} adds a single-key footer affordance; with no `action` prop the dialog
- * is byte-identical to before.
+ * renders identically to one that never offered an action.
  */
 export function ResultsDialog(props: { title: string; lines: string[]; emptyText: string; action?: ResultsAction; onClose: () => void }): JSX.Element {
     const dialog = useDialogEntry();

@@ -138,11 +138,11 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): SandboxStepDep
 /**
  * Assemble the {@link ExecuteAnalysisDeps} the parent workflow registers with.
  * `sandboxStepCallable` MUST be the callable returned by registering the child
- * first (design D1 — the parent's dispatch closes over it). `synthesisModel`
+ * first (the parent's dispatch closes over it). `synthesisModel`
  * reuses the one cli model id (splitting chat vs. synthesis is a later config
  * concern), `runCharge` is the harness no-op bracket, and `synthesisEnabled` is
  * left unset so it defaults to `true` — the skeleton proves the whole body
- * including run-level synthesis (design D6).
+ * including run-level synthesis.
  *
  * `emitProvenance` realizes the harness's optional run-lifecycle observer as bus
  * emission ({@link createRunProvenanceEmitter}), so the run's start/terminal
@@ -193,7 +193,7 @@ export function buildEphemeralDeps(comp: RunEngineComposition): CoreWorkflowDeps
 
 /**
  * Assemble the target-assessment workflow's construction deps. Registered
- * deliberately untriggerable in the cli (no surface launches it; design D1), so
+ * deliberately untriggerable in the cli (no surface launches it), so
  * these deps exist only to satisfy `assembleCoreRuntime`'s one-cohort
  * registration — never exercised at runtime. `chatProvider` takes the one shared
  * provider (`ChatProvider extends AgentChat`); `decisionModel`/`synthesisModel`

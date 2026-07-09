@@ -173,7 +173,7 @@ function walkFiles(dir: string, ignoredDirs: ReadonlySet<string>): Result<string
  * link/copy it into the target tree, and return its `StagedInput` manifest row.
  * {@link walkInputFiles} has already decided WHICH files exist and their identity
  * (`fileId`/`key`/`relativePath`); this only pays the content-size costs. Split out
- * so {@link enumerateInputFileIds} can share the walk without any of them.
+ * so {@link enumerateInputSignatures} can share the walk without any of them.
  */
 async function materializeStagedFile(file: InputFile, targetDir: string): Promise<Result<StagedInput, FsError>> {
     const dest = join(targetDir, file.relativePath);
@@ -259,7 +259,7 @@ function reconcileStagedTree(targetDir: string, staged: StagedInput[]): Result<v
 
 /**
  * One file an input yields, its staging identity resolved but no content touched.
- * The unit both {@link stageInputs} and {@link enumerateInputFileIds} consume:
+ * The unit both {@link stageInputs} and {@link enumerateInputSignatures} consume:
  * `absPath` is the source to read, `relativePath` its dest under `inputs/local`,
  * and `key`/`fileId` its manifest identity. Only {@link walkInputFiles} mints
  * these, so the two callers cannot disagree about which files an input yields.
@@ -285,7 +285,7 @@ type InputFile = {
  * noise-dir skips and symlink rules; a file input yields itself. Cost is bounded
  * by stat/readdir: no hashing, no tree writes. This is the SINGLE source of
  * "which files an input yields"; {@link stageInputs} adds materialization on top
- * and {@link enumerateInputFileIds} adds nothing, so their identity spaces are
+ * and {@link enumerateInputSignatures} adds nothing, so their identity spaces are
  * structurally unable to diverge.
  */
 function walkInputFiles(analysisId: string): Result<InputFile[], DbError | StagingError> {

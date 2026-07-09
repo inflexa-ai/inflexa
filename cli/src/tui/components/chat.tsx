@@ -33,7 +33,7 @@ export function Chat(props: ChatProps) {
 
     // Load the transcript from the pg thread, reacting to BOTH the open session AND the runtime boot
     // reaching `ready` — the pg thread read needs the booted pool, so a session opened while booting
-    // loads once boot flips to `ready` (design D9). On an in-place session swap, reset the hot state
+    // loads once boot flips to `ready`. On an in-place session swap, reset the hot state
     // before loading the new thread. `on` runs once immediately, then on each session/phase change.
     createEffect(
         on(

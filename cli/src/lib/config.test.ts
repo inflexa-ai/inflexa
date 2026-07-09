@@ -66,7 +66,7 @@ describe("readConfig — fail-closed", () => {
         expect(readConfig().telemetry).toBe(false);
     });
 
-    // finding 7: a malformed field must self-heal PER FIELD like its siblings —
+    // A malformed field must self-heal PER FIELD like its siblings —
     // a bad value must NOT nuke the whole parse and drop telemetry consent.
     test("a malformed field is salvaged per-field, keeping siblings intact", () => {
         writeRawConfig(JSON.stringify({ telemetry: true, theme: "not-a-real-theme", leaderTimeout: 500 }));

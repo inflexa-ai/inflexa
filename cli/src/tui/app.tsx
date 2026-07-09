@@ -73,17 +73,17 @@ export function App(props: AppProps) {
     });
     /* eslint-enable solid/reactivity */
 
-    // Auto-trigger the data profile at parity (design D8): fires once boot is `ready` and again on an
+    // Auto-trigger the data profile at parity: fires once boot is `ready` and again on an
     // in-place analysis swap, fire-and-forget, mapping the outcome to a notice. An app-level reactive
     // hook so the boot/analysis watch runs under App's reactive owner; never fires before `ready`.
     watchProfileParity(workspace);
 
-    // Wire the sidebar's live-data lifecycle (design D2): lifecycle-edge refreshes + the bounded,
+    // Wire the sidebar's live-data lifecycle: lifecycle-edge refreshes + the bounded,
     // active-work-gated poll. One call, under App's reactive owner (the store holds the snapshots the
     // Sidebar renders and the details views below snapshot on open).
     watchSidebarData(workspace);
 
-    // Open the DATA PROFILE details view (design D5/D6). Snapshots the profile as of open (a
+    // Open the DATA PROFILE details view. Snapshots the profile as of open (a
     // point-in-time view) and hands the composed lines to `ResultsDialog`, reused verbatim. The
     // optional `r re-profile` footer action drives a DELIBERATE force re-profile: offered only when
     // one could actually start — boot ready (so a runtime exists), no profile currently running, and
@@ -128,7 +128,7 @@ export function App(props: AppProps) {
         ));
     }
 
-    // Open the RUNS details view (design D5/D6). Snapshots the runs as of open; `loadSteps` fetches
+    // Open the RUNS details view. Snapshots the runs as of open; `loadSteps` fetches
     // the latest run's steps once, over the booted pool.
     function openRuns(): void {
         const snap = runsSnapshot();

@@ -14,9 +14,9 @@ import type {
 /**
  * The cross-process event contract. Today every member is an analysis-scoped provenance
  * event carrying `analysisId`; a future domain adds its own member here (see the event-bus
- * spec). The union holds only members with a live emitter AND consumer — the session-scoped
- * chat events retired with the proxy chat engine, and the harness conversation path writes
- * the Solid store directly rather than through the bus.
+ * spec). The union holds only members with a live emitter AND consumer; the harness conversation
+ * path writes the Solid store directly rather than through the bus, so no session/chat
+ * members belong here.
  *
  * One event type per domain action — never a single "recorded" event discriminated
  * by an interior `action` field with nullable companions. Each member carries exactly

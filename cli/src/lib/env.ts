@@ -13,32 +13,25 @@ export function isUnsandboxedTestRun(nodeEnv: string | undefined, sandboxMarker:
     return nodeEnv === "test" && !sandboxMarker;
 }
 
-// A `bun test` process that reaches this module without the sandbox marker resolves every `env.*` path
-// against the developer's REAL ~/.local/share/inflexa and ~/.config/inflexa. Two live incidents began
-// exactly there (agent.db, config.json and the models dir deleted). Bun resolves `bunfig.toml` from the
-// cwd and never walks up, so `cli/bunfig.toml`'s `[test].preload` — the thing that redirects XDG_* and
-// stamps INFLEXA_TEST_SANDBOX — silently does not apply to a run started anywhere but `cli/`. The repo
-// root refuses its own case (root bunfig's preload); this refuses every other, including a nested cwd.
+// DATA-LOSS GUARD. A `bun test` process that reaches this module without the sandbox marker resolves
+// every `env.*` path against the developer's REAL ~/.local/share/inflexa and ~/.config/inflexa — two
+// live incidents began exactly there (full story: src/test_support/sandbox.ts). Bun reads bunfig from
+// the cwd only, so `cli/bunfig.toml`'s preload (which redirects XDG_* and stamps INFLEXA_TEST_SANDBOX)
+// covers only runs started in `cli/`; the root bunfig refuses the root run; this refuses every other
+// cwd. Deny the PATHS, not each destructive call: a test cannot reach a `rmSync` with a real path in
+// hand if the path never resolved. `assertTestSandbox` remains the per-site check for the one case
+// this cannot see — a test that unsets the marker after this module is already imported.
 //
-// Deny the PATHS, not each destructive call: a test cannot reach a `rmSync` with a real path in hand if
-// the path never resolved. `assertTestSandbox` remains the per-site check for the narrower case of a test
-// that unsets the marker after this module is already imported.
+// Inert outside `bun test`: a built binary has NODE_ENV --defined to its channel (scripts/build.ts),
+// folding the comparison to a compile-time false; `bun run dev` leaves NODE_ENV unset; `runCli`
+// forwards the parent's whole environment, marker included, so its subprocess passes.
 //
-// Inert outside a test run. A built binary has NODE_ENV --defined to its build channel
-// ("production" | "development", scripts/build.ts), so the comparison folds to a compile-time false and
-// the branch is eliminated. `bun run dev` leaves NODE_ENV unset. `runCli` forwards the parent's whole
-// environment, marker included, so its subprocess passes.
-//
-// `throw` at import rather than a Result: module evaluation has no error channel to return one on, and
-// aborting the process loudly IS the correct outcome — same class as `assertTestSandbox`, a test-harness
-// boundary whose failure must stop the suite rather than be swallowed by a careless caller.
-// The ONE sanctioned NODE_ENV read. The rule that bans it is right — NODE_ENV is not our product-mode
-// axis, INFLEXA_BUILD_CHANNEL is — and this is not a product gate: it asks "is this a `bun test`
-// process?", which the channel cannot answer (a source run and a test run both leave it unset) and only
-// NODE_ENV can. The dot access is load-bearing for exactly the reason the rule cites: scripts/build.ts
-// --defines NODE_ENV from the channel, so a shipped binary folds this to `"production" === "test"` and
-// eliminates the branch entirely.
-// eslint-disable-next-line no-restricted-syntax -- see above
+// `throw`, not Result: module evaluation has no error channel, and a test-harness boundary's failure
+// must stop the suite loudly. This is also the ONE sanctioned NODE_ENV read: it asks "is this a
+// `bun test` process?", which only NODE_ENV can answer (the build channel is unset in both a source
+// run and a test run) — and the literal dot access is what lets the build's --define eliminate the
+// branch in a shipped binary.
+// eslint-disable-next-line no-restricted-syntax -- the one sanctioned NODE_ENV read; see above
 if (isUnsandboxedTestRun(process.env.NODE_ENV, process.env.INFLEXA_TEST_SANDBOX)) {
     throw new Error(
         "refusing to resolve inflexa paths: test sandbox not active — NODE_ENV=test but INFLEXA_TEST_SANDBOX is unset, so env.* would point at your real data. Run `bun test` from cli/ so bunfig's preload redirects XDG_* and stamps the marker.",
@@ -169,7 +162,6 @@ export const env = Object.freeze({
      * Deliberately ONE global base rather than per-analysis (e.g. under the analysis's
      * output dir): the embedded harness closes over a single `sessionsBasePath` when its
      * workflows are registered, once per process, so the base cannot vary by analysis.
-     * See openspec/changes/embed-harness-runtime (design decision D2).
      */
     sessionsDir: join(dataDir(), "inflexa", "sessions"),
     /**
@@ -214,14 +206,10 @@ export const env = Object.freeze({
     cliproxyApiUrl: `http://localhost:${cliproxyPort}/v1`, // chat backend endpoint
     postgresPort,
     /**
-     * True unless this is a production build — derived from the baked {@link bakedEnv.buildChannel}
-     * (via {@link isDevelopmentBuild}), never from NODE_ENV. A production binary bakes
-     * `INFLEXA_BUILD_CHANNEL=production`, guaranteed by scripts/build.ts's missing-var guard, so
-     * `isDevelopment` is a compile-time-fixed `false`; `bun run dev` leaves the channel unset, so it is
-     * `true`. Governs dev-only runtime layout: the compose container/network prefix
+     * True unless the `production` channel was baked in — {@link isDevelopmentBuild} over
+     * {@link bakedEnv.buildChannel}, never NODE_ENV (the buildChannel note above owns the
+     * one-axis rationale). Governs dev-only runtime layout: the compose container/network prefix
      * (src/modules/infra/compose.ts) and the harness skills/templates dirs (src/modules/harness/config.ts).
-     * Reading NODE_ENV directly would be the wrong signal — its Bun.build value is set by --define from
-     * this same channel, but as the deps' compile-mode axis it is intentionally not a source of truth here.
      */
     isDevelopment: isDevelopmentBuild(bakedEnv.buildChannel),
 });

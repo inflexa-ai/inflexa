@@ -1,7 +1,7 @@
 import type { EmitFn, EventSource } from "@inflexa-ai/harness";
 
 // The `inflexa chat` emit sink — renders one in-process `EmitFn` stream to a
-// plain-text terminal (task 4.3 / design D5). It is deliberately coarse: this
+// plain-text terminal. It is deliberately coarse: this
 // is the walking-skeleton dev surface, not the daemon+TUI renderer that #33
 // M3/M4 replaces it with. Three rules are load-bearing and each maps to a
 // chat-command spec requirement:
@@ -78,7 +78,7 @@ function eventSource(event: Parameters<EmitFn>[0]): EventSource | undefined {
  * top-level chat agent's `callPath` has length 1; anything longer is sub-agent
  * traffic. Events without a `source` (stream text deltas) are never sub-agent, so
  * they always pass. Exported so the TUI adapter shares this exact ruleset instead
- * of re-deriving it (design D3). `callPath` is external/loop-owned, so it is
+ * of re-deriving it. `callPath` is external/loop-owned, so it is
  * guarded with `Array.isArray` (matching every other untrusted read here) — a
  * malformed source lacking the array is treated as top-level rather than throwing.
  */
@@ -98,7 +98,7 @@ function formatMs(ms: number): string {
  * but `ChatDataPart.data` is typed `unknown`, so this narrows defensively and
  * copies every field it keeps — no reference to `data` survives the call.
  * Exported so the TUI adapter extracts card fields with this exact reader rather
- * than duplicating the coercion (design D3).
+ * than duplicating the coercion.
  */
 export function readPlanCard(data: unknown): { planId: string; title: string; steps: { id: string; name: string; agent: string }[] } {
     // `data` is external/loop-owned; treat it as a loose record and pull only
@@ -125,10 +125,9 @@ export function readPlanCard(data: unknown): { planId: string; title: string; st
 /**
  * Read a run card's render fields off the `unknown` `data` payload (the
  * harness's `RunCardData`). Note the contract carries NO run status field
- * (design D5 says "runId + status", but `RunCardData`/`RunCardPart` expose
- * `{runId, planId, title, stepCount}`), so this renders identity + step count.
- * Exported alongside {@link readPlanCard} so the TUI adapter shares the reader
- * (design D3).
+ * (`RunCardData`/`RunCardPart` expose `{runId, planId, title, stepCount}`),
+ * so this renders identity + step count.
+ * Exported alongside {@link readPlanCard} so the TUI adapter shares the reader.
  */
 export function readRunCard(data: unknown): { runId: string; title: string; stepCount: number } {
     // `data` is external/loop-owned; cast to a loose record and read-and-coerce
