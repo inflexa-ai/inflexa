@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { onCleanup } from "solid-js";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 
 import { env } from "../lib/env.ts";
 import { runCli } from "./cli.ts";
@@ -77,6 +77,37 @@ describe("freshDb / resetDb", () => {
             rmSync(env.dbPath, { force: true });
         }
     });
+
+    // A marker whose VALUE points at real data — an exported `INFLEXA_TEST_SANDBOX=$HOME` (basename =
+    // the username) or `=/` (basename = "") — used to be trusted: isInsideSandbox is pure prefix
+    // containment, so $HOME collapses the sandbox root to the developer's home and / collapses it to "",
+    // and every real env.* path then counts as "inside". The marker-SHAPE gate (assertTestSandbox →
+    // isSandboxMarkerShaped) now refuses any marker whose basename is not `inflexa-test-*` before a single
+    // deletion. Proven the same way as the absent-marker test: env.dbPath is the sentinel path inside the
+    // REAL sandbox (safe to write/remove); under the `/` marker its containment check WOULD authorize
+    // that path (every absolute path is under "/"), so only the shape gate keeps resetDb from rmSync'ing
+    // the sentinel.
+    for (const bogusMarker of [homedir(), sep]) {
+        test(`refuses a value-only marker (${bogusMarker}) before deleting; sentinel survives`, () => {
+            const saved = process.env.INFLEXA_TEST_SANDBOX;
+            // Guard the repo-root scenario first, while the real marker is still present, so a stray run
+            // where env.dbPath is the developer's real DB throws before the mkdir/write below touches it.
+            assertTestSandbox(env.dbPath);
+            mkdirSync(dirname(env.dbPath), { recursive: true });
+            writeFileSync(env.dbPath, "sentinel");
+            process.env.INFLEXA_TEST_SANDBOX = bogusMarker;
+            try {
+                expect(() => resetDb()).toThrow("test sandbox not active");
+                // The refusal is the SHAPE gate firing, not containment: a malformed marker is rejected
+                // before the path is ever tested, so the reason names the marker's danger, not the path.
+                expect(() => resetDb()).toThrow("must never authorize destroying real data");
+                expect(existsSync(env.dbPath)).toBe(true);
+            } finally {
+                if (saved !== undefined) process.env.INFLEXA_TEST_SANDBOX = saved;
+                rmSync(env.dbPath, { force: true });
+            }
+        });
+    }
 });
 
 // The guard's containment test is lexical, so its one interesting failure mode is a path that merely
@@ -102,6 +133,33 @@ describe("assertTestSandbox containment", () => {
 
     test("an unrelated real path is refused", () => {
         expect(() => assertTestSandbox(join(homedir(), ".local", "share", "inflexa", "agent.db"))).toThrow("test sandbox not active");
+    });
+});
+
+// The shape gate defeats a marker whose VALUE names a real directory. These are pure decisions (no fs),
+// so a throw is proof the exploit path never reaches a deletion. Unlike the sentinel tests above (which
+// target env.dbPath INSIDE the real sandbox), these target real ~/... paths — exactly what the old
+// value-only guard authorized under these markers.
+describe("assertTestSandbox marker shape", () => {
+    // Captured before any test mutates the env var (see the containment block's note on non-null-ness).
+    const sandbox = process.env.INFLEXA_TEST_SANDBOX;
+    // Restore the real sandbox marker for the sibling test files sharing this process.
+    afterAll(() => {
+        if (typeof sandbox === "string") process.env.INFLEXA_TEST_SANDBOX = sandbox;
+    });
+
+    test("a $HOME marker no longer authorizes a real home path", () => {
+        // The exploit: the old value-only guard made every path under home "inside" the sandbox when the
+        // marker was $HOME. The shape gate rejects the MARKER, so even a real ~/... path is refused.
+        process.env.INFLEXA_TEST_SANDBOX = homedir();
+        expect(() => assertTestSandbox(join(homedir(), ".local", "share", "inflexa", "agent.db"))).toThrow("must never authorize destroying real data");
+    });
+
+    test("a / marker no longer authorizes an arbitrary absolute path", () => {
+        // With marker=/ every absolute path passed containment (root collapses to ""); the shape gate is
+        // the only thing that now refuses it.
+        process.env.INFLEXA_TEST_SANDBOX = sep;
+        expect(() => assertTestSandbox(join(homedir(), ".config", "inflexa", "config.json"))).toThrow("must never authorize destroying real data");
     });
 });
 

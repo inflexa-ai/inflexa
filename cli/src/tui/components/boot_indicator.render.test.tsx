@@ -45,11 +45,11 @@ describe("BootIndicator + gated ChatBar render", () => {
         }
     });
 
-    test("the gated ChatBar surfaces the closed gate in its placeholder", async () => {
+    test("the booting-gated ChatBar surfaces the closed gate in its placeholder", async () => {
         const setup = await testRender(
             () => (
                 <box width="100%" height="100%">
-                    <ChatBar gated onTextareaRef={noop} onSubmit={noop} />
+                    <ChatBar gate="booting" onTextareaRef={noop} onSubmit={noop} />
                 </box>
             ),
             { width: 60, height: 8 },
@@ -57,6 +57,26 @@ describe("BootIndicator + gated ChatBar render", () => {
         try {
             await setup.renderOnce();
             expect(setup.captureCharFrame()).toContain("Booting harness runtime");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("the failed-gated ChatBar surfaces an honest boot-failed placeholder, not the booting one", async () => {
+        const setup = await testRender(
+            () => (
+                <box width="100%" height="100%">
+                    <ChatBar gate="failed" onTextareaRef={noop} onSubmit={noop} />
+                </box>
+            ),
+            { width: 60, height: 8 },
+        );
+        try {
+            await setup.renderOnce();
+            const frame = setup.captureCharFrame();
+            // A terminal boot failure must not keep claiming the runtime is still booting.
+            expect(frame).toContain("Boot failed");
+            expect(frame).not.toContain("Booting harness runtime");
         } finally {
             setup.renderer.destroy();
         }
@@ -108,7 +128,7 @@ describe("BootIndicator at its real mount shape survives bleed + short-terminal 
                             <box width="100%" flexShrink={0} backgroundColor={theme().bg} paddingLeft={1} paddingRight={1}>
                                 <BootIndicator />
                             </box>
-                            <ChatBar gated onTextareaRef={noop} onSubmit={noop} />
+                            <ChatBar gate="booting" onTextareaRef={noop} onSubmit={noop} />
                         </box>
                     </box>
                 ),

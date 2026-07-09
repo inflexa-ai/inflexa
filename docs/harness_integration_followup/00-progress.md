@@ -34,8 +34,8 @@ later:    ┌─ record-plan-lineage (the RQ6 provenance rider, deferred out of 
 
 **`tui-profile-lifecycle` LANDED 2026-07-09** (user-requested polish round on PR #45):
 the data profile now follows the analysis's input set instead of firing once. Drift-aware
-parity ladder (current enumerated `fileId` set vs the completed profile's
-`result.inputFileIds`; enumerate-first so checks cost stat/readdir, staging only on a
+parity ladder (current enumerated drift signatures — fileId+size+mtimeMs — vs the
+completed profile's `result.inputFiles`, hardened in a6b4368; enumerate-first so checks cost stat/readdir, staging only on a
 decided trigger), live edges (debounced `prov.input_*` bus subscription + a
 running→completed completion watch), clear-on-empty (harness rider: `clearDataProfile`,
 nullable `data_profile_status`, NULL claimable by the start CAS — the wedge fix caught in
@@ -85,8 +85,8 @@ It also took the #37 interim per-analysis lock across `run`/`profile`/`chat` and
 | TUI chat = conversation agent (parity with Cortex managed) | `14-tui-chat-direction.md` change 1 (`tui-harness-chat`) | **LANDED + archived 2026-07-08**; live-verified (PTY, exit 0) |
 | Sidebar: data-profile section + real runs (mocks out) | `14-tui-chat-direction.md` change 2 (`tui-sidebar-live`) | **LANDED 2026-07-08**; live-verified via tmux capture; found+fixed the trigger→sidebar refresh gap |
 | Proxy-chat retirement + `dev` command umbrella | `14-tui-chat-direction.md` change 3 | **LANDED 2026-07-08** — `modules/intelligence/` gone; bus = `prov.*` only; channel gate verified |
-| Release binary build BROKEN at HEAD (pre-existing) | retire-proxy-chat findings F1 | `bun run build` fails on DBOS-SDK telemetry lazy-requires (`winston`, otel-proto) unresolvable under Bun.build — reproduced on unmodified HEAD; needs externalize/stub or deps |
-| `INFLEXA_GIT_COMMIT` never actually baked (pre-existing) | retire-proxy-chat verify observation | build.ts sets it claiming the bakedEnv guard covers it, but the scan finds no literal dot-access (the getter is out-of-block) — a compiled binary would throw at first `gitCommit` use; masked by the build break |
+| Release binary build (was BROKEN, pre-existing) | retire-proxy-chat findings F1 | **FIXED at 442a304** — winston/winston-transport/otlp-proto + node-llama-cpp marked external in build.ts (DBOS-SDK requires them only on its never-enabled OTLP path); build + build:all verified clean in that commit |
+| `INFLEXA_GIT_COMMIT` baking (was: never baked, pre-existing) | retire-proxy-chat verify observation | **FIXED at 40eb417** — build.ts refuses a production build without the commit and emits its --define explicitly (the bakedEnv scanner deliberately does not cover it); env.ts keeps a channel-keyed runtime backstop |
 | Daemon architecture (one runtime, many clients) | #33 | decided + milestoned (M1–M4); demoted 2026-07-08 — a later transport swap, NOT a prerequisite (14) |
 | State ownership under the daemon | #36 | open; 4 decision areas with recommendations |
 | Provenance chain-fork (two recorders, one analysis) | #37 | open bug; structurally closed by #33 M2/M3 |

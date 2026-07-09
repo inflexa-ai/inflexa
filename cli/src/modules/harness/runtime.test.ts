@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -149,6 +149,16 @@ function recordingSeams(calls: string[]): BootSeams {
     };
 }
 
+// A successful boot's `acquireInstanceLock(RUNTIME_LOCK_KEY)` does a real `mkdirSync`/`writeFileSync`
+// under `env.locksDir`. env.ts's import-time backstop only fires under NODE_ENV=test — a shell that
+// pre-exported NODE_ENV (e.g. `NODE_ENV=development bun test`) disables it, and bun does not force it —
+// so this per-file guard is the belt-and-suspenders that keeps the boot tests off the developer's REAL
+// ~/.local/share/inflexa/locks. It throws unless the bunfig preload stamped INFLEXA_TEST_SANDBOX and the
+// path lives inside it (see test_support/sandbox.ts).
+beforeEach(() => {
+    assertTestSandbox(env.locksDir);
+});
+
 afterEach(() => {
     __resetHarnessRuntimeForTest();
     rmSync(skillsDir, { recursive: true, force: true });
@@ -275,6 +285,23 @@ describe("bootHarnessRuntime", () => {
         const second = (await bootHarnessRuntime({ seams, config: testConfig() }))._unsafeUnwrap();
         expect(second).toBe(first);
         expect(calls).toHaveLength(countAfterFirst);
+    });
+
+    test("two concurrent boots share one in-flight attempt: seams run once, both callers get the same runtime", async () => {
+        const calls: string[] = [];
+        const seams = recordingSeams(calls);
+        const cfg = testConfig();
+        // Both calls are issued BEFORE the first settles. The second must ride the first's memoized
+        // in-flight promise rather than start a second registration cohort — which would throw in DBOS
+        // re-registration and release the shared runtime lock out from under the first boot's live engine.
+        const [r1, r2] = await Promise.all([bootHarnessRuntime({ seams, config: cfg }), bootHarnessRuntime({ seams, config: cfg })]);
+
+        const runtime = r1._unsafeUnwrap();
+        expect(r2._unsafeUnwrap()).toBe(runtime); // one runtime, shared by both callers
+        // The whole sequence ran exactly once — `assemble` (registration cohort) and `launch` (its tail)
+        // each appear a single time, so no second boot registered anything.
+        expect(calls.filter((c) => c === "assemble")).toHaveLength(1);
+        expect(calls.filter((c) => c === "launch")).toHaveLength(1);
     });
 
     test("unavailable Postgres short-circuits before ingress/register/launch", async () => {

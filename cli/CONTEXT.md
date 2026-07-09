@@ -11,9 +11,16 @@ The local-first host for the Inflexa product, and the **embedder** of `@inflexa-
 Code is grouped by feature, not by layer — a module owns its logic, its text command actions, and its logic-local types.
 
 - **`auth/`** — Auth0 device flow + `login` / `logout` / `whoami`. Config seeded from `.env` (`INFLEXA_AUTH0_*`).
-- **`proxy/`** — CLIProxyAPI lifecycle + `setup` (the local model proxy).
+- **`proxy/`** — the CLIProxyAPI model helpers (`models.ts`: client key discovery + default-model ranking); the container lifecycle/provisioning lives in `infra/`.
 - **`analysis/`** — analysis lifecycle + the `sessions` command (live launch-identity rows; message history is frozen legacy data).
 - **`anchor/`** — invisible folder-identity markers (`.inflexa/id`) and lazy path reconciliation.
+- **`harness/`** — the harness embedder: boots the harness runtime (DBOS, sandbox, providers) and drives the chat turn, the model-free `run --plan` replay engine, data profiling, and the provenance bridge.
+- **`embedding/`** — config-driven embedding-provider resolution + the in-process bge-small local model (download, verify, lifecycle).
+- **`infra/`** — the container stack: `setup` / `up` / `down` provisioning CLIProxyAPI + Postgres/pgvector via a generated Docker Compose file.
+- **`libs/`** — the published sandbox image variants (GHCR refs) + the `sandbox pull` / `status` actions.
+- **`project/`** — project CRUD command actions (`project new` / `project ls`).
+- **`prov/`** — the provenance recorder: a bus subscriber that builds, signs, and persists each analysis's PROV document, plus `prov export` / `prov verify`.
+- **`staging/`** — stages analysis input files under the data dir with content hashes into the harness-compatible `StagedInput` manifest.
 
 ## Shared infrastructure
 

@@ -79,6 +79,22 @@ describe("openSession — analysis swap decision", () => {
         expect(notice?.text).toContain("4242");
     });
 
+    test('refused with an unknown holder pid (-1) omits the pid clause rather than printing "pid -1"', () => {
+        // On the reclaim race `acquireInstanceLock` reports the holder pid as -1 (lock.ts). The notice
+        // must degrade to naming just the analysis, never surface the -1 sentinel.
+        const t = makeSeams(() => ({ acquired: false, holderPid: -1 }));
+        const ws = createWorkspace(initFor(A), t.seams);
+
+        ws.openSession("s2", "/dir2", B);
+
+        expect(ws.analysis?.id).toBe("a1"); // scope untouched
+        expect(t.notices).toHaveLength(1);
+        const text = t.notices[0]?.text ?? "";
+        expect(text).toContain("Bravo");
+        expect(text).not.toContain("pid");
+        expect(text).not.toContain("-1");
+    });
+
     test("acquired: new lock claimed, in-flight turn aborted, old lock released, scope swapped", () => {
         const t = makeSeams(() => ({ acquired: true }));
         const ws = createWorkspace(initFor(A), t.seams);

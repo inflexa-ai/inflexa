@@ -299,6 +299,20 @@ function walkInputFiles(analysisId: string): Result<InputFile[], DbError | Stagi
 
     const files: InputFile[] = [];
     for (const { input, absPath } of resolvedInputs) {
+        // Resolve existence ONCE, in the walk both callers share, so enumeration and staging can never
+        // disagree about whether a source is still on disk. A source deleted while its input row
+        // survives is a routine DB/filesystem desync — the user may delete an input at any moment — not
+        // a fault: treat it as removed and skip it here. Without this shared gate the two callers
+        // diverge: enumeration skips the stat-missing file and reports drift, but staging deletes the
+        // previously staged copy and then fails to re-link the gone source, which wedges the
+        // drift-repair loop into a recurring "could not start profiling" toast that never converges.
+        // Directory MEMBERS are existence-checked by `walkFiles` itself; this covers the input root — a
+        // lone file, or a whole directory that vanished (whose `walkFiles` would otherwise ENOENT-fault
+        // in staging while enumeration silently skipped it).
+        if (statResult(absPath, "walkInputFiles:exists").isErr()) {
+            getLogger("staging").warn({ absPath, path: input.path }, "input source missing on disk — skipping it (treating it as removed)");
+            continue;
+        }
         // Anchored inputs keep their human-readable anchor-relative path as the
         // key. Anchorless inputs carry an ABSOLUTE host path — used verbatim it
         // leaks the host filesystem into the sandbox layout and the agent

@@ -112,8 +112,11 @@ export function createWorkspace(init: WorkspaceInit, seams: WorkspaceSeams = rea
                 if (!outcome.acquired) {
                     // Refused: the target is live in another process. Name the holder pid so the notice
                     // is actionable, and abort the swap whole — the current scope and its lock are
-                    // untouched (no partial state).
-                    seams.notify({ kind: "warn", text: `"${analysis.name}" is already open in another instance (pid ${outcome.holderPid}).` });
+                    // untouched (no partial state). On the reclaim race `acquireInstanceLock` reports an
+                    // unknown holder as `-1` (lock.ts); omit the pid clause then rather than print "(pid
+                    // -1)", which reads as a bug.
+                    const pidClause = outcome.holderPid >= 0 ? ` (pid ${outcome.holderPid})` : "";
+                    seams.notify({ kind: "warn", text: `"${analysis.name}" is already open in another instance${pidClause}.` });
                     return;
                 }
                 // Abort any in-flight turn BEFORE releasing the old analysis's lock, so no turn keeps

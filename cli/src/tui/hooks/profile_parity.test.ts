@@ -154,6 +154,24 @@ describe("driveProfileParity — mid-check analysis swap guard", () => {
         expect(refreshedWith).toEqual([ANALYSIS.id]);
         expect(notices).toEqual([{ kind: "info", text: `Profiling "${ANALYSIS.name}" data${GLYPHS.ellipsis}` }]);
     });
+
+    test("a drive whose analysis is no longer open at DEQUEUE never even stages", async () => {
+        // The cross-process race: a queued drive for A that starts staging A's tree AFTER this process
+        // released A's lock (a swap) collides with a second `inflexa` now holding it. The dequeue guard
+        // skips the drive BEFORE `check` stages anything — proven here by `check` never running.
+        let checked = false;
+        const seams: ParityDriverSeams = {
+            check: async () => {
+                checked = true;
+                return { kind: "triggered", restarted: false };
+            },
+            refreshSidebar: async () => {},
+            notify: () => {},
+        };
+        // The open analysis already moved off ANALYSIS before this queued drive dequeues.
+        await driveProfileParity(RUNTIME, ANALYSIS, () => "a2", seams);
+        expect(checked).toBe(false);
+    });
 });
 
 describe("driveForceReprofile — deliberate re-profile speaks its skips", () => {
@@ -371,6 +389,31 @@ describe("watchProfileParity — run-completion edge", () => {
             h.drives.length = 0;
             await refreshSidebarData("A", refreshSeams(profileStatus({ status: "completed", completedAt: "2026-07-08T00:00:05.000Z" })));
             expect(h.drives).toEqual([]); // no running→completed transition, no drive
+        } finally {
+            dispose();
+        }
+    });
+
+    test("a swap transitioning the shared snapshot A-running → B-completed fires nothing", async () => {
+        // The shared profile snapshot is not analysis-scoped, so an analysis swap can walk it
+        // A-running → B-completed — a status pair that reads as a completion but is B's, not A's. The
+        // analysis-keyed guard fires only when the id is unchanged across the transition, so this fires
+        // no redundant drive.
+        const h = watchHarness();
+        const ws = wsMut("A");
+        const dispose = mountWatch(ws, h.seams);
+        try {
+            await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver);
+            h.drives.length = 0; // ignore the boot edge
+
+            // A's profile is running — records prev = { running, A }.
+            await refreshSidebarData("A", refreshSeams(profileStatus({ status: "running" })));
+            expect(h.drives).toEqual([]);
+
+            // Swap to B, then B's completed profile lands: running→completed across DIFFERENT analyses.
+            ws.analysis = { id: "B", name: "n-B" } as unknown as Analysis;
+            await refreshSidebarData("B", refreshSeams(profileStatus({ status: "completed", completedAt: "2026-07-08T00:00:05.000Z" })));
+            expect(h.drives).toEqual([]);
         } finally {
             dispose();
         }

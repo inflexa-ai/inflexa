@@ -277,6 +277,57 @@ describe("stageInputs", () => {
         expect(existsSync(join(targetDir, "inputs", "local", "old"))).toBe(false);
     });
 
+    test("a file present in DB but deleted on disk is skipped, reconciled away, and never fails staging", async () => {
+        // The desync the shared-walk existence gate closes: an input whose source is deleted while its
+        // row survives. Before the gate, staging deleted the stale staged copy and then failed to
+        // re-link the gone source, so `stageAndSeed` mapped to `staging_failed` and the parity loop
+        // toasted "could not start profiling" on every edge. Now enumeration and staging BOTH skip it,
+        // and reconciliation removes the orphaned copy — parity converges over the survivors.
+        writeFileSync(join(anchorDir, "keep.csv"), "keep");
+        writeFileSync(join(anchorDir, "gone.csv"), "gone");
+        insertAnalysisInput({ path: "keep.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        insertAnalysisInput({ path: "gone.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+
+        const first = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        expect(first).toHaveLength(2);
+        expect(existsSync(join(targetDir, "inputs", "local", "gone.csv"))).toBe(true);
+
+        // Delete the source on disk while its DB row stays — the routine DB/filesystem disagreement.
+        rmSync(join(anchorDir, "gone.csv"), { force: true });
+
+        // Enumeration skips the gone file (reports drift over the survivor)…
+        const enumSigs = enumerateInputSignatures(analysisId)._unsafeUnwrap();
+        expect(enumSigs.size).toBe(1);
+
+        // …and staging COMPLETES over the survivor rather than hard-failing on the dead link.
+        const second = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        expect(second.map((s) => s.key)).toEqual(["keep.csv"]);
+        // The stale staged copy of the now-gone input is reconciled away — no orphan lingers.
+        expect(existsSync(join(targetDir, "inputs", "local", "gone.csv"))).toBe(false);
+        // Both callers land on the SAME identity space — the divergence the gate structurally closes.
+        const manifestSigs = new Set(second.map((s) => inputSignature(s.fileId, s.size, s.mtimeMs)));
+        expect([...enumSigs].sort()).toEqual([...manifestSigs].sort());
+    });
+
+    test("a directory input whose root vanished is skipped, not a staging failure", async () => {
+        // Symmetry with the single-file case: a whole directory input deleted on disk. Before the shared
+        // gate, `walkFiles` ENOENT-faulted inside staging (→ `staging_failed`) while enumeration skipped
+        // it, so the two callers diverged. Now the root existence check skips it in the shared walk.
+        const dirPath = join(anchorDir, "vanished-dir");
+        mkdirSync(dirPath, { recursive: true });
+        writeFileSync(join(dirPath, "inside.txt"), "x");
+        writeFileSync(join(anchorDir, "survivor.csv"), "s");
+        insertAnalysisInput({ path: "vanished-dir", isDir: true, analysisId, anchorId })._unsafeUnwrap();
+        insertAnalysisInput({ path: "survivor.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+
+        rmSync(dirPath, { recursive: true, force: true });
+
+        const enumSigs = enumerateInputSignatures(analysisId)._unsafeUnwrap();
+        expect(enumSigs.size).toBe(1);
+        const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        expect(staged.map((s) => s.key)).toEqual(["survivor.csv"]);
+    });
+
     test("re-staging yields identical fileIds and refreshed content", async () => {
         const dirPath = join(anchorDir, "stable");
         mkdirSync(dirPath, { recursive: true });

@@ -124,29 +124,60 @@ export function tryRerunDataProfile(pool: Querier, analysisId: string): ResultAs
     });
 }
 
-export function completeDataProfile(pool: Querier, analysisId: string, result?: DataProfileResult): ResultAsync<void, DbError> {
+/**
+ * Stamp a claimed-`running` row `completed` and record its result — a terminal
+ * write CAS'd on `data_profile_status = 'running'`.
+ *
+ * The running guard is load-bearing, not decoration. This write runs as plain
+ * workflow-body code, and the row it targets can be moved out from under it in the
+ * window between the claim and this call: `clearDataProfile` nulls an emptied-inputs
+ * row (its own guard only defers on a *running* row, so it succeeds on a `failed` one),
+ * `expireStaleDataProfile` flips a slow run to `failed`, and DBOS recovery may replay
+ * this body after either has landed. Without the guard a late completion re-stamps
+ * `completed` + result over a since-cleared row, resurrecting exactly the seedless-
+ * completed state the seed CAS forbids (`completed` with a NULL `seed_input_file_ids`).
+ * Every legitimate caller reaches here from a row it claimed into `running`, so the
+ * guard only ever refuses a row another writer already moved on from.
+ *
+ * `ok(true)` when this call stamped the row; `ok(false)` when the guard refused it
+ * (the row was cleared/expired/replayed away) — a no-op the caller logs, not an error.
+ */
+export function completeDataProfile(pool: Querier, analysisId: string, result?: DataProfileResult): ResultAsync<boolean, DbError> {
     const now = new Date().toISOString();
     return tryMutation("dataProfile.completeDataProfile", async () => {
-        await pool.query({
+        const res = await pool.query({
             text: `UPDATE cortex_analysis_state
             SET data_profile_status = 'completed', data_profile_completed_at = $1,
                 data_profile_result = $2::jsonb
-            WHERE analysis_id = $3`,
+            WHERE analysis_id = $3 AND data_profile_status = 'running'`,
             values: [now, result ? JSON.stringify(result) : null, analysisId],
         });
+        return (res.rowCount ?? 0) > 0;
     });
 }
 
-export function failDataProfile(pool: Querier, analysisId: string, error: string): ResultAsync<void, DbError> {
+/**
+ * Stamp a claimed-`running` row `failed` with a reason — the terminal-failure
+ * counterpart to {@link completeDataProfile}, CAS'd on `data_profile_status = 'running'`
+ * for the same reason: a workflow that fails after its row was cleared/expired
+ * out from under it (or a recovery replay of that body) must not resurrect a
+ * `failed` status over a cleared row. `data_profile_result` is left untouched so a
+ * prior profile survives the failure (the re-profile/retry route can keep serving it).
+ *
+ * `ok(true)` when this call stamped the row; `ok(false)` when the guard refused it —
+ * a logged no-op, not an error.
+ */
+export function failDataProfile(pool: Querier, analysisId: string, error: string): ResultAsync<boolean, DbError> {
     const now = new Date().toISOString();
     return tryMutation("dataProfile.failDataProfile", async () => {
-        await pool.query({
+        const res = await pool.query({
             text: `UPDATE cortex_analysis_state
             SET data_profile_status = 'failed', data_profile_error = $1,
                 data_profile_completed_at = $2
-            WHERE analysis_id = $3`,
+            WHERE analysis_id = $3 AND data_profile_status = 'running'`,
             values: [error, now, analysisId],
         });
+        return (res.rowCount ?? 0) > 0;
     });
 }
 
@@ -214,11 +245,18 @@ export function reconcileOrphanedDataProfile(pool: Querier, analysisId: string):
  *
  * An emptied input set makes any existing profile a lie: it describes files
  * the analysis no longer has, so the UI must fall back to "not profiled". The
- * `IS DISTINCT FROM 'running'` guard exists because a live profiling workflow's
- * completion write would resurrect half-cleared state (re-stamping `completed`
- * over the freshly-nulled ledger). Rather than fight the workflow, clearing
- * defers on a running row and leaves reconciliation to the caller's next
- * parity check once that workflow has settled.
+ * `IS DISTINCT FROM 'running'` guard defers the clear while a profiling workflow
+ * is live, so this write does not race that workflow's own ledger updates;
+ * reconciliation waits for the caller's next parity check once it settles.
+ *
+ * Deferring here is NOT what stops a late workflow from resurrecting a cleared
+ * row — it cannot be, because a clear still succeeds once the row has left
+ * `running`. The dangerous interleave is: `expireStaleDataProfile` flips a slow
+ * run to `failed`, this clear then succeeds on that `failed` row, and the
+ * still-live workflow finally reaches its terminal write against a since-cleared
+ * row. That resurrection is closed at the OTHER end: `completeDataProfile` /
+ * `failDataProfile` CAS on `data_profile_status = 'running'`, so a terminal write
+ * finds no running row to stamp and no-ops instead of re-seeding the cleared one.
  */
 export function clearDataProfile(pool: Querier, analysisId: string): ResultAsync<boolean, DbError> {
     return tryMutation("dataProfile.clearDataProfile", async () => {
@@ -277,5 +315,29 @@ export function loadDataProfileStatus(pool: Querier, analysisId: string): Result
             result: row.data_profile_result ?? null,
             seedInputFileIds: row.seed_input_file_ids ?? null,
         };
+    });
+}
+
+/**
+ * Read an analysis's raw `seed_input_file_ids`, without the NULL-status collapse
+ * {@link loadDataProfileStatus} applies (which hides the seed of any cleared row).
+ * Returns the seeded set, or `null` for BOTH "no such analysis row" AND "the row
+ * exists but the column is NULL" — the two are deliberately indistinguishable here,
+ * exactly as they are to the consumer: both mean "nothing to profile, no claim would
+ * match". A stored `[]` returns as an empty array — a real value naming zero files,
+ * which a caller refuses distinctly from a missing seed.
+ *
+ * Advisory only: this read never gates a claim. The seed conjunct that actually makes
+ * a seedless `running` row impossible rides in each claim's CAS (see {@link SEEDED});
+ * this exists so a caller can name WHY no claim would match before it fires one (the
+ * seed-first guard in `triggerDataProfile`).
+ */
+export function loadSeedInputFileIds(pool: Querier, analysisId: string): ResultAsync<string[] | null, DbError> {
+    return tryQuery("dataProfile.loadSeedInputFileIds", async () => {
+        const result = await pool.query<{ seed: string[] | null }>({
+            text: "SELECT seed_input_file_ids AS seed FROM cortex_analysis_state WHERE analysis_id = $1",
+            values: [analysisId],
+        });
+        return result.rows[0]?.seed ?? null;
     });
 }

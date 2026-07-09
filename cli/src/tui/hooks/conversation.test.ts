@@ -5,6 +5,7 @@ import type { MessagePage } from "@inflexa-ai/harness";
 import {
     applyEmitEvent,
     type CortexMsg,
+    cortexToUiMessage,
     errorMsg,
     lastTurnFailure,
     loadMessages,
@@ -678,7 +679,8 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
 
     test("a streamed final answer is not duplicated by the fallback", async () => {
         // The buffer is non-empty at completion, so the final assistant text DID stream — rendering
-        // `fallbackText` on top of it would print the answer twice.
+        // `fallbackText` on top of it would print the answer twice. The turn's FIRST event is a tool
+        // (the common bare-tool_use first iteration), so the prose must render BELOW the chip.
         const seams = fakeSeams({ kind: "ok", fallbackText: "streamed answer" }, (emit) => {
             void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
             void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", isError: false } as never);
@@ -689,6 +691,27 @@ describe("a delta-less final segment renders after a mid-turn part", () => {
         const texts = messages[1]?.parts.filter((p) => p.type === "text") ?? [];
         expect(texts.length).toBe(1);
         expect(texts[0]?.type === "text" ? texts[0].text : undefined).toBe("streamed answer");
+        // Part ORDER is [tool][text]: the pre-minted empty part[0] was dropped when the tool arrived
+        // first, so the prose opened a fresh segment BELOW the chip — matching a transcript reload,
+        // never the pre-fix inversion where part[0] stranded the prose above the tool.
+        const kinds = messages[1]?.parts.map((p) => p.type);
+        expect(kinds).toEqual(["tool-call", "text"]);
+    });
+
+    test("tool-first with the answer only as fallback: prose renders below the tool, not above it", async () => {
+        // The turn's first event is a tool and the final answer never streams — it arrives only as
+        // `fallbackText`. Pre-fix, `streamPartId` still named the pre-minted part[0] ahead of the tool,
+        // so the fallback landed above the chip; the drop-empty fix reopens a fresh segment after it.
+        const seams = fakeSeams({ kind: "ok", fallbackText: "the answer" }, (emit) => {
+            void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
+            void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", isError: false } as never);
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
+
+        const kinds = messages[1]?.parts.map((p) => p.type);
+        expect(kinds).toEqual(["tool-call", "text"]);
+        const trailing = messages[1]?.parts[1];
+        expect(trailing?.type === "text" ? trailing.text : undefined).toBe("the answer");
     });
 
     test("a turn ending on a card with no fallback leaves no trailing empty part", async () => {
@@ -722,5 +745,197 @@ describe("MESSAGE_CAP is coupled to loadPage's perPage clamp", () => {
         await loadMessages(SID, AID, seams);
         expect(seams.perPage()).toBeLessThanOrEqual(200);
         expect(seams.perPage()).toBeGreaterThan(0);
+    });
+});
+
+// The whole live/reload contract as ONE harness: the same turn fed through the live adapter (`send` →
+// `applyEmitEvent`) and through the reload path (`cortexToUiMessage` over the rows the harness would
+// reconstruct, in stored order) must yield the SAME part-type sequence. `content-to-cortex` preserves
+// row order, so a turn whose first event is a tool/card must render that part first LIVE too — the
+// emission-order invariant these findings restore. The pre-fix bug inverted the tool-first shapes live
+// while reload kept row order; here both paths are asserted to agree.
+describe("live emission order matches transcript reload order", () => {
+    type Shape = {
+        readonly name: string;
+        readonly drive: (emit: RunChatTurnArgs["emit"]) => void;
+        readonly fallbackText: string;
+        /** The turn as the harness reconstructs it from persisted rows, in stored order. */
+        readonly reloadParts: readonly { type: "text" | "tool-call"; text?: string; toolName?: string }[];
+    };
+
+    const shapes: Shape[] = [
+        {
+            name: "tool-first, answer streamed",
+            drive: (emit) => {
+                void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
+                void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", isError: false } as never);
+                void emit({ type: "text-delta", text: "answer" });
+            },
+            fallbackText: "answer",
+            reloadParts: [
+                { type: "tool-call", toolName: "read_file" },
+                { type: "text", text: "answer" },
+            ],
+        },
+        {
+            name: "tool-first, answer only as fallback",
+            drive: (emit) => {
+                void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
+                void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", isError: false } as never);
+            },
+            fallbackText: "final",
+            reloadParts: [
+                { type: "tool-call", toolName: "read_file" },
+                { type: "text", text: "final" },
+            ],
+        },
+        {
+            name: "text, tool, text",
+            drive: (emit) => {
+                void emit({ type: "text-delta", text: "before " });
+                void emit({ type: "tool-started", toolUseId: "t1", name: "read_file" } as never);
+                void emit({ type: "tool-finished", toolUseId: "t1", name: "read_file", isError: false } as never);
+                void emit({ type: "text-delta", text: "after" });
+            },
+            fallbackText: "after",
+            reloadParts: [
+                { type: "text", text: "before " },
+                { type: "tool-call", toolName: "read_file" },
+                { type: "text", text: "after" },
+            ],
+        },
+        {
+            name: "text only",
+            drive: (emit) => void emit({ type: "text-delta", text: "hello" }),
+            fallbackText: "hello",
+            reloadParts: [{ type: "text", text: "hello" }],
+        },
+    ];
+
+    for (const shape of shapes) {
+        test(`${shape.name}: live and reload agree on the part sequence`, async () => {
+            await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "ok", fallbackText: shape.fallbackText }, shape.drive));
+            const liveKinds = (messages[1]?.parts ?? []).map((p) => p.type);
+
+            const reloaded = cortexToUiMessage(
+                {
+                    id: "m1",
+                    role: "assistant",
+                    parts: shape.reloadParts.map((p) =>
+                        p.type === "tool-call" ? { type: "tool-call", toolCallId: "t1", toolName: p.toolName } : { type: "text", text: p.text },
+                    ),
+                } as unknown as CortexMsg,
+                SID,
+            );
+            const reloadKinds = reloaded.parts.map((p) => p.type);
+
+            expect(liveKinds).toEqual(reloadKinds);
+            expect(liveKinds).toEqual(shape.reloadParts.map((p) => p.type));
+        });
+    }
+});
+
+// A load fired at the boot-ready edge and superseded by that same edge's submit: pre-fix the dropped
+// load's history never remounted until a manual session swap. `send` re-fires the load after the turn;
+// the pg thread now carries the appended turn, so the reload is convergent — history + the turn mount.
+describe("a superseded initial load is retried after the turn finishes", () => {
+    const emptyPage = (total: number): MessagePage => ({ messages: [], total, page: 0, perPage: 200, hasMore: false });
+
+    test("history mounts once the boot-edge turn completes", async () => {
+        // The initial (boot-edge) load parks on its page read; the submit below supersedes and drops it.
+        let releaseInitial!: () => void;
+        const initialGate = new Promise<void>((r) => {
+            releaseInitial = r;
+        });
+        const initialLoad: LoadSeams = {
+            runtime: () => stubRuntime,
+            loadPage: () => ResultAsync.fromSafePromise(initialGate.then(() => emptyPage(1))),
+            toCortex: async () => [{ id: "old", role: "assistant", parts: [{ type: "text", text: "never-mounted" }] }] as unknown as CortexMsg[],
+        };
+
+        // The post-turn reload seams: the pg thread now holds the prior history AND the just-finished
+        // turn (what appendTurn wrote), so the convergent reconstruction carries all three messages.
+        const reloadSeams: LoadSeams = {
+            runtime: () => stubRuntime,
+            loadPage: () => okAsync(emptyPage(3)),
+            toCortex: async () =>
+                [
+                    { id: "h1", role: "assistant", parts: [{ type: "text", text: "prior history" }] },
+                    { id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] },
+                    { id: "a1", role: "assistant", parts: [{ type: "text", text: "live answer" }] },
+                ] as unknown as CortexMsg[],
+        };
+
+        const load = loadMessages(SID, AID, initialLoad); // parks — the submit below supersedes it
+
+        const seams: SendSeams = {
+            runtime: () => stubRuntime,
+            runChatTurn: async (args: RunChatTurnArgs): Promise<TurnOutcome> => {
+                void args.emit({ type: "text-delta", text: "live answer" });
+                return { kind: "ok", fallbackText: "" };
+            },
+            reloadTranscript: (sid, aid) => loadMessages(sid, aid, reloadSeams),
+        };
+        await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
+
+        // The convergent reload fired and mounted the prior history the dropped load never showed.
+        expect(messages.length).toBe(3);
+        const first = messages[0]?.parts[0];
+        expect(first?.type === "text" ? first.text : undefined).toBe("prior history");
+
+        releaseInitial();
+        await load; // the dropped initial load resolves and no-ops (its generation is stale)
+
+        // Still the convergent transcript — the stale load did not clobber it.
+        expect(messages.length).toBe(3);
+        const stillFirst = messages[0]?.parts[0];
+        expect(stillFirst?.type === "text" ? stillFirst.text : undefined).toBe("prior history");
+    });
+
+    test("no reload when a load already mounted the session's history", async () => {
+        // A completed load records the session; a subsequent turn must NOT re-fire the reload — the
+        // history is already on screen, and the reload replaces the store wholesale.
+        const completedLoad: LoadSeams = {
+            runtime: () => stubRuntime,
+            loadPage: () => okAsync(emptyPage(1)),
+            toCortex: async () => [{ id: "h1", role: "assistant", parts: [{ type: "text", text: "history" }] }] as unknown as CortexMsg[],
+        };
+        await loadMessages(SID, AID, completedLoad);
+        expect(messages.length).toBe(1);
+
+        let reloadFired = false;
+        const seams: SendSeams = {
+            runtime: () => stubRuntime,
+            runChatTurn: async (): Promise<TurnOutcome> => ({ kind: "ok", fallbackText: "done" }),
+            reloadTranscript: async () => {
+                reloadFired = true;
+            },
+        };
+        await send({ sessionId: SID, analysisId: AID, userText: "hi" }, seams);
+
+        // The turn appended to the mounted store (history + user + assistant); the reload was skipped.
+        expect(reloadFired).toBe(false);
+        expect(messages.length).toBe(3);
+    });
+});
+
+describe("send() closes the emit sink at turn completion", () => {
+    test("an event emitted after the turn settles is dropped, not applied to the finished message", async () => {
+        // Capture the turn's emit fn so a late event can fire AFTER send resolves — modelling a tool
+        // that ignored its abort signal and emits past the outcome. The supersession guard would not
+        // catch it (this turn was never superseded); the closed sink must.
+        let lateEmit!: RunChatTurnArgs["emit"];
+        const seams = fakeSeams({ kind: "ok", fallbackText: "done" }, (emit) => {
+            lateEmit = emit;
+            void emit({ type: "text-delta", text: "answer" });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        const partsBefore = messages[1]?.parts.length ?? 0;
+        void lateEmit({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "late", name: "read_file", input: {} });
+
+        // The closed sink dropped the straggler: no new tool chip, the finished message is untouched.
+        expect(messages[1]?.parts.length).toBe(partsBefore);
+        expect(findPart((p): p is ToolCallPart => p.type === "tool-call")).toBeUndefined();
     });
 });
