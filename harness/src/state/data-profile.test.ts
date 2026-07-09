@@ -133,6 +133,10 @@ describe("data-profile state transitions", () => {
         await seedAnalysis(pool, "a-retry", "pending");
         (await tryStartDataProfile(pool, "a-retry"))._unsafeUnwrap();
         (await completeDataProfile(pool, "a-retry", SAMPLE_RESULT))._unsafeUnwrap();
+        // Reach `failed` the only legitimate way: re-claim `completed → running` (the
+        // re-profile route), then fail from `running` — `failDataProfile` CAS's on
+        // `running`, so a direct `completed → failed` would now no-op.
+        (await tryRerunDataProfile(pool, "a-retry"))._unsafeUnwrap();
         (await failDataProfile(pool, "a-retry", "sandbox crashed"))._unsafeUnwrap();
 
         const before = (await loadDataProfileStatus(pool, "a-retry"))._unsafeUnwrap();
@@ -366,5 +370,93 @@ describe("the seed conjunct on every claim into running", () => {
                AND (seed_input_file_ids IS NULL OR jsonb_array_length(seed_input_file_ids) = 0)`,
         );
         expect(seedless.rows).toEqual([]);
+    });
+});
+
+// A terminal write (`completeDataProfile` / `failDataProfile`) runs as plain workflow-body
+// code and can reach the ledger after the row it targets was cleared (emptied inputs) or
+// expired (stale-timeout) out from under it — including on a DBOS recovery replay. Both
+// writes CAS on `data_profile_status = 'running'` so a late write finds no running row and
+// no-ops, instead of resurrecting the seedless-`completed` state the seed CAS forbids.
+describe("terminal writes CAS on running — a cleared row is never resurrected", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_terminal_cas");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    /**
+     * Drive a claimed-`running` row through the finding's expiry-zombie interleave:
+     * the stale-timeout expiry flips `running → failed`, then `clearDataProfile`
+     * succeeds on that `failed` row (its guard only defers on `running`). Leaves the
+     * row cleared while a notionally-still-live workflow holds the claim.
+     */
+    async function runningThenExpiredThenCleared(id: string): Promise<void> {
+        await seedAnalysis(pool, id, "pending");
+        (await tryStartDataProfile(pool, id))._unsafeUnwrap();
+        await pool.query({
+            text: `UPDATE cortex_analysis_state SET data_profile_started_at = $1 WHERE analysis_id = $2`,
+            values: [new Date(Date.now() - 15 * 60 * 1000).toISOString(), id],
+        });
+        (await expireStaleDataProfile(pool, id, 10 * 60 * 1000))._unsafeUnwrap();
+        expect((await clearDataProfile(pool, id))._unsafeUnwrap()).toBe(true);
+    }
+
+    it("completeDataProfile no-ops after a clear and leaves the row cleared", async () => {
+        await runningThenExpiredThenCleared("a-complete-after-clear");
+
+        const stamped = (await completeDataProfile(pool, "a-complete-after-clear", SAMPLE_RESULT))._unsafeUnwrap();
+        expect(stamped).toBe(false);
+
+        // Reads back as "no profile"; nothing resurrected — status, result, and seed all NULL.
+        expect((await loadDataProfileStatus(pool, "a-complete-after-clear"))._unsafeUnwrap()).toBeNull();
+        const raw = await pool.query<{ data_profile_status: string | null; data_profile_result: unknown; seed_input_file_ids: string[] | null }>({
+            text: "SELECT data_profile_status, data_profile_result, seed_input_file_ids FROM cortex_analysis_state WHERE analysis_id = $1",
+            values: ["a-complete-after-clear"],
+        });
+        expect(raw.rows[0]?.data_profile_status).toBeNull();
+        expect(raw.rows[0]?.data_profile_result).toBeNull();
+        expect(raw.rows[0]?.seed_input_file_ids).toBeNull();
+    });
+
+    it("failDataProfile no-ops after a clear and leaves the row cleared", async () => {
+        await runningThenExpiredThenCleared("a-fail-after-clear");
+
+        const stamped = (await failDataProfile(pool, "a-fail-after-clear", "sandbox crashed"))._unsafeUnwrap();
+        expect(stamped).toBe(false);
+
+        expect((await loadDataProfileStatus(pool, "a-fail-after-clear"))._unsafeUnwrap()).toBeNull();
+        expect(await rawStatus(pool, "a-fail-after-clear")).toBeNull();
+    });
+
+    it("completeDataProfile still stamps a genuinely running row", async () => {
+        await seedAnalysis(pool, "a-complete-running", "pending");
+        (await tryStartDataProfile(pool, "a-complete-running"))._unsafeUnwrap();
+
+        const stamped = (await completeDataProfile(pool, "a-complete-running", SAMPLE_RESULT))._unsafeUnwrap();
+        expect(stamped).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-complete-running"))._unsafeUnwrap();
+        expect(status?.status).toBe("completed");
+        expect(status?.result).toEqual(SAMPLE_RESULT);
+    });
+
+    it("failDataProfile still stamps a genuinely running row", async () => {
+        await seedAnalysis(pool, "a-fail-running", "pending");
+        (await tryStartDataProfile(pool, "a-fail-running"))._unsafeUnwrap();
+
+        const stamped = (await failDataProfile(pool, "a-fail-running", "boom"))._unsafeUnwrap();
+        expect(stamped).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-fail-running"))._unsafeUnwrap();
+        expect(status?.status).toBe("failed");
+        expect(status?.error).toBe("boom");
     });
 });

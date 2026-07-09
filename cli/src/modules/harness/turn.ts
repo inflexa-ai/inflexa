@@ -167,12 +167,18 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
             phase: { kind: "ok", fallbackText: finalText(result.messages) },
             toPersist: [userMessage, ...result.messages.slice(initial.length)],
         }),
-        // `runAgent` threw: an aborted signal means the user cancelled (persist the
-        // user turn only); anything else is a genuine failure carrying its cause.
-        (cause): { readonly phase: RunPhase; readonly toPersist: ModelMessage[] } => ({
-            phase: signal.aborted ? { kind: "aborted" } : { kind: "failed", cause },
-            toPersist: [userMessage],
-        }),
+        // `runAgent` threw. Classify as an abort ONLY when the throw is the AbortError the streaming
+        // provider re-throws verbatim (`streaming-chat.ts` re-throws it as control flow, name
+        // "AbortError" — a DOMException, which IS an `Error` instance under bun/node) AND our own signal
+        // is aborted. A provider failure that merely RACED a Ctrl+C would otherwise be swallowed as an
+        // abort and never logged; everything but a genuine abort stays `failed`, carrying its cause.
+        (cause): { readonly phase: RunPhase; readonly toPersist: ModelMessage[] } => {
+            const aborted = signal.aborted && cause instanceof Error && cause.name === "AbortError";
+            return {
+                phase: aborted ? { kind: "aborted" } : { kind: "failed", cause },
+                toPersist: [userMessage],
+            };
+        },
     );
 
     // Persist unconditionally — the partial turn must survive an abort/throw. The

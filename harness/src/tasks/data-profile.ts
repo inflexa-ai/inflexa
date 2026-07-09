@@ -41,7 +41,16 @@ import { generateExecutionId } from "../sandbox/execution-id.js";
 import { mintSandboxIdentity } from "../sandbox/identity.js";
 import { createVectorStore } from "../state/vector-store.js";
 import { ProfilerOutputSchema, type ProfilerOutput } from "../schemas/data-profile-schemas.js";
-import { completeDataProfile, failDataProfile, loadDataProfileStatus, tryRerunDataProfile, tryStartDataProfile, upsertArtifacts } from "../state/index.js";
+import {
+    completeDataProfile,
+    failDataProfile,
+    loadDataProfileStatus,
+    loadSeedInputFileIds,
+    tryRerunDataProfile,
+    tryStartDataProfile,
+    upsertArtifacts,
+    type DataProfileInputFile,
+} from "../state/index.js";
 import { ensureSearchIndex, searchIndexName } from "../workspace/search-config.js";
 
 /** Synthetic run/step literal for the data-profile workflow. */
@@ -117,6 +126,27 @@ function fileExtension(p: string): string {
 }
 
 /**
+ * Build the drift-signature comparand a completed profile persists, or `undefined`
+ * to omit it. `inputFiles` records whether the profiled files still hold the same
+ * bytes; it sits beside the `inputFileIds` audit record (WHICH files) in the stored
+ * `DataProfileResult`.
+ *
+ * A workflow input persisted before `StagedInput.mtimeMs` existed (recovered across
+ * the deploy that added it) carries entries with NO `mtimeMs` despite the compile-time
+ * type — the same recovered-legacy-input case `ownsMandate` handles. A per-entry
+ * `{ …, mtimeMs: undefined }` would JSON.stringify to `{ fileId, size }` and violate
+ * `DataProfileInputFile`, so the WHOLE signature is omitted when ANY entry lacks
+ * `mtimeMs`: an absent comparand reads back as drift and buys one clean re-profile,
+ * exactly as a wholly-absent `result` already does (see `DataProfileResult.inputFiles`).
+ * The cast defeats the required-`number` type precisely to observe that legacy gap.
+ */
+export function buildDriftSignature(stagedInputs: readonly StagedInput[]): DataProfileInputFile[] | undefined {
+    const mtimeOf = (f: StagedInput): number | undefined => (f as { mtimeMs?: number }).mtimeMs;
+    if (!stagedInputs.every((f) => mtimeOf(f) !== undefined)) return undefined;
+    return stagedInputs.map((f) => ({ fileId: f.fileId, size: f.size, mtimeMs: mtimeOf(f)! }));
+}
+
+/**
  * Register the data-profile workflow with DBOS. Returns the registered
  * callable so `triggerDataProfile` can dispatch via `DBOS.startWorkflow`.
  */
@@ -142,7 +172,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         // input. The body never downloads.
         if (stagedInputs.length === 0) {
             console.warn(`[data-profile] No input files staged for ${analysisId}`);
-            unwrapOrThrow(await completeDataProfile(deps.pool, analysisId));
+            if (!unwrapOrThrow(await completeDataProfile(deps.pool, analysisId))) logTerminalNoop(analysisId, "completion");
             await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
             return;
         }
@@ -333,21 +363,23 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             }
             console.log(`[data-profile] Indexed ${indexed} file(s) for ${analysisId}`);
 
-            // 5. Complete — store result with input snapshot for staleness detection
-            unwrapOrThrow(
-                await completeDataProfile(deps.pool, analysisId, {
-                    summary: profilerData.analysisSummary,
-                    files: profilerData.files.map((f) => ({
-                        path: f.path,
-                        description: f.description,
-                    })),
-                    inputFileIds: stagedInputs.map((f) => f.fileId),
-                    // The drift comparand beside the audit record: `inputFileIds` says WHICH files
-                    // this profile covered, `inputFiles` says whether they held the same bytes.
-                    inputFiles: stagedInputs.map((f) => ({ fileId: f.fileId, size: f.size, mtimeMs: f.mtimeMs })),
-                    profiledAt: new Date().toISOString(),
-                }),
-            );
+            // 5. Complete — store result with input snapshot for staleness detection.
+            if (
+                !unwrapOrThrow(
+                    await completeDataProfile(deps.pool, analysisId, {
+                        summary: profilerData.analysisSummary,
+                        files: profilerData.files.map((f) => ({
+                            path: f.path,
+                            description: f.description,
+                        })),
+                        inputFileIds: stagedInputs.map((f) => f.fileId),
+                        inputFiles: buildDriftSignature(stagedInputs),
+                        profiledAt: new Date().toISOString(),
+                    }),
+                )
+            ) {
+                logTerminalNoop(analysisId, "completion");
+            }
             await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
         } finally {
             try {
@@ -358,9 +390,19 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         }
     } catch (err) {
         console.error(`[data-profile] Failed for ${analysisId}:`, err);
-        unwrapOrThrow(await failDataProfile(deps.pool, analysisId, profileFailureReason(err)));
+        if (!unwrapOrThrow(await failDataProfile(deps.pool, analysisId, profileFailureReason(err)))) logTerminalNoop(analysisId, "failure");
         await deps.runAuthorizer.revoke(authorization, "data-profile-failed");
     }
+}
+
+/**
+ * Log a terminal ledger write the running-CAS refused: the row was cleared
+ * (emptied inputs) or expired (stale-timeout) out from under a live workflow, so
+ * there is no `running` row to stamp. Not an error — the ledger correctly moved
+ * on; the workflow still revokes its own authorization on the same terminal path.
+ */
+function logTerminalNoop(analysisId: string, write: string): void {
+    console.warn(`[data-profile] ${write} write skipped for ${analysisId}: ledger row not running (cleared or expired concurrently)`);
 }
 
 export type DataProfileTriggerResult = "started" | "restarted" | "already_running" | "failed";
@@ -462,17 +504,22 @@ export async function triggerDataProfile(deps: DataProfileTriggerDeps, params: D
         // conjunct (see `SEEDED` in state/data-profile.ts) and is what actually makes a
         // seedless `running` row impossible. This read exists only to name the cause: on
         // the ordinary non-racing path it turns an opaque "no claim matched" into a
-        // precise "the caller skipped seeding". An empty array is not a seed — it names
-        // zero files. `loadDataProfileStatus` collapses NULL-status rows to null by
-        // contract, so the seed column is read directly.
-        const seeded = await deps.pool
-            .query<{ seed: string[] | null }>({
-                text: "SELECT seed_input_file_ids AS seed FROM cortex_analysis_state WHERE analysis_id = $1",
-                values: [analysisId],
-            })
-            .then((r) => r.rows[0]?.seed ?? null);
+        // precise reason. An empty array is not a seed — it names zero files. Reads via
+        // `loadSeedInputFileIds`, which returns null for BOTH a missing analysis row and
+        // a NULL-seed row (`loadDataProfileStatus` would hide the seed of a cleared row).
+        const seeded = unwrapOrThrow(await loadSeedInputFileIds(deps.pool, analysisId));
         if (seeded === null || seeded.length === 0) {
-            console.error(`[data-profile] Trigger rejected for ${analysisId}: no seeded input set (caller skipped seeding)`);
+            console.error(`[data-profile] Trigger rejected for ${analysisId}: no seeded input set (missing analysis row or caller skipped seeding)`);
+            return "failed";
+        }
+
+        // The trigger validates the ledger seed above; it must also validate the manifest
+        // it is about to dispatch. A seeded row profiled against an EMPTY manifest would
+        // claim `running` and then hit the body's empty-manifest path — completing with a
+        // NULL result while the seed still names files, an incoherence a staleness policy
+        // then loops on re-triggering. Refuse the divergence before any claim.
+        if (params.stagedInputs.length === 0) {
+            console.error(`[data-profile] Trigger rejected for ${analysisId}: empty manifest dispatched against a seed naming ${seeded.length} file(s)`);
             return "failed";
         }
 
@@ -509,6 +556,12 @@ async function compensateStartFailure(deps: DataProfileTriggerDeps, analysisId: 
     const failed = await failDataProfile(deps.pool, analysisId, profileFailureReason(err));
     if (failed.isErr()) {
         console.error(`[data-profile] Failed to mark ${analysisId} failed after a start error:`, failed.error);
+    } else if (!failed.value) {
+        // The row this compensation was written to fail is no longer `running` — a
+        // concurrent clear/expire already moved it on, so the running-CAS refused the
+        // stamp. Nothing wedged at `running`, which is the outcome compensation exists
+        // to guarantee; just record the no-op.
+        logTerminalNoop(analysisId, "compensation");
     }
 }
 

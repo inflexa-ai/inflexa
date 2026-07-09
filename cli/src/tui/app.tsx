@@ -414,9 +414,11 @@ export function App(props: AppProps) {
                             </box>
                         </Show>
 
-                        {/* Input area — gated (submits refused, gate shown in the affordance) until boot is ready. */}
+                        {/* Input area — gated (submits refused, gate shown in the affordance) until boot is ready.
+                        The gate reason distinguishes still-booting from a terminal boot failure so the
+                        placeholder is honest; `ready` passes no gate (input open). */}
                         <ChatBar
-                            gated={bootState().phase !== "ready"}
+                            gate={bootState().phase === "ready" ? undefined : bootState().phase === "failed" ? "failed" : "booting"}
                             onTextareaRef={(r: TextareaRenderable) => {
                                 textareaRef = r;
                                 queueMicrotask(() => r.focus());

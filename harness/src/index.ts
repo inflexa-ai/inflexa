@@ -81,7 +81,10 @@ export type { AgentChat, ChatProvider, EmbeddingProvider, ChatRequest, ChatRespo
 // with; `toProviderError` is its sole constructor. Exposed so an embedder
 // realizing its own `ChatProvider`/`EmbeddingProvider` fails with the exact
 // same shape the harness's own realizations do, rather than re-deriving it.
-export { toProviderError } from "./providers/errors.js";
+// `isProviderError` is the structural guard an embedder driving `chatStream`
+// directly needs: `chatStream` throws a `ProviderError` value (a plain object,
+// not an `Error`), so a `catch` recognizes it by shape, not `instanceof`.
+export { toProviderError, isProviderError } from "./providers/errors.js";
 export type { ProviderError } from "./providers/errors.js";
 // `createStreamingChat` wraps a `ChatProvider` as a streaming `AgentChat` (the
 // type `runAgent`'s `provider` option takes): its `chat` drives the provider's

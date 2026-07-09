@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ok, okAsync, errAsync, ResultAsync } from "neverthrow";
 import { createRoot } from "solid-js";
+import { createStore } from "solid-js/store";
 
 // Side-effect import: installs `Date.relativeAge` (the loaded-profile timestamp lines call it) via the
 // same central loader the app boots with.
@@ -304,6 +305,51 @@ describe("watchSidebarData — triggers and bounded poll", () => {
         expect(disarms).toBe(0);
         dispose();
         expect(disarms).toBe(1); // onCleanup disarmed the live interval
+    });
+});
+
+describe("watchSidebarData — swap resets the snapshots before the new analysis loads", () => {
+    test("a swap immediately renders not_ready, then B's data once its ledger read resolves", async () => {
+        // A reactive workspace (real store) so Trigger 1's effect re-runs on the analysis swap — the
+        // plain-object `wsFor` stand-in would not repaint.
+        const [store, setStore] = createStore<{ analysis: { id: string } | null }>({ analysis: { id: "A" } });
+        const ws = store as unknown as Workspace;
+
+        // B's profile read is GATED so the reset window (not_ready) is deterministically observable
+        // before B's data lands — the same technique the staleness-guard test uses.
+        let releaseB!: (v: DataProfileStatus | null) => void;
+        const gatedB: ResultAsync<DataProfileStatus | null, DbError> = ResultAsync.fromSafePromise(
+            new Promise<DataProfileStatus | null>((res) => {
+                releaseB = res;
+            }),
+        );
+        const refresh = async (id: string): Promise<void> => {
+            const s: RefreshSeams =
+                id === "A"
+                    ? seams(profileStatus({ status: "completed" }), [runRow()])
+                    : { runtime: () => fakeRuntime, loadProfile: () => gatedB, loadRuns: () => okAsync([]) };
+            await refreshSidebarData(id, s);
+        };
+
+        const dispose = mountWatch(ws, { refresh, arm: () => () => {} });
+        try {
+            const readyDriver: BootDriver = async () => ok({ model: "m", pool: {} } as unknown as HarnessRuntime);
+            await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver); // Trigger 1 fires refresh(A)
+            await new Promise<void>((r) => setTimeout(r, 0)); // let A's ledger reads settle
+            expect(profileSnapshot().kind).toBe("loaded"); // A's data is on screen — stale state to clear
+
+            setStore("analysis", { id: "B" }); // swap → Trigger 1 resets synchronously, refresh(B) parks on the gate
+            expect(profileSnapshot().kind).toBe("not_ready"); // no stale A render during the swap window
+            expect(runsSnapshot().kind).toBe("not_ready");
+
+            releaseB(profileStatus({ status: "running" })); // B's read resolves
+            await new Promise<void>((r) => setTimeout(r, 0));
+            const p = profileSnapshot();
+            expect(p.kind).toBe("loaded"); // B's data lands after the window
+            if (p.kind === "loaded") expect(p.profile.status).toBe("running");
+        } finally {
+            dispose();
+        }
     });
 });
 

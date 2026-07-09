@@ -176,16 +176,21 @@ export function watchProfileParity(workspace: Workspace, seams: ParityWatchSeams
     });
 
     // Edge 3 — a profile run completing (the running→completed down-edge).
-    let prevProfileStatus: DataProfileStatus["status"] | null = null;
+    // Keyed by analysis id, not just status: the profile snapshot is a SHARED store, so an analysis
+    // swap can transition it A-running → B-completed (B's ledger, freshly refreshed) — a status pair
+    // that reads as a completion but is not B's. Record the id alongside the previous status and fire
+    // only when it is unchanged across the transition, so a swap fabricates no false drive.
+    let prevProfile: { status: DataProfileStatus["status"] | null; analysisId: string | null } = { status: null, analysisId: null };
     createEffect(() => {
         const snap = profileSnapshot();
         const status: DataProfileStatus["status"] | null = snap.kind === "loaded" ? snap.profile.status : null;
-        const wasRunning = prevProfileStatus === "running";
-        prevProfileStatus = status;
-        // Only the running→completed transition. Edits made WHILE a profile ran were skipped
-        // (`already_running`); this closes that window without any new polling, because the sidebar
-        // already polls a running profile, so the transition is observable here for free.
-        if (!(wasRunning && status === "completed")) return;
+        const analysisId = workspace.analysis?.id ?? null;
+        const prev = prevProfile;
+        prevProfile = { status, analysisId };
+        // Only the running→completed transition FOR THE SAME analysis. Edits made WHILE a profile ran
+        // were skipped (`already_running`); this closes that window without any new polling, because the
+        // sidebar already polls a running profile, so the transition is observable here for free.
+        if (!(prev.status === "running" && status === "completed" && prev.analysisId === analysisId)) return;
         const runtime = harnessRuntime();
         const analysis = workspace.analysis;
         if (!runtime || !analysis) return;
@@ -246,6 +251,13 @@ export function driveProfileParity(
 
 /** {@link driveProfileParity}'s body, run under the shared profile-work queue. */
 async function runParityDrive(runtime: HarnessRuntime, analysis: Analysis, currentAnalysisId: () => string | null, seams: ParityDriverSeams): Promise<void> {
+    // Also guard at DEQUEUE time, before `check` stages anything. A drive can sit in the queue while the
+    // user swaps analyses, and `openSession` releases this analysis's instance lock the moment it swaps
+    // away — so a drive that only began staging A's tree AFTER this process released A's lock would race
+    // a second `inflexa` process now holding it and staging the same tree. Skipping a drive whose
+    // analysis is no longer open closes that cross-process window; the post-`check` guard below remains
+    // for a swap that lands mid-check.
+    if (currentAnalysisId() !== analysis.id) return;
     const outcome = await seams.check(runtime, analysis);
     // Swapped analyses while `check` staged files? Drop both the poke and the notice (see the doc above).
     if (currentAnalysisId() !== analysis.id) return;

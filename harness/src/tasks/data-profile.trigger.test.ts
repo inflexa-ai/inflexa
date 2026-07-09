@@ -4,8 +4,37 @@ import type { Pool } from "pg";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 import { createLocalRunAuthorizer } from "../auth/local-run-authorizer.js";
+import type { StagedInput } from "../execution/staged-input.js";
 import { loadDataProfileStatus } from "../state/data-profile.js";
-import { triggerDataProfile, type DataProfileTriggerDeps } from "./data-profile.js";
+import { buildDriftSignature, triggerDataProfile, type DataProfileTriggerDeps } from "./data-profile.js";
+
+/**
+ * A minimal, well-formed staged-input manifest entry. The trigger forwards the
+ * manifest into the workflow input unread — it only validates that a non-empty
+ * manifest backs a seeded row — so these fields need not match the seed set.
+ */
+function stagedInput(fileId: string): StagedInput {
+    return {
+        fileId,
+        mountName: fileId,
+        key: `${fileId}.csv`,
+        fileName: `${fileId}.csv`,
+        hash: `hash-${fileId}`,
+        size: 1024,
+        mtimeMs: 1_780_000_000_000,
+        relativePath: `inputs/${fileId}/${fileId}.csv`,
+    };
+}
+
+/**
+ * A staged input as a pre-`mtimeMs` deploy persisted it: the `mtimeMs` key is
+ * absent from the deserialized object despite the required-`number` type. This is
+ * the recovered-legacy shape `buildDriftSignature` must detect and omit around.
+ */
+function legacyStagedInput(fileId: string): StagedInput {
+    const { mtimeMs: _dropped, ...legacy } = stagedInput(fileId);
+    return legacy as StagedInput;
+}
 
 /**
  * Seed a `cortex_analysis_state` row at the given `data_profile_status` (pass `null`
@@ -51,9 +80,15 @@ function parkedDispatchDeps(pool: Pool): DataProfileTriggerDeps {
 }
 
 /**
- * Deps whose workflow throws on entry. A tripwire: every refusal below must return
- * BEFORE any claim, so a regression that lets an unseeded row through surfaces as a
- * thrown failure rather than a silent pass.
+ * Deps whose `workflow` throws if it is ever invoked. Note the throw cannot
+ * actually fire in these tests: the trigger dispatches through `DBOS.startWorkflow`,
+ * which — with no DBOS engine launched — rejects before `deps.workflow` is reached,
+ * and that rejection is swallowed by the fire-and-forget `.catch(compensateStartFailure)`.
+ * So a regression that let an unseeded or empty-manifest row through would NOT surface
+ * as a thrown error. It surfaces through the assertions in each test instead:
+ * `expect(result).toBe("failed")` plus the `rawStatus` check that the row was never
+ * claimed into `running`. The throwing body only documents the contract that
+ * `deps.workflow` must stay unreached on every refusal path.
  */
 function tripwireDeps(pool: Pool): DataProfileTriggerDeps {
     return {
@@ -135,7 +170,7 @@ describe("triggerDataProfile seed-first guard", () => {
         const result = await triggerDataProfile(parkedDispatchDeps(pool), {
             auth: makeLocalAuth(),
             analysisId: "a-cleared",
-            stagedInputs: [],
+            stagedInputs: [stagedInput("file-aaa")],
         });
 
         expect(result).toBe("started");
@@ -149,7 +184,7 @@ describe("triggerDataProfile seed-first guard", () => {
         const result = await triggerDataProfile(parkedDispatchDeps(pool), {
             auth: makeLocalAuth(),
             analysisId: "a-seeded",
-            stagedInputs: [],
+            stagedInputs: [stagedInput("file-aaa")],
         });
 
         expect(result).toBe("started");
@@ -165,18 +200,41 @@ describe("triggerDataProfile seed-first guard", () => {
         const result = await triggerDataProfile(parkedDispatchDeps(pool), {
             auth: makeLocalAuth(),
             analysisId: "a-completed",
-            stagedInputs: [],
+            stagedInputs: [stagedInput("file-aaa")],
         });
 
         expect(result).toBe("restarted");
         expect(await rawStatus(pool, "a-completed")).toBe("running");
     });
 
+    it("refuses a seeded row dispatched an EMPTY manifest — the seed names files the manifest does not", async () => {
+        // The manifest divergence the trigger closes: the ledger seed names files, but the
+        // caller forwarded `stagedInputs: []`. Left through, the claim would flip `running`
+        // and the body's empty-manifest path would complete with a NULL result — the exact
+        // seedless-completed incoherence a staleness policy loops on. The refusal must land
+        // BEFORE any claim, so the row stays untouched at its seeded status.
+        await seedAnalysis(pool, "a-empty-manifest", "pending");
+        await setSeed(pool, "a-empty-manifest", ["file-aaa", "file-bbb"]);
+
+        const result = await triggerDataProfile(tripwireDeps(pool), {
+            auth: makeLocalAuth(),
+            analysisId: "a-empty-manifest",
+            stagedInputs: [],
+        });
+
+        expect(result).toBe("failed");
+        expect(await rawStatus(pool, "a-empty-manifest")).toBe("pending");
+        const status = (await loadDataProfileStatus(pool, "a-empty-manifest"))._unsafeUnwrap();
+        expect(status?.status).toBe("pending");
+    });
+
     it("a seed wiped after the guard's read cannot produce a seedless running row", async () => {
         // The TOCTOU the CAS conjunct closes. The guard's pre-read is advisory: here it
-        // observes a seed that a concurrent `clearDataProfile` then wipes. The claim must
-        // still refuse, because a `running` row that names no input set is the state the
-        // whole invariant exists to forbid.
+        // observes a seed that a concurrent `clearDataProfile` then wipes. A non-empty
+        // manifest is passed so flow reaches the CAS (an empty one would be refused earlier
+        // by the manifest guard, never exercising the race). The claim must still refuse,
+        // because a `running` row that names no input set is the state the whole invariant
+        // exists to forbid.
         await seedAnalysis(pool, "a-raced", null);
         await setSeed(pool, "a-raced", ["file-aaa"]);
 
@@ -199,10 +257,37 @@ describe("triggerDataProfile seed-first guard", () => {
         const result = await triggerDataProfile(raced, {
             auth: makeLocalAuth(),
             analysisId: "a-raced",
-            stagedInputs: [],
+            stagedInputs: [stagedInput("file-aaa")],
         });
 
         expect(result).toBe("failed");
         expect(await rawStatus(pool, "a-raced")).toBeNull();
+    });
+});
+
+// The workflow body builds the completed profile's drift comparand from the staged
+// manifest. A manifest recovered from before `StagedInput.mtimeMs` existed lacks that
+// field, so the per-entry object would serialize to a shape that violates
+// `DataProfileInputFile`; the signature is omitted whole, collapsing to drift. Pure —
+// no DB, no container.
+describe("buildDriftSignature — drift comparand for recovered legacy manifests", () => {
+    it("builds a full signature when every entry carries mtimeMs", () => {
+        const sig = buildDriftSignature([stagedInput("file-aaa"), stagedInput("file-bbb")]);
+        expect(sig).toEqual([
+            { fileId: "file-aaa", size: 1024, mtimeMs: 1_780_000_000_000 },
+            { fileId: "file-bbb", size: 1024, mtimeMs: 1_780_000_000_000 },
+        ]);
+    });
+
+    it("omits the whole signature when any entry lacks mtimeMs — a pre-deploy recovered input", () => {
+        const sig = buildDriftSignature([stagedInput("file-aaa"), legacyStagedInput("file-legacy")]);
+        expect(sig).toBeUndefined();
+    });
+
+    it("a built signature survives a JSON round-trip as a valid DataProfileInputFile[]", () => {
+        // The value is persisted via JSON.stringify inside the `DataProfileResult`; confirm
+        // no key drops out (the exact failure a legacy `mtimeMs: undefined` entry would cause).
+        const sig = buildDriftSignature([stagedInput("file-aaa")]);
+        expect(JSON.parse(JSON.stringify(sig))).toEqual([{ fileId: "file-aaa", size: 1024, mtimeMs: 1_780_000_000_000 }]);
     });
 });

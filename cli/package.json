@@ -17,7 +17,6 @@
         "wipe": "bun scripts/wipe.ts"
     },
     "dependencies": {
-        "@ai-sdk/openai-compatible": "^2.0.50",
         "@clack/prompts": "^1.5.1",
         "@inflexa-ai/harness": "file:../harness",
         "@inflexa-ai/tsprov": "0.4.0",
@@ -29,7 +28,6 @@
         "@opentelemetry/semantic-conventions": "^1.41.1",
         "@opentui/core": "0.4.2",
         "@opentui/solid": "^0.4.0",
-        "ai": "^6.0.205",
         "commander": "^15",
         "neverthrow": "^8.2.0",
         "pino": "^10.3.1",

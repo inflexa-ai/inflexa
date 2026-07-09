@@ -127,14 +127,41 @@ function commitStream(): void {
 }
 
 /**
- * Seal any prose still accumulating in `streamText` into its part BEFORE a non-text part (a tool
- * chip, a card, a tagged mention) joins the turn, so the transcript renders in emission order rather
- * than merging post-part prose above the part it followed (mid-turn interleaving). Only flushes
- * when text is actually pending; an empty buffer leaves the current (possibly the turn's pre-minted)
- * streaming part untouched, so no premature empty part is committed (the S1 empty-part discipline).
+ * Close the open streaming text segment BEFORE a non-text part (a tool chip, a card, a tagged
+ * mention) joins the turn, so the transcript renders in emission order rather than merging post-part
+ * prose above the part it followed (mid-turn interleaving). Two cases:
+ *
+ *   - prose is pending → seal it into its part via {@link commitStream} (which nulls `streamPartId`),
+ *     so the interrupting part appends AFTER the sealed prose;
+ *   - the buffer is empty but `streamPartId` still names a part → that part is the turn's pre-minted
+ *     (or a reopened-but-unwritten) EMPTY text segment. Splice it out and null `streamPartId`, so the
+ *     interrupting part is not preceded by an invisible empty part and any resumed prose / ok-fallback
+ *     opens a FRESH segment AFTER it.
+ *
+ * The empty-drop keeps a tool/card-FIRST turn — the agent's most common shape, whose first loop
+ * iteration is a bare tool_use — in parity with {@link cortexToUiMessage}'s in-order reload. Without
+ * it the pre-minted `parts[0]` survives ahead of the interrupting part and every later delta (and the
+ * ok-fallback) lands in it, rendering the prose ABOVE the tool live while a reload (preserving stored
+ * row order) renders it below.
  */
-function flushPendingText(): void {
-    if (streamText().length > 0) commitStream();
+function closeStreamSegment(): void {
+    if (streamText().length > 0) {
+        commitStream();
+        return;
+    }
+    const pid = streamPartId();
+    if (pid === null) return;
+    setStreamPartId(null);
+    const id = currentAssistantId;
+    if (!id) return;
+    setMessages(
+        produce((msgs) => {
+            const msg = msgs.find((m) => m.id === id);
+            if (!msg) return;
+            const idx = msg.parts.findIndex((p) => p.id === pid);
+            if (idx !== -1) msg.parts.splice(idx, 1);
+        }),
+    );
 }
 
 /** Append one part to the in-flight assistant message, if a turn is active. */
@@ -151,7 +178,7 @@ function appendPart(part: Part): void {
 
 /**
  * Begin a fresh streaming text segment on the in-flight assistant message and point `streamPartId` at
- * it. Called when a `text-delta` resumes after {@link flushPendingText} sealed and cleared the prior
+ * it. Called when a `text-delta` resumes after {@link closeStreamSegment} sealed or dropped the prior
  * segment: the resumed prose becomes its OWN part, appended AFTER the tool/card that
  * interrupted it, so live rendering matches {@link cortexToUiMessage}'s in-order reload. Minted lazily
  * (only on a real delta, never eagerly on flush) so a turn that ends on a card leaves no trailing
@@ -208,9 +235,11 @@ type EmitEventArg = Parameters<EmitFn>[0];
  * shapes) and writes the store rather than a terminal.
  *
  *   - sub-agent traffic (deeper `callPath`) is dropped — the shared depth filter;
- *   - `text-delta` accumulates in `streamText`; it flushes into its part at turn completion AND
- *     whenever a non-text part interrupts, so prose emitted after a tool/card renders as its own
- *     segment BELOW that part (in-order interleaving) rather than merged into the segment above it;
+ *   - `text-delta` accumulates in `streamText`; it seals into its part at turn completion AND whenever
+ *     a non-text part interrupts, so prose emitted after a tool/card renders as its own segment BELOW
+ *     that part (in-order interleaving). When a tool/card is the turn's FIRST event the pre-minted
+ *     empty text part is dropped, so the interrupting part is not preceded by an empty segment and any
+ *     later prose opens fresh below it — matching the reload path;
  *   - `tool-started`/`tool-finished` become one live tool part paired by tool-use id, with a
  *     duration and error outcome on finish;
  *   - `data-plan`/`data-run-card` become card parts via the shared readers;
@@ -226,10 +255,11 @@ export function applyEmitEvent(event: EmitEventArg): void {
 
     switch (event.type) {
         case "text-delta":
-            // A delta with no active streaming part means a preceding non-text part (tool/card) flushed
-            // and cleared the prior segment — begin a fresh text part so the resumed prose renders AFTER
-            // that part, matching the reload path's in-order interleaving. Lazy: minting only on
-            // a real delta leaves no trailing empty part when a turn ends on a card.
+            // A delta with no active streaming part means a preceding non-text part (tool/card) closed
+            // the prior segment (sealing its prose, or dropping an empty one) — begin a fresh text part
+            // so the resumed prose renders AFTER that part, matching the reload path's in-order
+            // interleaving. Lazy: minting only on a real delta leaves no trailing empty part when a
+            // turn ends on a card.
             if (streamPartId() === null) beginStreamSegment();
             setStreamText((prev) => prev + event.text);
             return;
@@ -239,9 +269,10 @@ export function applyEmitEvent(event: EmitEventArg): void {
             // Deliberately NO flush here: the turn's final segment is sealed by finishTurn, not by these.
             return;
         case "tool-started": {
-            // Seal prose streamed before this chip into its own part so parts render in emission
-            // order (text above the tool it preceded), never merged into the first segment above it.
-            flushPendingText();
+            // Close the open text segment before this chip: seal any prose streamed before it into its
+            // own part, or drop the pre-minted empty part when nothing streamed yet (a tool-first turn),
+            // so the chip renders in emission order and is never preceded by an empty part.
+            closeStreamSegment();
             // Extract primitives at receipt; never retain the event.
             const toolUseId = event.toolUseId;
             const name = event.name;
@@ -258,9 +289,10 @@ export function applyEmitEvent(event: EmitEventArg): void {
             return;
         }
         case "tool-finished": {
-            // Seal pending prose before the chip resolves — matters on the unpaired-finish path, where
-            // updateToolPart appends a fresh finished part that must land after the prose.
-            flushPendingText();
+            // Close the open text segment before the chip resolves — seals pending prose (matters on
+            // the unpaired-finish path, where updateToolPart appends a fresh finished part that must
+            // land after it) or drops an empty pre-minted part (a tool-first turn).
+            closeStreamSegment();
             const toolUseId = event.toolUseId;
             const name = event.name;
             const isError = event.isError;
@@ -271,8 +303,9 @@ export function applyEmitEvent(event: EmitEventArg): void {
             return;
         }
         default:
-            // Seal preceding prose so the card/mention this becomes renders after it, in order.
-            flushPendingText();
+            // Close the open text segment so the card/mention this becomes renders after it, in
+            // emission order: seals preceding prose or drops an empty pre-minted part (a card-first turn).
+            closeStreamSegment();
             // Only `ChatDataPart` remains (its `type` is `data-${string}`).
             renderDataPart(event.type, event.data);
             return;
@@ -423,7 +456,7 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
             // and deltas for it are only cleared by a non-text part arriving after them.)
             if (streamText().length === 0 && outcome.fallbackText.trim().length > 0) {
                 // `commitStream` writes into the part `streamPartId` names and no-ops when it is null.
-                // A mid-turn `flushPendingText` — every tool chip, plan card, run card — nulls it, so
+                // A mid-turn `closeStreamSegment` — every tool chip, plan card, run card — nulls it, so
                 // without reopening a segment the fallback would be assigned and immediately discarded.
                 // Reopening also puts it in emission order, below the part that interrupted the prose,
                 // which is where a transcript reload renders it.
@@ -484,7 +517,7 @@ export type CortexMsg = Awaited<ReturnType<typeof contentToCortexMessages>>[numb
  * results). Card parts are FLAT on the reconstructed part, and the readers narrow off any object, so
  * the part is passed straight through.
  */
-function cortexToUiMessage(m: CortexMsg, sessionId: string): UIMessage {
+export function cortexToUiMessage(m: CortexMsg, sessionId: string): UIMessage {
     // TODO(extend): content-fidelity gap, deliberately deferred. Any non-user role collapses onto
     // "assistant" here because UIMessage.role is a two-value union — a `system` turn loses its framing
     // and reads as the assistant. Widen UIMessage.role (and MessageBlock) to carry system turns
@@ -566,12 +599,21 @@ const realLoadSeams: LoadSeams = {
 // last.
 //
 // The direction is deliberate: a turn supersedes a load. The load replays state the turn is about to
-// append to, while the turn carries the user's live input — dropping the load costs a re-read on the
-// next lifecycle edge, dropping the turn costs the user their message. `resetHotState` claims the token
-// too, so a load started for a swapped-away session can never repopulate the cleared store.
+// append to, while the turn carries the user's live input — so dropping the turn would cost the user
+// their message, whereas dropping the load costs only a re-read: `send` re-fires it after the turn
+// finishes (the thread now carries the appended turn, so the reload is convergent — see `loadedSessionId`),
+// and a later lifecycle edge would re-fire it anyway. `resetHotState` claims the token too, so a load
+// started for a swapped-away session can never repopulate the cleared store.
 //
 // Module-private: only loadMessages / send / resetHotState touch it.
 let loadGeneration = 0;
+
+// The session id a transcript load has SUCCESSFULLY mounted into the store, or `null` when none has.
+// A load superseded by a boot-edge submit never sets this (the turn bumps `loadGeneration`, dropping
+// the load before its page resolves), so `send` re-fires the load after the turn to mount the prior
+// history that dropped load would have. Keyed by session id so a stale value from a swapped-away
+// session cannot suppress the new session's post-turn reload; `resetHotState` clears it on a swap.
+let loadedSessionId: string | null = null;
 
 /**
  * Load a session's transcript from the pg thread history, replacing whatever was mounted.
@@ -632,8 +674,12 @@ export async function loadMessages(sessionId: string, analysisId: string, seams:
     mapped.match(
         // Trailing cap is in MESSAGES (see the unit note in {@link loadMessages}'s doc and on
         // MESSAGE_CAP): two full turn pages can carry more than MESSAGE_CAP messages, so keep only the
-        // newest MESSAGE_CAP so the mounted window matches the live-append cap.
-        (cortex) => setMessages(cortex.map((m) => cortexToUiMessage(m, sessionId)).slice(-MESSAGE_CAP)),
+        // newest MESSAGE_CAP so the mounted window matches the live-append cap. Record the session this
+        // load mounted so `send` knows the history is already on screen and skips its post-turn reload.
+        (cortex) => {
+            setMessages(cortex.map((m) => cortexToUiMessage(m, sessionId)).slice(-MESSAGE_CAP));
+            loadedSessionId = sessionId;
+        },
         (cause) => {
             setErrorMsg(`Failed to load the conversation: ${describeCause(cause)}`);
             setChatStatus("error");
@@ -654,6 +700,9 @@ export function resetHotState(): void {
     // Claim the store-write token so a transcript load still awaiting Postgres for the OLD session
     // drops instead of repopulating the store we are about to clear.
     loadGeneration++;
+    // The cleared store no longer holds any session's history, so forget which session was mounted —
+    // otherwise a swap back to it could suppress the post-turn reload that would remount its history.
+    loadedSessionId = null;
     abortController?.abort();
     // C1: null the token AFTER aborting so an in-flight turn's controller no longer matches its
     // captured `myTurn` — the outcome/late-event guards in `send` then drop everything that turn
@@ -682,6 +731,12 @@ export type SendSeams = {
     readonly runtime: () => HarnessRuntime | null;
     /** The shared headless turn engine. Real: {@link runChatTurn}. */
     readonly runChatTurn: typeof runChatTurn;
+    /**
+     * Re-mount the thread after the turn when the initial transcript load was superseded by this
+     * turn's boot-edge submit (see {@link send}). Defaults to {@link loadMessages} with the production
+     * load seams; tests inject a fake so the convergent reload is observable offline.
+     */
+    readonly reloadTranscript?: (sessionId: string, analysisId: string) => Promise<void>;
 };
 
 const realSendSeams: SendSeams = { runtime: harnessRuntime, runChatTurn };
@@ -767,6 +822,27 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
     if (abortController !== myTurn || loadGeneration !== myTurnLoad) return;
 
     finishTurn(outcome, assistantId, startedAt);
+
+    // Close the emit sink now the turn is settled. The supersession guard above only drops events from
+    // a turn a swap/reset REPLACED; for a turn that simply finished, a tool that ignored its abort
+    // signal (or any other late straggler) still satisfies `abortController === myTurn`, so without
+    // this it would append to the finished message or flip a drained chip. Nulling the token the sink
+    // matches on drops every such event at `emitForTurn`; the per-turn adapter state is cleared
+    // alongside so nothing dangles at the finished turn.
+    abortController = null;
+    currentAssistantId = null;
+    currentSessionId = null;
+
+    // Retry a transcript load THIS turn superseded. `Chat` fires the initial load at the boot-ready
+    // edge — the same instant the submit gate opens — so a message pre-typed while booting bumps
+    // `loadGeneration` and drops that load before its first page resolves, leaving the prior history
+    // unmounted until a manual session swap. The appended turn is now in the pg thread, so the reload
+    // is convergent: it re-mounts the history plus this turn. Skipped when a load already completed for
+    // this session (the history is already on screen) — the reload replaces the store wholesale, so
+    // re-running it on every turn would needlessly remount and repaint the whole window.
+    if (loadedSessionId !== opts.sessionId) {
+        await (seams.reloadTranscript ?? loadMessages)(opts.sessionId, opts.analysisId);
+    }
 }
 
 /** Cancel the in-flight chat request, if any (the abort keybinding). */

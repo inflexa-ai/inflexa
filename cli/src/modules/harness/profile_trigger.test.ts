@@ -185,6 +185,25 @@ describe("ensureProfileAtParity — non-empty drift branch", () => {
         expect(ran.stage).toBe(true);
     });
 
+    test("a source removed on disk drifts enumerate and re-profiles over the survivors (no staging failure)", async () => {
+        // The staging desync closed end-to-end at the parity layer: the completed profile covered
+        // {f1, f2}, but f2's source was deleted on disk while its input row survived. The shared walk now
+        // skips the gone file, so `enumerate` yields only {f1} (drift), and `stage` COMPLETES over the
+        // survivor instead of hard-failing on the dead link — the ladder converges to a re-trigger rather
+        // than a recurring `failed`/"could not start profiling" toast. Before the fix the fakes could not
+        // model this: staging would have faulted, mapping `stageAndSeed` to a `failed` outcome.
+        const { seams, ran } = trackingSeams({
+            enumerate: () => ok(enumerated([file("f1")])),
+            loadStatus: () => okAsync(completedWith([file("f1"), file("f2")])),
+            trigger: async () => "restarted",
+        });
+        expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: true });
+        // Staging and seeding both ran (no early failure); the overridden `trigger` seam stands in for
+        // the dispatch, so `ran.trigger` stays false exactly as the sibling drift tests leave it.
+        expect(ran.stage).toBe(true);
+        expect(ran.seed).toBe(true);
+    });
+
     test("a completed row with a null result is treated as drift (re-profiles)", async () => {
         const { seams, ran } = trackingSeams({ enumerate: () => ok(new Set(["f1", "f2"])), loadStatus: () => okAsync(statusOf("completed")) });
         const outcome = await ensureProfileAtParity(stubRuntime, ANALYSIS, seams);

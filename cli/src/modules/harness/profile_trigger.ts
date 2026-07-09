@@ -129,6 +129,13 @@ function profiledSignatures(status: DataProfileStatus | null): string[] | null {
  * mirrors the command's retry-claim), so each caller owns that step.
  */
 async function stageAndSeed(runtime: HarnessRuntime, analysis: Analysis, seams: ProfileParitySeams): Promise<Result<DataProfileTriggerParams, string>> {
+    // TODO(robustness): exclude restaging against a live `executeAnalysis` run on this analysis. `stage`
+    // (`stageInputs`) rm/relinks the shared `data/inputs` tree and reconciles it against its own manifest
+    // (`reconcileStagedTree`'s `rmSync`), so an input edit (parity edge 2) that restages while a sandbox
+    // step is reading that tree can delete files out from under the running container — a mid-run I/O
+    // fault. The missing gate is an active-run check here (skip or defer staging while a run is in
+    // flight); it wants the run-liveness read the ledger already exposes and is left out now to keep this
+    // change scoped to the parity/staging convergence fix.
     const stageResult = await seams.stage(analysis.id, sessionTreeDataDir(analysis.id));
     if (stageResult.isErr()) return err(`staging inputs failed (${stageResult.error.type})`);
 

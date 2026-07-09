@@ -231,6 +231,17 @@ const realRefreshSeams: RefreshSeams = {
 let refreshGeneration = 0;
 
 /**
+ * Reset BOTH snapshots to `not_ready` together (the torn-pair guarantee) and invalidate any in-flight
+ * refresh. Used at an analysis swap so the previous analysis's DATA PROFILE / RUNS never render (nor get
+ * dialog-snapshotted) during the swap's one-ledger-round-trip refresh window, and by the test reset hook.
+ */
+function resetSnapshots(): void {
+    refreshGeneration += 1;
+    setProfile({ kind: "not_ready" });
+    setRuns({ kind: "not_ready" });
+}
+
+/**
  * Repopulate both snapshots for `analysisId` from the booted runtime's pool. No-ops to `not_ready`
  * (both snapshots) when the runtime is not booted — the sidebar renders a muted placeholder and no
  * query runs (the no-op guard). Otherwise the two ledger reads are awaited in turn and each
@@ -310,11 +321,24 @@ const realWatchSeams: WatchSeams = {
  *     cadence steady and guaranteeing an idle sidebar issues zero queries.
  */
 export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realWatchSeams): void {
-    // Trigger 1 — ready + analysis (and analysis swap).
+    // Trigger 1 — ready + analysis (and analysis swap). On a genuine swap the two snapshots still hold
+    // the PREVIOUS analysis's ledger data, and the refresh below is a full ledger round-trip — so
+    // without a synchronous reset the old analysis's DATA PROFILE / RUNS (and any dialog snapshot of
+    // them) would render for that whole window. Reset both to not_ready together BEFORE the refresh; the
+    // refresh then repopulates for the new analysis (its generation token drops any prior in-flight read).
+    let prevAnalysisId: string | null = null;
     createEffect(() => {
         const phase = bootState().phase;
-        const analysisId = workspace.analysis?.id;
-        if (phase === "ready" && analysisId) void seams.refresh(analysisId);
+        const analysisId = workspace.analysis?.id ?? null;
+        if (phase !== "ready" || analysisId === null) {
+            prevAnalysisId = analysisId;
+            return;
+        }
+        // Reset only on a genuine swap between two open analyses — the first ready edge finds the
+        // snapshots already not_ready, so a reset there would be a redundant same-value write.
+        if (prevAnalysisId !== null && prevAnalysisId !== analysisId) resetSnapshots();
+        prevAnalysisId = analysisId;
+        void seams.refresh(analysisId);
     });
 
     // Trigger 2 — the busy→idle down-edge. `prev` is closure-local per watcher invocation; seeded to
@@ -368,7 +392,5 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
  * mirrors `__resetBootForTest`.
  */
 export function __resetSidebarLiveForTest(): void {
-    refreshGeneration += 1;
-    setProfile({ kind: "not_ready" });
-    setRuns({ kind: "not_ready" });
+    resetSnapshots();
 }

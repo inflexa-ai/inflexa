@@ -54,9 +54,12 @@ export {
     completeDataProfile,
     failDataProfile,
     expireStaleDataProfile,
+    reconcileOrphanedDataProfile,
+    clearDataProfile,
     loadDataProfileStatus,
+    loadSeedInputFileIds,
 } from "./data-profile.js";
-export type { DataProfileStatus } from "./data-profile.js";
+export type { DataProfileStatus, DataProfileResult, DataProfileInputFile } from "./data-profile.js";
 
 export { queryRunCountsByAnalyses, queryThreadCountsByAnalyses, queryDataProfileStatusByAnalyses } from "./analyses-metrics.js";
 

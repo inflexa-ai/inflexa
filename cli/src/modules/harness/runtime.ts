@@ -253,6 +253,10 @@ const SANDBOX_TRANSPORT: "poll" | "callback" = "poll";
 
 let active: HarnessRuntime | null = null;
 
+// The in-flight boot, memoized so concurrent same-process callers share ONE attempt. `active` only
+// covers a COMPLETED boot; this covers the window between the first call and that completion.
+let booting: Promise<Result<HarnessRuntime, HarnessBootError>> | null = null;
+
 /** The booted runtime, if any — passive callers (status views) may read, never boot. */
 export function activeHarnessRuntime(): HarnessRuntime | null {
     return active;
@@ -261,21 +265,37 @@ export function activeHarnessRuntime(): HarnessRuntime | null {
 /** Test hook: drop the singleton without shutting anything down. Test-only. */
 export function __resetHarnessRuntimeForTest(): void {
     active = null;
+    booting = null;
 }
 
 /**
- * Boot (or return) the embedded harness runtime. Sequence: prerequisites →
- * Postgres readiness → callback ingress → schema init → ephemeral sweep →
- * composition root (`assembleCoreRuntime`) → sandbox-hygiene crons → DBOS
- * launch. Idempotent per process; the shutdown hook is registered once, on
- * success.
+ * Boot (or return) the embedded harness runtime. Idempotent per process, guarded on two levels: a
+ * COMPLETED boot short-circuits on {@link active}; an IN-FLIGHT boot is memoized on `booting` so
+ * overlapping same-process callers share the one attempt (its registration cohort and its lock
+ * acquisition) rather than racing a second DBOS registration. `booting` clears when the attempt settles
+ * — a success is thereafter served by `active`, a failure is free to retry. The heavy lifting lives in
+ * {@link bootHarnessRuntimeOnce}.
  */
-export async function bootHarnessRuntime(
+export function bootHarnessRuntime(
     options: { seams?: Partial<BootSeams>; config?: ResolvedHarnessConfig } = {},
 ): Promise<Result<HarnessRuntime, HarnessBootError>> {
-    if (active) return ok(active);
-    const seams: BootSeams = { ...realSeams, ...options.seams };
-    const cfg = options.config ?? resolveHarnessConfig();
+    if (active) return Promise.resolve(ok(active));
+    if (booting) return booting;
+    const attempt = bootHarnessRuntimeOnce({ ...realSeams, ...options.seams }, options.config ?? resolveHarnessConfig());
+    booting = attempt;
+    void attempt.finally(() => {
+        booting = null;
+    });
+    return attempt;
+}
+
+/**
+ * One boot attempt, run under the {@link bootHarnessRuntime} in-flight guard. Sequence: prerequisites →
+ * Postgres readiness → callback ingress → schema init → ephemeral sweep → composition root
+ * (`assembleCoreRuntime`) → sandbox-hygiene crons → DBOS launch. The shutdown hook is registered once,
+ * on success.
+ */
+async function bootHarnessRuntimeOnce(seams: BootSeams, cfg: ResolvedHarnessConfig): Promise<Result<HarnessRuntime, HarnessBootError>> {
     const logger = getLogger("harness");
 
     // A `harness` config block that was present but failed validation: report the

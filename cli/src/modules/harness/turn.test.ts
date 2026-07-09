@@ -31,8 +31,15 @@ const prepareNotFound: ChatTurnSeams["prepare"] = () => Promise.resolve({ kind: 
 /** A `run` seam that finishes cleanly, appending one assistant message to the loop. */
 const runOk: ChatTurnSeams["run"] = (_agent, initial) =>
     Promise.resolve({ messages: [...initial, assistantMessage], finish: { reason: "stop", cappedOut: false, truncationRecoveries: 0 } });
-/** A `run` seam that throws — an abort or a genuine failure, per the caller's signal. */
-const runThrows: ChatTurnSeams["run"] = () => Promise.reject(new Error("boom"));
+/**
+ * A `run` seam that throws the AbortError the streaming provider re-throws verbatim on cancellation
+ * (name "AbortError"). The abort classification keys on the error's NAME, not merely on `signal.aborted`.
+ */
+const runAborts: ChatTurnSeams["run"] = () => {
+    const e = new Error("The operation was aborted");
+    e.name = "AbortError";
+    return Promise.reject(e);
+};
 
 /** A `ThreadHistory` whose `appendTurn` records its payload; the read methods are unused here. */
 function recordingHistory(append: () => ResultAsync<void, DbError> = () => okAsync(undefined)): {
@@ -93,17 +100,31 @@ describe("runChatTurn", () => {
         expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage, assistantMessage] }]);
     });
 
-    test("abort persists [userMessage] only and returns the aborted outcome", async () => {
+    test("an AbortError under an aborted signal persists [userMessage] only and returns aborted", async () => {
         const { history, appended } = recordingHistory();
         const controller = new AbortController();
         controller.abort();
-        const outcome = await runWith({ prepare: prepareOk, run: runThrows, history, signal: controller.signal });
+        const outcome = await runWith({ prepare: prepareOk, run: runAborts, history, signal: controller.signal });
         expect(outcome.kind).toBe("aborted");
         // `runAgent` throws before returning its array, so only the user turn survives.
         expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage] }]);
     });
 
-    test("a non-abort throw is a failed outcome carrying the cause, still persisting [userMessage]", async () => {
+    test("a provider failure racing an abort is failed (cause preserved), never masked as aborted", async () => {
+        // The signal is aborted, but the throw is NOT the streaming provider's AbortError — it is a real
+        // provider failure that happened to race a Ctrl+C. Classifying it `aborted` would silently drop
+        // the cause; it must surface as `failed` so the failure is logged and inspectable.
+        const { history, appended } = recordingHistory();
+        const controller = new AbortController();
+        controller.abort();
+        const cause = new Error("provider 503");
+        const outcome = await runWith({ prepare: prepareOk, run: () => Promise.reject(cause), history, signal: controller.signal });
+        expect(outcome.kind).toBe("failed");
+        if (outcome.kind === "failed") expect(outcome.cause).toBe(cause);
+        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage] }]);
+    });
+
+    test("a non-abort throw with a non-aborted signal is a failed outcome carrying the cause", async () => {
         const { history, appended } = recordingHistory();
         const cause = new Error("runAgent exploded");
         const outcome = await runWith({ prepare: prepareOk, run: () => Promise.reject(cause), history, signal: new AbortController().signal });

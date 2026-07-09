@@ -20,12 +20,15 @@ export type ChatBarProps = {
      */
     onFocusChange?: (focused: boolean) => void;
     /**
-     * When true, the runtime is still booting (or boot failed) and submits are refused by the host —
-     * the bar surfaces the closed gate in its empty-buffer placeholder so the affordance itself
-     * explains why typing goes nowhere yet. The textarea stays editable so a first message can be
-     * pre-typed while booting; only the host's submit is gated.
+     * Why the input is gated (submits refused by the host), or absent when the input is open. Drives
+     * the empty-buffer placeholder so the affordance itself explains why typing goes nowhere yet:
+     *   - `"booting"` — the runtime is still coming up; a first message can be pre-typed and sends once
+     *     ready;
+     *   - `"failed"` — boot hit a terminal error (its actionable reason renders above the bar); typing
+     *     here will not send.
+     * The textarea stays editable in either state; only the host's submit is gated.
      */
-    gated?: boolean;
+    gate?: "booting" | "failed";
 };
 
 /**
@@ -48,7 +51,13 @@ export function ChatBar(props: ChatBarProps) {
                 chrome="full"
                 minHeight={3}
                 maxHeight={8}
-                placeholder={props.gated ? `Booting harness runtime${GLYPHS.ellipsis}` : `Type a message${GLYPHS.ellipsis}`}
+                placeholder={
+                    props.gate === "failed"
+                        ? `Boot failed ${GLYPHS.emDash} see the message above`
+                        : props.gate === "booting"
+                          ? `Booting harness runtime${GLYPHS.ellipsis}`
+                          : `Type a message${GLYPHS.ellipsis}`
+                }
                 onRef={(r) => props.onTextareaRef(r)}
                 onSubmit={() => props.onSubmit()}
                 onFocusChange={(f) => {
