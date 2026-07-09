@@ -262,7 +262,11 @@ export async function forceReprofile(runtime: HarnessRuntime, analysis: Analysis
             // Mirror the command's managed retry route: claim `failed → running`, then start the workflow
             // for the now-claimed row. Force is deliberate, so unlike parity it DOES resurrect a failure.
             const claimResult = await seams.retryClaim(runtime.pool, analysis.id);
-            if (claimResult.isErr()) return { kind: "failed", reason: `could not read the profile ledger (${claimResult.error.type})` };
+            // `tryRetryDataProfile` is a `failed → running` CAS UPDATE, not a read; a `DbError`
+            // here is a CAS-failure query fault, not a ledger-read miss (the read already
+            // happened above). Phrase the refusal as a claim failure, not a read failure, so
+            // the toast wording stays accurate under this rare race.
+            if (claimResult.isErr()) return { kind: "failed", reason: `could not claim the failed profile to retry (${claimResult.error.type})` };
             // Lost the claim (`ok(false)`): the row is no longer `failed` — another attempt already moved
             // it on. The command dies with "could not start"; headless, we report a distinct `failed`
             // reason so the caller can word the refusal separately from a start fault.

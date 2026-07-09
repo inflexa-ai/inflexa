@@ -274,7 +274,7 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
             // the retry claim. Mirror the managed retry route: claim, then start.
             const retried = (await tryRetryDataProfile(runtime.pool, analysis.id)).match(
                 (r) => r,
-                (e) => fail("Failed to read the profile ledger", e),
+                (e) => fail("Failed to retry-claim the failed profile", e),
             );
             if (!retried) {
                 const status = (await loadDataProfileStatus(runtime.pool, analysis.id)).match(
