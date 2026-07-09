@@ -57,7 +57,7 @@ describe("Sidebar input count follows the bus", () => {
         writeFileSync(join(dirA, "one.txt"), "x");
         writeFileSync(join(dirA, "three.txt"), "x");
         writeFileSync(join(dirB, "two.txt"), "x");
-        // Explicit inputPaths — omitting them engages createAnalysis's whole-cwd default input.
+        // These analyses need specific inputs to drive the input-event assertions below.
         const a = createAnalysis({ cwd: dirA, name: str256("alpha")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] })._unsafeUnwrap();
         const b = createAnalysis({ cwd: dirB, name: str256("bravo")._unsafeUnwrap(), inputPaths: [join(dirB, "two.txt")] })._unsafeUnwrap();
 

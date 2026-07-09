@@ -88,6 +88,41 @@ describe("detectSourceAnalysis", () => {
     });
 });
 
+describe("createAnalysis inputs", () => {
+    let dir = "";
+
+    beforeEach(() => {
+        freshDb();
+        // realpath so the analysis's stored paths match macOS's canonical /private/var.
+        dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-create-")));
+    });
+
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    // The load-bearing regression: opening `inflexa` in a huge tree (e.g. $HOME) once enrolled the
+    // whole cwd as an input, which the open-time parity check then data-profiled in full. Inputs are
+    // user-driven — no paths in, no inputs out.
+    test("with no inputPaths, the analysis starts with zero inputs (never defaults to cwd)", () => {
+        const a = createAnalysis({ cwd: dir, name: str256("no-inputs")._unsafeUnwrap() })._unsafeUnwrap();
+        expect(listAnalysisInputs(a.id)._unsafeUnwrap()).toHaveLength(0);
+    });
+
+    test("with an empty inputPaths array, the analysis still starts with zero inputs", () => {
+        const a = createAnalysis({ cwd: dir, name: str256("empty-inputs")._unsafeUnwrap(), inputPaths: [] })._unsafeUnwrap();
+        expect(listAnalysisInputs(a.id)._unsafeUnwrap()).toHaveLength(0);
+    });
+
+    test("explicit inputPaths are still enrolled", () => {
+        writeFileSync(join(dir, "one.txt"), "x");
+        const a = createAnalysis({ cwd: dir, name: str256("one-input")._unsafeUnwrap(), inputPaths: [join(dir, "one.txt")] })._unsafeUnwrap();
+        const inputs = listAnalysisInputs(a.id)._unsafeUnwrap();
+        expect(inputs).toHaveLength(1);
+        expect(inputs[0]?.path).toContain("one.txt");
+    });
+});
+
 describe("applyInputsDiff", () => {
     let dir = "";
 

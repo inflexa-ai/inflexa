@@ -89,7 +89,7 @@ The picker SHALL run the app's INSERT/NORMAL pattern: INSERT (filter input focus
 
 ### Requirement: Picker wiring into analysis flows
 
-The new-analysis flow SHALL open `FilePicker` seeded empty with `requireSelection` (breaking the silent whole-cwd default), and the add-inputs flow SHALL open it seeded with the analysis's existing inputs (clearing all is legitimate). The add-inputs confirm SHALL apply the diff adds-first via `applyInputsDiff`: the add batch is all-or-nothing, and the removals run ONLY when the adds succeeded — a failed add batch must not still strip the unchecked rows. Input mutations resulting from confirm SHALL emit input-change bus events so the sidebar refreshes without a reload.
+The new-analysis flow SHALL open `FilePicker` seeded empty with `requireSelection` (inputs are user-driven — `createAnalysis` enrolls none by default, so the picker gathers them explicitly), and the add-inputs flow SHALL open it seeded with the analysis's existing inputs (clearing all is legitimate). The add-inputs confirm SHALL apply the diff adds-first via `applyInputsDiff`: the add batch is all-or-nothing, and the removals run ONLY when the adds succeeded — a failed add batch must not still strip the unchecked rows. Input mutations resulting from confirm SHALL emit input-change bus events so the sidebar refreshes without a reload.
 
 #### Scenario: New analysis requires an explicit selection
 
