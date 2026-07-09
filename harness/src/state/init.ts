@@ -20,7 +20,11 @@ CREATE TABLE IF NOT EXISTS cortex_analysis_state (
   status                    TEXT NOT NULL,
   context                   TEXT,
   billing_context           JSONB,
-  data_profile_status       TEXT NOT NULL DEFAULT 'pending',
+  -- Nullable: NULL is the honest "no profile" state, which loadDataProfileStatus
+  -- collapses to null so a cleared profile is indistinguishable from one that never
+  -- existed. The 'pending' default still applies to a row inserted without a status --
+  -- a freshly-seeded analysis awaiting its first profile.
+  data_profile_status       TEXT DEFAULT 'pending',
   data_profile_error        TEXT,
   data_profile_started_at   TEXT,
   data_profile_completed_at TEXT,
@@ -366,11 +370,9 @@ export async function initCortexState(pool: Pool): Promise<void> {
                 // and re-opens the charge closed on the 402 pause path.
                 "ALTER TABLE cortex_runs ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE cortex_analysis_state ADD COLUMN IF NOT EXISTS seed_input_file_ids JSONB",
-                // NULL data_profile_status is the honest "no profile" state — a
-                // profile cleared once its input set emptied is indistinguishable
-                // from one that never existed. The column keeps its 'pending'
-                // default; only the NOT NULL floor is relaxed so a clear can null
-                // the whole ledger. Idempotent: dropping an absent NOT NULL no-ops.
+                // Databases created before `data_profile_status` became nullable still
+                // carry the NOT NULL floor, which would reject a clear. Idempotent:
+                // dropping an absent NOT NULL no-ops, so this is a no-op on fresh DBs.
                 "ALTER TABLE cortex_analysis_state ALTER COLUMN data_profile_status DROP NOT NULL",
                 "ALTER TABLE messages ADD COLUMN IF NOT EXISTS message_envelope JSONB",
             ];

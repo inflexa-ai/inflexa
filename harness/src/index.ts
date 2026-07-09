@@ -179,10 +179,11 @@ export { createPool } from "./lib/storage.js";
 export type { PoolConfig } from "./lib/storage.js";
 export type { Pool } from "pg";
 
-// Data-profile workflow: registration + trigger. `triggerDataProfile` claims
-// pending/completed rows only; a failed profile is re-claimed via
-// `tryRetryDataProfile` and then started with `runDataProfile` (the managed
-// retry route's shape — embedders mirror it).
+// Data-profile workflow: registration + trigger. `triggerDataProfile` claims a
+// startable row (`pending` or NULL status) or a `completed` one, in both cases only
+// when the analysis names a non-empty seeded input set; a failed profile is re-claimed
+// via `tryRetryDataProfile` and then started with `runDataProfile` (the managed retry
+// route's shape — embedders mirror it).
 export { registerDataProfileWorkflow, triggerDataProfile, runDataProfile } from "./tasks/data-profile.js";
 export type {
     DataProfileDeps,
@@ -204,7 +205,7 @@ export { upsertAnalysis } from "./state/analyses.js";
 // analysis's input set empties (deferring on a running workflow), so the UI
 // stops advertising a profile that describes files the analysis no longer has.
 export { clearDataProfile, loadDataProfileStatus, tryRetryDataProfile, reconcileOrphanedDataProfile } from "./state/data-profile.js";
-export type { DataProfileStatus } from "./state/data-profile.js";
+export type { DataProfileInputFile, DataProfileResult, DataProfileStatus } from "./state/data-profile.js";
 
 // Staged-input manifest contract (the embedder stages; the harness only reads).
 export type { StagedInput } from "./execution/staged-input.js";

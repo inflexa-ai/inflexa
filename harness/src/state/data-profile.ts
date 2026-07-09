@@ -9,31 +9,73 @@ import type { ResultAsync } from "neverthrow";
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
 
+/**
+ * One profiled input file's **drift signature**. `fileId` is a path identity the
+ * embedder derives (two files at the same path share it regardless of content),
+ * so `size` + `mtimeMs` are what let a consumer notice that the bytes behind a
+ * path changed. The harness treats all three as opaque labels: it persists them
+ * verbatim and never stats a source file or compares signatures itself.
+ */
+export interface DataProfileInputFile {
+    fileId: string;
+    size: number;
+    mtimeMs: number;
+}
+
+/** The profile snapshot `completeDataProfile` persists and `loadDataProfileStatus` reads back. */
+export interface DataProfileResult {
+    summary: string;
+    files: Array<{ path: string; description: string }>;
+    /** Which files the profile covered — the audit record. */
+    inputFileIds: string[];
+    /**
+     * Whether the same bytes were covered — the drift comparand. Optional on read:
+     * a snapshot written before this field existed carries only `inputFileIds`, and
+     * a consumer treats the absence as drift (re-profiling repairs it), exactly as
+     * it already treats a wholly absent `result`.
+     */
+    inputFiles?: DataProfileInputFile[];
+    profiledAt: string;
+}
+
 export interface DataProfileStatus {
     status: "pending" | "running" | "completed" | "failed";
     error: string | null;
     startedAt: string | null;
     completedAt: string | null;
-    result: {
-        summary: string;
-        files: Array<{ path: string; description: string }>;
-        inputFileIds: string[];
-        profiledAt: string;
-    } | null;
+    result: DataProfileResult | null;
     seedInputFileIds: string[] | null;
 }
 
 /**
- * Try to claim a startable row into `running`. Startable means `'pending'`
- * (seeded, not yet run) or NULL (no profile: never profiled, or cleared by
- * `clearDataProfile`). `ok(true)` when this call won the CAS, `ok(false)` when
- * it lost (already claimed) — losing the race is NOT an error, it stays in the
- * ok channel.
+ * The conjunct every claim into `running` carries: the row names a non-empty set
+ * of seeded input files.
  *
- * NULL must be claimable here or a cleared analysis whose inputs return can
- * never be profiled again: the seed upsert's ON CONFLICT deliberately never
- * rewrites profile status, so the row stays NULL — and NULL matches neither
- * the rerun (`completed`) nor retry (`failed`) claims.
+ * It rides in the CAS rather than in a caller's pre-read because "a `running` row
+ * records the input set it is profiling" is an invariant of the LEDGER, not of any
+ * one orchestration — and `clearDataProfile` can null the seed of any non-`running`
+ * row at any moment, so a pre-read followed by a claim is a race, not an enforcement.
+ *
+ * An empty array is not a seed. `upsertAnalysis` writes NULL to mean "leave the
+ * stored seed alone" (its `COALESCE` conflict branch), so `[]` is a real value that
+ * names zero files — a set no profile may run against. `jsonb_array_length` raises on
+ * a non-array jsonb; the column is only ever written from `JSON.stringify(string[])`,
+ * and surfacing a hand-corrupted row as a `DbError` beats silently claiming it.
+ */
+const SEEDED = "seed_input_file_ids IS NOT NULL AND jsonb_array_length(seed_input_file_ids) > 0";
+
+/**
+ * Try to claim a startable row into `running`. Startable means `'pending'` (seeded,
+ * not yet run) or NULL (no profile: never profiled, or cleared by `clearDataProfile`).
+ *
+ * NULL must be claimable or a cleared analysis whose inputs return can never be
+ * profiled again: the seed upsert's ON CONFLICT deliberately never rewrites profile
+ * status, so the row stays NULL — and NULL matches neither the rerun (`completed`)
+ * nor retry (`failed`) claims. A cleared row is therefore claimable only once a later
+ * seed upsert has repopulated `seed_input_file_ids` (see {@link SEEDED}).
+ *
+ * `ok(true)` when this call won the CAS; `ok(false)` when it lost or the row is
+ * unseeded — neither is an error, both stay in the ok channel.
  */
 export function tryStartDataProfile(pool: Querier, analysisId: string): ResultAsync<boolean, DbError> {
     const now = new Date().toISOString();
@@ -41,13 +83,14 @@ export function tryStartDataProfile(pool: Querier, analysisId: string): ResultAs
         const result = await pool.query({
             text: `UPDATE cortex_analysis_state
             SET data_profile_status = 'running', data_profile_started_at = $1
-            WHERE analysis_id = $2 AND (data_profile_status = 'pending' OR data_profile_status IS NULL)`,
+            WHERE analysis_id = $2 AND (data_profile_status = 'pending' OR data_profile_status IS NULL) AND ${SEEDED}`,
             values: [now, analysisId],
         });
         return (result.rowCount ?? 0) > 0;
     });
 }
 
+/** Claim a `failed` row back into `running` (the deliberate-retry route). Carries {@link SEEDED}. */
 export function tryRetryDataProfile(pool: Querier, analysisId: string): ResultAsync<boolean, DbError> {
     const now = new Date().toISOString();
     return tryMutation("dataProfile.tryRetryDataProfile", async () => {
@@ -55,13 +98,18 @@ export function tryRetryDataProfile(pool: Querier, analysisId: string): ResultAs
             text: `UPDATE cortex_analysis_state
             SET data_profile_status = 'running', data_profile_started_at = $1,
                 data_profile_error = NULL, data_profile_completed_at = NULL
-            WHERE analysis_id = $2 AND data_profile_status = 'failed'`,
+            WHERE analysis_id = $2 AND data_profile_status = 'failed' AND ${SEEDED}`,
             values: [now, analysisId],
         });
         return (result.rowCount ?? 0) > 0;
     });
 }
 
+/**
+ * Claim a `completed` row back into `running` (the re-profile route). `data_profile_result`
+ * is deliberately preserved so a consumer can keep serving the prior profile while the new
+ * one runs. Carries {@link SEEDED}.
+ */
 export function tryRerunDataProfile(pool: Querier, analysisId: string): ResultAsync<boolean, DbError> {
     const now = new Date().toISOString();
     return tryMutation("dataProfile.tryRerunDataProfile", async () => {
@@ -69,23 +117,14 @@ export function tryRerunDataProfile(pool: Querier, analysisId: string): ResultAs
             text: `UPDATE cortex_analysis_state
             SET data_profile_status = 'running', data_profile_started_at = $1,
                 data_profile_error = NULL, data_profile_completed_at = NULL
-            WHERE analysis_id = $2 AND data_profile_status = 'completed'`,
+            WHERE analysis_id = $2 AND data_profile_status = 'completed' AND ${SEEDED}`,
             values: [now, analysisId],
         });
         return (result.rowCount ?? 0) > 0;
     });
 }
 
-export function completeDataProfile(
-    pool: Querier,
-    analysisId: string,
-    result?: {
-        summary: string;
-        files: Array<{ path: string; description: string }>;
-        inputFileIds: string[];
-        profiledAt: string;
-    },
-): ResultAsync<void, DbError> {
+export function completeDataProfile(pool: Querier, analysisId: string, result?: DataProfileResult): ResultAsync<void, DbError> {
     const now = new Date().toISOString();
     return tryMutation("dataProfile.completeDataProfile", async () => {
         await pool.query({

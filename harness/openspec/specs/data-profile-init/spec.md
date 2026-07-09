@@ -56,6 +56,29 @@ a sandbox.
 - **WHEN** the body runs with an empty `stagedInputs` manifest
 - **THEN** it marks the profile completed, revokes the run authorization, and starts no sandbox
 
+### Requirement: The staged-input manifest carries a per-file drift signature
+
+Every `StagedInput` the embedder hands the data-profile trigger SHALL carry `mtimeMs: number` — the
+source file's last-modification time in epoch milliseconds — alongside the existing `size`. Together
+`(fileId, size, mtimeMs)` form the file's **drift signature**: the value a consumer compares against a
+completed profile's `inputFiles` to decide whether the same bytes were profiled.
+
+`mtimeMs` SHALL be a value the embedder already holds when it produces the manifest: the CLI reads it
+from the `stat` it performs to record `size`; a managed service supplies the object store's
+last-modified epoch. The harness treats it, like `fileId`/`key`/`mountName`, as an opaque label — it
+never interprets, compares, or validates it, and it never reads the source filesystem.
+
+#### Scenario: The manifest element carries size and mtime
+
+- **WHEN** an embedder constructs a `StagedInput` for a source file
+- **THEN** the element SHALL carry the file's `size` in bytes and its `mtimeMs` in epoch milliseconds
+
+#### Scenario: The harness does not interpret the signature
+
+- **WHEN** the data-profile workflow consumes a `StagedInput`
+- **THEN** it SHALL persist `mtimeMs` into the completed result's `inputFiles` verbatim
+- **AND** it SHALL NOT stat the source file, compare mtimes, or reject a manifest on the basis of them
+
 ### Requirement: The data-profiler agent delivers results through a terminal submit_profile tool
 
 The body SHALL run the `data-profiler` sandbox agent via `runToTerminal` (see the
@@ -115,10 +138,11 @@ scientific domain appropriate to the data it profiled (e.g. `"transcriptomics"`,
 On success the body SHALL register each staged file as a `role: "input"` artifact
 at `data/{relativePath}`, index a per-file description into the analysis vector
 store under `type: "input"`, and store a result snapshot — `summary`, file
-descriptions, `inputFileIds`, and `profiledAt` — in the `data_profile_status`
-ledger via `completeDataProfile`. The profiler's scratch scripts SHALL be
-confined to `runs/data-profile/profile`. The run authorization SHALL be revoked
-on every terminal path (success, no-op, and failure).
+descriptions, `inputFileIds`, `inputFiles` (the per-file drift signatures), and
+`profiledAt` — in the `data_profile_status` ledger via `completeDataProfile`. The
+profiler's scratch scripts SHALL be confined to `runs/data-profile/profile`. The
+run authorization SHALL be revoked on every terminal path (success, no-op, and
+failure).
 
 #### Scenario: Successful profile snapshots its inputs
 
