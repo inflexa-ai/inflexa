@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { devCommandsActive, isDevelopmentBuild } from "./env.ts";
+import { devCommandsActive, isDevelopmentBuild, isUnsandboxedTestRun } from "./env.ts";
 
 // The truth table behind env.isDevelopment: a build is development unless the baked channel is exactly
 // "production". We test the pure helper because env freezes its bakedEnv.buildChannel read at import.
@@ -53,5 +53,32 @@ describe("devCommandsActive", () => {
         expect(devCommandsActive("production", "0")).toBe(false);
         expect(devCommandsActive("production", "")).toBe(false);
         expect(devCommandsActive("production", "true")).toBe(false);
+    });
+});
+
+// The truth table behind env.ts's import-time data-loss guard. The guard itself runs during module
+// evaluation — by the time this file executes it has already decided — so only the pure helper is
+// reachable from a test. That this very suite imports env.ts without exploding is the guard's happy
+// path: cli/bunfig.toml's preload stamped the marker before any test module loaded.
+describe("isUnsandboxedTestRun", () => {
+    test("bun test with no sandbox marker → refuse", () => {
+        expect(isUnsandboxedTestRun("test", undefined)).toBe(true);
+    });
+
+    test("bun test with the preload's marker → allow", () => {
+        expect(isUnsandboxedTestRun("test", "/tmp/inflexa-test-AbC123")).toBe(false);
+    });
+
+    test("an empty marker is not a marker (an env var set to the empty string)", () => {
+        expect(isUnsandboxedTestRun("test", "")).toBe(true);
+    });
+
+    test("a built binary bakes NODE_ENV to its channel, never test → allow", () => {
+        expect(isUnsandboxedTestRun("production", undefined)).toBe(false);
+        expect(isUnsandboxedTestRun("development", undefined)).toBe(false);
+    });
+
+    test("bun run dev leaves NODE_ENV unset → allow", () => {
+        expect(isUnsandboxedTestRun(undefined, undefined)).toBe(false);
     });
 });

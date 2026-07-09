@@ -52,6 +52,15 @@ export async function resolveModelId(apiKey: string): Promise<Result<string, Cha
 }
 
 /**
+ * Test hook: forget the process-wide model cache. Test-only — the cache is deliberately never
+ * invalidated at runtime (a proxy's model list changes only across a `inflexa setup`, which restarts
+ * the process), so without this every test after the first would observe the first one's resolution.
+ */
+export function __resetModelCacheForTest(): void {
+    cachedModelId = null;
+}
+
+/**
  * Pick the default model id by {@link MODEL_PREFERENCE} (claude > gpt > gemini > qwen, matched
  * case-insensitively by substring), falling back to the first id when no family matches.
  */

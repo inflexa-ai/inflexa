@@ -30,9 +30,43 @@ import { profileSnapshot, refreshSidebarData } from "./sidebar_live.ts";
 // re-check the SAME analysis after its state changed).
 let lastTriggeredAnalysisId: string | null = null;
 
-/** Test hook: forget the last-triggered analysis so the de-dup guard starts clean. Test-only. */
+// The tail of the profile-work queue. EVERY entry into the profile lifecycle — the three parity edges
+// and the deliberate force — runs its whole stage → seed → trigger sequence through here, one at a time.
+//
+// The harness ledger CAS serializes the workflow DISPATCH, but it runs only after staging, so it cannot
+// serialize the two things that actually race. First, `stageInputs` rm/relinks files under one session
+// tree and then deletes every on-disk file absent from ITS OWN manifest (`reconcileStagedTree`), so a
+// drive holding a stale manifest can delete files another just linked — under a sandbox that is already
+// reading them. Second, the empty-set branch's `clearDataProfile` nulls `seed_input_file_ids`, which
+// landing between another drive's seed and its trigger refuses that drive for an absent seed.
+//
+// The per-analysis instance lock excludes other PROCESSES but is re-entrant per pid (lib/lock.ts), so it
+// cannot serve as the in-process guard. One chat screen with one open analysis is mounted at a time, so
+// an unkeyed queue is correct.
+//
+// Arrivals QUEUE, they do not drop: the edges fire precisely because state changed, so a drive arriving
+// during another must still run afterwards, against the new state. Dropping it would reopen the window
+// those edges were added to close.
+let profileQueueTail: Promise<unknown> = Promise.resolve();
+
+/**
+ * Run `work` after everything already queued. `.then(work, work)` so a rejected predecessor still lets
+ * its successors run, and the tail is kept rejection-free so one failure cannot skip every later drive.
+ * The returned promise carries `work`'s own outcome, so a caller (or a test) still observes it.
+ */
+function serializeProfileWork(work: () => Promise<void>): Promise<void> {
+    const next = profileQueueTail.then(work, work);
+    profileQueueTail = next.then(
+        () => {},
+        () => {},
+    );
+    return next;
+}
+
+/** Test hook: forget the last-triggered analysis and drain the work queue. Test-only. */
 export function __resetProfileParityForTest(): void {
     lastTriggeredAnalysisId = null;
+    profileQueueTail = Promise.resolve();
 }
 
 // Trailing-edge debounce for the live input-mutation drift check: a batch edit (a multi-file add via
@@ -201,12 +235,17 @@ const realParityDriverSeams: ParityDriverSeams = {
  * analysis A while B is on screen is the same class of bug. So if the open analysis changed while `check`
  * was in flight, drop BOTH the poke and the notice.
  */
-export async function driveProfileParity(
+export function driveProfileParity(
     runtime: HarnessRuntime,
     analysis: Analysis,
     currentAnalysisId: () => string | null,
     seams: ParityDriverSeams = realParityDriverSeams,
 ): Promise<void> {
+    return serializeProfileWork(() => runParityDrive(runtime, analysis, currentAnalysisId, seams));
+}
+
+/** {@link driveProfileParity}'s body, run under the shared profile-work queue. */
+async function runParityDrive(runtime: HarnessRuntime, analysis: Analysis, currentAnalysisId: () => string | null, seams: ParityDriverSeams): Promise<void> {
     const outcome = await seams.check(runtime, analysis);
     // Swapped analyses while `check` staged files? Drop both the poke and the notice (see the doc above).
     if (currentAnalysisId() !== analysis.id) return;
@@ -277,12 +316,19 @@ const realForceDriverSeams: ForceDriverSeams = {
  * the mid-check swap guard — if the open analysis changed while `force` staged files, drop both the poke
  * and the notice. Exported for the unit test; production drives it from the palette / dialog action.
  */
-export async function driveForceReprofile(
+export function driveForceReprofile(
     runtime: HarnessRuntime,
     analysis: Analysis,
     currentAnalysisId: () => string | null,
     seams: ForceDriverSeams = realForceDriverSeams,
 ): Promise<void> {
+    // Shares the parity queue, not a queue of its own: force and parity both stage into the same
+    // session tree and both write the same ledger row, so they must exclude each other too.
+    return serializeProfileWork(() => runForceDrive(runtime, analysis, currentAnalysisId, seams));
+}
+
+/** {@link driveForceReprofile}'s body, run under the shared profile-work queue. */
+async function runForceDrive(runtime: HarnessRuntime, analysis: Analysis, currentAnalysisId: () => string | null, seams: ForceDriverSeams): Promise<void> {
     const outcome = await seams.force(runtime, analysis);
     // Swapped analyses while `force` staged files? Drop both the poke and the notice (see driveProfileParity).
     if (currentAnalysisId() !== analysis.id) return;

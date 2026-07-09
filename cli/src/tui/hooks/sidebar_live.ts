@@ -340,10 +340,25 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
         const analysisId = workspace.analysis?.id;
         return active && analysisId ? analysisId : null;
     });
+    // A tick fired while the previous refresh is still awaiting Postgres is DROPPED, not queued.
+    // `refreshSidebarData` claims the generation token at entry, so a newer refresh CANCELS an older
+    // one — without this flag, reads slower than the interval would leave every tick superseded by the
+    // next and the store would never receive a write at all. That failure is self-sustaining: an
+    // `unavailable` snapshot is itself an arming condition (`hasActiveWork`), so a struggling database
+    // would be re-queried every 5s behind a permanently frozen section. Skipping degrades cadence
+    // instead. Only the POLL skips: lifecycle edges carry new information and must supersede.
+    let pollInFlight = false;
     createEffect(() => {
         const key = armKey();
         teardown();
-        if (key) disarm = seams.arm(() => void seams.refresh(key), POLL_INTERVAL_MS);
+        if (!key) return;
+        disarm = seams.arm(() => {
+            if (pollInFlight) return;
+            pollInFlight = true;
+            void seams.refresh(key).finally(() => {
+                pollInFlight = false;
+            });
+        }, POLL_INTERVAL_MS);
     });
     onCleanup(teardown);
 }

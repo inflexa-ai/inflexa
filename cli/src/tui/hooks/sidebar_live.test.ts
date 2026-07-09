@@ -355,3 +355,82 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
         expect(lines[lines.length - 1]).toBe("1 seed input");
     });
 });
+
+// The poll's own overlap guard. `refreshSidebarData` claims the generation token at entry, so a newer
+// refresh CANCELS an older one — unguarded ticks slower than the interval would supersede each other
+// forever and the store would never receive a write. `unavailable` is itself an arming condition, so
+// that failure would be self-sustaining against a degraded database.
+describe("the bounded poll never overlaps itself", () => {
+    /** Watch seams whose `refresh` parks until released, recording each entry. */
+    function parkedRefreshSeams(): { watchSeams: WatchSeams; tick: () => void; entries: () => number; release: () => void } {
+        const arms: Array<() => void> = [];
+        let entries = 0;
+        let release!: () => void;
+        const gate = new Promise<void>((r) => {
+            release = r;
+        });
+        return {
+            watchSeams: {
+                refresh: async () => {
+                    entries += 1;
+                    await gate;
+                },
+                arm: (fn) => {
+                    arms.push(fn);
+                    return () => {};
+                },
+            },
+            tick: () => {
+                for (const fn of arms) fn();
+            },
+            entries: () => entries,
+            release: () => release(),
+        };
+    }
+
+    test("N ticks during one slow refresh issue exactly one refresh", async () => {
+        const h = parkedRefreshSeams();
+        const dispose = mountWatch(wsFor("A"), h.watchSeams);
+        try {
+            // Arm the poll: a running profile is active work.
+            await refreshSidebarData("A", seams(profileStatus({ status: "running" }), []));
+            const armedAfterEdge = h.entries();
+
+            h.tick();
+            h.tick();
+            h.tick();
+            expect(h.entries()).toBe(armedAfterEdge + 1); // three ticks, one refresh
+
+            h.release();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // Once the in-flight refresh settles the poll resumes.
+            h.tick();
+            expect(h.entries()).toBe(armedAfterEdge + 2);
+        } finally {
+            dispose();
+        }
+    });
+
+    test("a lifecycle edge still refreshes while a poll tick is in flight", async () => {
+        const h = parkedRefreshSeams();
+        const dispose = mountWatch(wsFor("A"), h.watchSeams);
+        try {
+            await refreshSidebarData("A", seams(profileStatus({ status: "running" }), []));
+            const before = h.entries();
+
+            h.tick();
+            expect(h.entries()).toBe(before + 1); // the poll owns a refresh
+
+            // The turn-completion down-edge must NOT be skipped: it carries new information.
+            setChatStatus("busy");
+            setChatStatus("idle");
+            expect(h.entries()).toBe(before + 2);
+
+            h.release();
+        } finally {
+            dispose();
+        }
+    });
+});

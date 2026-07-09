@@ -39,10 +39,10 @@ function bakedVarNames(source: string): string[] {
     return names;
 }
 
-// Bake the exact source commit so a release binary can report what it was built from (the
-// provenance `system` actor stamps it). Left empty if this is not a git checkout, which the
-// bakedEnv missing-guard below then rejects with a clear error.
-process.env.INFLEXA_GIT_COMMIT = await $`git rev-parse HEAD`
+// Bake the exact source commit so a release binary can report what it was built from (the provenance
+// `system` actor stamps it). Empty when this is not a git checkout; the production gate below rejects
+// that, and a development build tolerates it (env.ts's resolveGitCommit shells out to git at runtime).
+const gitCommit = await $`git rev-parse HEAD`
     .text()
     .then((sha) => sha.trim())
     .catch(() => "");
@@ -78,6 +78,23 @@ if (channel !== "production" && channel !== "development") {
     process.exit(1);
 }
 define["process.env.NODE_ENV"] = JSON.stringify(channel);
+
+// A production binary must know its own commit: the provenance `system` actor stamps it into every
+// signed record, and an unknown commit makes a chain unattributable to a source tree. env.ts throws
+// when a production build reads it unbaked — but that fires on the user's machine, at the moment they
+// try to record provenance, long after the bad artifact shipped. Refuse here instead, where the
+// operator can see it. A development build is allowed to omit it and resolve HEAD at runtime.
+if (channel === "production" && !gitCommit) {
+    console.error("error: refusing to build a production binary with no INFLEXA_GIT_COMMIT — `git rev-parse HEAD` produced nothing (not a git checkout?)");
+    process.exit(1);
+}
+// An explicit --define rather than a `process.env.INFLEXA_GIT_COMMIT` access inside env.ts's bakedEnv
+// block: that block's scanner applies its missing-var guard to EVERY channel, which would reject a
+// development build outside a checkout. The commit's requirement is channel-conditional, so its gate is
+// the branch above and its bake is here. Skipped when empty — a --define of "" would shadow the runtime
+// fallback with a falsy literal, and `if (process.env.INFLEXA_GIT_COMMIT)` would then take the git path
+// anyway, just less legibly.
+if (gitCommit) define["process.env.INFLEXA_GIT_COMMIT"] = JSON.stringify(gitCommit);
 
 // Release target matrix, built by `bun run build:all` (passes --all). The
 // default `bun run build` compiles only the host target for quick local

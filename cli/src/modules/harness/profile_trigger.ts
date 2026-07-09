@@ -6,13 +6,14 @@ import {
     runDataProfile,
     triggerDataProfile,
     tryRetryDataProfile,
+    type DataProfileStatus,
     type DataProfileTriggerParams,
 } from "@inflexa-ai/harness";
 
 import { getLogger } from "../../lib/log.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { sessionTreeDataDir } from "../staging/paths.ts";
-import { enumerateInputFileIds, stageInputs } from "../staging/staging.ts";
+import { enumerateInputSignatures, inputSignature, stageInputs } from "../staging/staging.ts";
 import { seedProfileLedger } from "./profile.ts";
 import type { HarnessRuntime } from "./runtime.ts";
 
@@ -22,7 +23,7 @@ import type { HarnessRuntime } from "./runtime.ts";
 // (and after an analysis swap); `forceReprofile` is the deliberate re-profile the palette/dialog action
 // drives. Both own the DECISION — enumerate → (drift/status branch) → stage → seed → trigger — and share
 // the stage → seed core with `inflexa profile` (`seedProfileLedger` in profile.ts), so the ledger
-// contract stays single-sourced. The cheap `enumerateInputFileIds` runs FIRST so the drift check costs
+// contract stays single-sourced. The cheap `enumerateInputSignatures` runs FIRST so the drift check costs
 // only stat/readdir; `stageInputs` (content hashing) runs ONLY once a (re-)trigger has been decided.
 
 /**
@@ -59,9 +60,9 @@ export type ProfileParityOutcome =
 export type ProfileParitySeams = {
     /** Reset an orphaned `running` ledger row (best-effort self-heal). */
     readonly reconcile: typeof reconcileOrphanedDataProfile;
-    /** Cheap (stat/readdir) read of the current input fileId set — the drift check's left-hand side. */
-    readonly enumerate: typeof enumerateInputFileIds;
-    /** Read the ledger status (lifecycle state + the completed profile's `result.inputFileIds`). */
+    /** Cheap (stat/readdir) read of the current input signature set — the drift check's left-hand side. */
+    readonly enumerate: typeof enumerateInputSignatures;
+    /** Read the ledger status (lifecycle state + the completed profile's `result.inputFiles`). */
     readonly loadStatus: typeof loadDataProfileStatus;
     /** Null the ledger back to "not profiled" when the input set empties (guarded to skip a live run). */
     readonly clear: typeof clearDataProfile;
@@ -79,7 +80,7 @@ export type ProfileParitySeams = {
 
 const realParitySeams: ProfileParitySeams = {
     reconcile: reconcileOrphanedDataProfile,
-    enumerate: enumerateInputFileIds,
+    enumerate: enumerateInputSignatures,
     loadStatus: loadDataProfileStatus,
     clear: clearDataProfile,
     stage: stageInputs,
@@ -90,25 +91,39 @@ const realParitySeams: ProfileParitySeams = {
 };
 
 /**
- * Order-insensitive equality between the freshly enumerated input fileId set and the ids a completed
- * profile was taken against. Equal sizes plus every profiled id present in the current set means no
- * drift; either direction of difference (a file added or removed) is drift. Both sides come from the
- * same dedup'd id space (`enumerateInputFileIds` and staging share one walk), so `inputFileIds` carries
- * no duplicates and a size + membership check is exact — a null/absent `result` is handled by the caller.
+ * Order-insensitive equality between the freshly enumerated input signature set and the signatures a
+ * completed profile was taken against. Equal sizes plus every profiled signature present in the current
+ * set means no drift; a difference in either direction — a file added, removed, or REWRITTEN IN PLACE —
+ * is drift. Both sides come from the same dedup'd space (`enumerateInputSignatures` and staging share
+ * one walk), so the profiled list carries no duplicates and a size + membership check is exact.
  */
 function inputSetMatches(current: ReadonlySet<string>, profiled: readonly string[]): boolean {
     if (current.size !== profiled.length) return false;
-    for (const id of profiled) {
-        if (!current.has(id)) return false;
+    for (const sig of profiled) {
+        if (!current.has(sig)) return false;
     }
     return true;
+}
+
+/**
+ * The signatures a completed ledger row was taken against, or `null` when the row records none.
+ *
+ * A row whose `result` is absent, or whose `result` predates the `inputFiles` field, cannot prove it
+ * covered the current bytes — `inputFileIds` answers WHICH files, never WHETHER they changed. Both
+ * cases collapse to `null`, which the caller reads as drift: re-profiling repairs the contract gap and
+ * costs one run, the same self-heal the null-`result` case has always had.
+ */
+function profiledSignatures(status: DataProfileStatus | null): string[] | null {
+    const files = status?.result?.inputFiles;
+    if (!files) return null;
+    return files.map((f) => inputSignature(f.fileId, f.size, f.mtimeMs));
 }
 
 /**
  * The stage → seed tail both entry points run once a (re-)trigger is decided: content-hash the inputs
  * into the session data dir, seed the ledger row, and build the trigger params. Reached only after the
  * cheap enumerate confirmed a non-empty input set, so it deliberately does NOT re-guard an empty
- * manifest — {@link enumerateInputFileIds} is the gate and staging shares its walk. Returns the built
+ * manifest — {@link enumerateInputSignatures} is the gate and staging shares its walk. Returns the built
  * params, or a one-line failure reason the caller wraps in a `failed` outcome. The trigger itself is
  * NOT here: parity and force map its result differently (parity never retries a `failed` row; force
  * mirrors the command's retry-claim), so each caller owns that step.
@@ -130,9 +145,9 @@ async function stageAndSeed(runtime: HarnessRuntime, analysis: Analysis, seams: 
  *      and its DBOS workflow insert leaves the row wedged at `running` with nothing to resume; boot has
  *      run DBOS recovery, so a still-`running` row with no workflow is genuinely orphaned. Reset it so
  *      the status read below re-triggers instead of reporting `already_running` forever.
- *   1. Enumerate the current input fileId set at stat/readdir cost (no hashing) — the drift check's
+ *   1. Enumerate the current input signature set at stat/readdir cost (no hashing) — the drift check's
  *      left-hand side. An enumerate fault is `failed` (parity can't be judged).
- *   2. Read the ledger status — its lifecycle state plus the completed profile's `result.inputFileIds`
+ *   2. Read the ledger status — its lifecycle state plus the completed profile's `result.inputFiles`
  *      (the set the profile was taken against). A ledger read fault is `failed`.
  *   3. Branch on the input set:
  *      - EMPTY — never profiled (`null`) → `no_inputs`; a live run → `already_running` (never clear a
@@ -163,13 +178,13 @@ export async function ensureProfileAtParity(
 
     const enumerateResult = seams.enumerate(analysis.id);
     if (enumerateResult.isErr()) return { kind: "failed", reason: `could not enumerate inputs (${enumerateResult.error.type})` };
-    const currentIds = enumerateResult.value;
+    const currentSignatures = enumerateResult.value;
 
     const statusResult = await seams.loadStatus(runtime.pool, analysis.id);
     if (statusResult.isErr()) return { kind: "failed", reason: `could not read the profile ledger (${statusResult.error.type})` };
     const status = statusResult.value;
 
-    if (currentIds.size === 0) {
+    if (currentSignatures.size === 0) {
         // An emptied input set: nothing to profile now. A never-profiled analysis is the ordinary
         // "add inputs" state; a live run must never be cleared (its completion write would resurrect
         // half-cleared state); any settled prior profile now describes files that are gone, so clear it.
@@ -190,10 +205,8 @@ export async function ensureProfileAtParity(
     if (status?.status === "running") return { kind: "already_running" };
     if (status?.status === "failed") return { kind: "skipped_failed" };
     if (status?.status === "completed") {
-        // A completed row with a null `result` never recorded which files it covered — a contract gap
-        // re-profiling heals, so treat it as drift rather than trusting the row's staleness.
-        const profiled = status.result?.inputFileIds ?? null;
-        if (profiled !== null && inputSetMatches(currentIds, profiled)) return { kind: "already_profiled" };
+        const profiled = profiledSignatures(status);
+        if (profiled !== null && inputSetMatches(currentSignatures, profiled)) return { kind: "already_profiled" };
     }
 
     const paramsResult = await stageAndSeed(runtime, analysis, seams);

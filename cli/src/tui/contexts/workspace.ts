@@ -133,8 +133,14 @@ export function createWorkspace(init: WorkspaceInit, seams: WorkspaceSeams = rea
 export const WorkspaceContext = createContext<Workspace>();
 
 /**
- * Read the {@link Workspace} from context. Throws when called outside a `WorkspaceContext.Provider`
- * — failing loud beats handing back `undefined` and crashing deeper in a consumer.
+ * Read the {@link Workspace} from context. Throws when called outside a `WorkspaceContext.Provider`.
+ *
+ * The `throw` is deliberate and does not owe a `Result`: a missing Provider is a WIRING bug — the same
+ * invariant class as an exhaustive-switch `default`, a condition the component tree's shape makes
+ * unreachable, not a runtime failure a caller could meaningfully handle. Every consumer already sits
+ * under the Provider that `App` mounts; one that does not is broken at author time and cannot recover
+ * by branching on an `Err`. Failing loud here beats handing back `undefined` and crashing deeper, at a
+ * property read, where the stack no longer names the cause.
  */
 export function useWorkspace(): Workspace {
     const ws = useContext(WorkspaceContext);

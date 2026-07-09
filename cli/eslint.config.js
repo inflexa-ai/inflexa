@@ -77,6 +77,8 @@ export default defineConfig([
                     // two can't diverge. Banning direct reads (env.ts included) keeps that coupling the single
                     // authority. scripts/build.ts sets it via a `define["process.env.NODE_ENV"]` string key — an
                     // object property, not this `process.env.NODE_ENV` member expression — so it is unaffected.
+                    // ONE sanctioned exception, disabled inline in env.ts: the test-sandbox guard, which asks
+                    // "is this a `bun test` process?" — a question the channel cannot answer and NODE_ENV can.
                     selector: "MemberExpression[object.object.name='process'][object.property.name='env'][property.name='NODE_ENV']",
                     message: "Don't read `process.env.NODE_ENV` — use `env.isDevelopment` / `devCommandsEnabled` (baked from INFLEXA_BUILD_CHANNEL). See src/lib/env.ts.",
                 },
@@ -124,11 +126,11 @@ export default defineConfig([
         files: ["src/**/*.{ts,tsx}"],
         // env.ts owns the canonical reads; the test-support env-sandbox plumbing is the deliberate
         // exception. The preload *sets* the XDG_* sandbox and stamps the INFLEXA_TEST_SANDBOX marker
-        // before env.ts freezes its paths (preload.ts); assertTestSandbox *reads* that marker to
-        // authorize every destructive env-path op — the single choke point (sandbox.ts); and the
-        // harness test toggles it to prove the guard refuses when absent (harness.test.ts). The marker
-        // can't route through the frozen env because it gates the reset lifecycle, not env's path
-        // derivation.
+        // before env.ts freezes its paths (preload.ts); env.ts itself *reads* the marker at import to
+        // refuse resolving any path under an unsandboxed `bun test`; assertTestSandbox re-reads it to
+        // authorize an individual destructive op (sandbox.ts); and the harness test toggles it to prove
+        // the guard refuses when absent (harness.test.ts). The marker can't route through the frozen env
+        // because it gates env's own derivation, and the reset lifecycle, not a value env exposes.
         ignores: ["src/lib/env.ts", "src/test_support/preload.ts", "src/test_support/sandbox.ts", "src/test_support/harness.test.ts"],
         rules: {
             "no-restricted-properties": [

@@ -7,16 +7,19 @@
 // ({@link causeDetailLines}). It mirrors the spirit of the harness's `ResultError.describe`
 // (harness/src/lib/result.ts) but adds the `type` discriminant and a bounded `.cause` tail.
 
-/** Longest one-line JSON fallback before it is truncated with an ellipsis — a banner is one line. */
+/** Longest one-line rendering of a value's interior (JSON fallback, aggregate summary) — a banner is one line. */
 const MAX_ONE_LINE_JSON = 200;
 /** Cap the details dump so a pathological object/stack can never flood the dialog. */
 const MAX_DETAIL_LINES = 400;
-/** Stop walking `Error.cause` after this depth so a self-referential chain cannot loop forever. */
+/** Stop walking `Error.cause` / `AggregateError.errors` after this depth so a self-referential chain cannot loop forever. */
 const MAX_CAUSE_DEPTH = 5;
+/** How many of an `AggregateError`'s sub-errors the ONE-LINE summary names before it elides the rest. */
+const MAX_ONE_LINE_AGGREGATE = 3;
 
 /**
  * Render an unknown failure value as ONE human line for a banner or a log summary. Never
  * `String(object)`. The cases, in order:
+ * - an `AggregateError` → `name: message`, then a bounded summary of its sub-errors;
  * - an `Error` → `name: message`, with one level of `.cause` appended as ` (cause: …)` when it is
  *   present and adds information beyond the wrapper's own message;
  * - a non-null object carrying a string `type` (the DomainError / discriminated-union convention) →
@@ -28,6 +31,12 @@ const MAX_CAUSE_DEPTH = 5;
 export function describeCause(cause: unknown): string {
     if (cause instanceof Error) {
         const head = errorHeadline(cause);
+        // Sub-errors win over `.cause` when both are present: an AggregateError's own message names
+        // the aggregation ("All promises were rejected"), never the failure, so `.errors` is where
+        // every fact a reader needs actually lives.
+        const aggregated = aggregateErrors(cause);
+        if (aggregated) return `${head} (${truncateOneLine(summarizeAggregate(aggregated))})`;
+
         const inner = cause.cause;
         if (inner !== undefined && inner !== null) {
             const innerLine = describeShallow(inner);
@@ -38,6 +47,33 @@ export function describeCause(cause: unknown): string {
         return head;
     }
     return describeNonError(cause);
+}
+
+/**
+ * The sub-errors of an `AggregateError`, or `null` for every other value (including an empty one,
+ * which carries no more information than its headline).
+ *
+ * This is not an exotic shape: a failed `fetch` throws one under Bun/undici, so it is what the proxy
+ * reachability check sees. `Array.isArray` guards the read because the constructor accepts ANY
+ * iterable — `new AggregateError(someSet)` is legal, and only a spec-conformant engine normalizes it.
+ */
+function aggregateErrors(cause: unknown): unknown[] | null {
+    if (!(cause instanceof AggregateError) || !Array.isArray(cause.errors) || cause.errors.length === 0) return null;
+    return cause.errors;
+}
+
+/** `N errors: a; b; c; +M more` — the one-line, shallow (non-recursing) view of an aggregate's members. */
+function summarizeAggregate(errors: unknown[]): string {
+    const shown = errors.slice(0, MAX_ONE_LINE_AGGREGATE);
+    const elided = errors.length - shown.length;
+    const body = shown.map(describeShallow).join("; ");
+    const count = `${errors.length} error${errors.length === 1 ? "" : "s"}`;
+    return elided > 0 ? `${count}: ${body}; +${elided} more` : `${count}: ${body}`;
+}
+
+/** Clamp a one-line rendering so a banner stays one line. */
+function truncateOneLine(text: string): string {
+    return text.length > MAX_ONE_LINE_JSON ? `${text.slice(0, MAX_ONE_LINE_JSON)}…` : text;
 }
 
 /** `name: message` for an `Error`, the shared headline both renderers lead with. */
@@ -65,14 +101,15 @@ function describeNonError(cause: unknown): string {
     if (typeof record.type === "string") {
         return typeof record.message === "string" && record.message.length > 0 ? `${record.type}: ${record.message}` : record.type;
     }
-    const json = safeStringify(cause);
-    return json.length > MAX_ONE_LINE_JSON ? `${json.slice(0, MAX_ONE_LINE_JSON)}…` : json;
+    return truncateOneLine(safeStringify(cause));
 }
 
 /**
  * The full multi-line rendering of a failure value for a details view (no ANSI — plain strings):
  * - an `Error` → `name: message`, then its stack frames, then an indented, recursively-rendered
  *   `caused by:` section for one level of `.cause` (bounded by {@link MAX_CAUSE_DEPTH});
+ * - an `AggregateError` → the above, plus an indented `errors[i]:` section per sub-error, rendered
+ *   BEFORE `caused by:` (the sub-errors are the failure; `.cause`, if any, is context around it);
  * - a string → its own lines (split on newlines);
  * - any other primitive → a single `String(cause)` line;
  * - any other object → a pretty-printed, circular-safe JSON dump (2-space indent), one array entry
@@ -102,14 +139,23 @@ function appendCauseDetail(cause: unknown, lines: string[], depth: number): void
                 lines.push(frame);
             }
         }
+        const aggregated = aggregateErrors(cause);
+        if (aggregated && depth < MAX_CAUSE_DEPTH) {
+            for (const [index, sub] of aggregated.entries()) {
+                // Re-checked per sub-error, not once: a single fat member can exhaust the budget, and
+                // the trailing `slice` would then throw away work we had already paid to render.
+                if (lines.length >= MAX_DETAIL_LINES) return;
+                lines.push("");
+                lines.push(`errors[${index}]:`);
+                indentFrom(lines, lines.length, () => appendCauseDetail(sub, lines, depth + 1));
+            }
+        }
+
         const inner = cause.cause;
         if (inner !== undefined && inner !== null && depth < MAX_CAUSE_DEPTH) {
             lines.push("");
             lines.push("caused by:");
-            const start = lines.length;
-            appendCauseDetail(inner, lines, depth + 1);
-            // Indent the whole nested section so the cause chain reads as a tree, not a flat list.
-            for (let i = start; i < lines.length; i++) lines[i] = `  ${lines[i]}`;
+            indentFrom(lines, lines.length, () => appendCauseDetail(inner, lines, depth + 1));
         }
         return;
     }
@@ -123,6 +169,16 @@ function appendCauseDetail(cause: unknown, lines: string[], depth: number): void
         return;
     }
     for (const line of safeStringify(cause, 2).split("\n")) lines.push(line);
+}
+
+/**
+ * Run `emit`, then indent every line it appended from `start` onward, so a nested section reads as a
+ * tree rather than a flat list. The callback shape keeps the "where did this section begin" bookkeeping
+ * in one place — the two nesting sites (`errors[i]:`, `caused by:`) got it subtly different otherwise.
+ */
+function indentFrom(lines: string[], start: number, emit: () => void): void {
+    emit();
+    for (let i = start; i < lines.length; i++) lines[i] = `  ${lines[i]}`;
 }
 
 /**
