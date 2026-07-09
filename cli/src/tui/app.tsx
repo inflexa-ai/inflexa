@@ -4,6 +4,7 @@ import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import { errAsync } from "neverthrow";
 import { queryStepsByRun, type StepExecutionRow, type DbError } from "@inflexa-ai/harness";
 
+import { causeDetailLines } from "../lib/cause.ts";
 import { GLYPHS, zIndex } from "../lib/design_system.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { writeClipboard } from "../lib/clipboard.ts";
@@ -151,6 +152,21 @@ export function App(props: AppProps) {
         ));
     }
 
+    // Open the TURN ERROR details view: the full cause of the last failed turn (stack, nested
+    // `.cause`, the whole structured object) the one-line banner collapses. Snapshots the retained
+    // cause as of open, mirroring `openProfile`/`openRuns`. Opening with nothing stored is fine — the
+    // dialog shows its empty text. No footer action: this is a read-only inspection surface.
+    function openTurnError(): void {
+        dialogPush(() => (
+            <ResultsDialog
+                title="Turn error"
+                lines={causeDetailLines(conversation.lastTurnFailure())}
+                emptyText="no recent turn error"
+                onClose={() => dialogClose()}
+            />
+        ));
+    }
+
     // A text-selection drag released over a Sidebar Section fires its `onMouseUp` (→ open dialog) on the
     // SAME release the root `onMouseUp={copySelection}` handles — so a drag ending on DATA PROFILE/RUNS
     // would both copy AND pop the dialog. When a selection is live, treat the release as the tail of that
@@ -270,6 +286,7 @@ export function App(props: AppProps) {
             { chord: leaderSeq("r"), run: openRuns, desc: "Runs", group: "Analysis" },
             { chord: leaderSeq("s"), run: () => runCommandById("session.switch"), desc: "Switch session", group: "Session" },
             { chord: leaderSeq("t"), run: () => runCommandById("view.theme"), desc: "Change theme", group: "View" },
+            { chord: leaderSeq("e"), run: openTurnError, desc: "Turn error details", group: "App" },
             { chord: leaderSeq("q"), run: () => void quit(), desc: "Quit", group: "App" },
         ],
     }));

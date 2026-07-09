@@ -18,6 +18,7 @@ import { intro, log, outro, spinner, text, isCancel } from "@clack/prompts";
 import { type ResultAsync } from "neverthrow";
 import { createStreamingChat, createThreadHistory, createThreadStore, type AgentChat, type AgentSession, type DbError, type Thread } from "@inflexa-ai/harness";
 
+import { describeCause } from "../../lib/cause.ts";
 import { fail } from "../../lib/cli.ts";
 import { acquireInstanceLock } from "../../lib/lock.ts";
 import { shutdown } from "../../lib/shutdown.ts";
@@ -70,11 +71,6 @@ export async function selectThread(
         },
         (cause): ThreadSelection => ({ kind: "lookup_failed", cause }),
     );
-}
-
-/** `unknown` → a one-line message, the shape the other harness commands use. */
-function errText(cause: unknown): string {
-    return cause instanceof Error ? cause.message : String(cause);
 }
 
 /**
@@ -299,12 +295,12 @@ async function runTurn(
                 printer.finishTurn();
                 break;
             case "failed":
-                sink.errLine(`The turn failed: ${errText(outcome.cause)}`);
+                sink.errLine(`The turn failed: ${describeCause(outcome.cause)}`);
                 reportAppendError(outcome.appendError);
                 printer.finishTurn();
                 break;
             case "prepare_failed":
-                sink.errLine(`Could not assemble the turn (is Postgres reachable?): ${errText(outcome.cause)}`);
+                sink.errLine(`Could not assemble the turn (is Postgres reachable?): ${describeCause(outcome.cause)}`);
                 // Emit the per-turn separator + reset state on this pre-`runAgent`
                 // bail too, so output shape stays uniform with the streamed path.
                 printer.finishTurn();
