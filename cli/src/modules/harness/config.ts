@@ -169,8 +169,8 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
         sandboxImage: cfg?.sandboxImage ?? DEFAULT_SANDBOX_IMAGE,
         resourcePolicy,
         adminPort: cfg?.adminPort ?? DEFAULT_ADMIN_PORT,
-        skillsDir: cfg?.skillsDir ?? (env.isDev ? devSkillsDir : null),
-        templatesDir: cfg?.templatesDir ?? (env.isDev ? devTemplatesDir : null),
+        skillsDir: cfg?.skillsDir ?? (env.isDevelopment ? devSkillsDir : null),
+        templatesDir: cfg?.templatesDir ?? (env.isDevelopment ? devTemplatesDir : null),
         configError,
     };
 }

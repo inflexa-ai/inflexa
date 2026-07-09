@@ -64,6 +64,21 @@ if (missing.length > 0) {
     process.exit(1);
 }
 
+// Couple the bundler's NODE_ENV to our build channel, from the SINGLE operator input
+// (INFLEXA_BUILD_CHANNEL, already present per the missing-var guard above). NODE_ENV governs how
+// BUNDLED DEPENDENCIES compile (dev assertions/warnings vs production paths) — a separate axis from our
+// own gate, which reads the channel via env.ts. Deriving NODE_ENV here, rather than trusting the
+// operator to also export it, makes the two impossible to diverge (no `production` app atop `development`
+// deps). It MUST be an explicit --define: Bun.build (the JS API this script uses) defaults NODE_ENV to
+// "development" and does NOT read the ambient process.env value, so setting `process.env.NODE_ENV` would
+// be silently ignored — only the define reaches both our code and the dependency tree.
+const channel = process.env.INFLEXA_BUILD_CHANNEL;
+if (channel !== "production" && channel !== "development") {
+    console.error(`error: INFLEXA_BUILD_CHANNEL must be "production" or "development", got: ${JSON.stringify(channel)}`);
+    process.exit(1);
+}
+define["process.env.NODE_ENV"] = JSON.stringify(channel);
+
 // Release target matrix, built by `bun run build:all` (passes --all). The
 // default `bun run build` compiles only the host target for quick local
 // iteration. To ship a new platform, add it here — Bun cross-compiles by

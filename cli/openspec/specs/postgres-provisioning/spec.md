@@ -162,7 +162,7 @@ The containers SHALL be configured with `restart: unless-stopped` in the compose
 
 ### Requirement: Container names are environment-aware
 
-Container and network names SHALL use an `inflexa-` prefix in production builds and `inflexa-dev-` in dev runs (`NODE_ENV !== "production"`). This prevents a developer's `bun run dev` containers from colliding with a user's installed binary's containers.
+Container and network names SHALL use an `inflexa-` prefix in production builds and `inflexa-dev-` in dev runs, determined by `env.isDevelopment` (derived from the baked `INFLEXA_BUILD_CHANNEL` — `isDevelopment` is true unless the `production` channel was baked in, never keyed on `NODE_ENV`). This prevents a developer's `bun run dev` containers from colliding with a user's installed binary's containers.
 
 #### Scenario: Dev container names
 

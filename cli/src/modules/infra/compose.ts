@@ -22,7 +22,7 @@ const PROXY_AUTH_DIR = "/root/.cli-proxy-api";
 // Container and network names are environment-aware: `inflexa-*` in production
 // builds, `inflexa-dev-*` in dev runs. This prevents a dev session's containers
 // from colliding with (or shadowing) a user's installed binary's containers.
-const PREFIX = env.isDev ? "inflexa-dev" : "inflexa";
+const PREFIX = env.isDevelopment ? "inflexa-dev" : "inflexa";
 export const PROXY_CONTAINER_NAME = `${PREFIX}-cliproxy`;
 export const POSTGRES_CONTAINER_NAME = `${PREFIX}-postgres`;
 const NETWORK_NAME = PREFIX;

@@ -34,6 +34,71 @@ const cliproxyPort = 8317;
  */
 const postgresPort = 8432;
 
+/**
+ * Internal configuration baked into release binaries: `bun run build` inlines
+ * each value via --define, so the compiled executable never consults the
+ * runtime environment for them — end users cannot override them, and they are
+ * deliberately absent from envDoc/--help. Dev runs (`bun run dev`) fall back
+ * to runtime env/.env through these same expressions. The literal dot access
+ * is load-bearing: the bundler only inlines static `process.env.X` member
+ * expressions, never dynamic `process.env[name]` reads. To bake a new value,
+ * just add its dot access here — scripts/build.ts derives the baked-var list
+ * from this block, so there is nothing else to keep in sync.
+ */
+// Deferred so the spawnSync only runs when the value is first read (provenance actor, --version),
+// not on every CLI startup. In release builds --define inlines process.env.INFLEXA_GIT_COMMIT as a
+// string literal, so the fallback is dead code. The fallback is dev-only: resolve from git. If
+// neither source produces a commit, the binary was not built correctly — crash rather than silently
+// stamping provenance with garbage.
+let _gitCommit: string | undefined;
+function resolveGitCommit(): string {
+    if (process.env.INFLEXA_GIT_COMMIT) return process.env.INFLEXA_GIT_COMMIT;
+    // A production binary bakes INFLEXA_GIT_COMMIT (scripts/build.ts's missing-var guard enforces it),
+    // so reaching here in a production build means the bake was skipped — crash rather than shell out
+    // to git. Keyed on the baked channel, NOT NODE_ENV: the same --define makes this literal
+    // "production" === "production" in a shipped binary, whereas NODE_ENV would be an unguarded runtime read.
+    if (process.env.INFLEXA_BUILD_CHANNEL === "production")
+        throw new Error("INFLEXA_GIT_COMMIT is not set in a production build. This means the binary was not built correctly.");
+
+    // Dev-only path: resolve from the working tree's HEAD.
+    const sha = Bun.spawnSync(["git", "rev-parse", "HEAD"]).stdout.toString().trim();
+    if (!sha) throw new Error("Could not resolve git HEAD — are you running outside a git checkout?");
+    return sha;
+}
+
+export const bakedEnv = Object.freeze({
+    auth0Domain: process.env.INFLEXA_AUTH0_DOMAIN,
+    auth0ClientId: process.env.INFLEXA_AUTH0_CLIENT_ID,
+    auth0Audience: process.env.INFLEXA_AUTH0_AUDIENCE,
+    // Build channel — `production` | `development` — baked at build time so a shipped binary's
+    // identity is fixed at compile and cannot be swayed by the user's runtime environment. The literal
+    // `process.env.INFLEXA_BUILD_CHANNEL` dot access is load-bearing: scripts/build.ts scans this block
+    // for exactly that pattern to learn which vars to --define, and its missing-var guard rejects an
+    // empty/unset value — so a build MUST declare the channel. `bun run dev` leaves it unset (→ undefined
+    // → development). This is the ONE signal both `env.isDevelopment` (via isDevelopmentBuild) and
+    // `devCommandsEnabled` derive from. We deliberately do NOT read NODE_ENV here: it is the ecosystem's
+    // signal for how BUNDLED DEPENDENCIES compile, a separate axis. scripts/build.ts --defines NODE_ENV
+    // from this same channel value, so the two are coupled at the single build authority and cannot drift
+    // (a `production` binary with a `development` NODE_ENV would ship prod-gated code atop dev-mode deps).
+    buildChannel: process.env.INFLEXA_BUILD_CHANNEL,
+    get gitCommit(): string {
+        if (_gitCommit === undefined) _gitCommit = resolveGitCommit();
+        return _gitCommit;
+    },
+});
+
+/**
+ * The pure decision behind `env.isDevelopment`, split out so its truth table is unit-testable: `env`
+ * freezes its `bakedEnv.buildChannel` read at import, so the flag's own input cannot be varied within
+ * a test process. A build is development unless the `production` channel was baked in — the source-run
+ * default (unset channel) is development. Deliberately does NOT honor the `INFLEXA_DEV=1` escape hatch
+ * that {@link devCommandsActive} adds: that re-enables dev *commands* on a shipped binary for support,
+ * but must not also repoint container names / harness skills+templates dirs at the dev repo checkout.
+ */
+export function isDevelopmentBuild(channel: string | undefined): boolean {
+    return channel !== "production";
+}
+
 export const env = Object.freeze({
     dbPath: join(dataDir(), "inflexa", "agent.db"),
     logDir: join(dataDir(), "inflexa", "logs"),
@@ -102,86 +167,46 @@ export const env = Object.freeze({
     cliproxyApiUrl: `http://localhost:${cliproxyPort}/v1`, // chat backend endpoint
     postgresPort,
     /**
-     * True when running via `bun run dev` (NODE_ENV is not "production"). Release
-     * builds inline NODE_ENV as "production" at compile time. Used by the compose
-     * module to namespace container names so dev sessions don't collide with a
-     * user's installed binary.
+     * True unless this is a production build — derived from the baked {@link bakedEnv.buildChannel}
+     * (via {@link isDevelopmentBuild}), never from NODE_ENV. A production binary bakes
+     * `INFLEXA_BUILD_CHANNEL=production`, guaranteed by scripts/build.ts's missing-var guard, so
+     * `isDevelopment` is a compile-time-fixed `false`; `bun run dev` leaves the channel unset, so it is
+     * `true`. Governs dev-only runtime layout: the compose container/network prefix
+     * (src/modules/infra/compose.ts) and the harness skills/templates dirs (src/modules/harness/config.ts).
+     * Reading NODE_ENV directly would be the wrong signal — its Bun.build value is set by --define from
+     * this same channel, but as the deps' compile-mode axis it is intentionally not a source of truth here.
      */
-    isDev: process.env.NODE_ENV !== "production",
-});
-
-/**
- * Internal configuration baked into release binaries: `bun run build` inlines
- * each value via --define, so the compiled executable never consults the
- * runtime environment for them — end users cannot override them, and they are
- * deliberately absent from envDoc/--help. Dev runs (`bun run dev`) fall back
- * to runtime env/.env through these same expressions. The literal dot access
- * is load-bearing: the bundler only inlines static `process.env.X` member
- * expressions, never dynamic `process.env[name]` reads. To bake a new value,
- * just add its dot access here — scripts/build.ts derives the baked-var list
- * from this block, so there is nothing else to keep in sync.
- */
-// Deferred so the spawnSync only runs when the value is first read (provenance actor, --version),
-// not on every CLI startup. In release builds --define inlines process.env.INFLEXA_GIT_COMMIT as a
-// string literal, so the fallback is dead code. The fallback is dev-only: resolve from git. If
-// neither source produces a commit, the binary was not built correctly — crash rather than silently
-// stamping provenance with garbage.
-let _gitCommit: string | undefined;
-function resolveGitCommit(): string {
-    if (process.env.INFLEXA_GIT_COMMIT) return process.env.INFLEXA_GIT_COMMIT;
-    if (process.env.NODE_ENV === "production")
-        throw new Error("INFLEXA_GIT_COMMIT is not set on production environment. This means the binary was not built correctly.");
-
-    // Dev-only path: resolve from the working tree's HEAD.
-    const sha = Bun.spawnSync(["git", "rev-parse", "HEAD"]).stdout.toString().trim();
-    if (!sha) throw new Error("Could not resolve git HEAD — are you running outside a git checkout?");
-    return sha;
-}
-
-export const bakedEnv = Object.freeze({
-    auth0Domain: process.env.INFLEXA_AUTH0_DOMAIN,
-    auth0ClientId: process.env.INFLEXA_AUTH0_CLIENT_ID,
-    auth0Audience: process.env.INFLEXA_AUTH0_AUDIENCE,
-    // Release channel, baked at build time so a shipped binary's command surface is fixed at
-    // compile. The literal `process.env.INFLEXA_BUILD_CHANNEL` dot access is load-bearing:
-    // scripts/build.ts scans this block for exactly that pattern to learn which vars to --define,
-    // and its missing-var guard rejects an empty/unset value — so a release build MUST declare
-    // `INFLEXA_BUILD_CHANNEL=release`. `bun run dev` leaves it unset (→ undefined → dev channel).
-    // Read by devCommandsEnabled below.
-    buildChannel: process.env.INFLEXA_BUILD_CHANNEL,
-    get gitCommit(): string {
-        if (_gitCommit === undefined) _gitCommit = resolveGitCommit();
-        return _gitCommit;
-    },
+    isDevelopment: isDevelopmentBuild(bakedEnv.buildChannel),
 });
 
 /**
  * True when the dev/E2E command surface (`chat`, `profile`, `run`) should be registered.
- * A release build bakes `INFLEXA_BUILD_CHANNEL=release` and gets a product-only surface; any
- * other channel — notably the unset dev default of `bun run dev` — enables them. `INFLEXA_DEV=1`
+ * A production build bakes `INFLEXA_BUILD_CHANNEL=production` and gets a product-only surface; any
+ * other channel — notably the unset development default of `bun run dev` — enables them. `INFLEXA_DEV=1`
  * is a deliberate runtime escape hatch: it is intentionally NOT in `bakedEnv`, so it is never
- * --define-inlined and stays a live `process.env` read even inside a compiled release binary,
+ * --define-inlined and stays a live `process.env` read even inside a compiled production binary,
  * letting support re-enable the dev commands on a shipped build without a rebuild. See the
  * dev-commands spec.
  */
 export function devCommandsEnabled(): boolean {
-    return devChannelActive(bakedEnv.buildChannel, process.env.INFLEXA_DEV);
+    return devCommandsActive(bakedEnv.buildChannel, process.env.INFLEXA_DEV);
 }
 
 /**
  * The pure decision behind {@link devCommandsEnabled}, split out only so its truth table is unit
  * testable: `env`/`bakedEnv` freeze their `process.env` reads at import, so the accessor's own
- * inputs cannot be varied within a test process.
+ * inputs cannot be varied within a test process. It is {@link isDevelopmentBuild} (the same
+ * baked-channel axis `env.isDevelopment` uses) widened by the `INFLEXA_DEV=1` runtime escape hatch.
  */
-export function devChannelActive(channel: string | undefined, devOverride: string | undefined): boolean {
-    return channel !== "release" || devOverride === "1";
+export function devCommandsActive(channel: string | undefined, devOverride: string | undefined): boolean {
+    return isDevelopmentBuild(channel) || devOverride === "1";
 }
 
 export type EnvDocEntry = { kind: "path"; label: string; description: string; baseVar: string } | { kind: "var"; name: string; description: string };
 
 /** Rendered into the Paths/Environment sections of --help (src/cli/index.ts). */
 export const envDoc: Readonly<
-    Record<Exclude<keyof typeof env, "cliproxyPort" | "cliproxyBaseUrl" | "cliproxyApiUrl" | "postgresPort" | "isDev">, EnvDocEntry>
+    Record<Exclude<keyof typeof env, "cliproxyPort" | "cliproxyBaseUrl" | "cliproxyApiUrl" | "postgresPort" | "isDevelopment">, EnvDocEntry>
 > = Object.freeze({
     dbPath: { kind: "path", label: "database", description: "saved sessions (SQLite)", baseVar: dataVar },
     logDir: { kind: "path", label: "logs", description: "log files, rotated daily, 7-day retention", baseVar: dataVar },
