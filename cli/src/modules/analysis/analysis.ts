@@ -20,7 +20,7 @@ export type CreateAnalysisInput = {
     cwd: string;
     /** Required human label; drives the slug. */
     name: Str256;
-    /** Raw input paths; when empty, defaults to the anchor directory itself. */
+    /** Raw input paths to enroll. Omitted/empty ⇒ the analysis starts with NO inputs — never defaults to cwd; inputs are user-driven. */
     inputPaths?: string[];
     /** From `--output`; resolved to absolute and persisted onto `outputDirectory`. */
     outputOverride?: string;
@@ -211,7 +211,12 @@ export function createAnalysis(opts: CreateAnalysisInput): Result<Analysis, DbEr
                 createdAt: now,
                 updatedAt: now,
             };
-            const inputPaths = opts.inputPaths && opts.inputPaths.length > 0 ? opts.inputPaths : [anchor.cachedPath];
+            // Inputs are user-driven: an analysis created without explicit paths starts with NONE.
+            // We MUST NOT default to the anchor/cwd — that would silently enroll the entire working
+            // directory (potentially tens of thousands of files) and let the open-time parity check
+            // auto-trigger a data profile over all of it. Enrolling an input is always a deliberate
+            // act (the file picker, `inflexa new <paths>`, or a later `addInputs`).
+            const inputPaths = opts.inputPaths ?? [];
             return (
                 insertAnalysis(analysis)
                     // Seed the provenance document with the creation event before any input events.
@@ -223,7 +228,7 @@ export function createAnalysis(opts: CreateAnalysisInput): Result<Analysis, DbEr
                         });
                         return ok(created);
                     })
-                    .andThen((created) => addInputs(created.id, inputPaths, opts.cwd).map(() => created))
+                    .andThen((created) => (inputPaths.length > 0 ? addInputs(created.id, inputPaths, opts.cwd).map(() => created) : ok(created)))
                     .andThen((created) =>
                         resolveOutputDir(created).andThen((outDir) => {
                             // Persist only the XDG fallback (case 3); a writable-anchor path (case 2)

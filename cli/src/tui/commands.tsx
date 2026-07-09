@@ -176,9 +176,9 @@ function NewAnalysisDialog(): JSX.Element {
             onSubmit={(raw) => {
                 ws.closeDialog();
                 str256(raw).match(
-                    // An analysis is born with an EXPLICIT input set — the picker exists to break
-                    // the old silent whole-cwd default — so creation waits for the picker chained
-                    // after the name prompt.
+                    // Inputs are user-driven, so this flow gathers them explicitly: creation waits
+                    // for the file picker chained after the name prompt rather than enrolling anything
+                    // by default.
                     (name) => ws.openDialog(() => <NewAnalysisInputsDialog name={name} />),
                     (err) => notify({ kind: "warn", text: err === "empty" ? "A name is required." : "Keep the name to 256 characters or fewer." }),
                 );
@@ -198,9 +198,8 @@ function NewAnalysisInputsDialog(props: { name: Str256 }): JSX.Element {
             onConfirm={(paths) => {
                 ws.closeDialog();
                 // A deliberate action, so minting the anchor marker here is allowed (no-litter policy).
-                // The picker's selection MUST ride in as `inputPaths`: createAnalysis falls back to
-                // the whole anchor path when given none, and a separate addInputs call after the
-                // fact would stack the picked files ON TOP of that silent default.
+                // The picker's selection rides in as `inputPaths` so the new analysis is seeded with
+                // exactly the files the user chose — `createAnalysis` enrolls nothing on its own.
                 createAnalysis({ cwd: ws.workingDir, name: props.name, inputPaths: paths }).match(
                     (a) => {
                         openAnalysis(ws, a);

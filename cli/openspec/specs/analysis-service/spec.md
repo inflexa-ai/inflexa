@@ -5,14 +5,14 @@ The analysis lifecycle — create (anchor + unique slug + inputs + output dir), 
 ## Requirements
 ### Requirement: Create an analysis
 
-The system SHALL provide `createAnalysis(opts)` returning `Result<Analysis, DbError>` in `src/modules/analysis/analysis.ts` that: ensures `opts.cwd` is a tracked anchor; generates a slug from `opts.name` (kebab-case, lowercased) or a generated handle, unique within the anchor; mints and inserts the `Analysis` with `id = randomUUIDv7()` (inline), `anchorId` = the anchor id, `projectId = opts.projectId ?? null`, `name` the validated `Str256`, `outputDirectory` from `opts.outputOverride` resolved to absolute else null, and `createdAt`/`updatedAt` timestamps; adds inputs from `opts.inputPaths` (defaulting to the anchor directory itself when none); and persists the output directory onto `outputDirectory` when it resolves to the XDG fallback. The `Analysis` SHALL carry no `goals`, `syncedAnalysisId`, or `archivedAt` field.
+The system SHALL provide `createAnalysis(opts)` returning `Result<Analysis, DbError>` in `src/modules/analysis/analysis.ts` that: ensures `opts.cwd` is a tracked anchor; generates a slug from `opts.name` (kebab-case, lowercased) or a generated handle, unique within the anchor; mints and inserts the `Analysis` with `id = randomUUIDv7()` (inline), `anchorId` = the anchor id, `projectId = opts.projectId ?? null`, `name` the validated `Str256`, `outputDirectory` from `opts.outputOverride` resolved to absolute else null, and `createdAt`/`updatedAt` timestamps; adds inputs from `opts.inputPaths` when provided and SHALL NOT enroll any input by default (an omitted/empty `opts.inputPaths` yields an analysis with zero inputs — inputs are user-driven, never the anchor/cwd); and persists the output directory onto `outputDirectory` when it resolves to the XDG fallback. The `Analysis` SHALL carry no `goals`, `syncedAnalysisId`, or `archivedAt` field.
 
 #### Scenario: Create with a name yields a kebab slug and an anchor
 
 - **WHEN** `createAnalysis({ cwd, name: "Batch 42" })` runs in a fresh directory
 - **THEN** the analysis slug is `batch-42`
 - **AND** the directory has a marker and an anchors row
-- **AND** the analysis has one input referencing the anchor directory
+- **AND** the analysis has no inputs (none were provided; inputs are never defaulted to the anchor/cwd)
 
 #### Scenario: Duplicate name within an anchor gets a numeric suffix
 
