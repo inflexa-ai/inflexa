@@ -5,12 +5,39 @@ import (
 	"testing"
 )
 
-func TestLoadServerConfig_MissingCortexBaseURL(t *testing.T) {
+func TestLoadServerConfig_MissingCortexBaseURL_CallbackMode(t *testing.T) {
+	t.Setenv(envTransport, string(transportCallback))
 	t.Setenv(envCortexBaseURL, "")
 	t.Setenv(envCallbackSecret, "topsecret")
 	_, err := loadServerConfig()
 	if err == nil {
-		t.Fatalf("expected error for missing CORTEX_BASE_URL")
+		t.Fatalf("expected error for missing CORTEX_BASE_URL in callback mode")
+	}
+}
+
+func TestLoadServerConfig_PollModeDefaultsWithoutCortexBaseURL(t *testing.T) {
+	t.Setenv(envTransport, "")
+	t.Setenv(envCortexBaseURL, "")
+	t.Setenv(envCallbackSecret, "topsecret")
+	cfg, err := loadServerConfig()
+	if err != nil {
+		t.Fatalf("poll mode must start without CORTEX_BASE_URL: %v", err)
+	}
+	if cfg.transport != transportPoll {
+		t.Fatalf("expected default transport poll, got %q", cfg.transport)
+	}
+}
+
+func TestLoadServerConfig_InvalidTransportFallsBackToPoll(t *testing.T) {
+	t.Setenv(envTransport, "carrier-pigeon")
+	t.Setenv(envCortexBaseURL, "")
+	t.Setenv(envCallbackSecret, "topsecret")
+	cfg, err := loadServerConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.transport != transportPoll {
+		t.Fatalf("expected fallback to poll, got %q", cfg.transport)
 	}
 }
 
@@ -57,5 +84,29 @@ func TestLoadServerConfig_Base64Invalid(t *testing.T) {
 	_, err := loadServerConfig()
 	if err == nil {
 		t.Fatalf("expected base64 decode error")
+	}
+}
+
+func TestVerifyPrivilegeDrop_FirewallFlagAsRootRefused(t *testing.T) {
+	// Root under the firewall flag proves the entrypoint's drop never ran —
+	// the container would be privileged and unconfined while appearing healthy.
+	if err := verifyPrivilegeDrop("1", 0); err == nil {
+		t.Fatalf("expected refusal when the firewall flag is set but the server runs as root")
+	}
+}
+
+func TestVerifyPrivilegeDrop_FirewallFlagDroppedUidOk(t *testing.T) {
+	if err := verifyPrivilegeDrop("1", 1000); err != nil {
+		t.Fatalf("unexpected error after a completed privilege drop: %v", err)
+	}
+}
+
+func TestVerifyPrivilegeDrop_NoFirewallFlagIgnoresUid(t *testing.T) {
+	// Callback mode and K8s never set the flag; who the workload runs as is the
+	// image's/cluster's concern there, not this check's.
+	for _, flag := range []string{"", "0"} {
+		if err := verifyPrivilegeDrop(flag, 0); err != nil {
+			t.Fatalf("unexpected error with flag %q as root: %v", flag, err)
+		}
 	}
 }

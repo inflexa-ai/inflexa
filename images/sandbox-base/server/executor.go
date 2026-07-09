@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,15 @@ import (
 	"sync"
 	"time"
 )
+
+// maxExecBodyBytes caps how much of a POST /exec body the server will buffer.
+// The body is read in full BEFORE its signature can be verified (the signature
+// covers the bytes), so this cap — not the auth check — is what bounds the
+// memory cost an unauthenticated peer able to reach the port can impose. Sized
+// generously because `write_file` ships whole files base64-inflated inside the
+// command array; 16 MiB is far above any LLM-written payload while still
+// bounding a garbage flood.
+const maxExecBodyBytes = 16 << 20
 
 // execSubmitRequest is the new submit-and-return body for POST /exec.
 type execSubmitRequest struct {
@@ -56,15 +66,20 @@ type provenancePayload struct {
 	Deletes  []ProvenanceEntry `json:"deletes,omitempty"`
 }
 
-// executor wires the dedup table to the callback client. One executor per server.
+// executor wires the dedup table to the result-delivery path. One executor per
+// server. In callback mode `callback` POSTs events/completions; in poll mode
+// `callback` is nil and results are buffered in the exec table for the host to
+// pull.
 type executor struct {
-	table    *execTable
-	callback *callbackClient
-	procs    *processTable
+	table     *execTable
+	callback  *callbackClient
+	procs     *processTable
+	auth      inboundAuth
+	transport transportMode
 }
 
-func newExecutor(table *execTable, callback *callbackClient, procs *processTable) *executor {
-	return &executor{table: table, callback: callback, procs: procs}
+func newExecutor(table *execTable, callback *callbackClient, procs *processTable, auth inboundAuth, transport transportMode) *executor {
+	return &executor{table: table, callback: callback, procs: procs, auth: auth, transport: transport}
 }
 
 // handle is the POST /exec submit handler. Validates the request, dedups by
@@ -75,13 +90,34 @@ func (e *executor) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Read the raw bytes: the signature covers them, and re-encoding the parsed
+	// struct to verify would diverge from what the harness signed. The read is
+	// capped (see maxExecBodyBytes) since it happens before the auth check.
+	r.Body = http.MaxBytesReader(w, r.Body, maxExecBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeJSONResponse(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "body too large"})
+			return
+		}
+		writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "could not read body"})
+		return
+	}
+
 	var req execSubmitRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 		return
 	}
 	if strings.TrimSpace(req.ExecID) == "" {
 		writeJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "execId required"})
+		return
+	}
+	// Authenticate before any work: the execId comes from the untrusted body, but
+	// a forged body cannot carry a signature that verifies against the secret.
+	if !e.auth.authentic(r, req.ExecID, body) {
+		writeUnauthorized(w)
 		return
 	}
 	if len(req.Command) == 0 {
@@ -271,17 +307,30 @@ func (e *executor) failBeforeSpawn(execID, traceID, cmdStr, cwd string, startedA
 	})
 }
 
+// postCompletion records the terminal result and, in callback mode, delivers it
+// to Cortex. Recording the completion bytes in the exec table BEFORE any POST is
+// what makes the result retrievable in both modes: poll mode serves them from
+// `GET /exec/{execId}` and never dials out; callback mode additionally pushes,
+// but a host that was down for the whole retry window can still pull the same
+// bytes (provenance frame included) once it comes back.
 func (e *executor) postCompletion(execID string, payload completionPayload) {
-	if !e.table.markCompletionPosted(execID) {
-		return
-	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("[completion] marshal failed for %s: %v", execID, err)
 		return
 	}
+	e.table.setCompletionBody(execID, body)
+
+	// Poll mode never initiates a connection — the host pulls the recorded body.
+	if e.transport != transportCallback {
+		return
+	}
+	if !e.table.claimCompletionPost(execID) {
+		return
+	}
 	if perr := e.callback.post(context.Background(), callbackKindComplete, execID, body); perr != nil {
 		log.Printf("[completion] post failed for %s: %v", execID, perr)
+		e.table.releaseCompletionPost(execID)
 	}
 }
 
@@ -334,6 +383,11 @@ func (e *executor) emitTreeEvent(execID string, delta treeDiff) {
 		log.Printf("[event] marshal failed for %s: %v", execID, err)
 		return
 	}
+	// Poll mode buffers the event for the host to pull; callback mode POSTs it.
+	if e.transport != transportCallback {
+		e.table.appendEvent(execID, body)
+		return
+	}
 	if perr := e.callback.post(context.Background(), callbackKindEvent, execID, body); perr != nil {
 		log.Printf("[event] post failed for %s: %v", execID, perr)
 	}
@@ -355,6 +409,38 @@ func treeDiffRootForExec(cwd string) string {
 	return ""
 }
 
+// sensitiveEnvKeys are the host-privileged variables that reach sandbox-server
+// through its own environment and MUST NOT reach the commands it spawns.
+//
+// Possession of the callback secret is sufficient to forge a signed `/complete`
+// callback for any exec — fabricating its exit code, stdout, and provenance
+// frame. Leaving it in a spawned command's environment would place the integrity
+// of the provenance record inside the trust domain of the very code that record
+// is meant to observe.
+//
+// Stripping them here is safe because loadServerConfig reads both once, at
+// startup, before any exec is accepted.
+var sensitiveEnvKeys = map[string]struct{}{
+	envCallbackSecret: {},
+	envCortexBaseURL:  {},
+}
+
+// sanitizedEnviron is the server's environment with sensitiveEnvKeys removed.
+func sanitizedEnviron() []string {
+	src := os.Environ()
+	out := make([]string, 0, len(src))
+	for _, kv := range src {
+		name, _, found := strings.Cut(kv, "=")
+		if found {
+			if _, sensitive := sensitiveEnvKeys[name]; sensitive {
+				continue
+			}
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
 // buildCommand wraps a single-string command in `sh -c` (matching the prior
 // behavior); multi-element commands invoke execve directly.
 func buildCommand(ctx context.Context, req execSubmitRequest) *exec.Cmd {
@@ -367,7 +453,7 @@ func buildCommand(ctx context.Context, req execSubmitRequest) *exec.Cmd {
 	if req.Cwd != "" {
 		cmd.Dir = req.Cwd
 	}
-	cmd.Env = os.Environ()
+	cmd.Env = sanitizedEnviron()
 	for k, v := range req.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}

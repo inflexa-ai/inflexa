@@ -7,16 +7,33 @@
  * `/mnt/libs` / `/mnt/refs` when their host paths are configured. Container
  * paths and lib-store env come from the shared mount plan (`mount-plan.ts`).
  *
- * The container is launched with `CORTEX_BASE_URL` and
- * `SANDBOX_CALLBACK_SECRET` env so sandbox-server's outbound callback
- * client can sign and POST events back.
+ * ## Transport and confinement
+ *
+ * The container joins the default bridge and publishes sandbox-server's port to
+ * `127.0.0.1` only, so the host can reach `/exec` but the LAN cannot. What the
+ * sandbox may do *outbound* depends on the transport:
+ *
+ *   - **poll** (default): the sandbox initiates nothing, so it needs no egress.
+ *     The container is created as root with `CAP_NET_ADMIN` and the
+ *     `SANDBOX_EGRESS_FIREWALL` flag; the image's root entrypoint installs
+ *     `iptables -P OUTPUT DROP` (allowing loopback and established return
+ *     traffic) and then `setpriv`-drops to the uid-1000 workload, which can
+ *     neither reach the network nor flush the rules. The host polls
+ *     `GET /exec/{execId}?since={cursor}` over the published port; the reply
+ *     rides the established connection, so polling works with egress hard-blocked.
+ *   - **callback**: the sandbox is *allowed* egress and POSTs signed callbacks to
+ *     `CORTEX_BASE_URL`. It runs as uid 1000 throughout with no `NET_ADMIN` and
+ *     no firewall.
+ *
+ * Either way the workload ends as uid 1000 with `no-new-privileges` and no
+ * effective capabilities.
  */
 
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import Docker from "dockerode";
 import type pino from "pino";
-import { ResultAsync, err, ok } from "neverthrow";
+import { ResultAsync, err, ok, type Result } from "neverthrow";
 
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { buildMountPlan } from "./mount-plan.js";
@@ -25,10 +42,24 @@ import { buildMountPlan } from "./mount-plan.js";
 function statusOf(e: SandboxError): number | undefined {
     return "status" in e ? e.status : undefined;
 }
-import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef } from "./types.js";
+import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SandboxTransport } from "./types.js";
 
 const SANDBOX_SERVER_PORT = 8765;
 const HEALTH_TIMEOUT_MS = 30_000;
+
+/** Only this process dials the published port; binding it on every host interface would expose `/exec` to the LAN. */
+const SANDBOX_PORT_HOST_IP = "127.0.0.1";
+
+/** Matches `USER sandbox` (uid/gid 1000) in the sandbox images — the callback-mode workload user. */
+const SANDBOX_USER = "1000:1000";
+/**
+ * Poll mode starts the container as root so the entrypoint can install the
+ * egress firewall; the entrypoint then `setpriv`-drops to uid 1000, so the
+ * workload still runs unprivileged. sandbox-server refuses to start as root
+ * when the firewall flag is set, so an image whose entrypoint skips the drop
+ * fails at create time rather than running privileged and unconfined.
+ */
+const SANDBOX_ROOT_USER = "0:0";
 const HEALTH_POLL_MS = 250;
 
 const MANAGED_BY_LABEL = "app.kubernetes.io/managed-by";
@@ -39,8 +70,10 @@ const STEP_ID_LABEL = "cortex/step-id";
 
 export interface DockerClientConfig {
     image: string;
-    /** Cortex base URL injected into the sandbox env so callbacks land here. */
+    /** Cortex base URL injected into the sandbox env in callback mode so callbacks land here. Unused in poll mode. */
     cortexBaseUrl: string;
+    /** Result transport. `poll` (default) confines the sandbox with the egress firewall; `callback` permits egress. */
+    transport?: SandboxTransport;
     /** Host session-tree root; bind source for the analysis-tree mounts. */
     sessionsBasePath: string;
     /** Host lib store; bind-mounted read-only at `/mnt/libs` when set. */
@@ -103,6 +136,47 @@ async function pollHealth(fetchImpl: typeof fetch, url: string, timeoutMs: numbe
     throw new Error(`sandbox /health did not return 200 within ${timeoutMs}ms: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 }
 
+/** Docker reports an already-created object as a 409. */
+function statusCodeOf(cause: unknown): number | undefined {
+    return typeof cause === "object" && cause !== null && "statusCode" in cause && typeof cause.statusCode === "number" ? cause.statusCode : undefined;
+}
+
+/**
+ * Create the container, or adopt the one already standing under this
+ * checkpointed name (a recovery re-run, see the harness-sandbox-exec spec). A
+ * running container is adopted as-is; a stopped prior attempt is removed and
+ * recreated. A 409 whose container belongs to a different workflow is a refused
+ * name collision — never adopt or remove someone else's container.
+ */
+async function createOrAdopt(
+    docker: Docker,
+    createOpts: Docker.ContainerCreateOptions,
+    name: string,
+    ownerWorkflowId: string,
+    createFailed: (status: number | undefined, cause: unknown) => SandboxError,
+): Promise<Result<{ container: Docker.Container; alreadyRunning: boolean }, SandboxError>> {
+    const created = await trySandbox(() => docker.createContainer(createOpts), createFailed);
+    if (created.isOk()) return ok({ container: created.value, alreadyRunning: false });
+    if (statusOf(created.error) !== 409) return err(created.error);
+
+    const existing = docker.getContainer(name);
+    const inspected = await trySandbox(() => existing.inspect(), createFailed);
+    if (inspected.isErr()) return err(inspected.error);
+    const info = inspected.value;
+
+    const owner = info.Config?.Labels?.[OWNER_WORKFLOW_LABEL];
+    if (owner !== ownerWorkflowId) {
+        return err({ type: "name_conflict", op: "docker.createSandbox", sandboxId: name, owner: owner ?? null });
+    }
+    if (info.State.Running) return ok({ container: existing, alreadyRunning: true });
+
+    const removed = await removeContainerIgnoreMissing(docker, name);
+    if (removed.isErr()) return err(removed.error);
+    const recreated = await trySandbox(() => docker.createContainer(createOpts), createFailed);
+    if (recreated.isErr()) return err(recreated.error);
+    return ok({ container: recreated.value, alreadyRunning: false });
+}
+
 function removeContainerIgnoreMissing(docker: Docker, sandboxId: string): ResultAsync<void, SandboxError> {
     return trySandbox(
         async () => {
@@ -132,6 +206,8 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
 } {
     const docker = config.docker ?? new Docker();
     const fetchImpl = config.fetch ?? fetch;
+    const transport: SandboxTransport = config.transport ?? "poll";
+    const pollMode = transport === "poll";
 
     return {
         createSandbox(meta, identity) {
@@ -165,42 +241,6 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         ...(config.refStorePath ? [`${config.refStorePath}:${plan.refsPath}:ro`] : []),
                     ];
 
-                    const env = [
-                        `CORTEX_BASE_URL=${config.cortexBaseUrl}`,
-                        `SANDBOX_CALLBACK_SECRET=${callbackSecret}`,
-                        ...Object.entries(plan.env).map(([k, v]) => `${k}=${v}`),
-                        ...Object.entries(meta.extraEnv ?? {}).map(([k, v]) => `${k}=${v}`),
-                    ];
-
-                    const spec = meta.resources;
-                    const createOpts: Docker.ContainerCreateOptions = {
-                        name: sandboxId,
-                        ...(config.platform !== undefined && { platform: config.platform }),
-                        Image: meta.image ?? config.image,
-                        Env: env,
-                        WorkingDir: plan.workingDir,
-                        Labels: {
-                            [MANAGED_BY_LABEL]: MANAGED_BY_VALUE,
-                            role: "sandbox",
-                            "cortex/sandbox-id": sandboxId,
-                            [OWNER_WORKFLOW_LABEL]: meta.childWorkflowId,
-                            [RUN_ID_LABEL]: meta.runId,
-                            [STEP_ID_LABEL]: meta.stepId,
-                        },
-                        HostConfig: {
-                            Binds: binds,
-                            NanoCpus: Math.round(spec.cpu * 1e9),
-                            Memory: spec.memoryGb * 1024 ** 3,
-                            PortBindings: {
-                                [`${SANDBOX_SERVER_PORT}/tcp`]: [{ HostPort: "0" }],
-                            },
-                            AutoRemove: false,
-                        },
-                        ExposedPorts: {
-                            [`${SANDBOX_SERVER_PORT}/tcp`]: {},
-                        },
-                    };
-
                     const createFailed = (status: number | undefined, cause: unknown): SandboxError => ({
                         type: "container_create_failed",
                         op: "docker.createSandbox",
@@ -209,65 +249,71 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         cause,
                     });
 
-                    // Create, or adopt an existing container under the checkpointed name
-                    // (recovery re-run, see the harness-sandbox-exec spec). A running one is adopted as-is; a
-                    // stopped prior attempt is removed and recreated. A 409 whose existing
-                    // container is owned by a different step is a refused name collision.
-                    const created = await trySandbox(() => docker.createContainer(createOpts), createFailed);
+                    const image = meta.image ?? config.image;
 
-                    let container: Docker.Container;
-                    let alreadyRunning = false;
-                    if (created.isOk()) {
-                        container = created.value;
-                    } else if (statusOf(created.error) !== 409) {
-                        return err(created.error);
-                    } else {
-                        const existing = docker.getContainer(sandboxId);
-                        const inspected = await trySandbox(() => existing.inspect(), createFailed);
-                        if (inspected.isErr()) return err(inspected.error);
-                        const info = inspected.value;
-                        // Owner-guard: only a recovery re-run carries the same checkpointed
-                        // identity. A mismatch is a name collision with a different step —
-                        // never adopt or remove someone else's container (see the harness-sandbox-exec spec).
-                        const owner = info.Config?.Labels?.[OWNER_WORKFLOW_LABEL];
-                        if (owner !== meta.childWorkflowId) {
-                            return err({
-                                type: "name_conflict",
-                                op: "docker.createSandbox",
-                                sandboxId,
-                                owner: owner ?? null,
-                            });
-                        }
-                        if (info.State.Running) {
-                            container = existing;
-                            alreadyRunning = true;
-                        } else {
-                            const removed = await removeContainerIgnoreMissing(docker, sandboxId);
-                            if (removed.isErr()) return err(removed.error);
-                            const recreated = await trySandbox(() => docker.createContainer(createOpts), createFailed);
-                            if (recreated.isErr()) return err(recreated.error);
-                            container = recreated.value;
-                        }
-                    }
+                    // Poll mode never dials out and carries no CORTEX_BASE_URL; it sets the
+                    // firewall flag so the root entrypoint installs the egress block before
+                    // dropping to uid 1000. Callback mode is the inverse.
+                    const env = [
+                        `SANDBOX_TRANSPORT=${transport}`,
+                        `SANDBOX_CALLBACK_SECRET=${callbackSecret}`,
+                        ...(pollMode ? ["SANDBOX_EGRESS_FIREWALL=1"] : [`CORTEX_BASE_URL=${config.cortexBaseUrl}`]),
+                        ...Object.entries(plan.env).map(([k, v]) => `${k}=${v}`),
+                        ...Object.entries(meta.extraEnv ?? {}).map(([k, v]) => `${k}=${v}`),
+                    ];
 
-                    if (!alreadyRunning) {
-                        const started = await trySandbox(() => container.start(), createFailed);
+                    const spec = meta.resources;
+                    const createOpts: Docker.ContainerCreateOptions = {
+                        name: sandboxId,
+                        ...(config.platform !== undefined && { platform: config.platform }),
+                        Image: image,
+                        Env: env,
+                        User: pollMode ? SANDBOX_ROOT_USER : SANDBOX_USER,
+                        WorkingDir: plan.workingDir,
+                        Labels: {
+                            [MANAGED_BY_LABEL]: MANAGED_BY_VALUE,
+                            [OWNER_WORKFLOW_LABEL]: meta.childWorkflowId,
+                            [RUN_ID_LABEL]: meta.runId,
+                            [STEP_ID_LABEL]: meta.stepId,
+                            role: "sandbox",
+                            "cortex/sandbox-id": sandboxId,
+                        },
+                        ExposedPorts: { [`${SANDBOX_SERVER_PORT}/tcp`]: {} },
+                        HostConfig: {
+                            Binds: binds,
+                            // Published to loopback only: the host reaches `/exec`, the LAN cannot.
+                            PortBindings: {
+                                [`${SANDBOX_SERVER_PORT}/tcp`]: [{ HostIp: SANDBOX_PORT_HOST_IP, HostPort: "0" }],
+                            },
+                            CapDrop: ["ALL"],
+                            // Poll mode grants NET_ADMIN to the ROOT entrypoint only, to install
+                            // the egress firewall; `setpriv` drops it before the workload runs.
+                            ...(pollMode ? { CapAdd: ["NET_ADMIN"] } : {}),
+                            SecurityOpt: ["no-new-privileges"],
+                            NanoCpus: Math.round(spec.cpu * 1e9),
+                            Memory: spec.memoryGb * 1024 ** 3,
+                            AutoRemove: false,
+                        },
+                    };
+
+                    const sandbox = await createOrAdopt(docker, createOpts, sandboxId, meta.childWorkflowId, createFailed);
+                    if (sandbox.isErr()) return err(sandbox.error);
+                    if (!sandbox.value.alreadyRunning) {
+                        const started = await trySandbox(() => sandbox.value.container.start(), createFailed);
                         if (started.isErr()) return err(started.error);
                     }
 
-                    const inspectedRunning = await trySandbox(() => container.inspect(), createFailed);
-                    if (inspectedRunning.isErr()) return err(inspectedRunning.error);
-                    const info = inspectedRunning.value;
-
-                    const bindings = info.NetworkSettings.Ports[`${SANDBOX_SERVER_PORT}/tcp`];
-                    const hostPort = bindings?.[0]?.HostPort;
+                    const inspected = await trySandbox(() => sandbox.value.container.inspect(), createFailed);
+                    if (inspected.isErr()) return err(inspected.error);
+                    const hostPort = inspected.value.NetworkSettings.Ports?.[`${SANDBOX_SERVER_PORT}/tcp`]?.[0]?.HostPort;
                     if (!hostPort) {
-                        await container.stop({ t: 1 }).catch(() => {});
-                        await container.remove({ force: true }).catch(() => {});
+                        // A container we cannot reach is useless; stop and remove it so a retry
+                        // starts clean rather than colliding with an unroutable name.
+                        (await removeContainerIgnoreMissing(docker, sandboxId)).unwrapOr(undefined);
                         return err(createFailed(undefined, new Error(`DockerSandbox: no host port mapped for ${SANDBOX_SERVER_PORT}/tcp on ${sandboxId}`)));
                     }
 
-                    const host = "127.0.0.1";
+                    const host = SANDBOX_PORT_HOST_IP;
                     const port = Number(hostPort);
                     const healthy = await trySandbox(() => pollHealth(fetchImpl, `http://${host}:${port}/health`, HEALTH_TIMEOUT_MS), createFailed);
                     if (healthy.isErr()) return err(healthy.error);
@@ -326,12 +372,11 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
         isAlive(ref) {
             return trySandbox(
                 async () => {
-                    const container = docker.getContainer(ref.sandboxId);
-                    const info = await container.inspect();
-                    return {
-                        alive: info.State.Running === true,
-                        oomKilled: info.State.OOMKilled === true,
-                    };
+                    const info = await docker.getContainer(ref.sandboxId).inspect();
+                    const oomKilled = info.State.OOMKilled === true;
+                    // A running container is a reachable sandbox: the host dials its
+                    // published loopback port directly.
+                    return { alive: info.State.Running === true, oomKilled };
                 },
                 (status, cause) => ({
                     type: "liveness_failed",

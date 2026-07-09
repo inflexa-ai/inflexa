@@ -22,7 +22,7 @@ It is built for scientists, bioinformaticians, and engineers who need analysis t
 
 - **Local-first.** Your data, code, and results stay on your machine. No account required.
 - **Reproducible by construction.** Every run records its full provenance and lineage in a local SQLite database, with export and replay.
-- **Sandboxed execution.** Generated code runs inside a Docker sandbox with no network egress and access only to your working directory.
+- **Sandboxed execution.** Generated code runs inside a Docker sandbox as a non-root user with all Linux capabilities dropped, under CPU and memory limits, reading your analysis tree read-only and writing only to the current step's output directory. By default the sandbox initiates no network connections at all: its port is published to `127.0.0.1` only, an in-container firewall blocks all outbound traffic, and the host retrieves results by polling a signature-authenticated endpoint. See [`SECURITY.md`](./SECURITY.md).
 - **Bring your own model.** Use any supported LLM provider via API key, or run local models end to end, offline.
 - **Open source, in full.** The CLI is a complete product under Apache-2.0, not a limited trial. See [Open source and commercial](#open-source-and-commercial).
 

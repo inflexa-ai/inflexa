@@ -90,7 +90,7 @@ The bar is: a stranger can clone the repo, run your example, and get the same ar
 These areas get **extra scrutiny**, because Inflexa runs on real biological data and its whole premise is auditability:
 
 - **Analytical methods:** be explicit about the method, cite the relevant literature where appropriate, and make sure tool/library versions are pinned. Scientific correctness is a review criterion, not an afterthought.
-- **Sandbox:** preserve the security model (default no network egress, working-directory-only mounts, resource limits). Any change that loosens isolation must be called out explicitly and justified.
+- **Sandbox:** preserve the security model (unprivileged uid-1000 workload, all capabilities dropped, `no-new-privileges`; no network egress in poll mode — the in-container firewall on Docker, a NetworkPolicy on K8s; signature-authenticated exec endpoints; working-directory-only mounts; resource limits; and no host credentials in spawned commands). Any change that loosens isolation must be called out explicitly and justified.
 - **Provenance:** changes to what is recorded, or to the SQLite schema, must keep prior analyses reproducible (or document the expected variance).
 
 When in doubt, open a design proposal first.

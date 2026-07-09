@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"sync"
 	"time"
 )
@@ -15,6 +16,15 @@ const (
 
 const completedEntryTTL = time.Hour
 
+// eventRingCapacity bounds the per-exec progress-event ring in poll mode. A
+// chatty exec between polls must not grow the table without limit; on overflow
+// the oldest event is dropped and a sticky `truncated` marker is set so a poll
+// response can signal that earlier events were shed. Sized generously: progress
+// events are coalesced on-change, so an exec rarely emits hundreds between two
+// polls even at the host's slowest poll cadence, and the terminal result — not
+// the event stream — is the authoritative outcome.
+const eventRingCapacity = 256
+
 type execResult struct {
 	ExitCode   int    `json:"exitCode"`
 	Stdout     string `json:"stdout"`
@@ -23,14 +33,44 @@ type execResult struct {
 	TimedOut   bool   `json:"timedOut,omitempty"`
 }
 
+// ringEvent is one buffered progress event: the exact event-payload bytes plus
+// the monotonic per-exec sequence number that serves as the poll cursor.
+type ringEvent struct {
+	Seq     int64           `json:"seq"`
+	Payload json.RawMessage `json:"payload"`
+}
+
 type execState struct {
-	ExecID            string
-	Status            execStatus
-	PID               int
-	StartedAt         time.Time
-	TerminalAt        time.Time
-	Result            *execResult
-	CompletionPosted  bool
+	ExecID     string
+	Status     execStatus
+	PID        int
+	StartedAt  time.Time
+	TerminalAt time.Time
+	Result     *execResult
+	// CompletionBody is the exact JSON the completion callback carries, kept so
+	// `GET /exec/{execId}` can serve it verbatim. Serving the same bytes — not a
+	// re-marshalled `Result` — is what lets a pulled completion carry the
+	// provenance frame, which `execResult` does not model.
+	CompletionBody   []byte
+	CompletionPosted bool
+	// Poll-mode event ring: bounded, drop-oldest. `eventSeq` is the high-water
+	// sequence (also the poll cursor); `truncated` latches once the ring sheds
+	// an event.
+	events    []ringEvent
+	eventSeq  int64
+	truncated bool
+}
+
+// pollSnapshot is the atomic view `GET /exec/{execId}?since={cursor}` serves in
+// poll mode: the exec status, the events newer than the caller's cursor, the new
+// high-water cursor, whether events were ever shed, and the terminal completion
+// body (nil while running).
+type pollSnapshot struct {
+	status    execStatus
+	events    []ringEvent
+	cursor    int64
+	truncated bool
+	body      []byte
 }
 
 type execTable struct {
@@ -94,9 +134,26 @@ func (t *execTable) complete(execID string, status execStatus, result *execResul
 	return true
 }
 
-// markCompletionPosted sets the at-most-once completion flag. Returns true if
-// the caller is the first to set it (i.e., should post); false if already set.
-func (t *execTable) markCompletionPosted(execID string) bool {
+// setCompletionBody records the exact bytes a completion callback would carry.
+// Called before the POST is attempted, so a completion whose delivery never
+// succeeds is still retrievable through `GET /exec/{execId}`.
+func (t *execTable) setCompletionBody(execID string, body []byte) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if st, ok := t.entries[execID]; ok {
+		st.CompletionBody = body
+	}
+}
+
+// claimCompletionPost takes the at-most-once right to POST the completion.
+// Returns true if the caller is the first to claim it; false if a claim is
+// already outstanding or the execId is unknown.
+//
+// The claim must be released (see releaseCompletionPost) when delivery fails.
+// Latching it permanently on a *failed* attempt would mark the completion
+// delivered when it never was, stranding the result: the exec table would hold
+// a terminal entry that nothing is allowed to send.
+func (t *execTable) claimCompletionPost(execID string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	st, ok := t.entries[execID]
@@ -108,6 +165,82 @@ func (t *execTable) markCompletionPosted(execID string) bool {
 	}
 	st.CompletionPosted = true
 	return true
+}
+
+// releaseCompletionPost surrenders a claim taken by claimCompletionPost.
+func (t *execTable) releaseCompletionPost(execID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if st, ok := t.entries[execID]; ok {
+		st.CompletionPosted = false
+	}
+}
+
+// completionSnapshot copies out the fields `GET /exec/{execId}` serves. Copying
+// under the lock keeps the handler off the live entry, which the exec's own
+// goroutine mutates.
+func (t *execTable) completionSnapshot(execID string) (status execStatus, body []byte, ok bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	st, found := t.entries[execID]
+	if !found {
+		return "", nil, false
+	}
+	if st.CompletionBody == nil {
+		return st.Status, nil, true
+	}
+	out := make([]byte, len(st.CompletionBody))
+	copy(out, st.CompletionBody)
+	return st.Status, out, true
+}
+
+// appendEvent buffers one progress-event payload in the exec's ring (poll
+// mode), assigning it the next sequence number. On overflow it drops the oldest
+// event and latches `truncated`. A copy of the payload is retained so the
+// caller may reuse its buffer.
+func (t *execTable) appendEvent(execID string, payload []byte) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	st, ok := t.entries[execID]
+	if !ok {
+		return
+	}
+	st.eventSeq++
+	buf := make(json.RawMessage, len(payload))
+	copy(buf, payload)
+	st.events = append(st.events, ringEvent{Seq: st.eventSeq, Payload: buf})
+	if len(st.events) > eventRingCapacity {
+		st.events = st.events[len(st.events)-eventRingCapacity:]
+		st.truncated = true
+	}
+}
+
+// pollSnapshotFor copies out the poll view for execID: events with Seq > since,
+// the high-water cursor, the sticky truncated flag, and the terminal completion
+// body (nil while running). Copying under the lock keeps the handler off the
+// live entry, which the exec's own goroutine mutates.
+func (t *execTable) pollSnapshotFor(execID string, since int64) (pollSnapshot, bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	st, found := t.entries[execID]
+	if !found {
+		return pollSnapshot{}, false
+	}
+	snap := pollSnapshot{status: st.Status, cursor: st.eventSeq, truncated: st.truncated}
+	for _, ev := range st.events {
+		if ev.Seq <= since {
+			continue
+		}
+		buf := make(json.RawMessage, len(ev.Payload))
+		copy(buf, ev.Payload)
+		snap.events = append(snap.events, ringEvent{Seq: ev.Seq, Payload: buf})
+	}
+	if st.CompletionBody != nil {
+		out := make([]byte, len(st.CompletionBody))
+		copy(out, st.CompletionBody)
+		snap.body = out
+	}
+	return snap, true
 }
 
 // evictExpired removes terminal entries older than ttl.

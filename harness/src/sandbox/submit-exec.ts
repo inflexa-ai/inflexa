@@ -19,6 +19,7 @@
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
+import { signCallback } from "./hmac.js";
 import type { SandboxRef, SubmitExecBody } from "./types.js";
 
 export interface SubmitExecDeps {
@@ -34,10 +35,22 @@ async function postExec(fetchImpl: typeof fetch, ref: SandboxRef, body: SubmitEx
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SUBMIT_HTTP_TIMEOUT_MS);
     try {
+        // Sign the exact bytes we send, over the same HMAC construction the
+        // sandbox uses for its callbacks — sandbox-server authenticates every
+        // inbound request. `Date.now()` is safe here: this whole POST runs inside
+        // a `DBOS.runStep` whose cached result is replayed without re-executing
+        // the body, so the timestamp never re-computes on recovery.
+        const raw = JSON.stringify(body);
+        const timestamp = Math.floor(Date.now() / 1000);
+        const signature = signCallback({ execId: body.execId, body: raw, timestamp, secret: ref.callbackSecret });
         const res = await fetchImpl(`http://${ref.host}:${ref.port}/exec`, {
             method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(body),
+            headers: {
+                "content-type": "application/json",
+                "x-sandbox-signature": signature,
+                "x-sandbox-timestamp": String(timestamp),
+            },
+            body: raw,
             signal: controller.signal,
         });
 

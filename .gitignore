@@ -61,3 +61,7 @@ tech-debt/
 # Python bytecode (e.g. scripts/lib-store-validate)
 __pycache__/
 *.pyc
+
+# Paper working directory — manuscript scaffold and reference PDFs, kept local
+# only (a journal treats a public preprint as prior publication).
+paper/

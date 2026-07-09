@@ -139,7 +139,13 @@ export async function runEphemeralBody(input: EphemeralWorkflowInput, deps: Ephe
     );
 
     try {
-        const deadlineAbs = input.deadlineMs ?? Date.now() + DEFAULT_DEADLINE_MS;
+        // The fallback reads the CHECKPOINTED clock, not `Date.now()`: `awaitExec`
+        // gates on this absolute deadline, and its recovery-pull is a durable step,
+        // so a wall-clock deadline that grew on replay would shift which loop
+        // iteration crosses the deadline and desynchronise the recorded function-ID
+        // sequence (see the harness-durable-runtime spec; sandbox-step.ts does the
+        // same). `input.deadlineMs`, when present, is already replay-stable.
+        const deadlineAbs = input.deadlineMs ?? (await DBOS.now()) + DEFAULT_DEADLINE_MS;
         const nextFunctionId = makeNextFunctionId();
 
         const sandboxAgentDeps: SandboxAgentDeps = {

@@ -53,8 +53,8 @@ export async function runSandboxExec(args: RunExecArgs): Promise<ExecResult> {
     }
 
     return args.sandboxClient.awaitExec(
+        args.sandbox,
         args.execId,
-        args.sandbox.callbackSecret,
         (event) =>
             args.emit({
                 type: "data-sandbox-event",

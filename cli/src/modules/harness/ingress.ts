@@ -2,35 +2,48 @@ import { deliverExecEvent, workflowIdFromExec, type ExecEventMessage } from "@in
 import { ok, err, type Result } from "neverthrow";
 import { getLogger } from "../../lib/log.ts";
 
-// The exec-callback ingress: the HTTP endpoint sandbox-server POSTs signed
-// callbacks to (`{CORTEX_BASE_URL}/sandbox/{execId}/{event|complete}`,
+// The exec-callback ingress — used ONLY in callback transport mode. It is the
+// HTTP endpoint sandbox-server POSTs signed callbacks to
+// (`{CORTEX_BASE_URL}/sandbox/{execId}/{event|complete}`,
 // images/sandbox-base/server/callback.go). The route is deliberately DUMB — it
 // preserves the raw body bytes and forwards the signature headers verbatim onto
 // the per-exec DBOS topic; HMAC verification happens in the workflow-body recv
 // loop, which holds the per-sandbox secret. This listener never sees a secret,
 // so a forged POST costs an attacker nothing here and dies in `awaitExec`.
+//
+// The local CLI runs in POLL mode, where the sandbox initiates nothing and there
+// is no callback to receive — so it binds no ingress ({@link noopExecIngress}).
+// This listener exists for embedders that opt into callback mode.
 
 /** A running ingress listener plus the URL sandbox containers reach it under. */
 export type ExecIngress = {
-    /** Loopback port actually bound (ephemeral — chosen by the OS). */
+    /** Loopback port actually bound (ephemeral — chosen by the OS); 0 for the no-op poll-mode ingress. */
     readonly port: number;
     /**
-     * `CORTEX_BASE_URL` for sandbox containers. `host.docker.internal` resolves
-     * to the host on Docker Desktop even for loopback-bound listeners.
+     * The upstream this ingress is reachable at, advertised to the sandbox as
+     * `CORTEX_BASE_URL` in callback mode. `host.docker.internal` resolves to the
+     * host on Docker Desktop even for loopback-bound listeners. Empty for the
+     * no-op poll-mode ingress (poll mode advertises no callback URL).
      *
-     * TODO(robustness): native Linux Docker Engine has no `host.docker.internal`
-     * and cannot reach a host loopback listener from a container. The SECURE fix
-     * is to bind the ingress to the docker bridge gateway (reachable from the
-     * bridge network + host, but NOT the external LAN) and advertise that IP —
-     * NOT to bind `0.0.0.0`, which would expose the callback endpoint to every
-     * host on the network. Deferred because it needs runtime-aware bridge-address
-     * discovery (docker vs podman, custom `bip`) and Linux testing. Tracked in
-     * inflexa-ai/inf-cli#27.
+     * Callback mode on native Linux Docker Engine has no `host.docker.internal`
+     * and cannot reach a host loopback listener from a container; poll mode is the
+     * answer for local Linux, and callback-on-native-Linux remains a documented
+     * caveat (inflexa-ai/inf-cli#27).
      */
     readonly cortexBaseUrl: string;
-    /** Close the listener, dropping in-flight connections. */
+    /** Close the listener, dropping in-flight connections. No-op for the poll-mode ingress. */
     readonly stop: () => void;
 };
+
+/**
+ * The poll-mode ingress: a no-op. Poll mode receives no callbacks, so there is
+ * no listener to bind — but the boot flow still expects an {@link ExecIngress}
+ * handle, so hand it one that binds nothing, advertises no URL, and stops
+ * cleanly.
+ */
+export function noopExecIngress(): ExecIngress {
+    return { port: 0, cortexBaseUrl: "", stop: () => {} };
+}
 
 export type IngressError = { type: "ingress_bind_failed"; cause: unknown };
 
@@ -89,14 +102,13 @@ export async function handleExecCallback(req: Request, deliver: DeliverFn): Prom
 }
 
 /**
- * Bind the callback listener on an ephemeral loopback port. Loopback-only
- * (`127.0.0.1`) so the endpoint is reachable ONLY from this host — never the
- * LAN — which matters because the route is intentionally secret-less and defers
- * HMAC verification to the recv loop. Docker Desktop forwards containers to a
- * loopback listener via `host.docker.internal`; the native-Linux path (which
- * cannot reach host loopback) is the deferred follow-up documented on
- * {@link ExecIngress.cortexBaseUrl}, and MUST bind the bridge gateway rather
- * than widen to all interfaces.
+ * Bind the callback listener on an ephemeral loopback port (callback mode only).
+ * Loopback-only (`127.0.0.1`) so the endpoint is reachable ONLY from this host —
+ * never the LAN — which matters because the route is intentionally secret-less
+ * and defers HMAC verification to the recv loop. Docker Desktop forwards
+ * containers to a loopback listener via `host.docker.internal`; callback on
+ * native Linux is the documented caveat on {@link ExecIngress.cortexBaseUrl}
+ * (poll mode is the local-Linux answer).
  */
 export function startExecIngress(deliver: DeliverFn = deliverExecEvent): Result<ExecIngress, IngressError> {
     try {

@@ -92,14 +92,31 @@ func newTestExecutor(t *testing.T, secret []byte) (*executor, *callbackReceiver,
 	srv := httptest.NewServer(rec.handler())
 	cb := newCallbackClient(srv.URL, secret)
 	cb.sleep = func(context.Context, time.Duration) {}
-	exe := newExecutor(newExecTable(), cb, newProcessTable())
+	exe := newExecutor(newExecTable(), cb, newProcessTable(), newInboundAuth(secret), transportCallback)
 	return exe, rec, srv.Close
+}
+
+// signInbound stamps a request with a valid signature over (execID, body),
+// mirroring what the harness attaches.
+func signInbound(r *http.Request, execID string, body, secret []byte) {
+	ts := time.Now().Unix()
+	r.Header.Set(headerSignature, signCallback(secret, execID, ts, body))
+	r.Header.Set(headerTimestamp, strconv.FormatInt(ts, 10))
+}
+
+func execIDFromBody(b []byte) string {
+	var m struct {
+		ExecID string `json:"execId"`
+	}
+	_ = json.Unmarshal(b, &m)
+	return m.ExecID
 }
 
 func submit(t *testing.T, exe *executor, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/exec", bytes.NewReader(b))
+	signInbound(req, execIDFromBody(b), b, exe.auth.secret)
 	rw := httptest.NewRecorder()
 	exe.handle(rw, req)
 	return rw
@@ -146,6 +163,44 @@ func TestExecHandler_RejectsMalformedJSON(t *testing.T) {
 	exe.handle(rw, req)
 	if rw.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rw.Code)
+	}
+}
+
+// A well-formed submit with a valid execId+command but no (or a wrong)
+// signature must not spawn anything — anyone able to reach the port could
+// otherwise drive the sandbox.
+func TestExecHandler_RejectsUnsignedAndForgedSubmits(t *testing.T) {
+	exe, rec, cleanup := newTestExecutor(t, []byte("topsecret"))
+	defer cleanup()
+
+	post := func(sign func(r *http.Request, body []byte)) int {
+		body, _ := json.Marshal(map[string]any{"command": []string{"sh", "-c", "echo pwned"}, "execId": "intruder"})
+		req := httptest.NewRequest(http.MethodPost, "/exec", bytes.NewReader(body))
+		sign(req, body)
+		rw := httptest.NewRecorder()
+		exe.handle(rw, req)
+		return rw.Code
+	}
+
+	if code := post(func(*http.Request, []byte) {}); code != http.StatusUnauthorized {
+		t.Fatalf("unsigned submit: expected 401, got %d", code)
+	}
+	if code := post(func(r *http.Request, body []byte) { signInbound(r, "intruder", body, []byte("wrong")) }); code != http.StatusUnauthorized {
+		t.Fatalf("wrong-secret submit: expected 401, got %d", code)
+	}
+	// A signature over a DIFFERENT body must not authorise this one — the guard
+	// against a captured-then-tampered submit.
+	if code := post(func(r *http.Request, _ []byte) {
+		other, _ := json.Marshal(map[string]any{"command": []string{"true"}, "execId": "intruder"})
+		signInbound(r, "intruder", other, []byte("topsecret"))
+	}); code != http.StatusUnauthorized {
+		t.Fatalf("body-tampered submit: expected 401, got %d", code)
+	}
+
+	// Nothing should have been spawned or completed.
+	time.Sleep(100 * time.Millisecond)
+	if got := rec.completeCount(); got != 0 {
+		t.Fatalf("a rejected submit still ran: %d completions", got)
 	}
 }
 
@@ -301,7 +356,7 @@ func TestExecHandler_RetryPreservesSignatureAcrossAttempts(t *testing.T) {
 
 	cb := newCallbackClient(srv.URL, []byte("s"))
 	cb.sleep = func(context.Context, time.Duration) {}
-	exe := newExecutor(newExecTable(), cb, newProcessTable())
+	exe := newExecutor(newExecTable(), cb, newProcessTable(), newInboundAuth([]byte("s")), transportCallback)
 
 	submit(t, exe, map[string]any{
 		"command": []string{"sh", "-c", "echo hi"},
@@ -380,3 +435,88 @@ func TestExecHandler_SubmittedLogDedupHitFlag(t *testing.T) {
 	}
 }
 
+// A spawned command must never inherit the callback credentials: whoever holds
+// the secret can forge a signed completion — including its provenance frame —
+// for any exec.
+func TestBuildCommand_StripsCallbackCredentialsFromChildEnv(t *testing.T) {
+	t.Setenv(envCallbackSecret, "base64:c3VwZXItc2VjcmV0LXZhbHVl")
+	t.Setenv(envCortexBaseURL, "http://host.docker.internal:9999")
+	t.Setenv("SANDBOX_UNRELATED_VAR", "kept")
+
+	cmd := buildCommand(context.Background(), execSubmitRequest{
+		Command: []string{"true"},
+		Env:     map[string]string{"STEP_SCOPED": "also-kept"},
+	})
+
+	var sawUnrelated, sawStepScoped bool
+	for _, kv := range cmd.Env {
+		name, _, _ := strings.Cut(kv, "=")
+		if _, sensitive := sensitiveEnvKeys[name]; sensitive {
+			t.Fatalf("child env leaks %s", name)
+		}
+		switch kv {
+		case "SANDBOX_UNRELATED_VAR=kept":
+			sawUnrelated = true
+		case "STEP_SCOPED=also-kept":
+			sawStepScoped = true
+		}
+	}
+	if !sawUnrelated {
+		t.Error("unrelated host env var was dropped; only the callback credentials should be stripped")
+	}
+	if !sawStepScoped {
+		t.Error("request-supplied env var was dropped")
+	}
+}
+
+func TestSanitizedEnviron_DropsOnlyTheNamedKeys(t *testing.T) {
+	t.Setenv(envCallbackSecret, "base64:c2VjcmV0")
+	t.Setenv(envCortexBaseURL, "http://example.invalid")
+
+	for _, kv := range sanitizedEnviron() {
+		name, _, _ := strings.Cut(kv, "=")
+		if name == envCallbackSecret || name == envCortexBaseURL {
+			t.Fatalf("sanitizedEnviron returned %s", name)
+		}
+	}
+	// PATH is set in every sane environment and must survive.
+	var sawPath bool
+	for _, kv := range sanitizedEnviron() {
+		if name, _, _ := strings.Cut(kv, "="); name == "PATH" {
+			sawPath = true
+		}
+	}
+	if !sawPath {
+		t.Error("PATH was stripped from the child environment")
+	}
+}
+
+// The body is buffered before its signature can be verified (the signature
+// covers the bytes), so the read cap is what bounds an unauthenticated peer's
+// memory cost. An oversized submit must be refused without spawning anything.
+func TestExecHandler_OversizedBodyRejected(t *testing.T) {
+	exe, rec, cleanup := newTestExecutor(t, []byte("s"))
+	defer cleanup()
+
+	pad := strings.Repeat("a", maxExecBodyBytes)
+	body, _ := json.Marshal(map[string]any{
+		"command": []string{"true"},
+		"execId":  "oversized",
+		"env":     map[string]string{"PAD": pad},
+	})
+	if len(body) <= maxExecBodyBytes {
+		t.Fatalf("test body does not exceed the cap: %d <= %d", len(body), maxExecBodyBytes)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/exec", bytes.NewReader(body))
+	signInbound(req, "oversized", body, []byte("s"))
+	rw := httptest.NewRecorder()
+	exe.handle(rw, req)
+
+	if rw.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for an oversized submit, got %d", rw.Code)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := rec.completeCount(); got != 0 {
+		t.Fatalf("an oversized submit still ran: %d completions", got)
+	}
+}

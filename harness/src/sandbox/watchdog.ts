@@ -29,6 +29,7 @@ import { unwrapOrThrow } from "../lib/result.js";
 import type { ActiveSandboxRow } from "../state/index.js";
 import type { SandboxClient } from "./client.js";
 import { workflowIdFromExec } from "./exec-id.js";
+import { syntheticFailureReason, syntheticFailureResult } from "./liveness.js";
 import type { ExecEventMessage, ExecResult, SandboxLiveness, SandboxRef } from "./types.js";
 
 export const SHARD_COUNT = 8;
@@ -117,18 +118,8 @@ export async function checkShard(rows: ActiveSandboxRow[], deps: CheckShardDeps)
             continue;
         }
 
-        // An OOM-killed machine gets a distinguishable reason so the step
-        // failure reads "exceeded its memory limit", not a mystery death.
-        const reason = liveness.oomKilled ? "sandbox-oom-killed" : "sandbox-dead";
-        const failure: ExecResult = {
-            execId: row.execId,
-            exitCode: null,
-            stdout: "",
-            stderr: "",
-            durationMs: null,
-            timedOut: false,
-            syntheticFailure: { reason },
-        };
+        const reason = syntheticFailureReason(liveness);
+        const failure = syntheticFailureResult(row.execId, reason);
         await deps.sendSynthetic(workflowId, row.execId, failure, reason);
         syntheticSends++;
     }

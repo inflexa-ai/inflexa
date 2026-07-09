@@ -29,7 +29,7 @@ import { createDockerSandboxOps } from "./docker-client.js";
 import { createK8sSandboxOps } from "./k8s-client.js";
 import { STEP_SUBDIRS } from "./mount-plan.js";
 import { submitExec, type SubmitExecDeps } from "./submit-exec.js";
-import { toPersistedRef, type CreateSandboxMeta, type SandboxRef } from "./types.js";
+import { toPersistedRef, type CreateSandboxMeta, type SandboxRef, type SandboxTransport } from "./types.js";
 
 /**
  * Narrow config slice the sandbox factory reads off `Env` — the backend
@@ -48,6 +48,12 @@ export interface CreateSandboxClientConfig {
     env: SandboxBackendConfig;
     /** Cortex base URL injected into sandbox-server's env for callbacks. */
     cortexBaseUrl: string;
+    /**
+     * Result transport for every sandbox this client creates. Threaded to the
+     * container as `SANDBOX_TRANSPORT` and to `awaitExec`'s loop selection.
+     * Defaults to `poll`.
+     */
+    transport?: SandboxTransport;
     /** Default sandbox-base image when the workflow doesn't override per-step. */
     image: string;
     /** Cluster resource ceilings; every sandbox request is clamped to these. */
@@ -86,13 +92,29 @@ export interface CreateSandboxClientConfig {
      * observable rather than a silent mount drop. No-op when unset.
      */
     logger?: Pick<pino.Logger, "info" | "warn" | "error">;
-    /** Injectables for tests / non-production environments. */
+    /** Dependency seams (fetch, durable step/sleep, clock, recv, warn sink) forwarded to submit/await. */
     submitDeps?: SubmitExecDeps;
     awaitOptions?: AwaitExecOptions;
 }
 
+/**
+ * Assemble `awaitExec`'s options: the liveness probe self-wires from the
+ * backend ops (the poll loop's escalation always has its arbiter under the
+ * client), explicit seam injections in `base` win over the self-wired probe,
+ * and the transport is client-owned — never overridable through the seam bag.
+ * Exported for tests.
+ */
+export function composeAwaitOptions(
+    base: AwaitExecOptions | undefined,
+    transport: SandboxTransport,
+    isAlive: NonNullable<AwaitExecOptions["isAlive"]>,
+): AwaitExecOptions {
+    return { isAlive, ...base, transport };
+}
+
 export function createSandboxClient(config: CreateSandboxClientConfig): SandboxClient {
     const backend = config.backend ?? config.env.backend;
+    const transport = config.transport ?? "poll";
 
     const registerSandbox = async (meta: CreateSandboxMeta, ref: SandboxRef) => {
         unwrapOrThrow(await setSandboxRef(config.pool, meta.runId, meta.stepId, toPersistedRef(ref), meta.execId ?? null));
@@ -103,6 +125,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
             ? createK8sSandboxOps({
                   image: config.image,
                   cortexBaseUrl: config.cortexBaseUrl,
+                  transport,
                   namespace: config.namespace ?? config.env.namespace,
                   sessionPvc: config.sessionPvc,
                   libStorePvc: config.libStorePvc,
@@ -115,6 +138,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
             : createDockerSandboxOps({
                   image: config.image,
                   cortexBaseUrl: config.cortexBaseUrl,
+                  transport,
                   sessionsBasePath: config.sessionsBasePath,
                   libStorePath: config.libStorePath,
                   refStorePath: config.refStorePath,
@@ -159,6 +183,10 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
         );
     };
 
+    // One arbiter for both surfaces: the client's `isAlive` method and the
+    // poll loop's escalation probe are the same backend inspect.
+    const isAlive = async (ref: SandboxRef) => unwrapOrThrow(await ops.isAlive(ref));
+
     return {
         createSandbox: async (meta, identity) => {
             await precreateStepTree(meta);
@@ -173,8 +201,8 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
             return unwrapOrThrow(await ops.createSandbox({ ...meta, resources }, identity));
         },
         submitExec: async (ref, body) => submitExec(ref, body, config.submitDeps),
-        awaitExec: (execId, secret, emit, deadline) => awaitExec(execId, secret, emit, deadline, config.awaitOptions),
-        isAlive: async (ref) => unwrapOrThrow(await ops.isAlive(ref)),
+        awaitExec: (ref, execId, emit, deadline) => awaitExec(ref, execId, emit, deadline, composeAwaitOptions(config.awaitOptions, transport, isAlive)),
+        isAlive,
         teardown,
         teardownById: async (sandboxId) => unwrapOrThrow(await ops.teardownById(sandboxId)),
         listManagedSandboxes: async () => unwrapOrThrow(await ops.listManagedSandboxes()),

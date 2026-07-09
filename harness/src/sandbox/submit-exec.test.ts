@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { verifyCallback } from "./hmac.js";
 import { submitExec } from "./submit-exec.js";
 import type { SandboxRef } from "./types.js";
 
@@ -56,6 +57,28 @@ describe("submitExec", () => {
             command: ["echo", "hi"],
             execId: "wf-1:s-a:fn-0",
         });
+    });
+
+    test("signs the exact bytes it POSTs, so sandbox-server's inbound check passes", async () => {
+        const { fn, calls } = fetchResponding([{ status: 202, body: { execId: "wf-1:s-a:fn-0", status: "started" } }]);
+
+        await submitExec(REF, { command: ["echo", "hi"], execId: "wf-1:s-a:fn-0" }, { fetch: fn, runStep: (w) => w() });
+
+        const headers = calls[0]!.init!.headers as Record<string, string>;
+        const raw = calls[0]!.init!.body as string;
+        const timestamp = Number.parseInt(headers["x-sandbox-timestamp"]!, 10);
+        // Verify the way sandbox-server does: recompute the HMAC over the exact
+        // body bytes and confirm the header signature matches.
+        const verdict = verifyCallback({
+            execId: "wf-1:s-a:fn-0",
+            body: raw,
+            signature: headers["x-sandbox-signature"]!,
+            timestamp,
+            secret: REF.callbackSecret,
+            nowSec: timestamp,
+            freshnessSec: 300,
+        });
+        expect(verdict.valid).toBe(true);
     });
 
     test("dedup hit: 202 with existing-state body is also success", async () => {

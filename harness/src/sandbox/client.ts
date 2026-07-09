@@ -46,13 +46,15 @@ export interface SandboxClient {
     submitExec(ref: SandboxRef, body: SubmitExecBody): Promise<void>;
 
     /**
-     * Workflow-body recv loop. Loops `DBOS.recv("exec-event:${execId}",
-     * T)`, HMAC-verifies each message against `callbackSecret`, forwards
-     * meaningful events via `emit`, and returns the final `ExecResult` when
-     * a done-marker arrives. Bounded by `deadline` (absolute unix-ms
-     * timestamp); `T` is liveness-agnostic pacing only.
+     * Awaits a submitted exec's terminal result under the client's transport.
+     * Poll (default) loops durable, signed `GET /exec/{execId}?since={cursor}`
+     * steps against the sandbox in `ref`; callback loops
+     * `DBOS.recv("exec-event:${execId}", T)` with a signed pull as its
+     * recovery backstop. Both HMAC-verify every body against
+     * `ref.callbackSecret`, forward progress events via `emit`, and are
+     * bounded by `deadline` (absolute unix-ms timestamp).
      */
-    awaitExec(execId: string, callbackSecret: string, emit: ExecEmit, deadline: number): Promise<ExecResult>;
+    awaitExec(ref: SandboxRef, execId: string, emit: ExecEmit, deadline: number): Promise<ExecResult>;
 
     /**
      * Per-sandbox-machine liveness. `alive: false` only when observably dead

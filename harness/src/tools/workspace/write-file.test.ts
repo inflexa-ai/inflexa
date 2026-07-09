@@ -61,7 +61,7 @@ function makeFakeClient(opts: { sessionsBasePath: string }): FakeClient {
                 filesWritten.push({ sandboxPath, content: contentBytes });
             }
         },
-        async awaitExec(execId: string, _callbackSecret: string, _emit: ExecEmit, _deadlineMs: number): Promise<ExecResult> {
+        async awaitExec(_ref: SandboxRef, execId: string, _emit: ExecEmit, _deadlineMs: number): Promise<ExecResult> {
             return {
                 execId,
                 exitCode: 0,

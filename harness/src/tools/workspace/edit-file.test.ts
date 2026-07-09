@@ -49,7 +49,7 @@ function makeFakeClient(sessionsBasePath: string): FakeClient {
                 await writeFile(hostPath, contentBytes);
             }
         },
-        async awaitExec(execId: string, _secret: string, _emit: ExecEmit, _deadlineMs: number): Promise<ExecResult> {
+        async awaitExec(_ref: SandboxRef, execId: string, _emit: ExecEmit, _deadlineMs: number): Promise<ExecResult> {
             return {
                 execId,
                 exitCode: 0,

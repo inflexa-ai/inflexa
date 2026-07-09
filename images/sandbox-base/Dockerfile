@@ -73,6 +73,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     default-jre-headless \
     # Shell utilities
     curl ca-certificates git wget unzip file tree bsdmainutils jq \
+    # Egress firewall for Docker poll mode: the root entrypoint installs
+    # `iptables -P OUTPUT DROP` before dropping to the workload uid. `setpriv`
+    # (util-linux) performs that de-privileged exec. iptables is inert unless
+    # SANDBOX_EGRESS_FIREWALL=1 is set (callback mode and K8s never set it).
+    iptables \
     && rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
@@ -145,14 +150,24 @@ RUN useradd -m -u 1000 -s /bin/bash sandbox \
 # the expensive apt/font layers above.
 COPY --from=server-builder /sandbox-server /usr/local/bin/sandbox-server
 
+# Entrypoint wrapper: installs the poll-mode egress firewall (as root, when
+# SANDBOX_EGRESS_FIREWALL=1) then drops to the workload uid, else execs the
+# server directly.
+COPY images/sandbox-base/sandbox-entrypoint.sh /usr/local/bin/sandbox-entrypoint.sh
+RUN chmod +x /usr/local/bin/sandbox-entrypoint.sh
+
 # Provenance tracking hooks
 COPY --from=provtrack-builder /provtrack.so /opt/provenance/provtrack.so
 COPY images/sandbox-base/provenance/sitecustomize.py /opt/provenance/sitecustomize.py
 COPY images/sandbox-base/provenance/Rprofile.site /opt/provenance/Rprofile.site
 
+# Default to the unprivileged workload user. Callback mode and K8s run as uid
+# 1000 throughout. Docker poll mode overrides `User` to root at create time so
+# the entrypoint can install the egress firewall, then `setpriv` drops back to
+# uid 1000 before the server starts.
 WORKDIR /workspace
 USER sandbox
 
 EXPOSE 8765
 
-CMD ["sandbox-server"]
+ENTRYPOINT ["/usr/local/bin/sandbox-entrypoint.sh"]

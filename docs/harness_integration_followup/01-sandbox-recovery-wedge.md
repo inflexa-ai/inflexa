@@ -1,5 +1,36 @@
 # The Sandbox Recovery Wedge — what "#28" actually refers to, and the fix space
 
+> **RESOLVED 2026-07-08 — §4c was the right layer, and §4a would have made things worse.**
+> Kept as written; this header records what the prototyping found. Read the body for the
+> mechanism, this header for the correction.
+>
+> **The wedge had a second cause this document does not name.** `callback.go` minted the
+> callback timestamp and signature *outside* its retry loop, while the host verifies a
+> 300 s freshness window and treats a stale timestamp as a **hard cancel**, not a
+> retryable condition (`await-exec.ts`). The backoff sums past 300 s by attempt 16.
+> So §4a's stable ingress port — which this document calls "the durable fix" and defers
+> to — would **not** have unwedged a run that was down more than five minutes: the
+> retrying callback would have landed, verified its signature, failed freshness, and
+> hard-cancelled the run. It would have converted a silent hang into a loud, wrong
+> failure. A durability bug hiding behind a security control.
+>
+> **§4c's two verification questions, answered by reading the Go server:**
+> re-submitting a completed `execId` returns `{execId, status}` and **no result**
+> (`executor.go`, the dedup branch) — so submit-idempotency could not have carried the
+> completion. And the terminal result *was* retained (in-memory, 1 h TTL) but the
+> **provenance frame was not**: `execResult` does not model it, only the marshalled
+> completion payload did. Any pull that re-marshalled `execResult` would have silently
+> dropped provenance on exactly the path that most needs it.
+>
+> **What shipped:** sandbox-server retains the exact completion *bytes* and serves them
+> at `GET /exec/{execId}`, signed fresh at request time; every callback retry is
+> re-signed; the at-most-once completion claim is released on failed delivery instead of
+> latching. `awaitExec` pulls after a run of silent recv slices and once more before
+> declaring a deadline timeout. E2E-verified with the ingress stopped for the whole exec:
+> the completion was recovered with a valid signature and its full provenance frame.
+> §4b (widening watchdog liveness) landed in a narrower form — `isAlive` on Docker now
+> requires the sandbox's gateway to be running. See `harness-sandbox-exec` spec.
+
 Written 2026-07-07. Sources: the live observations recorded in
 `docs/harness_integration-new/00-progress.md` (§Change D findings, §Change D2 findings),
 issue #28 (data-profile kill/resume verification), issue #27 (Linux ingress
