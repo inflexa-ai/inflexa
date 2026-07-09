@@ -49,6 +49,7 @@ import {
     type StepExecutionRow,
 } from "@inflexa-ai/harness";
 
+import { describeCause } from "../../lib/cause.ts";
 import { fail, dieOn, failViaShutdown } from "../../lib/cli.ts";
 import { acquireInstanceLock } from "../../lib/lock.ts";
 import { shutdown } from "../../lib/shutdown.ts";
@@ -306,16 +307,15 @@ function describePlanIntakeError(e: PlanIntakeError): string {
 
 /** Each trigger failure, as one actionable line. The post-reserve failures note the row was released for retry. */
 function describeTriggerError(e: TriggerAnalysisRunError): string {
-    const errText = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
     switch (e.type) {
         case "dedup_failed":
             return `Could not check for an existing run (${e.cause.type}). Is Postgres reachable?`;
         case "reserve_failed":
-            return `Could not reserve the run row: ${errText(e.cause)}.`;
+            return `Could not reserve the run row: ${describeCause(e.cause)}.`;
         case "authorize_failed":
-            return `Run authorization failed for ${e.runId}: ${errText(e.cause)}. The row was marked failed — re-run to retry.`;
+            return `Run authorization failed for ${e.runId}: ${describeCause(e.cause)}. The row was marked failed — re-run to retry.`;
         case "launch_failed":
-            return `Could not start the run workflow for ${e.runId}: ${errText(e.cause)}. The row was marked failed — re-run to retry.`;
+            return `Could not start the run workflow for ${e.runId}: ${describeCause(e.cause)}. The row was marked failed — re-run to retry.`;
         default: {
             const exhaustive: never = e;
             throw new Error(`unhandled trigger error: ${JSON.stringify(exhaustive)}`);

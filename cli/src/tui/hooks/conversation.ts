@@ -13,10 +13,12 @@ import {
     type ThreadHistory,
 } from "@inflexa-ai/harness";
 
+import { describeCause } from "../../lib/cause.ts";
 import { env } from "../../lib/env.ts";
 import { isSubAgentEvent, readPlanCard, readRunCard } from "../../modules/harness/chat_printer.ts";
 import { buildChatSession, runChatTurn, type TurnOutcome } from "../../modules/harness/turn.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
+import { leaderSeq, sequenceLabel } from "../keymap.ts";
 import { harnessRuntime } from "./boot.ts";
 import { notify } from "./notice.ts";
 import { setChatStatus } from "./status.ts";
@@ -55,6 +57,11 @@ const [messages, setMessages] = createStore<UIMessage[]>([]);
 const [streamText, setStreamText] = createSignal("");
 const [streamPartId, setStreamPartId] = createSignal<string | null>(null);
 const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
+// The raw cause behind the current failure banner, retained so the "turn error details" dialog can
+// render the FULL value (stack, nested `.cause`, the whole structured object) the one-line banner
+// necessarily collapses. Typed `unknown` because a cause is exactly that — an `Error`, a
+// discriminated `{ type, ... }`, or anything a throw/`err` carried. Cleared on every new turn.
+const [lastTurnFailure, setLastTurnFailure] = createSignal<unknown>(null);
 
 /** The conversation's messages — read in a tracking scope to react to appends/edits. */
 export { messages };
@@ -64,6 +71,8 @@ export { streamText };
 export { streamPartId };
 /** The last chat error to surface as a banner, or `null` — read reactively. */
 export { errorMsg };
+/** The raw cause behind the last failed turn, or `null` — read reactively for the details dialog. */
+export { lastTurnFailure };
 
 /** The current message count — the `Sidebar` reads this; reactive on the store length. */
 export function messageCount(): number {
@@ -336,9 +345,13 @@ function startAssistantTurn(sessionId: string): string {
     return assistantId;
 }
 
-/** `unknown` → a one-line message, matching the REPL's `errText` shape. */
-function errText(cause: unknown): string {
-    return cause instanceof Error ? cause.message : String(cause);
+/**
+ * The `ctrl+x e for details` affordance appended to a failure banner. Derived from the SAME
+ * `leaderSeq("e")` that app.tsx binds to open the details dialog, so the printed label can never
+ * drift from the real key (it re-resolves the leader from config, exactly as the binding does).
+ */
+function detailsHint(): string {
+    return `${sequenceLabel(leaderSeq("e"))} for details`;
 }
 
 /** Surface an `appendTurn` fault as a non-fatal notice — the turn itself may have succeeded. */
@@ -424,18 +437,23 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
             commitStream();
             drainOpenTools();
             stampDuration(assistantId, startedAt);
-            setErrorMsg(`The turn failed: ${errText(outcome.cause)}`);
+            setLastTurnFailure(outcome.cause);
+            setErrorMsg(`The turn failed: ${describeCause(outcome.cause)} — ${detailsHint()}`);
             reportAppendError(outcome.appendError);
             setChatStatus("error");
             return;
         case "prepare_failed":
             dropEmptyAssistant(assistantId);
-            setErrorMsg(`Could not start the turn (is Postgres reachable?): ${errText(outcome.cause)}`);
+            setLastTurnFailure(outcome.cause);
+            setErrorMsg(`Could not start the turn (is Postgres reachable?): ${describeCause(outcome.cause)} — ${detailsHint()}`);
             setChatStatus("error");
             return;
         case "thread_gone":
             dropEmptyAssistant(assistantId);
-            setErrorMsg("This conversation thread is no longer available.");
+            // No raw cause rides on `thread_gone`; retain a structured stand-in so the details dialog
+            // shows the same reason the banner does rather than an empty view.
+            setLastTurnFailure({ type: "thread_gone", message: "This conversation thread is no longer available." });
+            setErrorMsg(`This conversation thread is no longer available. — ${detailsHint()}`);
             setChatStatus("error");
             return;
         default: {
@@ -598,7 +616,7 @@ export async function loadMessages(sessionId: string, analysisId: string, seams:
         // newest MESSAGE_CAP so the mounted window matches the live-append cap.
         (cortex) => setMessages(cortex.map((m) => cortexToUiMessage(m, sessionId)).slice(-MESSAGE_CAP)),
         (cause) => {
-            setErrorMsg(`Failed to load the conversation: ${errText(cause)}`);
+            setErrorMsg(`Failed to load the conversation: ${describeCause(cause)}`);
             setChatStatus("error");
         },
     );
@@ -626,6 +644,7 @@ export function resetHotState(): void {
     setStreamPartId(null);
     setStreamText("");
     setErrorMsg(null);
+    setLastTurnFailure(null);
     setChatStatus("idle");
     setMessages([]);
 }
@@ -664,6 +683,7 @@ const realSendSeams: SendSeams = { runtime: harnessRuntime, runChatTurn };
  */
 export async function send(opts: { sessionId: string; analysisId: string; userText: string }, seams: SendSeams = realSendSeams): Promise<void> {
     setErrorMsg(null);
+    setLastTurnFailure(null);
     const runtime = seams.runtime();
     if (!runtime) {
         // The app's boot gate should refuse a submit before this; a defensive terminal state beats a crash.

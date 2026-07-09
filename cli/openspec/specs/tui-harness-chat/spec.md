@@ -1,7 +1,7 @@
 # tui-harness-chat Specification
 
 ## Purpose
-The TUI's embedded harness chat lifecycle — the product conversation surface (plain `inflexa`) driving the harness conversation agent at managed parity. Covers boot-on-open gating (state machine, animation, failure surface, quit semantics), the emit adapter contract (harness `contracts/` vocabulary, clone-on-receive, sub-agent depth filter), the session↔thread binding, turn abort semantics, and the data-profile lifecycle at managed parity (the drift-aware auto-trigger that follows the input set, clear-on-empty, and the manual re-profile surfaces). Lives across `src/tui/hooks/{boot,conversation,profile_parity}.ts`, `src/tui/app.launch.tsx`, `src/tui/app.tsx`, and the shared engines `src/modules/harness/{turn,profile_trigger}.ts`.
+The TUI's embedded harness chat lifecycle — the product conversation surface (plain `inflexa`) driving the harness conversation agent at managed parity. Covers boot-on-open gating (state machine, animation, failure surface, quit semantics), the emit adapter contract (harness `contracts/` vocabulary, clone-on-receive, sub-agent depth filter), the session↔thread binding, turn abort semantics, turn-failure observability (readable banner, logged structured cause, details view), and the data-profile lifecycle at managed parity (the drift-aware auto-trigger that follows the input set, clear-on-empty, and the manual re-profile surfaces). Lives across `src/tui/hooks/{boot,conversation,profile_parity}.ts`, `src/tui/app.launch.tsx`, `src/tui/app.tsx`, and the shared engines `src/modules/harness/{turn,profile_trigger}.ts`.
 
 ## Requirements
 
@@ -63,6 +63,35 @@ carry the thread id in scope (chat-launched runs stamp `cortex_runs.thread_id`) 
 
 - **WHEN** an inner agent (planner, literature reviewer) emits deltas or tool events during a turn
 - **THEN** none of them render in the stream
+
+### Requirement: Turn failures are observable
+
+A failed turn SHALL never be a dead end. The failure banner's summary SHALL be derived from the
+structured cause — an `Error` renders its name and message (with one level of `.cause`), a
+discriminated `{type, …}` error renders its discriminant and message — never a default object
+coercion (`[object Object]`). The FULL structured cause SHALL be logged at error level from the
+shared turn engine (so both the TUI and the dev REPL record it in the file log — the one place the
+whole value survives), and an `appendTurn` fault SHALL be logged at warn. The TUI SHALL retain the
+last turn failure's raw cause and offer a leader-keybound details view (documented in which-key,
+hinted in the banner with a label derived from the live binding) rendering the full cause — stack,
+nested causes, or the pretty-printed structured object — through the standard results dialog. The
+retained failure SHALL clear when a new turn starts. `thread_gone`, which carries no raw cause,
+retains a structured stand-in so the details view explains the reason rather than showing empty.
+
+#### Scenario: A structured cause renders readably everywhere
+
+- **WHEN** a turn fails with a discriminated error object (e.g. a harness `ProviderError`)
+- **THEN** the banner shows the discriminant and message (never `[object Object]`), and the file log carries the complete structured cause
+
+#### Scenario: The details view shows the whole failure
+
+- **WHEN** the user presses the error-details leader key after a failed turn
+- **THEN** a dialog renders the full cause (stack and nested causes for an `Error`, pretty-printed JSON for a structured object)
+
+#### Scenario: A new turn clears the retained failure
+
+- **WHEN** the user sends a new message after a failure
+- **THEN** the banner and the retained cause reset, and the details view reports no recent turn error
 
 ### Requirement: The thread binds one-to-one to the session
 

@@ -6,6 +6,7 @@ import {
     applyEmitEvent,
     type CortexMsg,
     errorMsg,
+    lastTurnFailure,
     loadMessages,
     type LoadSeams,
     messages,
@@ -246,6 +247,25 @@ describe("send() drives the adapter + engine", () => {
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
         expect(errorMsg()).toContain("provider exploded");
         expect(chatStatus()).toBe("error");
+    });
+
+    test("a structured object cause renders its discriminant (not [object Object]) and is retained", async () => {
+        const cause = { type: "provider", retryable: true, message: "rate limited" };
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "failed", cause }));
+        // The banner names the discriminant + message via describeCause — never the [object Object] hole.
+        expect(errorMsg()).toContain("provider: rate limited");
+        expect(errorMsg()).not.toContain("[object Object]");
+        // The raw cause is retained verbatim for the details dialog.
+        expect(lastTurnFailure()).toBe(cause);
+    });
+
+    test("a new send clears the retained failure", async () => {
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, fakeSeams({ kind: "failed", cause: { type: "provider", message: "boom" } }));
+        expect(lastTurnFailure()).not.toBeNull();
+        // The next send resets hot error state before running — the stale failure must not linger.
+        await send({ sessionId: SID, analysisId: AID, userText: "again" }, fakeSeams({ kind: "ok", fallbackText: "hi" }));
+        expect(lastTurnFailure()).toBeNull();
+        expect(errorMsg()).toBeNull();
     });
 
     test("prepare_failed and thread_gone raise the error banner", async () => {

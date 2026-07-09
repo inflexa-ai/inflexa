@@ -15,6 +15,8 @@ import {
     type ThreadHistory,
 } from "@inflexa-ai/harness";
 
+import { getLogger } from "../../lib/log.ts";
+
 // The headless chat turn engine (design D2). One transport-free sequence —
 // `prepareChatTurn → runAgent → unconditional appendTurn` — shared by BOTH the
 // clack/stdout REPL (`chat.ts`) and the TUI chat hook, so neither carries a
@@ -141,7 +143,13 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         (r) => r,
         (cause): { readonly kind: "prepare_failed"; readonly cause: unknown } => ({ kind: "prepare_failed", cause }),
     );
-    if (prepared.kind === "prepare_failed") return { kind: "prepare_failed", cause: prepared.cause };
+    if (prepared.kind === "prepare_failed") {
+        // pino serializes the whole structured cause into the file log; the surface renders only a
+        // one-liner, so this record is the ONLY place the full failure detail survives for later
+        // inspection (the "[object Object]" hole this observability work closes).
+        getLogger("harness").error({ cause: prepared.cause }, "chat turn prepare failed");
+        return { kind: "prepare_failed", cause: prepared.cause };
+    }
     // The resume pre-check already refused foreign/absent ids before the loop
     // began, so this is reachable only if the thread was deleted mid-session.
     if (prepared.kind === "not_found") return { kind: "thread_gone" };
@@ -171,6 +179,9 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         (): DbError | undefined => undefined,
         (e): DbError | undefined => e,
     );
+    // The persistence fault rides ORTHOGONALLY on the outcome (the turn may still have succeeded);
+    // log it here so the whole DbError survives even when the surface only shows a terse toast.
+    if (appendError) getLogger("harness").warn({ appendError }, "chat turn append failed");
 
     switch (run.phase.kind) {
         case "ok":
@@ -178,6 +189,8 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         case "aborted":
             return { kind: "aborted", appendError };
         case "failed":
+            // The one place the full run failure survives — the banner collapses it to a one-liner.
+            getLogger("harness").error({ cause: run.phase.cause }, "chat turn failed");
             return { kind: "failed", cause: run.phase.cause, appendError };
         default: {
             const exhaustive: never = run.phase;
