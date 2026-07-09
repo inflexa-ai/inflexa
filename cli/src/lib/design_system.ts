@@ -476,7 +476,7 @@ export const themes: Record<ThemeId, Theme> = {
         syntax: {
             keyword: { fg: "#cf222e" },
             string: { fg: "#0a3069" },
-            comment: { fg: "#57606a", italic: true },
+            comment: { fg: "#6e7781", italic: true },
             number: { fg: "#0550ae" },
             function: { fg: "#8250df" },
             type: { fg: "#bc4c00" },

@@ -70,6 +70,16 @@ export default defineConfig([
                     selector: "CallExpression[callee.property.name='forEach']",
                     message: "`.forEach` is banned — use a `for` / `for...of` loop instead.",
                 },
+                {
+                    // NODE_ENV is not a source of truth in this codebase: our build mode is the baked
+                    // `INFLEXA_BUILD_CHANNEL`, read via `env.isDevelopment` / `devCommandsEnabled`. NODE_ENV is
+                    // only the deps' compile-mode axis, and scripts/build.ts --defines it FROM the channel so the
+                    // two can't diverge. Banning direct reads (env.ts included) keeps that coupling the single
+                    // authority. scripts/build.ts sets it via a `define["process.env.NODE_ENV"]` string key — an
+                    // object property, not this `process.env.NODE_ENV` member expression — so it is unaffected.
+                    selector: "MemberExpression[object.object.name='process'][object.property.name='env'][property.name='NODE_ENV']",
+                    message: "Don't read `process.env.NODE_ENV` — use `env.isDevelopment` / `devCommandsEnabled` (baked from INFLEXA_BUILD_CHANNEL). See src/lib/env.ts.",
+                },
             ],
         },
     },
