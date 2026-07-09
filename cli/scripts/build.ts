@@ -139,6 +139,21 @@ for (const target of targets) {
         root: buildRoot,
         define: targetDefine,
         plugins: [plugin],
+        // Optional deps that must NOT be bundled — each is a runtime import/require never reached in a
+        // normal inflexa run, but the bundler would otherwise try (and fail) to resolve it statically:
+        //   • node-llama-cpp (+ its per-platform packages) — the local-embeddings native addon, loaded
+        //     lazily via `import("node-llama-cpp")` only when `inflexa setup --embeddings local` is
+        //     chosen (modules/embedding). Its loader fans out to `import("@node-llama-cpp/<platform>")`
+        //     for ~16 platforms; only the host's package is installed, so bundling can't resolve the
+        //     rest. Absence is already handled gracefully (local-provider.ts → "run setup", not a crash).
+        //   • winston, winston-transport, @opentelemetry/exporter-logs-otlp-proto — @dbos-inc/dbos-sdk
+        //     `require()`s these ONLY on its OTLP-telemetry path, behind `if (!enableOTLP) return`.
+        //     enableOTLP defaults to `process.env.DBOS__CLOUD === 'true'` (dbos utils.js) and the harness
+        //     never enables it (runtime/dbos.ts sets no telemetry config), so those lines never execute in
+        //     a local binary. The packages aren't installed (dbos-sdk fails to declare them as
+        //     optionalDependencies), so external keeps the never-hit requires out of the bundle. Matches
+        //     the harness's documented posture (runtime/otel-smoke.test.ts: OTLP exporter absent, DBOS degrades).
+        external: ["node-llama-cpp", "@node-llama-cpp/*", "winston", "winston-transport", "@opentelemetry/exporter-logs-otlp-proto"],
         compile: {
             target: `bun-${target.os}-${target.arch}`,
             // Bun appends .exe automatically for windows targets.
