@@ -22,6 +22,22 @@ const originalRule = neverthrowPlugin.rules["must-use-result"];
 // `unwrapOrThrow` is reserved by convention for the src/lib/result.ts helper,
 // so a shadowing non-consuming function of the same name would be missed;
 // that trade-off is accepted to keep this patch parser-independent.
+// A Result consumed by a directly-chained `._unsafeUnwrapErr()` IS handled: the
+// plugin's handledMethods list carries `_unsafeUnwrap` but not its err twin, so
+// `fn()._unsafeUnwrapErr()` — the standard test idiom for asserting an expected
+// Err — is a false positive. Taught here, once, rather than scattering per-site
+// disables across test files.
+//
+// `(await fn())._unsafeUnwrapErr()` is the same idiom over a ResultAsync, and the
+// `await` is a node between the call and the member access — step through it, or
+// every async Err assertion still trips the rule.
+function isConsumedByUnsafeUnwrapErr(node) {
+    let current = node;
+    while (current.parent?.type === "AwaitExpression") current = current.parent;
+    const parent = current.parent;
+    return parent?.type === "MemberExpression" && parent.property?.name === "_unsafeUnwrapErr" && parent.parent?.type === "CallExpression";
+}
+
 function isConsumedByUnwrapOrThrow(node) {
     let current = node;
     let parent = node.parent;
@@ -84,6 +100,7 @@ const neverthrow = {
                     report: {
                         value(descriptor) {
                             if (descriptor && descriptor.node && isConsumedByUnwrapOrThrow(descriptor.node)) return;
+                            if (descriptor && descriptor.node && isConsumedByUnsafeUnwrapErr(descriptor.node)) return;
                             context.report(descriptor);
                         },
                     },

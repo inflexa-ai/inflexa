@@ -137,11 +137,6 @@ async function pollHealth(fetchImpl: typeof fetch, url: string, timeoutMs: numbe
     throw new Error(`sandbox /health did not return 200 within ${timeoutMs}ms: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 }
 
-/** Docker reports an already-created object as a 409. */
-function statusCodeOf(cause: unknown): number | undefined {
-    return typeof cause === "object" && cause !== null && "statusCode" in cause && typeof cause.statusCode === "number" ? cause.statusCode : undefined;
-}
-
 /**
  * Create the container, or adopt the one already standing under this
  * checkpointed name (a recovery re-run, see the harness-sandbox-exec spec). A

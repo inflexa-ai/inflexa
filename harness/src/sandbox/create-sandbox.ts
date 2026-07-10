@@ -20,7 +20,7 @@ import type { Pool } from "pg";
 import type pino from "pino";
 
 import { clampResources, type ResourceLimits } from "../config/resource-limits.js";
-import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { stepWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { tryMutation } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { clearSandboxRef, setSandboxRef } from "../state/index.js";
@@ -76,6 +76,12 @@ export interface CreateSandboxClientConfig {
     platform?: string;
     /** K8s: PVC claim backing the session PVC the workspace roots live under. */
     sessionPvc?: string;
+    /**
+     * K8s: absolute mountpoint of `sessionPvc` on this process's filesystem. Required with
+     * `sessionPvc` — the pod's `subPath` is a resolved workspace root taken relative to it,
+     * which is what keeps the pre-created step tree and the mounted step tree the same one.
+     */
+    sessionPvcRoot?: string;
     /** K8s: PVC claim mounted read-only at `/mnt/libs`. */
     libStorePvc?: string;
     /** K8s: PVC claim mounted read-only at `/mnt/refs`. */
@@ -130,6 +136,8 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   transport,
                   namespace: config.namespace ?? config.env.namespace,
                   sessionPvc: config.sessionPvc,
+                  sessionPvcRoot: config.sessionPvcRoot,
+                  resolveWorkspaceRoot: config.resolveWorkspaceRoot,
                   libStorePvc: config.libStorePvc,
                   refStorePvc: config.refStorePvc,
                   nodeSelector: config.nodeSelector,
@@ -157,7 +165,11 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
     const precreateStepTree = async (meta: CreateSandboxMeta): Promise<void> => {
         // A read-only sandbox has no writable step mount — nothing to pre-create.
         if (meta.readOnly) return;
-        const stepDir = join(config.resolveWorkspaceRoot(meta.analysisId), "runs", meta.runId, meta.stepId);
+        const stepDir = stepWritePrefix({
+            workspaceRoot: config.resolveWorkspaceRoot(meta.analysisId),
+            runId: meta.runId,
+            stepId: meta.stepId,
+        });
         await mkdir(stepDir, { recursive: true });
         await Promise.all(STEP_SUBDIRS.map((sub) => mkdir(join(stepDir, sub), { recursive: true })));
     };

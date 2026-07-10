@@ -1,30 +1,6 @@
-# workspace-root-resolution Specification
+# workspace-root-resolution Delta
 
-## Purpose
-
-Define the seam through which the harness locates every analysis's on-disk
-workspace: `resolveWorkspaceRoot(resourceId)` maps a resource id to the
-absolute host directory of that resource's tree. The embedder owns *where* a
-workspace lives (the CLI: beside the user's data under its anchor folder; a
-managed deployment: the session PVC); the harness owns the layout *inside*
-the root (workspace-layout). Registered once per process — the DBOS
-register-once constraint binds the closed-over *function*, whose *result*
-varies per resource — which is what makes per-resource roots possible at all.
-## Requirements
-### Requirement: The workspace root is resolved through an embedder-supplied seam
-
-The harness SHALL derive every host-side workspace path through a single construction-time dependency, `resolveWorkspaceRoot(resourceId) → absolute path`, supplied by the embedder at the composition root and closed over once at workflow registration. The returned path IS the analysis workspace tree root: the harness joins its own interior layout (`data/`, `runs/{runId}/{stepId}/…`, `reports/`, `previews/`) directly onto it, with no `{resourceId}` path segment on the host. No harness module SHALL accept or derive a global session base (`sessionsBasePath` / `sessionPath` / `SESSION_PATH`).
-
-#### Scenario: All consumers derive from the resolver
-
-- **WHEN** any harness surface needs a host path for resource `A` (sandbox mount source, post-step summary write, synthesis persist, data-profile scratch, report preview dir, workspace filesystem read)
-- **THEN** the path SHALL be `resolveWorkspaceRoot("A")` joined with a tree-relative subpath, and no other base SHALL be consulted
-
-#### Scenario: Roots vary per resource within one process
-
-- **GIVEN** one registered process whose embedder maps resource `A` to `/projects/x/.inflexa/analyses/a` and resource `B` to `/projects/y/.inflexa/analyses/b`
-- **WHEN** workflows for both resources run
-- **THEN** each resource's files land under its own root — the single registration does not force a shared base
+## MODIFIED Requirements
 
 ### Requirement: Resolver realizations are injective, durable, and stable during a run
 
@@ -58,14 +34,3 @@ Resolution failures SHALL be signalled by throwing. That contract is scoped to c
 - **GIVEN** a realization that memoizes resolutions in process memory
 - **WHEN** the embedder moves resource `A`'s root in that same process
 - **THEN** the memo entry for `A` is dropped, and the next resolution returns the new root
-
-### Requirement: Container-side paths are independent of the resolved root
-
-Sandbox containers SHALL continue to mount the analysis tree at `/{resourceId}` (read-only) with the step's writable root nested at `/{resourceId}/runs/{runId}/{stepId}` (read-write), regardless of where the resolver placed the tree on the host. Host↔container path mapping SHALL be `containerPath = "/" + resourceId + "/" + relative(workspaceRoot, hostPath)` and its inverse — the shared formula in `workspace/paths.ts` (`toSandboxPath` and the resolve direction).
-
-#### Scenario: Host location does not leak into the container
-
-- **GIVEN** resource `A` whose root resolves to `/home/u/proj/.inflexa/analyses/slug-a`
-- **WHEN** a sandbox for step `s1` of run `r1` is created
-- **THEN** the container sees `/A` (RO) and `/A/runs/r1/s1` (RW), and a file written to `/A/runs/r1/s1/output/x.csv` lands at `/home/u/proj/.inflexa/analyses/slug-a/runs/r1/s1/output/x.csv` on the host
-

@@ -38,6 +38,28 @@ describe("createWorkspaceFilesystem", () => {
         }
     });
 
+    // `ResolveWorkspaceRoot` throws for an unresolvable resource (the DBOS-body contract), but this
+    // seam promises `Result` and its tools run inside live chat turns. The throw must not escape.
+    describe("an unresolvable workspace root", () => {
+        const unresolvable = createWorkspaceFilesystem({
+            resolveWorkspaceRoot: () => {
+                throw new Error("analysis folder is gone");
+            },
+        });
+
+        it("surfaces on readFile as an err, not a throw", async () => {
+            expect((await unresolvable.readFile({ session, path: "data/inputs/x.csv" }))._unsafeUnwrapErr().type).toBe("read_failed");
+        });
+
+        it("surfaces on list as an err, not a throw", async () => {
+            expect((await unresolvable.list({ session, path: "data" }))._unsafeUnwrapErr().op).toBe("workspace.resolveWorkspaceRoot");
+        });
+
+        it("surfaces on stat as an err, not a throw", async () => {
+            expect((await unresolvable.stat({ session, path: "data" }))._unsafeUnwrapErr().type).toBe("read_failed");
+        });
+    });
+
     it("returns not_found for a missing path with no presigned fallback", async () => {
         const r = (await fs.readFile({ session, path: "data/inputs/missing.csv" }))._unsafeUnwrap();
         expect(r.kind).toBe("not_found");

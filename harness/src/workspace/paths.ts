@@ -162,6 +162,13 @@ export function toSandboxPath(workspaceRoot: string, resourceId: string, hostAbs
 }
 
 /**
+ * Parent of every preview, workspace-root-relative. Callers that enumerate
+ * previews join this; callers that address one join {@link previewDir}. Both
+ * spell the segment through this constant so the tree has one owner.
+ */
+export const PREVIEWS_ROOT = "previews";
+
+/**
  * Versioned preview directory, workspace-root-relative. Previews live inside
  * the analysis tree (`previews/{previewId}/v{N}`); the content-token `res`
  * claim keeps the separate `previews/{analysisId}/{previewId}` formula in
@@ -175,7 +182,7 @@ export function previewVersionDir(previewId: string, version: number): string {
 /** Preview root for a specific preview (all versions), workspace-root-relative. */
 export function previewDir(previewId: string): string {
     assertSafeId(previewId, "previewId");
-    return `previews/${previewId}`;
+    return `${PREVIEWS_ROOT}/${previewId}`;
 }
 
 /**

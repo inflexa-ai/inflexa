@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
 import { makeBaseSlug, matchOutputPrefix, detectSourceAnalysis, createAnalysis, applyInputsDiff, renameAnalysisAndMoveWorkspace } from "./analysis.ts";
-import { defaultOutputSubdir } from "./output.ts";
+import { archivedOutputSubdir, defaultOutputSubdir, disposeWorkspace, invalidateWorkspaceRoot, resolveOutputDir } from "./output.ts";
 import { freshDb } from "../../test_support/db.ts";
-import { insertAnchor, insertAnalysis } from "../../db/primary_mutation.ts";
+import { deleteAnalysis, insertAnchor, insertAnalysis } from "../../db/primary_mutation.ts";
 import { findAnalysesByRef, listAnalyses, listAnalysisInputs } from "../../db/primary_query.ts";
 import { asStr256, str256 } from "../../lib/types.ts";
 import type { Analysis } from "../../types/analysis.ts";
@@ -226,5 +226,78 @@ describe("renameAnalysisAndMoveWorkspace", () => {
         expect(findAnalysesByRef("loner-renamed")._unsafeUnwrap()[0]?.id).toBe(a.id);
         // Nothing was invented on disk at either slug.
         expect(existsSync(join(dir, ".inflexa", "analyses", "loner-renamed"))).toBe(false);
+    });
+
+    // The analysis must not collide with its own slug: a same-name rename is a no-op on disk.
+    test("renaming to the current name keeps the slug and does not move the tree", () => {
+        const a = createAnalysis({ cwd: dir, name: str256("My Analysis")._unsafeUnwrap() })._unsafeUnwrap();
+        expect(a.slug).toBe("my-analysis");
+        const root = join(dir, ".inflexa", "analyses", "my-analysis");
+        mkdirSync(join(root, "runs"), { recursive: true });
+        writeFileSync(join(root, "runs", "log.txt"), "kept");
+
+        const outcome = renameAnalysisAndMoveWorkspace(a, str256("My Analysis")._unsafeUnwrap())._unsafeUnwrap();
+
+        expect(outcome.analysis.slug).toBe("my-analysis");
+        expect(outcome.workspaceMoved).toBe(false);
+        expect(outcome.moveError).toBeUndefined();
+        expect(existsSync(join(dir, ".inflexa", "analyses", "my-analysis-2"))).toBe(false);
+        expect(readFileSync(join(root, "runs", "log.txt"), "utf-8")).toBe("kept");
+    });
+
+    // Same slug, different display name — e.g. re-casing. The row's name changes, the tree stays put.
+    test("renaming to a name that slugifies identically keeps the slug and updates the name", () => {
+        const a = createAnalysis({ cwd: dir, name: str256("My Analysis")._unsafeUnwrap() })._unsafeUnwrap();
+
+        const outcome = renameAnalysisAndMoveWorkspace(a, str256("my   analysis")._unsafeUnwrap())._unsafeUnwrap();
+
+        expect(outcome.analysis.slug).toBe("my-analysis");
+        expect(outcome.analysis.name).toBe(str256("my   analysis")._unsafeUnwrap());
+        expect(outcome.workspaceMoved).toBe(false);
+        expect(existsSync(join(dir, ".inflexa", "analyses", "my-analysis-2"))).toBe(false);
+    });
+
+    test("a genuinely new name still collides against SIBLINGS, suffixing past a taken slug", () => {
+        createAnalysis({ cwd: dir, name: str256("Taken")._unsafeUnwrap() })._unsafeUnwrap();
+        const b = createAnalysis({ cwd: dir, name: str256("Other")._unsafeUnwrap() })._unsafeUnwrap();
+
+        const outcome = renameAnalysisAndMoveWorkspace(b, str256("Taken")._unsafeUnwrap())._unsafeUnwrap();
+        expect(outcome.analysis.slug).toBe("taken-2");
+    });
+});
+
+describe("delete → recreate does not inherit the previous analysis's artifacts", () => {
+    let dir = "";
+
+    beforeEach(() => {
+        freshDb();
+        invalidateWorkspaceRoot();
+        dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-recreate-")));
+    });
+
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("a new analysis of the same name resolves onto a clean tree once the old one is disposed", () => {
+        const first = createAnalysis({ cwd: dir, name: str256("Trial")._unsafeUnwrap() })._unsafeUnwrap();
+        const firstRoot = resolveOutputDir(first)._unsafeUnwrap();
+        mkdirSync(join(firstRoot, "runs", "run-1"), { recursive: true });
+        writeFileSync(join(firstRoot, "runs", "run-1", "result.csv"), "old,data");
+
+        // The delete command's order: retire the tree, then drop the row.
+        disposeWorkspace(first, "archive")._unsafeUnwrap();
+        deleteAnalysis(first.id)._unsafeUnwrap();
+
+        const second = createAnalysis({ cwd: dir, name: str256("Trial")._unsafeUnwrap() })._unsafeUnwrap();
+        const secondRoot = resolveOutputDir(second)._unsafeUnwrap();
+
+        // The slug is reused — that is fine, because the bytes are no longer under it.
+        expect(second.slug).toBe("trial");
+        expect(secondRoot).toBe(firstRoot);
+        expect(existsSync(join(secondRoot, "runs", "run-1", "result.csv"))).toBe(false);
+
+        // And the first analysis's work is still on disk, where the user was told it would be.
+        expect(readFileSync(join(dir, archivedOutputSubdir("trial"), "runs", "run-1", "result.csv"), "utf-8")).toBe("old,data");
     });
 });

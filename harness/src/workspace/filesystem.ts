@@ -35,12 +35,12 @@ import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 
-import { ResultAsync, ok } from "neverthrow";
+import { ResultAsync, err, errAsync, ok, type Result } from "neverthrow";
 
 import type { AgentSession } from "../auth/types.js";
 import { scopeResource } from "../auth/types.js";
 import { type FsError, tryFetch, tryFs } from "../lib/fs-result.js";
-import { resolveWorkspacePath, type ResolveWorkspaceRoot } from "./paths.js";
+import { resolveWorkspacePath, type ResolvedPath, type ResolveWorkspaceRoot } from "./paths.js";
 
 // ── Result types ──────────────────────────────────────────────────────────
 
@@ -117,14 +117,30 @@ export interface WorkspaceFilesystemDeps {
 export function createWorkspaceFilesystem(deps: WorkspaceFilesystemDeps): WorkspaceFilesystem {
     const { resolveWorkspaceRoot, presignedFallback } = deps;
 
-    function resolveFor(session: AgentSession, path: string, workingDir?: string) {
+    /**
+     * `ResolveWorkspaceRoot` signals an unresolvable resource by throwing — the contract that
+     * makes a resolution failure inside a DBOS body a durably-failed step. This seam is not a
+     * DBOS body: it promises `Result`, and the read tools it backs are reachable from a live
+     * chat turn whose analysis folder may have been moved or deleted since the turn began.
+     * Convert at the boundary so an unresolvable root is a value here, not an exception that
+     * only survives because some caller happens to wrap it.
+     */
+    function resolveFor(session: AgentSession, path: string, workingDir?: string): Result<ResolvedPath, FsError> {
         const { resourceId: analysisId } = scopeResource(session.scope);
-        return resolveWorkspacePath({ workspaceRoot: resolveWorkspaceRoot(analysisId), analysisId, path, workingDir });
+        let workspaceRoot: string;
+        try {
+            workspaceRoot = resolveWorkspaceRoot(analysisId);
+        } catch (cause) {
+            return err({ type: "read_failed", op: "workspace.resolveWorkspaceRoot", path: analysisId, cause });
+        }
+        return ok(resolveWorkspacePath({ workspaceRoot, analysisId, path, workingDir }));
     }
 
     return {
         readFile({ session, path, maxBytes, headLines, tailLines, workingDir }) {
-            const resolved = resolveFor(session, path, workingDir);
+            const resolvedResult = resolveFor(session, path, workingDir);
+            if (resolvedResult.isErr()) return errAsync(resolvedResult.error);
+            const resolved = resolvedResult.value;
             if (resolved.kind === "out_of_scope") {
                 return okAsync<ReadFileResult>({ kind: "out_of_scope" });
             }
@@ -160,7 +176,9 @@ export function createWorkspaceFilesystem(deps: WorkspaceFilesystemDeps): Worksp
         },
 
         list({ session, path, workingDir }) {
-            const resolved = resolveFor(session, path, workingDir);
+            const resolvedResult = resolveFor(session, path, workingDir);
+            if (resolvedResult.isErr()) return errAsync(resolvedResult.error);
+            const resolved = resolvedResult.value;
             if (resolved.kind === "out_of_scope") {
                 return okAsync<ListResult>({ kind: "out_of_scope" });
             }
@@ -177,7 +195,9 @@ export function createWorkspaceFilesystem(deps: WorkspaceFilesystemDeps): Worksp
         },
 
         stat({ session, path, workingDir }) {
-            const resolved = resolveFor(session, path, workingDir);
+            const resolvedResult = resolveFor(session, path, workingDir);
+            if (resolvedResult.isErr()) return errAsync(resolvedResult.error);
+            const resolved = resolvedResult.value;
             if (resolved.kind === "out_of_scope") {
                 return okAsync<StatResult>({ kind: "out_of_scope" });
             }

@@ -25,7 +25,9 @@ failure whose version directory is rolled back, so a half-built report never
 leaks to the user.
 
 Each iteration is a new version directory under
-`previews/{analysisId}/{previewId}/v{N}`; `assets/` is shared across versions.
+`{workspaceRoot}/previews/{previewId}/v{N}`; `assets/` is shared across versions.
+(`previews/{analysisId}/{previewId}` is the content-token `res` claim — URL
+space, not a filesystem sub-path.)
 On success the tool emits a `data-preview` chat part; on any pre-flight, build,
 or submit failure it emits `data-preview-failed`. The hosted preview surface is
 reached only through the injected `PreviewPublisher` seam (the OSS default

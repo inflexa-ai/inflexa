@@ -13,7 +13,7 @@ import { renameResult } from "../../lib/fs.ts";
 import { getOrCreateAnchorForCwd, resolveAnchor } from "../anchor/anchor.ts";
 import { findMarkerUpwards, isDirWritable } from "../anchor/marker.ts";
 import { classifyInputPath } from "./input.ts";
-import { defaultOutputSubdir, type WorkspaceError } from "./output.ts";
+import { defaultOutputSubdir, invalidateWorkspaceRoot, type WorkspaceError } from "./output.ts";
 
 /** Args for {@link createAnalysis}. `name` is validated to {@link Str256} at the CLI boundary. */
 export type CreateAnalysisInput = {
@@ -42,12 +42,19 @@ export function makeBaseSlug(name: string): string {
     return `analysis-${randomUUIDv7().slice(-6).toLowerCase()}`;
 }
 
-// Slugs must be unique within the anchor: outputs live at <anchor>/.inflexa/analyses/<slug>/,
-// so two analyses sharing an anchor must not share a slug. Suffix -2, -3, … on collision.
-export function uniqueSlugForAnchor(anchorId: string, name: string): Result<string, DbError> {
+/**
+ * A slug free for `name` within `anchorId`, suffixing `-2`, `-3`, … past collisions. The whole
+ * workspace lives at `<anchor>/.inflexa/analyses/<slug>/`, so two analyses sharing an anchor must
+ * not share a slug.
+ *
+ * `excludeAnalysisId` drops one analysis from the collision set — the analysis being renamed.
+ * Without it an analysis collides with its own slug and a rename to the SAME name (or to any name
+ * that slugifies the same way) yields `<slug>-2` and drags the on-disk tree along with it.
+ */
+export function uniqueSlugForAnchor(anchorId: string, name: string, opts?: { excludeAnalysisId?: string }): Result<string, DbError> {
     const base = makeBaseSlug(name);
     return listAnalysesByAnchor(anchorId).map((existing) => {
-        const taken = new Set(existing.map((a) => a.slug));
+        const taken = new Set(existing.filter((a) => a.id !== opts?.excludeAnalysisId).map((a) => a.slug));
         if (!taken.has(base)) return base;
         for (let i = 2; ; i++) {
             const candidate = `${base}-${i}`;
@@ -238,12 +245,16 @@ export function createAnalysis(opts: CreateAnalysisInput): Result<Analysis, Work
     );
 }
 
-/** Outcome of {@link renameAnalysisAndMoveWorkspace}: the renamed analysis plus whether the on-disk tree moved with it. */
+/** Outcome of {@link renameAnalysisAndMoveWorkspace}: the renamed analysis plus what became of its on-disk tree. */
 export type RenameOutcome = {
     analysis: Analysis;
-    /** False when there was no tree to move (never created / user-deleted) OR the move itself failed — see `moveError`. */
+    /** True only when a tree existed at the old slug and now sits at the new one. */
     workspaceMoved: boolean;
-    /** Set only when a tree existed at the old slug but could not be moved; the caller decides how loudly to surface it. */
+    /**
+     * Set when a tree may exist at the old slug but could not be moved there and back —
+     * a failed rename, or an anchor we could not locate. Absent for the benign cases:
+     * no tree yet, or a slug that did not change. The caller decides how loudly to surface it.
+     */
     moveError?: unknown;
 };
 
@@ -254,26 +265,39 @@ export type RenameOutcome = {
  * derived from it, so a crash (or a failed move) between the two leaves a missing tree at
  * the new slug — the normal desync condition the next use heals — plus a visible leftover
  * dir at the old slug, never a row pointing at bytes the rename lost. A missing source dir
- * is NOT an error (per the desync rule). Mid-run renames are excluded structurally: the
- * only rename surface lives in the TUI process that holds the analysis's instance lock.
+ * is NOT an error (per the desync rule).
+ *
+ * Callers MUST establish that no run is in flight for this analysis first. The harness's
+ * workspace-root resolver hands out paths beneath this directory for the whole life of a run
+ * (workspace-root-resolution: "stable while the resource has an active run"), and the per-analysis
+ * instance lock does not help — it excludes other PROCESSES, while the runs live in this one.
  */
 export function renameAnalysisAndMoveWorkspace(analysis: Analysis, name: Str256): Result<RenameOutcome, DbError> {
-    return uniqueSlugForAnchor(analysis.anchorId, name).andThen((slug) =>
-        renameAnalysis(analysis.id, name, slug).map((): RenameOutcome => {
+    return uniqueSlugForAnchor(analysis.anchorId, name, { excludeAnalysisId: analysis.id }).andThen((slug) =>
+        renameAnalysis(analysis.id, name, slug).andThen((): Result<RenameOutcome, DbError> => {
             const renamed: Analysis = { ...analysis, name, slug };
+            invalidateWorkspaceRoot(analysis.id);
+
+            // A name that slugifies to the slug it already has: the row's `name` changed, the
+            // directory's identity did not. Nothing to move, and nothing went wrong.
+            if (slug === analysis.slug) return ok({ analysis: renamed, workspaceMoved: false });
+
             // Anchor resolution after the row update; writability is irrelevant here — a
             // read-only anchor still renames the row, and the move then fails visibly.
-            const anchorPath = resolveAnchor(analysis.anchorId).match(
-                (r) => r?.path ?? null,
-                () => null,
-            );
-            if (anchorPath === null) return { analysis: renamed, workspaceMoved: false };
-            const oldRoot = join(anchorPath, defaultOutputSubdir(analysis.slug));
-            if (!existsSync(oldRoot)) return { analysis: renamed, workspaceMoved: false };
-            return renameResult(oldRoot, join(anchorPath, defaultOutputSubdir(slug)), "renameAnalysisWorkspace").match(
-                (): RenameOutcome => ({ analysis: renamed, workspaceMoved: true }),
-                (e): RenameOutcome => ({ analysis: renamed, workspaceMoved: false, moveError: e.cause }),
-            );
+            // A storage fault is NOT folded into "no tree": the tree may well exist and we
+            // simply cannot say where, which the caller must be able to tell the user.
+            return resolveAnchor(analysis.anchorId, { touch: false }).map((resolved): RenameOutcome => {
+                const anchorPath = resolved?.path ?? null;
+                if (anchorPath === null) {
+                    return { analysis: renamed, workspaceMoved: false, moveError: { type: "anchor_unresolved", anchorId: analysis.anchorId } };
+                }
+                const oldRoot = join(anchorPath, defaultOutputSubdir(analysis.slug));
+                if (!existsSync(oldRoot)) return { analysis: renamed, workspaceMoved: false };
+                return renameResult(oldRoot, join(anchorPath, defaultOutputSubdir(slug)), "renameAnalysisWorkspace").match(
+                    (): RenameOutcome => ({ analysis: renamed, workspaceMoved: true }),
+                    (e): RenameOutcome => ({ analysis: renamed, workspaceMoved: false, moveError: e.cause }),
+                );
+            });
         }),
     );
 }

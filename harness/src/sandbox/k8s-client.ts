@@ -4,17 +4,22 @@
  * Launches a sandbox Job with `CORTEX_BASE_URL` and `SANDBOX_CALLBACK_SECRET`
  * env vars; pod IP + port 8765 are the host/port Cortex POSTs `/exec` to.
  * Storage is wired via the shared session PVC: a flat read-only `volumeMount`
- * of the analysis tree at `/{resourceId}` (`subPath: {resourceId}`) plus a
- * nested read-write mount of the step's artifact dir, with the lib/ref stores
- * mounted read-only at `/mnt/libs` / `/mnt/refs` when their PVCs are set.
- * Container paths and lib-store env come from the shared mount plan.
+ * of the analysis tree at `/{resourceId}` plus a nested read-write mount of the
+ * step's artifact dir, with the lib/ref stores mounted read-only at `/mnt/libs`
+ * / `/mnt/refs` when their PVCs are set. Container paths and lib-store env come
+ * from the shared mount plan; the PVC `subPath`s are derived from the same
+ * `resolveWorkspaceRoot` seam the harness pre-creates the step tree under, so
+ * both sides address one directory by construction.
  */
+
+import { relative as relativePath, sep } from "node:path";
 
 import { BatchV1Api, CoreV1Api, KubeConfig, type V1Job, type V1PodSpec, type V1Toleration, type V1Volume, type V1VolumeMount } from "@kubernetes/client-node";
 import { ResultAsync, err, ok } from "neverthrow";
 
+import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
-import { buildMountPlan } from "./mount-plan.js";
+import { buildMountPlan, buildSessionSubPaths } from "./mount-plan.js";
 import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SandboxTransport } from "./types.js";
 
 /** Read the originating HTTP status off any `SandboxError` variant that carries one. */
@@ -65,6 +70,15 @@ export interface K8sClientConfig {
     namespace: string;
     /** PVC claim backing the shared session PVC the workspace roots live under. */
     sessionPvc?: string;
+    /**
+     * Absolute mountpoint of `sessionPvc` on THIS process's filesystem. Required whenever
+     * `sessionPvc` is set: a pod addresses the PVC by `subPath`, so the harness must be able
+     * to express a resolved workspace root as a path relative to the volume's root. Every
+     * root the embedder resolves must therefore live under this directory.
+     */
+    sessionPvcRoot?: string;
+    /** Workspace-root resolution seam; the source of each analysis's PVC `subPath`. */
+    resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** PVC claim mounted read-only at `/mnt/libs` when set. */
     libStorePvc?: string;
     /** PVC claim mounted read-only at `/mnt/refs` when set. */
@@ -117,6 +131,24 @@ function buildKubeApi(): { batchApi: BatchV1Api; coreApi: CoreV1Api } {
     };
 }
 
+/**
+ * Express an analysis's resolved workspace root as a path relative to the session PVC's root.
+ * A root outside the PVC cannot be addressed by `subPath` at all, so the pod would silently
+ * mount a directory the harness never wrote to — fail loudly instead. `createSandbox` runs
+ * inside a DBOS workflow body, where a throw is the durable failure signal.
+ */
+function workspaceSubPathFor(config: K8sClientConfig, analysisId: string): string {
+    if (!config.sessionPvcRoot) {
+        throw new Error("k8s sandbox: sessionPvc is set but sessionPvcRoot is not — the PVC subPath of a workspace root cannot be derived");
+    }
+    const rel = relativePath(config.sessionPvcRoot, config.resolveWorkspaceRoot(analysisId));
+    const posix = rel.split(sep).join("/");
+    if (posix.length === 0 || posix.startsWith("..")) {
+        throw new Error(`k8s sandbox: workspace root for ${analysisId} does not live under sessionPvcRoot (${config.sessionPvcRoot})`);
+    }
+    return posix;
+}
+
 function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity: SandboxIdentity): V1Job {
     const { sandboxId } = identity;
     const plan = buildMountPlan(meta, {
@@ -155,6 +187,7 @@ function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity
     const volumeMounts: V1VolumeMount[] = [];
 
     if (config.sessionPvc) {
+        const subPaths = buildSessionSubPaths(meta, workspaceSubPathFor(config, meta.analysisId));
         volumes.push({
             name: SESSION_VOLUME_NAME,
             persistentVolumeClaim: { claimName: config.sessionPvc },
@@ -165,14 +198,14 @@ function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity
         volumeMounts.push({
             name: SESSION_VOLUME_NAME,
             mountPath: plan.readonlyTreePath,
-            subPath: plan.sessionSubPathRO,
+            subPath: subPaths.ro,
             readOnly: true,
         });
-        if (plan.writableStepPath && plan.sessionSubPathRW) {
+        if (plan.writableStepPath && subPaths.rw) {
             volumeMounts.push({
                 name: SESSION_VOLUME_NAME,
                 mountPath: plan.writableStepPath,
-                subPath: plan.sessionSubPathRW,
+                subPath: subPaths.rw,
                 readOnly: false,
             });
         }

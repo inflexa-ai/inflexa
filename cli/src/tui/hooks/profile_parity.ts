@@ -49,17 +49,34 @@ let lastTriggeredAnalysisId: string | null = null;
 // those edges were added to close.
 let profileQueueTail: Promise<unknown> = Promise.resolve();
 
+/** Depth, not a boolean: arrivals queue rather than drop, so several drives can be outstanding at once. */
+let profileWorkDepth = 0;
+
+/**
+ * True while any profile drive is queued or running. Profiling stages inputs into the analysis
+ * workspace's `data/` root, so a caller about to move or retire that tree must wait this out.
+ */
+export function profileWorkInFlight(): boolean {
+    return profileWorkDepth > 0;
+}
+
 /**
  * Run `work` after everything already queued. `.then(work, work)` so a rejected predecessor still lets
  * its successors run, and the tail is kept rejection-free so one failure cannot skip every later drive.
  * The returned promise carries `work`'s own outcome, so a caller (or a test) still observes it.
  */
 function serializeProfileWork(work: () => Promise<void>): Promise<void> {
+    profileWorkDepth++;
     const next = profileQueueTail.then(work, work);
     profileQueueTail = next.then(
         () => {},
         () => {},
     );
+    // Decrement on the tail, not on `next`: the work is only truly done once its settled outcome
+    // has been folded into the queue, and this branch cannot reject.
+    void profileQueueTail.then(() => {
+        profileWorkDepth--;
+    });
     return next;
 }
 
@@ -67,6 +84,7 @@ function serializeProfileWork(work: () => Promise<void>): Promise<void> {
 export function __resetProfileParityForTest(): void {
     lastTriggeredAnalysisId = null;
     profileQueueTail = Promise.resolve();
+    profileWorkDepth = 0;
 }
 
 // Trailing-edge debounce for the live input-mutation drift check: a batch edit (a multi-file add via

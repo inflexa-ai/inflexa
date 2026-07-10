@@ -13,8 +13,12 @@ import { ConfigApp } from "./app_config.tsx";
 import { DesignGallery } from "./layout/design_gallery.tsx";
 import { setTheme } from "./theme.ts";
 import { notify } from "./hooks/notice.ts";
+import { queryRunsByAnalysis } from "@inflexa-ai/harness";
+
 import { bootState, harnessRuntime } from "./hooks/boot.ts";
-import { driveForceReprofile } from "./hooks/profile_parity.ts";
+import { driveForceReprofile, profileWorkInFlight } from "./hooks/profile_parity.ts";
+import { RUN_STATUS_TERMINAL } from "./hooks/sidebar_live.ts";
+import { chatStatus } from "./hooks/status.ts";
 import { keybindLabel } from "./keymap.ts";
 import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
 import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
@@ -32,6 +36,7 @@ import {
 import { resolveInputPath } from "../modules/analysis/input.ts";
 import { resolveContext, describeContext } from "../modules/analysis/context.ts";
 import { openOutputDir } from "../modules/analysis/open.ts";
+import { archivedOutputSubdir, defaultOutputSubdir, disposeWorkspace } from "../modules/analysis/output.ts";
 import { resolveAnchor, resolvedPathOrCached } from "../modules/anchor/anchor.ts";
 import { canonicalPath } from "../modules/anchor/marker.ts";
 import { loadAuth, describeAuthError } from "../modules/auth/auth.ts";
@@ -76,6 +81,33 @@ function workingDirFor(a: Analysis): string {
     return resolveAnchor(a.anchorId).match(
         (resolved) => resolvedPathOrCached(resolved) ?? process.cwd(),
         () => process.cwd(),
+    );
+}
+
+/**
+ * Why the analysis's workspace directory must not move or be retired right now, phrased to finish
+ * "Cannot X while …". Null when it may.
+ *
+ * Renaming moves the tree; deleting archives or removes it. The harness's `resolveWorkspaceRoot`
+ * hands out paths beneath that tree for the whole life of a run, and the per-analysis instance lock
+ * is no defence — it excludes other PROCESSES, while every run of this analysis executes inside
+ * this one. Three things can be holding the tree: a streaming chat turn, a queued/running data
+ * profile, or a durable run that outlived the turn that launched it (`execute_plan` returns before
+ * its workflow does). Checked once, before the dialog opens: a modal blocks the composer, so no
+ * new work can start between the check and the action.
+ */
+async function workspaceBusyReason(analysisId: string): Promise<string | null> {
+    if (chatStatus() === "busy") return "a chat turn is running";
+    if (profileWorkInFlight()) return "a data profile is running";
+
+    const runtime = harnessRuntime();
+    // Nothing booted ⇒ no workflow in this process can hold the tree.
+    if (!runtime) return null;
+
+    return (await queryRunsByAnalysis(runtime.pool, analysisId, { limit: 20 })).match(
+        (runs) => (runs.some((r) => !RUN_STATUS_TERMINAL[r.status]) ? "a run is in flight" : null),
+        // Refuse rather than guess: an unreadable ledger cannot prove the workspace is idle.
+        () => "the run ledger is unreadable, so the workspace cannot be confirmed idle",
     );
 }
 
@@ -307,6 +339,82 @@ function ConfirmDeleteDialog(props: { entityLabel: string; entityName: string; o
     );
 }
 
+/**
+ * Second step of deleting an analysis: what happens to the bytes. Deleting the row is not enough
+ * on its own — the slug keys the workspace directory and is handed straight to the next analysis
+ * of the same name, so the tree must leave `analyses/` either way. Keeping is the default: a run's
+ * artifacts are the user's work, and an archive is recoverable where an `rm -rf` is not.
+ */
+function DeleteAnalysisFilesDialog(props: { analysis: Analysis; onDecided: (disposal: "archive" | "delete") => void }): JSX.Element {
+    const ws = useWorkspace();
+    return (
+        <SelectDialog
+            title={`Delete "${props.analysis.name}" — keep its files?`}
+            items={[
+                {
+                    value: "archive" as const,
+                    title: "Keep the files",
+                    description: `Move the workspace to ${archivedOutputSubdir(props.analysis.slug)}/ — inputs, run artifacts, reports, and provenance are preserved`,
+                },
+                {
+                    value: "delete" as const,
+                    title: "Delete the files permanently",
+                    description: "Remove the workspace directory and everything in it. This cannot be undone",
+                },
+            ]}
+            emptyText="No options"
+            onCancel={() => ws.closeDialog()}
+            onSelect={(disposal) => {
+                ws.closeDialog();
+                props.onDecided(disposal);
+            }}
+        />
+    );
+}
+
+/**
+ * Retire the workspace, then delete the row — in that order, and only proceeding if the first
+ * succeeds. The filesystem move is the operation that realistically fails (permissions, an open
+ * handle); doing it first means such a failure changes nothing at all. The reverse order would
+ * leave the row deleted and the tree still sitting at `analyses/<slug>`, where the next analysis
+ * of the same name would inherit it — the precise outcome the disposal exists to prevent.
+ */
+function deleteAnalysisWith(ctx: Workspace, a: Analysis, disposal: "archive" | "delete"): void {
+    disposeWorkspace(a, disposal).match(
+        (outcome) => {
+            const fate =
+                outcome.kind === "archived" ? `files kept at ${outcome.path}` : outcome.kind === "deleted" ? "files deleted" : "it had no files on disk";
+            deleteAnalysis(a.id).match(
+                (changed) => {
+                    if (changed === 0) {
+                        notify({ kind: "warn", text: "Analysis not found." });
+                        return;
+                    }
+                    notify({ kind: "info", text: `Deleted analysis "${a.name}" — ${fate}` });
+                    const remaining = listRecentAnalyses().match(
+                        (as) => as,
+                        () => [],
+                    );
+                    if (remaining.length > 0) {
+                        openAnalysis(ctx, remaining[0]!);
+                    } else {
+                        void ctx.quit();
+                    }
+                },
+                (e) => notify({ kind: "error", text: `Workspace retired, but the analysis row could not be deleted (${e.type}).` }),
+            );
+        },
+        (e) =>
+            notify({
+                kind: "error",
+                text:
+                    e.type === "workspace_unavailable"
+                        ? e.message
+                        : `Could not retire the workspace folder (${e.type}) — the analysis was NOT deleted, so nothing was lost.`,
+            }),
+    );
+}
+
 function WhoamiDialog(): JSX.Element {
     const ws = useWorkspace();
     const lines: string[] = [];
@@ -471,10 +579,13 @@ function RenameAnalysisDialog(): JSX.Element {
                         renameAnalysisAndMoveWorkspace(a, name).match(
                             (outcome) => {
                                 notify({ kind: "info", text: `Renamed to "${raw.trim()}"` });
+                                // The row is authoritative, so the rename stands either way — but a tree
+                                // stranded at the old slug is invisible to every later `open`/read, and
+                                // the user is the only one who can reconcile it.
                                 if (outcome.moveError !== undefined) {
                                     notify({
                                         kind: "warn",
-                                        text: `Workspace directory could not be moved to the new name — it remains at .inflexa/analyses/${a.slug}/`,
+                                        text: `Workspace directory could not be moved to the new name — it remains at ${defaultOutputSubdir(a.slug)}/`,
                                     });
                                 }
                                 // Re-fetch the updated analysis so the workspace store (sidebar, status bar) reflects the new name.
@@ -607,7 +718,16 @@ export const commands: Command[] = [
         description: "Change the current analysis's name",
         category: "Analysis",
         enabled: (ctx) => ctx.analysis !== null,
-        run: (ctx) => ctx.openDialog(() => <RenameAnalysisDialog />),
+        run: async (ctx) => {
+            const a = ctx.analysis;
+            if (!a) return;
+            const busy = await workspaceBusyReason(a.id);
+            if (busy) {
+                notify({ kind: "warn", text: `Cannot rename while ${busy} — renaming moves the analysis's workspace folder.` });
+                return;
+            }
+            ctx.openDialog(() => <RenameAnalysisDialog />);
+        },
     },
     {
         id: "analysis.add-input",
@@ -657,36 +777,23 @@ export const commands: Command[] = [
     {
         id: "analysis.delete",
         title: "Delete analysis",
-        description: "Permanently delete this analysis and its sessions",
+        description: "Delete this analysis and its sessions; choose whether to keep its files",
         category: "Analysis",
         enabled: (ctx) => ctx.analysis !== null,
-        run: (ctx) => {
+        run: async (ctx) => {
             const a = ctx.analysis;
             if (!a) return;
+            const busy = await workspaceBusyReason(a.id);
+            if (busy) {
+                notify({ kind: "warn", text: `Cannot delete while ${busy} — deleting retires the analysis's workspace folder.` });
+                return;
+            }
             ctx.openDialog(() => (
                 <ConfirmDeleteDialog
                     entityLabel="analysis"
                     entityName={a.name}
                     onConfirm={() => {
-                        deleteAnalysis(a.id).match(
-                            (changed) => {
-                                if (changed === 0) {
-                                    notify({ kind: "warn", text: "Analysis not found." });
-                                    return;
-                                }
-                                notify({ kind: "info", text: `Deleted analysis "${a.name}"` });
-                                const remaining = listRecentAnalyses().match(
-                                    (as) => as,
-                                    () => [],
-                                );
-                                if (remaining.length > 0) {
-                                    openAnalysis(ctx, remaining[0]!);
-                                } else {
-                                    void ctx.quit();
-                                }
-                            },
-                            (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
-                        );
+                        ctx.openDialog(() => <DeleteAnalysisFilesDialog analysis={a} onDecided={(disposal) => deleteAnalysisWith(ctx, a, disposal)} />);
                     }}
                 />
             ));
@@ -703,7 +810,9 @@ export const commands: Command[] = [
             if (!a) return;
             openOutputDir(a).match(
                 (d) => notify({ kind: "info", text: `Opened ${d}` }),
-                (e) => notify({ kind: "error", text: `Failed to open: ${e.type}` }),
+                // `workspace_unavailable` already carries the folder and the remedy — print it verbatim
+                // rather than reducing it to a `type` the user cannot act on.
+                (e) => notify({ kind: "error", text: e.type === "workspace_unavailable" ? e.message : `Failed to open: ${e.type}` }),
             );
         },
     },

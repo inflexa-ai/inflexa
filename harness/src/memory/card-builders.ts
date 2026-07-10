@@ -26,7 +26,7 @@ import { tryQuery, type DbError } from "../lib/db-result.js";
 import { tryFs, type FsError } from "../lib/fs-result.js";
 import { AnalysisPlanSchema } from "../schemas/workflow-state.js";
 import { loadPlan } from "../state/index.js";
-import { latestPreviewVersion, previewDir } from "../workspace/paths.js";
+import { latestPreviewVersion, previewDir, PREVIEWS_ROOT } from "../workspace/paths.js";
 
 const PREVIEW_META_FILE = "preview-meta.json";
 
@@ -203,7 +203,7 @@ export async function buildPreviewCardData(
     workspaceRoot: string,
     opts: { previewId?: string; title?: string; format?: "html" | "pdf" },
 ): Promise<PreviewCardData | null> {
-    const previewsRootAbs = join(workspaceRoot, "previews");
+    const previewsRootAbs = join(workspaceRoot, PREVIEWS_ROOT);
 
     const resolveId: ResultAsync<string | null, FsError> = opts.previewId ? okAsync(opts.previewId) : latestPreviewId(previewsRootAbs);
 

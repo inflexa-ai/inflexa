@@ -9,8 +9,13 @@
  * End-to-end contract:
  *   token res claim : "previews/{analysisId}/{previewId}"
  *   URL             : {contentBaseUrl}/previews/{analysisId}/{previewId}/{previewPath}?t={token}
- *   Filesystem path : /sessions/previews/{analysisId}/{previewId}/{previewPath}
  *   Caddy predicate : request.path.startsWith("/" + res + "/")
+ *
+ * This is URL space only. On disk a preview lives inside its analysis's workspace tree, at
+ * `{resolveWorkspaceRoot(analysisId)}/previews/{previewId}/{previewPath}` (the workspace-layout
+ * spec) — the `res` claim carries the analysis id because the URL needs an authorization
+ * boundary, whereas the resolved root already identifies the analysis and so does not repeat it.
+ * A host that serves previews owns the map between the two.
  *
  * The harness's contracts module owns this TS implementation so both the harness and
  * react-client consume one canonical formula.
@@ -20,8 +25,8 @@
  * Canonical `res` claim formula for a preview. Returns the literal string
  * `previews/{analysisId}/{previewId}` with no leading or trailing slash.
  *
- * This is also the filesystem sub-path under `/sessions/` on the session PVC
- * and the URL sub-path served by the content-server (Caddy).
+ * This is the URL sub-path served by the content-server (Caddy) and the token's
+ * authorization boundary — NOT a filesystem sub-path; see the module doc.
  *
  * MUST match `fmt.Sprintf("previews/%s/%s", analysisID, previewID)` in
  * the storage backend's Go preview-access implementation. Drift is caught by the shared test
