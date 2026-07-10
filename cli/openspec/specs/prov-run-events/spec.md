@@ -17,9 +17,11 @@ by construction, never minted by the cli recorder:
   "suspended_insufficient_funds"`.
 - `prov.step_completed` — carries `outcome: ProvStepOutcome { runId, stepId, status,
   completedAtMs, durationMs? }` where `status` is the step-settlement vocabulary
-  `"completed" | "failed" | "canceled"`.
-- `prov.command_executed` — carries the owning `step: ProvStepRef` and `command:
-  ProvCommandRef`, a discriminated union over the two execution kinds:
+  `"completed" | "failed" | "canceled"`, and `model: ProvModelRef` — the LLM that
+  drove the step.
+- `prov.command_executed` — carries the owning `step: ProvStepRef`, `command:
+  ProvCommandRef`, and `model: ProvModelRef`. `ProvCommandRef` is a discriminated
+  union over the two execution kinds:
   `{ kind: "command"; command; args?; exitCode; durationMs?; scriptPath?; outputs:
   ProvFileKey[]; inputs: ProvCommandInputRef[] }` or `{ kind: "file_tool"; tool;
   outputs: ProvFileKey[] }`, where `ProvFileKey` is the `(path, hash)` pick of
@@ -39,23 +41,36 @@ by construction, never minted by the cli recorder:
   "upstream" | "prior"` — the STEP-level attested-inputs registry, unchanged by the
   command-level edges (deliberate redundancy; see the builders requirement).
 
+`ProvModelRef` SHALL be a discriminated union over the harness's two native provider
+kinds: `{ provider: "anthropic"; model } | { provider: "openai-compatible"; model;
+endpoint }`, where `model` is the RESOLVED model id (never a config `null`) and
+`endpoint` — REQUIRED on, and representable only on, the `openai-compatible` arm —
+is the endpoint host only. The payload SHALL NOT carry API keys, credentialed URLs,
+or prompt content.
+
 The domain types SHALL live in `src/types/prov.ts` and the events in
 `src/types/events.ts`, following the one-event-per-domain-action bus rule (the
 command/file-tool discriminant lives inside `ProvCommandRef` because both are one
 domain action: an execution inside the step produced files). The bus telemetry
 projection SHALL surface identifying fields for each event; for
 `prov.command_executed`: runId + stepId + the command string or tool name + output
-count.
+count + the model id; for `prov.step_completed`: runId + stepId + status + the
+model id.
 
 #### Scenario: A command execution crosses the bus with its full facts
 
 - **WHEN** a step's registration contains a producer group for `Rscript scripts/de.R` (exit 0) that read one data input and wrote two files
-- **THEN** the bus receives one `prov.command_executed` whose `command` variant carries the command string, exit code, the script path, both outputs as `(path, hash)` keys, and the command-scoped input refs — and no observation timestamp
+- **THEN** the bus receives one `prov.command_executed` whose `command` variant carries the command string, exit code, the script path, both outputs as `(path, hash)` keys, the command-scoped input refs, and the model that drove the step — and no observation timestamp
 
 #### Scenario: File-tool writes are the second variant, not a degenerate command
 
 - **WHEN** an agent `write_file` produced `scripts/de.R`
 - **THEN** the group crosses as `ProvCommandRef { kind: "file_tool", tool: "write_file", outputs: [scripts/de.R…] }` with no inputs and no exit code
+
+#### Scenario: The model reference never carries credentials
+
+- **WHEN** any `prov.step_completed` or `prov.command_executed` event is emitted
+- **THEN** its `model` carries only the provider kind, the resolved model id, and (for `openai-compatible`) the endpoint host — no API key, no credentialed URL, no prompt content
 
 ### Requirement: Document builders append deterministic, PROV-valid execution records
 
@@ -65,14 +80,18 @@ The prov module SHALL provide six builders — `appendRunStarted`,
 analysis's live document. Runs, steps, and command executions SHALL be recorded as
 PROV **activities**; files and used inputs as PROV **entities**:
 
-- `appendRunStarted` / `appendRunCompleted` / `appendStepCompleted` /
-  `appendInputUsed`: unchanged from the prior revision (payload-sourced formal
-  times; step-level used edges).
+- `appendRunStarted` / `appendRunCompleted` / `appendInputUsed`: unchanged from the
+  prior revision (payload-sourced formal times; step-level used edges).
+- `appendStepCompleted`: the step activity as before (payload-sourced end time,
+  terminal status, `wasInformedBy` the run, `wasAssociatedWith` the actor's agent),
+  PLUS the model-agent records for the event's `model` (see below) and a
+  `wasAssociatedWith(stepQn, modelAgentQn)` edge.
 - `appendCommandExecuted`: a command activity (`prov:type: inflexa:Command` for the
   `command` kind, `inflexa:FileToolWrite` for `file_tool`) carrying the execution
   facts as attributes (`inflexa:command`, `inflexa:args`, `inflexa:exitCode`,
   `inflexa:durationMs` / `inflexa:tool`) and NO formal times; `wasInformedBy` the
-  step activity; `wasAssociatedWith` the actor's agent; a `used` edge per
+  step activity; `wasAssociatedWith` the actor's agent AND the model agent for the
+  event's `model`; a `used` edge per
   command-scoped input (including the script entity when `scriptPath` is present);
   and `wasGeneratedBy(fileQn, cmdQn)` for each output — the generation authority for
   produced files.
@@ -83,6 +102,19 @@ PROV **activities**; files and used inputs as PROV **entities**:
   observations). A produced file's generation
   comes exclusively from `appendCommandExecuted`; exactly one generation edge SHALL
   exist per file entity.
+
+The model-agent records: one PROV agent per distinct `(provider, model[, endpoint])`
+identity tuple under the deterministic QName `inflexa:agent-model-{digest}`, where
+the digest is over a STRUCTURAL encoding of the tuple (fields are free-form config
+strings, so a joined encoding could collide across field boundaries), typed BOTH
+`prov:SoftwareAgent` and `inflexa:Model`, carrying
+`inflexa:provider`, `inflexa:model`, and — on the `openai-compatible` arm —
+`inflexa:endpoint`; plus one `actedOnBehalfOf(modelAgentQn, responsibleAgentQn)` delegation — the
+model acted on behalf of the event's responsible agent (the CLI the user directed) —
+under a deterministic id derived from both agent digests. Model-agent
+`wasAssociatedWith` edges SHALL reuse the existing association id templates,
+disambiguated by the agent digest, so the CLI-agent and model-agent associations on
+one activity coexist and re-emission dedups.
 
 The command activity QName SHALL be deterministic from the group's OUTPUT SET —
 `inflexa:cmd-{runId}-{stepId}-{digest(sorted output (path, hash) pairs)}` — never
@@ -106,6 +138,26 @@ carry NO formal time.
 
 - **WHEN** the same `prov.command_executed` event is recorded twice (workflow re-execution) and the document is unified
 - **THEN** the document contains one command activity under the output-set QName and one of each of its relation records — not two
+
+#### Scenario: A step activity is associated with both the CLI and the model
+
+- **WHEN** a `prov.step_completed` carrying `model: { provider: "anthropic", model: "claude-sonnet-4-5" }` is recorded and the document is unified
+- **THEN** the step activity has two `wasAssociatedWith` edges — one to `inflexa:agent-system` and one to the model agent — and the model agent is typed `prov:SoftwareAgent` + `inflexa:Model`, carries `inflexa:provider`/`inflexa:model`, and `actedOnBehalfOf` the system agent
+
+#### Scenario: One agent per distinct model, shared across steps and commands
+
+- **WHEN** two steps and one command execution driven by the same `(provider, model)` are recorded and the document is unified
+- **THEN** the document contains exactly ONE model agent under the deterministic QName, one delegation record, and three model associations (one per activity)
+
+#### Scenario: The endpoint host is recorded only for openai-compatible refs
+
+- **WHEN** a step driven by `{ provider: "openai-compatible", model: "qwen3", endpoint: "localhost" }` is recorded
+- **THEN** its model agent carries `inflexa:endpoint: "localhost"` — and an `anthropic`-kind ref's agent carries no `inflexa:endpoint` attribute
+
+#### Scenario: Duplicate model-agent emission dedups
+
+- **WHEN** the same `prov.step_completed` (same model ref) is recorded twice (workflow re-execution) and the document is unified
+- **THEN** the document contains one model agent, one delegation record, and one model association for the step — not two
 
 ### Requirement: Replay-idempotent recording
 

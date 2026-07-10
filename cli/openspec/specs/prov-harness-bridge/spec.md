@@ -6,7 +6,8 @@ TBD - created by archiving change bridge-harness-provenance. Update Purpose afte
 ### Requirement: The artifact-registry bus adapter translates registration into provenance events
 
 The cli SHALL provide an `ArtifactRegistry` realization (the bus adapter, in
-`src/modules/harness/`) whose `register(input, session)` translates one step's
+`src/modules/harness/`) constructed with the `ProvModelRef` of the model driving the
+step seat, whose `register(input, session)` translates one step's
 registration into bus events and nothing else. The adapter emits COMMAND, FILE, and
 USED-INPUT events — step lifecycle events come from the harness's scheduler
 settlement:
@@ -19,6 +20,7 @@ settlement:
 - Per group, emit ONE `prov.command_executed` (the `command` variant with command /
   args / exitCode / durationMs / scriptPath and the group's outputs as analysis-scoped
   `(path, hash)` keys; the `file_tool` variant with the tool name and outputs),
+  stamped with the construction-time model ref,
   followed by that group's `prov.file_written` events carrying `generation:
   "command"`; leaf-bucket entries emit `prov.file_written` with `generation:
   "step"`. The producer's observation timestamp SHALL NOT be forwarded.
@@ -44,7 +46,7 @@ settlement:
 #### Scenario: Registration emits command groups before their files
 
 - **WHEN** `register` is called with three manifest entries where two share one command's producer record and one was written by a file tool
-- **THEN** the bus receives two `prov.command_executed` events (one `command` variant with two outputs, one `file_tool` variant with one output), each followed by its `prov.file_written` events, and the result reports three `registered` entries
+- **THEN** the bus receives two `prov.command_executed` events (one `command` variant with two outputs, one `file_tool` variant with one output), each carrying the construction-time model ref and followed by its `prov.file_written` events, and the result reports three `registered` entries
 
 #### Scenario: A leaf entry emits no command event
 
@@ -113,19 +115,30 @@ workflow behaves exactly as before.
 The cli composition SHALL realize `emitProvenance` by mapping all three harness arms
 to bus events: `run_started` → `prov.run_started` (run ref with `planSummary` and
 `startedAtMs`), `step_completed` → `prov.step_completed` (a `ProvStepOutcome` with
-the settlement status, `completedAtMs`, and duration), and `run_completed` →
-`prov.run_completed` (outcome with status, `completedAtMs`, and duration) — each
-stamped with the existing system actor (cli version + commit). The mapping SHALL use
+the settlement status, `completedAtMs`, and duration, stamped with the
+construction-time `ProvModelRef` of the model driving the step seat), and
+`run_completed` → `prov.run_completed` (outcome with status, `completedAtMs`, and
+duration) — each
+stamped with the existing system actor (cli version + commit). The realization SHALL
+be constructed with the model ref built at boot from the RESOLVED model id (the
+config override, or the proxy-default resolution when the config is `null`) and the
+provider kind the boot actually wires — never a config `null` and never a
+credential. The mapping SHALL use
 the harness-supplied `analysisId` unchanged and SHALL pass timestamps through without
 re-reading any clock.
 
 #### Scenario: Every executed step lands in the signed document
 
 - **WHEN** `inflexa run` executes a plan where one step succeeds with artifacts, one succeeds with none, and one fails
-- **THEN** the signed provenance document contains three step activities carrying statuses `completed`, `completed`, and `failed` — with true settlement times and durations
+- **THEN** the signed provenance document contains three step activities carrying statuses `completed`, `completed`, and `failed` — with true settlement times and durations, each associated with the model agent of the boot-resolved model
 
 #### Scenario: A run whose host process ended is still recorded on recovery
 
 - **WHEN** the cli process ends mid-run (detach, crash, or kill) and a later boot's DBOS recovery re-executes the workflow to a terminal status
 - **THEN** the re-executed body re-fires `emitProvenance`, the recorder records the completion, and the unified document contains a single run activity whose times equal the original workflow-observed times
+
+#### Scenario: An auto-resolved default model is recorded by its resolved id
+
+- **WHEN** `harness.model` is unset and boot resolves the proxy's default model id
+- **THEN** the step events emitted during the run carry that resolved id in `model.model` — never `null` or a placeholder
 
