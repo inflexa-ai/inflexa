@@ -28,7 +28,7 @@ export function ThinkingIndicator(): JSX.Element {
             <text>
                 {/* frame() is always in-bounds (% length); the marker glyph is a dead-safe fallback for the optional index. */}
                 <Fg role={MARKERS.thinking.role}>{`${GLYPHS.spinner[frame()] ?? MARKERS.thinking.glyph} thinking`}</Fg>
-                <Fg role="fgSubtle">{` ${GLYPHS.middot} ${age()}`}</Fg>
+                <Fg role="fgMuted">{` ${GLYPHS.middot} ${age()}`}</Fg>
             </text>
         </box>
     );

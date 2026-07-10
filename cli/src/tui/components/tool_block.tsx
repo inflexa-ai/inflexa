@@ -60,12 +60,16 @@ export function ToolBlock(props: ToolBlockProps) {
                     borderColor={theme().border}
                     backgroundColor={theme().bgRaised}
                 >
-                    <code content={props.result ?? ""} filetype={props.filetype ?? "text"} syntaxStyle={syntaxStyle()} />
+                    {/* `fg` is NOT redundant with the syntaxStyle "default" scope: when tree-sitter yields
+                        zero highlights (filetype "text"), CodeRenderable paints the whole buffer via
+                        setText() using the renderable's own default fg — bypassing chunk styling entirely.
+                        Unset, that default is opentui's white; pin it to the theme fg so plain results read. */}
+                    <code content={props.result ?? ""} filetype={props.filetype ?? "text"} fg={theme().fg} syntaxStyle={syntaxStyle()} />
                 </box>
             </Show>
             <text>
                 <Fg role={statusView(props.status).role}>{`${statusView(props.status).glyph} ${statusView(props.status).label}`}</Fg>
-                <Fg role="fgSubtle">{duration()}</Fg>
+                <Fg role="fgMuted">{duration()}</Fg>
             </text>
         </box>
     );

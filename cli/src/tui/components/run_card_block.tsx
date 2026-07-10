@@ -26,10 +26,10 @@ export function RunCardBlock(props: RunCardBlockProps) {
             <text>
                 <Fg role={MARKERS.run.role}>{`${MARKERS.run.glyph} `}</Fg>
                 <Fg role="fg">{heading()}</Fg>
-                <Fg role="fgSubtle">{` ${GLYPHS.middot} ${steps()}`}</Fg>
+                <Fg role="fgMuted">{` ${GLYPHS.middot} ${steps()}`}</Fg>
             </text>
             <text paddingLeft={space.md}>
-                <Fg role="fgSubtle">{props.runId}</Fg>
+                <Fg role="fgMuted">{props.runId}</Fg>
             </text>
         </box>
     );

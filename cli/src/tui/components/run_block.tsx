@@ -53,7 +53,7 @@ export function RunBlock(props: RunBlockProps) {
         <box flexDirection="column" paddingBottom={space.sm}>
             <text>
                 <Fg role={MARKERS.run.role}>{`${MARKERS.run.glyph} `}</Fg>
-                <Fg role="fg">{props.name}</Fg> <Fg role="fgSubtle">{props.tag}</Fg>
+                <Fg role="fg">{props.name}</Fg> <Fg role="fgMuted">{props.tag}</Fg>
             </text>
             <text paddingLeft={space.md}>
                 <Fg role="success">{filled()}</Fg>
@@ -66,13 +66,13 @@ export function RunBlock(props: RunBlockProps) {
                         return (
                             <text>
                                 <Fg role={m.role}>{`${m.glyph} `}</Fg>
-                                <Fg role={step.state === "queued" ? "fgSubtle" : "fg"}>{step.label}</Fg>
+                                <Fg role={step.state === "queued" ? "fgMuted" : "fg"}>{step.label}</Fg>
                             </text>
                         );
                     }}
                 </For>
             </box>
-            {(props.hint ?? true) ? <text fg={theme().fgSubtle}>esc detach {GLYPHS.middot} ctrl+c abort</text> : null}
+            {(props.hint ?? true) ? <text fg={theme().fgMuted}>esc detach {GLYPHS.middot} ctrl+c abort</text> : null}
         </box>
     );
 }
