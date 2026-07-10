@@ -23,7 +23,7 @@ import { getLogger } from "../../lib/log.ts";
 import { shutdown } from "../../lib/shutdown.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { resolveContext, type ContextFlags } from "../analysis/context.ts";
-import { sessionTreeDataDir } from "../staging/paths.ts";
+import { workspaceDataDir } from "../analysis/output.ts";
 import { stageInputs, type StagedInput } from "../staging/staging.ts";
 import { resolveHarnessConfig } from "./config.ts";
 import { bootHarnessRuntime, activeHarnessRuntime, type HarnessBootError } from "./runtime.ts";
@@ -202,6 +202,14 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
 
     await ensureSandboxImage(cfg.sandboxImage);
 
+    // Gate the workspace root BEFORE booting — an unresolvable or non-writable
+    // workspace fails like any other prerequisite (no fallback location exists).
+    // Resolution only; the tree is created by staging below, after boot.
+    const workspaceDataRoot = workspaceDataDir(analysis).match(
+        (dir) => dir,
+        (e) => fail(e.type === "workspace_unavailable" ? e.message : `Failed to resolve the analysis workspace (${e.type})`),
+    );
+
     // Claim the per-analysis instance lock before boot, so this analysis stays
     // single-process for the whole profile — the interim two-recorder fix of #37, the
     // same guard the TUI takes on open (app.launch.tsx). Acquired after the fail-fast
@@ -238,7 +246,7 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
     );
 
     s.start("Staging inputs");
-    const staged = (await stageInputs(analysis.id, sessionTreeDataDir(analysis.id))).match(
+    const staged = (await stageInputs(analysis.id, workspaceDataRoot)).match(
         (files) => files,
         (e) => {
             s.error("Staging failed");

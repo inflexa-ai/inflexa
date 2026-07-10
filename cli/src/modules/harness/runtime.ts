@@ -44,6 +44,7 @@ import { env } from "../../lib/env.ts";
 import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
 import { getLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
+import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
@@ -56,7 +57,7 @@ import { buildEphemeralDeps, buildExecuteAnalysisDeps, buildExecuteTargetAssessm
 // trigger (never from a passive flow — no-litter policy) and holds a process
 // singleton: workflow deps are closed over at registration and DBOS forbids
 // re-registering a name, so there is exactly one runtime per process, one
-// `sessionsBasePath`, one registration cohort.
+// workspace-root resolver, one registration cohort.
 //
 // Registration happens BEFORE `launchDbos`: `DBOS.launch()` runs recovery
 // synchronously and resolves in-flight workflows by their registered name, so a
@@ -414,6 +415,23 @@ async function bootHarnessRuntimeOnce(seams: BootSeams, cfg: ResolvedHarnessConf
 
         const resolveBilling = createNoopBillingResolver();
 
+        // The workspace-root seam realization (workspace-root-resolution spec):
+        // analysis id → `<anchorPath>/.inflexa/analyses/<slug>`, derived from DB
+        // state on every call so a DBOS-recovered workflow in a fresh process (or
+        // after a reconciled anchor move) resolves the current location. Injective
+        // via `UNIQUE (anchor_id, slug)`. THROWS on failure — the seam contract
+        // requires resolution failures to cross DBOS step boundaries as throws (a
+        // returned err would be durably cached as step success); this is a
+        // sanctioned boundary throw, the same bridge role as the harness's own
+        // `unwrapOrThrow`.
+        const resolveWorkspaceRoot = (analysisId: string): string =>
+            workspaceRootForAnalysisId(analysisId).match(
+                (root) => root,
+                (e) => {
+                    throw new Error(e.type === "workspace_unavailable" ? e.message : `workspace root for ${analysisId}: ${e.type}`);
+                },
+            );
+
         // Shared backends built ONCE so the profile workflow, the sandbox-step
         // child, the execute-analysis parent, the ephemeral runner, and the
         // conversation agent all close over the SAME instances. `provider` is a
@@ -438,9 +456,9 @@ async function bootHarnessRuntimeOnce(seams: BootSeams, cfg: ResolvedHarnessConf
             // lives in infra/harness config, not here.
             image: cfg.sandboxImage,
             resourceLimits: cfg.resourcePolicy.perStep,
-            sessionsBasePath: env.sessionsDir,
+            resolveWorkspaceRoot,
         });
-        const workspaceFs = createWorkspaceFilesystem({ sessionsBasePath: env.sessionsDir });
+        const workspaceFs = createWorkspaceFilesystem({ resolveWorkspaceRoot });
         // One authorizer instance, shared by the parent workflow's terminal revoke,
         // the run-trigger flow's async-edge authorize, AND the conversation agent's
         // execute_plan / run_ephemeral tools (the local realization is stateless, so
@@ -458,7 +476,7 @@ async function bootHarnessRuntimeOnce(seams: BootSeams, cfg: ResolvedHarnessConf
             embedding,
             sandboxClient,
             workspaceFs,
-            sessionsBasePath: env.sessionsDir,
+            resolveWorkspaceRoot,
             model,
             skillsDir: cfg.skillsDir,
             bioKeys: cfg.bioKeys,
@@ -487,7 +505,7 @@ async function bootHarnessRuntimeOnce(seams: BootSeams, cfg: ResolvedHarnessConf
                 pool,
                 sandboxClient,
                 workspaceFs,
-                sessionsBasePath: env.sessionsDir,
+                resolveWorkspaceRoot,
                 model,
                 runAuthorizer,
                 bioKeys: cfg.bioKeys,
@@ -508,7 +526,7 @@ async function bootHarnessRuntimeOnce(seams: BootSeams, cfg: ResolvedHarnessConf
             embedding,
             workspaceFs,
             model,
-            sessionsBasePath: env.sessionsDir,
+            resolveWorkspaceRoot,
             runAuthorizer,
             runLauncher,
             createPreviewPublisher: async () => new UnavailablePreviewPublisher(),

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, statSync, writeFileSync, type Stats } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync, type Stats } from "node:fs";
 import { type Result, ok, err } from "neverthrow";
 
 /**
@@ -31,6 +31,16 @@ export function writeFileResult(path: string, data: string, op: string, opts?: P
 export function mkdirResult(path: string, op: string): Result<void, FsError> {
     try {
         mkdirSync(path, { recursive: true });
+        return ok(undefined);
+    } catch (cause) {
+        return err({ type: "io_failed", op, cause });
+    }
+}
+
+/** Move/rename a path, wrapping `renameSync` throws into `Result`. */
+export function renameResult(from: string, to: string, op: string): Result<void, FsError> {
+    try {
+        renameSync(from, to);
         return ok(undefined);
     } catch (cause) {
         return err({ type: "io_failed", op, cause });

@@ -80,7 +80,7 @@ async function renderChat(target: ChatTarget): Promise<void> {
 }
 
 /** `inflexa new [name] [paths...]` — create an analysis (anchor = cwd) and open its chat. */
-export async function launchNew(opts: { name?: string; paths: string[]; project?: string; output?: string }): Promise<void> {
+export async function launchNew(opts: { name?: string; paths: string[]; project?: string }): Promise<void> {
     await renderChat(await resolveNewTarget(opts));
 }
 

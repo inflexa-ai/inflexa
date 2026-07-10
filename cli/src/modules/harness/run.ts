@@ -55,7 +55,7 @@ import { acquireInstanceLock } from "../../lib/lock.ts";
 import { shutdown } from "../../lib/shutdown.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
 import type { ContextFlags } from "../analysis/context.ts";
-import { sessionTreeDataDir } from "../staging/paths.ts";
+import { workspaceDataDir } from "../analysis/output.ts";
 import { stageInputs } from "../staging/staging.ts";
 import { resolveHarnessConfig } from "./config.ts";
 import { validatePlanFile, persistPlan, type PlanIntakeError } from "./plan_intake.ts";
@@ -356,6 +356,15 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
         fail(`"${analysis.name}" has no inputs — add input files in the chat first, then re-run \`inflexa run --plan <file>\`.`);
     }
 
+    // Gate the workspace root BEFORE booting (spec: analysis-run-launch — an
+    // unresolvable or non-writable workspace short-circuits like any other failed
+    // prerequisite; there is no fallback location). Resolution only — the tree is
+    // created by staging below, after boot.
+    const workspaceDataRoot = workspaceDataDir(analysis).match(
+        (dir) => dir,
+        (e) => fail(e.type === "workspace_unavailable" ? e.message : `Failed to resolve the analysis workspace (${e.type})`),
+    );
+
     // Gate the plan file BEFORE booting. `validatePlanFile` is pure (read + parse +
     // schema + `validatePlan`), so a malformed/invalid plan is rejected here with no
     // side effect — no boot, no staging, no ledger row — per the plan-intake spec's
@@ -395,7 +404,7 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
     s.stop(`Runtime ready — model ${runtime.model}`);
 
     s.start("Staging inputs");
-    const staged = (await stageInputs(analysis.id, sessionTreeDataDir(analysis.id))).match(
+    const staged = (await stageInputs(analysis.id, workspaceDataRoot)).match(
         (files) => files,
         (e) => {
             s.error("Staging failed");

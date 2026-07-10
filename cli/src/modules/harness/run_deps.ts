@@ -10,6 +10,7 @@ import {
     type EmbeddingProvider,
     type ExecuteAnalysisDeps,
     type Pool,
+    type ResolveWorkspaceRoot,
     type RunAuthorizer,
     type SandboxAgentBuildContext,
     type SandboxAgentDeps,
@@ -40,8 +41,8 @@ export type RunEngineComposition = {
     readonly embedding: EmbeddingProvider;
     readonly sandboxClient: SandboxClient;
     readonly workspaceFs: WorkspaceFilesystem;
-    /** Base path holding per-analysis session directories. */
-    readonly sessionsBasePath: string;
+    /** The workspace-root seam realization (analysis id → `<anchor>/.inflexa/analyses/<slug>`). */
+    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Chat/sandbox model id — also the synthesis model (one config id today; D6). */
     readonly model: string;
     /** Absolute skills tree path — enables the sandbox agents' skill tools. */
@@ -79,7 +80,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
         blockerHolder: ctx.blockerHolder,
         step: {
             sandbox: ctx.sandbox,
-            sessionsBasePath: comp.sessionsBasePath,
+            workspaceRoot: comp.resolveWorkspaceRoot(ctx.input.analysisId),
             analysisId: ctx.input.analysisId,
             runId: ctx.input.runId,
             stepId: ctx.input.stepId,
@@ -111,9 +112,9 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
  * bus-adapter registry ({@link createBusArtifactRegistry}) and the catalog-backed
  * `buildAgent` are the only run-specific realizations; everything else is a
  * straight pass-through of the shared backends. `resolveWritePrefix` follows the
- * harness's own path convention (`workspace/paths.ts:206-211`) resolved to an
- * ABSOLUTE path under the session tree, matching how the profile path builds
- * `allowedWritePrefix`.
+ * harness's own path convention (`workspace/paths.ts`) resolved to an
+ * ABSOLUTE path under the analysis's workspace root, matching how the profile
+ * path builds `allowedWritePrefix`.
  *
  * The registry realization emits `prov.step_completed` / `prov.file_written`
  * events (never writes `cortex_artifacts` — the harness owns that ledger AROUND
@@ -128,10 +129,10 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): SandboxStepDep
         sandboxClient: comp.sandboxClient,
         artifactRegistry: createBusArtifactRegistry(),
         workspaceFs: comp.workspaceFs,
-        sessionsBasePath: comp.sessionsBasePath,
+        resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
         model: comp.model,
         buildAgent: (ctx) => buildStepAgent(comp, ctx),
-        resolveWritePrefix: (input: SandboxStepInput) => join(comp.sessionsBasePath, runStepDir(input.analysisId, input.runId, input.stepId)),
+        resolveWritePrefix: (input: SandboxStepInput) => join(comp.resolveWorkspaceRoot(input.analysisId), runStepDir(input.runId, input.stepId)),
     };
 }
 
@@ -159,7 +160,7 @@ export function buildExecuteAnalysisDeps(
         provider: comp.provider,
         embedding: comp.embedding,
         sandboxStepCallable,
-        sessionsBasePath: comp.sessionsBasePath,
+        resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
         synthesisModel: comp.model,
         bioKeys: comp.bioKeys,
         runCharge: createNoopRunCharge(),
@@ -185,7 +186,7 @@ export function buildEphemeralDeps(comp: RunEngineComposition): CoreWorkflowDeps
         sandboxClient: comp.sandboxClient,
         workspaceFs: comp.workspaceFs,
         embedding: comp.embedding,
-        sessionsBasePath: comp.sessionsBasePath,
+        resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
         model: comp.model,
         bioKeys: comp.bioKeys,
     };

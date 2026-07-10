@@ -14,7 +14,7 @@ import {
 } from "@inflexa-ai/harness";
 
 import { describeCause } from "../../lib/cause.ts";
-import { env } from "../../lib/env.ts";
+import { workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
 import { isSubAgentEvent, readPlanCard, readRunCard } from "../../modules/harness/chat_printer.ts";
 import { buildChatSession, runChatTurn, type TurnOutcome } from "../../modules/harness/turn.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
@@ -585,10 +585,16 @@ export type LoadSeams = {
 const realLoadSeams: LoadSeams = {
     runtime: harnessRuntime,
     loadPage: (pool, threadId, page, perPage) => createThreadHistory(pool).loadPage(threadId, page, perPage),
-    // The card resolver reaches the pool + session tree to rebuild plan/run cards from the persisted
+    // The card resolver reaches the pool + workspace tree to rebuild plan/run cards from the persisted
     // tool_use rows; `unwrapOrThrow` inside it THROWS on a storage fault, so `contentToCortexMessages`
     // is bridged to a Result in `loadMessages` (neverthrow-first: a harness throw becomes our error state).
-    toCortex: (pool, analysisId, messages) => contentToCortexMessages(messages, createCardResolver(pool, analysisId, env.sessionsDir)),
+    // An unresolvable workspace root (moved/deleted anchor) degrades preview cards to chips rather than
+    // failing the whole history load (the local-state desync rule).
+    toCortex: (pool, analysisId, messages) =>
+        workspaceRootForAnalysisId(analysisId).match(
+            (root) => contentToCortexMessages(messages, createCardResolver(pool, analysisId, root)),
+            () => contentToCortexMessages(messages, async () => null),
+        ),
 };
 
 // Monotonic token ordering EVERY asynchronous write to the message store. Two producers write it —

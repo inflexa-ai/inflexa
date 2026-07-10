@@ -213,7 +213,6 @@ type AnalysisRow = {
     updated_at: number;
     name: string;
     slug: string;
-    output_directory: string | null;
     anchor_id: string;
     project_id: string | null;
 };
@@ -226,13 +225,12 @@ function analysisFromRow(r: AnalysisRow): Analysis {
         // Trusted source: the name was validated through `str256` before it was ever stored.
         name: asStr256(r.name),
         slug: r.slug,
-        outputDirectory: r.output_directory,
         anchorId: r.anchor_id,
         projectId: r.project_id,
     };
 }
 
-const ANALYSIS_COLS = "id, created_at, updated_at, name, slug, output_directory, anchor_id, project_id";
+const ANALYSIS_COLS = "id, created_at, updated_at, name, slug, anchor_id, project_id";
 
 /**
  * Resolve an id-or-name reference to its candidate analyses in ONE query: an exact `id` hit

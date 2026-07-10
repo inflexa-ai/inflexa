@@ -46,7 +46,6 @@ const analysis: Analysis = {
     updatedAt: 1_700_000_000_000,
     name: asStr256("My Analysis"),
     slug: "my-analysis",
-    outputDirectory: null,
     anchorId: "anchor1",
     projectId: null,
 };

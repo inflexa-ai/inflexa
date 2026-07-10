@@ -9,8 +9,8 @@ import { inputSignature, type StagedInput } from "../staging/staging.ts";
 import type { Analysis } from "../../types/analysis.ts";
 
 // The parity ladder is exercised entirely offline: reconcile, enumerate, the ledger read, clear,
-// staging, seed, trigger, and the force-only retry-claim/run edges are injected as fakes (no Postgres,
-// no Docker, no model), mirroring the BootSeams/SendSeams pattern. The happy path uses the REAL
+// the workspace data-dir resolution, staging, seed, trigger, and the force-only retry-claim/run edges
+// are injected as fakes (no Postgres, no Docker, no model), mirroring the BootSeams/SendSeams pattern. The happy path uses the REAL
 // `seedProfileLedger` so the params reaching the trigger are exactly what `inflexa profile` builds —
 // the seed's fileId mapping is verified via the fake pool's recorded query.
 
@@ -82,6 +82,8 @@ function trackingSeams(over: Partial<ProfileParitySeams>): { seams: ProfileParit
         enumerate: () => ok(new Set(["f1", "f2"])),
         loadStatus: () => okAsync(null),
         clear: () => okAsync(true),
+        // A fixed workspace data dir — no real anchor exists offline, and the fake `stage` ignores it.
+        dataDir: () => ok("/tmp/parity-data"),
         stage: async () => {
             ran.stage = true;
             return ok(STAGED);
@@ -337,6 +339,7 @@ describe("ensureProfileAtParity — trigger path (real seed)", () => {
             enumerate: () => ok(new Set(["f1", "f2"])),
             loadStatus: () => okAsync(null),
             clear: () => okAsync(true),
+            dataDir: () => ok("/tmp/parity-data"),
             stage: async () => ok(STAGED),
             // The real shared core — this is the whole point of the assertion below.
             seed: seedProfileLedger,

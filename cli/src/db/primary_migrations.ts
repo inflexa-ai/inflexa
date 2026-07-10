@@ -32,14 +32,15 @@ export const migrations: Migration[] = [
                 updated_at INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 slug TEXT NOT NULL,
-                output_directory TEXT,
                 provenance TEXT,
                 provenance_chain_hash TEXT,
                 provenance_signature TEXT,
                 provenance_prev_chain_hash TEXT,
                 anchor_id TEXT NOT NULL REFERENCES anchors(id),
                 project_id TEXT REFERENCES projects(id),
-                -- Outputs live at …/analyses/<slug>/, so a slug must be unique within its anchor.
+                -- The whole workspace (staged inputs, run artifacts, provenance exports) lives at
+                -- …/analyses/<slug>/ under the anchor, so a slug must be unique within its anchor.
+                -- This uniqueness is also what makes the harness workspace-root resolver injective.
                 UNIQUE (anchor_id, slug)
             );
             CREATE INDEX idx_analyses_project ON analyses(project_id);
