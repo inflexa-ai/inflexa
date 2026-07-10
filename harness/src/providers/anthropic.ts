@@ -17,6 +17,12 @@ export interface AnthropicProviderDeps {
     readonly fetch?: FetchLike;
 }
 
+/**
+ * Convenience over the `anthropic` arm of the public `AiSdkProviderConfig`
+ * union: it takes the Anthropic connection fields directly (`token` as the api
+ * key) and delegates to `createConfiguredAiSdkProvider`. The same construction
+ * contract holds — the `model` is bound into the returned provider.
+ */
 export function createAnthropicProvider(deps: AnthropicProviderDeps): ChatProvider {
     return createConfiguredAiSdkProvider({
         resolveBilling: deps.resolveBilling,
