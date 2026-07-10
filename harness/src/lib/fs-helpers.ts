@@ -77,6 +77,52 @@ export async function fileExists(filePath: string): Promise<boolean> {
  * Throws on any escape (a security-invariant violation, like `assertSafeId`) and
  * on genuine I/O failure; the caller decides whether that is fatal or best-effort.
  */
+/**
+ * How `absPath` — already lexically inside `confinementRoot` — relates to it
+ * once symlinks are followed:
+ *   - `in`      — resolves inside the root (a real file, or a symlink/hard link
+ *                 whose real location stays in-tree).
+ *   - `escaped` — resolves OUTSIDE the root via a symlink; the caller must refuse.
+ *   - `absent`  — does not fully exist (missing file, or a symlink to a missing
+ *                 target); nothing to leak, so the caller proceeds with its own
+ *                 not-found / fallback handling.
+ */
+export type WithinRootVerdict = "in" | "escaped" | "absent";
+
+/**
+ * Classify a path against a confinement root, following symlinks — the read-side
+ * companion to {@link writeFileWithinRoot}. The workspace read seam resolves
+ * agent-supplied paths lexically only; without this, a symlink an agent planted
+ * in its writable step dir (`ln -s ~/.ssh/id_rsa leak.txt`) would be read through
+ * by the host process, leaking arbitrary host-file content into the model context.
+ *
+ * Hard links classify as `in`: a hard link has no symlink target for `realpath`
+ * to follow, so it resolves to its own in-tree path — which is exactly why this
+ * blocks the symlink escape without breaking hard-linked staged inputs.
+ */
+export async function classifyWithinRoot(confinementRoot: string, absPath: string): Promise<WithinRootVerdict> {
+    let realRoot: string;
+    try {
+        realRoot = await realpath(confinementRoot);
+    } catch {
+        // The root itself is unresolvable — there is nothing in-tree to read.
+        return "absent";
+    }
+    let real: string;
+    try {
+        real = await realpath(absPath);
+    } catch (cause) {
+        const code = (cause as NodeJS.ErrnoException).code;
+        // A path (or symlink target) that does not resolve leaks nothing; let the
+        // caller's own not-found/fallback path handle it. Genuine faults (e.g.
+        // EACCES traversing a directory) propagate.
+        if (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP") return "absent";
+        throw cause;
+    }
+    if (real !== realRoot && !real.startsWith(realRoot + sep)) return "escaped";
+    return "in";
+}
+
 export async function writeFileWithinRoot(workspaceRoot: string, absPath: string, data: string | Uint8Array): Promise<void> {
     // Cheap lexical gate first, before any disk touch — rejects a `../` target
     // without paying for the mkdir/realpath below. Both sides stay un-canonicalized

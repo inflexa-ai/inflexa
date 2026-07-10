@@ -231,17 +231,27 @@ function stripAnalysisRoot(path: string, analysisId: string): string | null {
 const SAFE_ID = /^[\w.-]+$/;
 
 /**
- * Reject a path segment that could break out of its parent directory. `SAFE_ID`
- * forbids a slash, NUL, or other shell-hostile char, but its charset still
- * admits the pure-dot segments `.` and `..` — which `resolve`/`join` would treat
- * as the current/parent directory and use to climb the tree. Ids are
- * harness-minted UUIDs on every trusted path, but `stepId` reaches path builders
- * straight from an LLM-authored plan, so this is the boundary that keeps a
- * crafted id from re-rooting a mount or a host write. Exported so the mount-plan
- * builders (the container-path source of truth) validate the same way.
+ * True when `value` is a safe single path segment: the `SAFE_ID` charset (word
+ * chars, `.`, `-` — no slash, NUL, or shell-hostile char) AND not a pure-dot
+ * segment (`.`/`..`), which the charset otherwise admits and which `resolve`/`join`
+ * would treat as the current/parent directory and use to climb the tree. The one
+ * definition of "safe id", shared by the throwing {@link assertSafeId} at path
+ * builders and the plan validator (`validate-plan.ts`), so a stepId is judged the
+ * same at plan time and at mount time.
+ */
+export function isSafeId(value: string): boolean {
+    return SAFE_ID.test(value) && value !== "." && value !== "..";
+}
+
+/**
+ * Throwing form of {@link isSafeId} for the mount/host-path builders. Ids are
+ * harness-minted UUIDs on every trusted path, but `stepId` reaches these builders
+ * straight from an LLM-authored plan, so this is the boundary that keeps a crafted
+ * id from re-rooting a mount or a host write. Exported so the mount-plan builders
+ * (the container-path source of truth) validate the same way.
  */
 export function assertSafeId(value: string, label: string): void {
-    if (!SAFE_ID.test(value) || value === "." || value === "..") {
+    if (!isSafeId(value)) {
         throw new Error(`Invalid ${label}: ${value}`);
     }
 }

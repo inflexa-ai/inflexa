@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -90,6 +90,37 @@ describe("createWorkspaceFilesystem", () => {
     it("returns out_of_scope for /etc/passwd-style absolute paths", async () => {
         const r = (await fs.readFile({ session, path: "/etc/passwd" }))._unsafeUnwrap();
         expect(r.kind).toBe("out_of_scope");
+    });
+
+    it("refuses a planted symlink that escapes the analysis tree (read exfil)", async () => {
+        // A secret outside the analysis root and a symlink an agent could plant in
+        // its writable step dir pointing at it — the lexical path is in-tree, so
+        // only symlink-following confinement stops the leak.
+        const secret = join(sessions, "outside-secret.txt");
+        await writeFile(secret, "PRIVATE KEY");
+        const stepDir = join(sessions, ANALYSIS, "runs", "r1", "s1");
+        await mkdir(stepDir, { recursive: true });
+        await symlink(secret, join(stepDir, "leak.txt"));
+
+        expect((await fs.readFile({ session, path: "runs/r1/s1/leak.txt" }))._unsafeUnwrap().kind).toBe("out_of_scope");
+        expect((await fs.stat({ session, path: "runs/r1/s1/leak.txt" }))._unsafeUnwrap().kind).toBe("out_of_scope");
+    });
+
+    it("still reads an in-tree symlink and a hard-linked input", async () => {
+        // In-tree symlink → allowed (realpath stays in the tree).
+        const real = join(sessions, ANALYSIS, "data", "inputs", "real.csv");
+        await writeFile(real, "gene\nBRCA1\n");
+        await symlink(real, join(sessions, ANALYSIS, "data", "inputs", "alias.csv"));
+        expect((await fs.readFile({ session, path: "data/inputs/alias.csv" }))._unsafeUnwrap().kind).toBe("ok");
+
+        // Hard-linked input (mirrors stageFile's linkSync) → allowed: a hard link
+        // has no symlink target for realpath to follow, so it stays in-tree.
+        const original = join(sessions, "user-original.csv");
+        await writeFile(original, "hardlinked\n");
+        await link(original, join(sessions, ANALYSIS, "data", "inputs", "staged.csv"));
+        const viaHardlink = (await fs.readFile({ session, path: "data/inputs/staged.csv" }))._unsafeUnwrap();
+        expect(viaHardlink.kind).toBe("ok");
+        if (viaHardlink.kind === "ok") expect(viaHardlink.content.toString("utf8")).toContain("hardlinked");
     });
 
     it("falls back to presigned fetch when local is missing", async () => {

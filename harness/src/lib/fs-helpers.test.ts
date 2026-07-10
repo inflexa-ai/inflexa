@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { writeFileWithinRoot } from "./fs-helpers.js";
+import { link } from "node:fs/promises";
+
+import { classifyWithinRoot, writeFileWithinRoot } from "./fs-helpers.js";
 
 describe("writeFileWithinRoot", () => {
     let root: string;
@@ -58,5 +60,62 @@ describe("writeFileWithinRoot", () => {
         await writeFileWithinRoot(root, target, "first");
         await writeFileWithinRoot(root, target, "second");
         expect(await readFile(target, "utf8")).toBe("second");
+    });
+});
+
+describe("classifyWithinRoot", () => {
+    let root: string;
+    let outside: string;
+
+    beforeEach(async () => {
+        root = await mkdtemp(join(tmpdir(), "cwr-root-"));
+        outside = await mkdtemp(join(tmpdir(), "cwr-out-"));
+    });
+
+    afterEach(async () => {
+        await rm(root, { recursive: true, force: true });
+        await rm(outside, { recursive: true, force: true });
+    });
+
+    it("classifies a real in-tree file as `in`", async () => {
+        const p = join(root, "data", "x.csv");
+        await mkdir(join(root, "data"), { recursive: true });
+        await writeFile(p, "col\n1\n");
+        expect(await classifyWithinRoot(root, p)).toBe("in");
+    });
+
+    it("classifies a hard-linked input as `in` (realpath does not follow hard links)", async () => {
+        const original = join(outside, "user-original.csv");
+        await writeFile(original, "secret,data\n");
+        const staged = join(root, "data", "inputs", "local", "foo.csv");
+        await mkdir(join(root, "data", "inputs", "local"), { recursive: true });
+        await link(original, staged); // hard link, mirroring stageFile's linkSync
+        expect(await classifyWithinRoot(root, staged)).toBe("in");
+    });
+
+    it("classifies a symlink escaping the tree as `escaped`", async () => {
+        const victim = join(outside, "victim.txt");
+        await writeFile(victim, "secret");
+        const planted = join(root, "runs", "r1", "s1", "leak.txt");
+        await mkdir(join(root, "runs", "r1", "s1"), { recursive: true });
+        await symlink(victim, planted);
+        expect(await classifyWithinRoot(root, planted)).toBe("escaped");
+    });
+
+    it("classifies a missing path (and a symlink to a missing target) as `absent`", async () => {
+        expect(await classifyWithinRoot(root, join(root, "runs", "gone.txt"))).toBe("absent");
+        const dangling = join(root, "dangling.txt");
+        await symlink(join(outside, "does-not-exist"), dangling);
+        expect(await classifyWithinRoot(root, dangling)).toBe("absent");
+    });
+
+    it("classifies an in-tree symlink as `in`", async () => {
+        const realFile = join(root, "data", "real.csv");
+        await mkdir(join(root, "data"), { recursive: true });
+        await writeFile(realFile, "ok");
+        const inTreeLink = join(root, "runs", "r1", "s1", "alias.csv");
+        await mkdir(join(root, "runs", "r1", "s1"), { recursive: true });
+        await symlink(realFile, inTreeLink);
+        expect(await classifyWithinRoot(root, inTreeLink)).toBe("in");
     });
 });
