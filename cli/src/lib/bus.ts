@@ -50,6 +50,7 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
                 runId: event.outcome.runId,
                 stepId: event.outcome.stepId,
                 status: event.outcome.status,
+                model: event.model.model,
             };
         case "prov.command_executed":
             return {
@@ -61,6 +62,7 @@ function eventFields(event: StampedEvent): Record<string, unknown> {
                 // one identifying string per producer kind, without carrying args into telemetry.
                 command: event.command.kind === "command" ? event.command.command : event.command.tool,
                 outputCount: event.command.outputs.length,
+                model: event.model.model,
             };
         case "prov.file_written":
             return { analysisId: event.analysisId, actorKind: event.actor.kind, filePath: event.file.path, producer: event.file.producer };

@@ -43,7 +43,7 @@ function testComposition(): RunEngineComposition {
         }),
         workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot }),
         resolveWorkspaceRoot,
-        model: "claude-test",
+        modelRef: { provider: "anthropic", model: "claude-test" },
         skillsDir: "/tmp/skills",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
     };
@@ -120,6 +120,13 @@ describe("run-engine provenance wiring", () => {
 
         expect(captured).toHaveLength(1);
         expect(captured[0]!.type).toBe("prov.run_started");
+
+        // The emitter closed over the composition's model ref — a settled step records which model
+        // drove it (the wiring half of the model-agent record; the mapping itself is prov_bridge's).
+        deps.emitProvenance!({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_001_000 });
+        const stepEvent = captured[1]!;
+        if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
+        expect(stepEvent.model).toEqual({ provider: "anthropic", model: "claude-test" });
     });
 });
 

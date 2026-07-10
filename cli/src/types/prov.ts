@@ -27,6 +27,36 @@ export type ProvActor =
       };
 
 /**
+ * The LLM that reasoned about a model-driven activity — recorded as its own PROV `SoftwareAgent`
+ * (typed `inflexa:Model`) that `actedOnBehalfOf` the responsible agent, so the document answers
+ * *which intelligence entered the process*, not just that the CLI acted. Carried by
+ * `prov.step_completed` and `prov.command_executed` (the activities the model drove); a
+ * discriminated union over the harness's two NATIVE PROVIDER KINDS (the protocol the model is
+ * reached through — a proxied third-party model still rides the kind of the route that served it;
+ * the model id itself carries the vendor identity). `model` is always the RESOLVED id — the config
+ * override, or the proxy-default resolution at boot; never a config `null`. NEVER carries API keys,
+ * credentialed URLs, or prompt content — the model's identity is the whole record.
+ */
+export type ProvModelRef =
+    | {
+          /** The Anthropic Messages protocol — no endpoint attribute exists on this arm by design. */
+          provider: "anthropic";
+          model: string;
+      }
+    | {
+          provider: "openai-compatible";
+          model: string;
+          /**
+           * The endpoint HOST only — itself meaningful provenance (`localhost` says "local model");
+           * never a key or a credentialed URL. REQUIRED: the harness's openai-compatible config
+           * always carries a `baseURL`, and an optional field here would let a host silently omit
+           * the most load-bearing fact of this arm — then splitting the agent's identity (the
+           * endpoint keys the agent QName) when the omission is later fixed.
+           */
+          endpoint: string;
+      };
+
+/**
  * The subset of an analysis input that provenance records: the identity fields for the PROV
  * entity (stable QName from anchor+path) and the attributes written onto it. The owning
  * `analysisId` is not needed — the analysis subject is already in the document.

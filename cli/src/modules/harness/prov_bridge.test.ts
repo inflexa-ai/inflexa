@@ -3,6 +3,7 @@ import type { AgentSession, ArtifactManifestEntry, ArtifactRegistrationInput, Pr
 
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
+import type { ProvModelRef } from "../../types/prov.ts";
 import { fileQName } from "../prov/document.ts";
 import { createBusArtifactRegistry, createRunProvenanceEmitter } from "./prov_bridge.ts";
 
@@ -51,13 +52,16 @@ const inputEvents = (): InputEvent[] => captured.filter((e): e is InputEvent => 
 // is honest here (the adapter never dereferences it).
 const noSession = {} as unknown as AgentSession;
 
+// The construction-time model ref both bridge halves stamp onto their model-driven events.
+const modelRef: ProvModelRef = { provider: "anthropic", model: "claude-test" };
+
 function entry(path: string, hash: string | undefined, size: number): ArtifactManifestEntry {
     return { stepId: "de-analysis", runId: "run-001", path, size, type: "output", hash };
 }
 
 describe("createBusArtifactRegistry — register", () => {
     test("two entries sharing one producer group into a single command event carrying both outputs", async () => {
-        const registry = createBusArtifactRegistry();
+        const registry = createBusArtifactRegistry(modelRef);
         // One producer OBJECT shared across both records — the collector's shape for a multi-output command.
         const cmd: FakeProducer = {
             type: "command",
@@ -101,6 +105,8 @@ describe("createBusArtifactRegistry — register", () => {
         expect(JSON.stringify(cmds[0]!)).not.toContain("timestamp");
         expect(cmds[0]!.step).toEqual({ runId: "run-001", stepId: "de-analysis" });
         expect(cmds[0]!.actor.kind).toBe("system");
+        // The construction-time model ref rides the event — which model drove the producing step.
+        expect(cmds[0]!.model).toEqual(modelRef);
 
         // Every produced file rides generation "command" — the command activity owns the generation edge.
         const files = fileEvents();
@@ -113,7 +119,7 @@ describe("createBusArtifactRegistry — register", () => {
     });
 
     test("a file-tool write groups into a file_tool command event with no inputs", async () => {
-        const registry = createBusArtifactRegistry();
+        const registry = createBusArtifactRegistry(modelRef);
         const tool: FakeProducer = { type: "file_tool", tool: "write_file", timestamp: "2026-07-06T00:00:00Z" };
         const input: ArtifactRegistrationInput = {
             resourceId: "an-1",
@@ -139,7 +145,7 @@ describe("createBusArtifactRegistry — register", () => {
     });
 
     test("a leaf entry (no collector record) emits no command event and keeps step generation", async () => {
-        const registry = createBusArtifactRegistry();
+        const registry = createBusArtifactRegistry(modelRef);
         const input: ArtifactRegistrationInput = {
             resourceId: "an-1",
             runId: "run-001",
@@ -159,7 +165,7 @@ describe("createBusArtifactRegistry — register", () => {
     });
 
     test("an intra-step artifacts read resolves to a command-scoped 'step' input, while a phantom self-read is dropped", async () => {
-        const registry = createBusArtifactRegistry();
+        const registry = createBusArtifactRegistry(modelRef);
         const cmdA: FakeProducer = { type: "command", command: "python3 de.py", exitCode: 0, durationMs: 900, timestamp: "t" };
         const cmdB: FakeProducer = { type: "command", command: "python3 plot.py", exitCode: 0, durationMs: 300, timestamp: "t" };
         const input: ArtifactRegistrationInput = {
@@ -197,7 +203,7 @@ describe("createBusArtifactRegistry — register", () => {
     });
 
     test("a step-relative scriptPath is scoped to the analysis output space so the builder can resolve it", async () => {
-        const registry = createBusArtifactRegistry();
+        const registry = createBusArtifactRegistry(modelRef);
         const cmd: FakeProducer = { type: "command", command: "python3 scripts/de.py", exitCode: 0, durationMs: 500, timestamp: "t" };
         const input: ArtifactRegistrationInput = {
             resourceId: "an-1",
@@ -216,7 +222,7 @@ describe("createBusArtifactRegistry — register", () => {
     });
 
     test("step-level input_used passes non-artifacts reads through and still skips the step's own artifacts reads", async () => {
-        const registry = createBusArtifactRegistry();
+        const registry = createBusArtifactRegistry(modelRef);
         const input: ArtifactRegistrationInput = {
             resourceId: "an-1",
             runId: "run-001",
@@ -258,7 +264,7 @@ describe("createBusArtifactRegistry — register", () => {
     });
 
     test("a prior read strips to the SAME analysis-relative path the producing run's file event used", async () => {
-        const registry = createBusArtifactRegistry();
+        const registry = createBusArtifactRegistry(modelRef);
         const input: ArtifactRegistrationInput = {
             resourceId: "an-1",
             runId: "run-002",
@@ -278,7 +284,7 @@ describe("createBusArtifactRegistry — register", () => {
     });
 
     test("a hash-less entry fails registration without emitting, while its siblings still emit", async () => {
-        const registry = createBusArtifactRegistry();
+        const registry = createBusArtifactRegistry(modelRef);
         const input: ArtifactRegistrationInput = {
             resourceId: "an-1",
             runId: "run-001",
@@ -303,7 +309,7 @@ describe("createBusArtifactRegistry — register", () => {
     });
 
     test("a hash-less tracked input fails registration without emitting, while its siblings still emit", async () => {
-        const registry = createBusArtifactRegistry();
+        const registry = createBusArtifactRegistry(modelRef);
         const input: ArtifactRegistrationInput = {
             resourceId: "an-1",
             runId: "run-001",
@@ -335,7 +341,7 @@ describe("createBusArtifactRegistry — register", () => {
     });
 
     test("a zero-entry, zero-input step emits nothing and returns empty arrays", async () => {
-        const registry = createBusArtifactRegistry();
+        const registry = createBusArtifactRegistry(modelRef);
         const input: ArtifactRegistrationInput = {
             resourceId: "an-1",
             runId: "run-001",
@@ -353,7 +359,7 @@ describe("createBusArtifactRegistry — register", () => {
 
 describe("createRunProvenanceEmitter", () => {
     test("run_started maps to prov.run_started, passing startedAtMs through from atMs", () => {
-        const emit = createRunProvenanceEmitter();
+        const emit = createRunProvenanceEmitter(modelRef);
         const event: RunProvenanceEvent = {
             type: "run_started",
             analysisId: "an-1",
@@ -375,7 +381,7 @@ describe("createRunProvenanceEmitter", () => {
     });
 
     test("step_completed maps to prov.step_completed, passing completedAtMs + durationMs through", () => {
-        const emit = createRunProvenanceEmitter();
+        const emit = createRunProvenanceEmitter(modelRef);
         const event: RunProvenanceEvent = {
             type: "step_completed",
             analysisId: "an-1",
@@ -394,10 +400,12 @@ describe("createRunProvenanceEmitter", () => {
         expect(busEvent.analysisId).toBe("an-1");
         expect(busEvent.actor.kind).toBe("system");
         expect(busEvent.outcome).toEqual({ runId: "run-001", stepId: "step-de", status: "failed", completedAtMs: 1_700_000_123_000, durationMs: 90_000 });
+        // The construction-time model ref rides the event — which model drove the step.
+        expect(busEvent.model).toEqual(modelRef);
     });
 
     test("step_completed with no durationMs leaves it unset in the outcome", () => {
-        const emit = createRunProvenanceEmitter();
+        const emit = createRunProvenanceEmitter(modelRef);
         // The child-error settlement branch carries no durable duration.
         const event: RunProvenanceEvent = {
             type: "step_completed",
@@ -417,7 +425,7 @@ describe("createRunProvenanceEmitter", () => {
     });
 
     test("run_completed maps to prov.run_completed, passing completedAtMs + durationMs through", () => {
-        const emit = createRunProvenanceEmitter();
+        const emit = createRunProvenanceEmitter(modelRef);
         const event: RunProvenanceEvent = {
             type: "run_completed",
             analysisId: "an-1",

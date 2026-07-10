@@ -41,6 +41,7 @@ import {
 
 import { readConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
+import type { ProvModelRef } from "../../types/prov.ts";
 import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
 import { getLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
@@ -441,6 +442,14 @@ async function bootHarnessRuntimeOnce(seams: BootSeams, cfg: ResolvedHarnessConf
         // unchanged, so every path shares the one resolved instance. `cfg.skillsDir`
         // and `cfg.templatesDir` are non-null here — the pre-flight above returned
         // if either was null.
+        // The provenance identity of the model every seat runs on, built BESIDE the provider ctor
+        // it describes so the recorded kind can never silently diverge from the wiring: `anthropic`
+        // because the chat path IS `createAnthropicProvider` on the next line (the Anthropic
+        // Messages protocol through the proxy — a kind the harness does not expose type-level, so
+        // this adjacency is the coupling), and `model` is the RESOLVED id — the config override or
+        // the proxy default resolved earlier in this boot — so the signed document never records a
+        // config `null`. No endpoint: that attribute exists only for the openai-compatible kind.
+        const modelRef: ProvModelRef = { provider: "anthropic", model };
         const provider = createAnthropicProvider({ baseURL: env.cliproxyApiUrl, token: apiKey, model, resolveBilling });
         const sandboxClient = createSandboxClient({
             pool,
@@ -477,7 +486,7 @@ async function bootHarnessRuntimeOnce(seams: BootSeams, cfg: ResolvedHarnessConf
             sandboxClient,
             workspaceFs,
             resolveWorkspaceRoot,
-            model,
+            modelRef,
             skillsDir: cfg.skillsDir,
             bioKeys: cfg.bioKeys,
         };
