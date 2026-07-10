@@ -16,7 +16,7 @@
 
 - [x] 3.1 Delete `workspace/mount-strategy.ts` (no importers)
 - [x] 3.2 `openspec/specs/workspace-profiles`: remove the `Docker mount builder in mount-strategy` requirement
-- [ ] 3.3 Ask the deployment owner whether anything downstream consumed `buildPodMounts`/`buildDockerMounts`, and whether a managed content-server relied on `previews/{analysisId}/{previewId}` being a real filesystem path
+- [x] 3.3 Ask the deployment owner whether anything downstream consumed `buildPodMounts`/`buildDockerMounts`, and whether a managed content-server relied on `previews/{analysisId}/{previewId}` being a real filesystem path — asked in inflexa-ai/inf-cli#69 (also covers the new `sessionPvcRoot` requirement for k8s embedders)
 
 ## 4. Path-formula ownership
 
