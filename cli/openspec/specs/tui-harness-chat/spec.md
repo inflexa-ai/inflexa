@@ -204,7 +204,7 @@ Every entry into the profile lifecycle — the parity edges above and the delibe
 SHALL be **serialized**: at most one may run its stage → seed → trigger sequence at a time, and one
 arriving while another runs SHALL queue behind it rather than be dropped, because the edges fire
 precisely because state changed. Serialization is required for two reasons the ledger CAS cannot
-supply, since it runs only after staging: concurrent `stageInputs` calls on one session tree race the
+supply, since it runs only after staging: concurrent `stageInputs` calls on one workspace tree race the
 tree-reconciliation delete, and a concurrent clear can null `seed_input_file_ids` between another
 drive's seed write and its trigger.
 
@@ -258,7 +258,7 @@ notice.
 - **WHEN** inputs change while a profile is running
 - **THEN** the live check skips (already running), and when that profile completes the check re-runs and re-triggers on the drift
 
-#### Scenario: Two edges firing together do not race the session tree
+#### Scenario: Two edges firing together do not race the workspace tree
 
 - **WHEN** an input-mutation edge and a profile-completion edge fire while a parity check is already staging
 - **THEN** the later drives SHALL run strictly after the first completes

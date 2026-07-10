@@ -3,7 +3,9 @@
 ## Purpose
 The embedding seam between the cli and `@inflexa-ai/harness`: a lazy, process-singleton composition root that provisions/boots the runtime (Postgres readiness, cortex schema, pre-launch ephemeral sweep, workflow registration and conversation-agent build through the harness composition root `assembleCoreRuntime`, DBOS launch), realizes every local seam (data-profile, run-engine, and conversation deps) locally, and tears down gracefully on exit. Owns the single global session-tree base and the sandbox transport choice: the CLI defaults to **poll** (the sandbox is polled for results; no callback listener exists), with the loopback HTTP ingress that bridges sandbox-server callbacks onto DBOS topics reserved for the opt-in callback mode. Lives in `src/modules/harness/`.
 ## Requirements
+
 ### Requirement: On-demand composition of the embedded harness runtime
+
 
 The system SHALL provide a composition module that boots the embedded harness runtime
 on first use and reuses it for the remainder of the process (module singleton). Boot
@@ -58,6 +60,7 @@ re-registering or re-launching.
 
 ### Requirement: Local realizations for every data-profile dependency
 
+
 The composition SHALL realize `DataProfileDeps` from deliberate local wiring: the
 `pg.Pool` built from the infra module's resolved `PostgresConnection`; the harness's
 local run authorizer and no-op billing resolver; the chat provider pointed at the local
@@ -90,20 +93,8 @@ the point of use.
 - **WHEN** the resolved embedder cannot be built from config, fails or times out on the probe embedding, or emits vectors of a width other than it advertises
 - **THEN** boot fails naming the remedy, before Postgres provisioning, listener start, registration, or launch
 
-### Requirement: Single global session-tree base
-
-The system SHALL expose one path helper for the session-tree base
-(`{cli data dir}/sessions`), and staging targets, the sandbox client's
-`sessionsBasePath`, and the workspace filesystem SHALL all derive from it. Per-analysis
-bases are prohibited: workflow deps are closed over once at registration, so the base
-cannot vary by analysis.
-
-#### Scenario: One base across all consumers
-
-- **WHEN** an analysis is staged and profiled
-- **THEN** the staged files, the sandbox bind mount source, and workspace filesystem reads all resolve under `{base}/{analysisId}/…` for the same `{base}`
-
 ### Requirement: Exec-callback ingress bridges sandbox HTTP callbacks to DBOS topics
+
 
 In **callback** transport mode the runtime SHALL host a loopback-only HTTP listener
 accepting `POST /sandbox/{execId}/{kind}` for `kind` ∈ {`event`, `complete`}. Each
@@ -143,6 +134,7 @@ and is polled for results instead.
 
 ### Requirement: Graceful runtime shutdown
 
+
 On cli process exit after the runtime has booted, the system SHALL shut DBOS down
 (marking in-flight workflows recoverable) and close the callback listener (a no-op in
 poll mode, which binds none). Shutdown failures SHALL NOT prevent the remainder of
@@ -154,6 +146,7 @@ the exit sequence.
 - **THEN** DBOS shutdown marks it recoverable and a later runtime boot resumes it
 
 ### Requirement: The embedding imports through the harness barrel
+
 
 Cli code SHALL import harness symbols only from the `@inflexa-ai/harness` barrel. The
 barrel SHALL be extended (additive exports only) with the embedder runtime surface the
@@ -184,6 +177,7 @@ chat-event and chat-part types.
 
 ### Requirement: Local realizations for every analysis-run dependency
 
+
 The composition SHALL realize the sandbox-step and execute-analysis dep bundles from
 deliberate local wiring, reusing the data-profile realizations where the seams are
 shared (pool, chat provider, sandbox client, workspace filesystem, session-tree base,
@@ -198,7 +192,7 @@ model id, bio keys, local run authorizer). Specific to the run engine:
   catalog's agent deps; an agent id absent from the catalog SHALL fail the step with
   the known-id list.
 - The step write prefix SHALL resolve to the harness's `runs/{runId}/{stepId}` path
-  convention under the analysis's session tree.
+  convention under the analysis's workspace tree.
 - The artifact registry SHALL be the provenance bus adapter (see
   `prov-harness-bridge`): registration emits `prov.file_written` /
   `prov.input_used` bus events feeding the analysis's signed tsprov document, and
@@ -232,6 +226,7 @@ model id, bio keys, local run authorizer). Specific to the run engine:
 
 ### Requirement: Sandbox-hygiene scheduled workflows registered at boot
 
+
 The runtime boot SHALL register the harness's sandbox reaper, sandbox watchdog, and
 notification sweep scheduled workflows before DBOS launch, wired to the same pool and
 sandbox client as the workflow deps. These convert host-kill fallout into bounded
@@ -249,6 +244,7 @@ step failure instead of a hang until the step deadline.
 - **THEN** the watchdog records a synthetic failure completion and the step's recv unblocks before the step deadline
 
 ### Requirement: Local realizations for every conversation dependency
+
 
 The composition SHALL realize the conversation agent's dependency surface from
 deliberate local wiring, reusing the existing realizations where the seams are shared
@@ -275,3 +271,23 @@ surface:
 - **WHEN** the agent attempts a report preview snapshot in a local chat
 - **THEN** the preview tool reports preview unavailability (no Chrome is contacted) and report iteration/submission still works
 
+### Requirement: The CLI realizes the workspace-root resolver
+
+
+The system SHALL wire the harness's `resolveWorkspaceRoot` seam with a realization that maps an analysis id to `join(anchorPath, ".inflexa", "analyses", slug)` by reading the analysis row (slug, anchorId) and resolving the anchor's live path from the database — durable state, so a DBOS-recovered workflow on a fresh process resolves correctly. The realization is injective by the `UNIQUE (anchor_id, slug)` constraint. Every dep bundle that previously carried `sessionsBasePath` (sandbox client, workspace filesystem, composition, data-profile, and conversation deps in `src/modules/harness/runtime.ts`) SHALL receive this realization; no global base path remains in the wiring. Resolution failure for a live workflow SHALL surface per the harness seam contract (a throw across DBOS step boundaries → the step fails durably).
+
+#### Scenario: One tree across all consumers
+
+- **WHEN** an analysis is staged, profiled, and run
+- **THEN** the staged files, the sandbox bind-mount source, the post-step artifact writes, and workspace filesystem reads all resolve under `<anchorPath>/.inflexa/analyses/<slug>/…`
+
+#### Scenario: Recovery resolves from the database
+
+- **GIVEN** a run interrupted by a crash, and the anchor folder moved (marker intact, path reconciled) before restart
+- **WHEN** DBOS recovery resumes the workflow in a fresh CLI process
+- **THEN** the resolver derives the workspace root from the current anchor path and the run continues against the moved tree
+
+#### Scenario: Deleted analysis fails resolution loudly
+
+- **WHEN** the resolver is invoked for an analysis id whose row no longer exists
+- **THEN** it fails with an error that crosses the DBOS boundary as a throw, and the requesting step is recorded as failed

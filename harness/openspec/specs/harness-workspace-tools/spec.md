@@ -42,15 +42,18 @@ with the artifact convention.
 
 ### Requirement: Workspace read seam is a construction-time dependency
 
+
 The harness SHALL expose a workspace filesystem read seam —
 `createWorkspaceFilesystem(deps)` returning `{ readFile, list, stat }` over the
-analysis session tree — injected at the composition root as a construction-time
-dependency (see the harness-durable-runtime spec). It SHALL NOT be retrieved from an ambient context magic
+analysis workspace tree — injected at the composition root as a construction-time
+dependency (see the harness-durable-runtime spec). Its deps SHALL carry the
+`resolveWorkspaceRoot` seam (workspace-root-resolution), not a global base path.
+It SHALL NOT be retrieved from an ambient context magic
 key. A tool that depends on the seam SHALL receive it through a factory closure
 (e.g. `createReadFileTool(fs, workingDir?)`) so the dependency is visible in the
 factory signature and replaceable with a fake in tests.
 
-Reads SHALL resolve from the host session directory when the file is
+Reads SHALL resolve from the resolved workspace root when the file is
 materialized, falling back to an optional embedder-supplied presigned fetch when
 it is not. The seam SHALL NOT write provenance and SHALL NOT depend on any
 sandbox. Relative paths resolve against the caller-supplied `workingDir`
@@ -71,21 +74,24 @@ conversation-agent behaviour.
 - **THEN** the filesystem is not reachable through `ToolContext` — it is captured
   by the factory closure
 
-#### Scenario: A materialized file is read from the local session directory
+#### Scenario: A materialized file is read from the workspace root
 
 - **GIVEN** an analysis whose input file is materialized on the host
 - **WHEN** the seam's `readFile` is called with that path
-- **THEN** it returns the file content read from the local session directory
-  without a remote round-trip
+- **THEN** it returns the file content read from under the analysis's resolved
+  workspace root without a remote round-trip
 
 ### Requirement: Frame-aware path resolution
+
 
 Relative paths SHALL resolve against the caller's working directory; absolute
 `/{resourceId}/...` paths SHALL resolve against the analysis root regardless of
 the working directory. The resolver (`resolveWorkspacePath` in
 `workspace/paths.ts`) SHALL return an `out_of_scope` data variant for any input
-that escapes `${sessionsBasePath}/{resourceId}/` — `..` traversal, absolute
-paths outside the tree, and `/{otherResourceId}/...` — never a throw.
+that escapes the analysis's resolved workspace root — `..` traversal, absolute
+paths outside the tree, and `/{otherResourceId}/...` — never a throw. The
+container-absolute `/{resourceId}/...` form is unchanged by where the root
+lives on the host: it maps onto the root via the shared host↔container formula.
 
 #### Scenario: A relative path is frame-local
 
@@ -109,6 +115,7 @@ paths outside the tree, and `/{otherResourceId}/...` — never a throw.
 - **THEN** the resolver SHALL return `out_of_scope` before any I/O
 
 ### Requirement: read_file tool reads workspace files with bounded output
+
 
 The harness SHALL expose a `read_file` tool over the workspace read seam. Its
 input SHALL be a workspace path (relative to the working directory, or absolute
@@ -143,6 +150,7 @@ so the harness loop's error contract can wrap them as `is_error` results.
   bytes and the total size
 
 ### Requirement: read_file supports head and tail line windows for bio files
+
 
 The harness `read_file` tool SHALL accept optional `headLines` and `tailLines`
 parameters. `headLines: N` returns the first N lines; `tailLines: N` returns the
@@ -183,6 +191,7 @@ the whole file into memory.
 
 ### Requirement: The read seam accepts an optional embedder-supplied presigned fallback
 
+
 The `WorkspaceFilesystem` read seam SHALL accept an optional `PresignedFallback`
 whose `fetch(...)` returns a `Buffer` or `null`. When a file is absent on the
 host session directory and a fallback is configured, the seam SHALL attempt it; a
@@ -208,6 +217,7 @@ the OSS seam ships or guarantees.
 
 ### Requirement: grep tool searches workspace files with bounded results
 
+
 The harness SHALL expose a `grep` tool over the workspace read seam. It SHALL
 accept a pattern and a workspace path (file or directory). It SHALL return
 matches as data, including the empty-result case as a data variant rather than a
@@ -230,6 +240,7 @@ exceeding either bound SHALL carry a truncation marker.
 
 ### Requirement: Reserved artifact-subdir names are rejected as step ids
 
+
 Plan validation SHALL reject any step whose id equals one of the reserved
 artifact-subdir names — `scripts`, `output`, `figures`, `logs`, `notebooks` —
 case-insensitively, because a step directory `runs/{runId}/{stepId}` named after
@@ -244,6 +255,7 @@ relies on.
   the plan SHALL NOT execute
 
 ### Requirement: execute_command is the single chokepoint for sandbox command execution
+
 
 The harness SHALL expose an `execute_command` tool as a dependency-bearing factory
 `createExecuteCommandTool(deps)` that captures a `SandboxClient`, the live
@@ -296,6 +308,7 @@ SHALL throw.
 
 ### Requirement: execute_command result is bounded with a truncation marker
 
+
 The `execute_command` result payload SHALL be bounded by a maximum byte count on
 each of `stdout` and `stderr` so a chatty command cannot blow the loop's context.
 When either stream exceeds the cap the returned data variant SHALL carry a
@@ -318,6 +331,7 @@ through unchanged regardless of truncation.
   `durationMs`, and `timedOut` SHALL be returned unchanged
 
 ### Requirement: write_file is sandbox-gated and confined to the working directory
+
 
 The harness SHALL expose a `write_file` tool as a factory closure
 `createWriteFileTool({ mutator })` — a thin adapter over the `WorkspaceMutator`
@@ -361,6 +375,7 @@ corrects. Only unexpected sandbox failures SHALL throw.
 
 ### Requirement: edit_file is sandbox-gated and confined to the working directory
 
+
 The harness SHALL expose an `edit_file` tool as a factory closure
 `createEditFileTool({ mutator, workspaceFilesystem, workingDir })` that composes
 the read seam (fetch current content), a search/replace, and
@@ -395,6 +410,7 @@ the read surface at the same path.
 
 ### Requirement: Mutate and read surfaces share one canonical resolver
 
+
 The `WorkspaceMutator` seam SHALL import `resolveForWrite` from
 `workspace/paths.ts` — the same module whose `resolveWorkspacePath` the read seam
 uses. There SHALL be no second path-construction module on the mutate side;
@@ -418,4 +434,3 @@ top of a resolved, scope-checked path.
 - **WHEN** the read surface is called with the same workspace path
 - **THEN** both surfaces SHALL resolve to the same session-tree location and the
   content written SHALL be returned
-

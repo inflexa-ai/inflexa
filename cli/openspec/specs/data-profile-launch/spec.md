@@ -20,7 +20,7 @@ runtime boots.
 #### Scenario: No-analysis flows stay side-effect free
 
 - **WHEN** the user runs bare `inflexa` and it resolves to no analysis (welcome/no-op path)
-- **THEN** no session tree is created, no files are staged, and DBOS is not launched
+- **THEN** no workspace tree is created, no files are staged, and DBOS is not launched
 
 #### Scenario: Opening an analysis chat is a deliberate profile trigger
 

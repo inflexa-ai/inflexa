@@ -6,9 +6,10 @@ Defines the per-step workspace construction in the harness — the mount strateg
 
 ### Requirement: Pod mount specs use nested RO/RW
 
+
 `buildPodMounts` SHALL return exactly two pod volumeMount specs: one read-only mount for the full analysis tree at `/{analysisId}/` and one read-write mount for the step at `/{analysisId}/runs/{runId}/{stepId}/`. K8s handles nested mounts — the most-specific path wins.
 
-When `SANDBOX_BACKEND=docker`, `buildDockerMounts` SHALL return the equivalent as Docker bind mount specs: `{ hostPath, containerPath, readOnly }[]`. The host paths are derived from `SESSION_PATH` + the analysis-relative subpaths.
+When `SANDBOX_BACKEND=docker`, `buildDockerMounts` SHALL return the equivalent as Docker bind mount specs: `{ hostPath, containerPath, readOnly }[]`. The host paths are derived from the analysis's resolved workspace root + the tree-relative subpaths.
 
 #### Scenario: Pod has nested mounts (K8s)
 
@@ -17,10 +18,11 @@ When `SANDBOX_BACKEND=docker`, `buildDockerMounts` SHALL return the equivalent a
 
 #### Scenario: Docker has nested bind mounts
 
-- **WHEN** `buildDockerMounts({ resourceId, runId, stepId, sessionPath })` is called
-- **THEN** it returns two entries mapping host paths to the same container paths with the same read-only flags
+- **WHEN** `buildDockerMounts({ resourceId, runId, stepId, workspaceRoot })` is called
+- **THEN** it returns two entries mapping host paths under `workspaceRoot` to the same container paths with the same read-only flags
 
 ### Requirement: Workflow is the sole writer of per-analysis vector index entries
+
 
 The per-analysis pgvector search index (`search_<analysisId>` table) SHALL be written only by workflow-owned code paths: the executeAnalysis parent workflow (step outputs, step summary, run synthesis) and the data-profile fire-and-forget task (input files, profile summary). Sandbox agents SHALL NOT have any index tool available — there is no agent-callable index tool in the central registry.
 
@@ -36,6 +38,7 @@ The per-analysis pgvector search index (`search_<analysisId>` table) SHALL be wr
 - **AND** returns results written by the workflow from prior steps
 
 ### Requirement: Vector index metadata SHALL include a `type` discriminator
+
 
 Every row written into the per-analysis pgvector index SHALL have a `type` field in its `metadata` JSONB column, taking one of: `"input"`, `"output"`, `"summary"`, `"synthesis"`, `"profile"`. Writers that fail to set `type` SHALL be considered bugs.
 
@@ -63,6 +66,7 @@ Every row written into the per-analysis pgvector index SHALL have a `type` field
 
 ### Requirement: Summary markdown indexing uses raw markdown as embedding text
 
+
 When the workflow indexes a step's `summary.md`, the embedding SHALL be computed from the raw markdown body (no field concatenation, no TL;DR extraction). Metadata SHALL include `type: "summary"`, `stepId`, `runId`, `agentId`, and `path` (the relative artifact path).
 
 #### Scenario: Embedding text is the markdown body
@@ -77,13 +81,14 @@ When the workflow indexes a step's `summary.md`, the embedding SHALL be computed
 
 ### Requirement: Sandbox factory selects backend
 
+
 `createSandboxClient(config)` (`harness/sandbox/create-sandbox.ts`) SHALL read `SANDBOX_BACKEND` from env config and wire either `createK8sSandboxOps` or `createDockerSandboxOps`. The factory is the sole place where the backend decision is made.
 
 #### Scenario: Docker backend selected
 
 - **GIVEN** `SANDBOX_BACKEND=docker`
 - **WHEN** `createSandboxClient(...)` is invoked
-- **THEN** it wires `createDockerSandboxOps` with bind mounts derived from `SESSION_PATH`
+- **THEN** it wires `createDockerSandboxOps` with bind mounts derived from the `resolveWorkspaceRoot` seam
 
 #### Scenario: K8s backend selected
 
@@ -93,12 +98,13 @@ When the workflow indexes a step's `summary.md`, the embedding SHALL be computed
 
 ### Requirement: Docker mount builder in mount-strategy
 
-`harness/workspace/mount-strategy.ts` SHALL export `buildDockerMounts()` alongside `buildPodMounts()`. It SHALL accept `{ resourceId, runId, stepId, sessionPath }` and return `DockerMount[]` with `hostPath` (absolute host directory path), `containerPath` (container mount path), and `readOnly` (boolean).
 
-#### Scenario: Docker mounts derive host paths from sessionPath
+`harness/workspace/mount-strategy.ts` SHALL export `buildDockerMounts()` alongside `buildPodMounts()`. It SHALL accept `{ resourceId, runId, stepId, workspaceRoot }` — where `workspaceRoot` is the analysis's resolved workspace root — and return `DockerMount[]` with `hostPath` (absolute host directory path), `containerPath` (container mount path), and `readOnly` (boolean).
 
-- **GIVEN** sessionPath `"~/.cortex-dev/sessions"` and resourceId `"abc123"`
-- **WHEN** `buildDockerMounts({ resourceId: "abc123", runId: "run-01", stepId: "de", sessionPath })` is called
+#### Scenario: Docker mounts derive host paths from the workspace root
+
+- **GIVEN** workspaceRoot `"/home/u/proj/.inflexa/analyses/abc"` and resourceId `"abc123"`
+- **WHEN** `buildDockerMounts({ resourceId: "abc123", runId: "run-01", stepId: "de", workspaceRoot })` is called
 - **THEN** it returns:
-  - `{ hostPath: "~/.cortex-dev/sessions/abc123", containerPath: "/abc123", readOnly: true }`
-  - `{ hostPath: "~/.cortex-dev/sessions/abc123/runs/run-01/de", containerPath: "/abc123/runs/run-01/de", readOnly: false }`
+  - `{ hostPath: "/home/u/proj/.inflexa/analyses/abc", containerPath: "/abc123", readOnly: true }`
+  - `{ hostPath: "/home/u/proj/.inflexa/analyses/abc/runs/run-01/de", containerPath: "/abc123/runs/run-01/de", readOnly: false }`

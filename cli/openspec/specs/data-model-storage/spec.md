@@ -3,7 +3,9 @@
 ## Purpose
 The SQLite schema for the local data model — the columnar `anchors`/`projects`/`analyses` tables, the blob-free `analysis_inputs` table, the `sessions.analysis_id` link, and their indexes — defined as a single forward-only baseline migration with identity → core → FK column ordering.
 ## Requirements
+
 ### Requirement: Single forward-only baseline migration
+
 
 The data-model schema SHALL be defined as a single `version: 1` baseline in `src/db/primary_migrations.ts` (not a separate appended migration), applied in one transaction by the existing versioned runner. Tables SHALL be declared parent-before-child so every foreign key is a backward reference. There is no prod SQLite to preserve, so the schema is consolidated rather than layered as deltas.
 
@@ -20,6 +22,7 @@ The data-model schema SHALL be defined as a single `version: 1` baseline in `src
 
 ### Requirement: Columnar entity tables (no JSON data blob)
 
+
 The `anchors`, `projects`, and `analyses` tables SHALL store one typed column per entity field — NOT a single JSON `data` blob — so rows are filtered, ordered, and joined directly in SQL. Columns SHALL follow the house order: the identity triple (`id`, `created_at`, `updated_at`) first and colocated, then core data, then foreign keys last.
 
 #### Scenario: Anchors table shape
@@ -35,13 +38,14 @@ The `anchors`, `projects`, and `analyses` tables SHALL store one typed column pe
 #### Scenario: Analyses table shape and FKs
 
 - **WHEN** the migration has been applied
-- **THEN** `analyses` has columns `id`, `created_at`, `updated_at`, `name`, `slug`, `output_directory`, `provenance`, `provenance_chain_hash`, `provenance_signature`, `provenance_prev_chain_hash`, `anchor_id`, `project_id` in that order
+- **THEN** `analyses` has columns `id`, `created_at`, `updated_at`, `name`, `slug`, `provenance`, `provenance_chain_hash`, `provenance_signature`, `provenance_prev_chain_hash`, `anchor_id`, `project_id` in that order
 - **AND** `anchor_id` is `NOT NULL` and references `anchors(id)`; `project_id` is nullable and references `projects(id)`
-- **AND** there is no `data`, `goals`, `synced_analysis_id`, or `archived_at` column
+- **AND** there is no `data`, `goals`, `synced_analysis_id`, `archived_at`, or `output_directory` column — the workspace root is derived from anchor + slug, never stored
 
 ### Requirement: Slug is unique within an anchor
 
-The `analyses` table SHALL enforce `UNIQUE (anchor_id, slug)`, because outputs live at `…/analyses/<slug>/` and two analyses sharing a home anchor must not collide there.
+
+The `analyses` table SHALL enforce `UNIQUE (anchor_id, slug)`, because the analysis workspace — staged inputs, run artifacts, reports, and provenance exports — lives at `<anchorPath>/.inflexa/analyses/<slug>/`, and two analyses sharing a home anchor must not collide there. The constraint is also what makes the harness workspace-root resolver realization injective.
 
 #### Scenario: Duplicate slug within one anchor is rejected
 
@@ -49,6 +53,7 @@ The `analyses` table SHALL enforce `UNIQUE (anchor_id, slug)`, because outputs l
 - **THEN** the second insert trips the `UNIQUE (anchor_id, slug)` constraint
 
 ### Requirement: Analysis inputs table without a data blob
+
 
 The system SHALL create an `analysis_inputs` table whose columns are the entire row, in core → foreign-key order with no identity triple: `path TEXT NOT NULL`, `is_dir INTEGER NOT NULL DEFAULT 0`, `analysis_id TEXT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE`, and `anchor_id TEXT REFERENCES anchors(id)`. It SHALL NOT include a `data` JSON column.
 
@@ -60,6 +65,7 @@ The system SHALL create an `analysis_inputs` table whose columns are the entire 
 - **AND** deleting an analysis cascades to delete its input rows
 
 ### Requirement: Chat tables keep a JSON data blob with FK columns
+
 
 The `sessions`, `messages`, and `parts` tables SHALL keep their application-shaped JSON `data` blob, exposing only the id and foreign-key columns: `sessions(id, data, analysis_id)`, `messages(id, data, session_id)`, `parts(id, data, session_id, message_id)`. `sessions.analysis_id` links a chat session to its analysis (one analysis, many sessions); it is nullable with no default.
 
@@ -76,6 +82,7 @@ The `sessions`, `messages`, and `parts` tables SHALL keep their application-shap
 
 ### Requirement: Lookup indexes
 
+
 The migration SHALL create the indexes `idx_analyses_project` on `analyses(project_id)`, `idx_analyses_anchor` on `analyses(anchor_id)`, `idx_analysis_inputs_analysis` on `analysis_inputs(analysis_id)`, `idx_sessions_analysis` on `sessions(analysis_id)`, `idx_messages_session` on `messages(session_id)`, `idx_parts_message` on `parts(message_id)`, and `idx_parts_session` on `parts(session_id)`.
 
 #### Scenario: FK lookup indexes exist
@@ -85,7 +92,8 @@ The migration SHALL create the indexes `idx_analyses_project` on `analyses(proje
 
 ### Requirement: Provenance integrity columns in the baseline schema
 
-The `version: 1` baseline in `src/db/primary_migrations.ts` SHALL declare four provenance columns on the `analyses` table — `provenance TEXT`, `provenance_chain_hash TEXT`, `provenance_signature TEXT`, and `provenance_prev_chain_hash TEXT` — in that order. There is no separate `ALTER TABLE` / `version: 2` / `version: 3` migration; the columns exist from the first migration. Per the house column order they sit as core data: after `output_directory` and before the `anchor_id`/`project_id` foreign keys. A row has `NULL` in all four until its first signed flush.
+
+The `version: 1` baseline in `src/db/primary_migrations.ts` SHALL declare four provenance columns on the `analyses` table — `provenance TEXT`, `provenance_chain_hash TEXT`, `provenance_signature TEXT`, and `provenance_prev_chain_hash TEXT` — in that order. There is no separate `ALTER TABLE` / `version: 2` / `version: 3` migration; the columns exist from the first migration. Per the house column order they sit as core data: after `slug` and before the `anchor_id`/`project_id` foreign keys. A row has `NULL` in all four until its first signed flush.
 
 #### Scenario: Baseline creates all four provenance columns
 
@@ -96,9 +104,10 @@ The `version: 1` baseline in `src/db/primary_migrations.ts` SHALL declare four p
 #### Scenario: Column ordering follows house convention
 
 - **WHEN** the baseline SQL is read
-- **THEN** the four provenance columns appear after `output_directory` (core data) and before `anchor_id`/`project_id` (foreign keys)
+- **THEN** the four provenance columns appear after `slug` (core data) and before `anchor_id`/`project_id` (foreign keys)
 
 ### Requirement: DB accessors for integrity columns
+
 
 The system SHALL provide `getAnalysisIntegrity(id): Result<AnalysisIntegrity | null, DbError>` in `src/db/primary_query.ts`, where `AnalysisIntegrity` carries all four integrity columns — `{ provenance, prevChainHash, chainHash, signature }`, each `string | null` — read in a single query (the verifier's one DB round-trip); an unknown id resolves to `null` on the ok channel. `updateAnalysisProvenance(id, provenance, chainHash, signature)` in `src/db/primary_mutation.ts` SHALL require all three values (unsigned provenance is never written) and persist them in a single `UPDATE` that atomically rotates the chain — copying the current `provenance_chain_hash` into `provenance_prev_chain_hash` before the new values land — returning rows changed.
 
@@ -112,4 +121,3 @@ The system SHALL provide `getAnalysisIntegrity(id): Result<AnalysisIntegrity | n
 
 - **WHEN** `updateAnalysisProvenance(id, prov, chainHash, signature)` is called
 - **THEN** `provenance`, `provenance_chain_hash`, and `provenance_signature` are updated and `provenance_prev_chain_hash` receives the prior chain hash, all in one statement
-

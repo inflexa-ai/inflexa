@@ -35,6 +35,7 @@ returns "unavailable" so reports still build without a hosted preview).
 
 ### Requirement: iterate_report exposes mutually-exclusive creation and iteration modes
 
+
 The conversation agent SHALL have an `iterate_report` tool with two modes, and
 the input SHALL require exactly one of `report` (creation) or `modifications`
 (iteration). The tool accepts `previewId` (optional lowercase-alphanumeric-dash,
@@ -54,6 +55,7 @@ rejected). It SHALL return `{ previewId, version, previewPath, error?, notes? }`
 - **THEN** the tool generates a `prv-`-prefixed id, produces version 1, and returns `{ previewId, version: 1, previewPath }`
 
 ### Requirement: The report brief is a typed section union with intent and content
+
 
 A creation `report` SHALL contain `title`, `audience`, optional `styleGuidance`,
 a `sources` array, and a non-empty `sections` array. Each section SHALL be one of
@@ -78,6 +80,7 @@ string — the builder reads the prior template and applies it surgically.
 
 ### Requirement: Pre-flight stages sources and cross-checks creation briefs
 
+
 Before invoking the builder, `iterate_report` SHALL copy every declared source
 into the preview's shared `assets/` dir and enrich the brief with each asset's
 kind, size, columns, head rows, and row count. For a creation brief it SHALL
@@ -92,6 +95,7 @@ without running the builder.
 - **THEN** the tool emits `data-preview-failed` (errorKind `build`) and returns an error naming the missing reference, without starting the builder
 
 ### Requirement: The report-builder runs in-process via runToTerminal, with no sandbox or Python
+
 
 The report-builder agent SHALL be a non-plannable in-process agent (not a member
 of the sandbox-agent catalog) driven by `runToTerminal` over `passthroughStep`.
@@ -114,9 +118,12 @@ or any sandbox/Python build path, and SHALL have no workspace discovery tools.
 
 ### Requirement: Version directories are managed Cortex-side with shared assets and rollback
 
+
 The runner SHALL serialize iterations per `previewId` (`withPreviewLock`),
 resolve the new version as `max(latest, baseVersion) + 1`, create
-`previews/{analysisId}/{previewId}/v{N}`, copy the base version's
+`{workspaceRoot}/previews/{previewId}/v{N}` (where `{workspaceRoot}` is the
+analysis's resolved workspace root — see workspace-root-resolution), copy the
+base version's
 `report.html.j2` forward when one exists, and symlink the version dir's `assets`
 to the preview's shared `assets/`. On any failure (no outcome, agent error, or
 phantom success) it SHALL remove the new version directory while leaving the
@@ -135,6 +142,7 @@ shared `assets/` untouched, and return a structured failure with `errorKind` in
 
 ### Requirement: build_report renders the template via in-process Nunjucks
 
+
 The `build_report` tool SHALL render `v{N}/report.html.j2` to `v{N}/index.html`
 through the Node-side `renderReport` (Nunjucks, autoescape off). The loader
 resolution order SHALL be `[versionDir, templatesDir/report-html]` so the
@@ -152,6 +160,7 @@ available), never thrown.
 
 ### Requirement: preview_snapshot validates the rendered report in headless Chrome
 
+
 The `preview_snapshot` tool SHALL navigate headless Chrome to the rendered
 report URL, wait for the `inflexa-theme-ready` signal, and return a base64 PNG
 screenshot together with collected console errors and failed network requests.
@@ -166,6 +175,7 @@ rather than throwing.
 - **THEN** it receives a screenshot plus the page's console errors and failed requests, and decides whether to fix the template or proceed to `submit_report`
 
 ### Requirement: submit_report is the postcondition gate and emits the preview part
+
 
 `submit_report` SHALL be the only signal that finalizes a version: it validates
 that `index.html` exists and is non-empty, contains no unrendered Jinja markers,
