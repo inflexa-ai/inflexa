@@ -133,7 +133,11 @@ export type ThemeColors = {
      * ids, meta) uses `fgMuted` or stronger — retuning this tier to 4.5:1 would collapse it into `fgMuted`.
      */
     fgSubtle: string;
-    /** Subtle dividers and frames. */
+    /**
+     * Subtle dividers and frames. Held to the 3:1 non-text floor against `bg` **and** `bgRaised`: a
+     * bordered box paints its border glyphs on its own `backgroundColor`, so a frame around a raised
+     * panel (tool results, the sidebar, dialogs) never renders against `bg`.
+     */
     border: string;
     /** Focused / active region border. */
     borderFocus: string;
@@ -162,8 +166,9 @@ export type ThemeColors = {
     /**
      * Row band painted behind an *added* diff line. A per-theme tint of `success` toward `bg` —
      * dark bands on dark themes, light pastel bands on light themes — chosen so the diff text
-     * (`fg`) stays AA-readable (≥4.5:1) on the band while the band stays visibly distinct from
-     * `bg`. Replaces opentui's hardcoded dark-only `#1a4d1a`, which is wrong on light themes.
+     * (`fg`) stays AA-readable (≥4.5:1) on the band while the band stays distinct from `bg`
+     * (≥1.2:1, the weight of the weakest band opentui itself ships). Replaces opentui's hardcoded
+     * dark-only `#1a4d1a`, which is wrong on light themes. Both floors are enforced by the matrix.
      */
     diffAddedBg: string;
     /** Row band painted behind a *removed* diff line — the matching `error`-toward-`bg` tint; see {@link ThemeColors.diffAddedBg}. */
@@ -196,12 +201,11 @@ export type ThemeSyntax = {
  *
  * Heading levels are listed individually on purpose: opentui's `SyntaxStyle.getStyle` only falls a
  * scope back to its FIRST segment (`markup.heading.1` → `markup`), never to `markup.heading`, so a
- * lone `markup.heading` parent would not catch them. The markers themselves (`#`, `*`, `` ` ``) stay
- * visible — opentui conceals them only when the renderable opts in, and (like opencode) we don't,
- * since a terminal can't size an H1; this just colors the text so the structure reads clearly.
+ * lone `markup.heading` parent would not catch them. A terminal can't size an H1, so the structure
+ * has to read from color and weight alone.
  *
- * Also registers the `"default"` fallback scope — the style opentui resolves for any span it renders
- * WITHOUT a tree-sitter capture (see the `default` entry's comment for the exact paths).
+ * Two entries below are not prose captures — `default` and `conceal`. Each closes a path where
+ * opentui would otherwise paint a color that belongs to no palette; see their comments.
  */
 export function markdownStyles(c: ThemeColors): Record<string, SyntaxEntry> {
     const heading: SyntaxEntry = { fg: c.accent, bold: true };
@@ -213,6 +217,14 @@ export function markdownStyles(c: ThemeColors): Record<string, SyntaxEntry> {
         // a fenced block. Without a registered `"default"`, `getStyle("default")` is `undefined` and
         // those spans fall through to opentui's built-in #FFFFFF foreground — invisible on light themes.
         default: { fg: c.fg },
+        // opentui resolves `conceal` for the markdown chrome it draws itself, not for prose. Blockquote
+        // bars and horizontal rules read `getStyle("conceal")?.fg ?? getStyle("default")?.fg`, so leaving
+        // it unset paints structural dividers at full body-text weight; pipe-table frames read
+        // `getStyle("conceal")?.fg ?? "#888888"`, a gray no palette owns (unreachable while
+        // `internalBlockMode="top-level"` renders tables as borderless columns, but one option away).
+        // All three are frames, so they take `border`. The `#`/`*`/`` ` `` markers this scope also
+        // captures are elided before styling, so coloring it cannot touch prose.
+        conceal: { fg: c.border },
         markup: { fg: c.fg }, // base: first-segment fallback for any markup.* not set below
         "markup.heading": heading,
         "markup.heading.1": heading,
@@ -261,7 +273,7 @@ export const themes: Record<ThemeId, Theme> = {
             fg: "#c0caf5",
             fgMuted: "#838eba",
             fgSubtle: "#687192",
-            border: "#5e6587",
+            border: "#646c8e",
             borderFocus: "#7aa2f7",
             onAccent: "#1a1b26",
             accent: "#7aa2f7",
@@ -417,7 +429,7 @@ export const themes: Record<ThemeId, Theme> = {
             fg: "#e0def4",
             fgMuted: "#8d89a6",
             fgSubtle: "#6f6c85",
-            border: "#656278",
+            border: "#6a677d",
             borderFocus: "#c4a7e7",
             onAccent: "#191724",
             accent: "#c4a7e7",
@@ -457,20 +469,20 @@ export const themes: Record<ThemeId, Theme> = {
             fg: "#4c4f69",
             fgMuted: "#565869",
             fgSubtle: "#717484",
-            border: "#888b97",
+            border: "#828591",
             borderFocus: "#1e66f5",
             onAccent: "#eff1f5",
             accent: "#004bd7",
             secondary: "#781fdb",
             success: "#196800",
-            warning: "#965c00",
-            error: "#d10e39",
-            info: "#00709e",
-            user: "#0075a5",
-            assistant: "#8839ef",
-            tool: "#0075a5",
-            thinking: "#9d6000",
-            diffAddedBg: "#d5e5d7",
+            warning: "#804e00",
+            error: "#b5002e",
+            info: "#005f87",
+            user: "#005f87",
+            assistant: "#781fdb",
+            tool: "#005f87",
+            thinking: "#804e00",
+            diffAddedBg: "#d0e0d2",
             diffRemovedBg: "#ebcfd9",
         },
         syntax: {
@@ -496,19 +508,19 @@ export const themes: Record<ThemeId, Theme> = {
             fg: "#24292f",
             fgMuted: "#57606a",
             fgSubtle: "#858d97",
-            border: "#8f959c",
+            border: "#8a9097",
             borderFocus: "#0969da",
             onAccent: "#ffffff",
             accent: "#0969da",
             secondary: "#8250df",
             success: "#1a7f37",
-            warning: "#9a6700",
+            warning: "#966400",
             error: "#cf222e",
-            info: "#1b7c83",
-            user: "#1b7c83",
+            info: "#187a81",
+            user: "#187a81",
             assistant: "#8250df",
-            tool: "#1b7c83",
-            thinking: "#9a6700",
+            tool: "#187a81",
+            thinking: "#966400",
             diffAddedBg: "#dfede3",
             diffRemovedBg: "#f8e0e2",
         },
@@ -532,10 +544,16 @@ export const themes: Record<ThemeId, Theme> = {
             bg: "#fdf6e3",
             bgRaised: "#eee8d5",
             bgActive: "#eee8d5",
-            fg: "#536870",
+            // Solarized's canonical `fg` (#657b83) is only 4.13:1 on `bg` — sub-AA — so this palette
+            // deviates from upstream, darkening every foreground for AA. `fg` is darkened past its own
+            // 4.5:1 minimum on purpose: a diff band sits between `fg` and `bg`, and the two contrast
+            // ratios multiply exactly, so a band can only clear the 1.2:1 distinctness floor while
+            // keeping `fg` readable on it when contrast(fg, bg) ≥ 4.5 × 1.2. Solarized's near-white
+            // `bg` leaves no other source of that headroom.
+            fg: "#4f646c",
             fgMuted: "#5e6b6b",
             fgSubtle: "#7f8686",
-            border: "#849191",
+            border: "#7b8787",
             borderFocus: "#268bd2",
             onAccent: "#fdf6e3",
             accent: "#006dad",
@@ -544,16 +562,12 @@ export const themes: Record<ThemeId, Theme> = {
             warning: "#846300",
             error: "#cd1e21",
             info: "#00756e",
-            user: "#007f78",
-            assistant: "#6569bc",
-            tool: "#007f78",
-            thinking: "#8f6c00",
-            // Diff bands are held at the low end of the light-tint range: Solarized's canonical `fg`
-            // (#657b83) was itself only 4.13:1 on `bg` — sub-AA — so this palette deviates from upstream,
-            // darkening every foreground (`fg` → #536870, etc.) for AA. Keeping the bands light gives that
-            // retuned diff text the most headroom while staying visibly distinct from `bg`.
-            diffAddedBg: "#edeac5",
-            diffRemovedBg: "#f9ddcc",
+            user: "#00756e",
+            assistant: "#5d60b2",
+            tool: "#00756e",
+            thinking: "#846300",
+            diffAddedBg: "#e5e2be",
+            diffRemovedBg: "#f7dbca",
         },
         syntax: {
             keyword: { fg: "#606f00" },
@@ -578,20 +592,20 @@ export const themes: Record<ThemeId, Theme> = {
             fg: "#3c3836",
             fgMuted: "#5d5046",
             fgSubtle: "#796b57",
-            border: "#98896f",
-            borderFocus: "#b57614",
+            border: "#897a61",
+            borderFocus: "#ad6f02",
             onAccent: "#fbf1c7",
             accent: "#754900",
             secondary: "#005b6c",
             success: "#595400",
-            warning: "#ae3902",
+            warning: "#962f00",
             error: "#9d0006",
-            info: "#076678",
-            user: "#076678",
-            assistant: "#8f3f71",
-            tool: "#076678",
-            thinking: "#af3a03",
-            diffAddedBg: "#e8deab",
+            info: "#005b6c",
+            user: "#005b6c",
+            assistant: "#843567",
+            tool: "#005b6c",
+            thinking: "#962f00",
+            diffAddedBg: "#e6dca9",
             diffRemovedBg: "#edcdaa",
         },
         syntax: {
@@ -617,21 +631,21 @@ export const themes: Record<ThemeId, Theme> = {
             fg: "#383a42",
             fgMuted: "#69696f",
             fgSubtle: "#86868c",
-            border: "#919192",
+            border: "#8a8a8b",
             borderFocus: "#4078f2",
             onAccent: "#fafafa",
             accent: "#2d62db",
             secondary: "#a626a4",
             success: "#267928",
-            warning: "#946400",
-            error: "#c73a30",
-            info: "#0074a7",
-            user: "#007bb0",
+            warning: "#8f6000",
+            error: "#c2352c",
+            info: "#0070a1",
+            user: "#0070a1",
             assistant: "#a626a4",
-            tool: "#007bb0",
-            thinking: "#9c6900",
-            diffAddedBg: "#e2eee2",
-            diffRemovedBg: "#f7e3e1",
+            tool: "#0070a1",
+            thinking: "#8f6000",
+            diffAddedBg: "#dce8dc",
+            diffRemovedBg: "#f4e0de",
         },
         syntax: {
             keyword: { fg: "#a626a4" },
