@@ -15,7 +15,7 @@
 import { KNOWN_AGENT_IDS } from "../agents/sandbox-catalog.js";
 import type { ResourceLimits } from "../config/resource-limits.js";
 import { CycleError, DependencyError, topoSortIntoWaves } from "../execution/topo-sort.js";
-import { STEP_SUBDIRS } from "../workspace/paths.js";
+import { isSafeId, STEP_SUBDIRS } from "../workspace/paths.js";
 import type { AnalysisPlan } from "./workflow-state.js";
 
 const KNOWN_AGENTS: ReadonlySet<string> = new Set(KNOWN_AGENT_IDS);
@@ -132,6 +132,21 @@ export function validatePlan(plan: AnalysisPlan, options?: ValidatePlanOptions):
             errors.push(
                 `Step "${step.id}" uses a reserved name — step ids must not be one of: ` +
                     `${STEP_SUBDIRS.join(", ")} (they collide with the artifact subdirectory convention)`,
+            );
+        }
+    }
+
+    // 6. Step-id path safety. The id becomes the `runs/{runId}/{stepId}` directory
+    //    segment and a `/{analysisId}/…` container mount path; an unsafe segment
+    //    (a slash, or `.`/`..`) could traverse or widen the mount. The sandbox
+    //    mount boundary also rejects these (assertSafeId), but catching it here
+    //    turns it into an actionable, retryable planner error instead of a
+    //    durably-failed step at sandbox creation.
+    for (const step of plan.steps) {
+        if (!isSafeId(step.id)) {
+            errors.push(
+                `Step "${step.id}" has an unsafe id — step ids may contain only letters, digits, '.', '_', '-' ` +
+                    `and cannot be '.' or '..' (the id becomes a workspace directory and container mount segment)`,
             );
         }
     }

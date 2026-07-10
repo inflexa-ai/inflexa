@@ -40,6 +40,7 @@ import { ResultAsync, err, errAsync, ok, type Result } from "neverthrow";
 import type { AgentSession } from "../auth/types.js";
 import { scopeResource } from "../auth/types.js";
 import { type FsError, tryFetch, tryFs } from "../lib/fs-result.js";
+import { classifyWithinRoot } from "../lib/fs-helpers.js";
 import { resolveWorkspacePath, type ResolvedPath, type ResolveWorkspaceRoot } from "./paths.js";
 
 // ── Result types ──────────────────────────────────────────────────────────
@@ -125,7 +126,7 @@ export function createWorkspaceFilesystem(deps: WorkspaceFilesystemDeps): Worksp
      * Convert at the boundary so an unresolvable root is a value here, not an exception that
      * only survives because some caller happens to wrap it.
      */
-    function resolveFor(session: AgentSession, path: string, workingDir?: string): Result<ResolvedPath, FsError> {
+    function resolveFor(session: AgentSession, path: string, workingDir?: string): Result<{ resolved: ResolvedPath; workspaceRoot: string }, FsError> {
         const { resourceId: analysisId } = scopeResource(session.scope);
         let workspaceRoot: string;
         try {
@@ -133,82 +134,102 @@ export function createWorkspaceFilesystem(deps: WorkspaceFilesystemDeps): Worksp
         } catch (cause) {
             return err({ type: "read_failed", op: "workspace.resolveWorkspaceRoot", path: analysisId, cause });
         }
-        return ok(resolveWorkspacePath({ workspaceRoot, analysisId, path, workingDir }));
+        return ok({ resolved: resolveWorkspacePath({ workspaceRoot, analysisId, path, workingDir }), workspaceRoot });
+    }
+
+    /**
+     * Lexical resolution PLUS a symlink-following confinement check — the single
+     * chokepoint every read tool (`read_file`, `grep`, `list`, `stat`) funnels
+     * through. `resolveWorkspacePath` is purely lexical, so a symlink an agent
+     * planted in its writable step dir (pointing at a host file outside the tree)
+     * would otherwise be read through by this host process. `classifyWithinRoot`
+     * follows the link: an `escaped` verdict is downgraded to `out_of_scope`; an
+     * `absent` path passes through unchanged so the caller's own not-found /
+     * presigned-fallback handling still runs (a non-existent path leaks nothing).
+     */
+    function confinedResolve(session: AgentSession, path: string, workingDir?: string): ResultAsync<ResolvedPath, FsError> {
+        const base = resolveFor(session, path, workingDir);
+        if (base.isErr()) return errAsync(base.error);
+        const { resolved, workspaceRoot } = base.value;
+        if (resolved.kind === "out_of_scope") return okAsync<ResolvedPath>(resolved);
+        return ResultAsync.fromPromise(classifyWithinRoot(workspaceRoot, resolved.absolute), (cause): FsError => ({
+            type: "read_failed",
+            op: "workspace.confineRealpath",
+            path: resolved.absolute,
+            cause,
+        })).map((verdict): ResolvedPath => (verdict === "escaped" ? { kind: "out_of_scope" } : resolved));
     }
 
     return {
         readFile({ session, path, maxBytes, headLines, tailLines, workingDir }) {
-            const resolvedResult = resolveFor(session, path, workingDir);
-            if (resolvedResult.isErr()) return errAsync(resolvedResult.error);
-            const resolved = resolvedResult.value;
-            if (resolved.kind === "out_of_scope") {
-                return okAsync<ReadFileResult>({ kind: "out_of_scope" });
-            }
-            const absolute = resolved.absolute;
-            const relative = resolved.relative;
-
-            return safeStat(absolute).andThen((localStat): ResultAsync<ReadFileResult, FsError> => {
-                if (localStat?.isFile()) {
-                    if (headLines !== undefined) {
-                        return readHeadLines(absolute, headLines, maxBytes);
-                    }
-                    if (tailLines !== undefined) {
-                        return readTailLines(absolute, localStat.size, tailLines, maxBytes);
-                    }
-                    return readWithCap(absolute, localStat.size, maxBytes);
+            return confinedResolve(session, path, workingDir).andThen((resolved): ResultAsync<ReadFileResult, FsError> => {
+                if (resolved.kind === "out_of_scope") {
+                    return okAsync<ReadFileResult>({ kind: "out_of_scope" });
                 }
+                const absolute = resolved.absolute;
+                const relative = resolved.relative;
 
-                if (presignedFallback) {
-                    return tryFetch("workspace.presignedFetch", () => presignedFallback.fetch({ session, relativePath: relative }), relative).map(
-                        (content): ReadFileResult => {
-                            if (content !== null) {
-                                if (headLines !== undefined) return sliceHeadLines(content, headLines, maxBytes);
-                                if (tailLines !== undefined) return sliceTailLines(content, tailLines, maxBytes);
-                                return capBuffer(content, maxBytes);
-                            }
-                            return { kind: "not_found" };
-                        },
-                    );
-                }
+                return safeStat(absolute).andThen((localStat): ResultAsync<ReadFileResult, FsError> => {
+                    if (localStat?.isFile()) {
+                        if (headLines !== undefined) {
+                            return readHeadLines(absolute, headLines, maxBytes);
+                        }
+                        if (tailLines !== undefined) {
+                            return readTailLines(absolute, localStat.size, tailLines, maxBytes);
+                        }
+                        return readWithCap(absolute, localStat.size, maxBytes);
+                    }
 
-                return okAsync<ReadFileResult>({ kind: "not_found" });
+                    if (presignedFallback) {
+                        return tryFetch("workspace.presignedFetch", () => presignedFallback.fetch({ session, relativePath: relative }), relative).map(
+                            (content): ReadFileResult => {
+                                if (content !== null) {
+                                    if (headLines !== undefined) return sliceHeadLines(content, headLines, maxBytes);
+                                    if (tailLines !== undefined) return sliceTailLines(content, tailLines, maxBytes);
+                                    return capBuffer(content, maxBytes);
+                                }
+                                return { kind: "not_found" };
+                            },
+                        );
+                    }
+
+                    return okAsync<ReadFileResult>({ kind: "not_found" });
+                });
             });
         },
 
         list({ session, path, workingDir }) {
-            const resolvedResult = resolveFor(session, path, workingDir);
-            if (resolvedResult.isErr()) return errAsync(resolvedResult.error);
-            const resolved = resolvedResult.value;
-            if (resolved.kind === "out_of_scope") {
-                return okAsync<ListResult>({ kind: "out_of_scope" });
-            }
-            const absolute = resolved.absolute;
+            return confinedResolve(session, path, workingDir).andThen((resolved): ResultAsync<ListResult, FsError> => {
+                if (resolved.kind === "out_of_scope") {
+                    return okAsync<ListResult>({ kind: "out_of_scope" });
+                }
+                const absolute = resolved.absolute;
 
-            return tryFs<readonly { name: string; isDirectory(): boolean }[] | { notFound: true }>(
-                "workspace.list",
-                () => fsReaddir(absolute, { withFileTypes: true }),
-                { path: absolute, onAbsent: () => ({ notFound: true }) },
-            ).andThen((dirents): ResultAsync<ListResult, FsError> => {
-                if ("notFound" in dirents) return okAsync<ListResult>({ kind: "not_found" });
-                return collectEntries(absolute, dirents).map((entries): ListResult => ({ kind: "ok", entries }));
+                return tryFs<readonly { name: string; isDirectory(): boolean }[] | { notFound: true }>(
+                    "workspace.list",
+                    () => fsReaddir(absolute, { withFileTypes: true }),
+                    { path: absolute, onAbsent: () => ({ notFound: true }) },
+                ).andThen((dirents): ResultAsync<ListResult, FsError> => {
+                    if ("notFound" in dirents) return okAsync<ListResult>({ kind: "not_found" });
+                    return collectEntries(absolute, dirents).map((entries): ListResult => ({ kind: "ok", entries }));
+                });
             });
         },
 
         stat({ session, path, workingDir }) {
-            const resolvedResult = resolveFor(session, path, workingDir);
-            if (resolvedResult.isErr()) return errAsync(resolvedResult.error);
-            const resolved = resolvedResult.value;
-            if (resolved.kind === "out_of_scope") {
-                return okAsync<StatResult>({ kind: "out_of_scope" });
-            }
+            return confinedResolve(session, path, workingDir).andThen((resolved): ResultAsync<StatResult, FsError> => {
+                if (resolved.kind === "out_of_scope") {
+                    return okAsync<StatResult>({ kind: "out_of_scope" });
+                }
 
-            return safeStat(resolved.absolute).map((s): StatResult => {
-                if (!s) return { kind: "not_found" };
-                return {
-                    kind: "ok",
-                    type: s.isDirectory() ? "directory" : "file",
-                    size: s.size,
-                };
+                return safeStat(resolved.absolute).map((s): StatResult => {
+                    if (!s) return { kind: "not_found" };
+                    return {
+                        kind: "ok",
+                        type: s.isDirectory() ? "directory" : "file",
+                        size: s.size,
+                    };
+                });
             });
         },
     };

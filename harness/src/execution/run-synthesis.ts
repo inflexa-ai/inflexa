@@ -373,8 +373,12 @@ export interface PersistSynthesisInput {
 }
 
 export async function persistSynthesis(args: PersistSynthesisInput): Promise<string> {
-    const path = join(args.workspaceRoot, runDir(args.runId), "synthesis.json");
-    await writeFileWithinRoot(args.workspaceRoot, path, JSON.stringify(args.synthesis, null, 2));
+    // Confine to the run directory, not the whole workspace: synthesis.json sits
+    // at runs/{runId}/, above any step's RW mount and never in the hard-linked
+    // `data/` inputs.
+    const runRoot = join(args.workspaceRoot, runDir(args.runId));
+    const path = join(runRoot, "synthesis.json");
+    await writeFileWithinRoot(runRoot, path, JSON.stringify(args.synthesis, null, 2));
     return path;
 }
 

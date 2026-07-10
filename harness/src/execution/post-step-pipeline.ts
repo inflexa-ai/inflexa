@@ -112,10 +112,11 @@ export async function generateStepSummaryAndWrite(
     });
     if (summary && summary.markdown.trim().length > 0) {
         try {
-            // Host-side write into the step's RW subtree — symlink-confined so a
-            // compromised sandbox agent cannot redirect it onto a host file.
-            const workspaceRoot = deps.resolveWorkspaceRoot(input.analysisId);
-            await writeFileWithinRoot(workspaceRoot, join(writePrefix, "output", "summary.md"), summary.markdown);
+            // Host-side write into the step's own RW subtree. Confine to the step
+            // prefix (not the whole workspace) so a symlink a compromised agent
+            // planted cannot redirect it onto a host file — and so this write can
+            // never reach the hard-linked `data/` inputs, which are RO by design.
+            await writeFileWithinRoot(writePrefix, join(writePrefix, "output", "summary.md"), summary.markdown);
         } catch (err) {
             console.warn(`[post-step.summary] writeFile output/summary.md failed for ${input.stepId}: ${err instanceof Error ? err.message : err}`);
         }

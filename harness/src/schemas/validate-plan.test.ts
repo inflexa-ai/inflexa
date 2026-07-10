@@ -56,6 +56,18 @@ describe("validatePlan", () => {
             expect(result.valid).toBe(false);
         }
     });
+
+    it("rejects a step id with a path separator", () => {
+        const result = validatePlan(plan([step({ id: "a/b" })]));
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes("unsafe id"))).toBe(true);
+    });
+
+    it("rejects a '..' step id", () => {
+        const result = validatePlan(plan([step({ id: ".." })]));
+        expect(result.valid).toBe(false);
+        expect(result.errors.some((e) => e.includes("unsafe id"))).toBe(true);
+    });
 });
 
 describe("validatePlan per-step resource ceiling", () => {
