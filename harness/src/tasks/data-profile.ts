@@ -35,6 +35,7 @@ import { defineTool } from "../tools/define-tool.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
+import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 
 import { estimateDataProfileResources } from "../sandbox/estimate-data-profile-resources.js";
 import { generateExecutionId } from "../sandbox/execution-id.js";
@@ -67,7 +68,8 @@ export interface DataProfileDeps {
     readonly pool: Pool;
     readonly sandboxClient: SandboxClient;
     readonly workspaceFs: WorkspaceFilesystem;
-    readonly sessionsBasePath: string;
+    /** Workspace-root resolution seam (see workspace/paths.ts). */
+    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Model id — provenance / metric label; the provider owns the wire model. */
     readonly model: string;
     readonly runAuthorizer: RunAuthorizer;
@@ -213,6 +215,10 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         const executionId = generateExecutionId(DATA_PROFILE_AGENT_ID);
         const workflowId = DBOS.workflowID ?? `${DATA_PROFILE_RUN_LITERAL}:${executionId}`;
         const childSession = forSubAgent(runSession, DATA_PROFILE_AGENT_ID);
+        // A resolver throw fails the workflow loudly (workspace-root-resolution
+        // contract) — profiling an analysis whose root cannot be resolved is
+        // meaningless, so no softer handling is warranted.
+        const workspaceRoot = deps.resolveWorkspaceRoot(analysisId);
 
         console.log(`[data-profile] execution=${executionId} analysis=${analysisId} starting sandbox`);
 
@@ -247,7 +253,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 bioKeys: deps.bioKeys,
                 step: {
                     sandbox,
-                    sessionsBasePath: deps.sessionsBasePath,
+                    workspaceRoot,
                     analysisId,
                     runId: DATA_PROFILE_RUN_LITERAL,
                     stepId: DATA_PROFILE_STEP_LITERAL,
@@ -255,7 +261,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     // The profiler writes Python scripts and intermediate artifacts under
                     // the synthetic step path; the post-agent `rm -rf runs/data-profile/`
                     // cleanup wipes them.
-                    allowedWritePrefix: `${deps.sessionsBasePath}/${analysisId}/runs/${DATA_PROFILE_RUN_LITERAL}/${DATA_PROFILE_STEP_LITERAL}`,
+                    allowedWritePrefix: `${workspaceRoot}/runs/${DATA_PROFILE_RUN_LITERAL}/${DATA_PROFILE_STEP_LITERAL}`,
                     nextFunctionId,
                     deadlineMs: () => deadlineAbs,
                 },

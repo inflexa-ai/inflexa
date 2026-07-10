@@ -63,7 +63,7 @@ export interface K8sClientConfig {
      */
     transport?: SandboxTransport;
     namespace: string;
-    /** PVC claim backing the shared session-tree volume. */
+    /** PVC claim backing the shared session PVC the workspace roots live under. */
     sessionPvc?: string;
     /** PVC claim mounted read-only at `/mnt/libs` when set. */
     libStorePvc?: string;

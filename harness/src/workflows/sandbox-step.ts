@@ -47,6 +47,7 @@ import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
+import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactRegistry } from "../execution/artifact-registry.js";
 import { walkStepArtifacts } from "../execution/post-step.js";
 import {
@@ -239,8 +240,8 @@ export interface SandboxStepDeps {
     readonly artifactRegistry: ArtifactRegistry;
     /** Workspace read seam — backs `read_file` in the metadata + summary loops. */
     readonly workspaceFs: WorkspaceFilesystem;
-    /** Base path holding per-analysis session directories. */
-    readonly sessionsBasePath: string;
+    /** Workspace-root resolution seam (see workspace/paths.ts). */
+    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Sandbox model id — provenance label for metadata + summary generation. */
     readonly model: string;
     /**

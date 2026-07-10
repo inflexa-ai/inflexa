@@ -331,8 +331,8 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
 // ── Disk I/O — load summaries + persist synthesis ───────────────────
 
 export interface LoadStepSummariesInput {
-    readonly sessionsBasePath: string;
-    readonly analysisId: string;
+    /** Absolute host root of the analysis's workspace tree. */
+    readonly workspaceRoot: string;
     readonly runId: string;
     readonly completedSteps: readonly string[];
     readonly agentByStepId?: Readonly<Record<string, string>>;
@@ -346,7 +346,7 @@ export interface LoadStepSummariesInput {
 export async function loadStepSummariesFromDisk(args: LoadStepSummariesInput): Promise<StepSummary[]> {
     const out: StepSummary[] = [];
     for (const stepId of args.completedSteps) {
-        const path = join(args.sessionsBasePath, args.analysisId, "runs", args.runId, stepId, "output", "summary.md");
+        const path = join(args.workspaceRoot, "runs", args.runId, stepId, "output", "summary.md");
         try {
             const markdown = await readFile(path, "utf8");
             if (markdown.trim().length === 0) continue;
@@ -364,14 +364,14 @@ export async function loadStepSummariesFromDisk(args: LoadStepSummariesInput): P
 }
 
 export interface PersistSynthesisInput {
-    readonly sessionsBasePath: string;
-    readonly analysisId: string;
+    /** Absolute host root of the analysis's workspace tree. */
+    readonly workspaceRoot: string;
     readonly runId: string;
     readonly synthesis: RunSynthesis;
 }
 
 export async function persistSynthesis(args: PersistSynthesisInput): Promise<string> {
-    const dir = join(args.sessionsBasePath, runDir(args.analysisId, args.runId));
+    const dir = join(args.workspaceRoot, runDir(args.runId));
     await mkdir(dir, { recursive: true });
     const path = join(dir, "synthesis.json");
     await writeFile(path, JSON.stringify(args.synthesis, null, 2));

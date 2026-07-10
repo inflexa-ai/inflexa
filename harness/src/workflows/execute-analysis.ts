@@ -9,7 +9,7 @@
  *     - create the run dir
  *     - open the running charge
  *     - emit `data-run-started`
- *     Inputs are NOT materialized here: the session tree's `data/` inputs must
+ *     Inputs are NOT materialized here: the workspace tree's `data/` inputs must
  *     already be populated by the embedder before the run is triggered — the
  *     workflow neither downloads nor stages input data.
  *     The run authorization is minted at the async edge (`executePlan` / TA
@@ -73,7 +73,7 @@ import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
 import type { EmitFn } from "../loop/types.js";
 import type { RunCharge } from "../billing/run-charge.js";
-import { runDir } from "../workspace/paths.js";
+import { runDir, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { isChatDataPart } from "../sandbox/sandbox-step-translate.js";
 import { synthesizeRun } from "../app/synthesize-run.js";
 import { type PlanStep, computeTopologicalLevels, scheduleReady, validatePlanDag } from "./execute-analysis-scheduler.js";
@@ -228,8 +228,8 @@ export interface ExecuteAnalysisDeps {
     readonly embedding: EmbeddingProvider;
     /** Registered child sandbox-step callable the body dispatches per step. */
     readonly sandboxStepCallable: SandboxStepCallable;
-    /** Session tree root — run dir creation + synthesis disk reads. */
-    readonly sessionsBasePath: string;
+    /** Workspace-root resolution seam — run dir creation + synthesis disk reads. */
+    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Model id for the synthesizer agent loop. */
     readonly synthesisModel: string;
     /** API keys for the bio/chem tools the embedded literature reviewer uses. */
@@ -342,7 +342,7 @@ export function synthesizeFindings(args: {
             pool: deps.pool,
             provider: deps.provider,
             embedding: deps.embedding,
-            sessionsBasePath: deps.sessionsBasePath,
+            resolveWorkspaceRoot: deps.resolveWorkspaceRoot,
             synthesisModel: deps.synthesisModel,
             bioKeys: deps.bioKeys,
         },
@@ -393,7 +393,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     const levels = computeTopologicalLevels(input.steps);
 
     // (1) validateAndInit — create the run dir + open the charge. Inputs are
-    // NOT materialized here: the embedder must have populated the session tree's
+    // NOT materialized here: the embedder must have populated the workspace tree's
     // `data/` before triggering (the workflow neither downloads nor stages). The
     // `cortex_runs` row was inserted by `executePlan` at the async edge;
     // the run authorization is already minted and rides in `input.runSession`.
@@ -545,7 +545,10 @@ async function validateAndInit(input: ExecuteAnalysisInput, runId: string, deps:
 
     await DBOS.runStep(
         async () => {
-            await mkdir(join(deps.sessionsBasePath, runDir(input.analysisId, runId)), {
+            // A resolver throw here (unknown analysis, unresolvable root) fails the
+            // step durably — exactly the contract the workspace-root-resolution spec
+            // requires of failures inside DBOS bodies.
+            await mkdir(join(deps.resolveWorkspaceRoot(input.analysisId), runDir(runId)), {
                 recursive: true,
             });
         },

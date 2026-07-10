@@ -26,7 +26,7 @@ import { tryQuery, type DbError } from "../lib/db-result.js";
 import { tryFs, type FsError } from "../lib/fs-result.js";
 import { AnalysisPlanSchema } from "../schemas/workflow-state.js";
 import { loadPlan } from "../state/index.js";
-import { latestPreviewVersion, previewDir, previewsForAnalysis } from "../workspace/paths.js";
+import { latestPreviewVersion, previewDir } from "../workspace/paths.js";
 
 const PREVIEW_META_FILE = "preview-meta.json";
 
@@ -199,11 +199,11 @@ function latestPreviewId(previewsRootAbs: string): ResultAsync<string | null, Fs
  * Null when nothing renders — the caller falls back to a chip.
  */
 export async function buildPreviewCardData(
-    sessionsBasePath: string,
-    resourceId: string,
+    /** Absolute host root of the analysis's workspace tree (previews live inside it). */
+    workspaceRoot: string,
     opts: { previewId?: string; title?: string; format?: "html" | "pdf" },
 ): Promise<PreviewCardData | null> {
-    const previewsRootAbs = join(sessionsBasePath, previewsForAnalysis(resourceId));
+    const previewsRootAbs = join(workspaceRoot, "previews");
 
     const resolveId: ResultAsync<string | null, FsError> = opts.previewId ? okAsync(opts.previewId) : latestPreviewId(previewsRootAbs);
 
@@ -211,7 +211,7 @@ export async function buildPreviewCardData(
         .andThen((previewId) => {
             if (!previewId) return okAsync<PreviewCardData | null, FsError>(null);
 
-            const previewRootAbs = join(sessionsBasePath, previewDir(resourceId, previewId));
+            const previewRootAbs = join(workspaceRoot, previewDir(previewId));
 
             return subdirs(previewRootAbs).andThen((versionDirs) => {
                 const version = latestPreviewVersion(versionDirs);

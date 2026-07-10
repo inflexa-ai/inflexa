@@ -94,7 +94,8 @@ export const BASE_SANDBOX_TOOLS: readonly SandboxToolName[] = ["listAvailablePac
 /** Per-step coordinates the composition root threads through every mutate tool. */
 export interface SandboxStepCoords {
     readonly sandbox: SandboxRef;
-    readonly sessionsBasePath: string;
+    /** Absolute host root of this analysis's workspace tree (resolved at the workflow body). */
+    readonly workspaceRoot: string;
     readonly analysisId: string;
     readonly runId: string;
     readonly stepId: string;
@@ -234,7 +235,7 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] 
     // location under the `/{analysisId}` mount — derived from the host path so
     // it is correct for non-step agents (data profiler, ephemeral) too.
     const hostWorkingDir = step.allowedWritePrefix;
-    const sandboxWorkingDir = toSandboxPath(step.sessionsBasePath, hostWorkingDir);
+    const sandboxWorkingDir = toSandboxPath(step.workspaceRoot, step.analysisId, hostWorkingDir);
 
     const mutateTools = readOnly
         ? []
@@ -242,7 +243,7 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] 
               const mutator = createWorkspaceMutator({
                   sandboxClient,
                   sandbox: step.sandbox,
-                  sessionsBasePath: step.sessionsBasePath,
+                  workspaceRoot: step.workspaceRoot,
                   analysisId: step.analysisId,
                   stepId: step.stepId,
                   workflowId: step.workflowId,
@@ -290,7 +291,7 @@ export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body
     // Substitute the concrete in-sandbox paths the agent sees so the orient-core
     // path model is accurate per step (see the harness-workspace-tools spec), not boilerplate prose.
     const analysisRoot = `/${deps.step.analysisId}`;
-    const workingDir = toSandboxPath(deps.step.sessionsBasePath, deps.step.allowedWritePrefix);
+    const workingDir = toSandboxPath(deps.step.workspaceRoot, deps.step.analysisId, deps.step.allowedWritePrefix);
     const resolvedBody = agentBody.split("{{WORKING_DIR}}").join(workingDir).split("{{ANALYSIS_ROOT}}").join(analysisRoot);
 
     const systemPrompt = composeSystemPrompt(resolvedBody, {

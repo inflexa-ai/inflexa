@@ -32,6 +32,7 @@ import {
     loadStepSummariesFromDisk,
     persistSynthesis,
 } from "../execution/run-synthesis.js";
+import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { ensureSearchIndex, searchIndexName } from "../workspace/search-config.js";
 import { createVectorStore } from "../state/vector-store.js";
 import { loadPlan, queryRun } from "../state/index.js";
@@ -42,7 +43,8 @@ export interface SynthesizeRunDeps {
     readonly provider: ChatProvider;
     /** Write-side embedder — its `dimensions` sizes the per-analysis index. */
     readonly embedding: EmbeddingProvider;
-    readonly sessionsBasePath: string;
+    /** Embedder-supplied workspace-root resolution seam (see workspace/paths.ts). */
+    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Model id for the synthesizer agent loop. */
     readonly synthesisModel: string;
     /** API keys for the bio/chem tools the embedded literature reviewer uses. */
@@ -73,15 +75,15 @@ export interface SynthesizeRunResult {
 }
 
 export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeRunParams): Promise<SynthesizeRunResult> {
-    const { pool, provider, embedding, sessionsBasePath, synthesisModel, bioKeys } = deps;
+    const { pool, provider, embedding, resolveWorkspaceRoot, synthesisModel, bioKeys } = deps;
     const { analysisId, runId, completedSteps, session, emit, onProgress } = params;
 
     await onProgress("starting", "Beginning literature-grounded synthesis");
 
     try {
+        const workspaceRoot = resolveWorkspaceRoot(analysisId);
         const summaries = await loadStepSummariesFromDisk({
-            sessionsBasePath,
-            analysisId,
+            workspaceRoot,
             runId,
             completedSteps,
         });
@@ -134,7 +136,7 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
         }
 
         await onProgress("persisting", "Persisting synthesis");
-        await persistSynthesis({ sessionsBasePath, analysisId, runId, synthesis });
+        await persistSynthesis({ workspaceRoot, runId, synthesis });
 
         await emit(buildRunSynthesisPart(runId, synthesis));
         await onProgress("complete", "Literature-grounded synthesis ready");

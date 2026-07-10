@@ -32,17 +32,17 @@ function stubPreviews(): PreviewPublisher {
 const NO_POOL = {} as Pool;
 
 async function setupSession() {
-    const sessionsBasePath = await mkdtemp(join(tmpdir(), "report-runner-test-"));
+    const base = await mkdtemp(join(tmpdir(), "report-runner-test-"));
     const resourceId = "analysis-r";
-    const analysisRoot = join(sessionsBasePath, resourceId);
-    await mkdir(analysisRoot, { recursive: true });
+    const workspaceRoot = join(base, resourceId);
+    await mkdir(workspaceRoot, { recursive: true });
     // Provide a minimal templates dir; build_report reads echarts-theme.json.
-    return { sessionsBasePath, resourceId };
+    return { workspaceRoot, resourceId };
 }
 
 describe("runReportIteration (closure-state outcome)", () => {
     test("captures success via the submit-report closure write", async () => {
-        const { sessionsBasePath, resourceId } = await setupSession();
+        const { workspaceRoot, resourceId } = await setupSession();
         const previewId = "prv-success";
 
         // Script the report-builder to:
@@ -89,7 +89,7 @@ describe("runReportIteration (closure-state outcome)", () => {
             },
             {
                 resourceId,
-                sessionPath: sessionsBasePath,
+                workspaceRoot,
                 previews: stubPreviews(),
                 previewId,
                 format: "html",
@@ -111,7 +111,7 @@ describe("runReportIteration (closure-state outcome)", () => {
         }
 
         // The version dir survived (not rolled back) and contains index.html.
-        const indexStat = await stat(join(sessionsBasePath, "previews", resourceId, previewId, "v1", "index.html"));
+        const indexStat = await stat(join(workspaceRoot, "previews", previewId, "v1", "index.html"));
         expect(indexStat.isFile()).toBe(true);
 
         // The child agent ran with the forSubAgent provenance.
@@ -120,7 +120,7 @@ describe("runReportIteration (closure-state outcome)", () => {
     });
 
     test("rolls back when the builder ends without calling submit_report", async () => {
-        const { sessionsBasePath, resourceId } = await setupSession();
+        const { workspaceRoot, resourceId } = await setupSession();
         const previewId = "prv-no-submit";
 
         // Agent writes something but never calls submit_report — closure-state
@@ -158,7 +158,7 @@ describe("runReportIteration (closure-state outcome)", () => {
             },
             {
                 resourceId,
-                sessionPath: sessionsBasePath,
+                workspaceRoot,
                 previews: stubPreviews(),
                 previewId,
                 format: "html",
@@ -178,7 +178,7 @@ describe("runReportIteration (closure-state outcome)", () => {
         }
 
         // Version dir was rolled back.
-        const versionDirAbs = join(sessionsBasePath, "previews", resourceId, previewId, "v1");
+        const versionDirAbs = join(workspaceRoot, "previews", previewId, "v1");
         let stillExists = true;
         try {
             await stat(versionDirAbs);
@@ -188,17 +188,17 @@ describe("runReportIteration (closure-state outcome)", () => {
         expect(stillExists).toBe(false);
 
         // The shared assets/ dir is preserved (not rolled back).
-        const assetsDirAbs = join(sessionsBasePath, "previews", resourceId, previewId, "assets");
+        const assetsDirAbs = join(workspaceRoot, "previews", previewId, "assets");
         const ast = await stat(assetsDirAbs);
         expect(ast.isDirectory()).toBe(true);
     });
 
     test("explicit baseVersion=0 does not collide with existing v1", async () => {
-        const { sessionsBasePath, resourceId } = await setupSession();
+        const { workspaceRoot, resourceId } = await setupSession();
         const previewId = "prv-collide";
 
         // Seed an existing v1 with a non-empty index.html.
-        const v1Dir = join(sessionsBasePath, "previews", resourceId, previewId, "v1");
+        const v1Dir = join(workspaceRoot, "previews", previewId, "v1");
         await mkdir(v1Dir, { recursive: true });
         await writeFile(join(v1Dir, "index.html"), "<html>v1</html>", "utf8");
 
@@ -232,7 +232,7 @@ describe("runReportIteration (closure-state outcome)", () => {
             },
             {
                 resourceId,
-                sessionPath: sessionsBasePath,
+                workspaceRoot,
                 previews: stubPreviews(),
                 previewId,
                 baseVersion: 0,
@@ -253,7 +253,7 @@ describe("runReportIteration (closure-state outcome)", () => {
     });
 
     test("phantom-success: submit_report ok but index.html missing → fails", async () => {
-        const { sessionsBasePath, resourceId } = await setupSession();
+        const { workspaceRoot, resourceId } = await setupSession();
         const previewId = "prv-phantom";
 
         // Agent calls submit_report without ever writing index.html. The
@@ -307,7 +307,7 @@ describe("runReportIteration (closure-state outcome)", () => {
             },
             {
                 resourceId,
-                sessionPath: sessionsBasePath,
+                workspaceRoot,
                 previews: stubPreviews(),
                 previewId,
                 format: "html",

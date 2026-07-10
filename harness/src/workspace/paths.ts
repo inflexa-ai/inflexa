@@ -2,7 +2,7 @@
  * Canonical workspace path resolver — shared between the read surface and
  * the sandbox-gated mutate surface.
  *
- * One module that maps agent-supplied paths to physical session-tree
+ * One module that maps agent-supplied paths to physical workspace-tree
  * locations under the frame-aware path model (see the harness-workspace-tools spec):
  *
  *   - A **relative** path resolves against the caller's `workingDir` (the
@@ -11,6 +11,13 @@
  *   - An **absolute `/{analysisId}/...`** path resolves against the analysis
  *     root regardless of `workingDir`. Frame-independent — the canonical
  *     interchange form for paths crossing an agent or frame boundary.
+ *
+ * The analysis root itself comes from the embedder through the
+ * {@link ResolveWorkspaceRoot} seam — the harness owns the layout *inside*
+ * the root, the embedder owns *where* the root lives. Host paths carry no
+ * `{resourceId}` segment (the resolved root already identifies the resource);
+ * the `/{resourceId}/…` form survives only as the container-side view, which
+ * bind mounts keep independent of the host location.
  *
  * Both surfaces share this resolver, so a file a step writes is read back at
  * the identical path — agreement is structural, not re-implemented per tool.
@@ -21,7 +28,29 @@
 
 import { relative as relativePath, resolve as resolvePath, sep } from "node:path";
 
-import { previewResourceId } from "@inflexa-ai/harness/contracts/content-url.js";
+/**
+ * The workspace-root resolution seam (see the workspace-root-resolution spec).
+ *
+ * Maps a resource id to the absolute host directory of that resource's
+ * workspace tree. Supplied by the embedder at the composition root and closed
+ * over once at workflow registration — the *function* is fixed per process,
+ * its *result* varies per resource, which is what makes per-resource roots
+ * compatible with DBOS's register-once model.
+ *
+ * Realization contract:
+ *   - **Injective** — two live resources never resolve to the same root; the
+ *     harness treats the root as exclusively owned and does not verify this.
+ *   - **Durable-state-backed** — resolve from host state that survives the
+ *     process (a DB row, a config map), never process memory, so a recovered
+ *     workflow on a fresh process resolves correctly.
+ *   - **Stable while the resource has an active run** — derived paths are
+ *     recorded in durable step outputs; preventing mid-run moves is the
+ *     embedder's job.
+ *   - **Throws on unknown resources** — inside DBOS bodies the failure must
+ *     cross the step boundary as a throw so the step is durably recorded as
+ *     failed (see `lib/result.ts` house rules).
+ */
+export type ResolveWorkspaceRoot = (resourceId: string) => string;
 
 /** Result of resolving a workspace path against the canonical layout. */
 export type ResolvedPath = { readonly kind: "ok"; readonly absolute: string; readonly relative: string } | { readonly kind: "out_of_scope" };
@@ -48,21 +77,22 @@ export type WriteResolvedPath =
  *
  * The returned `relative` is always **analysis-root-relative** (used to build
  * the in-sandbox `/{analysisId}/…` path). Returns `out_of_scope` for any input
- * that escapes `${sessionsBasePath}/${analysisId}/` (`..` traversal, absolute
+ * that escapes the resolved workspace root (`..` traversal, absolute host
  * paths outside the tree, `/{otherAnalysisId}/...`).
  */
 export function resolveWorkspacePath(args: {
-    readonly sessionsBasePath: string;
+    /** Absolute host root of the analysis's workspace tree (from the embedder's resolver). */
+    readonly workspaceRoot: string;
     readonly analysisId: string;
     readonly path: string;
     /** Absolute host base that relative paths resolve against. Defaults to the analysis root. */
     readonly workingDir?: string;
 }): ResolvedPath {
-    const { sessionsBasePath, analysisId, path } = args;
+    const { workspaceRoot, analysisId, path } = args;
 
     if (path.length === 0 || path.includes("\0")) return { kind: "out_of_scope" };
 
-    const analysisRoot = resolvePath(sessionsBasePath, analysisId);
+    const analysisRoot = resolvePath(workspaceRoot);
 
     let absolute: string;
     if (path.startsWith("/")) {
@@ -93,7 +123,8 @@ export function resolveWorkspacePath(args: {
  * directory (for a plannable step, `stepWritePrefix(...)`).
  */
 export function resolveForWrite(args: {
-    readonly sessionsBasePath: string;
+    /** Absolute host root of the analysis's workspace tree (from the embedder's resolver). */
+    readonly workspaceRoot: string;
     readonly analysisId: string;
     readonly path: string;
     readonly workingDir: string;
@@ -111,41 +142,40 @@ export function resolveForWrite(args: {
 /**
  * Derive the canonical writable-prefix absolute path for a sandbox step.
  * Single source of truth — the agent does NOT supply this; it is computed
- * from the session base + analysis/run/step coordinates the workflow owns.
+ * from the workspace root + run/step coordinates the workflow owns.
  */
-export function stepWritePrefix(args: {
-    readonly sessionsBasePath: string;
-    readonly analysisId: string;
-    readonly runId: string;
-    readonly stepId: string;
-}): string {
-    return resolvePath(args.sessionsBasePath, args.analysisId, "runs", args.runId, args.stepId);
+export function stepWritePrefix(args: { readonly workspaceRoot: string; readonly runId: string; readonly stepId: string }): string {
+    return resolvePath(args.workspaceRoot, "runs", args.runId, args.stepId);
 }
 
 /**
- * Map a host-side absolute path within the session tree to its in-sandbox
- * absolute path. Each analysis is bind-mounted at `/{analysisId}`, so the
- * session-base-relative tail is identical on both sides — only the root
- * differs. Single source of truth for the `execute_command` / `write_file`
- * cwd and the `{{WORKING_DIR}}` prompt substitution (see the harness-workspace-tools spec).
+ * Map a host-side absolute path within an analysis's workspace tree to its
+ * in-sandbox absolute path. The tree is bind-mounted at `/{resourceId}`, so
+ * the sandbox path is the resource id plus the root-relative tail — the host
+ * location of the root never leaks into the container. Single source of truth
+ * for the `execute_command` / `write_file` cwd and the `{{WORKING_DIR}}`
+ * prompt substitution (see the harness-workspace-tools spec).
  */
-export function toSandboxPath(sessionsBasePath: string, hostAbsPath: string): string {
-    return "/" + relativePath(sessionsBasePath, hostAbsPath).split(sep).join("/");
+export function toSandboxPath(workspaceRoot: string, resourceId: string, hostAbsPath: string): string {
+    const tail = relativePath(workspaceRoot, hostAbsPath).split(sep).join("/");
+    return tail === "" ? `/${resourceId}` : `/${resourceId}/${tail}`;
 }
 
 /**
- * Versioned preview directory — consistent path at every layer (URL, PVC, S3).
- * Uses `previewResourceId` from `@inflexa-ai/harness/contracts` so the formula
- * lives in exactly one TypeScript file. Drift against the Go mirror
- * is caught by the shared test vector in react-client.
+ * Versioned preview directory, workspace-root-relative. Previews live inside
+ * the analysis tree (`previews/{previewId}/v{N}`); the content-token `res`
+ * claim keeps the separate `previews/{analysisId}/{previewId}` formula in
+ * `contracts/content-url.ts` — that is URL space, not a filesystem sub-path,
+ * and hosts that serve previews map one onto the other themselves.
  */
-export function previewVersionDir(resourceId: string, previewId: string, version: number): string {
-    return `${previewResourceId(resourceId, previewId)}/v${version}`;
+export function previewVersionDir(previewId: string, version: number): string {
+    return `${previewDir(previewId)}/v${version}`;
 }
 
-/** Preview root for a specific preview (all versions). */
-export function previewDir(resourceId: string, previewId: string): string {
-    return previewResourceId(resourceId, previewId);
+/** Preview root for a specific preview (all versions), workspace-root-relative. */
+export function previewDir(previewId: string): string {
+    assertSafeId(previewId, "previewId");
+    return `previews/${previewId}`;
 }
 
 /**
@@ -187,25 +217,17 @@ function assertSafeId(value: string, label: string): void {
     }
 }
 
-/** Input data directory (immutable). */
-export function analysisDataDir(resourceId: string): string {
-    assertSafeId(resourceId, "resourceId");
-    return `${resourceId}/data`;
-}
-
-/** Root directory for a specific workflow run. */
-export function runDir(resourceId: string, runId: string): string {
-    assertSafeId(resourceId, "resourceId");
+/** Root directory for a specific workflow run, workspace-root-relative. */
+export function runDir(runId: string): string {
     assertSafeId(runId, "runId");
-    return `${resourceId}/runs/${runId}`;
+    return `runs/${runId}`;
 }
 
-/** Step directory within a run. */
-export function runStepDir(resourceId: string, runId: string, stepId: string): string {
-    assertSafeId(resourceId, "resourceId");
+/** Step directory within a run, workspace-root-relative. */
+export function runStepDir(runId: string, stepId: string): string {
     assertSafeId(runId, "runId");
     assertSafeId(stepId, "stepId");
-    return `${resourceId}/runs/${runId}/${stepId}`;
+    return `runs/${runId}/${stepId}`;
 }
 
 /** Step subdirectory for a specific artifact type. */
@@ -215,17 +237,10 @@ export function stepSubdir(stepBase: string, type: StepSubdirType): string {
     return `${stepBase}/${type}`;
 }
 
-/** Report output directory. */
-export function reportDir(resourceId: string, reportId: string): string {
-    assertSafeId(resourceId, "resourceId");
+/** Report output directory, workspace-root-relative. */
+export function reportDir(reportId: string): string {
     assertSafeId(reportId, "reportId");
-    return `${resourceId}/reports/${reportId}`;
-}
-
-/** All previews for an analysis (authorization boundary). */
-export function previewsForAnalysis(resourceId: string): string {
-    assertSafeId(resourceId, "resourceId");
-    return `previews/${resourceId}`;
+    return `reports/${reportId}`;
 }
 
 /** All standard subdirectory types for a step. */

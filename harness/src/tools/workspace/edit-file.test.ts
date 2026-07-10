@@ -60,7 +60,7 @@ function makeFakeClient(sessionsBasePath: string): FakeClient {
             };
         },
         async isAlive() {
-            return true;
+            return { alive: true, oomKilled: false };
         },
         async teardown() {},
         async teardownById() {},
@@ -83,23 +83,23 @@ describe("edit_file tool", () => {
     });
 
     function buildTool() {
-        const fs = createWorkspaceFilesystem({ sessionsBasePath });
+        const workspaceRoot = join(sessionsBasePath, ANALYSIS);
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(sessionsBasePath, id) });
         const client = makeFakeClient(sessionsBasePath);
         const workingDir = stepWritePrefix({
-            sessionsBasePath,
-            analysisId: ANALYSIS,
+            workspaceRoot,
             runId: RUN,
             stepId: STEP,
         });
         const mutator = createWorkspaceMutator({
             sandboxClient: client,
             sandbox: makeSandboxRef(),
-            sessionsBasePath,
+            workspaceRoot,
             analysisId: ANALYSIS,
             stepId: STEP,
             workflowId: "wf1",
             workingDir,
-            sandboxWorkingDir: toSandboxPath(sessionsBasePath, workingDir),
+            sandboxWorkingDir: toSandboxPath(workspaceRoot, ANALYSIS, workingDir),
             nextFunctionId: () => "fn1",
             deadlineMs: () => 9_999_999,
         });

@@ -59,7 +59,7 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
             const expected = await computeSha256File(join(root, upstreamRel));
 
             await reconcileManifestWithDisk({
-                sessionPath,
+                workspaceRoot: root,
                 resourceId: RID,
                 runId: "run-001",
                 stepId: "de",
@@ -104,7 +104,7 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
             const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: "output/result.csv", size: 0, type: "output", hash: "" }];
 
             const result = await reconcileManifestWithDisk({
-                sessionPath,
+                workspaceRoot: root,
                 resourceId: RID,
                 runId: "run-001",
                 stepId: "de",
@@ -124,11 +124,11 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
     });
 
     test("throws when an attested input is missing at reconcile (fail-fast)", async () => {
-        const { sessionPath, collector, manifest } = await setup({ writeUpstream: false });
+        const { sessionPath, root, collector, manifest } = await setup({ writeUpstream: false });
         try {
             await expect(
                 reconcileManifestWithDisk({
-                    sessionPath,
+                    workspaceRoot: root,
                     resourceId: RID,
                     runId: "run-001",
                     stepId: "de",

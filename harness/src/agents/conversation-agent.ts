@@ -35,6 +35,7 @@ import type { AgentDefinition } from "../loop/types.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { Tool } from "../tools/define-tool.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
+import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import { conversationPrompt } from "../prompts/conversation.js";
 import { composeSystemPrompt } from "./system-prompt.js";
@@ -115,8 +116,8 @@ export interface ConversationAgentDeps {
      * starts it, and awaits the result inline within the chat turn.
      */
     readonly ephemeralWorkflow: (input: EphemeralWorkflowInput) => Promise<EphemeralResult>;
-    /** Filesystem root every sandbox-mounted volume resolves under. */
-    readonly sessionsBasePath: string;
+    /** Workspace-root resolution seam (see workspace/paths.ts). */
+    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /**
      * Async-edge run-authorization seam — injected, not constructed here.
      * `execute_plan` and `run_ephemeral` turn the caller's opaque auth into a
@@ -160,7 +161,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         model,
         executeAnalysisWorkflow,
         ephemeralWorkflow,
-        sessionsBasePath,
+        resolveWorkspaceRoot,
         runAuthorizer,
         runLauncher,
         createPreviewPublisher,
@@ -228,7 +229,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createIterateReportTool({
             provider,
             pool,
-            sessionsBasePath,
+            resolveWorkspaceRoot,
             model,
             templatesDir,
             chrome,

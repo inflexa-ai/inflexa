@@ -24,6 +24,7 @@
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { join } from "node:path";
 import type { Pool } from "pg";
 import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat-parts.js";
 
@@ -251,7 +252,7 @@ function makeDeps(opts: {
         sandboxStepCallable: async () => {
             throw new Error("sandboxStepCallable should not be invoked directly");
         },
-        sessionsBasePath: "/tmp/cortex-execute-analysis-test",
+        resolveWorkspaceRoot: (id: string) => join("/tmp/cortex-execute-analysis-test", id),
         synthesisModel: "test-synthesis-model",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         synthesisEnabled: opts.synthesisEnabled ?? false,

@@ -17,6 +17,7 @@ import type { Pool } from "pg";
 
 import type { AgentChat, EmbeddingProvider } from "../providers/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
+import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import { unwrapOrThrow } from "../lib/result.js";
@@ -42,7 +43,8 @@ export interface PostStepPipelineDeps {
     readonly embedding: EmbeddingProvider;
     readonly workspaceFs: WorkspaceFilesystem;
     readonly artifactRegistry: ArtifactRegistry;
-    readonly sessionsBasePath: string;
+    /** Workspace-root resolution seam (see workspace/paths.ts). */
+    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Sandbox model id — provenance label for metadata + summary. */
     readonly model: string;
 }
@@ -136,7 +138,7 @@ export async function reconcileAndRegisterStepArtifacts(
     const { input, session, lineageCollector } = postCtx;
 
     const reconciled = await reconcileManifestWithDisk({
-        sessionPath: deps.sessionsBasePath,
+        workspaceRoot: deps.resolveWorkspaceRoot(input.analysisId),
         resourceId: input.analysisId,
         runId: input.runId,
         stepId: input.stepId,

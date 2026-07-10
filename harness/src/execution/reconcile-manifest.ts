@@ -1,5 +1,5 @@
 /**
- * Reconcile a step's artifact manifest against the on-disk session directory.
+ * Reconcile a step's artifact manifest against the on-disk workspace tree.
  *
  * Runs after the sandbox is destroyed and before any artifact is synced to
  * permanent storage. Two responsibilities:
@@ -28,8 +28,8 @@ import { computeSha256File, hasValidContentHash } from "../lib/fs-helpers.js";
 import { artifactReconcileDropped } from "../lib/metrics.js";
 
 export interface ReconcileManifestInput {
-    /** Absolute filesystem root for analysis sessions (`sessionsBasePath()`). */
-    sessionPath: string;
+    /** Absolute host root of the analysis's workspace tree. */
+    workspaceRoot: string;
     /** Analysis (resource) ID. */
     resourceId: string;
     /** Run ID owning this step. */
@@ -52,8 +52,8 @@ export interface ReconcileManifestResult {
 }
 
 export async function reconcileManifestWithDisk(input: ReconcileManifestInput): Promise<ReconcileManifestResult> {
-    const { sessionPath, resourceId, runId, stepId, agentId, manifest, collector } = input;
-    const stepRoot = path.join(sessionPath, resourceId, "runs", runId, stepId);
+    const { workspaceRoot, resourceId, runId, stepId, agentId, manifest, collector } = input;
+    const stepRoot = path.join(workspaceRoot, "runs", runId, stepId);
 
     const reconciled: ArtifactManifestEntry[] = [];
     let droppedCount = 0;
@@ -104,7 +104,7 @@ export async function reconcileManifestWithDisk(input: ReconcileManifestInput): 
         reconciled.push({ ...entry, hash, size: info.size });
     }
 
-    await fillInputHashesFromDisk(collector, sessionPath, resourceId, runId, stepId);
+    await fillInputHashesFromDisk(collector, workspaceRoot, resourceId, runId, stepId);
 
     return { manifest: reconciled, droppedCount };
 }
@@ -122,17 +122,27 @@ export async function reconcileManifestWithDisk(input: ReconcileManifestInput): 
  * Lineage attestation is fail-fast: an input we cannot hash (gone, or resolving
  * outside the analysis tree) throws rather than registering a hashless edge.
  */
-async function fillInputHashesFromDisk(collector: ProvenanceCollector, sessionPath: string, resourceId: string, runId: string, stepId: string): Promise<void> {
-    const resourceRoot = path.join(sessionPath, resourceId);
+async function fillInputHashesFromDisk(
+    collector: ProvenanceCollector,
+    workspaceRoot: string,
+    resourceId: string,
+    runId: string,
+    stepId: string,
+): Promise<void> {
+    const resourceRoot = path.resolve(workspaceRoot);
 
     for (const ref of collector.getTrackedInputs()) {
         if (ref.source === "artifacts") continue;
         if (hasValidContentHash(ref.hash)) continue;
 
-        // `ref.path` is the absolute container path `/{resourceId}/...`; map it onto
-        // the host session tree. `path.join` normalizes any `..`, and the bound
-        // confines the read to the analysis tree.
-        const hostPath = path.join(sessionPath, ref.path);
+        // `ref.path` is the absolute container path `/{resourceId}/...`; strip the
+        // mount segment and map the tail onto the host workspace root. `path.join`
+        // normalizes any `..`, and the bound confines the read to the analysis tree.
+        const containerPrefix = `/${resourceId}`;
+        if (ref.path !== containerPrefix && !ref.path.startsWith(containerPrefix + "/")) {
+            throw new Error(`[reconcile-manifest] input read resolves outside the analysis tree: path=${ref.path} stepId=${stepId} runId=${runId}`);
+        }
+        const hostPath = path.join(resourceRoot, ref.path.slice(containerPrefix.length + 1));
         if (hostPath !== resourceRoot && !hostPath.startsWith(resourceRoot + path.sep)) {
             throw new Error(`[reconcile-manifest] input read resolves outside the analysis tree: path=${ref.path} stepId=${stepId} runId=${runId}`);
         }

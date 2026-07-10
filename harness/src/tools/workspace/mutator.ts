@@ -29,8 +29,8 @@ export type WriteFileResult =
 export interface WorkspaceMutatorDeps {
     readonly sandboxClient: SandboxClient;
     readonly sandbox: SandboxRef;
-    /** Host-side base path containing per-analysis subtrees — used by the resolver. */
-    readonly sessionsBasePath: string;
+    /** Absolute host root of this analysis's workspace tree — used by the resolver. */
+    readonly workspaceRoot: string;
     readonly analysisId: string;
     readonly stepId: string;
     readonly workflowId: string;
@@ -68,7 +68,7 @@ export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMut
     return {
         async writeFile({ path, content, emit }) {
             const scoped = resolveForWrite({
-                sessionsBasePath: deps.sessionsBasePath,
+                workspaceRoot: deps.workspaceRoot,
                 analysisId: deps.analysisId,
                 workingDir: deps.workingDir,
                 path,

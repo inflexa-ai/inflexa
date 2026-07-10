@@ -1,15 +1,15 @@
 /**
  * The workspace read seam — `{ readFile, list, stat }` over the analysis
- * session tree. A construction-time dependency (see the harness-durable-runtime spec): the composition
+ * workspace tree. A construction-time dependency (see the harness-durable-runtime spec): the composition
  * root builds one `WorkspaceFilesystem` and passes it to tool factories.
  *
- * Reads resolve from the host session directory when the file is present and
+ * Reads resolve from the analysis's workspace root when the file is present and
  * fall back to an embedder-supplied presigned URL otherwise. The seam writes no
  * provenance — reads don't produce lineage — and does not depend on any
  * sandbox.
  *
  * Scoping is enforced once, here, by `resolveWorkspacePath`: any path that
- * escapes `${sessionsBasePath}/${analysisId}/` is rejected before any I/O.
+ * escapes the analysis's resolved workspace root is rejected before any I/O.
  * `read_file` / `grep` / any future reader share the chokepoint.
  *
  * Reads roam the whole tree read-only, so the seam never confines. Relative
@@ -40,7 +40,7 @@ import { ResultAsync, ok } from "neverthrow";
 import type { AgentSession } from "../auth/types.js";
 import { scopeResource } from "../auth/types.js";
 import { type FsError, tryFetch, tryFs } from "../lib/fs-result.js";
-import { resolveWorkspacePath } from "./paths.js";
+import { resolveWorkspacePath, type ResolveWorkspaceRoot } from "./paths.js";
 
 // ── Result types ──────────────────────────────────────────────────────────
 
@@ -106,8 +106,8 @@ export interface PresignedFallback {
 }
 
 export interface WorkspaceFilesystemDeps {
-    /** Absolute path to the host directory containing per-analysis subtrees. */
-    readonly sessionsBasePath: string;
+    /** Embedder-supplied workspace-root resolution seam (see workspace/paths.ts). */
+    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Optional fallback for files not present locally. */
     readonly presignedFallback?: PresignedFallback;
 }
@@ -115,11 +115,11 @@ export interface WorkspaceFilesystemDeps {
 // ── Constructor ───────────────────────────────────────────────────────────
 
 export function createWorkspaceFilesystem(deps: WorkspaceFilesystemDeps): WorkspaceFilesystem {
-    const { sessionsBasePath, presignedFallback } = deps;
+    const { resolveWorkspaceRoot, presignedFallback } = deps;
 
     function resolveFor(session: AgentSession, path: string, workingDir?: string) {
         const { resourceId: analysisId } = scopeResource(session.scope);
-        return resolveWorkspacePath({ sessionsBasePath, analysisId, path, workingDir });
+        return resolveWorkspacePath({ workspaceRoot: resolveWorkspaceRoot(analysisId), analysisId, path, workingDir });
     }
 
     return {

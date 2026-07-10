@@ -293,7 +293,8 @@ describe("contentToCortexMessages", () => {
         const previewId = "prv-3860785d";
         const sessions = await mkdtemp(join(tmpdir(), "cortex-preview-rc-"));
         try {
-            const root = join(sessions, "previews", analysisId, previewId);
+            const workspaceRoot = join(sessions, analysisId);
+            const root = join(workspaceRoot, "previews", previewId);
             await mkdir(join(root, "v1"), { recursive: true });
             await writeFile(join(root, "v1", "index.html"), "<html></html>");
             await writeFile(join(root, "preview-meta.json"), JSON.stringify({ title: "Meta Title", format: "html" }));
@@ -315,7 +316,7 @@ describe("contentToCortexMessages", () => {
                         ],
                     }),
                 ],
-                createCardResolver(pool, analysisId, sessions),
+                createCardResolver(pool, analysisId, workspaceRoot),
             );
 
             expect(cortex[0]!.parts).toEqual([

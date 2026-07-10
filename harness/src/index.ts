@@ -155,7 +155,7 @@ export type { CortexChatPartType, PartDescriptor, PartEmitter, PartConsumer } fr
 // Embedder runtime surface — what a same-process host needs to run durable
 // workflows itself: the DBOS lifecycle, per-workflow registration + triggers,
 // the staged-input manifest contract, the sandbox/workspace factories over its
-// session tree, and the exec-callback envelope pieces (the HTTP→DBOS-topic
+// workspace tree, and the exec-callback envelope pieces (the HTTP→DBOS-topic
 // ingress is the embedder's to host; see the sandbox-server callback protocol).
 
 // DBOS lifecycle. `sweepEphemeralWorkflows` is a pre-launch boot duty: once the
@@ -213,7 +213,11 @@ export type { DataProfileInputFile, DataProfileResult, DataProfileStatus } from 
 // Staged-input manifest contract (the embedder stages; the harness only reads).
 export type { StagedInput } from "./execution/staged-input.js";
 
-// Sandbox + workspace seams over the embedder's session tree.
+// Sandbox + workspace seams over the embedder-resolved workspace roots.
+// `ResolveWorkspaceRoot` is the location seam itself: the embedder maps each
+// resource id to the absolute host directory of its workspace tree (see the
+// workspace-root-resolution spec); every harness path derives from it.
+export type { ResolveWorkspaceRoot } from "./workspace/paths.js";
 export { createSandboxClient } from "./sandbox/create-sandbox.js";
 export type { CreateSandboxClientConfig, SandboxBackendConfig } from "./sandbox/create-sandbox.js";
 export type { SandboxClient } from "./sandbox/client.js";
@@ -274,9 +278,9 @@ export type { DbError } from "./lib/db-result.js";
 // Backs `WatchdogDeps.queryActiveSandboxes` when the embedder wires the watchdog.
 export { queryActiveSandboxes } from "./state/active-sandboxes.js";
 
-// Session-tree path convention — the absolute write prefix each sandbox step
-// confines its artifact writes to.
-export { runStepDir } from "./workspace/paths.js";
+// Workspace-tree path convention — the root-relative step directory each
+// sandbox step confines its artifact writes to (join onto the resolved root).
+export { runStepDir, stepWritePrefix } from "./workspace/paths.js";
 
 // Sandbox-hygiene scheduled workflows. Reaper reclaims a dead host's orphaned
 // containers; watchdog converts a dead sandbox into a prompt step failure

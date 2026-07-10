@@ -30,7 +30,7 @@ import { join } from "node:path";
 import { scopeResource } from "../auth/types.js";
 import type { ChatProvider } from "../providers/types.js";
 import { defineTool, type Tool, type ToolError } from "./define-tool.js";
-import { previewDir } from "../workspace/paths.js";
+import { previewDir, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { runReportIteration } from "../execution/report-runner.js";
 import { formatBytes, stageReportAssets, type StagedAsset } from "./lib/report-preflight.js";
 import type { PreviewPublisher } from "./report/preview-publisher.js";
@@ -232,7 +232,8 @@ type SectionInput = z.infer<typeof SectionSchema>;
 export interface IterateReportDeps {
     readonly provider: ChatProvider;
     readonly pool: Pool;
-    readonly sessionsBasePath: string;
+    /** Embedder-supplied workspace-root resolution seam (see workspace/paths.ts). */
+    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Model id — provenance / metric label; provider owns the wire model. */
     readonly model: string;
     /** Root templates dir; report-runner joins `report-html`. */
@@ -275,17 +276,16 @@ export function createIterateReportTool(deps: IterateReportDeps): Tool {
         inputSchema: iterateReportInputSchema,
         execute: async (input, ctx): Promise<Result<IterateReportOutput, ToolError>> => {
             const { resourceId } = scopeResource(ctx.session.scope);
-            const sessionPath = deps.sessionsBasePath;
+            const analysisRoot = deps.resolveWorkspaceRoot(resourceId);
 
             // Zod fills the default at parse time but the static type keeps it
             // optional — re-apply so the runner sees a concrete value.
             const format: "html" | "pdf" = input.format ?? "html";
 
             const previewId = input.previewId ?? `prv-${randomUUID().slice(0, 8)}`;
-            const previewRootAbs = join(sessionPath, previewDir(resourceId, previewId));
+            const previewRootAbs = join(analysisRoot, previewDir(previewId));
             const assetsDirAbs = join(previewRootAbs, "assets");
             const metaPathAbs = join(previewRootAbs, PREVIEW_META_FILE);
-            const analysisRoot = join(sessionPath, resourceId);
 
             // Iteration mode: recover the title from the creation-time meta file
             // so the data-preview part keeps the original title across versions.
@@ -381,7 +381,7 @@ export function createIterateReportTool(deps: IterateReportDeps): Tool {
                 },
                 {
                     resourceId,
-                    sessionPath,
+                    workspaceRoot: analysisRoot,
                     previews,
                     previewId,
                     baseVersion: input.baseVersion,

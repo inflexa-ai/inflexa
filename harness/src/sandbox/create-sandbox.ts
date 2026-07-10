@@ -20,6 +20,7 @@ import type { Pool } from "pg";
 import type pino from "pino";
 
 import { clampResources, type ResourceLimits } from "../config/resource-limits.js";
+import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { tryMutation } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { clearSandboxRef, setSandboxRef } from "../state/index.js";
@@ -61,18 +62,19 @@ export interface CreateSandboxClientConfig {
     /** K8s namespace; only used by the k8s backend. */
     namespace?: string;
     /**
-     * Session-tree root — dev host dir Docker binds, or the `cortex-sessions`
-     * PVC mountpoint on the Cortex pod in prod. Always required: the writable
-     * step dir is pre-created here regardless of backend.
+     * Workspace-root resolution seam (see workspace/paths.ts). Docker binds
+     * each analysis's resolved root; on K8s the resolved roots live under the
+     * session PVC. Always required: the writable step dir is pre-created under
+     * the resolved root regardless of backend.
      */
-    sessionsBasePath: string;
+    resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Docker: host dir bind-mounted read-only at `/mnt/libs`. */
     libStorePath?: string;
     /** Docker: host dir bind-mounted read-only at `/mnt/refs`. */
     refStorePath?: string;
     /** Docker: force the container platform (e.g. `linux/amd64`) so the sandbox matches the mounted lib store's arch. */
     platform?: string;
-    /** K8s: PVC claim backing the session-tree volume. */
+    /** K8s: PVC claim backing the session PVC the workspace roots live under. */
     sessionPvc?: string;
     /** K8s: PVC claim mounted read-only at `/mnt/libs`. */
     libStorePvc?: string;
@@ -139,7 +141,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   image: config.image,
                   cortexBaseUrl: config.cortexBaseUrl,
                   transport,
-                  sessionsBasePath: config.sessionsBasePath,
+                  resolveWorkspaceRoot: config.resolveWorkspaceRoot,
                   libStorePath: config.libStorePath,
                   refStorePath: config.refStorePath,
                   platform: config.platform,
@@ -147,15 +149,15 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   registerSandbox,
               });
 
-    // Backend-agnostic pre-creation of the writable step tree. In dev this is
-    // the host dir Docker binds; in prod `sessionsBasePath` is the
-    // `cortex-sessions` PVC mountpoint on the Cortex pod — the same volume the
-    // sandbox pod mounts via subPath. mkdir(recursive) is idempotent, so an
-    // existing tree (replay, retry) is not an error.
+    // Backend-agnostic pre-creation of the writable step tree under the
+    // analysis's resolved workspace root. On Docker that root is the host dir
+    // the container binds; on K8s it lives under the session PVC the sandbox
+    // pod mounts via subPath. mkdir(recursive) is idempotent, so an existing
+    // tree (replay, retry) is not an error.
     const precreateStepTree = async (meta: CreateSandboxMeta): Promise<void> => {
         // A read-only sandbox has no writable step mount — nothing to pre-create.
         if (meta.readOnly) return;
-        const stepDir = join(config.sessionsBasePath, meta.analysisId, "runs", meta.runId, meta.stepId);
+        const stepDir = join(config.resolveWorkspaceRoot(meta.analysisId), "runs", meta.runId, meta.stepId);
         await mkdir(stepDir, { recursive: true });
         await Promise.all(STEP_SUBDIRS.map((sub) => mkdir(join(stepDir, sub), { recursive: true })));
     };
