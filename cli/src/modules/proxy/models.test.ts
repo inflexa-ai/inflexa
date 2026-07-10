@@ -5,20 +5,25 @@ import { dirname } from "node:path";
 import "../../extensions/index.ts"; // installs Response.prototype.jsonWith, which resolveModelId uses
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { __resetModelCacheForTest, modelProvider, pickDefaultModel, readApiKey, resolveModelId } from "./models.ts";
+import { __resetModelCacheForTest, modelMatchesProvider, pickDefaultModel, readApiKey, resolveModelId } from "./models.ts";
 
-describe("modelProvider", () => {
-    test("maps each proxy-servable family to its vendor slug, case-insensitively", () => {
-        expect(modelProvider("claude-sonnet-4-5")).toBe("anthropic");
-        expect(modelProvider("My-Claude-3.5")).toBe("anthropic");
-        expect(modelProvider("gpt-4o")).toBe("openai");
-        expect(modelProvider("gemini-2.5-pro")).toBe("google");
-        expect(modelProvider("qwen-72b")).toBe("qwen");
+describe("modelMatchesProvider", () => {
+    test("a resolved id whose family matches the configured provider agrees (provider→family, case-insensitive)", () => {
+        expect(modelMatchesProvider("anthropic", "claude-sonnet-4-5")).toBe(true);
+        expect(modelMatchesProvider("anthropic", "My-Claude-3.5")).toBe(true);
+        expect(modelMatchesProvider("openai", "gpt-4o")).toBe(true);
+        expect(modelMatchesProvider("google", "gemini-2.5-pro")).toBe(true);
+        expect(modelMatchesProvider("qwen", "qwen-72b")).toBe(true);
     });
 
-    test("an unrecognized family derives 'unknown' — never a silent guess", () => {
-        expect(modelProvider("deepseek-r1")).toBe("unknown");
-        expect(modelProvider("some-proxy-alias")).toBe("unknown");
+    test("a family from a different provider is a mismatch (the old Claude check degenerates from this)", () => {
+        expect(modelMatchesProvider("anthropic", "gpt-4o")).toBe(false);
+        expect(modelMatchesProvider("openai", "claude-sonnet-4-5")).toBe(false);
+    });
+
+    test("a provider absent from the table matches nothing — never derives an identity, just reports mismatch", () => {
+        expect(modelMatchesProvider("deepseek", "some-alias-v2")).toBe(false);
+        expect(modelMatchesProvider("deepseek", "deepseek-r1")).toBe(false);
     });
 });
 

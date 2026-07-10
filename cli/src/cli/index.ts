@@ -297,29 +297,33 @@ cli.command("down")
 
 cli.command("setup")
     .description("Install, authenticate, and start CLIProxyAPI and Postgres (Docker or Podman); optionally configure embeddings")
+    .option("--connection <mode>", "How inflexa reaches models: cliproxy|direct (default cliproxy)")
     .option("--provider <name>", "Authenticate a provider non-interactively: gemini|openai|claude|qwen|iflow")
     .option("--no-auth", "Skip the provider authentication step")
     .option("--no-start", "Set up only; don't start the proxy or Postgres containers")
     .option("--no-postgres", "Skip the Postgres provisioning step")
     .option("--force", "Re-pull images even if they are already cached")
     .option("--embeddings <mode>", "Configure embeddings non-interactively: local|api-key|off")
-    .action(async (options: { provider?: string; auth: boolean; start: boolean; postgres: boolean; force?: boolean; embeddings?: string }) => {
-        const { setup } = await import("../modules/infra/setup.ts");
-        const embeddings = parseEmbeddingMode(options.embeddings);
-        if (embeddings === null) {
-            console.error("\n  `--embeddings` must be one of: local, api-key, off.\n");
-            process.exitCode = 1;
-            return;
-        }
-        await setup({
-            provider: options.provider,
-            auth: options.auth,
-            start: options.start,
-            force: options.force ?? false,
-            postgres: options.postgres,
-            embeddings,
-        });
-    });
+    .action(
+        async (options: { connection?: string; provider?: string; auth: boolean; start: boolean; postgres: boolean; force?: boolean; embeddings?: string }) => {
+            const { setup } = await import("../modules/infra/setup.ts");
+            const embeddings = parseEmbeddingMode(options.embeddings);
+            if (embeddings === null) {
+                console.error("\n  `--embeddings` must be one of: local, api-key, off.\n");
+                process.exitCode = 1;
+                return;
+            }
+            await setup({
+                connection: options.connection,
+                provider: options.provider,
+                auth: options.auth,
+                start: options.start,
+                force: options.force ?? false,
+                postgres: options.postgres,
+                embeddings,
+            });
+        },
+    );
 
 // The sandbox image: pull a variant (python | python-r) and inspect it. The
 // pulled image bakes the R/Python/conda/node packages at `/mnt/libs/current`, so

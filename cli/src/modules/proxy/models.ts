@@ -14,9 +14,11 @@ const modelsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
 
 /**
  * The model families CLIProxyAPI can serve (one per authenticatable account kind), in default-pick
- * preference order, each with the vendor slug that names its provider. ONE table so the ranking
- * ({@link pickDefaultModel}) and the vendor derivation ({@link modelProvider}) can never disagree
- * about what a family is.
+ * preference order, each paired with the vendor slug that names its provider. The `provider` column
+ * is read in ONE direction only — provider→family, by {@link modelMatchesProvider} — as a cliproxy
+ * auto-resolve sanity check. It MUST NEVER be read id→provider to derive a provider identity: the
+ * connection's configured `provider` is the sole identity source, and deriving one from a model id
+ * here would fabricate provenance. {@link pickDefaultModel} reads only the family column.
  */
 const MODEL_FAMILIES = [
     { family: "claude", provider: "anthropic" },
@@ -88,16 +90,17 @@ export function pickDefaultModel(ids: string[]): string {
 }
 
 /**
- * The vendor slug for a model id, matched by family (case-insensitive substring, same mechanics as
- * {@link pickDefaultModel}); `"unknown"` when no family matches — a provider we cannot attest is
- * recorded as exactly that, never guessed silently. This derivation exists because CLIProxyAPI ids
- * arrive bare (`claude-…`, `gpt-…`) while provenance records the vendor-qualified
- * `{provider}/{model}` name.
- *
- * TODO(extend): retire once the user specifies provider + model in config (PR #70 review) — the
- * configured provider then feeds the composition directly and nothing is derived.
+ * True when `modelId`'s family matches the configured provider slug — the cliproxy auto-resolve
+ * agreement guard (design D5). Reads {@link MODEL_FAMILIES} in the provider→family direction ONLY:
+ * the configured provider names one or more families, and the auto-resolved id must contain one of
+ * them (case-insensitive substring, same mechanics as {@link pickDefaultModel}). This is NOT
+ * id→provider derivation — it never produces a provider identity, only answers "is this the family I
+ * expected for the configured provider?". A configured provider absent from the table (e.g.
+ * `deepseek` in cliproxy mode) matches nothing, so it is treated as a mismatch — boot then surfaces
+ * an actionable error rather than serving a model the route was not built for. With the default
+ * provider `anthropic`, only Claude-family ids pass — the sole family that table maps to `anthropic`.
  */
-export function modelProvider(modelId: string): string {
+export function modelMatchesProvider(provider: string, modelId: string): boolean {
     const lower = modelId.toLowerCase();
-    return MODEL_FAMILIES.find((f) => lower.includes(f.family))?.provider ?? "unknown";
+    return MODEL_FAMILIES.some((f) => f.provider === provider && lower.includes(f.family));
 }

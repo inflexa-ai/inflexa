@@ -60,16 +60,19 @@ re-registering or re-launching.
 
 The composition SHALL realize `DataProfileDeps` from deliberate local wiring: the
 `pg.Pool` built from the infra module's resolved `PostgresConnection`; the harness's
-local run authorizer and no-op billing resolver; the chat provider pointed at the local
-proxy's Anthropic-shaped Messages endpoint; the embedding provider resolved from the
+local run authorizer and no-op billing resolver; the chat provider constructed from
+the RESOLVED model connection (see `model-connection`: the local proxy's
+Anthropic-shaped Messages endpoint in `cliproxy` mode, the configured endpoint and
+protocol in `direct` mode) through the harness's exported provider factory; the
+embedding provider resolved from the
 top-level `embedding` config key via `resolveEmbedder` (mode-based: in-process local
-model or a DIRECT OpenAI-compatible endpoint — never through the chat proxy, which
-serves no embeddings route), verified with one real probe embedding through that very
-provider instance BEFORE any provisioning or registration — embeddings are consumed
-late in the profile workflow, so a broken embedder must fail while failure is still
-free, and the probe vector's width must match the provider's advertised `dimensions`,
-which sizes the per-analysis search index; a workspace filesystem and sandbox client (Docker
-backend) sharing
+model or a DIRECT OpenAI-compatible endpoint — never through the chat connection,
+which serves no embeddings route), verified with one real probe embedding through
+that very provider instance BEFORE any provisioning or registration — embeddings are
+consumed late in the profile workflow, so a broken embedder must fail while failure
+is still free, and the probe vector's width must match the provider's advertised
+`dimensions`, which sizes the per-analysis search index; a workspace filesystem and
+sandbox client (Docker backend) sharing
 the runtime's single session-tree base; bio-tool keys from cli config with absent keys
 passed as empty; and the shared skills directory. No dependency SHALL be realized as a
 fake that fabricates success — a locally unrealizable capability must fail visibly at
@@ -78,7 +81,7 @@ the point of use.
 #### Scenario: Deps resolve to their designated backends
 
 - **WHEN** the runtime composes the data-profile deps bundle
-- **THEN** chat traffic targets the local proxy, embeddings go through the resolved provider (in-process model, or directly to the configured endpoint), and everything else requires only the local Postgres and the Docker daemon
+- **THEN** chat traffic targets the resolved model connection (the local proxy in `cliproxy` mode, the configured endpoint in `direct` mode), embeddings go through the resolved provider (in-process model, or directly to the configured endpoint), and everything else requires only the local Postgres and the Docker daemon
 
 #### Scenario: Unconfigured bio keys degrade per-tool, not at boot
 
@@ -200,7 +203,7 @@ model id, bio keys, local run authorizer). Specific to the run engine:
 #### Scenario: Run deps resolve to their designated backends
 
 - **WHEN** the runtime composes the sandbox-step and execute-analysis dep bundles
-- **THEN** chat traffic targets the local proxy, embedding traffic targets the configured embeddings endpoint, and everything else requires only the local Postgres and the Docker daemon
+- **THEN** chat traffic targets the resolved model connection (the local proxy in `cliproxy` mode, the configured endpoint in `direct` mode), embedding traffic targets the configured embeddings endpoint, and everything else requires only the local Postgres and the Docker daemon
 
 #### Scenario: Step agents come from the harness catalog
 
@@ -255,7 +258,7 @@ surface:
 #### Scenario: Conversation deps resolve to their designated backends
 
 - **WHEN** the runtime composes the conversation agent
-- **THEN** chat traffic targets the local proxy, threads and working memory live in the local Postgres, and templates resolve from the configured (or default root) templates directory
+- **THEN** chat traffic targets the resolved model connection (the local proxy in `cliproxy` mode, the configured endpoint in `direct` mode), threads and working memory live in the local Postgres, and templates resolve from the configured (or default root) templates directory
 
 #### Scenario: Report preview degrades visibly, report building does not
 
