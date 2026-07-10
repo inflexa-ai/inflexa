@@ -2,7 +2,7 @@ import type { AnalysisId } from "./analysis.ts";
 import type {
     ProvActor,
     ProvInputRef,
-    ProvModelRef,
+    ProvModelId,
     ProvRunRef,
     ProvRunOutcome,
     ProvStepRef,
@@ -47,7 +47,7 @@ export type BusEvent =
            * event (like `generation` on `prov.file_written`) so the recorder never infers it across
            * events.
            */
-          model: ProvModelRef;
+          model: ProvModelId;
       }
     | {
           type: "prov.command_executed";
@@ -56,7 +56,7 @@ export type BusEvent =
           step: ProvStepRef;
           command: ProvCommandRef;
           /** The model that drove the producing step — see `prov.step_completed`'s `model`. */
-          model: ProvModelRef;
+          model: ProvModelId;
       }
     | {
           type: "prov.file_written";

@@ -20,7 +20,7 @@ import {
     type WorkspaceFilesystem,
 } from "@inflexa-ai/harness";
 
-import type { ProvModelRef } from "../../types/prov.ts";
+import type { ProvModelId } from "../../types/prov.ts";
 import type { ResolvedHarnessConfig } from "./config.ts";
 import { createBusArtifactRegistry, createRunProvenanceEmitter } from "./prov_bridge.ts";
 
@@ -45,12 +45,12 @@ export type RunEngineComposition = {
     /** The workspace-root seam realization (analysis id → `<anchor>/.inflexa/analyses/<slug>`). */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /**
-     * The chat/sandbox model — also the synthesis model (one config id today; D6) — as its
-     * provenance identity: the RESOLVED id plus the provider kind the boot actually wires. The ONE
-     * model field, deliberately: the harness seats read the bare id off `modelRef.model`, so the
-     * seats and the signed provenance record can never be fed diverging values.
+     * The chat/sandbox model id — also the synthesis model (one config id today; D6) — RESOLVED at
+     * boot (config override or proxy default), never a config `null`. Typed {@link ProvModelId}
+     * because the SAME value feeds the harness seats and the prov-bridge emitters — one field, so
+     * the seats and the signed provenance record can never be fed diverging values.
      */
-    readonly modelRef: ProvModelRef;
+    readonly model: ProvModelId;
     /** Absolute skills tree path — enables the sandbox agents' skill tools. */
     readonly skillsDir: string;
     /** Bio/chem API keys; absent keys pass as empty strings and surface per-call. */
@@ -80,7 +80,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
         workspaceFs: comp.workspaceFs,
         embedding: comp.embedding,
         lineageCollector: ctx.lineageCollector,
-        model: comp.modelRef.model,
+        model: comp.model,
         skillsDir: comp.skillsDir,
         bioKeys: comp.bioKeys,
         blockerHolder: ctx.blockerHolder,
@@ -123,7 +123,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
  * path builds `allowedWritePrefix`.
  *
  * The registry realization emits `prov.command_executed` / `prov.file_written` /
- * `prov.input_used` events, each stamped with the composition's model ref (never
+ * `prov.input_used` events, each stamped with the composition's model id (never
  * `prov.step_completed` — that comes from the scheduler settlement via
  * `createRunProvenanceEmitter` — and never a `cortex_artifacts` write: the
  * harness owns that ledger AROUND the seam, and writes the returned external id
@@ -136,10 +136,10 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): SandboxStepDep
         provider: comp.provider,
         embedding: comp.embedding,
         sandboxClient: comp.sandboxClient,
-        artifactRegistry: createBusArtifactRegistry(comp.modelRef),
+        artifactRegistry: createBusArtifactRegistry(comp.model),
         workspaceFs: comp.workspaceFs,
         resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
-        model: comp.modelRef.model,
+        model: comp.model,
         buildAgent: (ctx) => buildStepAgent(comp, ctx),
         resolveWritePrefix: (input: SandboxStepInput) => join(comp.resolveWorkspaceRoot(input.analysisId), runStepDir(input.runId, input.stepId)),
     };
@@ -170,11 +170,11 @@ export function buildExecuteAnalysisDeps(
         embedding: comp.embedding,
         sandboxStepCallable,
         resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
-        synthesisModel: comp.modelRef.model,
+        synthesisModel: comp.model,
         bioKeys: comp.bioKeys,
         runCharge: createNoopRunCharge(),
         runAuthorizer,
-        emitProvenance: createRunProvenanceEmitter(comp.modelRef),
+        emitProvenance: createRunProvenanceEmitter(comp.model),
     };
 }
 
@@ -196,7 +196,7 @@ export function buildEphemeralDeps(comp: RunEngineComposition): CoreWorkflowDeps
         workspaceFs: comp.workspaceFs,
         embedding: comp.embedding,
         resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
-        model: comp.modelRef.model,
+        model: comp.model,
         bioKeys: comp.bioKeys,
     };
 }
@@ -218,7 +218,7 @@ export function buildExecuteTargetAssessmentDeps(comp: RunEngineComposition, run
         runAuthorizer,
         ncbiApiKey: comp.bioKeys.ncbi,
         chatProvider: comp.provider,
-        decisionModel: comp.modelRef.model,
-        synthesisModel: comp.modelRef.model,
+        decisionModel: comp.model,
+        synthesisModel: comp.model,
     };
 }

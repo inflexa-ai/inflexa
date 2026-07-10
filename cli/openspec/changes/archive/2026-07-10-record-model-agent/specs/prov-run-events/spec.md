@@ -16,10 +16,10 @@ by construction, never minted by the cli recorder:
   "suspended_insufficient_funds"`.
 - `prov.step_completed` — carries `outcome: ProvStepOutcome { runId, stepId, status,
   completedAtMs, durationMs? }` where `status` is the step-settlement vocabulary
-  `"completed" | "failed" | "canceled"`, and `model: ProvModelRef` — the LLM that
+  `"completed" | "failed" | "canceled"`, and `model: ProvModelId` — the LLM that
   drove the step.
 - `prov.command_executed` — carries the owning `step: ProvStepRef`, `command:
-  ProvCommandRef`, and `model: ProvModelRef`. `ProvCommandRef` is a discriminated
+  ProvCommandRef`, and `model: ProvModelId`. `ProvCommandRef` is a discriminated
   union over the two execution kinds:
   `{ kind: "command"; command; args?; exitCode; durationMs?; scriptPath?; outputs:
   ProvFileKey[]; inputs: ProvCommandInputRef[] }` or `{ kind: "file_tool"; tool;
@@ -40,12 +40,13 @@ by construction, never minted by the cli recorder:
   "upstream" | "prior"` — the STEP-level attested-inputs registry, unchanged by the
   command-level edges (deliberate redundancy; see the builders requirement).
 
-`ProvModelRef` SHALL be a discriminated union over the harness's two native provider
-kinds: `{ provider: "anthropic"; model } | { provider: "openai-compatible"; model;
-endpoint }`, where `model` is the RESOLVED model id (never a config `null`) and
-`endpoint` — REQUIRED on, and representable only on, the `openai-compatible` arm —
-is the endpoint host only. The payload SHALL NOT carry API keys, credentialed URLs,
-or prompt content.
+`ProvModelId` SHALL be an OPAQUE string: the RESOLVED model id (never a config
+`null`), captured VERBATIM from the wiring — never inferred, parsed, or dressed up
+with a guessed vendor. Provenance is model-agnostic by construction: it keeps no
+provider vocabulary of its own, so a host whose model naming is vendor-qualified
+(`{provider}/{model}`, e.g. `anthropic/claude-opus-4-8`) records that full name
+unchanged. The payload SHALL NOT carry API keys, credentialed URLs, or prompt
+content.
 
 The domain types SHALL live in `src/types/prov.ts` and the events in
 `src/types/events.ts`, following the one-event-per-domain-action bus rule (the
@@ -69,7 +70,7 @@ model id.
 #### Scenario: The model reference never carries credentials
 
 - **WHEN** any `prov.step_completed` or `prov.command_executed` event is emitted
-- **THEN** its `model` carries only the provider kind, the resolved model id, and (for `openai-compatible`) the endpoint host — no API key, no credentialed URL, no prompt content
+- **THEN** its `model` carries only the resolved model id — no API key, no credentialed URL, no prompt content
 
 ### Requirement: Document builders append deterministic, PROV-valid execution records
 
@@ -102,13 +103,11 @@ PROV **activities**; files and used inputs as PROV **entities**:
   comes exclusively from `appendCommandExecuted`; exactly one generation edge SHALL
   exist per file entity.
 
-The model-agent records: one PROV agent per distinct `(provider, model[, endpoint])`
-identity tuple under the deterministic QName `inflexa:agent-model-{digest}`, where
-the digest is over a STRUCTURAL encoding of the tuple (fields are free-form config
-strings, so a joined encoding could collide across field boundaries), typed BOTH
-`prov:SoftwareAgent` and `inflexa:Model`, carrying
-`inflexa:provider`, `inflexa:model`, and — on the `openai-compatible` arm —
-`inflexa:endpoint`; plus one `actedOnBehalfOf(modelAgentQn, responsibleAgentQn)` delegation — the
+The model-agent records: one PROV agent per distinct model id under the
+deterministic QName `inflexa:agent-model-{digest(id)}`, typed BOTH
+`prov:SoftwareAgent` and `inflexa:Model`, carrying the verbatim id as its ONLY
+identity attribute (`inflexa:model`, plus `prov:label`); plus one
+`actedOnBehalfOf(modelAgentQn, responsibleAgentQn)` delegation — the
 model acted on behalf of the event's responsible agent (the CLI the user directed) —
 under a deterministic id derived from both agent digests. Model-agent
 `wasAssociatedWith` edges SHALL reuse the existing association id templates,
@@ -140,18 +139,18 @@ carry NO formal time.
 
 #### Scenario: A step activity is associated with both the CLI and the model
 
-- **WHEN** a `prov.step_completed` carrying `model: { provider: "anthropic", model: "claude-sonnet-4-5" }` is recorded and the document is unified
-- **THEN** the step activity has two `wasAssociatedWith` edges — one to `inflexa:agent-system` and one to the model agent — and the model agent is typed `prov:SoftwareAgent` + `inflexa:Model`, carries `inflexa:provider`/`inflexa:model`, and `actedOnBehalfOf` the system agent
+- **WHEN** a `prov.step_completed` carrying `model: "claude-sonnet-4-5"` is recorded and the document is unified
+- **THEN** the step activity has two `wasAssociatedWith` edges — one to `inflexa:agent-system` and one to the model agent — and the model agent is typed `prov:SoftwareAgent` + `inflexa:Model`, carries `inflexa:model`, and `actedOnBehalfOf` the system agent
 
 #### Scenario: One agent per distinct model, shared across steps and commands
 
-- **WHEN** two steps and one command execution driven by the same `(provider, model)` are recorded and the document is unified
+- **WHEN** two steps and one command execution driven by the same model id are recorded and the document is unified
 - **THEN** the document contains exactly ONE model agent under the deterministic QName, one delegation record, and three model associations (one per activity)
 
-#### Scenario: The endpoint host is recorded only for openai-compatible refs
+#### Scenario: A vendor-qualified id is captured verbatim, not parsed
 
-- **WHEN** a step driven by `{ provider: "openai-compatible", model: "qwen3", endpoint: "localhost" }` is recorded
-- **THEN** its model agent carries `inflexa:endpoint: "localhost"` — and an `anthropic`-kind ref's agent carries no `inflexa:endpoint` attribute
+- **WHEN** a step driven by the id `anthropic/claude-opus-4-8` is recorded
+- **THEN** its model agent carries `inflexa:model: "anthropic/claude-opus-4-8"` unchanged — no vendor is split off, no vocabulary interprets it
 
 #### Scenario: Duplicate model-agent emission dedups
 

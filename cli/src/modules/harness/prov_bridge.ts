@@ -1,7 +1,7 @@
 import type { ArtifactRegistrationInput, ArtifactRegistry, ExternalRegistrationResult, RunProvenanceEvent } from "@inflexa-ai/harness";
 
 import { Bus } from "../../lib/bus.ts";
-import type { ProvCommandInputRef, ProvCommandRef, ProvFileKey, ProvFileRef, ProvModelRef, ProvStepRef, ProvUsedInputRef } from "../../types/prov.ts";
+import type { ProvCommandInputRef, ProvCommandRef, ProvFileKey, ProvFileRef, ProvModelId, ProvStepRef, ProvUsedInputRef } from "../../types/prov.ts";
 import { fileQName } from "../prov/document.ts";
 import { systemActor } from "../prov/prov.ts";
 
@@ -147,11 +147,11 @@ function toCommandRef(
  * harness can cross-reference its local ledger into the signed document, and does NOT emit
  * `prov.step_completed` (see the module note on the split and the producer grouping).
  *
- * `model` is the provenance identity of the model driving the step seat — resolved ONCE at boot
- * (composition), so stamping the construction-time ref on every `prov.command_executed` is exactly
- * "the model this run's steps ran on". It rides the event so the recorder never infers it across
- * events; when the seats split (chat/decision/synthesis, D6), this constructor takes the step
- * seat's own ref with no event-shape change.
+ * `model` is the id of the model driving the step seat — resolved ONCE at boot (composition), so
+ * stamping the construction-time id on every `prov.command_executed` is exactly "the model this
+ * run's steps ran on". It rides the event so the recorder never infers it across events; when the
+ * seats split (chat/decision/synthesis, D6), this constructor takes the step seat's own id with no
+ * event-shape change.
  *
  * Three seam-contract facts shape the behavior:
  *
@@ -175,7 +175,7 @@ function toCommandRef(
  *     `source: "prior"` read then keys onto the SAME file QName the producing run emitted, chaining
  *     lineage across runs for free.
  */
-export function createBusArtifactRegistry(model: ProvModelRef): ArtifactRegistry {
+export function createBusArtifactRegistry(model: ProvModelId): ArtifactRegistry {
     return {
         register: async (input: ArtifactRegistrationInput): Promise<ExternalRegistrationResult> => {
             // One actor stamp for the whole step — `systemActor()` is pure over pkg version + build
@@ -301,7 +301,7 @@ export function createBusArtifactRegistry(model: ProvModelRef): ArtifactRegistry
  * run-lifecycle arms onto a `prov.*` event stamped with the system actor (cli version + commit).
  * This is the site that emits `prov.step_completed` (from the scheduler-settlement `step_completed`
  * arm — the only place every EXECUTED step is observed), NOT the artifact registry above. `model`
- * is the boot-resolved provenance identity of the model driving the step seat (see
+ * is the boot-resolved id of the model driving the step seat (see
  * {@link createBusArtifactRegistry}); it stamps `prov.step_completed` only — the run arms carry no
  * model because the issue scopes model association to the step and command activities the model
  * drove.
@@ -313,7 +313,7 @@ export function createBusArtifactRegistry(model: ProvModelRef): ArtifactRegistry
  * replays and defeat the merge. The mapping is fire-and-forget; the harness guards the call site so a
  * throw here never fails the run.
  */
-export function createRunProvenanceEmitter(model: ProvModelRef): (event: RunProvenanceEvent) => void {
+export function createRunProvenanceEmitter(model: ProvModelId): (event: RunProvenanceEvent) => void {
     return (event: RunProvenanceEvent): void => {
         switch (event.type) {
             case "run_started":
