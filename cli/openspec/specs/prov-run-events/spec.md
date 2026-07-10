@@ -41,13 +41,15 @@ by construction, never minted by the cli recorder:
   "upstream" | "prior"` — the STEP-level attested-inputs registry, unchanged by the
   command-level edges (deliberate redundancy; see the builders requirement).
 
-`ProvModelId` SHALL be an OPAQUE string: the RESOLVED model id (never a config
-`null`), captured VERBATIM from the wiring — never inferred, parsed, or dressed up
-with a guessed vendor. Provenance is model-agnostic by construction: it keeps no
-provider vocabulary of its own, so a host whose model naming is vendor-qualified
-(`{provider}/{model}`, e.g. `anthropic/claude-opus-4-8`) records that full name
-unchanged. The payload SHALL NOT carry API keys, credentialed URLs, or prompt
-content.
+`ProvModelId` SHALL be the vendor-qualified `{provider}/{model}` name (the
+convention model ecosystems use — e.g. `anthropic/claude-opus-4-8`,
+`openai/gpt-5`), enforced as a template-literal string type. The model part is
+the RESOLVED id (never a config `null`); the provider part is an OPEN vocabulary —
+no closed union to keep in step with any provider list. Until provider+model are
+user-specified config, the composition SHALL derive the provider from the model
+family, recording `unknown` when the family is unrecognized — an unattestable
+provider is recorded as exactly that, never guessed silently. The payload SHALL
+NOT carry API keys, credentialed URLs, or prompt content.
 
 The domain types SHALL live in `src/types/prov.ts` and the events in
 `src/types/events.ts`, following the one-event-per-domain-action bus rule (the
@@ -104,10 +106,11 @@ PROV **activities**; files and used inputs as PROV **entities**:
   comes exclusively from `appendCommandExecuted`; exactly one generation edge SHALL
   exist per file entity.
 
-The model-agent records: one PROV agent per distinct model id under the
-deterministic QName `inflexa:agent-model-{digest(id)}`, typed BOTH
-`prov:SoftwareAgent` and `inflexa:Model`, carrying the verbatim id as its ONLY
-identity attribute (`inflexa:model`, plus `prov:label`); plus one
+The model-agent records: one PROV agent per distinct `{provider}/{model}` name
+under the deterministic QName `inflexa:agent-model-{digest(name)}`, typed BOTH
+`prov:SoftwareAgent` and `inflexa:Model`, carrying the qualified name as its ONLY
+identity attribute (`inflexa:model`, plus `prov:label`) — the provider lives
+inside the name, never as a separate closed attribute; plus one
 `actedOnBehalfOf(modelAgentQn, responsibleAgentQn)` delegation — the
 model acted on behalf of the event's responsible agent (the CLI the user directed) —
 under a deterministic id derived from both agent digests. Model-agent
@@ -140,7 +143,7 @@ carry NO formal time.
 
 #### Scenario: A step activity is associated with both the CLI and the model
 
-- **WHEN** a `prov.step_completed` carrying `model: "claude-sonnet-4-5"` is recorded and the document is unified
+- **WHEN** a `prov.step_completed` carrying `model: "anthropic/claude-sonnet-4-5"` is recorded and the document is unified
 - **THEN** the step activity has two `wasAssociatedWith` edges — one to `inflexa:agent-system` and one to the model agent — and the model agent is typed `prov:SoftwareAgent` + `inflexa:Model`, carries `inflexa:model`, and `actedOnBehalfOf` the system agent
 
 #### Scenario: One agent per distinct model, shared across steps and commands
@@ -148,10 +151,10 @@ carry NO formal time.
 - **WHEN** two steps and one command execution driven by the same model id are recorded and the document is unified
 - **THEN** the document contains exactly ONE model agent under the deterministic QName, one delegation record, and three model associations (one per activity)
 
-#### Scenario: A vendor-qualified id is captured verbatim, not parsed
+#### Scenario: The qualified name is the whole identity — no separate provider attribute
 
-- **WHEN** a step driven by the id `anthropic/claude-opus-4-8` is recorded
-- **THEN** its model agent carries `inflexa:model: "anthropic/claude-opus-4-8"` unchanged — no vendor is split off, no vocabulary interprets it
+- **WHEN** a step driven by `anthropic/claude-opus-4-8` is recorded
+- **THEN** its model agent carries `inflexa:model: "anthropic/claude-opus-4-8"` as its only identity attribute — the provider is inside the name, and no `inflexa:provider` attribute exists
 
 #### Scenario: Duplicate model-agent emission dedups
 

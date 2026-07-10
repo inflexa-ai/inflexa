@@ -225,10 +225,10 @@ function agentDigest(agentQn: string): string {
 }
 
 /**
- * The model-agent QName, keyed by the verbatim model id — one agent per distinct id, nothing else
- * in the identity (the id is opaque; see {@link ProvModelId}). Exported (like {@link fileQName} /
- * {@link commandQName}) so the builder's tests reference the one canonical derivation rather than
- * duplicating this hash and risking drift.
+ * The model-agent QName, keyed by the vendor-qualified `{provider}/{model}` name — one agent per
+ * distinct name, nothing else in the identity (see {@link ProvModelId}). Exported (like
+ * {@link fileQName} / {@link commandQName}) so the builder's tests reference the one canonical
+ * derivation rather than duplicating this hash and risking drift.
  */
 export function modelAgentQName(model: ProvModelId): string {
     return `${NS_PREFIX}:agent-model-${Bun.hash(model).toString(36)}`;
@@ -252,8 +252,9 @@ function appendModelAgent(doc: ProvDocument, model: ProvModelId, responsibleQn: 
     doc.agent(qn, {
         // Both types deliberately: `prov:SoftwareAgent` places it in PROV's agent taxonomy,
         // `inflexa:Model` marks WHAT KIND of software agent (tsprov attributes are multi-valued).
-        // The id is the agent's ONLY identity attribute — provenance stays model-agnostic by
-        // carrying no provider/vendor vocabulary of its own (see {@link ProvModelId}).
+        // The `{provider}/{model}` name is the agent's ONLY identity attribute — the provider
+        // lives INSIDE the name (open vocabulary), never as a separate closed attribute set
+        // (see {@link ProvModelId}).
         "prov:type": ["prov:SoftwareAgent", `${NS_PREFIX}:Model`],
         "prov:label": model,
         "inflexa:model": model,

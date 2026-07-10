@@ -44,6 +44,7 @@ function testComposition(): RunEngineComposition {
         workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot }),
         resolveWorkspaceRoot,
         model: "claude-test",
+        modelProvider: "anthropic",
         skillsDir: "/tmp/skills",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
     };
@@ -126,7 +127,7 @@ describe("run-engine provenance wiring", () => {
         deps.emitProvenance!({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_001_000 });
         const stepEvent = captured[1]!;
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
-        expect(stepEvent.model).toBe("claude-test");
+        expect(stepEvent.model).toBe("anthropic/claude-test");
     });
 });
 

@@ -52,8 +52,8 @@ const inputEvents = (): InputEvent[] => captured.filter((e): e is InputEvent => 
 // is honest here (the adapter never dereferences it).
 const noSession = {} as unknown as AgentSession;
 
-// The construction-time model id both bridge halves stamp onto their model-driven events.
-const modelId: ProvModelId = "claude-test";
+// The construction-time {provider}/{model} name both bridge halves stamp onto their model-driven events.
+const modelId: ProvModelId = "anthropic/claude-test";
 
 function entry(path: string, hash: string | undefined, size: number): ArtifactManifestEntry {
     return { stepId: "de-analysis", runId: "run-001", path, size, type: "output", hash };

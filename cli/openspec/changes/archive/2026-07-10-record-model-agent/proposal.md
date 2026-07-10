@@ -4,7 +4,7 @@ The provenance document records *that* the CLI performed an action but never *wh
 
 ## What Changes
 
-- A new `ProvModelId` domain type — the resolved model id as an opaque string, captured verbatim (model-agnostic; no provider or endpoint vocabulary) — is added to the provenance vocabulary.
+- A new `ProvModelId` domain type — the vendor-qualified `{provider}/{model}` name (open provider vocabulary, template-literal enforced), with the model part always the resolved id — is added to the provenance vocabulary.
 - `prov.step_completed` and `prov.command_executed` bus events carry the model that drove the activity; the document builders declare a per-distinct-model `prov:SoftwareAgent` (typed `inflexa:Model`), add `wasAssociatedWith(activity, modelAgent)` on step and command activities, and `actedOnBehalfOf(modelAgent, systemAgent)` for the delegation.
 - The cli↔harness bridge emitters (`createBusArtifactRegistry`, `createRunProvenanceEmitter`) take the model ref at construction; the boot threads the **resolved** model id (config override or proxy-default resolution) through `RunEngineComposition`.
 - No API keys, credentialed URLs, or prompt content are ever recorded — only the model identity.

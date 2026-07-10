@@ -5,7 +5,22 @@ import { dirname } from "node:path";
 import "../../extensions/index.ts"; // installs Response.prototype.jsonWith, which resolveModelId uses
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { __resetModelCacheForTest, pickDefaultModel, readApiKey, resolveModelId } from "./models.ts";
+import { __resetModelCacheForTest, modelProvider, pickDefaultModel, readApiKey, resolveModelId } from "./models.ts";
+
+describe("modelProvider", () => {
+    test("maps each proxy-servable family to its vendor slug, case-insensitively", () => {
+        expect(modelProvider("claude-sonnet-4-5")).toBe("anthropic");
+        expect(modelProvider("My-Claude-3.5")).toBe("anthropic");
+        expect(modelProvider("gpt-4o")).toBe("openai");
+        expect(modelProvider("gemini-2.5-pro")).toBe("google");
+        expect(modelProvider("qwen-72b")).toBe("qwen");
+    });
+
+    test("an unrecognized family derives 'unknown' — never a silent guess", () => {
+        expect(modelProvider("deepseek-r1")).toBe("unknown");
+        expect(modelProvider("some-proxy-alias")).toBe("unknown");
+    });
+});
 
 describe("pickDefaultModel", () => {
     test("prefers claude over other families regardless of list order", () => {

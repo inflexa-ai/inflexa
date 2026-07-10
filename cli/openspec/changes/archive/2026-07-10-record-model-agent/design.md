@@ -9,7 +9,7 @@ Constraints inherited from the existing prov design: records must be replay-idem
 **Goals:**
 
 - Record which model reasoned about each model-driven step and command activity, as a first-class PROV `SoftwareAgent` related by `wasAssociatedWith`, with `actedOnBehalfOf` expressing the model→CLI delegation.
-- Record the **resolved** model id (never the config's `null`), captured verbatim as an opaque string — model-agnostic by construction.
+- Record the **resolved** model id (never the config's `null`) as the vendor-qualified `{provider}/{model}` name, with an open provider vocabulary.
 - Preserve replay-idempotency: re-emission under recovery merges to one record set.
 
 **Non-Goals:**
@@ -22,8 +22,8 @@ Constraints inherited from the existing prov design: records must be replay-idem
 
 ## Decisions
 
-**D1 — `ProvModelId` is an opaque string: the resolved model id, captured verbatim.**
-PR review (#70) removed the earlier discriminated union over the harness's native provider kinds and its per-kind endpoint host: the reviewer's point stands that provenance should capture *whatever is set up*, model-agnostically, rather than maintain a provider vocabulary of its own — and the endpoint was populated by no production wiring (the CLI reaches models through the local proxy, whose host is plumbing, not the model's home). The id records verbatim: a bare proxy id as-is, and a vendor-qualified `{provider}/{model}` name (the Mastra/Bifrost convention) as-is if the host's model config adopts it — nothing is inferred or parsed from it. Rejected: vendor-prefixing bare ids by inference (fabricates provenance from id-substring heuristics) and keeping the native-kind union (a closed vocabulary the cli must keep in step with the harness for marginal audit value).
+**D1 — `ProvModelId` is the vendor-qualified `{provider}/{model}` name (open provider vocabulary).**
+PR review (#70), two rounds. Round one removed the original discriminated union over the harness's native provider kinds and its per-kind endpoint host (a closed protocol-kind vocabulary with marginal audit value; the endpoint was populated by no production wiring). Round two adopted the reviewer's `{provider}/{model}` convention (the form model ecosystems use — Mastra, Bifrost) as the recorded identity, enforced by a template-literal type: the roadmap is that the user will specify provider + model in config, making the provider a configured fact. Until that lands, the boot derives the provider slug from the model family (`claude`→`anthropic`, `gpt`→`openai`, `gemini`→`google`, `qwen`→`qwen` — the same family table the proxy's default-model ranking uses), recording `unknown` for an unrecognized family rather than guessing silently. The provider is an open string inside the name — never a closed union, never a separate attribute.
 
 **D2 — The model rides the `prov.step_completed` and `prov.command_executed` events (required field), not a separate event or cross-event inference.**
 The recorder never infers facts across events (established by `generation: "command" | "step"` riding `prov.file_written`). A required field makes "forgot to wire the model" a compile error at both emit sites, which both hold the composition. Rejected: an optional field (silent gaps in exactly the record this change exists to make), a per-run `prov.model_resolved` event (cross-event inference in the recorder, plus a run-scoped cache keyed by runId that recovery ordering could leave cold).
@@ -34,14 +34,14 @@ The digest is `Bun.hash` over the verbatim id, in base-36 — a single opaque fi
 **D4 — Association and delegation relations reuse the existing deterministic-id scheme.**
 `wasAssociatedWith(stepQn, modelQn)` gets id `assoc-step-{runId}-{stepId}-{agentDigest(modelQn)}` and `wasAssociatedWith(cmdQn, modelQn)` gets `assoc-cmd-{runId}-{stepId}-{groupDigest}-{agentDigest(modelQn)}` — the *same* id templates the CLI-agent associations use, disambiguated by the agent digest exactly as those are (two agents on one activity produce two ids; re-emission of the same pair dedups). `actedOnBehalfOf(modelQn, responsibleQn)` gets `delegation-{agentDigest(modelQn)}-{agentDigest(responsibleQn)}` — keyed on the full endpoint tuple, activity-independent (the delegation holds for the pair, not per activity), declared beside every model-agent declaration and collapsed by `unified()`. If a recovery boot auto-resolves a *different* default model, the re-emitted records carry a second agent and second association — the same honest-drift semantics the agent-digest fold already accepts for a CLI upgrade mid-run.
 
-**D5 — The composition's ONE `model: ProvModelId` field feeds the seats and the emitters alike.**
-With the record reduced to the id (D1), the composition's existing resolved-id field IS the provenance value: `run_deps.ts` passes `comp.model` to the two emitter constructors, and the harness seats read the same field. One field means the seats and the signed provenance record can never be fed diverging values. Rejected: a parallel `modelRef` field (two sources of truth whose divergence compiles fine and produces a signed document that attributes steps to a model that did not drive them — exactly the record this change exists to make trustworthy).
+**D5 — The composition carries the two FACTS (`model`, `modelProvider`); the emitters compose the name.**
+`model` stays the bare resolved id — it is the model parameter on every API call, so it cannot carry the qualified form. `modelProvider` is the vendor slug (boot-derived for now, config-supplied later). The composition deliberately holds no combined `{provider}/{model}` field: composing at the two emitter constructions (`run_deps.ts`) means there is no redundant third value whose drift could make the signed record disagree with the wiring — the earlier one-field rationale, preserved under the two-fact reality.
 
 ## Risks / Trade-offs
 
 - [Proxy opacity] The recorded id is what the CLI asked for; CLIProxyAPI could substitute silently → accepted and documented (Non-Goal); response-echo capture is a harness-side follow-up.
 - [Default-model drift across recovery boots] A run recovered on a boot whose proxy default changed re-emits records under a second model agent → both agents appear with their associations; this mirrors the accepted CLI-upgrade drift and is more honest than pretending one model ran everything.
-- [No provider/endpoint facts] the record is the id alone; which route or endpoint served it is not captured → deliberate (PR #70 review): the id is the load-bearing fact, and any wiring fact worth recording later lands harness-first without touching the event shape.
+- [Interim provider derivation] until provider+model are user config, the provider slug is derived from the model family; an explicitly configured id of an unrecognized family records `unknown/…` → honest by design, and the derivation (a `TODO(extend)` in `proxy/models.ts`) retires when the config change lands.
 
 ## Open Questions
 
