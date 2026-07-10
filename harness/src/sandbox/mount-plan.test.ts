@@ -101,4 +101,17 @@ describe("buildSessionSubPaths", () => {
         expect(() => buildSessionSubPaths(COORDS, "/abs/an-1")).toThrow(/PVC-root-relative/);
         expect(() => buildSessionSubPaths(COORDS, "../escape/an-1")).toThrow(/'\.\.'/);
     });
+
+    test("rejects a crafted `..` runId/stepId in the RW subPath", () => {
+        expect(() => buildSessionSubPaths({ ...COORDS, stepId: ".." }, "an-1")).toThrow(/Invalid stepId/);
+        expect(() => buildSessionSubPaths({ ...COORDS, runId: ".." }, "an-1")).toThrow(/Invalid runId/);
+    });
+});
+
+describe("buildMountPlan id validation", () => {
+    test("rejects a crafted `..` analysisId/runId/stepId", () => {
+        expect(() => buildMountPlan({ ...COORDS, analysisId: ".." }, { libs: false, refs: false })).toThrow(/Invalid analysisId/);
+        expect(() => buildMountPlan({ ...COORDS, stepId: ".." }, { libs: false, refs: false })).toThrow(/Invalid stepId/);
+        expect(() => buildMountPlan({ ...COORDS, runId: ".." }, { libs: false, refs: false })).toThrow(/Invalid runId/);
+    });
 });

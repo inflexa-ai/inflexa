@@ -17,6 +17,8 @@
  * (see {@link buildSessionSubPaths}).
  */
 
+import { assertSafeId } from "../workspace/paths.js";
+
 export const STEP_SUBDIRS = ["output", "scripts", "figures", "logs", "notebooks"] as const;
 
 const LIBS_CONTAINER_PATH = "/mnt/libs";
@@ -77,6 +79,11 @@ export interface SessionSubPaths {
  * PVC-relative space. The harness owns this layout (workspace-layout spec).
  */
 function stepTail(runId: string, stepId: string): string {
+    // The single builder feeding both the container RW path (`buildMountPlan`)
+    // and the K8s RW subPath (`buildSessionSubPaths`); validate here so a crafted
+    // `stepId` cannot inject a `..`/`/` into either.
+    assertSafeId(runId, "runId");
+    assertSafeId(stepId, "stepId");
     return `runs/${runId}/${stepId}`;
 }
 
@@ -116,6 +123,9 @@ function libStoreEnv(): Record<string, string> {
 
 export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores): MountPlan {
     const { analysisId, runId, stepId, readOnly } = coords;
+    // `analysisId` becomes the RO mount point `/{analysisId}` even in read-only
+    // mode (where `stepTail` — which validates runId/stepId — is not reached).
+    assertSafeId(analysisId, "analysisId");
     const readonlyTreePath = `/${analysisId}`;
     const writableStepPath = readOnly ? undefined : `${readonlyTreePath}/${stepTail(runId, stepId)}`;
 

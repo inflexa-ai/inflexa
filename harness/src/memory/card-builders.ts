@@ -189,7 +189,7 @@ function latestPreviewId(previewsRootAbs: string): ResultAsync<string | null, Fs
 /**
  * Build the `data-preview` payload for an `iterate_report` tool_use. The
  * preview's source of truth is the filesystem under
- * `previews/{resourceId}/{previewId}/`: directory layout yields `version`
+ * `previews/{previewId}/`: directory layout yields `version`
  * (latest `vN`) + `previewPath`, and `preview-meta.json` yields title/format.
  * Mirrors `buildRunCardData` — the live emit knows the server-generated
  * `previewId`, while the reconstruct-on-read path resolves it (from the

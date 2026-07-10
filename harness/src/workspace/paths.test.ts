@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { resolve as resolvePath, sep } from "node:path";
 
-import { resolveForWrite, resolveWorkspacePath, stepWritePrefix } from "./paths.js";
+import { assertSafeId, resolveForWrite, resolveWorkspacePath, stepWritePrefix, toSandboxPath } from "./paths.js";
 
 const SESSIONS = "/var/sessions";
 const ANALYSIS = "analysis-001";
@@ -198,5 +198,41 @@ describe("stepWritePrefix", () => {
                 stepId: "step-1",
             }),
         ).toBe(ROOT + sep + ["runs", "run-abc", "step-1"].join(sep));
+    });
+
+    it("rejects a `..` stepId before it becomes a host path", () => {
+        // An LLM-authored plan step id of ".." would otherwise climb `runs/{runId}`
+        // into a sibling run's tree (the finding this guard closes).
+        expect(() => stepWritePrefix({ workspaceRoot: ROOT, runId: "run-abc", stepId: ".." })).toThrow(/Invalid stepId/);
+        expect(() => stepWritePrefix({ workspaceRoot: ROOT, runId: "..", stepId: "step-1" })).toThrow(/Invalid runId/);
+    });
+});
+
+describe("assertSafeId", () => {
+    it("accepts UUID-shaped and dashed/dotted ids", () => {
+        expect(() => assertSafeId("01890f2a-7c3e-7abc-9def-000000000000", "runId")).not.toThrow();
+        expect(() => assertSafeId("data-profile", "stepId")).not.toThrow();
+        expect(() => assertSafeId("v1.2", "id")).not.toThrow();
+    });
+
+    it("rejects the pure-dot segments the charset otherwise admits", () => {
+        expect(() => assertSafeId(".", "stepId")).toThrow(/Invalid stepId/);
+        expect(() => assertSafeId("..", "stepId")).toThrow(/Invalid stepId/);
+    });
+
+    it("rejects a slash or NUL", () => {
+        expect(() => assertSafeId("a/b", "stepId")).toThrow(/Invalid stepId/);
+        expect(() => assertSafeId("a\0b", "stepId")).toThrow(/Invalid stepId/);
+    });
+});
+
+describe("toSandboxPath", () => {
+    it("maps an in-tree host path onto /{resourceId}/{tail}", () => {
+        expect(toSandboxPath(ROOT, ANALYSIS, STEP_DIR)).toBe(`/${ANALYSIS}/runs/run-abc/step-1`);
+        expect(toSandboxPath(ROOT, ANALYSIS, ROOT)).toBe(`/${ANALYSIS}`);
+    });
+
+    it("throws when the host path escapes the workspace root", () => {
+        expect(() => toSandboxPath(ROOT, ANALYSIS, resolvePath(SESSIONS, "analysis-002", "x"))).toThrow(/escapes the workspace root/);
     });
 });

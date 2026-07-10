@@ -35,7 +35,7 @@ import Docker from "dockerode";
 import type pino from "pino";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
-import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { stepWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { buildMountPlan } from "./mount-plan.js";
 
@@ -229,7 +229,10 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     });
 
                     const hostTreePath = config.resolveWorkspaceRoot(meta.analysisId);
-                    const hostStepPath = join(hostTreePath, "runs", meta.runId, meta.stepId);
+                    // `stepWritePrefix` (not a raw `join`) so the RW bind source runs through
+                    // the same id validation as the pre-created step tree — a crafted stepId
+                    // cannot escape the resolved root into the container.
+                    const hostStepPath = stepWritePrefix({ workspaceRoot: hostTreePath, runId: meta.runId, stepId: meta.stepId });
                     const binds = [
                         `${hostTreePath}:${plan.readonlyTreePath}:ro`,
                         ...(plan.writableStepPath ? [`${hostStepPath}:${plan.writableStepPath}:rw`] : []),

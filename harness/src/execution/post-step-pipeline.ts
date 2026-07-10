@@ -11,7 +11,6 @@
  * fail-fast vs. best-effort. This module owns only the stage bodies.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Pool } from "pg";
 
@@ -21,6 +20,7 @@ import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import { unwrapOrThrow } from "../lib/result.js";
+import { writeFileWithinRoot } from "../lib/fs-helpers.js";
 
 import type { ArtifactRegistry } from "./artifact-registry.js";
 import { registerStepArtifacts } from "./artifact-registration.js";
@@ -112,9 +112,10 @@ export async function generateStepSummaryAndWrite(
     });
     if (summary && summary.markdown.trim().length > 0) {
         try {
-            const outDir = join(writePrefix, "output");
-            await mkdir(outDir, { recursive: true });
-            await writeFile(join(outDir, "summary.md"), summary.markdown);
+            // Host-side write into the step's RW subtree — symlink-confined so a
+            // compromised sandbox agent cannot redirect it onto a host file.
+            const workspaceRoot = deps.resolveWorkspaceRoot(input.analysisId);
+            await writeFileWithinRoot(workspaceRoot, join(writePrefix, "output", "summary.md"), summary.markdown);
         } catch (err) {
             console.warn(`[post-step.summary] writeFile output/summary.md failed for ${input.stepId}: ${err instanceof Error ? err.message : err}`);
         }

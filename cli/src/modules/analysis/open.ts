@@ -1,6 +1,6 @@
 import { ok, err, type Result } from "neverthrow";
 import { findAnalysis } from "./analysis.ts";
-import { ensureOutputDir } from "./output.ts";
+import { ensureOutputDir, locateExistingOutputDir } from "./output.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { IdOrName } from "../../lib/types.ts";
@@ -37,21 +37,26 @@ export function openInFileBrowser(dir: string): Result<void, Error> {
 }
 
 /**
- * Ensure an analysis's workspace root exists and open it in the OS file browser; returns the
- * opened path. The revealed directory is the analysis's single tree — staged inputs (`data/`),
- * run artifacts (`runs/`), reports, and provenance exports. Library-pure (no stdout, no process
- * exit) so both the `inflexa open` CLI adapter and the in-app command palette can call it.
+ * Open an analysis's workspace root in the OS file browser; returns the opened path. The revealed
+ * directory is the analysis's single tree — staged inputs (`data/`), run artifacts (`runs/`),
+ * reports, and provenance exports. Library-pure (no stdout, no process exit) so both the
+ * `inflexa open` CLI adapter and the in-app command palette can call it.
+ *
+ * An already-materialized tree is revealed as-is — a home folder that later went read-only must
+ * not block opening results the user already produced. Only when nothing exists yet do we
+ * materialize it, which needs a writable folder and surfaces the actionable non-writable error.
  */
 export function openOutputDir(analysis: Analysis): Result<string, WorkspaceError> {
-    // ensure (not just resolve) — the directory must exist to be opened.
-    return ensureOutputDir(analysis).map((dir) => {
-        try {
-            Bun.spawn(openerArgv(dir), { stdout: "inherit", stderr: "inherit" });
-        } catch {
-            // Fire-and-forget: a missing opener (ENOENT) is not worth crashing for.
-        }
-        return dir;
-    });
+    return locateExistingOutputDir(analysis)
+        .andThen((existing): Result<string, WorkspaceError> => (existing !== null ? ok(existing) : ensureOutputDir(analysis)))
+        .map((dir) => {
+            try {
+                Bun.spawn(openerArgv(dir), { stdout: "inherit", stderr: "inherit" });
+            } catch {
+                // Fire-and-forget: a missing opener (ENOENT) is not worth crashing for.
+            }
+            return dir;
+        });
 }
 
 /** `inflexa open <id|name>` — open an analysis's workspace in the OS file browser. */

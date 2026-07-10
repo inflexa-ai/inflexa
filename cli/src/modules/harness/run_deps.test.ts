@@ -148,7 +148,10 @@ describe("buildSandboxStepDeps", () => {
 
         let thrown: Error | null = null;
         try {
-            deps.buildAgent(fakeBuildContext("not-a-real-agent", "/tmp/prefix"));
+            // The write prefix must sit under the analysis's workspace root — agent
+            // construction maps it to a sandbox path — so the unknown-id lookup is
+            // what fails, not the path mapping.
+            deps.buildAgent(fakeBuildContext("not-a-real-agent", "/tmp/sessions/an-1/runs/run-1/step-1"));
         } catch (e) {
             thrown = e as Error;
         }

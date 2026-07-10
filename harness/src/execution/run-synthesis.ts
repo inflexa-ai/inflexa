@@ -19,10 +19,12 @@
  * `failed` part. We do not throw here for routine submitter rejections.
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
+
+import { writeFileWithinRoot } from "../lib/fs-helpers.js";
 
 import { RunSynthesisSchema, type RunSynthesis } from "../schemas/run-synthesis.js";
 import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
@@ -371,10 +373,8 @@ export interface PersistSynthesisInput {
 }
 
 export async function persistSynthesis(args: PersistSynthesisInput): Promise<string> {
-    const dir = join(args.workspaceRoot, runDir(args.runId));
-    await mkdir(dir, { recursive: true });
-    const path = join(dir, "synthesis.json");
-    await writeFile(path, JSON.stringify(args.synthesis, null, 2));
+    const path = join(args.workspaceRoot, runDir(args.runId), "synthesis.json");
+    await writeFileWithinRoot(args.workspaceRoot, path, JSON.stringify(args.synthesis, null, 2));
     return path;
 }
 

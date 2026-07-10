@@ -4,7 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { freshDb } from "../../test_support/db.ts";
-import { archivedOutputSubdir, disposeWorkspace, invalidateWorkspaceRoot, resolveOutputDir, workspaceDataDir, workspaceRootForAnalysisId } from "./output.ts";
+import {
+    archivedOutputSubdir,
+    disposeWorkspace,
+    ensureOutputDir,
+    invalidateWorkspaceRoot,
+    locateExistingOutputDir,
+    resolveOutputDir,
+    workspaceDataDir,
+    workspaceRootForAnalysisId,
+} from "./output.ts";
 import { writeMarker } from "../anchor/marker.ts";
 import { deleteAnalysis, insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
 import { asStr256 } from "../../lib/types.ts";
@@ -81,6 +90,31 @@ describe("resolveOutputDir", () => {
         insertAnchorAt("A1", gone);
         rmSync(gone, { recursive: true, force: true }); // anchor can no longer be located
         expect(resolveOutputDir(analysis())._unsafeUnwrapErr().type).toBe("workspace_unavailable");
+    });
+});
+
+describe("locateExistingOutputDir", () => {
+    test("an existing tree is revealed even when the home folder is not writable", () => {
+        const home = anchoredHome();
+        // Materialize the tree while the folder is still writable, then revoke write.
+        ensureOutputDir(analysis())._unsafeUnwrap();
+        chmodSync(home, 0o555);
+
+        // resolveOutputDir (the write path) refuses, but the reveal path returns the tree.
+        expect(resolveOutputDir(analysis())._unsafeUnwrapErr().type).toBe("workspace_unavailable");
+        expect(locateExistingOutputDir(analysis())._unsafeUnwrap()).toBe(join(home, ".inflexa", "analyses", "myslug"));
+    });
+
+    test("a reachable folder with no materialized tree → ok(null)", () => {
+        anchoredHome();
+        expect(locateExistingOutputDir(analysis())._unsafeUnwrap()).toBeNull();
+    });
+
+    test("an unlocatable folder → workspace_unavailable", () => {
+        const gone = tmp();
+        insertAnchorAt("A1", gone);
+        rmSync(gone, { recursive: true, force: true });
+        expect(locateExistingOutputDir(analysis())._unsafeUnwrapErr().type).toBe("workspace_unavailable");
     });
 });
 

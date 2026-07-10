@@ -145,6 +145,11 @@ export function resolveForWrite(args: {
  * from the workspace root + run/step coordinates the workflow owns.
  */
 export function stepWritePrefix(args: { readonly workspaceRoot: string; readonly runId: string; readonly stepId: string }): string {
+    // `stepId` originates in an LLM-authored plan; validate before it becomes a
+    // host directory path (this prefix is the mkdir target and the docker bind
+    // source) so a crafted `..`/`/` segment cannot widen or escape the mount.
+    assertSafeId(args.runId, "runId");
+    assertSafeId(args.stepId, "stepId");
     return resolvePath(args.workspaceRoot, "runs", args.runId, args.stepId);
 }
 
@@ -158,6 +163,13 @@ export function stepWritePrefix(args: { readonly workspaceRoot: string; readonly
  */
 export function toSandboxPath(workspaceRoot: string, resourceId: string, hostAbsPath: string): string {
     const tail = relativePath(workspaceRoot, hostAbsPath).split(sep).join("/");
+    // A `..`-leading tail means `hostAbsPath` is not under `workspaceRoot`; every
+    // current caller passes an in-tree path (a step write prefix), so this is a
+    // guard against a future miswire producing `/{resourceId}/../…`, not a
+    // reachable case today.
+    if (tail === ".." || tail.startsWith("../")) {
+        throw new Error(`toSandboxPath: host path escapes the workspace root: ${hostAbsPath}`);
+    }
     return tail === "" ? `/${resourceId}` : `/${resourceId}/${tail}`;
 }
 
@@ -218,8 +230,18 @@ function stripAnalysisRoot(path: string, analysisId: string): string | null {
 
 const SAFE_ID = /^[\w.-]+$/;
 
-function assertSafeId(value: string, label: string): void {
-    if (!SAFE_ID.test(value)) {
+/**
+ * Reject a path segment that could break out of its parent directory. `SAFE_ID`
+ * forbids a slash, NUL, or other shell-hostile char, but its charset still
+ * admits the pure-dot segments `.` and `..` — which `resolve`/`join` would treat
+ * as the current/parent directory and use to climb the tree. Ids are
+ * harness-minted UUIDs on every trusted path, but `stepId` reaches path builders
+ * straight from an LLM-authored plan, so this is the boundary that keeps a
+ * crafted id from re-rooting a mount or a host write. Exported so the mount-plan
+ * builders (the container-path source of truth) validate the same way.
+ */
+export function assertSafeId(value: string, label: string): void {
+    if (!SAFE_ID.test(value) || value === "." || value === "..") {
         throw new Error(`Invalid ${label}: ${value}`);
     }
 }
