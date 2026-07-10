@@ -280,7 +280,7 @@ export { queryActiveSandboxes } from "./state/active-sandboxes.js";
 
 // Workspace-tree path convention — the root-relative step directory each
 // sandbox step confines its artifact writes to (join onto the resolved root).
-export { runStepDir, stepWritePrefix } from "./workspace/paths.js";
+export { runStepDir } from "./workspace/paths.js";
 
 // Sandbox-hygiene scheduled workflows. Reaper reclaims a dead host's orphaned
 // containers; watchdog converts a dead sandbox into a prompt step failure

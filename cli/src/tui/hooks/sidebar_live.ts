@@ -173,7 +173,8 @@ const POLL_INTERVAL_MS = 5_000;
  * Trade-off: a genuinely wedged non-terminal run keeps the 5s poll alive. Accepted
  * — it is bounded, cheap (≤10 rows), and visible; the alternative (guessing wedged-ness) is worse.
  */
-const RUN_STATUS_TERMINAL: Record<RunStatus, boolean> = {
+/** Whether a run status means the run is finished — i.e. nothing is still writing to its workspace. */
+export const RUN_STATUS_TERMINAL: Record<RunStatus, boolean> = {
     running: false,
     completed: true,
     failed: true,

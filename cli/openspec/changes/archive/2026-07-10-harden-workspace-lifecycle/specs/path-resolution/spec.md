@@ -1,56 +1,6 @@
-# path-resolution Specification
+# path-resolution Delta
 
-## Purpose
-Classification and resolution of analysis input path references (anchor-relative when under a tracked anchor, absolute otherwise) and resolution/creation of the per-analysis workspace root — always beside the data at `<anchor>/.inflexa/analyses/<slug>/`; an unresolvable or non-writable anchor is an actionable error, never a fallback.
-## Requirements
-### Requirement: Classify an input path into a reference
-
-The system SHALL provide `classifyInputPath(analysisId, rawPath, cwd)` returning `Result<AnalysisInput, DbError>` in `src/modules/analysis/input.ts`. It SHALL expand a leading `~`, resolve relative paths against `cwd`, determine `isDir` via a filesystem stat, and use `findMarkerUpwards` on the resolved absolute path to decide membership: when a marker is found and the input is genuinely inside the marker directory, store `(anchorId = marker id, path = clean relative path)`; otherwise store `(anchorId = null, path = absolute)`.
-
-#### Scenario: Path inside a marked directory becomes an anchor-relative ref
-
-- **WHEN** `classifyInputPath` is called on a path inside a directory that has a marker
-- **THEN** the returned ref has `anchorId` set to the marker id
-- **AND** `path` is the clean relative path from the marker directory (no `..` escape)
-
-#### Scenario: Path outside any marker becomes an absolute ref
-
-- **WHEN** `classifyInputPath` is called on a path with no marker among its ancestors
-- **THEN** the returned ref has `anchorId = null` and `path` is the absolute path
-
-#### Scenario: Path escaping the marker dir is stored absolute
-
-- **WHEN** the relative path from the marker directory would start with `..`
-- **THEN** the input is stored as `anchorId = null` with an absolute `path`
-
-#### Scenario: Non-existent path is surfaced, not defaulted
-
-- **WHEN** the resolved input path does not exist
-- **THEN** `classifyInputPath` returns an `err` (it does not silently default `isDir`)
-
-#### Scenario: isDir reflects the filesystem
-
-- **WHEN** the input path is an existing directory
-- **THEN** `isDir` is `true`; when it is an existing file, `isDir` is `false`
-
-### Requirement: Resolve an input reference to an absolute path
-
-The system SHALL provide `resolveInputPath(input)` returning `Result<string | null, DbError>`. When `anchorId` is null it SHALL return the stored absolute `path`; when set it SHALL return `join(resolvedAnchorPath, path)`, or `null` when the anchor cannot be resolved.
-
-#### Scenario: Absolute ref resolves to itself
-
-- **WHEN** `resolveInputPath` is called with `anchorId = null`
-- **THEN** it returns the stored absolute `path`
-
-#### Scenario: Anchor-relative ref resolves against the live anchor path
-
-- **WHEN** `resolveInputPath` is called with an `anchorId` whose anchor resolves to a path
-- **THEN** it returns `join(anchorPath, input.path)`
-
-#### Scenario: Unresolvable anchor yields null
-
-- **WHEN** the input's anchor cannot be resolved to a live path
-- **THEN** `resolveInputPath` returns `null`
+## MODIFIED Requirements
 
 ### Requirement: Resolve the analysis output directory
 
@@ -84,19 +34,7 @@ Resolution SHALL NOT record an anchor sighting (`resolveAnchor(anchorId, { touch
 - **WHEN** `resolveOutputDir` resolves an analysis's anchor
 - **THEN** the anchor's `last_seen` is unchanged
 
-### Requirement: Create the analysis output directory
-
-The system SHALL provide `ensureOutputDir(analysis)` returning `Result<string, WorkspaceError>` that resolves the workspace root and creates it recursively (idempotently), returning the absolute path. It SHALL write only to the workspace root location, never to source data, and SHALL propagate resolution errors (non-writable/unresolvable anchor) unchanged.
-
-#### Scenario: Output directory created idempotently
-
-- **WHEN** `ensureOutputDir(analysis)` is called
-- **THEN** the resolved directory exists afterward and calling it again succeeds without error
-
-#### Scenario: Resolution failure propagates
-
-- **WHEN** the workspace root cannot be resolved
-- **THEN** `ensureOutputDir` returns that err and creates nothing
+## ADDED Requirements
 
 ### Requirement: Resolve a workspace root by analysis id, memoized
 
@@ -132,4 +70,3 @@ The system SHALL provide `archivedOutputSubdir(slug)` in `src/modules/analysis/o
 
 - **WHEN** `archivedOutputSubdir("trial")` is called
 - **THEN** it returns `.inflexa/analyses_archived/trial`, which is not under `.inflexa/analyses/`
-

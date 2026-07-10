@@ -11,6 +11,10 @@ import type { BatchV1Api, CoreV1Api, V1Job, V1Pod } from "@kubernetes/client-nod
 import { createK8sSandboxOps, sanitizeLabelValue } from "./k8s-client.js";
 import { mintSandboxIdentity } from "./identity.js";
 
+/** The conventional managed layout: workspace roots sit directly under the PVC mountpoint. */
+const SESSION_PVC_ROOT = "/sessions";
+const resolveWorkspaceRoot = (analysisId: string) => `${SESSION_PVC_ROOT}/${analysisId}`;
+
 function stubApis(podSequence: Array<Partial<V1Pod>>, opts: { create409Times?: number; existingOwner?: string } = {}) {
     const createdJobs: V1Job[] = [];
     const deletedJobs: string[] = [];
@@ -89,6 +93,8 @@ describe("k8s createSandbox", () => {
             cortexBaseUrl: "https://cortex.example.com:443",
             transport: "callback",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             libStorePvc: "cortex-libs",
             refStorePvc: "cortex-refs",
@@ -155,6 +161,64 @@ describe("k8s createSandbox", () => {
         expect(registered).toEqual([ref.sandboxId]);
     });
 
+    test("session subPaths follow the resolved workspace root, not the analysis id", async () => {
+        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "sbx-nested" } }]);
+
+        const ops = createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            // An embedder whose roots are NOT `{pvcRoot}/{analysisId}`. The pod must mount the
+            // directory the harness pre-creates under this root, not a same-named sibling of it.
+            resolveWorkspaceRoot: (id) => `${SESSION_PVC_ROOT}/tenants/acme/${id}`,
+            sessionPvc: "cortex-sessions",
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        const container = stub.createdJobs[0]!.spec!.template.spec!.containers[0]!;
+        const mounts = container.volumeMounts!;
+
+        // Container-side paths are unchanged — the sandbox contract does not know where the tree lives.
+        expect(container.workingDir).toBe("/an-1/runs/run-1/step-a");
+        expect(mounts.find((m) => m.name === "session" && m.mountPath === "/an-1")!.subPath).toBe("tenants/acme/an-1");
+        expect(mounts.find((m) => m.name === "session" && m.mountPath === "/an-1/runs/run-1/step-a")!.subPath).toBe("tenants/acme/an-1/runs/run-1/step-a");
+    });
+
+    test("a workspace root outside sessionPvcRoot is a loud failure, not a silently wrong mount", async () => {
+        const stub = stubApis([{ status: { phase: "Running", podIP: "10.0.0.9" }, metadata: { name: "sbx-escape" } }]);
+
+        const ops = createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot: () => "/elsewhere/an-1",
+            sessionPvc: "cortex-sessions",
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+
+        // The throw escapes as a rejection rather than an `err` — `createSandbox` runs inside a
+        // DBOS workflow body, where only a throw records the step as durably failed.
+        const attempt = async () =>
+            ops.createSandbox(
+                { runId: "run-1", stepId: "step-a", analysisId: "an-1", childWorkflowId: "run-1-0", resources: { cpu: 1, memoryGb: 1 } },
+                mintSandboxIdentity("run-1"),
+            );
+        await expect(attempt()).rejects.toThrow(/does not live under sessionPvcRoot/);
+    });
+
     test("poll mode (default) omits CORTEX_BASE_URL — the pod spec documents that the sandbox never dials out", async () => {
         const stub = stubApis([
             {
@@ -167,6 +231,8 @@ describe("k8s createSandbox", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://cortex.example.com:443",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -205,6 +271,8 @@ describe("k8s createSandbox", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             libStorePvc: "cortex-libs",
             batchApi: stub.batchApi,
@@ -250,6 +318,8 @@ describe("k8s createSandbox", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             nodeSelector: { "platform.io/role": "agent-node" },
             tolerations: [
@@ -302,6 +372,8 @@ describe("k8s createSandbox", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -339,6 +411,8 @@ describe("k8s createSandbox", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -377,6 +451,8 @@ describe("k8s createSandbox failure cleanup", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -404,6 +480,8 @@ describe("k8s createSandbox failure cleanup", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -441,6 +519,8 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -483,6 +563,8 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -518,6 +600,8 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -549,6 +633,8 @@ describe("k8s job ownership labels", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -581,6 +667,8 @@ describe("k8s job ownership labels", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             sessionPvc: "cortex-sessions",
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
@@ -625,6 +713,8 @@ describe("k8s teardown", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
             registerSandbox: async () => {},
@@ -646,6 +736,8 @@ describe("k8s teardown", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
             registerSandbox: async () => {},
@@ -689,6 +781,10 @@ describe("k8s isAlive", () => {
                 image: "sandbox-base:latest",
                 cortexBaseUrl: "https://x",
                 namespace: "sandbox",
+                sessionPvcRoot: SESSION_PVC_ROOT,
+                resolveWorkspaceRoot,
+                sessionPvcRoot: SESSION_PVC_ROOT,
+                resolveWorkspaceRoot,
                 batchApi: stub.batchApi,
                 coreApi: stub.coreApi,
                 registerSandbox: async () => {},
@@ -721,6 +817,8 @@ describe("k8s isAlive", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
             namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
             batchApi: stub.batchApi,
             coreApi: stub.coreApi,
             registerSandbox: async () => {},

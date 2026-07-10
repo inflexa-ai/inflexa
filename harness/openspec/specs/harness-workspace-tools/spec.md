@@ -37,11 +37,8 @@ sandbox byte-write + provenance, so confinement is enforced in one place rather
 than re-implemented per tool. The five reserved artifact-subdir names are
 rejected as step ids at plan validation so a step directory can never collide
 with the artifact convention.
-
 ## Requirements
-
 ### Requirement: Workspace read seam is a construction-time dependency
-
 
 The harness SHALL expose a workspace filesystem read seam —
 `createWorkspaceFilesystem(deps)` returning `{ readFile, list, stat }` over the
@@ -83,7 +80,6 @@ conversation-agent behaviour.
 
 ### Requirement: Frame-aware path resolution
 
-
 Relative paths SHALL resolve against the caller's working directory; absolute
 `/{resourceId}/...` paths SHALL resolve against the analysis root regardless of
 the working directory. The resolver (`resolveWorkspacePath` in
@@ -115,7 +111,6 @@ lives on the host: it maps onto the root via the shared host↔container formula
 - **THEN** the resolver SHALL return `out_of_scope` before any I/O
 
 ### Requirement: read_file tool reads workspace files with bounded output
-
 
 The harness SHALL expose a `read_file` tool over the workspace read seam. Its
 input SHALL be a workspace path (relative to the working directory, or absolute
@@ -150,7 +145,6 @@ so the harness loop's error contract can wrap them as `is_error` results.
   bytes and the total size
 
 ### Requirement: read_file supports head and tail line windows for bio files
-
 
 The harness `read_file` tool SHALL accept optional `headLines` and `tailLines`
 parameters. `headLines: N` returns the first N lines; `tailLines: N` returns the
@@ -191,7 +185,6 @@ the whole file into memory.
 
 ### Requirement: The read seam accepts an optional embedder-supplied presigned fallback
 
-
 The `WorkspaceFilesystem` read seam SHALL accept an optional `PresignedFallback`
 whose `fetch(...)` returns a `Buffer` or `null`. When a file is absent on the
 host session directory and a fallback is configured, the seam SHALL attempt it; a
@@ -217,7 +210,6 @@ the OSS seam ships or guarantees.
 
 ### Requirement: grep tool searches workspace files with bounded results
 
-
 The harness SHALL expose a `grep` tool over the workspace read seam. It SHALL
 accept a pattern and a workspace path (file or directory). It SHALL return
 matches as data, including the empty-result case as a data variant rather than a
@@ -240,7 +232,6 @@ exceeding either bound SHALL carry a truncation marker.
 
 ### Requirement: Reserved artifact-subdir names are rejected as step ids
 
-
 Plan validation SHALL reject any step whose id equals one of the reserved
 artifact-subdir names — `scripts`, `output`, `figures`, `logs`, `notebooks` —
 case-insensitively, because a step directory `runs/{runId}/{stepId}` named after
@@ -255,7 +246,6 @@ relies on.
   the plan SHALL NOT execute
 
 ### Requirement: execute_command is the single chokepoint for sandbox command execution
-
 
 The harness SHALL expose an `execute_command` tool as a dependency-bearing factory
 `createExecuteCommandTool(deps)` that captures a `SandboxClient`, the live
@@ -308,7 +298,6 @@ SHALL throw.
 
 ### Requirement: execute_command result is bounded with a truncation marker
 
-
 The `execute_command` result payload SHALL be bounded by a maximum byte count on
 each of `stdout` and `stderr` so a chatty command cannot blow the loop's context.
 When either stream exceeds the cap the returned data variant SHALL carry a
@@ -331,7 +320,6 @@ through unchanged regardless of truncation.
   `durationMs`, and `timedOut` SHALL be returned unchanged
 
 ### Requirement: write_file is sandbox-gated and confined to the working directory
-
 
 The harness SHALL expose a `write_file` tool as a factory closure
 `createWriteFileTool({ mutator })` — a thin adapter over the `WorkspaceMutator`
@@ -375,7 +363,6 @@ corrects. Only unexpected sandbox failures SHALL throw.
 
 ### Requirement: edit_file is sandbox-gated and confined to the working directory
 
-
 The harness SHALL expose an `edit_file` tool as a factory closure
 `createEditFileTool({ mutator, workspaceFilesystem, workingDir })` that composes
 the read seam (fetch current content), a search/replace, and
@@ -410,7 +397,6 @@ the read surface at the same path.
 
 ### Requirement: Mutate and read surfaces share one canonical resolver
 
-
 The `WorkspaceMutator` seam SHALL import `resolveForWrite` from
 `workspace/paths.ts` — the same module whose `resolveWorkspacePath` the read seam
 uses. There SHALL be no second path-construction module on the mutate side;
@@ -434,3 +420,22 @@ top of a resolved, scope-checked path.
 - **WHEN** the read surface is called with the same workspace path
 - **THEN** both surfaces SHALL resolve to the same session-tree location and the
   content written SHALL be returned
+
+### Requirement: The read seam converts an unresolvable workspace root into an error value
+
+`createWorkspaceFilesystem` SHALL call `resolveWorkspaceRoot` inside its own boundary conversion and return `err(FsError)` — `type: "read_failed"`, `op: "workspace.resolveWorkspaceRoot"`, with the resource id as `path` and the thrown value as `cause` — rather than propagating the exception. It SHALL NOT rely on a caller's incidental `catch` (the agent loop's `dispatchTool` wraps `tool.execute`) to contain it, because the seam's type says the failure is a value.
+
+`resolveWorkspaceRoot` signals an unresolvable resource by throwing (workspace-root-resolution), which is the correct protocol inside a DBOS body. `createWorkspaceFilesystem` is not a DBOS body: `readFile`, `list`, and `stat` are typed `ResultAsync<_, FsError>`, and they are reachable from a live chat turn whose analysis root may have been moved or deleted since the turn began.
+
+#### Scenario: An unresolvable root is an err on every read method
+
+- **GIVEN** a `WorkspaceFilesystem` whose `resolveWorkspaceRoot` throws for the session's resource
+- **WHEN** `readFile`, `list`, or `stat` is called
+- **THEN** each returns `err(FsError)` with `op: "workspace.resolveWorkspaceRoot"` — no exception escapes
+
+#### Scenario: An unresolvable root is distinguishable from an out-of-scope path
+
+- **GIVEN** a `WorkspaceFilesystem` whose root resolves normally
+- **WHEN** `readFile` is called with a path that escapes the analysis tree
+- **THEN** it returns `ok({ kind: "out_of_scope" })`, not an err — scope violations remain in-band data, and only resolution failure uses the error channel
+

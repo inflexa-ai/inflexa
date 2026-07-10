@@ -25,11 +25,8 @@ Cleanup is sweep-based, not lifecycle-coupled: every managed container carries
 `listManagedSandboxes` and tears down those whose owning workflow is terminal or
 gone. There is no GPU passthrough on the Docker backend — GPU scheduling is a
 K8s-only concern.
-
 ## Requirements
-
 ### Requirement: createDockerSandboxOps implements the backend ops
-
 
 `createDockerSandboxOps` SHALL produce the backend-specific ops (`createSandbox`,
 `teardown`, `teardownById`, `isAlive`, `listManagedSandboxes`) consumed by
@@ -46,7 +43,6 @@ a `SandboxError` variant on failure, never throw.
 - **AND** `submitExec` / `awaitExec` are used unchanged across backends
 
 ### Requirement: Container lifecycle via the Docker API
-
 
 `createDockerSandboxOps.createSandbox(meta, identity)` SHALL create a Docker
 container from `meta.image ?? config.image` with bind mounts, CPU/memory limits,
@@ -75,7 +71,6 @@ until it responds 200 (default 30s budget). `teardown(ref)` and
 - **THEN** `createSandbox` returns a `container_create_failed` error including the last failure detail
 
 ### Requirement: Transport-mode container wiring
-
 
 `createSandbox` SHALL render the harness `SandboxTransport` into the container's
 runtime configuration:
@@ -112,7 +107,6 @@ dropped before the workload runs.
 
 ### Requirement: Image source is config default overridden per step
 
-
 The Docker backend SHALL use `meta.image` when the workflow supplies a per-step
 image override, falling back to the `config.image` default otherwise. There is
 no `SANDBOX_IMAGE` env read in this layer.
@@ -125,7 +119,6 @@ no `SANDBOX_IMAGE` env read in this layer.
 
 ### Requirement: Bind mounts replace PVCs
 
-
 The Docker backend SHALL bind-mount host directories into the container per the
 shared mount plan (`mount-plan.ts`): the analysis workspace tree (flat read-only
 mount at the plan's `readonlyTreePath`), the per-step writable artifact root
@@ -135,6 +128,11 @@ configured), and the ref store at `/mnt/refs` (read-only, when `refStorePath` is
 configured). Mount host-path sources SHALL derive from the resolved workspace
 root (`resolveWorkspaceRoot(analysisId)`), not from a global session base. Each
 mount's read-only flag is set explicitly in the bind string.
+
+`buildMountPlan` SHALL return only the paths both backends share — container
+paths, step subdirs, and env. The K8s `subPath` strings SHALL come from
+`buildSessionSubPaths(coords, workspaceSubPath)` instead, since they are a
+property of how one backend addresses a volume, not of the container contract.
 
 #### Scenario: Workspace tree mounted read-only
 
@@ -150,7 +148,6 @@ mount's read-only flag is set explicitly in the bind string.
 - **AND** the sandbox env injects the lib-store path variables from the mount plan
 
 ### Requirement: Dynamic port mapping for host connectivity
-
 
 The Docker backend SHALL use dynamic port mapping for `8765/tcp` bound to the
 loopback host address (`HostIp: "127.0.0.1"`, `HostPort: ""` so Docker assigns a
@@ -173,7 +170,6 @@ poll) SHALL use `127.0.0.1:{mappedPort}`.
 
 ### Requirement: CPU and memory limits via the Docker API; no GPU passthrough
 
-
 The Docker backend SHALL apply CPU and memory constraints via the Docker
 container `HostConfig`: `NanoCpus` set to `round(cpu * 1e9)` and `Memory` set to
 `memoryGb * 1024^3`. The Docker backend SHALL NOT request GPUs (no
@@ -192,7 +188,6 @@ container `HostConfig`: `NanoCpus` set to `round(cpu * 1e9)` and `Memory` set to
 - **THEN** the `HostConfig` has no `DeviceRequests` entry
 
 ### Requirement: Sandbox containers labeled for managed-sweep cleanup
-
 
 Sandbox containers created by the Docker backend SHALL carry the labels
 `app.kubernetes.io/managed-by=cortex`, `role=sandbox`,
@@ -217,7 +212,6 @@ workflow and tear down orphans.
 
 ### Requirement: Container creation is idempotent on a recovery re-run
 
-
 `createSandbox` SHALL be idempotent on the checkpointed `sandboxId`. When
 `createContainer` returns a name collision (HTTP 409), it inspects the existing
 container and applies an owner-guard: it only adopts or replaces the container
@@ -237,3 +231,32 @@ error. The decision and its rationale are owned by the harness-sandbox-exec spec
 - **GIVEN** a 409 whose existing container is labeled with a different `cortex/owner-workflow-id`
 - **WHEN** `createSandbox` reconciles it
 - **THEN** it returns a `name_conflict` error and neither adopts nor removes the container
+
+### Requirement: K8s PVC subPaths derive from the resolved workspace root
+
+The K8s backend addresses the session volume by `subPath`, so it SHALL be able to express a resolved workspace root as a path relative to the volume's root. `K8sClientConfig` SHALL therefore carry the `resolveWorkspaceRoot` seam and `sessionPvcRoot` — the absolute mountpoint of `sessionPvc` on the harness process's own filesystem. Whenever `sessionPvc` is configured, `sessionPvcRoot` SHALL be configured too.
+
+The pod's read-only tree mount SHALL use `subPath = relative(sessionPvcRoot, resolveWorkspaceRoot(analysisId))`, and its read-write step mount SHALL use that path joined with `runs/{runId}/{stepId}`. Because `createSandbox` pre-creates the step tree under `resolveWorkspaceRoot(analysisId)` on the same volume, the directory the harness writes and the directory the pod mounts are then the same one by construction rather than by convention. The backend SHALL NOT derive the `subPath` from `analysisId` alone: that silently mounts a different directory for any embedder whose roots are not laid out as `{pvcRoot}/{analysisId}`.
+
+A resolved root that does not live under `sessionPvcRoot` cannot be addressed as a `subPath` at all. The backend SHALL fail loudly in that case — `createSandbox` runs inside a DBOS workflow body, where a throw is the durable failure signal — rather than mounting a same-named sibling.
+
+#### Scenario: subPath tracks a root that is not `{pvcRoot}/{analysisId}`
+
+- **GIVEN** `sessionPvcRoot` `/sessions` and a resolver mapping `an-1` to `/sessions/tenants/acme/an-1`
+- **WHEN** a sandbox is created for `an-1`, run `run-1`, step `step-a`
+- **THEN** the read-only session mount has `mountPath: "/an-1"` and `subPath: "tenants/acme/an-1"`
+- **AND** the read-write session mount has `mountPath: "/an-1/runs/run-1/step-a"` and `subPath: "tenants/acme/an-1/runs/run-1/step-a"`
+- **AND** the container's paths are unchanged — the container never learns where the tree lives
+
+#### Scenario: A root outside the PVC root is rejected
+
+- **GIVEN** `sessionPvcRoot` `/sessions` and a resolver mapping `an-1` to `/elsewhere/an-1`
+- **WHEN** a sandbox is created for `an-1`
+- **THEN** creation throws, naming the root and the PVC root — no Job is created
+
+#### Scenario: `sessionPvc` without `sessionPvcRoot` is a configuration error
+
+- **GIVEN** `sessionPvc` is set and `sessionPvcRoot` is not
+- **WHEN** a sandbox is created
+- **THEN** creation throws, because the `subPath` of a workspace root cannot be derived
+

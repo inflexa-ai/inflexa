@@ -119,14 +119,22 @@ function selfHeal(anchor: Anchor, anchorId: string, dir: string): Result<Resolve
  * is a routine desync. We degrade rather than hard-fail; the deliberate `getOrCreateAnchorForCwd`
  * re-establishes the row from the on-disk marker when the user next acts (we never write on this
  * passive resolve — the no-litter policy). See CLAUDE.md → "Local state can desync from the database".
+ *
+ * `touch` records a sighting heartbeat on the happy path. Leave it on for a user-driven resolve
+ * (launch, context, `open`), where a sighting is real news. Turn it OFF for resolves the user did
+ * not ask for — notably the harness's workspace-root lookup, which runs once per agent file read:
+ * `last_seen` would then measure agent I/O rather than folder liveness, and each read would pay a
+ * synchronous SQLite write.
  */
-export function resolveAnchor(anchorId: string, opts?: { searchRoots?: string[] }): Result<ResolvedAnchor | null, DbError> {
+export function resolveAnchor(anchorId: string, opts?: { searchRoots?: string[]; touch?: boolean }): Result<ResolvedAnchor | null, DbError> {
+    const touch = opts?.touch ?? true;
     return getAnchor(anchorId).andThen((anchor): Result<ResolvedAnchor | null, DbError> => {
         if (!anchor) return ok(null);
 
         // Step 1: the cached path still holds our marker — cheapest, highest-hit case.
         if (markerMatches(anchor.cachedPath, anchorId)) {
-            return touchAnchor(anchorId).map(() => ({ anchor, path: anchor.cachedPath }));
+            const resolved: ResolvedAnchor = { anchor, path: anchor.cachedPath };
+            return touch ? touchAnchor(anchorId).map(() => resolved) : ok(resolved);
         }
 
         const roots = (opts?.searchRoots ?? [process.cwd()]).map((r) => canonicalPath(r));

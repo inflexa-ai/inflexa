@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync, type Stats } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
 import { type Result, ok, err } from "neverthrow";
 
 /**
@@ -41,6 +41,16 @@ export function mkdirResult(path: string, op: string): Result<void, FsError> {
 export function renameResult(from: string, to: string, op: string): Result<void, FsError> {
     try {
         renameSync(from, to);
+        return ok(undefined);
+    } catch (cause) {
+        return err({ type: "io_failed", op, cause });
+    }
+}
+
+/** Recursively remove a path, wrapping `rmSync` throws into `Result`. An absent path is a success. */
+export function rmResult(path: string, op: string): Result<void, FsError> {
+    try {
+        rmSync(path, { recursive: true, force: true });
         return ok(undefined);
     } catch (cause) {
         return err({ type: "io_failed", op, cause });

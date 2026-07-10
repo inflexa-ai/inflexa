@@ -9,6 +9,12 @@
  * mount at `/{resourceId}/runs/{runId}/{stepId}` for the step's
  * artifacts, lib store read-only at `/mnt/libs`, ref store read-only at
  * `/mnt/refs`.
+ *
+ * Container paths are a function of `resourceId` alone — they never carry the
+ * host location of the tree. Where that tree physically lives is the embedder's
+ * (`resolveWorkspaceRoot`); the two are reconciled per backend: Docker binds the
+ * resolved root directly, K8s addresses it as a `subPath` into the session PVC
+ * (see {@link buildSessionSubPaths}).
  */
 
 export const STEP_SUBDIRS = ["output", "scripts", "figures", "logs", "notebooks"] as const;
@@ -54,12 +60,46 @@ export interface MountPlan {
     /** Pre-created subdirectories under the writable step path. Empty when
      *  read-only (nothing to pre-create). */
     stepSubdirs: readonly string[];
-    /** K8s `subPath` for the read-only tree mount (no leading slash). */
-    sessionSubPathRO: string;
-    /** K8s `subPath` for the read-write step mount; undefined when read-only. */
-    sessionSubPathRW?: string;
     /** Env merged into the sandbox container: provenance + lib-store vars. */
     env: Record<string, string>;
+}
+
+/** K8s `subPath` strings into the session PVC. No leading or trailing slash. */
+export interface SessionSubPaths {
+    /** Read-only mount of the whole analysis tree. */
+    readonly ro: string;
+    /** Read-write mount of the step's artifact dir; absent when read-only. */
+    readonly rw?: string;
+}
+
+/**
+ * The step tail beneath an analysis's workspace root, in both container and
+ * PVC-relative space. The harness owns this layout (workspace-layout spec).
+ */
+function stepTail(runId: string, stepId: string): string {
+    return `runs/${runId}/${stepId}`;
+}
+
+/**
+ * K8s `subPath`s for the session-PVC mounts.
+ *
+ * `workspaceSubPath` is the analysis's workspace root expressed relative to the PVC root —
+ * i.e. `relative(pvcRoot, resolveWorkspaceRoot(analysisId))`. Deriving the subPaths from the
+ * same resolver that `precreateStepTree` mkdirs under is what makes the directory the harness
+ * creates and the directory the pod mounts provably the same one. Hardcoding `{analysisId}`
+ * here instead would silently mount elsewhere for any embedder whose roots are not laid out
+ * as `{pvcRoot}/{analysisId}` — a coupling nothing in the type system would catch.
+ */
+export function buildSessionSubPaths(coords: MountPlanCoords, workspaceSubPath: string): SessionSubPaths {
+    if (workspaceSubPath.length === 0 || workspaceSubPath.startsWith("/") || workspaceSubPath.split("/").includes("..")) {
+        throw new Error(
+            `buildSessionSubPaths: workspaceSubPath must be a non-empty PVC-root-relative path without '..' (got ${JSON.stringify(workspaceSubPath)})`,
+        );
+    }
+    return {
+        ro: workspaceSubPath,
+        rw: coords.readOnly ? undefined : `${workspaceSubPath}/${stepTail(coords.runId, coords.stepId)}`,
+    };
 }
 
 /**
@@ -77,8 +117,7 @@ function libStoreEnv(): Record<string, string> {
 export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores): MountPlan {
     const { analysisId, runId, stepId, readOnly } = coords;
     const readonlyTreePath = `/${analysisId}`;
-    const sessionSubPathRW = `${analysisId}/runs/${runId}/${stepId}`;
-    const writableStepPath = readOnly ? undefined : `/${sessionSubPathRW}`;
+    const writableStepPath = readOnly ? undefined : `${readonlyTreePath}/${stepTail(runId, stepId)}`;
 
     return {
         readonlyTreePath,
@@ -87,8 +126,6 @@ export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores)
         libsPath: stores.libs ? LIBS_CONTAINER_PATH : undefined,
         refsPath: stores.refs ? REFS_CONTAINER_PATH : undefined,
         stepSubdirs: readOnly ? [] : STEP_SUBDIRS,
-        sessionSubPathRO: analysisId,
-        sessionSubPathRW: readOnly ? undefined : sessionSubPathRW,
         env: {
             PROVENANCE_WATCH_DIRS: readonlyTreePath,
             ...(stores.libs ? libStoreEnv() : {}),
