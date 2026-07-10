@@ -40,14 +40,14 @@ export function PlanCardBlock(props: PlanCardBlockProps) {
                 {/* Show the id beside the title only when the title is what's already displayed —
                     otherwise the heading IS the id and repeating it is noise. */}
                 <Show when={props.title}>
-                    <Fg role="fgSubtle">{` ${GLYPHS.middot} ${props.planId}`}</Fg>
+                    <Fg role="fgMuted">{` ${GLYPHS.middot} ${props.planId}`}</Fg>
                 </Show>
             </text>
             <box paddingLeft={space.md} flexDirection="column" border={["left"]} borderColor={theme().border}>
                 <For each={props.steps}>
                     {(step) => (
                         <text>
-                            <Fg role="fgSubtle">{`${step.id} `}</Fg>
+                            <Fg role="fgMuted">{`${step.id} `}</Fg>
                             <Fg role="fg">{step.name}</Fg>
                             <Fg role="tool">{` [${step.agent}]`}</Fg>
                         </text>

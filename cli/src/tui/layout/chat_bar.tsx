@@ -76,7 +76,7 @@ export function ChatBar(props: ChatBarProps) {
                     )}
                 </text>
                 <box flexGrow={1} />
-                <text fg={theme().fgSubtle}>{NEWLINE_LABEL} newline</text>
+                <text fg={theme().fgMuted}>{NEWLINE_LABEL} newline</text>
             </box>
         </box>
     );

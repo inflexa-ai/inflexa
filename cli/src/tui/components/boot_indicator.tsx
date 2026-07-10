@@ -49,7 +49,7 @@ export function BootIndicator(props: BootIndicatorProps): JSX.Element {
                     <text>
                         {/* frame() is always in-bounds (% length); circleHalf is a dead-safe fallback for the optional index. */}
                         <Fg role="accent">{`${GLYPHS.spinner[frame()] ?? GLYPHS.circleHalf} booting harness runtime`}</Fg>
-                        <Fg role="fgSubtle">{` ${GLYPHS.middot} ${age()}`}</Fg>
+                        <Fg role="fgMuted">{` ${GLYPHS.middot} ${age()}`}</Fg>
                     </text>
                 </box>
             }

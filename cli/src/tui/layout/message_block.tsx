@@ -49,7 +49,7 @@ export function MessageBlock(props: MessageBlockProps) {
         <box width="100%" flexDirection="column" paddingBottom={space.sm}>
             <text fg={theme()[props.role === "user" ? MARKERS.you.role : MARKERS.assistant.role]}>
                 <Bold>{props.role === "user" ? `${MARKERS.you.glyph} You` : `${MARKERS.assistant.glyph} Inflexa`}</Bold>
-                <Fg role="fgSubtle">{meta()}</Fg>
+                <Fg role="fgMuted">{meta()}</Fg>
             </text>
             <For each={props.parts}>
                 {(part): JSX.Element => {

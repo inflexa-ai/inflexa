@@ -29,12 +29,12 @@ export function ThinkingBlock(props: ThinkingBlockProps) {
         <box flexDirection="column" paddingBottom={space.sm}>
             <text>
                 <Fg role={MARKERS.thinking.role}>{`${MARKERS.thinking.glyph} thinking`}</Fg>
-                <Fg role="fgSubtle">{duration()}</Fg>
+                <Fg role="fgMuted">{duration()}</Fg>
             </text>
             <Show
                 when={props.expanded}
                 fallback={
-                    <text fg={theme().fgSubtle} paddingLeft={space.md}>
+                    <text fg={theme().fgMuted} paddingLeft={space.md}>
                         {GLYPHS.arrowDown} expand {GLYPHS.middot} collapsed by default
                     </text>
                 }

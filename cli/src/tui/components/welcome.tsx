@@ -34,7 +34,7 @@ export function Welcome(props: WelcomeProps) {
                 </text>
             </Show>
             <Show when={props.hints?.length}>
-                <text fg={theme().fgSubtle} paddingTop={space.sm}>
+                <text fg={theme().fgMuted} paddingTop={space.sm}>
                     {props.hints!.join(`  ${GLYPHS.middot}  `)}
                 </text>
             </Show>
