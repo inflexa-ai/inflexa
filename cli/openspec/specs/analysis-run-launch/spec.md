@@ -7,25 +7,29 @@ The deliberate `inflexa run` action that launches a full `executeAnalysis` run f
 
 ### Requirement: Launching an analysis run is a deliberate action
 
+
 The system SHALL provide a dedicated command that launches a full `executeAnalysis`
 run for a resolved analysis from a validated plan. The command SHALL sequence:
 resolve the analysis reference → pre-flight prerequisite checks (the same actionable
 gates as the profile launch: sandbox image, embedding endpoint, skills dir, proxy
-key, model, Postgres) → validate the plan file (the pure parse/schema/`validatePlan`
+key, model, Postgres — plus the analysis workspace root resolving to a writable
+location) → validate the plan file (the pure parse/schema/`validatePlan`
 gates, which persist nothing) → boot the embedded runtime → stage the analysis's
-inputs into the session tree (mirror reconciliation; the run engine never downloads)
+inputs into the analysis workspace (`{workspaceRoot}/data`, mirror reconciliation;
+the run engine never downloads)
 → seed the harness analysis ledger row → persist the validated plan under its
 deterministic id → trigger. Plan validation SHALL precede the boot so a malformed or
 invalid plan is rejected before any side effect (no boot, no staging, no ledger row),
 per the plan-intake spec; only the deterministic-id persistence needs the booted
 pool. No passive flow (bare `inflexa` launch, TUI startup) SHALL stage, boot, or
 trigger. An analysis with no resolvable inputs SHALL short-circuit before boot with
-an actionable message.
+an actionable message, and an unresolvable or non-writable workspace root SHALL
+short-circuit the same way — there is no fallback location.
 
 #### Scenario: Full launch sequence on a prepared analysis
 
 - **WHEN** the command runs for an analysis with resolvable inputs, a valid plan file, and satisfied prerequisites
-- **THEN** inputs are staged under the session tree, the plan is persisted, and an `executeAnalysis` workflow is launched whose run row exists in the harness ledger
+- **THEN** inputs are staged under the analysis workspace, the plan is persisted, and an `executeAnalysis` workflow is launched whose run row exists in the harness ledger
 
 #### Scenario: Failed prerequisite is reported before side effects
 
@@ -37,12 +41,18 @@ an actionable message.
 - **WHEN** the plan file is unreadable, not valid JSON, fails the plan schema, or fails `validatePlan` (cycle, unknown agent, missing resources, zero steps)
 - **THEN** the command exits with the plan's actionable error before the runtime is booted — the runtime is never started, nothing is staged, and no ledger or plan row is written
 
+#### Scenario: Non-writable workspace blocks the launch before side effects
+
+- **WHEN** the analysis's workspace root cannot be resolved or is not writable
+- **THEN** the command exits with the workspace's actionable message before boot, staging, or any ledger write
+
 #### Scenario: Missing completed data profile warns but does not block
 
 - **WHEN** the analysis has no completed data profile in the harness ledger
 - **THEN** the command surfaces a warning (agents orient on the profile summary) and proceeds with the launch
 
 ### Requirement: Trigger semantics match the harness's own plan-execution flow
+
 
 The launch SHALL follow the same sequence the harness's `executePlan` tool performs,
 using the harness's exported state functions and run launcher: dedup pre-check for
@@ -65,6 +75,7 @@ authorization revoked where one was issued) so a retry can re-run.
 - **THEN** the row is marked failed and a subsequent invocation can launch fresh
 
 ### Requirement: The command blocks to a terminal state with live progress
+
 
 The command SHALL block until the run reaches a terminal status (`completed`,
 `partial`, `failed`, `canceled`, `suspended_insufficient_funds`) — the durable
@@ -94,6 +105,7 @@ resumes on a future runtime boot, and the detach message SHALL say so.
 
 ### Requirement: Read-only run status view
 
+
 The command SHALL offer a status mode that reports the analysis's runs and their
 steps from the harness ledger without booting the runtime, provisioning anything, or
 writing any state — reusing the live runtime's pool when one exists, else a
@@ -106,6 +118,7 @@ resume-on-next-boot note.
 - **THEN** run and step states are reported (or "none") and no DBOS launch, listener, staging, or provisioning occurred
 
 ### Requirement: Kill/resume durability is verified end-to-end
+
 
 The change SHALL verify DBOS crash recovery live for the embedded runtime: kill the
 cli mid-workflow, boot again, and confirm the workflow resumes to a terminal state

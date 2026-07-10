@@ -3,7 +3,9 @@
 ## Purpose
 The cross-cutting TypeScript domain model for the local data model — the entity shapes (`Anchor`, `Project`, `Analysis`, `AnalysisInput`), the on-disk `AnchorMarker`, and the `ID`/`Str256`/`IdOrName` aliases over the single uuidv7 scheme — that every data-model slice imports as its contract.
 ## Requirements
+
 ### Requirement: Id aliases over the single uuidv7 scheme
+
 
 The system SHALL export the id aliases `AnchorId`, `AnalysisId`, and `ProjectId`, each defined as the shared `ID` alias in `src/lib/types.ts`. `ID` SHALL be a plain `string` documenting the single id scheme — a time-sortable `randomUUIDv7()` minted inline at the call site (DB row ids, the on-disk anchor marker, event ids). The aliases SHALL NOT be branded or nominal.
 
@@ -20,6 +22,7 @@ The system SHALL export the id aliases `AnchorId`, `AnalysisId`, and `ProjectId`
 
 ### Requirement: Validated name type and id-or-name reference
 
+
 The system SHALL export a branded `Str256` type (a trimmed, non-empty string of at most 256 Unicode code points) constructed only via `str256` (validating) or `asStr256` (trusted source), and an `IdOrName` alias naming a value resolved by id **or** human name/slug. Entity name fields SHALL be typed `Str256`, never a bare `string`.
 
 #### Scenario: A name is provably bounded
@@ -34,6 +37,7 @@ The system SHALL export a branded `Str256` type (a trimmed, non-empty string of 
 
 ### Requirement: Domain types grouped by domain
 
+
 The shared domain model SHALL live under `src/types/`, grouped by domain (`anchor.ts`, `project.ts`, `analysis.ts`, `session.ts`, `events.ts`), rather than in a single monolithic file. Every exported type, its properties, and exported functions SHALL carry JSDoc.
 
 #### Scenario: Entity shapes are shared, not module-local
@@ -42,6 +46,7 @@ The shared domain model SHALL live under `src/types/`, grouped by domain (`ancho
 - **THEN** it imports it from `src/types/`, keeping the infra→feature dependency direction intact
 
 ### Requirement: Anchor entity type
+
 
 The system SHALL export an `Anchor` type — the invisible folder-identity record — with fields ordered identity-first: `id: AnchorId`, `createdAt: number`, `updatedAt: number`, then `cachedPath: string`, `markerWritten: boolean`, and `lastSeen: number`. There SHALL be no `driveId` field (cloud-sync mapping is deferred).
 
@@ -53,6 +58,7 @@ The system SHALL export an `Anchor` type — the invisible folder-identity recor
 
 ### Requirement: Project entity type
 
+
 The system SHALL export a `Project` type with fields `id: ProjectId`, `createdAt: number`, `updatedAt: number`, `name: Str256`, `description: string | null`, and `tags: string[]`. There SHALL be no `archivedAt` field.
 
 #### Scenario: Project shape
@@ -63,17 +69,19 @@ The system SHALL export a `Project` type with fields `id: ProjectId`, `createdAt
 
 ### Requirement: Analysis entity type
 
-The system SHALL export an `Analysis` type — the primary entity — with fields ordered identity → core → foreign keys: `id: AnalysisId`, `createdAt: number`, `updatedAt: number`, `name: Str256`, `slug: string`, `outputDirectory: string | null`, `anchorId: AnchorId`, and `projectId: ProjectId | null`. There SHALL be no `goals`, `syncedAnalysisId`, or `archivedAt` fields.
+
+The system SHALL export an `Analysis` type — the primary entity — with fields ordered identity → core → foreign keys: `id: AnalysisId`, `createdAt: number`, `updatedAt: number`, `name: Str256`, `slug: string`, `anchorId: AnchorId`, and `projectId: ProjectId | null`. There SHALL be no `outputDirectory` field (the workspace root is derived from anchor + slug, never stored) and no `goals`, `syncedAnalysisId`, or `archivedAt` fields.
 
 #### Scenario: Analysis shape
 
 - **WHEN** code constructs an `Analysis` value
-- **THEN** all eight fields above MUST be present with the stated types
+- **THEN** all seven fields above MUST be present with the stated types
 - **AND** `name` MUST be a non-null `Str256` (an analysis always has a validated name)
 - **AND** `anchorId` MUST be non-nullable (an analysis always has a home anchor)
 - **AND** the foreign keys `anchorId` and `projectId` come last, after the core data
 
 ### Requirement: AnalysisInput reference type
+
 
 The system SHALL export an `AnalysisInput` type representing one referenced path, with fields ordered core → foreign keys and no identity triple: `path: string`, `isDir: boolean`, `analysisId: AnalysisId`, and `anchorId: AnchorId | null`. It SHALL NOT model the row with a nested `data` JSON blob.
 
@@ -86,6 +94,7 @@ The system SHALL export an `AnalysisInput` type representing one referenced path
 
 ### Requirement: AnchorMarker on-disk type
 
+
 The system SHALL export an `AnchorMarker` type describing the write-once on-disk marker, with fields `schemaVersion: 1` (a literal `1`) and `anchorId: AnchorId`.
 
 #### Scenario: AnchorMarker shape
@@ -95,6 +104,7 @@ The system SHALL export an `AnchorMarker` type describing the write-once on-disk
 - **AND** `anchorId` MUST be present as an `AnchorId`
 
 ### Requirement: Existing chat types preserved
+
 
 The change SHALL add the new types alongside, and leave unchanged, the existing `Session`, `Message`, `TextPart`, `Part`, and `StoredMessage` types (`src/types/session.ts`) and the `BusEvent`/`StampedEvent` event contract (`src/types/events.ts`).
 
@@ -106,6 +116,7 @@ The change SHALL add the new types alongside, and leave unchanged, the existing 
 
 ### Requirement: Optionality modeled as null
 
+
 All optional or absent fields on the new entity types SHALL be modeled as `T | null`, never with an optional `?` modifier, mirroring the columnar row storage where every column is present and serialized explicitly.
 
 #### Scenario: No optional modifiers
@@ -113,4 +124,3 @@ All optional or absent fields on the new entity types SHALL be modeled as `T | n
 - **WHEN** the new entity types are inspected
 - **THEN** no field uses the `?:` optional modifier
 - **AND** every absent-capable field uses an explicit `| null` union
-

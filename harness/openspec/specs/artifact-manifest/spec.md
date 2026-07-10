@@ -45,6 +45,7 @@ vector index is the sole source of truth for descriptions and discovery.
 
 ### Requirement: The step manifest is a disk walk of the writable step directory
 
+
 The per-step artifact manifest SHALL be produced by `walkStepArtifacts`, which
 recursively walks the step's writable directory (`writePrefix`,
 `runs/{runId}/{stepId}/...`), and for each regular file emits an
@@ -70,6 +71,7 @@ the manifest.
 
 ### Requirement: cortex_artifacts is the local ledger
 
+
 The `cortex_artifacts` table SHALL be the local ledger for file registration and
 provenance tracking. Each row SHALL carry: `analysis_id` (TEXT, NOT NULL),
 `path` (TEXT, NOT NULL — analysis-relative canonical path), `hash` (TEXT, NOT
@@ -90,9 +92,11 @@ index owns those.
 
 ### Requirement: The manifest is reconciled against disk before registration
 
+
 Before registration, the draft manifest SHALL be reconciled against disk by
 `reconcileManifestWithDisk`. For each manifest entry the helper SHALL stat the
-absolute step path (`{sessionPath}/{resourceId}/runs/{runId}/{stepId}/{path}`),
+absolute step path (`{workspaceRoot}/runs/{runId}/{stepId}/{path}`, where
+`{workspaceRoot}` is the analysis's resolved workspace root),
 bounded to the step root, and:
 
 - If the file does not exist (`ENOENT`) → drop the entry from the returned manifest, call `collector.removeRecord(path)`, increment the `cortex.artifact.reconcile.dropped` counter (tagged `agent_id`, `step_id`), and emit a debug log line.
@@ -103,8 +107,8 @@ Every surviving entry SHALL be re-hashed from disk — there is no matched-size
 fast path that skips hashing. The reconcile step SHALL also content-attest the
 collector's tracked inputs via `fillInputHashesFromDisk`: for each tracked input
 that is not an `artifacts`-source read and lacks a valid content hash, it maps
-the container path onto the host session tree, bounds it to
-`{sessionPath}/{resourceId}`, and hashes the file from disk. A directory input is
+the container path onto the host workspace tree, bounds it to
+`{workspaceRoot}`, and hashes the file from disk. A directory input is
 dropped via `collector.dropInput`. An input file that is missing or resolves
 outside the analysis tree SHALL throw (fail-fast attestation), never register a
 hashless lineage edge.
@@ -136,6 +140,7 @@ hashless lineage edge.
 
 ### Requirement: Registration through the ArtifactRegistry seam
 
+
 `registerStepArtifacts(db, registry, input, session)` SHALL: (1) build the
 `cortex_artifacts` rows from the reconciled manifest — `role = 'step_output'`,
 `path` prefixed `runs/{runId}/{stepId}/`, `file_type` from the entry's inferred
@@ -162,6 +167,7 @@ return all-zero counts immediately and SHALL NOT call the registry.
 
 ### Requirement: Integrity stages fail-fast; enrichment stages degrade
 
+
 `reconcileAndRegisterStepArtifacts` SHALL reconcile, then register, then
 `ArtifactRegistry.sync` the step's artifacts, and SHALL treat the whole sequence
 as fail-fast: a non-zero `externalFailed` SHALL throw with the
@@ -184,6 +190,7 @@ failure degrades without failing the step.
 
 ### Requirement: Artifact upsert semantics
 
+
 `upsertArtifact` and `upsertArtifacts` SHALL use a Postgres `INSERT ... ON
 CONFLICT (analysis_id, path) DO UPDATE` that updates `hash`, `size`, `role`,
 `source_step`, `source_run`, and `COALESCE`s `file_type` and `file_id`.
@@ -198,11 +205,12 @@ existing row rather than fail on the duplicate key.
 
 ### Requirement: Optional external sync tracking
 
+
 `cortex_artifacts` SHALL track external sync state via `artifact_id` (set after
 external registration by `updateArtifactId`) and `file_id` (set when an adapter
 reports an external file identity, applied in batch by `updateFileIds`). A
 registry realization with no external system (the OSS noop) MAY leave both null
-because the bytes already live in the local session tree. `queryUnsyncedStepArtifacts(pool, resourceId, runId,
+because the bytes already live in the local workspace tree. `queryUnsyncedStepArtifacts(pool, resourceId, runId,
 stepId)` SHALL return step-output rows where `artifact_id IS NOT NULL AND file_id
 IS NULL`, ordered by `created_at`.
 
@@ -221,6 +229,7 @@ IS NULL`, ordered by `created_at`.
 - **THEN** `file_id` is set via `updateFileIds`
 
 ### Requirement: Manifest is scoped per analysis with cross-run visibility
+
 
 `cortex_artifacts` SHALL hold all runs of an analysis in one table, queryable by
 `source_run`; the flat read-only mount gives filesystem access to all runs.

@@ -30,6 +30,7 @@ K8s-only concern.
 
 ### Requirement: createDockerSandboxOps implements the backend ops
 
+
 `createDockerSandboxOps` SHALL produce the backend-specific ops (`createSandbox`,
 `teardown`, `teardownById`, `isAlive`, `listManagedSandboxes`) consumed by
 `createSandboxClient` (`harness/src/sandbox/create-sandbox.ts`). The submit/await
@@ -45,6 +46,7 @@ a `SandboxError` variant on failure, never throw.
 - **AND** `submitExec` / `awaitExec` are used unchanged across backends
 
 ### Requirement: Container lifecycle via the Docker API
+
 
 `createDockerSandboxOps.createSandbox(meta, identity)` SHALL create a Docker
 container from `meta.image ?? config.image` with bind mounts, CPU/memory limits,
@@ -73,6 +75,7 @@ until it responds 200 (default 30s budget). `teardown(ref)` and
 - **THEN** `createSandbox` returns a `container_create_failed` error including the last failure detail
 
 ### Requirement: Transport-mode container wiring
+
 
 `createSandbox` SHALL render the harness `SandboxTransport` into the container's
 runtime configuration:
@@ -109,6 +112,7 @@ dropped before the workload runs.
 
 ### Requirement: Image source is config default overridden per step
 
+
 The Docker backend SHALL use `meta.image` when the workflow supplies a per-step
 image override, falling back to the `config.image` default otherwise. There is
 no `SANDBOX_IMAGE` env read in this layer.
@@ -121,19 +125,22 @@ no `SANDBOX_IMAGE` env read in this layer.
 
 ### Requirement: Bind mounts replace PVCs
 
+
 The Docker backend SHALL bind-mount host directories into the container per the
-shared mount plan (`mount-plan.ts`): the analysis session tree (flat read-only
+shared mount plan (`mount-plan.ts`): the analysis workspace tree (flat read-only
 mount at the plan's `readonlyTreePath`), the per-step writable artifact root
 (nested read-write mount at the plan's `writableStepPath`, omitted for read-only
 sandboxes), the lib store at `/mnt/libs` (read-only, when `libStorePath` is
 configured), and the ref store at `/mnt/refs` (read-only, when `refStorePath` is
-configured). Each mount's read-only flag is set explicitly in the bind string.
+configured). Mount host-path sources SHALL derive from the resolved workspace
+root (`resolveWorkspaceRoot(analysisId)`), not from a global session base. Each
+mount's read-only flag is set explicitly in the bind string.
 
-#### Scenario: Session directory mounted read-only
+#### Scenario: Workspace tree mounted read-only
 
-- **GIVEN** a host session tree at `${sessionsBasePath}/${analysisId}`
+- **GIVEN** an analysis whose workspace root resolves to `{workspaceRoot}`
 - **WHEN** the container is created
-- **THEN** it is bind-mounted at the plan's read-only tree path with the `:ro` flag
+- **THEN** `{workspaceRoot}` is bind-mounted at the plan's read-only tree path (`/{analysisId}`) with the `:ro` flag
 
 #### Scenario: Library store bind mount
 
@@ -143,6 +150,7 @@ configured). Each mount's read-only flag is set explicitly in the bind string.
 - **AND** the sandbox env injects the lib-store path variables from the mount plan
 
 ### Requirement: Dynamic port mapping for host connectivity
+
 
 The Docker backend SHALL use dynamic port mapping for `8765/tcp` bound to the
 loopback host address (`HostIp: "127.0.0.1"`, `HostPort: ""` so Docker assigns a
@@ -165,6 +173,7 @@ poll) SHALL use `127.0.0.1:{mappedPort}`.
 
 ### Requirement: CPU and memory limits via the Docker API; no GPU passthrough
 
+
 The Docker backend SHALL apply CPU and memory constraints via the Docker
 container `HostConfig`: `NanoCpus` set to `round(cpu * 1e9)` and `Memory` set to
 `memoryGb * 1024^3`. The Docker backend SHALL NOT request GPUs (no
@@ -183,6 +192,7 @@ container `HostConfig`: `NanoCpus` set to `round(cpu * 1e9)` and `Memory` set to
 - **THEN** the `HostConfig` has no `DeviceRequests` entry
 
 ### Requirement: Sandbox containers labeled for managed-sweep cleanup
+
 
 Sandbox containers created by the Docker backend SHALL carry the labels
 `app.kubernetes.io/managed-by=cortex`, `role=sandbox`,
@@ -206,6 +216,7 @@ workflow and tear down orphans.
 - **THEN** it calls `teardownById(sandboxId)` and reconciles the step row to a terminal status
 
 ### Requirement: Container creation is idempotent on a recovery re-run
+
 
 `createSandbox` SHALL be idempotent on the checkpointed `sandboxId`. When
 `createContainer` returns a name collision (HTTP 409), it inspects the existing

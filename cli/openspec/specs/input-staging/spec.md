@@ -1,15 +1,19 @@
 # input-staging Specification
 
 ## Purpose
-Materialize an analysis's selected inputs into the harness session tree (`{sessionsDir}/{analysisId}/data/inputs/local/…`) as the `StagedInput[]` manifest the embedded harness consumes verbatim — hardlink-first placement, noise-dir-aware directory walks, deterministic file identity, staging-time mirroring so the tree always reflects the current inputs, and a read-only drift-signature enumeration sharing the same walk (for profile-drift checks). Lives in `src/modules/staging/`; the session-tree base contract is owned by `harness-runtime`.
+Materialize an analysis's selected inputs into its workspace tree (`{workspaceRoot}/data/inputs/local/…`) as the `StagedInput[]` manifest the embedded harness consumes verbatim — hardlink-first placement, noise-dir-aware directory walks, deterministic file identity, staging-time mirroring so the tree always reflects the current inputs, and a read-only drift-signature enumeration sharing the same walk (for profile-drift checks). Lives in `src/modules/staging/`; the workspace-root rule is owned by `path-resolution`, and its harness-seam realization by `harness-runtime`.
 ## Requirements
 
-### Requirement: Stage an analysis's inputs into the session tree
+### Requirement: Stage an analysis's inputs into the workspace tree
+
 
 The system SHALL provide `stageInputs(analysisId, targetDir)` in
 `src/modules/staging/staging.ts` returning `Result`-typed `StagedInput[]`, where
-`targetDir` is the analysis's session-tree `data/` root
-(`{sessionsBasePath}/{analysisId}/data`). Each staged file SHALL be placed at
+`targetDir` is the analysis workspace's `data/` root
+(`{workspaceRoot}/data`, i.e. `<anchorPath>/.inflexa/analyses/<slug>/data` — resolved
+via the same rule as every other workspace path; the deleted session-tree helpers
+`sessionTreeRoot`/`sessionTreeDataDir` have no successor module, callers derive from
+the workspace root). Each staged file SHALL be placed at
 `{targetDir}/inputs/local/{key}` and described by a manifest entry
 `{fileId, mountName: "local", key, fileName, hash, size, mtimeMs, relativePath}` whose
 `relativePath` is `inputs/local/{key}` — field-for-field compatible with the harness
@@ -58,16 +62,20 @@ signature is consistent with the one `enumerateInputSignatures` produces for the
 
 ### Requirement: Hardlink-first materialization
 
+
 Staging SHALL attempt a hardlink first and fall back to a byte copy when linking fails
-(e.g. cross-filesystem). Staging SHALL NOT create symlinks: the session tree is
-bind-mounted into sandbox containers, where host symlinks dangle.
+(e.g. cross-filesystem). With the workspace under the anchor, the hardlink path is the
+common case — inputs usually share the anchor's filesystem. Staging SHALL NOT create
+symlinks: the workspace tree is bind-mounted into sandbox containers, where host
+symlinks dangle.
 
 #### Scenario: Cross-filesystem fallback
 
-- **WHEN** the input file lives on a different filesystem than the session tree
+- **WHEN** the input file lives on a different filesystem than the workspace tree
 - **THEN** the file is staged as a full copy and the manifest entry is identical to the hardlink case
 
 ### Requirement: Symlinked files inside directory inputs are staged
+
 
 When walking a directory input, entries that are symlinks SHALL be resolved via stat:
 a symlink to a file is staged (as the target's content), and a symlink to a directory
@@ -86,10 +94,14 @@ the walk.
 
 ### Requirement: Noise directories are never staged
 
+
 Directory-input walks SHALL skip directories whose name identifies tool or
 source-control noise rather than data: the harness's ignored set (`node_modules`,
 `__pycache__`, `.cache`, `.ruff_cache`, `.ipynb_checkpoints`, `.Rproj.user`) plus the
-cli-specific `.git` and `.inflexa` (the anchor-marker directory). Skipping SHALL apply
+cli-specific `.git` and `.inflexa`. The `.inflexa` exclusion is load-bearing, not
+hygiene: the workspace itself lives at `<anchor>/.inflexa/analyses/<slug>/`, so an
+anchor-folder directory input would otherwise stage the analysis's own staged inputs
+and run artifacts into itself, recursively. Skipping SHALL apply
 to the whole subtree, including directories reached through symlinks.
 
 #### Scenario: Project root selected as a directory input
@@ -97,7 +109,14 @@ to the whole subtree, including directories reached through symlinks.
 - **WHEN** a directory input contains `node_modules/`, `.git/`, and a data file
 - **THEN** only the data file is staged and the noise directories appear neither in the manifest nor on disk
 
+#### Scenario: The anchor folder as an input never stages the workspace
+
+- **GIVEN** an analysis whose input is its own anchor folder, after a completed run (the workspace holds `data/` and `runs/`)
+- **WHEN** `stageInputs` runs again
+- **THEN** nothing under `.inflexa/` is staged — the workspace does not ingest itself
+
 ### Requirement: The staged tree mirrors the current inputs
+
 
 `stageInputs` SHALL reconcile the `inputs/local` tree against the manifest it just
 produced: staged files no current input produced SHALL be deleted, and directories
@@ -118,6 +137,7 @@ could race a run holding the tree in a read-only mount.
 
 ### Requirement: Deterministic file identity
 
+
 `fileId` SHALL be derived deterministically from the input's identity (anchor id plus
 input path, plus the relative subpath for files inside directory inputs), so re-staging
 the same input yields the same `fileId` across runs. The derivation for directory
@@ -131,12 +151,13 @@ derivation.
 
 ### Requirement: Identity-only input enumeration
 
+
 The system SHALL provide `enumerateInputSignatures(analysisId)` in `src/modules/staging/` returning the
 `Result`-typed set of **drift signatures** — `(fileId, size, mtimeMs)` — that `stageInputs` would
 produce for the analysis's current inputs, using the same identity derivation and the same walk rules
 (noise-directory skips, symlink handling, unresolvable inputs skipped, same-destination collision
-resolved last-write-wins) — while writing nothing to the session tree, hashing no file content, and not
-requiring the session tree to exist.
+resolved last-write-wins) — while writing nothing to the workspace tree, hashing no file content, and not
+requiring the workspace tree to exist.
 
 Its cost SHALL be bounded by directory enumeration plus one `stat` per file (never by input content
 size), so parity drift checks can run on every chat open and every input mutation. The identity walk
@@ -156,7 +177,7 @@ both byte length and mtime is consequently not detected; this is a bounded, acce
 
 #### Scenario: Enumeration performs no writes
 
-- **WHEN** `enumerateInputSignatures` runs for an analysis whose session tree does not exist
+- **WHEN** `enumerateInputSignatures` runs for an analysis whose workspace tree does not exist
 - **THEN** it returns the signature set and creates no directory or file
 
 #### Scenario: Enumeration hashes nothing
