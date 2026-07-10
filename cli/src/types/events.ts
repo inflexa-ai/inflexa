@@ -2,6 +2,7 @@ import type { AnalysisId } from "./analysis.ts";
 import type {
     ProvActor,
     ProvInputRef,
+    ProvModelRef,
     ProvRunRef,
     ProvRunOutcome,
     ProvStepRef,
@@ -35,8 +36,28 @@ export type BusEvent =
     | { type: "prov.input_removed"; analysisId: AnalysisId; actor: ProvActor; input: ProvInputRef }
     | { type: "prov.run_started"; analysisId: AnalysisId; actor: ProvActor; run: ProvRunRef }
     | { type: "prov.run_completed"; analysisId: AnalysisId; actor: ProvActor; outcome: ProvRunOutcome }
-    | { type: "prov.step_completed"; analysisId: AnalysisId; actor: ProvActor; outcome: ProvStepOutcome }
-    | { type: "prov.command_executed"; analysisId: AnalysisId; actor: ProvActor; step: ProvStepRef; command: ProvCommandRef }
+    | {
+          type: "prov.step_completed";
+          analysisId: AnalysisId;
+          actor: ProvActor;
+          outcome: ProvStepOutcome;
+          /**
+           * The model that drove the step — REQUIRED so a forgotten wiring is a compile error at the
+           * emit site, never a silent gap in exactly the record this field exists to make. Rides the
+           * event (like `generation` on `prov.file_written`) so the recorder never infers it across
+           * events.
+           */
+          model: ProvModelRef;
+      }
+    | {
+          type: "prov.command_executed";
+          analysisId: AnalysisId;
+          actor: ProvActor;
+          step: ProvStepRef;
+          command: ProvCommandRef;
+          /** The model that drove the producing step — see `prov.step_completed`'s `model`. */
+          model: ProvModelRef;
+      }
     | {
           type: "prov.file_written";
           analysisId: AnalysisId;

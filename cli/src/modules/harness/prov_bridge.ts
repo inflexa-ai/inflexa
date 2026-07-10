@@ -1,7 +1,7 @@
 import type { ArtifactRegistrationInput, ArtifactRegistry, ExternalRegistrationResult, RunProvenanceEvent } from "@inflexa-ai/harness";
 
 import { Bus } from "../../lib/bus.ts";
-import type { ProvCommandInputRef, ProvCommandRef, ProvFileKey, ProvFileRef, ProvStepRef, ProvUsedInputRef } from "../../types/prov.ts";
+import type { ProvCommandInputRef, ProvCommandRef, ProvFileKey, ProvFileRef, ProvModelRef, ProvStepRef, ProvUsedInputRef } from "../../types/prov.ts";
 import { fileQName } from "../prov/document.ts";
 import { systemActor } from "../prov/prov.ts";
 
@@ -147,6 +147,12 @@ function toCommandRef(
  * harness can cross-reference its local ledger into the signed document, and does NOT emit
  * `prov.step_completed` (see the module note on the split and the producer grouping).
  *
+ * `model` is the provenance identity of the model driving the step seat — resolved ONCE at boot
+ * (composition), so stamping the construction-time ref on every `prov.command_executed` is exactly
+ * "the model this run's steps ran on". It rides the event so the recorder never infers it across
+ * events; when the seats split (chat/decision/synthesis, D6), this constructor takes the step
+ * seat's own ref with no event-shape change.
+ *
  * Three seam-contract facts shape the behavior:
  *
  *  1. The harness's post-step pipeline fails a step ONLY when `failedCount > 0`
@@ -169,7 +175,7 @@ function toCommandRef(
  *     `source: "prior"` read then keys onto the SAME file QName the producing run emitted, chaining
  *     lineage across runs for free.
  */
-export function createBusArtifactRegistry(): ArtifactRegistry {
+export function createBusArtifactRegistry(model: ProvModelRef): ArtifactRegistry {
     return {
         register: async (input: ArtifactRegistrationInput): Promise<ExternalRegistrationResult> => {
             // One actor stamp for the whole step — `systemActor()` is pure over pkg version + build
@@ -242,7 +248,7 @@ export function createBusArtifactRegistry(): ArtifactRegistry {
 
                 const outputs: ProvFileKey[] = files.map((f) => ({ path: f.path, hash: f.hash }));
                 const command = toCommandRef(record, outputs, input.resourceId, input.runId, input.stepId, producedHashByPath);
-                Bus.emit("inflexa", { type: "prov.command_executed", analysisId: input.resourceId, actor, step, command });
+                Bus.emit("inflexa", { type: "prov.command_executed", analysisId: input.resourceId, actor, step, command, model });
                 for (const file of files) {
                     Bus.emit("inflexa", { type: "prov.file_written", analysisId: input.resourceId, actor, file, step, generation: "command" });
                     registered.push({ path: file.path, externalId: fileQName(file) });
@@ -294,7 +300,11 @@ export function createBusArtifactRegistry(): ArtifactRegistry {
  * Realize the harness's optional `emitProvenance` dep as bus emission: map each of the three
  * run-lifecycle arms onto a `prov.*` event stamped with the system actor (cli version + commit).
  * This is the site that emits `prov.step_completed` (from the scheduler-settlement `step_completed`
- * arm — the only place every EXECUTED step is observed), NOT the artifact registry above.
+ * arm — the only place every EXECUTED step is observed), NOT the artifact registry above. `model`
+ * is the boot-resolved provenance identity of the model driving the step seat (see
+ * {@link createBusArtifactRegistry}); it stamps `prov.step_completed` only — the run arms carry no
+ * model because the issue scopes model association to the step and command activities the model
+ * drove.
  *
  * The harness-supplied `analysisId` passes through unchanged — it equals the cli `analysisId` by the
  * trigger contract, and the recorder silently drops unknown ids. Every timestamp (`atMs`,
@@ -303,7 +313,7 @@ export function createBusArtifactRegistry(): ArtifactRegistry {
  * replays and defeat the merge. The mapping is fire-and-forget; the harness guards the call site so a
  * throw here never fails the run.
  */
-export function createRunProvenanceEmitter(): (event: RunProvenanceEvent) => void {
+export function createRunProvenanceEmitter(model: ProvModelRef): (event: RunProvenanceEvent) => void {
     return (event: RunProvenanceEvent): void => {
         switch (event.type) {
             case "run_started":
@@ -319,6 +329,7 @@ export function createRunProvenanceEmitter(): (event: RunProvenanceEvent) => voi
                     type: "prov.step_completed",
                     analysisId: event.analysisId,
                     actor: systemActor(),
+                    model,
                     outcome: {
                         runId: event.runId,
                         stepId: event.stepId,

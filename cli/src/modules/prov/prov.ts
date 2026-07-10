@@ -145,10 +145,10 @@ function onEvent(event: StampedEvent): void {
                 appendRunCompleted(doc, event.analysisId, event.actor, event.outcome);
                 break;
             case "prov.step_completed":
-                appendStepCompleted(doc, event.analysisId, event.actor, event.outcome);
+                appendStepCompleted(doc, event.analysisId, event.actor, event.outcome, event.model);
                 break;
             case "prov.command_executed":
-                appendCommandExecuted(doc, event.analysisId, event.actor, event.step, event.command);
+                appendCommandExecuted(doc, event.analysisId, event.actor, event.step, event.command, event.model);
                 break;
             case "prov.file_written":
                 appendFileWritten(doc, event.analysisId, event.actor, event.file, event.step, event.generation);

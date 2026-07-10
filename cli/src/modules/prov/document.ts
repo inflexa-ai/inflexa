@@ -5,6 +5,7 @@ import type { Analysis } from "../../types/analysis.ts";
 import type {
     ProvActor,
     ProvInputRef,
+    ProvModelRef,
     ProvRunRef,
     ProvRunOutcome,
     ProvStepRef,
@@ -224,6 +225,52 @@ function agentDigest(agentQn: string): string {
 }
 
 /**
+ * The model-agent QName, keyed by the FULL identity tuple `(provider, model[, endpoint])` — so the
+ * same model id reached through two different endpoints yields two agents (a local endpoint is
+ * itself meaningful provenance) rather than one agent with contradictory endpoint attributes. The
+ * tuple is JSON-encoded, NOT `|`-joined like the path digests: model ids and endpoint hosts are
+ * free-form config strings, so nothing structurally excludes a delimiter inside a field — a
+ * structural encoding makes cross-field collisions impossible (the path digests are safe because
+ * their hash side is hex). Exported (like {@link fileQName} / {@link commandQName}) so the
+ * builder's tests reference the one canonical derivation rather than duplicating this hash and
+ * risking drift.
+ */
+export function modelAgentQName(model: ProvModelRef): string {
+    const tuple = model.provider === "openai-compatible" ? [model.provider, model.model, model.endpoint] : [model.provider, model.model];
+    return `${NS_PREFIX}:agent-model-${Bun.hash(JSON.stringify(tuple)).toString(36)}`;
+}
+
+/**
+ * Declare (re-declare) the model agent for `model` — the LLM that reasoned about a model-driven
+ * activity — plus its delegation to the event's responsible agent, plus its association with the
+ * driven activity. The association id is `{assocIdBase}-{agentDigest(modelQn)}` — the SAME base the
+ * caller's actor association uses, disambiguated by the agent digest — owned here so the "two
+ * associations share one id template" invariant that makes re-emission dedup work lives in one
+ * place, not in per-caller copies. The delegation reads `actedOnBehalfOf(model, responsible)`: the
+ * CLI is the agent the user directed; the model acted on its behalf. Its id is keyed on both agent
+ * digests (activity-independent — the delegation holds for the pair, not per activity), so
+ * re-declaration across activities and DBOS re-execution collapses under `unified()`. A recovery
+ * boot that auto-resolves a DIFFERENT default model re-emits under a second agent + delegation —
+ * the same honest-drift semantics the agent-digest fold already accepts for a cli upgrade mid-run.
+ */
+function appendModelAgent(doc: ProvDocument, model: ProvModelRef, responsibleQn: string, activityQn: string, assocIdBase: string): void {
+    const qn = modelAgentQName(model);
+    doc.agent(qn, {
+        // Both types deliberately: `prov:SoftwareAgent` places it in PROV's agent taxonomy,
+        // `inflexa:Model` marks WHAT KIND of software agent (tsprov attributes are multi-valued).
+        "prov:type": ["prov:SoftwareAgent", `${NS_PREFIX}:Model`],
+        "prov:label": model.model,
+        "inflexa:provider": model.provider,
+        "inflexa:model": model.model,
+        // The endpoint host is part of the openai-compatible arm's identity (required there by
+        // type, and folded into the QName above) and absent from the anthropic arm by design.
+        ...(model.provider === "openai-compatible" ? { "inflexa:endpoint": model.endpoint } : {}),
+    });
+    doc.actedOnBehalfOf(qn, responsibleQn, undefined, `${NS_PREFIX}:delegation-${agentDigest(qn)}-${agentDigest(responsibleQn)}`);
+    doc.wasAssociatedWith(activityQn, qn, undefined, `${assocIdBase}-${agentDigest(qn)}`);
+}
+
+/**
  * The file-entity QName, keyed by `(path, content hash)` so re-writing identical bytes to a path
  * dedups to one entity. Exported because the harness bridge (`prov_bridge.ts`) returns this same
  * QName as the artifact's `externalId`, giving the harness's local `cortex_artifacts` row a stable
@@ -341,13 +388,16 @@ export function appendRunCompleted(doc: ProvDocument, analysisId: string, actor:
 
 /**
  * Append the step-completion records: a step activity closed with an end time and terminal status,
- * `wasInformedBy` its run activity, and associated with the actor's agent. The step is an activity
+ * `wasInformedBy` its run activity, and associated with BOTH the actor's agent and the model agent
+ * (the step is model-driven; recording which model reasoned about it is the point of the model
+ * agent). The step is an activity
  * (not an entity) so a file's `wasGeneratedBy` can validly reference it. Takes the settlement
  * {@link ProvStepOutcome} — every EXECUTED step settles here (registration is skipped for
  * zero-artifact steps and never reached by failed ones), so `inflexa:status` records whether it
- * completed, failed, or was canceled.
+ * completed, failed, or was canceled. The two association ids share one template and differ in the
+ * agent digest, so they coexist on the activity and each dedups on re-emission.
  */
-export function appendStepCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvStepOutcome): void {
+export function appendStepCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvStepOutcome, model: ProvModelRef): void {
     const { agentQn } = recordPreamble(doc, analysisId, actor);
     const rQn = runQName(outcome.runId);
     const sQn = stepQName(outcome);
@@ -364,12 +414,16 @@ export function appendStepCompleted(doc: ProvDocument, analysisId: string, actor
         ...(outcome.durationMs !== undefined ? { "inflexa:durationMs": outcome.durationMs } : {}),
     });
     doc.wasInformedBy(sQn, rQn, `${NS_PREFIX}:informed-${outcome.runId}-${outcome.stepId}`);
-    doc.wasAssociatedWith(sQn, agentQn, undefined, `${NS_PREFIX}:assoc-step-${outcome.runId}-${outcome.stepId}-${agentDigest(agentQn)}`);
+    const assocIdBase = `${NS_PREFIX}:assoc-step-${outcome.runId}-${outcome.stepId}`;
+    doc.wasAssociatedWith(sQn, agentQn, undefined, `${assocIdBase}-${agentDigest(agentQn)}`);
+    appendModelAgent(doc, model, agentQn, sQn, assocIdBase);
 }
 
 /**
  * Append a command execution's records — the finer-grained lineage the step level cannot express: a
- * command (or file-tool) activity, `wasInformedBy` its step, `wasAssociatedWith` the actor's agent, a
+ * command (or file-tool) activity, `wasInformedBy` its step, `wasAssociatedWith` the actor's agent
+ * AND the model agent (mirroring {@link appendStepCompleted} — the command is what the model's step
+ * actually executed), a
  * `used` edge per command-scoped input (including the script when it resolves), and — the load-bearing
  * move — `wasGeneratedBy(output, command)` per output. The command is the GENERATION AUTHORITY for its
  * outputs: it writes each `gen-{fileDigest}` edge under the SAME id `appendFileWritten` would have used
@@ -382,7 +436,14 @@ export function appendStepCompleted(doc: ProvDocument, analysisId: string, actor
  * {@link commandQName}), so two commands in one step never collide and a DBOS re-execution's
  * re-emission dedups under `unified()`.
  */
-export function appendCommandExecuted(doc: ProvDocument, analysisId: string, actor: ProvActor, step: ProvStepRef, command: ProvCommandRef): void {
+export function appendCommandExecuted(
+    doc: ProvDocument,
+    analysisId: string,
+    actor: ProvActor,
+    step: ProvStepRef,
+    command: ProvCommandRef,
+    model: ProvModelRef,
+): void {
     const { agentQn } = recordPreamble(doc, analysisId, actor);
     const sQn = stepQName(step);
     const groupDigest = commandGroupDigest(command.outputs);
@@ -402,7 +463,9 @@ export function appendCommandExecuted(doc: ProvDocument, analysisId: string, act
             : { "prov:type": "inflexa:FileToolWrite", "inflexa:tool": command.tool };
     doc.activity(cmdQn, undefined, undefined, attributes);
     doc.wasInformedBy(cmdQn, sQn, `${NS_PREFIX}:informed-cmd-${step.runId}-${step.stepId}-${groupDigest}`);
-    doc.wasAssociatedWith(cmdQn, agentQn, undefined, `${NS_PREFIX}:assoc-cmd-${step.runId}-${step.stepId}-${groupDigest}-${agentDigest(agentQn)}`);
+    const assocIdBase = `${NS_PREFIX}:assoc-cmd-${step.runId}-${step.stepId}-${groupDigest}`;
+    doc.wasAssociatedWith(cmdQn, agentQn, undefined, `${assocIdBase}-${agentDigest(agentQn)}`);
+    appendModelAgent(doc, model, agentQn, cmdQn, assocIdBase);
 
     // Generation authority for each output — SAME `gen-{fileDigest}` id the step-level edge uses, so a
     // file entity can never accrue two generation records (the bridge's produced-vs-leaf partition is
