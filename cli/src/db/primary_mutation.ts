@@ -158,15 +158,12 @@ export function deleteAnchor(id: string): Result<number, DbError> {
 /** Inserts a fully-formed analysis row. The caller mints the id (`randomUUIDv7()`) and resolves the slug before calling. */
 export function insertAnalysis(analysis: Analysis): Result<Analysis, DbError> {
     return tryMutation("insertAnalysis", (conn) => {
-        conn.query(
-            "INSERT INTO analyses (id, created_at, updated_at, name, slug, output_directory, anchor_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ).run(
+        conn.query("INSERT INTO analyses (id, created_at, updated_at, name, slug, anchor_id, project_id) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
             analysis.id,
             analysis.createdAt,
             analysis.updatedAt,
             analysis.name,
             analysis.slug,
-            analysis.outputDirectory,
             analysis.anchorId,
             analysis.projectId,
         );
@@ -179,8 +176,8 @@ export function updateAnalysis(analysis: Analysis): Result<number, DbError> {
     analysis.updatedAt = Date.now();
     return tryMutation("updateAnalysis", (conn) => {
         return conn
-            .query("UPDATE analyses SET updated_at = ?, name = ?, slug = ?, output_directory = ?, anchor_id = ?, project_id = ? WHERE id = ?")
-            .run(analysis.updatedAt, analysis.name, analysis.slug, analysis.outputDirectory, analysis.anchorId, analysis.projectId, analysis.id).changes;
+            .query("UPDATE analyses SET updated_at = ?, name = ?, slug = ?, anchor_id = ?, project_id = ? WHERE id = ?")
+            .run(analysis.updatedAt, analysis.name, analysis.slug, analysis.anchorId, analysis.projectId, analysis.id).changes;
     });
 }
 

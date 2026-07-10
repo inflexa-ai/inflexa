@@ -1,25 +1,26 @@
 import { resolve, sep } from "node:path";
 import { Result } from "neverthrow";
 import type { Analysis } from "../../types/analysis.ts";
-import type { DbError } from "../../db/errors.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
-import { ensureOutputDir } from "./output.ts";
+import { ensureOutputDir, type WorkspaceError } from "./output.ts";
 import { resolveInputPath } from "./input.ts";
 
 /** The structural read/write roots for an analysis's agent. */
 export type Roots = {
-    /** Exactly one: the resolved output directory. */
+    /** Exactly one: the resolved workspace root. */
     writable: string[];
-    /** Declared inputs (resolved absolute) + the output directory. */
+    /** Declared inputs (resolved absolute) + the workspace root. */
     readable: string[];
 };
 
 /**
- * The structural write boundary: the agent's only writable root is the analysis output
- * directory; readable roots are the declared inputs plus that output directory. There is no
- * per-input access mode — user data outside the output dir is read-only by construction.
+ * The structural write boundary: the agent's only writable root is the analysis workspace —
+ * the same tree that holds staged inputs, run artifacts, and provenance exports; readable
+ * roots are the declared inputs plus that workspace. There is no per-input access mode —
+ * user data outside the workspace is read-only by construction. An unresolvable or
+ * non-writable workspace is an error (there is no substitute writable root).
  */
-export function computeRoots(analysis: Analysis): Result<Roots, DbError> {
+export function computeRoots(analysis: Analysis): Result<Roots, WorkspaceError> {
     return ensureOutputDir(analysis).andThen((outDir) =>
         listAnalysisInputs(analysis.id).andThen((inputs) =>
             Result.combine(inputs.map((i) => resolveInputPath(i))).map((resolved): Roots => {

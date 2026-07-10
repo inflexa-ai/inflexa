@@ -52,7 +52,6 @@ describe("session + message + part round-trip", () => {
             updatedAt: 1,
             name: asStr256("A"),
             slug: "a",
-            outputDirectory: null,
             anchorId: "anc-s",
             projectId: null,
         };
@@ -84,7 +83,6 @@ describe("listRecentSessionMessages (capped UI window)", () => {
             updatedAt: 1,
             name: asStr256("Cap"),
             slug: "cap",
-            outputDirectory: null,
             anchorId: "anc-cap",
             projectId: null,
         })._unsafeUnwrap();
@@ -141,7 +139,6 @@ describe("DbError constraint classification", () => {
             updatedAt: 1,
             name: asStr256("Orphan"),
             slug: "orphan",
-            outputDirectory: null,
             anchorId: "ghost-anchor",
             projectId: null,
         };

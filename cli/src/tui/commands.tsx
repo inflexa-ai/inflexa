@@ -21,7 +21,14 @@ import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts"
 import { readConfig, writeConfig } from "../lib/config.ts";
 import { mkdirResult, writeFileResult } from "../lib/fs.ts";
 import { str256, type Str256 } from "../lib/types.ts";
-import { createAnalysis, listRecentAnalyses, uniqueSlugForAnchor, applyInputsDiff, removeInput, matchAnalysis } from "../modules/analysis/analysis.ts";
+import {
+    createAnalysis,
+    listRecentAnalyses,
+    renameAnalysisAndMoveWorkspace,
+    applyInputsDiff,
+    removeInput,
+    matchAnalysis,
+} from "../modules/analysis/analysis.ts";
 import { resolveInputPath } from "../modules/analysis/input.ts";
 import { resolveContext, describeContext } from "../modules/analysis/context.ts";
 import { openOutputDir } from "../modules/analysis/open.ts";
@@ -29,16 +36,7 @@ import { resolveAnchor, resolvedPathOrCached } from "../modules/anchor/anchor.ts
 import { canonicalPath } from "../modules/anchor/marker.ts";
 import { loadAuth, describeAuthError } from "../modules/auth/auth.ts";
 import { decodeIdTokenClaims } from "../modules/auth/whoami.ts";
-import {
-    createProject,
-    createSession,
-    deleteAnalysis,
-    deleteProject,
-    deleteSession,
-    renameSession,
-    renameAnalysis,
-    updateAnalysisProject,
-} from "../db/primary_mutation.ts";
+import { createProject, createSession, deleteAnalysis, deleteProject, deleteSession, renameSession, updateAnalysisProject } from "../db/primary_mutation.ts";
 import { getSession, listSessionsByAnalysis, listProjects, listAnalysisInputs, countAnalysesByProject } from "../db/primary_query.ts";
 import type { Analysis, AnalysisInput } from "../types/analysis.ts";
 import type { Session } from "../types/session.ts";
@@ -468,21 +466,27 @@ function RenameAnalysisDialog(): JSX.Element {
                 if (!a) return;
                 str256(raw).match(
                     (name) =>
-                        uniqueSlugForAnchor(a.anchorId, name)
-                            .andThen((slug) => renameAnalysis(a.id, name, slug))
-                            .match(
-                                () => {
-                                    notify({ kind: "info", text: `Renamed to "${raw.trim()}"` });
-                                    // Re-fetch the updated analysis so the workspace store (sidebar, status bar) reflects the new name.
-                                    matchAnalysis(a.id).match(
-                                        (m) => {
-                                            if (m) ws.openSession(ws.sessionId, ws.workingDir, m.analysis);
-                                        },
-                                        () => {},
-                                    );
-                                },
-                                (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
-                            ),
+                        // The slug keys the on-disk workspace, so the rename also moves
+                        // `.inflexa/analyses/<old>/` → `<new>/` (one deliberate action).
+                        renameAnalysisAndMoveWorkspace(a, name).match(
+                            (outcome) => {
+                                notify({ kind: "info", text: `Renamed to "${raw.trim()}"` });
+                                if (outcome.moveError !== undefined) {
+                                    notify({
+                                        kind: "warn",
+                                        text: `Workspace directory could not be moved to the new name — it remains at .inflexa/analyses/${a.slug}/`,
+                                    });
+                                }
+                                // Re-fetch the updated analysis so the workspace store (sidebar, status bar) reflects the new name.
+                                matchAnalysis(a.id).match(
+                                    (m) => {
+                                        if (m) ws.openSession(ws.sessionId, ws.workingDir, m.analysis);
+                                    },
+                                    () => {},
+                                );
+                            },
+                            (e) => notify({ kind: "error", text: `Failed: ${e.type}` }),
+                        ),
                     (err) => notify({ kind: "warn", text: err === "empty" ? "A name is required." : "Keep the name to 256 characters or fewer." }),
                 );
             }}

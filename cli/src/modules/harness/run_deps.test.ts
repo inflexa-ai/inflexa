@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import {
     createAnthropicProvider,
     createEmbeddingProvider,
@@ -25,6 +26,9 @@ import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineCompositi
 function testComposition(): RunEngineComposition {
     const resolveBilling = createNoopBillingResolver();
     const pool = createPool({ host: "localhost", port: "5", database: "d", user: "u", password: "p", sslMode: "disable" });
+    // A `<base>/<analysisId>` resolver keeps the byte layout the old fixed base
+    // produced, so every expected path below stays literal and readable.
+    const resolveWorkspaceRoot = (analysisId: string): string => join("/tmp/sessions", analysisId);
     return {
         pool,
         provider: createAnthropicProvider({ baseURL: "http://proxy.test", token: "t", model: "claude-test", resolveBilling }),
@@ -35,10 +39,10 @@ function testComposition(): RunEngineComposition {
             cortexBaseUrl: "http://host.docker.internal:1",
             image: "img",
             resourceLimits: { maxCpu: 1, maxMemoryGb: 1, maxGpuCount: 0 },
-            sessionsBasePath: "/tmp/sessions",
+            resolveWorkspaceRoot,
         }),
-        workspaceFs: createWorkspaceFilesystem({ sessionsBasePath: "/tmp/sessions" }),
-        sessionsBasePath: "/tmp/sessions",
+        workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot }),
+        resolveWorkspaceRoot,
         model: "claude-test",
         skillsDir: "/tmp/skills",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
@@ -120,7 +124,7 @@ describe("run-engine provenance wiring", () => {
 });
 
 describe("buildSandboxStepDeps", () => {
-    test("resolveWritePrefix is the absolute runs/{runId}/{stepId} path under the session tree", () => {
+    test("resolveWritePrefix is the absolute runs/{runId}/{stepId} path under the analysis's workspace root", () => {
         const deps = buildSandboxStepDeps(testComposition());
         const prefix = deps.resolveWritePrefix({ analysisId: "an-1", runId: "run-1", stepId: "step-1" } as never);
 

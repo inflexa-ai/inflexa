@@ -284,7 +284,7 @@ export function createBusArtifactRegistry(): ArtifactRegistry {
 
             return { registered, failed, failedCount: failed.length };
         },
-        // No-op: the artifact bytes already live on the host session tree, so there is nothing to push
+        // No-op: the artifact bytes already live in the host workspace tree, so there is nothing to push
         // to permanent storage (the managed adapter uploads them; the local host does not).
         sync: async (): Promise<void> => {},
     };

@@ -27,7 +27,6 @@ const analysis: Analysis = {
     updatedAt: 1_700_000_000_000,
     name: asStr256("Staging Test"),
     slug: "staging-test",
-    outputDirectory: null,
     anchorId,
     projectId: null,
 };
@@ -380,12 +379,12 @@ describe("enumerateInputSignatures", () => {
         expect([...enumSigs].sort()).toEqual([...manifestSigs].sort());
     });
 
-    test("enumerates with no session tree, returns ok, and writes nothing", () => {
+    test("enumerates with no staging target, returns ok, and writes nothing", () => {
         writeFileSync(join(anchorDir, "data.csv"), "x");
         insertAnalysisInput({ path: "data.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
 
-        // A session tree path staging would use, deliberately never created.
-        const absentTree = join(testDir, "absent-session-tree");
+        // A workspace data-dir path staging would use, deliberately never created.
+        const absentTree = join(testDir, "absent-data-dir");
 
         const result = enumerateInputSignatures(analysisId);
         expect(result.isOk()).toBe(true);

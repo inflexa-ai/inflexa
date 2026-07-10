@@ -74,7 +74,7 @@ function deriveFileId(input: AnalysisInput, subpath?: string): string {
 
 /**
  * Link a file into the staging tree, replacing any stale destination. Hardlinks are
- * preferred (fast, zero-copy, safe because the harness mounts the session tree
+ * preferred (fast, zero-copy, safe because the harness mounts the workspace tree
  * read-only into sandboxes); the copy fallback covers cross-filesystem boundaries.
  */
 function stageFile(src: string, dest: string): Result<void, FsError> {
@@ -340,7 +340,7 @@ function walkInputFiles(analysisId: string): Result<InputFile[], DbError | Stagi
  * compute content hashes, and return the `StagedInput[]` manifest the harness consumes.
  *
  * @param analysisId - The analysis whose inputs to stage.
- * @param targetDir - The data directory root (`sessionTreeDataDir(analysisId)` — see
+ * @param targetDir - The data directory root (`workspaceDataDir(analysis)` — see
  *   paths.ts). Staged files are written under `{targetDir}/inputs/local/{key}`; do NOT
  *   pass a path already ending in `inputs` or the tree doubles the segment.
  * @returns The staged manifest, or a `DbError`/`StagingError` if resolution or I/O fails.

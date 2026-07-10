@@ -19,15 +19,11 @@ export type Analysis = {
     name: Str256;
     /**
      * URL-safe handle derived from `name` (else a generated one). Unique **within an
-     * anchor**, because outputs live at `…/analyses/<slug>/` and must not collide there.
+     * anchor**, because the whole workspace — staged inputs, run artifacts, provenance
+     * exports — lives at `…/analyses/<slug>/` and must not collide there. The workspace
+     * root is always DERIVED from anchor + slug (never stored), so it follows anchor moves.
      */
     slug: string;
-    /**
-     * Where outputs are written. `null` = derived from the anchor + slug (the default);
-     * a set value is a persisted absolute path — an explicit `--output` override or the
-     * XDG fallback used when the anchor folder isn't writable.
-     */
-    outputDirectory: string | null;
 
     /** The home folder's stable identity; always set. */
     anchorId: AnchorId;

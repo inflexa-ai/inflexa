@@ -12,7 +12,7 @@ import {
 
 import { getLogger } from "../../lib/log.ts";
 import type { Analysis } from "../../types/analysis.ts";
-import { sessionTreeDataDir } from "../staging/paths.ts";
+import { workspaceDataDir } from "../analysis/output.ts";
 import { enumerateInputSignatures, inputSignature, stageInputs } from "../staging/staging.ts";
 import { seedProfileLedger } from "./profile.ts";
 import type { HarnessRuntime } from "./runtime.ts";
@@ -66,7 +66,9 @@ export type ProfileParitySeams = {
     readonly loadStatus: typeof loadDataProfileStatus;
     /** Null the ledger back to "not profiled" when the input set empties (guarded to skip a live run). */
     readonly clear: typeof clearDataProfile;
-    /** Content-hash + link the inputs into the session tree — paid only once a (re-)trigger is decided. */
+    /** Resolve the analysis workspace's `data/` root — the staging target (errs on an unusable workspace). */
+    readonly dataDir: typeof workspaceDataDir;
+    /** Content-hash + link the inputs into the workspace tree — paid only once a (re-)trigger is decided. */
     readonly stage: typeof stageInputs;
     /** Seed the ledger row + build the trigger params (the construction shared with `inflexa profile`). */
     readonly seed: typeof seedProfileLedger;
@@ -83,6 +85,7 @@ const realParitySeams: ProfileParitySeams = {
     enumerate: enumerateInputSignatures,
     loadStatus: loadDataProfileStatus,
     clear: clearDataProfile,
+    dataDir: workspaceDataDir,
     stage: stageInputs,
     seed: seedProfileLedger,
     trigger: triggerDataProfile,
@@ -136,7 +139,12 @@ async function stageAndSeed(runtime: HarnessRuntime, analysis: Analysis, seams: 
     // fault. The missing gate is an active-run check here (skip or defer staging while a run is in
     // flight); it wants the run-liveness read the ledger already exposes and is left out now to keep this
     // change scoped to the parity/staging convergence fix.
-    const stageResult = await seams.stage(analysis.id, sessionTreeDataDir(analysis.id));
+    const dataDirResult = seams.dataDir(analysis);
+    if (dataDirResult.isErr()) {
+        const e = dataDirResult.error;
+        return err(e.type === "workspace_unavailable" ? e.message : `workspace resolution failed (${e.type})`);
+    }
+    const stageResult = await seams.stage(analysis.id, dataDirResult.value);
     if (stageResult.isErr()) return err(`staging inputs failed (${stageResult.error.type})`);
 
     const seedResult = await seams.seed(runtime.pool, analysis.id, stageResult.value);

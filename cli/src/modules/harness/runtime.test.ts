@@ -99,9 +99,13 @@ function recordingSeams(calls: string[]): BootSeams {
             const executeAnalysisDeps = workflows.buildExecuteAnalysis(child);
             expect(executeAnalysisDeps.sandboxStepCallable).toBe(child);
             expect(executeAnalysisDeps.emitProvenance).toBeInstanceOf(Function);
-            // The data-profile bundle carries the base every consumer shares (design
-            // D2) plus the RESOLVED provider instance advertising its index width.
-            expect(workflows.dataProfile.sessionsBasePath).toBe(env.sessionsDir);
+            // The data-profile bundle carries the workspace-root seam every consumer
+            // shares (design D2) plus the RESOLVED provider instance advertising its
+            // index width. The ONE resolver instance built at boot threads to every
+            // bundle, so identity (not just shape) is the invariant.
+            expect(workflows.dataProfile.resolveWorkspaceRoot).toBeInstanceOf(Function);
+            expect(workflows.dataProfile.resolveWorkspaceRoot).toBe(workflows.sandboxStep.resolveWorkspaceRoot);
+            expect(workflows.dataProfile.resolveWorkspaceRoot).toBe(conversation.resolveWorkspaceRoot);
             expect(workflows.dataProfile.skillsDir).toBe(skillsDir);
             expect(workflows.dataProfile.embedding.dimensions).toBe(1536);
             expect(workflows.dataProfile.embedding.embed).toBeInstanceOf(Function);

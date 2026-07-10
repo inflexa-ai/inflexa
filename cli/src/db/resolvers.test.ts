@@ -24,7 +24,6 @@ function seedAnalysis(id: string, name: string, slug: string, anchorId: string):
         updatedAt: Date.now(),
         name: asStr256(name),
         slug,
-        outputDirectory: null,
         anchorId,
         projectId: null,
     })._unsafeUnwrap();

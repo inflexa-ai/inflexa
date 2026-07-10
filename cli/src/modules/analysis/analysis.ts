@@ -1,29 +1,28 @@
 import { randomUUIDv7 } from "bun";
-import { resolve, sep } from "node:path";
-import { ok, Result } from "neverthrow";
+import { existsSync } from "node:fs";
+import { join, sep } from "node:path";
+import { err, ok, Result } from "neverthrow";
 import type { Analysis, AnalysisInput } from "../../types/analysis.ts";
 import type { Str256, IdOrName } from "../../lib/types.ts";
 import type { DbError } from "../../db/errors.ts";
-import { findAnalysesByRef, listAnalyses, listAnalysesByAnchor, listAnalysesByProject, listAnalysisInputs } from "../../db/primary_query.ts";
-import { insertAnalysis, insertAnalysisInput, deleteAnalysisInput, updateAnalysis } from "../../db/primary_mutation.ts";
+import { findAnalysesByRef, listAnalysesByAnchor, listAnalysesByProject, listAnalysisInputs, listAnalyses } from "../../db/primary_query.ts";
+import { insertAnalysis, insertAnalysisInput, deleteAnalysisInput, renameAnalysis } from "../../db/primary_mutation.ts";
 import { currentUserActor } from "../prov/prov.ts";
 import { Bus } from "../../lib/bus.ts";
-import { getOrCreateAnchorForCwd } from "../anchor/anchor.ts";
-import { findMarkerUpwards } from "../anchor/marker.ts";
+import { renameResult } from "../../lib/fs.ts";
+import { getOrCreateAnchorForCwd, resolveAnchor } from "../anchor/anchor.ts";
+import { findMarkerUpwards, isDirWritable } from "../anchor/marker.ts";
 import { classifyInputPath } from "./input.ts";
-import { resolveOutputDir, defaultOutputSubdir } from "./output.ts";
-import { env } from "../../lib/env.ts";
+import { defaultOutputSubdir, type WorkspaceError } from "./output.ts";
 
 /** Args for {@link createAnalysis}. `name` is validated to {@link Str256} at the CLI boundary. */
 export type CreateAnalysisInput = {
-    /** Becomes the analysis's home anchor. */
+    /** Becomes the analysis's home anchor. Must be writable — the workspace lives under it. */
     cwd: string;
     /** Required human label; drives the slug. */
     name: Str256;
     /** Raw input paths to enroll. Omitted/empty ⇒ the analysis starts with NO inputs — never defaults to cwd; inputs are user-driven. */
     inputPaths?: string[];
-    /** From `--output`; resolved to absolute and persisted onto `outputDirectory`. */
-    outputOverride?: string;
     /** Optional project grouping (the lone foreign key — last). */
     projectId?: string | null;
 };
@@ -75,15 +74,14 @@ export function matchOutputPrefix(path: string, candidates: { id: string; dir: s
  * Detect whether `input` is itself another inflexa analysis's output, returning that analysis's id
  * (to record as `derivedFromAnalysisId`, linking the two provenance documents) or null.
  *
- * Side-effect-FREE by design: uses only pure reads (`listAnalysesByAnchor`/`listAnalyses`), never
+ * Side-effect-FREE by design: uses only pure reads (`listAnalysesByAnchor`), never
  * `resolveOutputDir`/`resolveAnchor` — whose Step-1 `touchAnchor` would bump every other anchor's
- * `last_seen` on each add, a false "sighting" that corrupts the heartbeat. Two cases are provable
- * from stored data alone:
- *  - an anchor-relative input under a sibling's DEFAULT output (`<anchor>/.inflexa/analyses/<slug>/`):
- *    same anchor, so its stored relpath is prefixed by that analysis's default output subdir;
- *  - a raw absolute input under some analysis's EXPLICIT `outputDirectory`.
- * Not detected (best-effort, per the "if possible" spec): XDG-fallback outputs, and a default output
- * reached from a different anchor than the input's own.
+ * `last_seen` on each add, a false "sighting" that corrupts the heartbeat. One case is provable
+ * from stored data alone: an anchor-relative input under a sibling's workspace
+ * (`<anchor>/.inflexa/analyses/<slug>/`) — same anchor, so its stored relpath is prefixed by that
+ * analysis's workspace subdir. Not detected (best-effort, per the "if possible" spec): a raw
+ * absolute input under some analysis's workspace, which is only reachable through that analysis's
+ * anchor path — a resolution this function must not perform.
  */
 export function detectSourceAnalysis(input: AnalysisInput, excludeAnalysisId: string): Result<string | null, DbError> {
     if (input.anchorId !== null) {
@@ -91,17 +89,14 @@ export function detectSourceAnalysis(input: AnalysisInput, excludeAnalysisId: st
         return listAnalysesByAnchor(anchorId).map((siblings) =>
             matchOutputPrefix(
                 input.path,
-                siblings.filter((a) => a.id !== excludeAnalysisId && a.outputDirectory === null).map((a) => ({ id: a.id, dir: defaultOutputSubdir(a.slug) })),
+                siblings.filter((a) => a.id !== excludeAnalysisId).map((a) => ({ id: a.id, dir: defaultOutputSubdir(a.slug) })),
             ),
         );
     }
-    return listAnalyses().map((all) =>
-        matchOutputPrefix(
-            input.path,
-            // Only analyses that pinned an explicit (absolute) output dir; a raw input's path is absolute too.
-            all.flatMap((a) => (a.id !== excludeAnalysisId && a.outputDirectory !== null ? [{ id: a.id, dir: a.outputDirectory }] : [])),
-        ),
-    );
+    // A raw absolute input can only sit under some analysis's workspace via that analysis's
+    // anchor path — which this function must not resolve (side-effect-free constraint above).
+    // Best-effort per the spec: the anchorless case detects nothing.
+    return ok(null);
 }
 
 /**
@@ -193,13 +188,23 @@ export function applyInputsDiff(analysisId: string, toAdd: string[], toRemove: A
 }
 
 /**
- * Orchestrate analysis creation: anchor → unique slug → insert → inputs → output-dir
- * resolution + fallback persist. Output-dir *creation* is deferred to first chat / `inflexa open`;
- * here we only resolve and persist a stable path.
+ * Orchestrate analysis creation: writability precondition → anchor → unique slug → insert →
+ * inputs. The workspace root is always derived (anchor + slug), never persisted; its *creation*
+ * is deferred to first chat / `inflexa open`. Writability is checked BEFORE any row or marker
+ * write: the workspace at `<cwd>/.inflexa/analyses/<slug>/` is where everything the analysis
+ * touches will live, so a folder that cannot host it must fail creation — there is no fallback.
  */
-export function createAnalysis(opts: CreateAnalysisInput): Result<Analysis, DbError> {
+export function createAnalysis(opts: CreateAnalysisInput): Result<Analysis, WorkspaceError> {
+    if (!isDirWritable(opts.cwd)) {
+        return err({
+            type: "workspace_unavailable",
+            message:
+                `${opts.cwd} is not writable, so the analysis workspace cannot live there. ` +
+                `Create the analysis in a writable folder (inputs can be referenced from anywhere).`,
+        });
+    }
     return getOrCreateAnchorForCwd(opts.cwd).andThen((anchor) =>
-        uniqueSlugForAnchor(anchor.id, opts.name).andThen((slug) => {
+        uniqueSlugForAnchor(anchor.id, opts.name).andThen((slug): Result<Analysis, WorkspaceError> => {
             const now = Date.now();
             const analysis: Analysis = {
                 id: randomUUIDv7(),
@@ -207,7 +212,6 @@ export function createAnalysis(opts: CreateAnalysisInput): Result<Analysis, DbEr
                 anchorId: anchor.id,
                 name: opts.name,
                 slug,
-                outputDirectory: opts.outputOverride ? resolve(opts.cwd, opts.outputOverride) : null,
                 createdAt: now,
                 updatedAt: now,
             };
@@ -229,17 +233,46 @@ export function createAnalysis(opts: CreateAnalysisInput): Result<Analysis, DbEr
                         return ok(created);
                     })
                     .andThen((created) => (inputPaths.length > 0 ? addInputs(created.id, inputPaths, opts.cwd).map(() => created) : ok(created)))
-                    .andThen((created) =>
-                        resolveOutputDir(created).andThen((outDir) => {
-                            // Persist only the XDG fallback (case 3); a writable-anchor path (case 2)
-                            // stays null = derived, and an override is already absolute on the row.
-                            if (created.outputDirectory === null && outDir.startsWith(env.outputFallbackDir)) {
-                                const persisted: Analysis = { ...created, outputDirectory: outDir };
-                                return updateAnalysis(persisted).map(() => persisted);
-                            }
-                            return ok(created);
-                        }),
-                    )
+            );
+        }),
+    );
+}
+
+/** Outcome of {@link renameAnalysisAndMoveWorkspace}: the renamed analysis plus whether the on-disk tree moved with it. */
+export type RenameOutcome = {
+    analysis: Analysis;
+    /** False when there was no tree to move (never created / user-deleted) OR the move itself failed — see `moveError`. */
+    workspaceMoved: boolean;
+    /** Set only when a tree existed at the old slug but could not be moved; the caller decides how loudly to surface it. */
+    moveError?: unknown;
+};
+
+/**
+ * Rename an analysis and move its workspace directory to the new slug. The slug keys the
+ * on-disk workspace (`.inflexa/analyses/<slug>/`), so the rename and the move are one
+ * deliberate action. Row first, then the move: the row is authoritative and the tree is
+ * derived from it, so a crash (or a failed move) between the two leaves a missing tree at
+ * the new slug — the normal desync condition the next use heals — plus a visible leftover
+ * dir at the old slug, never a row pointing at bytes the rename lost. A missing source dir
+ * is NOT an error (per the desync rule). Mid-run renames are excluded structurally: the
+ * only rename surface lives in the TUI process that holds the analysis's instance lock.
+ */
+export function renameAnalysisAndMoveWorkspace(analysis: Analysis, name: Str256): Result<RenameOutcome, DbError> {
+    return uniqueSlugForAnchor(analysis.anchorId, name).andThen((slug) =>
+        renameAnalysis(analysis.id, name, slug).map((): RenameOutcome => {
+            const renamed: Analysis = { ...analysis, name, slug };
+            // Anchor resolution after the row update; writability is irrelevant here — a
+            // read-only anchor still renames the row, and the move then fails visibly.
+            const anchorPath = resolveAnchor(analysis.anchorId).match(
+                (r) => r?.path ?? null,
+                () => null,
+            );
+            if (anchorPath === null) return { analysis: renamed, workspaceMoved: false };
+            const oldRoot = join(anchorPath, defaultOutputSubdir(analysis.slug));
+            if (!existsSync(oldRoot)) return { analysis: renamed, workspaceMoved: false };
+            return renameResult(oldRoot, join(anchorPath, defaultOutputSubdir(slug)), "renameAnalysisWorkspace").match(
+                (): RenameOutcome => ({ analysis: renamed, workspaceMoved: true }),
+                (e): RenameOutcome => ({ analysis: renamed, workspaceMoved: false, moveError: e.cause }),
             );
         }),
     );

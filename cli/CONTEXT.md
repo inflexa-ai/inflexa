@@ -20,7 +20,7 @@ Code is grouped by feature, not by layer — a module owns its logic, its text c
 - **`libs/`** — the published sandbox image variants (GHCR refs) + the `sandbox pull` / `status` actions.
 - **`project/`** — project CRUD command actions (`project new` / `project ls`).
 - **`prov/`** — the provenance recorder: a bus subscriber that builds, signs, and persists each analysis's PROV document, plus `prov export` / `prov verify`.
-- **`staging/`** — stages analysis input files under the data dir with content hashes into the harness-compatible `StagedInput` manifest.
+- **`staging/`** — stages analysis input files under the analysis workspace's `data/` root with content hashes into the harness-compatible `StagedInput` manifest.
 
 ## Shared infrastructure
 

@@ -3,8 +3,8 @@ import { findAnalysis } from "./analysis.ts";
 import { ensureOutputDir } from "./output.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
 import type { Analysis } from "../../types/analysis.ts";
-import type { DbError } from "../../db/errors.ts";
 import type { IdOrName } from "../../lib/types.ts";
+import type { WorkspaceError } from "./output.ts";
 
 /**
  * The OS-specific argv that opens `dir` in the file browser. `platform` defaults to the running OS
@@ -37,11 +37,12 @@ export function openInFileBrowser(dir: string): Result<void, Error> {
 }
 
 /**
- * Ensure an analysis's output directory exists and open it in the OS file browser; returns the
- * opened path. Library-pure (no stdout, no process exit) so both the `inflexa open` CLI adapter
- * and the in-app command palette can call it.
+ * Ensure an analysis's workspace root exists and open it in the OS file browser; returns the
+ * opened path. The revealed directory is the analysis's single tree — staged inputs (`data/`),
+ * run artifacts (`runs/`), reports, and provenance exports. Library-pure (no stdout, no process
+ * exit) so both the `inflexa open` CLI adapter and the in-app command palette can call it.
  */
-export function openOutputDir(analysis: Analysis): Result<string, DbError> {
+export function openOutputDir(analysis: Analysis): Result<string, WorkspaceError> {
     // ensure (not just resolve) — the directory must exist to be opened.
     return ensureOutputDir(analysis).map((dir) => {
         try {
@@ -53,11 +54,14 @@ export function openOutputDir(analysis: Analysis): Result<string, DbError> {
     });
 }
 
-/** `inflexa open <id|name>` — open an analysis's output directory in the OS file browser. */
+/** `inflexa open <id|name>` — open an analysis's workspace in the OS file browser. */
 export function runOpen(idOrName: IdOrName): void {
     const analysis = findAnalysis(idOrName).match((a) => a, dieOn("Failed to resolve analysis"));
     if (!analysis) fail(`No analysis found matching "${idOrName}".`);
 
-    const dir = openOutputDir(analysis).match((d) => d, dieOn("Failed to prepare output directory"));
+    const dir = openOutputDir(analysis).match(
+        (d) => d,
+        (e) => (e.type === "workspace_unavailable" ? fail(e.message) : fail(`Failed to prepare the analysis workspace (${e.type})`, e.cause)),
+    );
     console.log(dir);
 }

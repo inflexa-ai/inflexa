@@ -143,27 +143,12 @@ export const env = Object.freeze({
     dbPath: join(dataDir(), "inflexa", "agent.db"),
     logDir: join(dataDir(), "inflexa", "logs"),
     /**
-     * Fallback output root, used only when an analysis's anchor folder is not writable
-     * (a read-only mount, a directory owned by another user). The default lives beside
-     * the data at `<anchor>/.inflexa/analyses/<slug>/`; this guarantees every analysis always
-     * has somewhere to write. See src/modules/analysis/output.ts.
-     */
-    outputFallbackDir: join(dataDir(), "inflexa", "analyses"),
-    /**
      * Advisory instance locks: `<dataDir>/inflexa/locks/<key>.lock`, keyed by an analysis id (one
      * inflexa process may have an analysis open at a time) or a fixed sentinel for the embedded harness
      * runtime (one DBOS engine per machine). The lock files coordinate that across instances.
      * See src/lib/lock.ts.
      */
     locksDir: join(dataDir(), "inflexa", "locks"),
-    /**
-     * Harness session trees: `<sessionsDir>/<analysisId>/…` holds an analysis's staged
-     * inputs (`data/inputs/…`) and its sandbox run outputs (`runs/<runId>/<stepId>/…`).
-     * Deliberately ONE global base rather than per-analysis (e.g. under the analysis's
-     * output dir): the embedded harness closes over a single `sessionsBasePath` when its
-     * workflows are registered, once per process, so the base cannot vary by analysis.
-     */
-    sessionsDir: join(dataDir(), "inflexa", "sessions"),
     /**
      * Local embedding model storage: `<dataDir>/inflexa/models/`. The GGUF for
      * `bge-small-en-v1.5` (q8_0, 384-dim) is downloaded here on `inflexa setup --embeddings`
@@ -245,9 +230,7 @@ export const envDoc: Readonly<
 > = Object.freeze({
     dbPath: { kind: "path", label: "database", description: "saved sessions (SQLite)", baseVar: dataVar },
     logDir: { kind: "path", label: "logs", description: "log files, rotated daily, 7-day retention", baseVar: dataVar },
-    outputFallbackDir: { kind: "path", label: "outputs", description: "analysis outputs when the anchor folder isn't writable", baseVar: dataVar },
     locksDir: { kind: "path", label: "locks", description: "advisory per-analysis instance locks", baseVar: dataVar },
-    sessionsDir: { kind: "path", label: "sessions", description: "harness session trees: staged inputs and sandbox run outputs", baseVar: dataVar },
     modelDir: { kind: "path", label: "models", description: "local embedding GGUF models, downloaded by `inflexa setup --embeddings`", baseVar: dataVar },
     embeddingModelPath: {
         kind: "path",

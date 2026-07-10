@@ -10,6 +10,13 @@ import { defineConfig } from "eslint/config";
 // context.sourceCode.parserServices / context.sourceCode.getScope(node).
 // getScope must resolve to the visitor's current node (not the AST root) so
 // the plugin's variable-reference tracker can find function-local assignments.
+//
+// The patched `report` additionally recognizes `._unsafeUnwrapErr()` as consuming
+// its Result: the plugin's handledMethods list has `_unsafeUnwrap` but not the err
+// twin, so a directly-chained `fn()._unsafeUnwrapErr()` — the standard test idiom
+// for asserting an expected Err (CLAUDE.md sanctions both unsafe unwraps in tests) —
+// would otherwise be a false positive. Taught here, once, rather than scattering
+// per-site disables.
 const originalRule = neverthrowPlugin.rules["must-use-result"];
 const neverthrow = {
     rules: {
@@ -26,6 +33,16 @@ const neverthrow = {
                     getScope: {
                         value() {
                             return context.sourceCode.getScope(visitingNode || context.sourceCode.ast);
+                        },
+                    },
+                    report: {
+                        value(descriptor) {
+                            const parent = descriptor.node?.parent;
+                            const consumedByUnwrapErr =
+                                parent?.type === "MemberExpression" &&
+                                parent.property?.name === "_unsafeUnwrapErr" &&
+                                parent.parent?.type === "CallExpression";
+                            if (!consumedByUnwrapErr) context.report(descriptor);
                         },
                     },
                 });

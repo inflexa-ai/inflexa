@@ -92,10 +92,9 @@ cli.command("config")
 cli.command("new [name] [paths...]")
     .description("Create an analysis anchored at the current directory and open its chat")
     .option("--project <name>", "Group the analysis under a project")
-    .option("--output <path>", "Write outputs here instead of the derived default")
-    .action(async (name: string | undefined, paths: string[] | undefined, options: { project?: string; output?: string }) => {
+    .action(async (name: string | undefined, paths: string[] | undefined, options: { project?: string }) => {
         const { launchNew } = await import("../tui/app.launch.tsx");
-        await launchNew({ name, paths: paths ?? [], project: options.project, output: options.output });
+        await launchNew({ name, paths: paths ?? [], project: options.project });
     });
 
 cli.command("ls")
@@ -114,7 +113,7 @@ cli.command("resume <idOrName>")
     });
 
 cli.command("open <idOrName>")
-    .description("Open an analysis's output directory in the file browser")
+    .description("Open an analysis's workspace (inputs, run artifacts, reports, provenance) in the file browser")
     .action(async (idOrName: string) => {
         const { runOpen } = await import("../modules/analysis/open.ts");
         runOpen(idOrName);
@@ -210,7 +209,7 @@ project
 const prov = cli.command("prov").description("Provenance — the recorded history of an analysis's inputs and actions");
 
 prov.command("export <analysis>")
-    .description("Export an analysis's provenance document as PROV (writes into its .inflexa output folder by default)")
+    .description("Export an analysis's provenance document as PROV (writes into its workspace folder by default)")
     .option("--format <format>", "json (PROV-JSON) or provn (PROV-N)", "json")
     .option("--output <file>", "Write to this file instead of the analysis output folder")
     .action(async (analysisRef: string, options: { format?: string; output?: string }) => {

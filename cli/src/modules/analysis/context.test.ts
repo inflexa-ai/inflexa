@@ -11,7 +11,6 @@ function analysis(name: string): Analysis {
         updatedAt: 0,
         name: asStr256(name),
         slug: "slug",
-        outputDirectory: null,
         anchorId: "anchor1",
         projectId: null,
     };

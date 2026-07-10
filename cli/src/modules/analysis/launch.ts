@@ -104,7 +104,7 @@ async function pickOrStartTarget(analyses: Analysis[], cwd: string): Promise<Cha
 }
 
 /** `inflexa new [name] [paths...]` — create an analysis (anchor = cwd) and resolve its chat target. */
-export async function resolveNewTarget(opts: { name?: string; paths: string[]; project?: string; output?: string }): Promise<ChatTarget> {
+export async function resolveNewTarget(opts: { name?: string; paths: string[]; project?: string }): Promise<ChatTarget> {
     let projectId: string | null = null;
     if (opts.project) {
         const project = findProjectByRef(opts.project).match((p) => p, dieOn("Failed to resolve project"));
@@ -121,17 +121,18 @@ export async function resolveNewTarget(opts: { name?: string; paths: string[]; p
                   (e) => fail(e === "empty" ? "A name is required." : "Keep the name to 256 characters or fewer."),
               );
 
-    const analysis = createAnalysis({ cwd: process.cwd(), name, inputPaths: opts.paths, outputOverride: opts.output, projectId }).match(
+    const analysis = createAnalysis({ cwd: process.cwd(), name, inputPaths: opts.paths, projectId }).match(
         (a) => a,
-        dieOn("Failed to create analysis"),
+        (e) => (e.type === "workspace_unavailable" ? fail(e.message) : fail("Failed to create analysis", e.cause)),
     );
 
+    // Creation guaranteed a writable anchor, so this only misses on a same-instant desync.
     const outDir = resolveOutputDir(analysis).match(
         (d) => d,
         () => null,
     );
     console.log(`\n  Created analysis "${analysis.name}"`);
-    if (outDir) console.log(`  Output: ${outDir}\n`);
+    if (outDir) console.log(`  Workspace: ${outDir}\n`);
 
     return resolveChatTarget({ analysis });
 }

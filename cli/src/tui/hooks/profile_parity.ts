@@ -335,7 +335,7 @@ export function driveForceReprofile(
     seams: ForceDriverSeams = realForceDriverSeams,
 ): Promise<void> {
     // Shares the parity queue, not a queue of its own: force and parity both stage into the same
-    // session tree and both write the same ledger row, so they must exclude each other too.
+    // workspace tree and both write the same ledger row, so they must exclude each other too.
     return serializeProfileWork(() => runForceDrive(runtime, analysis, currentAnalysisId, seams));
 }
 

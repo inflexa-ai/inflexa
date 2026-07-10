@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
-import { makeBaseSlug, matchOutputPrefix, detectSourceAnalysis, createAnalysis, applyInputsDiff } from "./analysis.ts";
+import { makeBaseSlug, matchOutputPrefix, detectSourceAnalysis, createAnalysis, applyInputsDiff, renameAnalysisAndMoveWorkspace } from "./analysis.ts";
 import { defaultOutputSubdir } from "./output.ts";
 import { freshDb } from "../../test_support/db.ts";
 import { insertAnchor, insertAnalysis } from "../../db/primary_mutation.ts";
-import { listAnalysisInputs } from "../../db/primary_query.ts";
+import { findAnalysesByRef, listAnalyses, listAnalysisInputs } from "../../db/primary_query.ts";
 import { asStr256, str256 } from "../../lib/types.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { AnalysisInput } from "../../types/analysis.ts";
@@ -55,8 +55,8 @@ describe("detectSourceAnalysis", () => {
         freshDb();
     });
 
-    function row(id: string, slug: string, anchorId: string, outputDirectory: string | null = null): Analysis {
-        return { id, createdAt: 1, updatedAt: 1, name: asStr256(slug), slug, outputDirectory, anchorId, projectId: null };
+    function row(id: string, slug: string, anchorId: string): Analysis {
+        return { id, createdAt: 1, updatedAt: 1, name: asStr256(slug), slug, anchorId, projectId: null };
     }
     function seedAnchor(id: string): void {
         insertAnchor({ id, createdAt: 1, updatedAt: 1, cachedPath: "/tmp/x", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
@@ -73,11 +73,11 @@ describe("detectSourceAnalysis", () => {
         expect(detectSourceAnalysis(i, dst.id)._unsafeUnwrap()).toBe("SRC");
     });
 
-    test("links a raw absolute input under an analysis's EXPLICIT outputDirectory", () => {
+    test("a raw absolute-path input (no source anchor) detects nothing — the side-effect-free contract forbids resolving anchors", () => {
         seedAnchor("anc");
-        insertAnalysis(row("SRC", "src", "anc", join(sep, "custom", "out")))._unsafeUnwrap();
+        insertAnalysis(row("SRC", "src", "anc"))._unsafeUnwrap();
         const i = input({ path: join(sep, "custom", "out", "r.csv"), analysisId: "OTHER" });
-        expect(detectSourceAnalysis(i, "OTHER")._unsafeUnwrap()).toBe("SRC");
+        expect(detectSourceAnalysis(i, "OTHER")._unsafeUnwrap()).toBeNull();
     });
 
     test("null when the input is no analysis's output", () => {
@@ -123,6 +123,29 @@ describe("createAnalysis inputs", () => {
     });
 });
 
+describe("createAnalysis workspace precondition", () => {
+    let dir = "";
+
+    beforeEach(() => {
+        freshDb();
+        dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-precond-")));
+    });
+
+    afterEach(() => {
+        // The test leaves the dir read-only; restore the write bit so rmSync can clear it.
+        chmodSync(dir, 0o755);
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("a non-writable cwd fails with workspace_unavailable BEFORE any row or marker write", () => {
+        chmodSync(dir, 0o555);
+        expect(createAnalysis({ cwd: dir, name: str256("blocked")._unsafeUnwrap() })._unsafeUnwrapErr().type).toBe("workspace_unavailable");
+        // The precondition runs first — no analysis row landed and no .inflexa marker was minted.
+        expect(listAnalyses()._unsafeUnwrap()).toEqual([]);
+        expect(existsSync(join(dir, ".inflexa"))).toBe(false);
+    });
+});
+
 describe("applyInputsDiff", () => {
     let dir = "";
 
@@ -160,5 +183,48 @@ describe("applyInputsDiff", () => {
         const after = listAnalysisInputs(a.id)._unsafeUnwrap();
         expect(after).toHaveLength(1);
         expect(after[0]?.path).toContain("new.txt");
+    });
+});
+
+describe("renameAnalysisAndMoveWorkspace", () => {
+    let dir = "";
+
+    beforeEach(() => {
+        freshDb();
+        // realpath so the anchor's canonical cached path matches macOS's /private/var.
+        dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-rename-")));
+    });
+
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("moves an existing workspace tree — with its contents — to the new slug", () => {
+        const a = createAnalysis({ cwd: dir, name: str256("Old Name")._unsafeUnwrap() })._unsafeUnwrap();
+        const oldRoot = join(dir, ".inflexa", "analyses", a.slug);
+        mkdirSync(join(oldRoot, "runs"), { recursive: true });
+        writeFileSync(join(oldRoot, "runs", "log.txt"), "kept");
+
+        const outcome = renameAnalysisAndMoveWorkspace(a, str256("New Name")._unsafeUnwrap())._unsafeUnwrap();
+        expect(outcome.workspaceMoved).toBe(true);
+        expect(outcome.analysis.slug).toBe("new-name");
+        // The tree moved wholesale: nothing left at the old slug, contents intact at the new one.
+        expect(existsSync(oldRoot)).toBe(false);
+        expect(readFileSync(join(dir, ".inflexa", "analyses", "new-name", "runs", "log.txt"), "utf-8")).toBe("kept");
+        // The row is authoritative and renamed with it.
+        expect(findAnalysesByRef("new-name")._unsafeUnwrap()[0]?.id).toBe(a.id);
+    });
+
+    test("a missing workspace tree is the normal desync, not an error — the row still renames", () => {
+        // Workspace creation is deferred to first use, so a never-opened analysis has no tree.
+        const a = createAnalysis({ cwd: dir, name: str256("Loner")._unsafeUnwrap() })._unsafeUnwrap();
+
+        const outcome = renameAnalysisAndMoveWorkspace(a, str256("Loner Renamed")._unsafeUnwrap())._unsafeUnwrap();
+        expect(outcome.workspaceMoved).toBe(false);
+        expect(outcome.moveError).toBeUndefined();
+        expect(outcome.analysis.slug).toBe("loner-renamed");
+        expect(findAnalysesByRef("loner-renamed")._unsafeUnwrap()[0]?.id).toBe(a.id);
+        // Nothing was invented on disk at either slug.
+        expect(existsSync(join(dir, ".inflexa", "analyses", "loner-renamed"))).toBe(false);
     });
 });
