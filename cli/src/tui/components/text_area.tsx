@@ -106,7 +106,13 @@ export function TextArea(props: TextAreaProps): JSX.Element {
             initialValue={props.initialValue}
             placeholder={props.placeholder ?? ""}
             placeholderColor={theme().fgMuted}
+            // TextareaRenderable keeps separate unfocused/focused text colors and picks by focus;
+            // its `set textColor` writes ONLY the unfocused one, so without an explicit
+            // focusedTextColor the focused (INSERT) state falls back to opentui's #FFFFFF default —
+            // white-on-bgActive, unreadable on light themes. Mirror the textColor expression exactly
+            // so busy-dimming holds in both focus states.
             textColor={props.busy ? theme().fgMuted : theme().fg}
+            focusedTextColor={props.busy ? theme().fgMuted : theme().fg}
             backgroundColor={theme().bg}
             focusedBackgroundColor={theme().bgActive}
             cursorColor={props.busy ? theme().bg : theme().fg}

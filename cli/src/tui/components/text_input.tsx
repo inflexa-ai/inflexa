@@ -93,7 +93,11 @@ export function TextInput(props: TextInputProps): JSX.Element {
             value={props.initialValue}
             placeholder={props.placeholder ?? ""}
             placeholderColor={theme().fgMuted}
+            // InputRenderable inherits TextareaRenderable's unfocused/focused text-color split, whose
+            // `set textColor` writes only the unfocused slot; set focusedTextColor too or the focused
+            // state falls back to opentui's #FFFFFF default (unreadable on light themes).
             textColor={props.busy ? theme().fgMuted : theme().fg}
+            focusedTextColor={props.busy ? theme().fgMuted : theme().fg}
             backgroundColor={theme().bg}
             focusedBackgroundColor={theme().bgActive}
             cursorColor={props.busy ? theme().bg : theme().fg}

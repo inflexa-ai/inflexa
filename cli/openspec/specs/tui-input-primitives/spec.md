@@ -8,12 +8,17 @@ Shared themed text-entry primitives for the TUI: `TextArea` (multi-line, mode-tr
 
 ### Requirement: TextArea component with themed styling and mode tracking
 
-The system SHALL provide a `TextArea` component in `src/tui/components/text_area.tsx` that wraps opentui's `<textarea>` with the standard themed color contract: `textColor` from `theme().fg`, `placeholderColor` from `theme().fgMuted`, `backgroundColor` from `theme().bg`, `focusedBackgroundColor` from `theme().bgActive`. It SHALL accept a `placeholder` string, an optional `initialValue`, an optional `height` (defaulting to textarea auto-sizing), an `onSubmit` callback receiving the textarea's plain text, an `onRef` callback receiving the `TextareaRenderable`, and a reactive `focused` accessor that drives mode display and border color.
+The system SHALL provide a `TextArea` component in `src/tui/components/text_area.tsx` that wraps opentui's `<textarea>` with the standard themed color contract: `textColor` from `theme().fg`, `placeholderColor` from `theme().fgMuted`, `backgroundColor` from `theme().bg`, `focusedBackgroundColor` from `theme().bgActive`, and `focusedTextColor` mirroring `textColor`'s value (theme `fg`, or `fgMuted` while busy) — opentui's `TextareaRenderable` keeps separate focused/unfocused text colors and its `textColor` setter updates only the unfocused one, so omitting `focusedTextColor` leaves the focused state on opentui's built-in `#FFFFFF`, unreadable on light themes' `bgActive`. It SHALL accept a `placeholder` string, an optional `initialValue`, an optional `height` (defaulting to textarea auto-sizing), an `onSubmit` callback receiving the textarea's plain text, an `onRef` callback receiving the `TextareaRenderable`, and a reactive `focused` accessor that drives mode display and border color.
 
 #### Scenario: Themed colors applied
 
 - **WHEN** a `TextArea` renders
-- **THEN** its text color, placeholder color, background, and focused background come from `theme()` — no inline hex values
+- **THEN** its text color, focused text color, placeholder color, background, and focused background come from `theme()` — no inline hex values
+
+#### Scenario: INSERT-mode text is readable on light themes
+
+- **WHEN** the user types into a focused `TextArea` under a light theme
+- **THEN** the typed text renders in the theme's `fg` (or `fgMuted` while busy) on `bgActive` — never opentui's white focused-text default
 
 #### Scenario: Submit callback fires on Enter
 
@@ -74,12 +79,17 @@ The system SHALL provide a `TextArea` component in `src/tui/components/text_area
 
 ### Requirement: TextInput component with themed styling and per-keystroke callback
 
-The system SHALL provide a `TextInput` component in `src/tui/components/text_input.tsx` that wraps opentui's `<input>` with the standard themed color contract (same as TextArea: `theme().fg`, `theme().fgMuted`, `theme().bg`, `theme().bgActive`). It SHALL accept a `placeholder` string, an `onInput` callback invoked on every keystroke with the current text value, and an `onRef` callback receiving the `InputRenderable`. It SHALL NOT have mode tracking, submit chords, or newline chords — the `<input>` element serves filter/search patterns where the user is always typing.
+The system SHALL provide a `TextInput` component in `src/tui/components/text_input.tsx` that wraps opentui's `<input>` with the standard themed color contract (same as TextArea, including `focusedTextColor` — `InputRenderable` extends `TextareaRenderable` and inherits the same focused/unfocused text-color split and white focused-state default). It SHALL accept a `placeholder` string, an `onInput` callback invoked on every keystroke with the current text value, and an `onRef` callback receiving the `InputRenderable`. It SHALL NOT have mode tracking, submit chords, or newline chords — the `<input>` element serves filter/search patterns where the user is always typing.
 
 #### Scenario: Themed colors applied
 
 - **WHEN** a `TextInput` renders
-- **THEN** its text color, placeholder color, background, and focused background come from `theme()`
+- **THEN** its text color, focused text color, placeholder color, background, and focused background come from `theme()`
+
+#### Scenario: INSERT-mode text is readable on light themes
+
+- **WHEN** the user types into a focused `TextInput` under a light theme
+- **THEN** the typed text renders in the theme's `fg` (or `fgMuted` while busy) on `bgActive` — never opentui's white focused-text default
 
 #### Scenario: Per-keystroke callback fires
 
