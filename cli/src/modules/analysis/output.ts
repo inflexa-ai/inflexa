@@ -45,7 +45,13 @@ export function archivedOutputSubdir(slug: string): string {
  * An unresolvable or non-writable anchor is an actionable error; there is no
  * fallback and no override. Does not create the directory.
  */
-export function resolveOutputDir(analysis: Analysis): Result<string, WorkspaceError> {
+/**
+ * Locate an analysis's home anchor folder, or the shared actionable "cannot be
+ * located" error. Split out so the write path ({@link resolveOutputDir}) and the
+ * read-only reveal path ({@link locateExistingOutputDir}) report the same message
+ * for a lost folder and differ only on the writability requirement.
+ */
+function locateAnchorPath(analysis: Analysis): Result<string, WorkspaceError> {
     // `touch: false` — resolving a workspace root is not a folder sighting. This runs on the
     // harness's per-read path, where a heartbeat write would be both meaningless and hot.
     return resolveAnchor(analysis.anchorId, { touch: false }).andThen((resolved) => {
@@ -58,6 +64,12 @@ export function resolveOutputDir(analysis: Analysis): Result<string, WorkspaceEr
                     `Restore the folder or create the analysis again in a reachable location.`,
             });
         }
+        return ok(path);
+    });
+}
+
+export function resolveOutputDir(analysis: Analysis): Result<string, WorkspaceError> {
+    return locateAnchorPath(analysis).andThen((path) => {
         if (!isDirWritable(path)) {
             return err<string, WorkspaceError>({
                 type: "workspace_unavailable",
@@ -68,6 +80,22 @@ export function resolveOutputDir(analysis: Analysis): Result<string, WorkspaceEr
             });
         }
         return ok(join(path, defaultOutputSubdir(analysis.slug)));
+    });
+}
+
+/**
+ * Locate an analysis's workspace root for a READ-ONLY reveal (`inflexa open`),
+ * returning the directory only when it already exists on disk. Unlike
+ * {@link resolveOutputDir} this does NOT require the home folder to be writable:
+ * a tree that was already materialized stays revealable even if its folder later
+ * went read-only (a mounted volume, a `chmod`). `ok(null)` means the folder is
+ * reachable but nothing was ever written there — the caller decides whether to
+ * create it. `workspace_unavailable` is reserved for a folder that cannot be found.
+ */
+export function locateExistingOutputDir(analysis: Analysis): Result<string | null, WorkspaceError> {
+    return locateAnchorPath(analysis).map((path) => {
+        const dir = join(path, defaultOutputSubdir(analysis.slug));
+        return existsSync(dir) ? dir : null;
     });
 }
 
@@ -157,13 +185,14 @@ function freeArchivePath(anchorPath: string, slug: string): string {
 export function disposeWorkspace(analysis: Analysis, mode: "archive" | "delete"): Result<WorkspaceDisposal, WorkspaceError> {
     return resolveAnchor(analysis.anchorId, { touch: false }).andThen((resolved): Result<WorkspaceDisposal, WorkspaceError> => {
         const anchorPath = resolved?.path ?? null;
+        // Drop any cached root up front so the disposal is never shadowed by a stale
+        // memo, regardless of which branch we return through below.
+        invalidateWorkspaceRoot(analysis.id);
         // The tree lived inside the anchor folder, so an unlocatable folder took it along.
         if (anchorPath === null) return ok({ kind: "absent" });
 
         const root = join(anchorPath, defaultOutputSubdir(analysis.slug));
         if (!existsSync(root)) return ok({ kind: "absent" });
-
-        invalidateWorkspaceRoot(analysis.id);
 
         if (mode === "delete") {
             return rmResult(root, "disposeWorkspace:delete")

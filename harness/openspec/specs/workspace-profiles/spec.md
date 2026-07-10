@@ -2,21 +2,21 @@
 
 Defines the per-step workspace construction in the harness — the mount strategy (nested RO analysis tree + RW step root), the central `WorkspaceFilesystem` seam, and the vector-index discipline (the workflow body is the sole writer; sandbox agents do not call any index tool).
 ## Requirements
-### Requirement: Pod mount specs use nested RO/RW
+### Requirement: Mount plan uses nested RO/RW
 
-`buildPodMounts` SHALL return exactly two pod volumeMount specs: one read-only mount for the full analysis tree at `/{analysisId}/` and one read-write mount for the step at `/{analysisId}/runs/{runId}/{stepId}/`. K8s handles nested mounts — the most-specific path wins.
+`buildMountPlan(coords, stores)` SHALL be the backend-agnostic source of truth for the container-side paths: a read-only mount of the full analysis tree at `/{analysisId}` and a read-write mount for the step at `/{analysisId}/runs/{runId}/{stepId}` (absent when `readOnly`). Nested mounts resolve most-specific-path-wins on both backends.
 
-When `SANDBOX_BACKEND=docker`, `buildDockerMounts` SHALL return the equivalent as Docker bind mount specs: `{ hostPath, containerPath, readOnly }[]`. The host paths are derived from the analysis's resolved workspace root + the tree-relative subpaths.
+Each backend reconciles the resolved workspace root against those container paths: the Docker client binds the root directly (`{hostRoot}:/{analysisId}:ro` + `{hostRoot}/runs/{runId}/{stepId}:…:rw`), and the K8s client addresses it as a `subPath` into the session PVC via `buildSessionSubPaths(coords, workspaceSubPath)`, where `workspaceSubPath` is the resolved root taken relative to the PVC root. Both derive from the same `resolveWorkspaceRoot` seam the harness pre-creates the step tree under.
 
-#### Scenario: Pod has nested mounts (K8s)
+#### Scenario: Mount plan has nested RO/RW paths
 
-- **WHEN** `buildPodMounts({ resourceId, runId, stepId })` is called
-- **THEN** it returns two entries: `{ mountPath: /{analysisId}/, readOnly: true }` and `{ mountPath: /{analysisId}/runs/{runId}/{stepId}/, readOnly: false }`
+- **WHEN** `buildMountPlan({ analysisId, runId, stepId }, stores)` is called
+- **THEN** `readonlyTreePath` is `/{analysisId}` and `writableStepPath` is `/{analysisId}/runs/{runId}/{stepId}`
 
-#### Scenario: Docker has nested bind mounts
+#### Scenario: K8s subPaths follow the resolved root
 
-- **WHEN** `buildDockerMounts({ resourceId, runId, stepId, workspaceRoot })` is called
-- **THEN** it returns two entries mapping host paths under `workspaceRoot` to the same container paths with the same read-only flags
+- **WHEN** `buildSessionSubPaths({ runId, stepId }, workspaceSubPath)` is called
+- **THEN** `ro` is `workspaceSubPath` and `rw` is `{workspaceSubPath}/runs/{runId}/{stepId}`, mapping onto the same container paths with the same read-only flags
 
 ### Requirement: Workflow is the sole writer of per-analysis vector index entries
 

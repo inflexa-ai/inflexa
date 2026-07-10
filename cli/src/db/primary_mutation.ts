@@ -171,16 +171,6 @@ export function insertAnalysis(analysis: Analysis): Result<Analysis, DbError> {
     });
 }
 
-/** Persists `analysis`, stamping a fresh `updatedAt` (mutates the argument). Returns rows changed — `0` when no such analysis exists. */
-export function updateAnalysis(analysis: Analysis): Result<number, DbError> {
-    analysis.updatedAt = Date.now();
-    return tryMutation("updateAnalysis", (conn) => {
-        return conn
-            .query("UPDATE analyses SET updated_at = ?, name = ?, slug = ?, anchor_id = ?, project_id = ? WHERE id = ?")
-            .run(analysis.updatedAt, analysis.name, analysis.slug, analysis.anchorId, analysis.projectId, analysis.id).changes;
-    });
-}
-
 /** Attaches/moves/clears an analysis's project grouping in one targeted write (bumps `updated_at`). Returns rows changed — `0` when no such analysis exists. */
 export function updateAnalysisProject(id: string, projectId: string | null): Result<number, DbError> {
     return tryMutation("updateAnalysisProject", (conn) => {

@@ -783,8 +783,6 @@ describe("k8s isAlive", () => {
                 namespace: "sandbox",
                 sessionPvcRoot: SESSION_PVC_ROOT,
                 resolveWorkspaceRoot,
-                sessionPvcRoot: SESSION_PVC_ROOT,
-                resolveWorkspaceRoot,
                 batchApi: stub.batchApi,
                 coreApi: stub.coreApi,
                 registerSandbox: async () => {},
