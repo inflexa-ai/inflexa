@@ -148,6 +148,27 @@ command performs reads only. The action lives in `src/modules/analysis/sessions.
 - **WHEN** the user runs `inflexa sessions`
 - **THEN** saved sessions print (or "No sessions found.") and no row is created or modified
 
+### Requirement: inflexa prov lineage traverses a file's provenance
+
+The system SHALL register `inflexa prov lineage <analysis> <file>` under the
+existing `prov` command group, resolving the analysis by id-or-name and the file
+reference per the prov-lineage capability, with options `--forward` (derive-from
+walk), `--depth <n>` (bound the walk; default unbounded up to the prov-lineage
+safety ceiling), and `--format tree|json`
+(default `tree`). The action SHALL live in `src/modules/prov/lineage.ts` and be
+lazy-imported from `src/cli/index.ts`. An analysis with no stored provenance SHALL
+fail with an actionable message, not an empty walk.
+
+#### Scenario: Lineage from the command line
+
+- **WHEN** `inflexa prov lineage my-analysis runs/run-001/step-de/output/results.csv` is run for an analysis whose document records the file
+- **THEN** stdout renders the backward lineage tree: the producing command (with exit code, step, and run) and its inputs indented beneath, recursively
+
+#### Scenario: The subcommand is discoverable
+
+- **WHEN** `inflexa prov --help` is run
+- **THEN** `lineage` is listed alongside `export`, `verify`, and `verify-file`
+
 ### Requirement: inflexa prov verify checks provenance integrity
 
 The system SHALL register `inflexa prov verify <analysis>` under the existing `prov` command group that resolves the analysis by id-or-name, runs the verification logic, and prints the result. The action SHALL live in `src/modules/prov/verify.ts` and be lazy-imported from `src/cli/index.ts`.
