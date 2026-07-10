@@ -32,16 +32,17 @@ export type ProvActor =
  * *which intelligence entered the process*, not just that the CLI acted. Carried by
  * `prov.step_completed` and `prov.command_executed` (the activities the model drove).
  *
- * Deliberately an OPAQUE string, captured VERBATIM from the wiring — always the RESOLVED id (the
- * config override, or the proxy-default resolution at boot; never a config `null`), never anything
- * inferred from it. Provenance is model-agnostic by construction: it carries no provider/vendor
- * vocabulary of its own, so a host whose model naming is vendor-qualified (the
- * `{provider}/{model}` convention, e.g. `anthropic/claude-opus-4-8`) records that full name here
- * with no vocabulary to keep in step, and a bare proxy id records as-is rather than being dressed
- * up with a guessed vendor. NEVER carries API keys, credentialed URLs, or prompt content — the
- * model's identity is the whole record.
+ * The vendor-qualified `{provider}/{model}` name (the convention model ecosystems use — e.g.
+ * `anthropic/claude-opus-4-8`, `openai/gpt-5`), enforced by the template-literal type. The model
+ * part is always the RESOLVED id (the config override, or the proxy-default resolution at boot;
+ * never a config `null`). The provider part is an OPEN vocabulary — no closed union to keep in
+ * step with any provider list; it becomes a user-configured fact once provider+model config lands
+ * (PR #70 review), and until then the boot derives it from the model family (`unknown` when the
+ * family is unrecognized — a fact we cannot attest is recorded as exactly that, never guessed
+ * silently). NEVER carries API keys, credentialed URLs, or prompt content — the model's identity
+ * is the whole record.
  */
-export type ProvModelId = string;
+export type ProvModelId = `${string}/${string}`;
 
 /**
  * The subset of an analysis input that provenance records: the identity fields for the PROV

@@ -20,7 +20,6 @@ import {
     type WorkspaceFilesystem,
 } from "@inflexa-ai/harness";
 
-import type { ProvModelId } from "../../types/prov.ts";
 import type { ResolvedHarnessConfig } from "./config.ts";
 import { createBusArtifactRegistry, createRunProvenanceEmitter } from "./prov_bridge.ts";
 
@@ -46,11 +45,17 @@ export type RunEngineComposition = {
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /**
      * The chat/sandbox model id — also the synthesis model (one config id today; D6) — RESOLVED at
-     * boot (config override or proxy default), never a config `null`. Typed {@link ProvModelId}
-     * because the SAME value feeds the harness seats and the prov-bridge emitters — one field, so
-     * the seats and the signed provenance record can never be fed diverging values.
+     * boot (config override or proxy default), never a config `null`. Kept BARE (it is the id sent
+     * on every API call); the provenance identity composes it with `modelProvider` below.
      */
-    readonly model: ProvModelId;
+    readonly model: string;
+    /**
+     * The vendor slug naming `model`'s provider (`anthropic`, `openai`, …) — an open vocabulary,
+     * boot-derived from the model family until provider+model become user config (PR #70 review).
+     * A separate FACT beside `model`, never a combined string, so the composition holds no
+     * redundant field to drift; the emitters compose the `{provider}/{model}` provenance name.
+     */
+    readonly modelProvider: string;
     /** Absolute skills tree path — enables the sandbox agents' skill tools. */
     readonly skillsDir: string;
     /** Bio/chem API keys; absent keys pass as empty strings and surface per-call. */
@@ -123,7 +128,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
  * path builds `allowedWritePrefix`.
  *
  * The registry realization emits `prov.command_executed` / `prov.file_written` /
- * `prov.input_used` events, each stamped with the composition's model id (never
+ * `prov.input_used` events, each stamped with the composed `{provider}/{model}` name (never
  * `prov.step_completed` — that comes from the scheduler settlement via
  * `createRunProvenanceEmitter` — and never a `cortex_artifacts` write: the
  * harness owns that ledger AROUND the seam, and writes the returned external id
@@ -136,7 +141,7 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): SandboxStepDep
         provider: comp.provider,
         embedding: comp.embedding,
         sandboxClient: comp.sandboxClient,
-        artifactRegistry: createBusArtifactRegistry(comp.model),
+        artifactRegistry: createBusArtifactRegistry(`${comp.modelProvider}/${comp.model}`),
         workspaceFs: comp.workspaceFs,
         resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
         model: comp.model,
@@ -174,7 +179,7 @@ export function buildExecuteAnalysisDeps(
         bioKeys: comp.bioKeys,
         runCharge: createNoopRunCharge(),
         runAuthorizer,
-        emitProvenance: createRunProvenanceEmitter(comp.model),
+        emitProvenance: createRunProvenanceEmitter(`${comp.modelProvider}/${comp.model}`),
     };
 }
 

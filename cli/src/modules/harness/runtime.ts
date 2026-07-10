@@ -48,7 +48,7 @@ import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
-import { readApiKey, resolveModelId, type ChatSetupError } from "../proxy/models.ts";
+import { modelProvider, readApiKey, resolveModelId, type ChatSetupError } from "../proxy/models.ts";
 import { resolveHarnessConfig, type ResolvedHarnessConfig } from "./config.ts";
 import { noopExecIngress, startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
 import { buildEphemeralDeps, buildExecuteAnalysisDeps, buildExecuteTargetAssessmentDeps, buildSandboxStepDeps, type RunEngineComposition } from "./run_deps.ts";
@@ -478,9 +478,11 @@ async function bootHarnessRuntimeOnce(seams: BootSeams, cfg: ResolvedHarnessConf
             workspaceFs,
             resolveWorkspaceRoot,
             // The RESOLVED id — the config override or the proxy default resolved earlier in this
-            // boot — which is also what the prov-bridge emitters stamp into the signed document
-            // (verbatim, model-agnostic; never a config `null`).
+            // boot; never a config `null`. Bare here (it is the API model param); the prov-bridge
+            // emitters compose the `{provider}/{model}` provenance name from it and the vendor
+            // below — family-derived until provider+model become user config (PR #70 review).
             model,
+            modelProvider: modelProvider(model),
             skillsDir: cfg.skillsDir,
             bioKeys: cfg.bioKeys,
         };

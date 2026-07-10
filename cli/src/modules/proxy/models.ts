@@ -13,12 +13,25 @@ import { env } from "../../lib/env.ts";
 const modelsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
 
 /**
+ * The model families CLIProxyAPI can serve (one per authenticatable account kind), in default-pick
+ * preference order, each with the vendor slug that names its provider. ONE table so the ranking
+ * ({@link pickDefaultModel}) and the vendor derivation ({@link modelProvider}) can never disagree
+ * about what a family is.
+ */
+const MODEL_FAMILIES = [
+    { family: "claude", provider: "anthropic" },
+    { family: "gpt", provider: "openai" },
+    { family: "gemini", provider: "google" },
+    { family: "qwen", provider: "qwen" },
+] as const;
+
+/**
  * Resolved once per process from the proxy's model list (which reflects the
  * authenticated provider). The user primarily uses Anthropic, so prefer a
  * Claude model when present, then other known families, then whatever is first
  * — this keeps the default adapting to whatever `inflexa setup` signed into.
  */
-const MODEL_PREFERENCE = ["claude", "gpt", "gemini", "qwen"];
+const MODEL_PREFERENCE = MODEL_FAMILIES.map((f) => f.family);
 let cachedModelId: string | null = null;
 
 /** Setup failures surfaced before streaming begins — the proxy key is missing, unreachable, or reports no models. */
@@ -72,4 +85,19 @@ export function pickDefaultModel(ids: string[]): string {
     // Callers pass a non-empty list (resolveModelId returns `no_models` first on an empty `data`),
     // so index 0 is always present in practice.
     return ids[0]!;
+}
+
+/**
+ * The vendor slug for a model id, matched by family (case-insensitive substring, same mechanics as
+ * {@link pickDefaultModel}); `"unknown"` when no family matches — a provider we cannot attest is
+ * recorded as exactly that, never guessed silently. This derivation exists because CLIProxyAPI ids
+ * arrive bare (`claude-…`, `gpt-…`) while provenance records the vendor-qualified
+ * `{provider}/{model}` name.
+ *
+ * TODO(extend): retire once the user specifies provider + model in config (PR #70 review) — the
+ * configured provider then feeds the composition directly and nothing is derived.
+ */
+export function modelProvider(modelId: string): string {
+    const lower = modelId.toLowerCase();
+    return MODEL_FAMILIES.find((f) => lower.includes(f.family))?.provider ?? "unknown";
 }

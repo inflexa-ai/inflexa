@@ -120,9 +120,11 @@ construction-time `ProvModelId` of the model driving the step seat), and
 `run_completed` → `prov.run_completed` (outcome with status, `completedAtMs`, and
 duration) — each
 stamped with the existing system actor (cli version + commit). The realization SHALL
-be constructed with the RESOLVED model id built at boot (the config override, or
-the proxy-default resolution when the config is `null`), captured verbatim — never
-a config `null` and never a credential. The mapping SHALL use
+be constructed with the `{provider}/{model}` name composed at boot: the RESOLVED
+model id (the config override, or the proxy-default resolution when the config is
+`null`) qualified by the provider slug — user-configured once provider+model
+config lands; until then derived from the model family, `unknown` when
+unrecognized — never a config `null` and never a credential. The mapping SHALL use
 the harness-supplied `analysisId` unchanged and SHALL pass timestamps through without
 re-reading any clock.
 
@@ -136,8 +138,13 @@ re-reading any clock.
 - **WHEN** the cli process ends mid-run (detach, crash, or kill) and a later boot's DBOS recovery re-executes the workflow to a terminal status
 - **THEN** the re-executed body re-fires `emitProvenance`, the recorder records the completion, and the unified document contains a single run activity whose times equal the original workflow-observed times
 
-#### Scenario: An auto-resolved default model is recorded by its resolved id
+#### Scenario: An auto-resolved default model is recorded by its qualified resolved name
 
 - **WHEN** `harness.model` is unset and boot resolves the proxy's default model id
-- **THEN** the step events emitted during the run carry that resolved id in `model.model` — never `null` or a placeholder
+- **THEN** the step events emitted during the run carry `anthropic/{resolved id}` in `model` (the auto-resolve path admits only Claude models) — never `null` or a placeholder
+
+#### Scenario: An unrecognized model family records provider `unknown`
+
+- **WHEN** `harness.model` is explicitly set to an id matching no known family (e.g. a proxy alias)
+- **THEN** the step events carry `unknown/{configured id}` — the unattestable provider is recorded as exactly that, not guessed
 

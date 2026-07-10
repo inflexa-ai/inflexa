@@ -55,8 +55,9 @@ const analysis: Analysis = {
 const user: ProvActor = { kind: "user", email: "alice@example.org" };
 const system: ProvActor = { kind: "system", version: "0.0.1", commit: "abc1234" };
 const anon: ProvActor = { kind: "anonymous" };
-// The model that drove every model-driven fixture below — the boot-resolved id, captured verbatim.
-const model: ProvModelId = "claude-sonnet-4-5";
+// The model that drove every model-driven fixture below — the vendor-qualified {provider}/{model}
+// name the emitters compose from the boot-resolved id.
+const model: ProvModelId = "anthropic/claude-sonnet-4-5";
 
 function inputRef(path: string): ProvInputRef {
     return { path, isDir: false, anchorId: "anchor1" };
@@ -509,14 +510,15 @@ describe("PROV model agent (the LLM behind model-driven activities)", () => {
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
         const provn = doc.unified().serialize("provn");
 
-        // The model agent is declared with its identity: both types, the label, and the verbatim
-        // model id — its ONLY identity attribute (no provider/endpoint vocabulary; model-agnostic).
+        // The model agent is declared with its identity: both types, the label, and the
+        // vendor-qualified {provider}/{model} name — its ONLY identity attribute (the provider
+        // lives inside the name, never as a separate closed attribute).
         const modelQn = modelAgentQName(model);
         expect(provn).toContain(`agent(${modelQn}`);
         expect(provn).toContain("prov:SoftwareAgent");
         expect(provn).toContain("inflexa:Model");
         expect(provn).toContain("inflexa:model");
-        expect(provn).toContain("claude-sonnet-4-5");
+        expect(provn).toContain("anthropic/claude-sonnet-4-5");
         expect(provn).not.toContain("inflexa:provider");
         expect(provn).not.toContain("inflexa:endpoint");
 
@@ -543,30 +545,20 @@ describe("PROV model agent (the LLM behind model-driven activities)", () => {
         expect(modelAssociations(provn, modelQn)).toBe(3); // two steps + one command
     });
 
-    test("distinct model ids yield distinct agents, and each id is recorded verbatim", () => {
-        const local: ProvModelId = "qwen3";
+    test("distinct model names yield distinct agents, and each full name is recorded", () => {
+        const local: ProvModelId = "qwen/qwen3";
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-local", status: "completed", completedAtMs: 1_700_000_003_000 }, local);
         const provn = doc.unified().serialize("provn");
 
-        // Two distinct agents — the verbatim id is the whole identity.
+        // Two distinct agents — the qualified name is the whole identity, and the same bare model
+        // id under two providers would likewise split (the provider is part of the name).
         expect(modelAgentQName(local)).not.toBe(modelAgentQName(model));
         expect(provn).toContain(`agent(${modelAgentQName(model)}`);
         expect(provn).toContain(`agent(${modelAgentQName(local)}`);
-        expect(provn).toContain("claude-sonnet-4-5");
-        expect(provn).toContain("qwen3");
-    });
-
-    test("a vendor-qualified {provider}/{model} id is captured verbatim, not parsed", () => {
-        // The id is opaque: a host whose model naming is vendor-qualified records the full name
-        // as-is — provenance keeps no provider vocabulary to interpret it against.
-        const qualified: ProvModelId = "anthropic/claude-opus-4-8";
-        const doc = freshDocument(analysis);
-        appendStepCompleted(doc, "a1", system, stepOutcome, qualified);
-        const provn = doc.unified().serialize("provn");
-        expect(provn).toContain("anthropic/claude-opus-4-8");
-        expect(provn).toContain(`agent(${modelAgentQName(qualified)}`);
+        expect(provn).toContain("anthropic/claude-sonnet-4-5");
+        expect(provn).toContain("qwen/qwen3");
     });
 
     test("duplicate step emission dedups the model agent, its delegation, and its association", () => {
@@ -587,7 +579,7 @@ describe("PROV model agent (the LLM behind model-driven activities)", () => {
     test("model-agent records round-trip losslessly through PROV-JSON", () => {
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
-        appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-local", status: "completed", completedAtMs: 1_700_000_003_000 }, "qwen3");
+        appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-local", status: "completed", completedAtMs: 1_700_000_003_000 }, "qwen/qwen3");
         const unified = doc.unified();
         const parsed = ProvDocument.deserialize(unified.serialize("json"), "json");
         expect(unified.equals(parsed)).toBe(true);
