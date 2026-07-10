@@ -5,7 +5,7 @@
 ### Requirement: The artifact-registry bus adapter translates registration into provenance events
 
 The cli SHALL provide an `ArtifactRegistry` realization (the bus adapter, in
-`src/modules/harness/`) constructed with the `ProvModelRef` of the model driving the
+`src/modules/harness/`) constructed with the `ProvModelId` of the model driving the
 step seat, whose `register(input, session)` translates one step's registration into
 bus events and nothing else. The adapter emits COMMAND, FILE, and
 USED-INPUT events — step lifecycle events come from the harness's scheduler
@@ -19,7 +19,7 @@ settlement:
 - Per group, emit ONE `prov.command_executed` (the `command` variant with command /
   args / exitCode / durationMs / scriptPath and the group's outputs as analysis-scoped
   `(path, hash)` keys; the `file_tool` variant with the tool name and outputs),
-  stamped with the construction-time model ref,
+  stamped with the construction-time model id,
   followed by that group's `prov.file_written` events carrying `generation:
   "command"`; leaf-bucket entries emit `prov.file_written` with `generation:
   "step"`. The producer's observation timestamp SHALL NOT be forwarded.
@@ -45,7 +45,7 @@ settlement:
 #### Scenario: Registration emits command groups before their files
 
 - **WHEN** `register` is called with three manifest entries where two share one command's producer record and one was written by a file tool
-- **THEN** the bus receives two `prov.command_executed` events (one `command` variant with two outputs, one `file_tool` variant with one output), each carrying the construction-time model ref and followed by its `prov.file_written` events, and the result reports three `registered` entries
+- **THEN** the bus receives two `prov.command_executed` events (one `command` variant with two outputs, one `file_tool` variant with one output), each carrying the construction-time model id and followed by its `prov.file_written` events, and the result reports three `registered` entries
 
 #### Scenario: A leaf entry emits no command event
 
@@ -68,14 +68,13 @@ The cli composition SHALL realize `emitProvenance` by mapping all three harness 
 to bus events: `run_started` → `prov.run_started` (run ref with `planSummary` and
 `startedAtMs`), `step_completed` → `prov.step_completed` (a `ProvStepOutcome` with
 the settlement status, `completedAtMs`, and duration, stamped with the
-construction-time `ProvModelRef` of the model driving the step seat), and
+construction-time `ProvModelId` of the model driving the step seat), and
 `run_completed` → `prov.run_completed` (outcome with status, `completedAtMs`, and
 duration) — each
 stamped with the existing system actor (cli version + commit). The realization SHALL
-be constructed with the model ref built at boot from the RESOLVED model id (the
-config override, or the proxy-default resolution when the config is `null`) and the
-provider kind the boot actually wires — never a config `null` and never a
-credential. The mapping SHALL use
+be constructed with the RESOLVED model id built at boot (the config override, or
+the proxy-default resolution when the config is `null`), captured verbatim — never
+a config `null` and never a credential. The mapping SHALL use
 the harness-supplied `analysisId` unchanged and SHALL pass timestamps through without
 re-reading any clock.
 

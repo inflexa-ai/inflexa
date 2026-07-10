@@ -30,31 +30,18 @@ export type ProvActor =
  * The LLM that reasoned about a model-driven activity — recorded as its own PROV `SoftwareAgent`
  * (typed `inflexa:Model`) that `actedOnBehalfOf` the responsible agent, so the document answers
  * *which intelligence entered the process*, not just that the CLI acted. Carried by
- * `prov.step_completed` and `prov.command_executed` (the activities the model drove); a
- * discriminated union over the harness's two NATIVE PROVIDER KINDS (the protocol the model is
- * reached through — a proxied third-party model still rides the kind of the route that served it;
- * the model id itself carries the vendor identity). `model` is always the RESOLVED id — the config
- * override, or the proxy-default resolution at boot; never a config `null`. NEVER carries API keys,
- * credentialed URLs, or prompt content — the model's identity is the whole record.
+ * `prov.step_completed` and `prov.command_executed` (the activities the model drove).
+ *
+ * Deliberately an OPAQUE string, captured VERBATIM from the wiring — always the RESOLVED id (the
+ * config override, or the proxy-default resolution at boot; never a config `null`), never anything
+ * inferred from it. Provenance is model-agnostic by construction: it carries no provider/vendor
+ * vocabulary of its own, so a host whose model naming is vendor-qualified (the
+ * `{provider}/{model}` convention, e.g. `anthropic/claude-opus-4-8`) records that full name here
+ * with no vocabulary to keep in step, and a bare proxy id records as-is rather than being dressed
+ * up with a guessed vendor. NEVER carries API keys, credentialed URLs, or prompt content — the
+ * model's identity is the whole record.
  */
-export type ProvModelRef =
-    | {
-          /** The Anthropic Messages protocol — no endpoint attribute exists on this arm by design. */
-          provider: "anthropic";
-          model: string;
-      }
-    | {
-          provider: "openai-compatible";
-          model: string;
-          /**
-           * The endpoint HOST only — itself meaningful provenance (`localhost` says "local model");
-           * never a key or a credentialed URL. REQUIRED: the harness's openai-compatible config
-           * always carries a `baseURL`, and an optional field here would let a host silently omit
-           * the most load-bearing fact of this arm — then splitting the agent's identity (the
-           * endpoint keys the agent QName) when the omission is later fixed.
-           */
-          endpoint: string;
-      };
+export type ProvModelId = string;
 
 /**
  * The subset of an analysis input that provenance records: the identity fields for the PROV

@@ -5,7 +5,7 @@ import type { Analysis } from "../../types/analysis.ts";
 import type {
     ProvActor,
     ProvInputRef,
-    ProvModelRef,
+    ProvModelId,
     ProvRunRef,
     ProvRunOutcome,
     ProvStepRef,
@@ -225,19 +225,13 @@ function agentDigest(agentQn: string): string {
 }
 
 /**
- * The model-agent QName, keyed by the FULL identity tuple `(provider, model[, endpoint])` — so the
- * same model id reached through two different endpoints yields two agents (a local endpoint is
- * itself meaningful provenance) rather than one agent with contradictory endpoint attributes. The
- * tuple is JSON-encoded, NOT `|`-joined like the path digests: model ids and endpoint hosts are
- * free-form config strings, so nothing structurally excludes a delimiter inside a field — a
- * structural encoding makes cross-field collisions impossible (the path digests are safe because
- * their hash side is hex). Exported (like {@link fileQName} / {@link commandQName}) so the
- * builder's tests reference the one canonical derivation rather than duplicating this hash and
- * risking drift.
+ * The model-agent QName, keyed by the verbatim model id — one agent per distinct id, nothing else
+ * in the identity (the id is opaque; see {@link ProvModelId}). Exported (like {@link fileQName} /
+ * {@link commandQName}) so the builder's tests reference the one canonical derivation rather than
+ * duplicating this hash and risking drift.
  */
-export function modelAgentQName(model: ProvModelRef): string {
-    const tuple = model.provider === "openai-compatible" ? [model.provider, model.model, model.endpoint] : [model.provider, model.model];
-    return `${NS_PREFIX}:agent-model-${Bun.hash(JSON.stringify(tuple)).toString(36)}`;
+export function modelAgentQName(model: ProvModelId): string {
+    return `${NS_PREFIX}:agent-model-${Bun.hash(model).toString(36)}`;
 }
 
 /**
@@ -253,18 +247,16 @@ export function modelAgentQName(model: ProvModelRef): string {
  * boot that auto-resolves a DIFFERENT default model re-emits under a second agent + delegation —
  * the same honest-drift semantics the agent-digest fold already accepts for a cli upgrade mid-run.
  */
-function appendModelAgent(doc: ProvDocument, model: ProvModelRef, responsibleQn: string, activityQn: string, assocIdBase: string): void {
+function appendModelAgent(doc: ProvDocument, model: ProvModelId, responsibleQn: string, activityQn: string, assocIdBase: string): void {
     const qn = modelAgentQName(model);
     doc.agent(qn, {
         // Both types deliberately: `prov:SoftwareAgent` places it in PROV's agent taxonomy,
         // `inflexa:Model` marks WHAT KIND of software agent (tsprov attributes are multi-valued).
+        // The id is the agent's ONLY identity attribute — provenance stays model-agnostic by
+        // carrying no provider/vendor vocabulary of its own (see {@link ProvModelId}).
         "prov:type": ["prov:SoftwareAgent", `${NS_PREFIX}:Model`],
-        "prov:label": model.model,
-        "inflexa:provider": model.provider,
-        "inflexa:model": model.model,
-        // The endpoint host is part of the openai-compatible arm's identity (required there by
-        // type, and folded into the QName above) and absent from the anthropic arm by design.
-        ...(model.provider === "openai-compatible" ? { "inflexa:endpoint": model.endpoint } : {}),
+        "prov:label": model,
+        "inflexa:model": model,
     });
     doc.actedOnBehalfOf(qn, responsibleQn, undefined, `${NS_PREFIX}:delegation-${agentDigest(qn)}-${agentDigest(responsibleQn)}`);
     doc.wasAssociatedWith(activityQn, qn, undefined, `${assocIdBase}-${agentDigest(qn)}`);
@@ -397,7 +389,7 @@ export function appendRunCompleted(doc: ProvDocument, analysisId: string, actor:
  * completed, failed, or was canceled. The two association ids share one template and differ in the
  * agent digest, so they coexist on the activity and each dedups on re-emission.
  */
-export function appendStepCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvStepOutcome, model: ProvModelRef): void {
+export function appendStepCompleted(doc: ProvDocument, analysisId: string, actor: ProvActor, outcome: ProvStepOutcome, model: ProvModelId): void {
     const { agentQn } = recordPreamble(doc, analysisId, actor);
     const rQn = runQName(outcome.runId);
     const sQn = stepQName(outcome);
@@ -442,7 +434,7 @@ export function appendCommandExecuted(
     actor: ProvActor,
     step: ProvStepRef,
     command: ProvCommandRef,
-    model: ProvModelRef,
+    model: ProvModelId,
 ): void {
     const { agentQn } = recordPreamble(doc, analysisId, actor);
     const sQn = stepQName(step);

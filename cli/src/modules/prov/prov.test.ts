@@ -10,7 +10,7 @@ import type { Analysis } from "../../types/analysis.ts";
 import type {
     ProvActor,
     ProvInputRef,
-    ProvModelRef,
+    ProvModelId,
     ProvRunRef,
     ProvRunOutcome,
     ProvStepRef,
@@ -55,9 +55,8 @@ const analysis: Analysis = {
 const user: ProvActor = { kind: "user", email: "alice@example.org" };
 const system: ProvActor = { kind: "system", version: "0.0.1", commit: "abc1234" };
 const anon: ProvActor = { kind: "anonymous" };
-// The model that drove every model-driven fixture below — the anthropic native kind the cli boot
-// wires (no endpoint attribute exists on that arm, by type).
-const model: ProvModelRef = { provider: "anthropic", model: "claude-sonnet-4-5" };
+// The model that drove every model-driven fixture below — the boot-resolved id, captured verbatim.
+const model: ProvModelId = "claude-sonnet-4-5";
 
 function inputRef(path: string): ProvInputRef {
     return { path, isDir: false, anchorId: "anchor1" };
@@ -510,15 +509,15 @@ describe("PROV model agent (the LLM behind model-driven activities)", () => {
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
         const provn = doc.unified().serialize("provn");
 
-        // The model agent is declared with its full identity: both types, the label, and the
-        // provider/model attributes — and NO endpoint (the anthropic arm has none, by type).
+        // The model agent is declared with its identity: both types, the label, and the verbatim
+        // model id — its ONLY identity attribute (no provider/endpoint vocabulary; model-agnostic).
         const modelQn = modelAgentQName(model);
         expect(provn).toContain(`agent(${modelQn}`);
         expect(provn).toContain("prov:SoftwareAgent");
         expect(provn).toContain("inflexa:Model");
-        expect(provn).toContain("inflexa:provider");
-        expect(provn).toContain("anthropic");
+        expect(provn).toContain("inflexa:model");
         expect(provn).toContain("claude-sonnet-4-5");
+        expect(provn).not.toContain("inflexa:provider");
         expect(provn).not.toContain("inflexa:endpoint");
 
         // The step activity carries TWO associations — the cli agent's and the model agent's — and
@@ -544,31 +543,30 @@ describe("PROV model agent (the LLM behind model-driven activities)", () => {
         expect(modelAssociations(provn, modelQn)).toBe(3); // two steps + one command
     });
 
-    test("the endpoint host is recorded only for an openai-compatible ref, and distinct tuples yield distinct agents", () => {
-        const local: ProvModelRef = { provider: "openai-compatible", model: "qwen3", endpoint: "localhost" };
+    test("distinct model ids yield distinct agents, and each id is recorded verbatim", () => {
+        const local: ProvModelId = "qwen3";
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
         appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-local", status: "completed", completedAtMs: 1_700_000_003_000 }, local);
         const provn = doc.unified().serialize("provn");
 
-        // Two distinct agents — the identity tuple (provider, model, endpoint) keys the QName.
+        // Two distinct agents — the verbatim id is the whole identity.
         expect(modelAgentQName(local)).not.toBe(modelAgentQName(model));
         expect(provn).toContain(`agent(${modelAgentQName(model)}`);
         expect(provn).toContain(`agent(${modelAgentQName(local)}`);
-        // The endpoint host lands on the openai-compatible agent — and is the ONLY endpoint
-        // attribute in the document (the anthropic agent carries none).
-        expect(provn).toContain("openai-compatible");
-        expect((provn.match(/inflexa:endpoint/g) ?? []).length).toBe(1);
-        expect(provn).toContain("localhost");
+        expect(provn).toContain("claude-sonnet-4-5");
+        expect(provn).toContain("qwen3");
     });
 
-    test("the identity digest cannot collide across field boundaries — the tuple is structurally encoded", () => {
-        // Under a naive `provider|model|endpoint` join these two would hash to ONE agent; model ids
-        // and endpoint hosts are free-form config strings, so the JSON-tuple encoding is what keeps
-        // two different model identities from merging in the signed document.
-        const a: ProvModelRef = { provider: "openai-compatible", model: "a|b", endpoint: "c" };
-        const b: ProvModelRef = { provider: "openai-compatible", model: "a", endpoint: "b|c" };
-        expect(modelAgentQName(a)).not.toBe(modelAgentQName(b));
+    test("a vendor-qualified {provider}/{model} id is captured verbatim, not parsed", () => {
+        // The id is opaque: a host whose model naming is vendor-qualified records the full name
+        // as-is — provenance keeps no provider vocabulary to interpret it against.
+        const qualified: ProvModelId = "anthropic/claude-opus-4-8";
+        const doc = freshDocument(analysis);
+        appendStepCompleted(doc, "a1", system, stepOutcome, qualified);
+        const provn = doc.unified().serialize("provn");
+        expect(provn).toContain("anthropic/claude-opus-4-8");
+        expect(provn).toContain(`agent(${modelAgentQName(qualified)}`);
     });
 
     test("duplicate step emission dedups the model agent, its delegation, and its association", () => {
@@ -589,17 +587,7 @@ describe("PROV model agent (the LLM behind model-driven activities)", () => {
     test("model-agent records round-trip losslessly through PROV-JSON", () => {
         const doc = freshDocument(analysis);
         appendStepCompleted(doc, "a1", system, stepOutcome, model);
-        appendStepCompleted(
-            doc,
-            "a1",
-            system,
-            { runId: "run-001", stepId: "step-local", status: "completed", completedAtMs: 1_700_000_003_000 },
-            {
-                provider: "openai-compatible",
-                model: "qwen3",
-                endpoint: "localhost",
-            },
-        );
+        appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-local", status: "completed", completedAtMs: 1_700_000_003_000 }, "qwen3");
         const unified = doc.unified();
         const parsed = ProvDocument.deserialize(unified.serialize("json"), "json");
         expect(unified.equals(parsed)).toBe(true);
