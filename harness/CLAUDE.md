@@ -146,7 +146,7 @@ The submit + result protocol ([harness-sandbox-exec](openspec/specs/harness-sand
 
 **sandbox-server**: Statically-linked Go binary at `images/sandbox-base/server/`. Endpoints: `GET /health` (unauthenticated), `POST /exec` (idempotency-keyed submit), `GET /exec/{execId}` (terminal result, signed fresh at request time; with `?since={cursor}` in poll mode it returns `{ status, events[], cursor, result? }`, always signed). The two exec endpoints are **signature-authenticated inbound** in both transport modes — the caller signs each request with the per-sandbox secret over the same HMAC construction as the served/pushed bodies (a request signature, not a bearer, so any cleartext hop can drop a request but never mint one); an unsigned, forged, or stale request is a `401`. This confines siblings: a sandbox holding only its own secret cannot drive another's `/exec`. There is no `kill` route. `SANDBOX_TRANSPORT` selects poll (default; no outbound, serves the ring + result) or callback (POSTs to `CORTEX_BASE_URL`).
 
-**Session storage**: Per-analysis data and artifacts live in the session directory. Each sandbox container gets a **flat read-only mount** of the full analysis tree at `/{resourceId}`, with a **nested read-write mount** at `/{resourceId}/runs/{runId}/{stepId}` for the step's artifacts. Workspace tools enforce write restriction via `allowedWritePrefix`.
+**Workspace storage**: Per-analysis data and artifacts live in the analysis's workspace tree (rooted at the embedder-resolved workspace root — see Storage Layout). Each sandbox container gets a **flat read-only mount** of the full analysis tree at `/{resourceId}`, with a **nested read-write mount** at `/{resourceId}/runs/{runId}/{stepId}` for the step's artifacts. Workspace tools enforce write restriction via `allowedWritePrefix`.
 
 **Auth and attribution** (the harness's seams; concrete policy is an embedder concern):
 - **Inbound** — the harness consumes a session built upstream from whatever auth the host runs at its edge; it sees only the opaque `auth` capability (local: `makeLocalAuth`). Per-route authorization is a host concern, not a harness seam.
@@ -199,12 +199,16 @@ Agent prompts live in `prompts/`. Every prompt follows these conventions:
 
 ## Storage Layout
 
+Each analysis's tree is rooted at the host directory the embedder's
+`resolveWorkspaceRoot(resourceId)` seam returns (the workspace-root-resolution
+spec) — the harness owns the layout *inside* the root, the embedder owns
+*where* the root lives. Host paths carry no `{resourceId}` segment; sandboxes
+still see the tree mounted at `/{resourceId}` (bind mounts decouple the two).
+
 ```
-/{resourceId}/
-+-- data/                        # Input data (immutable, materialized at init)
+{resolveWorkspaceRoot(resourceId)}/
++-- data/                        # Input data (immutable, staged by the embedder)
 |   +-- inputs/{fileId}/         # Per-file directories
-+-- dataprofile/                 # Data profiling output
-|   +-- profile-summary.md       # Analysis summary + file descriptions
 +-- runs/{runId}/                # Workflow run directory
 |   +-- synthesis.json           # Literature-grounded run synthesis
 |   +-- {stepId}/                # Step artifacts
@@ -214,7 +218,12 @@ Agent prompts live in `prompts/`. Every prompt follows these conventions:
 |       +-- logs/                # Execution logs
 |       +-- notebooks/           # Generated notebooks
 +-- reports/{reportId}/          # Report output
++-- previews/{previewId}/        # Iterative report previews (shared assets/ + v{N}/)
 ```
+
+(The data profiler's file scratch lives under `runs/data-profile/` and is wiped
+when profiling completes — its durable products are the vector index and
+`cortex_analysis_state`, not files.)
 
 The harness uses Postgres (`pg` directly + pgvector). The DBOS system DB carries workflow state, step cache, and durable streams. App tables (`cortex_runs`, `cortex_step_executions`, `cortex_artifacts`, `cortex_target_assessments`, `messages`, `cortex_working_memory`) are thin ledgers — rich data (summaries, findings, file descriptions) lives in files and the vector index, not in DB columns. Connection parameters come from `DB_PG_HOST`/`DB_PG_PORT`/`DB_PG_NAME`/`DB_PG_USER`/`DB_PG_PASSWORD`/`DB_PG_SSLMODE`. The app pool is owned by `lib/storage.ts:createPool()`; DBOS owns a separate pool ([postgres-storage-backend](openspec/specs/postgres-storage-backend/spec.md)).
 

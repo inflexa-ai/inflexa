@@ -170,7 +170,7 @@ describe("docker createSandbox — transport modes", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://cortex.example.com:443",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -199,7 +199,7 @@ describe("docker createSandbox — transport modes", () => {
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://cortex.example.com:443",
             transport: "callback",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -224,7 +224,7 @@ describe("docker createSandbox — transport modes", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -249,7 +249,7 @@ describe("docker createSandbox — transport modes", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             libStorePath: libRoot,
             refStorePath: "/host/refs",
             docker,
@@ -305,7 +305,7 @@ describe("docker createSandbox — transport modes", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -324,7 +324,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -346,7 +346,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             platform: "linux/arm64",
             docker,
             fetch: okFetch,
@@ -364,7 +364,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -381,7 +381,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
@@ -414,7 +414,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
@@ -436,7 +436,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
@@ -458,7 +458,7 @@ describe("docker createSandbox — mounts and platform", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
@@ -477,7 +477,7 @@ describe("docker teardown / isAlive", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             docker,
             fetch: okFetch,
             registerSandbox: async () => {},
@@ -493,7 +493,7 @@ describe("docker teardown / isAlive", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             docker,
             registerSandbox: async () => {},
         });
@@ -506,7 +506,7 @@ describe("docker teardown / isAlive", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             docker,
             registerSandbox: async () => {},
         });
@@ -535,7 +535,7 @@ describe("docker teardown / isAlive", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             docker,
             registerSandbox: async () => {},
         });
@@ -562,7 +562,7 @@ describe("docker teardown / isAlive", () => {
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
             cortexBaseUrl: "https://x",
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
             docker: erroringDocker,
             registerSandbox: async () => {},
         });

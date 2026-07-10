@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { join } from "node:path";
 import type { Pool } from "pg";
 
 import { createConversationAgent, CONVERSATION_AGENT_ID } from "./conversation-agent.js";
@@ -24,7 +25,7 @@ function buildAgent() {
         ephemeralWorkflow: (async () => {
             throw new Error("not used at composition time");
         }) as never,
-        sessionsBasePath: "/sessions",
+        resolveWorkspaceRoot: (id: string) => join("/sessions", id),
         runAuthorizer: {} as RunAuthorizer,
         runLauncher: {} as RunLauncher,
         createPreviewPublisher: (async () => {

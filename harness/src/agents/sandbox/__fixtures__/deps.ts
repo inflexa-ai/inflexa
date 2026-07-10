@@ -103,7 +103,7 @@ export function makeFakeSandboxAgentDeps(over: MakeDepsOverrides = {}): SandboxA
                 backend: "docker",
                 callbackSecret: "secret",
             },
-            sessionsBasePath: "/tmp/sessions",
+            workspaceRoot: "/tmp/sessions/analysis-001",
             analysisId: over.analysisId ?? "analysis-001",
             runId: over.runId ?? "run-001",
             stepId: over.stepId ?? "step-001",

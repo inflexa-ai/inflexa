@@ -35,6 +35,7 @@ import Docker from "dockerode";
 import type pino from "pino";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
+import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { buildMountPlan } from "./mount-plan.js";
 
@@ -74,8 +75,8 @@ export interface DockerClientConfig {
     cortexBaseUrl: string;
     /** Result transport. `poll` (default) confines the sandbox with the egress firewall; `callback` permits egress. */
     transport?: SandboxTransport;
-    /** Host session-tree root; bind source for the analysis-tree mounts. */
-    sessionsBasePath: string;
+    /** Workspace-root resolution seam; each analysis's resolved root is the bind source for its tree mounts. */
+    resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Host lib store; bind-mounted read-only at `/mnt/libs` when set. */
     libStorePath?: string;
     /** Host ref store; bind-mounted read-only at `/mnt/refs` when set. */
@@ -232,7 +233,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         refs: !!config.refStorePath,
                     });
 
-                    const hostTreePath = join(config.sessionsBasePath, meta.analysisId);
+                    const hostTreePath = config.resolveWorkspaceRoot(meta.analysisId);
                     const hostStepPath = join(hostTreePath, "runs", meta.runId, meta.stepId);
                     const binds = [
                         `${hostTreePath}:${plan.readonlyTreePath}:ro`,

@@ -22,7 +22,7 @@ describe("createWorkspaceFilesystem", () => {
 
     beforeEach(async () => {
         sessions = await makeRoot();
-        fs = createWorkspaceFilesystem({ sessionsBasePath: sessions });
+        fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(sessions, id) });
     });
 
     afterEach(async () => {
@@ -78,7 +78,7 @@ describe("createWorkspaceFilesystem", () => {
             },
         };
         const fs2 = createWorkspaceFilesystem({
-            sessionsBasePath: sessions,
+            resolveWorkspaceRoot: (id) => join(sessions, id),
             presignedFallback: fallback,
         });
         const r = (await fs2.readFile({ session, path: "data/inputs/cold.csv" }))._unsafeUnwrap();
@@ -95,7 +95,7 @@ describe("createWorkspaceFilesystem", () => {
             },
         };
         const fs2 = createWorkspaceFilesystem({
-            sessionsBasePath: sessions,
+            resolveWorkspaceRoot: (id) => join(sessions, id),
             presignedFallback: fallback,
         });
         const result = await fs2.readFile({ session, path: "data/inputs/cold.csv" });

@@ -7,8 +7,8 @@
  * resolver for each AI SDK tool-call part: a recognised display tool yields its card (rebuilt via the
  * shared `card-builders`); anything else yields `null` and falls back to a
  * generic `tool-call` chip. Keyed by the analysis `Pool` + id (plan / run) or
- * the `sessionsBasePath` (preview, filesystem-backed) so the card can be
- * re-loaded.
+ * the analysis's workspace root (preview, filesystem-backed) so the card can
+ * be re-loaded.
  */
 
 import type { CortexPart } from "@inflexa-ai/harness/contracts/message.js";
@@ -26,7 +26,7 @@ export interface StoredToolCallForCard {
 
 export type ToolCardResolver = (block: StoredToolCallForCard) => Promise<CortexPart | null>;
 
-export function createCardResolver(pool: Pool, analysisId: string, sessionsBasePath: string): ToolCardResolver {
+export function createCardResolver(pool: Pool, analysisId: string, workspaceRoot: string): ToolCardResolver {
     return async (block) => {
         if (block.type !== "tool_use") return null;
         const input = (block.input ?? {}) as Record<string, unknown>;
@@ -35,7 +35,7 @@ export function createCardResolver(pool: Pool, analysisId: string, sessionsBaseP
         // `iterateReport` — accept both.
         if (block.name === "iterate_report" || block.name === "iterateReport") {
             const report = (input.report ?? null) as { title?: unknown } | null;
-            const card = await buildPreviewCardData(sessionsBasePath, analysisId, {
+            const card = await buildPreviewCardData(workspaceRoot, {
                 previewId: typeof input.previewId === "string" ? input.previewId : undefined,
                 title: report && typeof report.title === "string" ? report.title : undefined,
                 format: input.format === "pdf" || input.format === "html" ? input.format : undefined,

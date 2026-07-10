@@ -72,7 +72,7 @@ function makeFakeClient(opts: { sessionsBasePath: string }): FakeClient {
             };
         },
         async isAlive() {
-            return true;
+            return { alive: true, oomKilled: false };
         },
         async teardown() {},
         async teardownById() {},
@@ -93,22 +93,22 @@ describe("write_file tool", () => {
     });
 
     function buildTool(opts: { nextFunctionId?: () => string } = {}) {
+        const workspaceRoot = join(sessionsBasePath, ANALYSIS);
         const client = makeFakeClient({ sessionsBasePath });
         const workingDir = stepWritePrefix({
-            sessionsBasePath,
-            analysisId: ANALYSIS,
+            workspaceRoot,
             runId: RUN,
             stepId: STEP,
         });
         const mutator = createWorkspaceMutator({
             sandboxClient: client,
             sandbox: makeSandboxRef(),
-            sessionsBasePath,
+            workspaceRoot,
             analysisId: ANALYSIS,
             stepId: STEP,
             workflowId: "wf1",
             workingDir,
-            sandboxWorkingDir: toSandboxPath(sessionsBasePath, workingDir),
+            sandboxWorkingDir: toSandboxPath(workspaceRoot, ANALYSIS, workingDir),
             nextFunctionId: opts.nextFunctionId ?? (() => "fn1"),
             deadlineMs: () => 9_999_999,
         });
@@ -123,7 +123,7 @@ describe("write_file tool", () => {
         const out = (await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/result.csv`, content: "id,value\n1,42\n" }, ctx))._unsafeUnwrap();
         expect(out.status).toBe("ok");
 
-        const fs = createWorkspaceFilesystem({ sessionsBasePath });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(sessionsBasePath, id) });
         const readTool = createReadFileTool(fs);
         const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/output/result.csv` }, ctx))._unsafeUnwrap();
         expect(read.status).toBe("ok");
@@ -144,7 +144,7 @@ describe("write_file tool", () => {
 
         // The bytes land at the step's output dir, and the read surface (using the
         // same working dir as base) reads them back at the same relative path.
-        const fs = createWorkspaceFilesystem({ sessionsBasePath });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(sessionsBasePath, id) });
         const onDisk = await readFile(resolvePath(sessionsBasePath, ANALYSIS, "runs", RUN, STEP, "output", "x.csv"), "utf8");
         expect(onDisk).toBe("id,value\n1,42\n");
         void fs;
@@ -181,7 +181,7 @@ describe("write_file tool", () => {
         const { ctx } = makeToolContext();
         const content = "α,β,γ\n1,2,3\n";
         await tool.execute({ path: `/${ANALYSIS}/runs/${RUN}/${STEP}/output/u.csv`, content }, ctx);
-        const fs = createWorkspaceFilesystem({ sessionsBasePath });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(sessionsBasePath, id) });
         const readTool = createReadFileTool(fs);
         const read = (await readTool.execute({ path: `runs/${RUN}/${STEP}/output/u.csv` }, ctx))._unsafeUnwrap();
         expect(read.status).toBe("ok");

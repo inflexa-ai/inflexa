@@ -81,7 +81,7 @@ function makeFakeClient(opts: { sessionsBasePath: string; lsResult?: { stdout: s
             };
         },
         async isAlive() {
-            return true;
+            return { alive: true, oomKilled: false };
         },
         async teardown() {},
         async teardownById() {},
@@ -103,25 +103,25 @@ describe("mutate surface — end-to-end", () => {
 
     function setup() {
         const sandbox = makeSandboxRef();
+        const workspaceRoot = join(sessionsBasePath, ANALYSIS);
         const workingDir = stepWritePrefix({
-            sessionsBasePath,
-            analysisId: ANALYSIS,
+            workspaceRoot,
             runId: RUN,
             stepId: STEP,
         });
-        const fs = createWorkspaceFilesystem({ sessionsBasePath });
-        const sandboxWorkingDir = toSandboxPath(sessionsBasePath, workingDir);
-        return { sandbox, workingDir, sandboxWorkingDir, fs };
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(sessionsBasePath, id) });
+        const sandboxWorkingDir = toSandboxPath(workspaceRoot, ANALYSIS, workingDir);
+        return { sandbox, workspaceRoot, workingDir, sandboxWorkingDir, fs };
     }
 
     it("relative write resolves into the working dir; read_file agrees", async () => {
-        const { sandbox, workingDir, sandboxWorkingDir, fs } = setup();
+        const { sandbox, workspaceRoot, workingDir, sandboxWorkingDir, fs } = setup();
         const client = makeFakeClient({ sessionsBasePath });
 
         const mutator = createWorkspaceMutator({
             sandboxClient: client,
             sandbox,
-            sessionsBasePath,
+            workspaceRoot,
             analysisId: ANALYSIS,
             stepId: STEP,
             workflowId: "wf1",
@@ -172,12 +172,12 @@ describe("mutate surface — end-to-end", () => {
     });
 
     it("absolute write outside the working dir rejected as out_of_prefix + read_file returns not_found (no leak)", async () => {
-        const { sandbox, workingDir, sandboxWorkingDir, fs } = setup();
+        const { sandbox, workspaceRoot, workingDir, sandboxWorkingDir, fs } = setup();
         const client = makeFakeClient({ sessionsBasePath });
         const mutator = createWorkspaceMutator({
             sandboxClient: client,
             sandbox,
-            sessionsBasePath,
+            workspaceRoot,
             analysisId: ANALYSIS,
             stepId: STEP,
             workflowId: "wf1",

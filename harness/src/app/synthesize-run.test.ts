@@ -113,7 +113,7 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
             pool: emptyPool(),
             provider,
             embedding,
-            sessionsBasePath: base,
+            resolveWorkspaceRoot: (id) => join(base, id),
             synthesisModel: "claude-test",
             bioKeys: BIO_KEYS,
         },
@@ -196,7 +196,7 @@ describe("synthesizeRun", () => {
             // The final run-synthesis chat part was emitted.
             expect(emitted.some((e) => typeof e === "object" && e !== null && (e as { type?: string }).type === "data-run-synthesis")).toBe(true);
             // synthesis.json was written under the run directory.
-            const path = join(h.deps.sessionsBasePath, ANALYSIS_ID, "runs", RUN_ID, "synthesis.json");
+            const path = join(h.deps.resolveWorkspaceRoot(ANALYSIS_ID), "runs", RUN_ID, "synthesis.json");
             expect((await stat(path)).isFile()).toBe(true);
         } finally {
             await h.cleanup();

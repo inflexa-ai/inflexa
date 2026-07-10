@@ -359,8 +359,7 @@ describe("loadStepSummariesFromDisk", () => {
 
     it("reads non-empty summaries and skips missing/empty ones", async () => {
         const out = await loadStepSummariesFromDisk({
-            sessionsBasePath: tempDir,
-            analysisId: "analysis-001",
+            workspaceRoot: join(tempDir, "analysis-001"),
             runId: RUN_ID,
             completedSteps: ["T1S1", "T1S2", "T1S3-missing"],
         });
@@ -384,8 +383,7 @@ describe("persistSynthesis", () => {
                 keyReferences: [],
             };
             const path = await persistSynthesis({
-                sessionsBasePath: tempDir,
-                analysisId: "analysis-001",
+                workspaceRoot: join(tempDir, "analysis-001"),
                 runId: RUN_ID,
                 synthesis,
             });

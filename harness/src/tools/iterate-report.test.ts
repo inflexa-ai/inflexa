@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+import { join } from "node:path";
 import type { Pool } from "pg";
 
 import { createIterateReportTool, iterateReportInputSchema, stagedAssetsBlock } from "./iterate-report.js";
@@ -141,7 +142,7 @@ describe("createIterateReportTool factory", () => {
         const tool = createIterateReportTool({
             provider: {} as ChatProvider,
             pool: {} as Pool,
-            sessionsBasePath: "/sessions",
+            resolveWorkspaceRoot: (id: string) => join("/sessions", id),
             model: "anthropic/claude-opus-4-7",
             templatesDir: "/templates",
             chrome: {},

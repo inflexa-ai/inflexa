@@ -131,7 +131,7 @@ describe("generateStepSummary", () => {
         const outDir = join(base, "analysis-001", "runs", "run-1", "step-1", "output");
         await mkdir(outDir, { recursive: true });
         await writeFile(join(outDir, "de-results.csv"), "gene,log2fc,padj\nTP53,2.3,0.001\nMYC,-1.8,0.004\n");
-        const fs = createWorkspaceFilesystem({ sessionsBasePath: base });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(base, id) });
 
         // Loop: read the persisted file, then write the summary using its contents.
         const { provider, calls } = makeProvider([readFileCall("t1", "output/de-results.csv"), textMessage("# DE\n\n- 2 significant genes: TP53, MYC")]);

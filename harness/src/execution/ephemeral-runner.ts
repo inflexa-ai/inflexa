@@ -38,6 +38,7 @@ import { createEphemeralExecutorAgent } from "../agents/sandbox/ephemeral-execut
 import type { SandboxAgentDeps } from "../agents/sandbox/shared.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
+import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 
 /** Sub-agent identity — appended to `callPath`, set as `agentId`. */
 export const EPHEMERAL_AGENT_ID = "ephemeral-executor";
@@ -68,7 +69,8 @@ export interface EphemeralDeps {
     readonly workspaceFs: WorkspaceFilesystem;
     /** Embedding provider for the executor's in-sandbox `workspace_search`. */
     readonly embedding: EmbeddingProvider;
-    readonly sessionsBasePath: string;
+    /** Workspace-root resolution seam (see workspace/paths.ts). */
+    readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Model id — provenance / metric label; the provider owns the wire model. */
     readonly model: string;
     /** API keys for the bio/chem tools the ephemeral executor may use. */
@@ -121,6 +123,8 @@ export async function runEphemeralBody(input: EphemeralWorkflowInput, deps: Ephe
     const workflowId = DBOS.workflowID ?? `${EPHEMERAL_WORKFLOW_PREFIX}${executionId}`;
 
     const childSession = forSubAgent(runSession, EPHEMERAL_AGENT_ID);
+    // Resolver throw = loud workflow failure, per the workspace-root-resolution contract.
+    const workspaceRoot = deps.resolveWorkspaceRoot(analysisId);
 
     console.log(`[ephemeral] execution=${executionId} analysis=${analysisId} starting sandbox`);
 
@@ -158,7 +162,7 @@ export async function runEphemeralBody(input: EphemeralWorkflowInput, deps: Ephe
             bioKeys: deps.bioKeys,
             step: {
                 sandbox,
-                sessionsBasePath: deps.sessionsBasePath,
+                workspaceRoot,
                 analysisId,
                 runId: EPHEMERAL_RUN_LITERAL,
                 stepId: EPHEMERAL_RUN_LITERAL,
@@ -167,7 +171,7 @@ export async function runEphemeralBody(input: EphemeralWorkflowInput, deps: Ephe
                 // tools and the sandbox has no read-write mount. This prefix is not a
                 // writable location — it only resolves `execute_command`'s default cwd
                 // to the read-only analysis-tree root (`/{analysisId}`), where reads land.
-                allowedWritePrefix: `${deps.sessionsBasePath}/${analysisId}`,
+                allowedWritePrefix: workspaceRoot,
                 nextFunctionId,
                 deadlineMs: () => deadlineAbs,
             },

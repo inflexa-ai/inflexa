@@ -199,7 +199,7 @@ describe("generateFileMetadata", () => {
         const outDir = join(stepDir, "output");
         await mkdir(outDir, { recursive: true });
         await writeFile(join(outDir, "a.csv"), "gene,count\nTP53,42\n");
-        const fs = createWorkspaceFilesystem({ sessionsBasePath: base });
+        const fs = createWorkspaceFilesystem({ resolveWorkspaceRoot: (id) => join(base, id) });
 
         const { provider, calls } = makeProvider([
             // Inspect the real file before describing.
