@@ -16,6 +16,16 @@ export interface AiSdkProviderDeps {
     readonly capabilities?: Partial<ProviderCapabilities>;
 }
 
+/**
+ * Connection + model configuration for one `ChatProvider`, discriminated by
+ * wire protocol (`anthropic` | `openai-compatible`). The `model` is the wire
+ * model bound into the provider at construction: `ChatRequest` carries no model
+ * field (see `./types.ts`), so a config value describes exactly one model over
+ * one connection. An embedder running distinct models on distinct seats builds
+ * one provider per model from configs that share the connection (same
+ * `baseURL`/`apiKey`) and differ only in `model` — a single provider cannot be
+ * retargeted to another model per request.
+ */
 export type AiSdkProviderConfig =
     | {
           readonly kind: "anthropic";
@@ -151,6 +161,13 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     return { capabilities, chat, chatStream };
 }
 
+/**
+ * Realize an `AiSdkProviderConfig` into a `ChatProvider` bound to that config's
+ * connection and model. The model is closed into the returned provider here (it
+ * is never passed per `ChatRequest`), so N seat models require N provider
+ * instances over one shared connection configuration — one instance serves the
+ * single model it was built with.
+ */
 export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps): ChatProvider {
     const config = deps.config;
     if (config.kind === "anthropic") {

@@ -74,6 +74,13 @@ export { makeLocalAuth } from "./auth/local-auth-context.js";
 // Providers.
 export { createAnthropicProvider } from "./providers/anthropic.js";
 export type { AnthropicProviderDeps } from "./providers/anthropic.js";
+// The general provider-configuration path: `createConfiguredAiSdkProvider`
+// builds a `ChatProvider` from an `AiSdkProviderConfig` — the connection+model
+// union discriminated over the `anthropic` and `openai-compatible` kinds — with
+// `ConfiguredAiSdkProviderDeps` as its argument shape. `createAnthropicProvider`
+// above is a convenience over this union's `anthropic` arm.
+export { createConfiguredAiSdkProvider } from "./providers/ai-sdk.js";
+export type { AiSdkProviderConfig, ConfiguredAiSdkProviderDeps } from "./providers/ai-sdk.js";
 export { createEmbeddingProvider } from "./providers/embedding.js";
 export type { EmbeddingProviderDeps } from "./providers/embedding.js";
 export type { AgentChat, ChatProvider, EmbeddingProvider, ChatRequest, ChatResponse, ChatStreamEvent, ModelMessage } from "./providers/types.js";
