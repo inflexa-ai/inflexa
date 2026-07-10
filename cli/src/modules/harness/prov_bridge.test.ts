@@ -424,6 +424,27 @@ describe("createRunProvenanceEmitter", () => {
         expect(busEvent.outcome.durationMs).toBeUndefined();
     });
 
+    test("the construction-time model id is stamped verbatim — an arbitrary configured provider, no sniffing path", () => {
+        // A direct connection's `{provider}/{model}` for a provider no family table knows: the bridge
+        // stamps exactly what boot composed from the configured slug + resolved id — there is no
+        // derivation anywhere that could turn `some-alias-v2` into `deepseek`.
+        const emit = createRunProvenanceEmitter("deepseek/some-alias-v2");
+        const event: RunProvenanceEvent = {
+            type: "step_completed",
+            analysisId: "an-1",
+            runId: "run-1",
+            stepId: "step-de",
+            status: "completed",
+            atMs: 1_700_000_400_000,
+        };
+
+        emit(event);
+
+        const busEvent = captured[0]!;
+        if (busEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
+        expect(busEvent.model).toBe("deepseek/some-alias-v2");
+    });
+
     test("run_completed maps to prov.run_completed, passing completedAtMs + durationMs through", () => {
         const emit = createRunProvenanceEmitter(modelId);
         const event: RunProvenanceEvent = {

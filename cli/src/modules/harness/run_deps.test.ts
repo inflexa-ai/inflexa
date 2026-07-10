@@ -23,7 +23,7 @@ import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineCompositi
 // All factories below construct lazily (pg pools connect on first query; the
 // SDK clients open no socket at construction), so the whole module builds
 // offline — no Postgres, proxy, embeddings endpoint, or Docker daemon.
-function testComposition(): RunEngineComposition {
+function testComposition(overrides: Partial<Pick<RunEngineComposition, "model" | "modelProvider">> = {}): RunEngineComposition {
     const resolveBilling = createNoopBillingResolver();
     const pool = createPool({ host: "localhost", port: "5", database: "d", user: "u", password: "p", sslMode: "disable" });
     // A `<base>/<analysisId>` resolver keeps the byte layout the old fixed base
@@ -44,9 +44,12 @@ function testComposition(): RunEngineComposition {
         workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot }),
         resolveWorkspaceRoot,
         model: "claude-test",
+        // The connection's configured provider slug (boot feeds it verbatim); overridable so a test can
+        // prove an arbitrary configured provider flows into the recorded identity with no id sniffing.
         modelProvider: "anthropic",
         skillsDir: "/tmp/skills",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+        ...overrides,
     };
 }
 
@@ -128,6 +131,23 @@ describe("run-engine provenance wiring", () => {
         const stepEvent = captured[1]!;
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(stepEvent.model).toBe("anthropic/claude-test");
+    });
+
+    test("an arbitrary configured provider slug flows verbatim into the recorded model id — no id sniffing", () => {
+        // A direct connection to a provider absent from any family table: `deepseek/some-alias-v2` can
+        // only appear if the composition carried the CONFIGURED slug, since no derivation would ever
+        // produce it from the opaque model alias.
+        const callable = (async () => ({})) as unknown as ExecuteAnalysisDeps["sandboxStepCallable"];
+        const authorizer = {} as unknown as RunAuthorizer;
+        const deps = buildExecuteAnalysisDeps(testComposition({ model: "some-alias-v2", modelProvider: "deepseek" }), callable, authorizer);
+
+        captured = [];
+        Bus.on("inflexa", spy);
+        deps.emitProvenance!({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_002_000 });
+
+        const stepEvent = captured[0]!;
+        if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
+        expect(stepEvent.model).toBe("deepseek/some-alias-v2");
     });
 });
 

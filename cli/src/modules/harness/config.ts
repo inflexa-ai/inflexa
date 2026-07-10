@@ -2,7 +2,7 @@ import { availableParallelism, totalmem } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import type { MachineBudget, ResourceLimits, ResourcePolicy } from "@inflexa-ai/harness";
-import { readConfig } from "../../lib/config.ts";
+import { modelsConfigSchema, readConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { DEFAULT_SANDBOX_IMAGE } from "../libs/images.ts";
 
@@ -189,4 +189,61 @@ export function resolveHarnessConfig(): ResolvedHarnessConfig {
     if (parsed.success) return defaultsWith(parsed.data);
     const issues = parsed.error.issues.map((i) => `harness.${i.path.join(".")}: ${i.message}`).join("; ");
     return defaultsWith(undefined, { issues });
+}
+
+/** The harness provider kinds a direct endpoint can speak — the two the harness's AI SDK path covers. */
+export type ModelWireProtocol = "anthropic" | "openai-compatible";
+
+/**
+ * The model connection resolved to the concrete facts boot consumes. A discriminated union over
+ * `mode`: `cliproxy` targets the owned proxy (boot supplies `env.cliproxyApiUrl` + the minted proxy
+ * client key), `direct` carries the user's endpoint and wire protocol (secret via
+ * `INFLEXA_MODEL_API_KEY`). `provider` is the CONFIGURED vendor slug in both modes — the fact
+ * provenance records, never derived from a model id. `configError` is set when the `models` block
+ * was present but failed validation: boot reports it and falls back to this default connection,
+ * exactly as {@link ResolvedHarnessConfig.configError} does for the `harness` block.
+ */
+export type ResolvedModelConnection =
+    | { readonly mode: "cliproxy"; readonly provider: string; readonly configError?: { issues: string } }
+    | {
+          readonly mode: "direct";
+          readonly provider: string;
+          /** The configured endpoint (required in direct mode). */
+          readonly baseURL: string;
+          readonly protocol: ModelWireProtocol;
+          readonly configError?: { issues: string };
+      };
+
+/**
+ * The zero-config connection: cliproxy mode, provider `anthropic` — today's behavior verbatim, so an
+ * install without a `models` block boots, chats, and records provenance exactly as before this change.
+ */
+const DEFAULT_MODEL_CONNECTION: ResolvedModelConnection = { mode: "cliproxy", provider: "anthropic" };
+
+/**
+ * Resolve the `models.connection` block the boot builds the chat provider from. The raw value comes
+ * through lib/config.ts as `unknown` and is validated here (same pattern as {@link resolveHarnessConfig}):
+ * an absent block — or a present block with no `connection` — resolves to {@link DEFAULT_MODEL_CONNECTION};
+ * a present-but-invalid block resolves to that default carrying a `configError` naming the offending
+ * fields, so boot reports the real problem instead of a misleading downstream error. The protocol for a
+ * direct endpoint is implied from the provider when unset (D3): `anthropic` ⇒ the Anthropic wire kind,
+ * every other provider ⇒ OpenAI-compatible; an explicit `protocol` overrides (e.g. an Anthropic-fronting
+ * gateway that speaks OpenAI-compatible). cliproxy has no protocol choice — the proxy always exposes the
+ * Anthropic Messages route the chat path targets.
+ */
+export function resolveModelConnection(): ResolvedModelConnection {
+    const raw = readConfig().models;
+    if (raw === undefined) return DEFAULT_MODEL_CONNECTION;
+    const parsed = modelsConfigSchema.safeParse(raw);
+    if (!parsed.success) {
+        const issues = parsed.error.issues.map((i) => `models.${i.path.join(".")}: ${i.message}`).join("; ");
+        return { ...DEFAULT_MODEL_CONNECTION, configError: { issues } };
+    }
+    const connection = parsed.data.connection;
+    if (connection === undefined) return DEFAULT_MODEL_CONNECTION;
+    if (connection.mode === "cliproxy") {
+        return { mode: "cliproxy", provider: connection.provider ?? "anthropic" };
+    }
+    const protocol: ModelWireProtocol = connection.protocol ?? (connection.provider === "anthropic" ? "anthropic" : "openai-compatible");
+    return { mode: "direct", provider: connection.provider, baseURL: connection.baseURL, protocol };
 }

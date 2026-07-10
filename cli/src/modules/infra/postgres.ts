@@ -1,5 +1,5 @@
 import { type Result, ok, err } from "neverthrow";
-import { activeRuntime, resolvePostgresConfig } from "../../lib/config.ts";
+import { activeRuntime, resolveConnectionMode, resolvePostgresConfig } from "../../lib/config.ts";
 import { capture, ensureReady, type ContainerRuntime, type CaptureResult } from "../../lib/container.ts";
 import { DEFAULT_IMAGE, type PostgresConnection, type PostgresError, type ProvisionOutcome, type SetupOptions } from "./postgres_types.ts";
 import { POSTGRES_CONTAINER_NAME, composeUp, ensureComposeFile } from "./compose.ts";
@@ -153,8 +153,9 @@ export async function ensurePostgresReady(): Promise<Result<PostgresConnection, 
 
     // Compose up is idempotent — starts only containers that aren't running.
     // The caller (ensurePostgresReadyOrExit or the TUI launch path) generates
-    // the compose file if missing before calling this function.
-    const composeWriteErr = ensureComposeFile(conn).match(
+    // the compose file if missing before calling this function; when this gate
+    // is what generates it, shape it for the configured connection mode.
+    const composeWriteErr = ensureComposeFile(conn, resolveConnectionMode()).match(
         () => null,
         (e) => e,
     );

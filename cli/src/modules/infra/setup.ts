@@ -3,13 +3,13 @@ import { dirname } from "node:path";
 
 import { intro, outro, log, note, spinner as clackSpinner } from "@clack/prompts";
 import { type Result, ok, err } from "neverthrow";
-import { activeRuntime, readConfig, resolvePostgresConfig, writeConfig } from "../../lib/config.ts";
+import { activeRuntime, readConfig, resolvePostgresConfig, writeConfig, type ConfigError } from "../../lib/config.ts";
 import { ensureReady, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { select, promptText } from "../../lib/cli.ts";
 import { detectedMachine, resolveHarnessConfig } from "../harness/config.ts";
 import { type PostgresConnection } from "./postgres_types.ts";
-import { writeComposeFile, composeUp, composePull, composePullIfMissing, composeAvailable } from "./compose.ts";
+import { writeComposeFile, composeUp, composePull, composePullIfMissing, composeAvailable, type ConnectionMode } from "./compose.ts";
 
 // `inflexa setup` provisions the inflexa infrastructure stack: CLIProxyAPI (the
 // local model proxy) and Postgres + pgvector (the harness substrate). Both run
@@ -29,6 +29,8 @@ import { writeComposeFile, composeUp, composePull, composePullIfMissing, compose
 type SetupOptions = {
     /** Commander fills these in from the flags registered in src/cli/index.ts. */
     provider?: string;
+    /** Preselected connection mode from `--connection` (`cliproxy` | `direct`); overrides the prompt. */
+    connection?: string;
     auth: boolean;
     start: boolean;
     force: boolean;
@@ -48,6 +50,17 @@ export async function setup(options: SetupOptions): Promise<void> {
         },
     );
     if (provider === null) return;
+
+    const connectionFlag = parseConnectionMode(options.connection).match(
+        (m) => m,
+        (e) => {
+            console.error(`\n  ${e.message}\n`);
+            process.exitCode = 1;
+            return null as ConnectionMode | undefined | null;
+        },
+    );
+    if (connectionFlag === null) return;
+
     const rt = activeRuntime();
 
     const readyResult = await ensureReady(rt);
@@ -60,28 +73,64 @@ export async function setup(options: SetupOptions): Promise<void> {
     intro("inflexa setup");
 
     try {
-        // --- proxy config ---
-        const { created, apiKey } = await writeProxyConfig();
-        if (created) {
-            log.success(`Wrote proxy config at ${env.cliproxyConfigPath}`);
-            if (apiKey) {
-                note(apiKey, "Client API key (use this to call the proxy)");
+        const mode = await chooseConnectionMode(connectionFlag);
+
+        if (mode === "cliproxy") {
+            // --- proxy config ---
+            const { created, apiKey } = await writeProxyConfig();
+            if (created) {
+                log.success(`Wrote proxy config at ${env.cliproxyConfigPath}`);
+                if (apiKey) {
+                    note(apiKey, "Client API key (use this to call the proxy)");
+                }
+            } else {
+                log.info(`Proxy config exists at ${env.cliproxyConfigPath}`);
+            }
+
+            // --- provider auth ---
+            // authenticate() records the connection provider fact on a successful login (see
+            // recordCliproxyProvider), so the cliproxy path always leaves `models.connection` naming
+            // the authenticated vendor.
+            if (options.auth) {
+                if (provider === undefined && (await isAuthenticated())) {
+                    log.info("Already authenticated — use `--provider <name>` to add or switch.");
+                } else {
+                    const authed = await authenticate(rt, provider);
+                    if (!authed) log.warn("No provider authenticated yet — re-run `inflexa setup` to sign in.");
+                }
             }
         } else {
-            log.info(`Proxy config exists at ${env.cliproxyConfigPath}`);
-        }
-
-        // --- provider auth ---
-        if (options.auth) {
-            if (provider === undefined && (await isAuthenticated())) {
-                log.info("Already authenticated — use `--provider <name>` to add or switch.");
-            } else {
-                const authed = await authenticate(rt, provider);
-                if (!authed) log.warn("No provider authenticated yet — re-run `inflexa setup` to sign in.");
+            // --- direct connection ---
+            // The endpoint and provider are collected interactively (there are no non-interactive
+            // flags for them), so a scripted `--connection direct` cannot proceed — fail with a clear
+            // instruction rather than the shared prompt's generic "stdin is not interactive" bail-out.
+            if (!process.stdin.isTTY) {
+                log.error(
+                    "Direct-connection setup needs an interactive terminal to collect the endpoint and provider.\n  Re-run `inflexa setup --connection direct` in an interactive shell.",
+                );
+                process.exitCode = 1;
+                return;
             }
+            const direct = await promptDirectConnection();
+            const writeErr = writeDirectConnection(direct).match(
+                () => null,
+                (e) => e,
+            );
+            if (writeErr) {
+                log.error(`Failed to save the model connection: ${writeErr.type}`);
+                process.exitCode = 1;
+                return;
+            }
+            log.success("Saved the direct model connection.");
+            note(
+                `Export your provider API key before starting a chat:\n\n  export ${MODEL_API_KEY_VAR}=<your-key>\n\nThe key is read from the environment only — it is never written to config.`,
+                "Model API key",
+            );
         }
 
         // --- postgres config ---
+        // Postgres is provisioned in BOTH modes; only the compose file's service set differs (the mode
+        // drops or keeps the proxy service — see generateComposeFile).
         let pgConn: PostgresConnection;
         if (options.postgres) {
             pgConn = await promptPostgresConfig();
@@ -95,7 +144,7 @@ export async function setup(options: SetupOptions): Promise<void> {
             const s = clackSpinner();
 
             s.start("Generating Docker Compose file");
-            const composeWriteErr = writeComposeFile(pgConn).match(
+            const composeWriteErr = writeComposeFile(pgConn, mode).match(
                 () => null,
                 (e) => e,
             );
@@ -173,7 +222,7 @@ export async function setup(options: SetupOptions): Promise<void> {
         // (`inflexa profile` pulls it on demand if still missing).
         await runSandboxImageSetup();
 
-        printNextSteps(options, pgConn);
+        printNextSteps(options, pgConn, mode);
         outro("Setup complete");
     } catch (error) {
         log.error(`Setup failed unexpectedly: ${error}`);
@@ -333,9 +382,13 @@ function resolveProvider(options: SetupOptions): Result<Provider | undefined, Pr
     return ok(options.provider);
 }
 
-function printNextSteps(options: SetupOptions, conn: PostgresConnection): void {
+function printNextSteps(options: SetupOptions, conn: PostgresConnection, mode: ConnectionMode): void {
     const lines: string[] = [];
-    lines.push(`Proxy: ${env.cliproxyBaseUrl}`);
+    if (mode === "cliproxy") {
+        lines.push(`Proxy: ${env.cliproxyBaseUrl}`);
+    } else {
+        lines.push(`Model connection: direct — export ${MODEL_API_KEY_VAR} with your provider key.`);
+    }
     if (options.postgres && options.start) {
         lines.push(`Postgres: postgres://${conn.user}:***@${conn.host}:${conn.port}/${conn.database}`);
     } else if (options.postgres && !options.start) {
@@ -348,6 +401,136 @@ function printNextSteps(options: SetupOptions, conn: PostgresConnection): void {
         lines.push("Containers start automatically on next `inflexa` run.");
     }
     note(lines.join("\n"), "Next steps");
+}
+
+// --- connection mode -------------------------------------------------------
+//
+// The connection choice decides the whole flow: `cliproxy` provisions the managed proxy (its config +
+// provider OAuth) and records the provider from the login; `direct` writes the user's endpoint and
+// provider to `models.connection`, skips all proxy provisioning, and points at INFLEXA_MODEL_API_KEY.
+// Postgres provisioning is mode-independent.
+
+/**
+ * The direct-mode secret's environment variable. Mirrors lib/env.ts's `modelApiKeyVar` — the sole
+ * `process.env` reader, which does not export the name — because setup only PRINTS it (never reads it),
+ * so the literal is duplicated rather than widening env.ts's surface for a display string.
+ */
+const MODEL_API_KEY_VAR = "INFLEXA_MODEL_API_KEY";
+
+/**
+ * Validate the `--connection` flag value. `undefined` (flag absent) is OK — the mode is then chosen
+ * interactively, or defaults to `cliproxy` on a non-TTY (today's scripted-setup behavior). Any other
+ * value is a user-actionable error.
+ */
+export function parseConnectionMode(value: string | undefined): Result<ConnectionMode | undefined, ProxyError> {
+    if (value === undefined) return ok(undefined);
+    if (value !== "cliproxy" && value !== "direct") {
+        return err(new ProxyError(`Unknown connection '${value}'. Choose one of: cliproxy, direct.`));
+    }
+    return ok(value);
+}
+
+/**
+ * Resolve the connection mode: the pre-validated `--connection` value when given, else an interactive
+ * select, else (non-TTY, no flag) the `cliproxy` default so a scripted setup keeps today's behavior.
+ */
+async function chooseConnectionMode(preselected: ConnectionMode | undefined): Promise<ConnectionMode> {
+    if (preselected) return preselected;
+    if (!process.stdin.isTTY) return "cliproxy";
+    const chosen = await select("How should inflexa reach models?", [
+        { value: "cliproxy", label: "Managed local proxy (CLIProxyAPI) — default" },
+        { value: "direct", label: "Direct endpoint (your own provider)" },
+    ]);
+    // The select's value domain is exactly ConnectionMode's two literals, so the cast is total.
+    return chosen as ConnectionMode;
+}
+
+/**
+ * Collect a direct connection interactively: the endpoint URL (must parse as a URL), the provider slug
+ * (open vocabulary, lowercased, non-empty), and an optional wire protocol. "Infer from provider" leaves
+ * the protocol unset so `resolveModelConnection` (modules/harness/config.ts) implies it from the
+ * provider (design D3).
+ */
+async function promptDirectConnection(): Promise<DirectConnectionInput> {
+    const baseURL = await promptText("Model endpoint URL", {
+        placeholder: "https://api.openai.com/v1",
+        validate: (v) => {
+            const s = v.trim();
+            if (s === "") return "Enter the endpoint URL.";
+            if (!URL.canParse(s)) return "Must be a valid URL, including the scheme (e.g. https://…).";
+            return undefined;
+        },
+    });
+    const provider = await promptText("Provider slug (e.g. openai, anthropic, google)", {
+        validate: (v) => (v.trim() === "" ? "Enter a provider slug." : undefined),
+    });
+    const protocolChoice = await select("Wire protocol", [
+        { value: "infer", label: "Infer from provider (default)" },
+        { value: "anthropic", label: "Anthropic" },
+        { value: "openai-compatible", label: "OpenAI-compatible" },
+    ]);
+    return {
+        provider: provider.trim().toLowerCase(),
+        baseURL: baseURL.trim(),
+        // "infer" leaves protocol unset; the two explicit values are exactly the schema's wire kinds.
+        ...(protocolChoice !== "infer" && { protocol: protocolChoice as "anthropic" | "openai-compatible" }),
+    };
+}
+
+/** A direct connection's user-supplied facts, written verbatim to `models.connection`. */
+type DirectConnectionInput = {
+    provider: string;
+    baseURL: string;
+    protocol?: "anthropic" | "openai-compatible";
+};
+
+/**
+ * Persist a direct-mode model connection. Spread-preserving: keeps every other config key and every
+ * other key inside the `models` block (e.g. a future `seats`), rewriting only `connection`. The API
+ * key is NEVER written here — it comes from {@link MODEL_API_KEY_VAR} at provider construction (design
+ * D4 / model-connection spec).
+ */
+export function writeDirectConnection(input: DirectConnectionInput): Result<void, ConfigError> {
+    const config = readConfig();
+    // `config.models` is `unknown` in lib/config.ts (validated downstream by resolveModelConnection),
+    // so spread it as a plain record to preserve sibling keys this write does not manage.
+    const models = (config.models ?? {}) as Record<string, unknown>;
+    const connection = {
+        mode: "direct",
+        provider: input.provider,
+        baseURL: input.baseURL,
+        // Omit `protocol` when absent so the resolver implies it from the provider (D3).
+        ...(input.protocol !== undefined && { protocol: input.protocol }),
+    };
+    return writeConfig({ ...config, models: { ...models, connection } });
+}
+
+/**
+ * Account-kind → provider-slug map. It lives ONLY here because the account kind is a KNOWN FACT at
+ * login time: setup drove exactly this provider's OAuth flow, so it names the vendor directly. That is
+ * why recording it here is legitimate where deriving a provider from a model id is not — this is the
+ * configured fact, captured at its source, not a guess reverse-engineered from a served model id (the
+ * fabricated-provenance path this change removed).
+ */
+const PROVIDER_SLUG: Record<Provider, string> = {
+    claude: "anthropic",
+    openai: "openai",
+    gemini: "google",
+    qwen: "qwen",
+    iflow: "iflow",
+};
+
+/**
+ * Record the cliproxy connection's provider slug from the account kind just authenticated (see
+ * {@link PROVIDER_SLUG}). Re-authenticating a different account kind rewrites the slug. Spread-preserving
+ * like {@link writeDirectConnection}. Returns the write Result so the caller consumes it (a failure here
+ * is a warning, not a setup-aborting error — the login itself succeeded).
+ */
+export function recordCliproxyProvider(kind: Provider): Result<void, ConfigError> {
+    const config = readConfig();
+    // See writeDirectConnection: `config.models` is `unknown`, spread as a record to keep siblings.
+    const models = (config.models ?? {}) as Record<string, unknown>;
+    return writeConfig({ ...config, models: { ...models, connection: { mode: "cliproxy", provider: PROVIDER_SLUG[kind] } } });
 }
 
 // --- proxy runtime ---------------------------------------------------------
@@ -467,9 +650,10 @@ async function isAuthenticated(): Promise<boolean> {
  * PTY, it just prints a URL and waits for the HTTP callback on the published
  * port). The extracted URL is copied to the clipboard and shown in a clack
  * `note` box. stdin is still inherited (`-i`) so any interactive prompt the
- * container might issue still works.
+ * container might issue still works. Returns whether the login succeeded (exit 0/null) so the caller
+ * records the provider fact only on a real success, never when the flow errored out.
  */
-async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promise<void> {
+async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promise<boolean> {
     const port = PROVIDER_CALLBACK_PORT[provider];
     const publish = port === null ? [] : ["-p", `${port}:${port}`];
     // No `-t`: the `--no-browser` flow doesn't need a PTY. Dropping it lets us
@@ -547,9 +731,10 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
     if (code !== 0 && code !== null) {
         s.error(`${PROVIDER_LABEL[provider]} login failed (exit code ${code})`);
         log.warn("You can retry with `inflexa setup`.");
-    } else {
-        s.stop(`${PROVIDER_LABEL[provider]} authenticated`);
+        return false;
     }
+    s.stop(`${PROVIDER_LABEL[provider]} authenticated`);
+    return true;
 }
 
 /**
@@ -569,47 +754,70 @@ async function chooseProvider(preselected: Provider | undefined): Promise<Provid
 
 async function authenticate(rt: ContainerRuntime, preselected: Provider | undefined): Promise<boolean> {
     const chosen = await chooseProvider(preselected);
-    if (chosen) await runProviderLogin(rt, chosen);
+    if (chosen) {
+        const loggedIn = await runProviderLogin(rt, chosen);
+        // Record the connection provider fact from the account kind on a successful login. This runs
+        // for both the setup flow and the TUI-launch fallback login (ensureProxyReady) — every login
+        // rewrites the slug. A write failure is non-fatal: the OAuth login already succeeded.
+        if (loggedIn) {
+            recordCliproxyProvider(chosen).match(
+                () => {},
+                (e) => log.warn(`Could not record the model connection provider: ${e.type}`),
+            );
+        }
+    }
     return isAuthenticated();
 }
 
 // --- shared entry used by the TUI ------------------------------------------
 
 /**
- * Make the proxy ready to serve the TUI: runtime up, config written,
- * authenticated, compose services running. Returns a {@link ProxyError} or
- * {@link ContainerRuntimeError} on the error channel with actionable guidance
- * when it can't proceed.
+ * Make the chat backend's local prerequisites ready before the TUI takes the
+ * terminal. The mode-INDEPENDENT phases always run — the container runtime, the
+ * Postgres compose stack, and the embedder readiness gate — because they are the
+ * harness runtime's prerequisites regardless of where chat traffic goes. The
+ * proxy-SPECIFIC phases (writing the proxy config, provider OAuth) run only in
+ * `cliproxy` mode: a `direct` connection reaches its own endpoint with
+ * `INFLEXA_MODEL_API_KEY`, so the proxy is neither configured, authenticated, nor
+ * required for chat (design D6 / model-connection spec). Returns a
+ * {@link ProxyError} or {@link ContainerRuntimeError} on the error channel with
+ * actionable guidance when it can't proceed.
  */
-export async function ensureProxyReady(): Promise<Result<void, ProxyError | ContainerRuntimeError>> {
+export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Result<void, ProxyError | ContainerRuntimeError>> {
     const rt = activeRuntime();
     const readyResult = await ensureReady(rt);
     if (readyResult.isErr()) return readyResult;
 
-    try {
-        await writeProxyConfig();
-    } catch (cause) {
-        return err(new ProxyError(`Failed to write proxy config: ${cause instanceof Error ? cause.message : String(cause)}`));
-    }
-
-    if (!(await isAuthenticated())) {
-        if (!process.stdin.isTTY) {
-            return err(new ProxyError("CLIProxyAPI isn't authenticated yet.\n  Run `inflexa setup` to sign in to a provider before starting the TUI."));
-        }
-        console.log("\n  CLIProxyAPI isn't authenticated yet — let's sign in.");
+    // Proxy config + provider OAuth are only meaningful when chat targets the managed
+    // proxy. A direct connection has neither, so both are skipped — the Postgres/compose
+    // and embedder steps below still run as mode-independent prerequisites.
+    if (mode === "cliproxy") {
         try {
-            if (!(await authenticate(rt, undefined))) {
-                return err(new ProxyError("Authentication didn't complete.\n  Run `inflexa setup` to finish signing in, then try again."));
-            }
+            await writeProxyConfig();
         } catch (cause) {
-            return err(new ProxyError(`Authentication failed: ${cause instanceof Error ? cause.message : String(cause)}`));
+            return err(new ProxyError(`Failed to write proxy config: ${cause instanceof Error ? cause.message : String(cause)}`));
+        }
+
+        if (!(await isAuthenticated())) {
+            if (!process.stdin.isTTY) {
+                return err(new ProxyError("CLIProxyAPI isn't authenticated yet.\n  Run `inflexa setup` to sign in to a provider before starting the TUI."));
+            }
+            console.log("\n  CLIProxyAPI isn't authenticated yet — let's sign in.");
+            try {
+                if (!(await authenticate(rt, undefined))) {
+                    return err(new ProxyError("Authentication didn't complete.\n  Run `inflexa setup` to finish signing in, then try again."));
+                }
+            } catch (cause) {
+                return err(new ProxyError(`Authentication failed: ${cause instanceof Error ? cause.message : String(cause)}`));
+            }
         }
     }
 
-    // Compose up is idempotent — starts only containers that aren't running.
-    // Generate the compose file if it doesn't exist yet (self-healing gate).
+    // Compose up is idempotent — starts only containers that aren't running. Always regenerate the
+    // compose file for the resolved mode (authoritative regeneration point): a mode switch since the
+    // last launch rewrites it coherently — proxy service dropped for direct, present for cliproxy.
     const conn = resolvePostgresConfig();
-    const composeWriteErr = writeComposeFile(conn).match(
+    const composeWriteErr = writeComposeFile(conn, mode).match(
         () => null,
         (e) => e,
     );
@@ -620,7 +828,7 @@ export async function ensureProxyReady(): Promise<Result<void, ProxyError | Cont
     // Pull missing images with streaming progress before compose up. compose up -d
     // would implicitly pull via capture(), but that buffers silently and makes the
     // TUI launch appear to hang on a fresh install.
-    const pullResult = await composePullIfMissing(rt);
+    const pullResult = await composePullIfMissing(rt, mode);
     if (pullResult.isErr()) {
         return err(new ProxyError(pullResult.error.message));
     }
@@ -646,8 +854,8 @@ export async function ensureProxyReady(): Promise<Result<void, ProxyError | Cont
 /**
  * The exit-on-error variant of {@link ensureProxyReady} for the TUI launch path.
  */
-export async function ensureProxyReadyOrExit(): Promise<void> {
-    const result = await ensureProxyReady();
+export async function ensureProxyReadyOrExit(mode: "cliproxy" | "direct"): Promise<void> {
+    const result = await ensureProxyReady(mode);
     if (result.isErr()) {
         console.error(`\n  ${result.error.message}\n`);
         process.exit(1);

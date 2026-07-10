@@ -53,6 +53,16 @@ const configSchema = z.object({
     // `unknown` (never `any`) forces the owner to parse before use; and the key MUST be declared, because
     // zod strips unrecognized keys — without this line `readConfig().harness` would always be undefined.
     harness: z.unknown().optional(),
+    // The model connection block — the user-owned chat backend (see {@link modelsConfigSchema}).
+    // Declared `unknown` and validated downstream by `resolveModelConnection` (modules/harness/config.ts)
+    // for the SAME reasons the `harness` key is: a strict inline schema would fail the WHOLE config
+    // parse on one bad field (dropping telemetry/theme with it), while a block-level `.catch` would
+    // SILENTLY discard a malformed block instead of reporting it. Deferring to the resolver names the
+    // exact offending field, keeps siblings intact, and fails closed to the cliproxy/anthropic default.
+    // The key MUST be declared (zod strips unrecognized keys), else `readConfig().models` is always
+    // undefined. Unlike `harness` (whose schema can't live here — lib/ must not import a module), the
+    // model connection is a cli-owned config concept, so its schema lives here beside this declaration.
+    models: z.unknown().optional(),
     // Embedding backend selection — the ONE config surface for embeddings; the harness
     // runtime consumes it through `resolveEmbedder` (modules/embedding/resolve.ts).
     // `off` until the user runs `inflexa setup --embeddings`. `modelPath` is set when
@@ -74,6 +84,39 @@ const configSchema = z.object({
         .default({ mode: "off" }),
 });
 export type Config = z.infer<typeof configSchema>;
+
+/**
+ * The `models.connection` union — the user-owned chat backend, mirroring the `embedding` block's
+ * mode discrimination. `cliproxy` is the managed local proxy (today's default); `direct` is any
+ * user-supplied Anthropic or OpenAI-compatible endpoint. `provider` is the vendor slug (an OPEN
+ * vocabulary, e.g. `anthropic`/`openai`/`google`) — a configured FACT in both modes, never derived
+ * from a model id. `protocol` selects the harness wire kind for direct endpoints; when absent it is
+ * implied from the provider (see `resolveModelConnection`). Validated by `resolveModelConnection`
+ * (modules/harness/config.ts), not inline, so a malformed block reports a precise error and fails
+ * closed without dropping its config siblings.
+ */
+export const modelConnectionSchema = z.discriminatedUnion("mode", [
+    z.object({
+        mode: z.literal("cliproxy"),
+        provider: z.string().optional(),
+    }),
+    z.object({
+        mode: z.literal("direct"),
+        provider: z.string(),
+        baseURL: z.string(),
+        protocol: z.enum(["anthropic", "openai-compatible"]).optional(),
+    }),
+]);
+
+/**
+ * The top-level `models` block. `connection` selects the chat backend; the follow-up change
+ * `select-seat-models` extends this same block with `seats`, which is why `connection` is a field
+ * here rather than a flat `modelConnection` key. `connection` is optional so a future seats-only
+ * block still resolves to the default connection.
+ */
+export const modelsConfigSchema = z.object({
+    connection: modelConnectionSchema.optional(),
+});
 
 export type ConfigError = { type: "config_write_failed"; cause: unknown };
 
@@ -105,6 +148,24 @@ export function writeConfig(config: Config): Result<void, ConfigError> {
         },
         (cause): ConfigError => ({ type: "config_write_failed", cause }),
     )();
+}
+
+/**
+ * Read the chat-backend connection MODE from config — the minimal fact the infra layer needs to shape
+ * the compose file (proxy service present in `cliproxy`, dropped in `direct`). Lives here, beside the
+ * `models` schema this file owns, rather than pulling the full harness resolver
+ * (`resolveModelConnection`, modules/harness/config.ts) into infra's compose-lifecycle callers: the
+ * compose file cares about the mode alone, not the provider/protocol/secret the harness boot resolves.
+ * Mode selection mirrors `resolveModelConnection` exactly: an absent block, an invalid block, or a
+ * connection-less block all resolve to the `cliproxy` default; only a well-formed `direct` connection
+ * yields `"direct"`.
+ */
+export function resolveConnectionMode(): "cliproxy" | "direct" {
+    const raw = readConfig().models;
+    if (raw === undefined) return "cliproxy";
+    const parsed = modelsConfigSchema.safeParse(raw);
+    if (!parsed.success) return "cliproxy";
+    return parsed.data.connection?.mode ?? "cliproxy";
 }
 
 /**

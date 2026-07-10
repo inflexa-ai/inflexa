@@ -51,8 +51,8 @@ export type RunEngineComposition = {
     readonly model: string;
     /**
      * The vendor slug naming `model`'s provider (`anthropic`, `openai`, …) — an open vocabulary,
-     * boot-derived from the model family until provider+model become user config (PR #70 review).
-     * A separate FACT beside `model`, never a combined string, so the composition holds no
+     * the model connection's CONFIGURED provider fed by boot (design D2), never derived from the
+     * model id. A separate FACT beside `model`, never a combined string, so the composition holds no
      * redundant field to drift; the emitters compose the `{provider}/{model}` provenance name.
      */
     readonly modelProvider: string;

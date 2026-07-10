@@ -92,23 +92,32 @@ describe("PostgresError variants", () => {
 });
 
 describe("compose file generation", () => {
-    test("generated compose file contains both services", () => {
+    test("cliproxy mode contains both services", () => {
         const conn = resolvePostgresConfig();
-        const yaml = generateComposeFile(conn);
+        const yaml = generateComposeFile(conn, "cliproxy");
         expect(yaml).toContain(`${PROXY_CONTAINER_NAME}:`);
         expect(yaml).toContain(`${POSTGRES_CONTAINER_NAME}:`);
     });
 
+    test("direct mode defines no proxy service but keeps Postgres", () => {
+        const conn = resolvePostgresConfig();
+        const yaml = generateComposeFile(conn, "direct");
+        expect(yaml).not.toContain(`${PROXY_CONTAINER_NAME}:`);
+        expect(yaml).toContain(`${POSTGRES_CONTAINER_NAME}:`);
+        // The proxy image and its config/auth mounts vanish with the service.
+        expect(yaml).not.toContain("cli-proxy-api");
+    });
+
     test("generated compose file contains the shared network", () => {
         const conn = resolvePostgresConfig();
-        const yaml = generateComposeFile(conn);
+        const yaml = generateComposeFile(conn, "cliproxy");
         expect(yaml).toContain("networks:");
         expect(yaml).toContain("driver: bridge");
     });
 
     test("generated compose file uses correct postgres credentials", () => {
         const conn = { host: "localhost", port: 9999, database: "testdb", user: "testuser", password: "testpass" };
-        const yaml = generateComposeFile(conn);
+        const yaml = generateComposeFile(conn, "cliproxy");
         expect(yaml).toContain('POSTGRES_DB: "testdb"');
         expect(yaml).toContain('POSTGRES_USER: "testuser"');
         expect(yaml).toContain('POSTGRES_PASSWORD: "testpass"');
@@ -117,15 +126,13 @@ describe("compose file generation", () => {
 
     test("generated compose file uses the fixed pgvector image", () => {
         const conn = resolvePostgresConfig();
-        const yaml = generateComposeFile(conn);
-        expect(yaml).toContain(`image: ${DEFAULT_IMAGE}`);
+        expect(generateComposeFile(conn, "cliproxy")).toContain(`image: ${DEFAULT_IMAGE}`);
+        expect(generateComposeFile(conn, "direct")).toContain(`image: ${DEFAULT_IMAGE}`);
     });
 
-    test("both services have restart: unless-stopped", () => {
+    test("cliproxy mode gives both services restart: unless-stopped; direct only Postgres", () => {
         const conn = resolvePostgresConfig();
-        const yaml = generateComposeFile(conn);
-        const matches = yaml.match(/restart: unless-stopped/g);
-        expect(matches).not.toBeNull();
-        expect(matches!.length).toBe(2);
+        expect(generateComposeFile(conn, "cliproxy").match(/restart: unless-stopped/g)!.length).toBe(2);
+        expect(generateComposeFile(conn, "direct").match(/restart: unless-stopped/g)!.length).toBe(1);
     });
 });

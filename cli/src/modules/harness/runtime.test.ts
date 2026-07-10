@@ -10,8 +10,13 @@ import { env } from "../../lib/env.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { bootHarnessRuntime, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
-import type { ResolvedHarnessConfig } from "./config.ts";
+import type { ResolvedHarnessConfig, ResolvedModelConnection } from "./config.ts";
 import type { ExecIngress } from "./ingress.ts";
+
+/** A direct connection to a stubbed OpenAI-compatible endpoint — used by the direct-mode boot tests. */
+function directConnection(overrides: Partial<Extract<ResolvedModelConnection, { mode: "direct" }>> = {}): ResolvedModelConnection {
+    return { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1", protocol: "openai-compatible", ...overrides };
+}
 
 let skillsDir: string;
 let templatesDir: string;
@@ -67,6 +72,10 @@ function recordingSeams(calls: string[]): BootSeams {
         readKey: async () => {
             calls.push("readKey");
             return ok("proxy-key");
+        },
+        readModelApiKey: () => {
+            calls.push("readModelApiKey");
+            return "direct-model-key";
         },
         resolveModel: async () => {
             calls.push("resolveModel");
@@ -379,7 +388,7 @@ describe("bootHarnessRuntime", () => {
         expect(calls).toEqual([]);
     });
 
-    test("a non-Claude auto-resolved model is rejected at boot (Anthropic route)", async () => {
+    test("an auto-resolved model whose family mismatches the configured provider is rejected at boot", async () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
@@ -388,18 +397,104 @@ describe("bootHarnessRuntime", () => {
                 return ok("gemini-2.5-pro");
             },
         };
-        const result = await bootHarnessRuntime({ seams, config: testConfig({ model: null }) });
+        // The default connection is cliproxy/anthropic, so this degenerates to exactly the old
+        // Claude-only check: a gemini id does not match the anthropic family.
+        const result = await bootHarnessRuntime({
+            seams,
+            config: testConfig({ model: null }),
+            connection: { mode: "cliproxy", provider: "anthropic" },
+        });
 
-        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_not_claude", model: "gemini-2.5-pro" });
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_provider_mismatch", provider: "anthropic", model: "gemini-2.5-pro" });
         expect(calls).not.toContain("postgres");
     });
 
-    test("an explicitly-configured non-Claude model is trusted (no family guard)", async () => {
+    test("an auto-resolved model whose family matches the configured provider boots (non-anthropic cliproxy account)", async () => {
         const calls: string[] = [];
-        const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig({ model: "gpt-4o" }) });
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            resolveModel: async () => {
+                calls.push("resolveModel");
+                return ok("gpt-4o");
+            },
+        };
+        const result = await bootHarnessRuntime({
+            seams,
+            config: testConfig({ model: null }),
+            connection: { mode: "cliproxy", provider: "openai" },
+        });
 
         expect(result._unsafeUnwrap().model).toBe("gpt-4o");
         expect(calls).toContain("launch");
+    });
+
+    test("an explicitly-configured off-family model is trusted (the guard only checks the auto path)", async () => {
+        const calls: string[] = [];
+        const result = await bootHarnessRuntime({
+            seams: recordingSeams(calls),
+            config: testConfig({ model: "gpt-4o" }),
+            connection: { mode: "cliproxy", provider: "anthropic" },
+        });
+
+        expect(result._unsafeUnwrap().model).toBe("gpt-4o");
+        expect(calls).toContain("launch");
+    });
+
+    test("a malformed models.connection block fails boot before any side effect", async () => {
+        const calls: string[] = [];
+        const result = await bootHarnessRuntime({
+            seams: recordingSeams(calls),
+            config: testConfig(),
+            connection: { mode: "cliproxy", provider: "anthropic", configError: { issues: "models.connection.baseURL: Required" } },
+        });
+
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_connection_invalid", issues: "models.connection.baseURL: Required" });
+        expect(calls).toEqual([]);
+    });
+
+    test("direct mode boots with the explicit model, reads the env key, and never contacts the proxy", async () => {
+        const calls: string[] = [];
+        const result = await bootHarnessRuntime({
+            seams: recordingSeams(calls),
+            config: testConfig({ model: "some-alias-v2" }),
+            connection: directConnection(),
+        });
+
+        expect(result._unsafeUnwrap().model).toBe("some-alias-v2");
+        // The direct path reads the env secret, never the proxy client key, and never the proxy /models.
+        expect(calls).toContain("readModelApiKey");
+        expect(calls).not.toContain("readKey");
+        expect(calls).not.toContain("resolveModel");
+        expect(calls).toContain("launch");
+    });
+
+    test("direct mode with no configured model fails boot with model_required (no proxy auto-resolve)", async () => {
+        const calls: string[] = [];
+        const result = await bootHarnessRuntime({
+            seams: recordingSeams(calls),
+            config: testConfig({ model: null }),
+            connection: directConnection(),
+        });
+
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_required" });
+        expect(calls).not.toContain("resolveModel");
+        expect(calls).not.toContain("postgres");
+    });
+
+    test("direct mode with an unset INFLEXA_MODEL_API_KEY fails boot naming the variable", async () => {
+        const calls: string[] = [];
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            readModelApiKey: () => {
+                calls.push("readModelApiKey");
+                return undefined;
+            },
+        };
+        const result = await bootHarnessRuntime({ seams, config: testConfig({ model: "some-alias-v2" }), connection: directConnection() });
+
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_api_key_missing" });
+        expect(calls).not.toContain("readKey");
+        expect(calls).not.toContain("postgres");
     });
 
     test("missing skills dir fails before any side effect", async () => {

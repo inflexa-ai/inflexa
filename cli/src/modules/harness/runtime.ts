@@ -3,7 +3,7 @@ import type pino from "pino";
 import { ok, err, type Result } from "neverthrow";
 import {
     assembleCoreRuntime,
-    createAnthropicProvider,
+    createConfiguredAiSdkProvider,
     createDbosRunLauncher,
     createLocalRunAuthorizer,
     createNoopBillingResolver,
@@ -22,6 +22,7 @@ import {
     UnavailablePreviewPublisher,
     type AgentDefinition,
     type AgentSession,
+    type AiSdkProviderConfig,
     type ChatProvider,
     type ConversationAssemblyDeps,
     type CoreWorkflowDeps,
@@ -48,8 +49,8 @@ import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
-import { modelProvider, readApiKey, resolveModelId, type ChatSetupError } from "../proxy/models.ts";
-import { resolveHarnessConfig, type ResolvedHarnessConfig } from "./config.ts";
+import { modelMatchesProvider, readApiKey, resolveModelId, type ChatSetupError } from "../proxy/models.ts";
+import { resolveHarnessConfig, resolveModelConnection, type ResolvedHarnessConfig, type ResolvedModelConnection } from "./config.ts";
 import { noopExecIngress, startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
 import { buildEphemeralDeps, buildExecuteAnalysisDeps, buildExecuteTargetAssessmentDeps, buildSandboxStepDeps, type RunEngineComposition } from "./run_deps.ts";
 
@@ -121,14 +122,17 @@ export type HarnessRuntime = {
 /** Why the runtime could not boot — each variant maps to one actionable user message. */
 export type HarnessBootError =
     | { type: "harness_config_invalid"; issues: string }
+    | { type: "model_connection_invalid"; issues: string }
     | { type: "embedding_unresolved"; cause: EmbeddingResolveError }
     | { type: "embedding_probe_failed"; detail: string }
     | { type: "embedding_dimension_mismatch"; expected: number; actual: number }
     | { type: "skills_dir_missing"; path: string | null }
     | { type: "templates_dir_missing"; path: string | null }
     | { type: "proxy_key_missing"; cause: ChatSetupError }
+    | { type: "model_api_key_missing" }
     | { type: "model_unresolved"; cause: ChatSetupError }
-    | { type: "model_not_claude"; model: string }
+    | { type: "model_provider_mismatch"; provider: string; model: string }
+    | { type: "model_required" }
     | { type: "postgres_unavailable"; cause: PostgresError }
     | { type: "ingress_failed"; cause: IngressError }
     | { type: "runtime_already_active"; holderPid: number }
@@ -193,6 +197,8 @@ export type BootSeams = {
     readonly ensurePostgres: () => Promise<Result<PostgresConnection, PostgresError>>;
     readonly startIngress: () => Result<ExecIngress, IngressError>;
     readonly readKey: () => Promise<Result<string, ChatSetupError>>;
+    /** The `direct`-connection secret from the environment (`env.modelApiKey`); `undefined` when unset. */
+    readonly readModelApiKey: () => string | undefined;
     readonly resolveModel: (apiKey: string) => Promise<Result<string, ChatSetupError>>;
     readonly resolveEmbedding: () => Result<EmbeddingProvider, EmbeddingResolveError>;
     /**
@@ -224,6 +230,7 @@ const realSeams: BootSeams = {
     ensurePostgres: ensurePostgresReady,
     startIngress: () => startExecIngress(),
     readKey: readApiKey,
+    readModelApiKey: () => env.modelApiKey,
     resolveModel: resolveModelId,
     resolveEmbedding: () => resolveEmbedder(readConfig()),
     assemble: assembleCoreRuntime,
@@ -278,11 +285,15 @@ export function __resetHarnessRuntimeForTest(): void {
  * {@link bootHarnessRuntimeOnce}.
  */
 export function bootHarnessRuntime(
-    options: { seams?: Partial<BootSeams>; config?: ResolvedHarnessConfig } = {},
+    options: { seams?: Partial<BootSeams>; config?: ResolvedHarnessConfig; connection?: ResolvedModelConnection } = {},
 ): Promise<Result<HarnessRuntime, HarnessBootError>> {
     if (active) return Promise.resolve(ok(active));
     if (booting) return booting;
-    const attempt = bootHarnessRuntimeOnce({ ...realSeams, ...options.seams }, options.config ?? resolveHarnessConfig());
+    const attempt = bootHarnessRuntimeOnce(
+        { ...realSeams, ...options.seams },
+        options.config ?? resolveHarnessConfig(),
+        options.connection ?? resolveModelConnection(),
+    );
     booting = attempt;
     void attempt.finally(() => {
         booting = null;
@@ -296,13 +307,20 @@ export function bootHarnessRuntime(
  * (`assembleCoreRuntime`) → sandbox-hygiene crons → DBOS launch. The shutdown hook is registered once,
  * on success.
  */
-async function bootHarnessRuntimeOnce(seams: BootSeams, cfg: ResolvedHarnessConfig): Promise<Result<HarnessRuntime, HarnessBootError>> {
+async function bootHarnessRuntimeOnce(
+    seams: BootSeams,
+    cfg: ResolvedHarnessConfig,
+    connection: ResolvedModelConnection,
+): Promise<Result<HarnessRuntime, HarnessBootError>> {
     const logger = getLogger("harness");
 
     // A `harness` config block that was present but failed validation: report the
     // offending fields, not a misleading downstream error. Checked first so a bad
     // `adminPort` type never surfaces as "embedding not configured".
     if (cfg.configError) return err({ type: "harness_config_invalid", issues: cfg.configError.issues });
+    // Likewise a malformed `models.connection` block: report it rather than booting
+    // against the silently-substituted default connection.
+    if (connection.configError) return err({ type: "model_connection_invalid", issues: connection.configError.issues });
 
     // Prerequisites that no amount of booting can heal — checked before any
     // side effect so a misconfigured run costs nothing. The embedder comes from
@@ -323,9 +341,20 @@ async function bootHarnessRuntimeOnce(seams: BootSeams, cfg: ResolvedHarnessConf
     if (embedderResult.isErr()) return err({ type: "embedding_unresolved", cause: embedderResult.error });
     const embedding = embedderResult.value;
 
-    const keyResult = await seams.readKey();
-    if (keyResult.isErr()) return err({ type: "proxy_key_missing", cause: keyResult.error });
-    const apiKey = keyResult.value;
+    // The chat credential is mode-specific (design D4/D6): cliproxy discovers the
+    // minted proxy client key (and contacts the proxy for auto-resolve below);
+    // direct reads the env secret and NEVER touches the proxy. Resolved before the
+    // probe so a missing credential fails as cheaply as the proxy-key path always did.
+    let providerApiKey: string;
+    if (connection.mode === "cliproxy") {
+        const keyResult = await seams.readKey();
+        if (keyResult.isErr()) return err({ type: "proxy_key_missing", cause: keyResult.error });
+        providerApiKey = keyResult.value;
+    } else {
+        const key = seams.readModelApiKey();
+        if (!key) return err({ type: "model_api_key_missing" });
+        providerApiKey = key;
+    }
 
     // Probe the resolved embedder before anything expensive: embeddings are
     // consumed LATE in the profile workflow (after the sandbox agent spent its
@@ -339,22 +368,33 @@ async function bootHarnessRuntimeOnce(seams: BootSeams, cfg: ResolvedHarnessConf
             : err({ type: "embedding_probe_failed", detail: e.detail });
     }
 
-    const autoResolvedModel = cfg.model === null;
-    let model = cfg.model;
-    if (model === null) {
-        const modelResult = await seams.resolveModel(apiKey);
-        if (modelResult.isErr()) return err({ type: "model_unresolved", cause: modelResult.error });
-        model = modelResult.value;
-    }
-    // The data-profile agent reaches the proxy over the Anthropic Messages
-    // protocol (`createAnthropicProvider` below). When no Claude model is
-    // authenticated, the auto-resolver falls through to whatever family the proxy
-    // advertises (gpt/gemini/qwen); wiring a non-Claude id into the Anthropic
-    // route fails only at the first model round, after the sandbox has spun up.
-    // Reject it at boot. An explicitly-configured `harness.model` is trusted (it
-    // may be a proxy alias that resolves to Claude), so this guards the auto path.
-    if (autoResolvedModel && !model.toLowerCase().includes("claude")) {
-        return err({ type: "model_not_claude", model });
+    // Model resolution per mode (design D5). cliproxy keeps the auto-resolve
+    // (`harness.model` override, else the proxy's `/models` ranking) guarded by
+    // provider-family agreement; direct requires an explicit model and never
+    // contacts the proxy — direct users name the model their endpoint serves.
+    let model: string;
+    if (connection.mode === "cliproxy") {
+        const autoResolvedModel = cfg.model === null;
+        if (cfg.model === null) {
+            const modelResult = await seams.resolveModel(providerApiKey);
+            if (modelResult.isErr()) return err({ type: "model_unresolved", cause: modelResult.error });
+            model = modelResult.value;
+        } else {
+            model = cfg.model;
+        }
+        // The auto-resolver falls through to whatever family the proxy advertises when the configured
+        // provider's account is not the one authenticated; wiring a mismatched id into the provider's
+        // route fails only at the first model round, after the sandbox has spun up. Reject it at boot.
+        // `modelMatchesProvider` reads the family table in the provider→family direction ONLY (a sanity
+        // check, never id→provider identity). An explicit `harness.model` is trusted (it may be a proxy
+        // alias resolving to the right family), so this guards the auto path; with the default provider
+        // `anthropic` only Claude-family ids pass.
+        if (autoResolvedModel && !modelMatchesProvider(connection.provider, model)) {
+            return err({ type: "model_provider_mismatch", provider: connection.provider, model });
+        }
+    } else {
+        if (cfg.model === null) return err({ type: "model_required" });
+        model = cfg.model;
     }
 
     const pgResult = await seams.ensurePostgres();
@@ -441,7 +481,29 @@ async function bootHarnessRuntimeOnce(seams: BootSeams, cfg: ResolvedHarnessConf
         // unchanged, so every path shares the one resolved instance. `cfg.skillsDir`
         // and `cfg.templatesDir` are non-null here — the pre-flight above returned
         // if either was null.
-        const provider = createAnthropicProvider({ baseURL: env.cliproxyApiUrl, token: apiKey, model, resolveBilling });
+        //
+        // One construction path for both modes (design D6): the resolved connection
+        // becomes an `AiSdkProviderConfig`. cliproxy resolves to the Anthropic kind
+        // at the owned proxy URL with the proxy client key — deliberately identical
+        // to what the harness's `createAnthropicProvider` convenience wrapper emits
+        // (same kind/baseURL/apiKey/model and `capabilities: { toolCalling: true }`),
+        // so the proxy path is indistinguishable from a bare Anthropic connection.
+        // direct resolves to the configured protocol kind at the configured endpoint
+        // with the env secret.
+        const providerConfig: AiSdkProviderConfig =
+            connection.mode === "cliproxy"
+                ? { kind: "anthropic", baseURL: env.cliproxyApiUrl, apiKey: providerApiKey, model, capabilities: { toolCalling: true } }
+                : connection.protocol === "anthropic"
+                  ? { kind: "anthropic", baseURL: connection.baseURL, apiKey: providerApiKey, model, capabilities: { toolCalling: true } }
+                  : {
+                        kind: "openai-compatible",
+                        name: connection.provider,
+                        baseURL: connection.baseURL,
+                        apiKey: providerApiKey,
+                        model,
+                        capabilities: { toolCalling: true },
+                    };
+        const provider = createConfiguredAiSdkProvider({ resolveBilling, config: providerConfig });
         const sandboxClient = createSandboxClient({
             pool,
             env: { backend: "docker", namespace: "" },
@@ -479,10 +541,12 @@ async function bootHarnessRuntimeOnce(seams: BootSeams, cfg: ResolvedHarnessConf
             resolveWorkspaceRoot,
             // The RESOLVED id — the config override or the proxy default resolved earlier in this
             // boot; never a config `null`. Bare here (it is the API model param); the prov-bridge
-            // emitters compose the `{provider}/{model}` provenance name from it and the vendor
-            // below — family-derived until provider+model become user config (PR #70 review).
+            // emitters compose the `{provider}/{model}` provenance name from it and the CONFIGURED
+            // provider slug below.
             model,
-            modelProvider: modelProvider(model),
+            // The connection's configured provider slug — the attested fact provenance records,
+            // never derived from the model id (design D2).
+            modelProvider: connection.provider,
             skillsDir: cfg.skillsDir,
             bioKeys: cfg.bioKeys,
         };

@@ -16,6 +16,7 @@ import {
 
 import { confirm, fail, dieOn } from "../../lib/cli.ts";
 import { activeRuntime, resolvePostgresConfig } from "../../lib/config.ts";
+import { env } from "../../lib/env.ts";
 import { capture, ensureReady, inherit } from "../../lib/container.ts";
 import { variantOfImage } from "../libs/images.ts";
 import { acquireInstanceLock } from "../../lib/lock.ts";
@@ -80,6 +81,8 @@ export function describeBootError(e: HarnessBootError): string {
     switch (e.type) {
         case "harness_config_invalid":
             return `Your \`harness\` config has an invalid field — ${e.issues}. Fix it in config.json and re-run.`;
+        case "model_connection_invalid":
+            return `Your \`models.connection\` config is invalid — ${e.issues}. Fix it in config.json and re-run.`;
         case "embedding_unresolved":
             return ["Profiling's vector indexing requires an embedder, and none could be resolved from the `embedding` config key.", e.cause.message].join(
                 "\n",
@@ -100,14 +103,24 @@ export function describeBootError(e: HarnessBootError): string {
             return `Templates directory not found${e.path ? ` at ${e.path}` : ""}. Set \`harness.templatesDir\` in config.json (a checkout's \`templates/\` tree).`;
         case "proxy_key_missing":
             return "Proxy client key not found — run `inflexa setup` to provision the proxy first.";
+        case "model_api_key_missing":
+            return [
+                "A direct model connection needs its API key in the `INFLEXA_MODEL_API_KEY` environment variable, which is unset.",
+                `Export it (e.g. \`export INFLEXA_MODEL_API_KEY=…\`) — the key is read from the environment only, never from ${env.configPath}.`,
+            ].join("\n");
         case "model_unresolved":
             return e.cause.type === "no_models"
                 ? "The proxy lists no models — authenticate a provider via `inflexa setup`, or set `harness.model` in config.json."
                 : `The proxy is unreachable (${e.cause.type === "proxy_unreachable" ? e.cause.detail : e.cause.type}) — is the container running? Try \`inflexa setup\`.`;
-        case "model_not_claude":
+        case "model_provider_mismatch":
             return [
-                `The proxy's default model "${e.model}" is not a Claude model, but data profiling drives the proxy over the Anthropic protocol.`,
-                "Authenticate a Claude provider via `inflexa setup`, or set `harness.model` in config.json to a Claude model the proxy serves.",
+                `The proxy's auto-resolved model "${e.model}" does not match the configured provider "${e.provider}", but the chat route is built for that provider.`,
+                `Authenticate the "${e.provider}" account via \`inflexa setup\`, or set \`harness.model\` (a model that provider serves) or \`models.connection.provider\` in config.json.`,
+            ].join("\n");
+        case "model_required":
+            return [
+                "A direct model connection needs an explicit model — there is no proxy `/models` to auto-resolve one from.",
+                "Set `harness.model` in config.json to the model id your endpoint serves.",
             ].join("\n");
         case "postgres_unavailable":
             return e.cause.message;

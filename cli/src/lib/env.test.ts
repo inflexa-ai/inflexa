@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { devCommandsActive, isDevelopmentBuild, isUnsandboxedTestRun } from "./env.ts";
+import { devCommandsActive, env, envDoc, isDevelopmentBuild, isUnsandboxedTestRun } from "./env.ts";
 
 // The truth table behind env.isDevelopment: a build is development unless the baked channel is exactly
 // "production". We test the pure helper because env freezes its bakedEnv.buildChannel read at import.
@@ -80,5 +80,24 @@ describe("isUnsandboxedTestRun", () => {
 
     test("bun run dev leaves NODE_ENV unset → allow", () => {
         expect(isUnsandboxedTestRun(undefined, undefined)).toBe(false);
+    });
+});
+
+// The direct-connection secret channel: exposed on the frozen env object (its sole reader) and
+// documented in envDoc for --help. env freezes its process.env read at import, so the presence/absence
+// behavior itself is exercised where it is consumed (the boot's readModelApiKey seam, runtime.test.ts);
+// here we assert only that the surface exists and is a string-or-undefined secret, never persisted.
+describe("INFLEXA_MODEL_API_KEY", () => {
+    test("env exposes modelApiKey as a string-or-absent secret", () => {
+        expect("modelApiKey" in env).toBe(true);
+        // Present ⇒ a string; absent ⇒ undefined — never any other shape.
+        expect(env.modelApiKey === undefined || typeof env.modelApiKey === "string").toBe(true);
+    });
+
+    test("envDoc documents INFLEXA_MODEL_API_KEY as an environment variable", () => {
+        const entry = envDoc.modelApiKey;
+        expect(entry.kind).toBe("var");
+        if (entry.kind !== "var") throw new Error("expected a var entry");
+        expect(entry.name).toBe("INFLEXA_MODEL_API_KEY");
     });
 });

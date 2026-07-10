@@ -44,11 +44,11 @@ by construction, never minted by the cli recorder:
 `ProvModelId` SHALL be the vendor-qualified `{provider}/{model}` name (the
 convention model ecosystems use — e.g. `anthropic/claude-opus-4-8`,
 `openai/gpt-5`), enforced as a template-literal string type. The model part is
-the RESOLVED id (never a config `null`); the provider part is an OPEN vocabulary —
-no closed union to keep in step with any provider list. Until provider+model are
-user-specified config, the composition SHALL derive the provider from the model
-family, recording `unknown` when the family is unrecognized — an unattestable
-provider is recorded as exactly that, never guessed silently. The payload SHALL
+the RESOLVED id (never a config `null`); the provider part is the model
+connection's CONFIGURED provider slug (see `model-connection`) — an OPEN
+vocabulary with no closed union to keep in step with any provider list, and
+never derived from the model id: an unattestable provider is a configuration
+error surfaced at boot, not a recorded guess. The payload SHALL
 NOT carry API keys, credentialed URLs, or prompt content.
 
 The domain types SHALL live in `src/types/prov.ts` and the events in
@@ -73,7 +73,7 @@ model id.
 #### Scenario: The model reference never carries credentials
 
 - **WHEN** any `prov.step_completed` or `prov.command_executed` event is emitted
-- **THEN** its `model` carries only the resolved model id — no API key, no credentialed URL, no prompt content
+- **THEN** its `model` carries only the configured provider slug and the resolved model id — no API key, no credentialed URL, no prompt content
 
 ### Requirement: Document builders append deterministic, PROV-valid execution records
 

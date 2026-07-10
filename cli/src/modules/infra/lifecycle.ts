@@ -1,6 +1,6 @@
 import { rmSync } from "node:fs";
 
-import { activeRuntime, resolvePostgresConfig } from "../../lib/config.ts";
+import { activeRuntime, resolveConnectionMode, resolvePostgresConfig } from "../../lib/config.ts";
 import { ensureReady } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { promptText } from "../../lib/cli.ts";
@@ -28,7 +28,10 @@ export async function up(): Promise<void> {
     }
 
     const conn = resolvePostgresConfig();
-    const writeErr = ensureComposeFile(conn).match(
+    // `up` operates on the existing compose file; when it is missing, generate one for the currently
+    // configured connection mode (postgres-only for a direct connection, proxy+postgres otherwise).
+    const mode = resolveConnectionMode();
+    const writeErr = ensureComposeFile(conn, mode).match(
         () => null,
         (e) => e,
     );
@@ -38,7 +41,7 @@ export async function up(): Promise<void> {
         return;
     }
 
-    const pullResult = await composePullIfMissing(rt);
+    const pullResult = await composePullIfMissing(rt, mode);
     if (pullResult.isErr()) {
         console.error(`\n  ${pullResult.error.message}\n`);
         process.exitCode = 1;

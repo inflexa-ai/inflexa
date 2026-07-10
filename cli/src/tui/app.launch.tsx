@@ -10,7 +10,7 @@ import type { ContextFlags } from "../modules/analysis/context.ts";
 import { readConfig } from "../lib/config.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import type { IdOrName } from "../lib/types.ts";
-import { resolveHarnessConfig } from "../modules/harness/config.ts";
+import { resolveHarnessConfig, resolveModelConnection } from "../modules/harness/config.ts";
 import { describeBootError, ensureSandboxImage } from "../modules/harness/profile.ts";
 import { startHarnessBoot } from "./hooks/boot.ts";
 import { App } from "./app.tsx";
@@ -28,7 +28,13 @@ import { setTheme } from "./theme.ts";
  * config, then hand the terminal to OpenTUI to open the chat for the resolved target.
  */
 async function renderChat(target: ChatTarget): Promise<void> {
-    await ensureProxyReadyOrExit();
+    // Resolve the chat backend connection first: its mode decides whether the proxy gate runs at all
+    // (a direct connection skips proxy config/auth — see ensureProxyReady), and a malformed
+    // `models.connection` block must surface as its real problem here, not as a misleading proxy-auth
+    // failure from running the cliproxy gate against the fail-closed default.
+    const connection = resolveModelConnection();
+    if (connection.configError) fail(describeBootError({ type: "model_connection_invalid", issues: connection.configError.issues }));
+    await ensureProxyReadyOrExit(connection.mode);
 
     // Harness pre-flight gates that need normal stdio — resolved once here and reused by the
     // post-render boot below, so the model/image/policy are computed a single time. The config gate
