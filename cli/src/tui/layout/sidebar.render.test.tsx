@@ -221,7 +221,7 @@ describe("Sidebar MODELS section", () => {
     });
 });
 
-// The connection line (agent-model-selection group 7) rides the immutable boot-ready state, so each case
+// The connection line rides the immutable boot-ready state, so each case
 // seeds a `ready` boot with the connection identity AND a non-empty agentModels (the section body is
 // gated on the switch's authority). It renders above the agent rows in both connection modes.
 describe("Sidebar MODELS connection line", () => {

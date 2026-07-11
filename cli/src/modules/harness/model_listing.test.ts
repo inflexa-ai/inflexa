@@ -70,11 +70,13 @@ describe("listConnectionModels — per-mode request shape", () => {
         expect(rec.calls[0]?.headers).toEqual({ Authorization: "Bearer sk-direct" });
     });
 
-    test("direct anthropic hits {baseURL}/v1/models with the x-api-key + anthropic-version headers", async () => {
+    test("direct anthropic appends /models to the same /v1-terminated baseURL the chat path uses", async () => {
         const rec = recordingFetch(() => Promise.resolve(modelsResponse(["claude-sonnet-4-5"])));
         const result = await listConnectionModels(
             seamsFor({
-                connection: { mode: "direct", provider: "anthropic", baseURL: "https://api.anthropic.com", protocol: "anthropic", agents: {} },
+                // The `/v1`-terminated protocol root the chat path POSTs `{baseURL}/messages` to; the
+                // listing appends `/models` to that SAME value, so one configured URL serves both paths.
+                connection: { mode: "direct", provider: "anthropic", baseURL: "https://api.anthropic.com/v1", protocol: "anthropic", agents: {} },
                 modelApiKey: "sk-ant",
                 fetch: rec.fetch,
             }),

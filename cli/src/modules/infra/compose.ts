@@ -41,8 +41,7 @@ export type ConnectionMode = "cliproxy" | "direct";
  *
  * Connection-aware: `cliproxy` mode defines BOTH the CLIProxyAPI proxy and Postgres; `direct` mode
  * defines Postgres ONLY — a direct connection reaches the user's own endpoint with
- * `INFLEXA_MODEL_API_KEY`, so the managed proxy is never provisioned (model-connection spec / design
- * D6). Postgres is mode-independent.
+ * `INFLEXA_MODEL_API_KEY`, so the managed proxy is never provisioned. Postgres is mode-independent.
  *
  * Invariant: `inflexa up`/`down` operate on WHICHEVER file already exists — they do not re-derive the
  * mode from a running file. The two authoritative regeneration points overwrite it with the current

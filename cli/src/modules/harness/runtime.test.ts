@@ -115,7 +115,7 @@ function recordingSeams(calls: string[]): BootSeams {
             expect(executeAnalysisDeps.sandboxStepCallable).toBe(child);
             expect(executeAnalysisDeps.emitProvenance).toBeInstanceOf(Function);
             // The data-profile bundle carries the workspace-root seam every consumer
-            // shares (design D2) plus the RESOLVED provider instance advertising its
+            // shares plus the RESOLVED provider instance advertising its
             // index width. The ONE resolver instance built at boot threads to every
             // bundle, so identity (not just shape) is the invariant.
             expect(workflows.dataProfile.resolveWorkspaceRoot).toBeInstanceOf(Function);
@@ -212,8 +212,8 @@ describe("bootHarnessRuntime", () => {
         ]);
         expect(calls).not.toContain("ingress");
         // No `models.agents` and a single `harness.model` (claude-test-model): both agents resolve to it
-        // and share ONE underlying provider instance (D-SHARE). Each agent carries its own swappable HANDLE
-        // (so a later live switch of one agent re-points only that agent — agent-model-selection D4), but the
+        // and share ONE underlying provider instance. Each agent carries its own swappable HANDLE
+        // (so a later live switch of one agent re-points only that agent), but the
         // handles delegate to the SAME inner, which is the referential invariant that matters.
         expect(runtime.conversation.model).toBe("claude-test-model");
         expect(runtime.sandbox.model).toBe("claude-test-model");
@@ -524,7 +524,7 @@ describe("bootHarnessRuntime", () => {
         const runtime = result._unsafeUnwrap();
         expect(runtime.conversation.model).toBe("deepseek-chat");
         expect(runtime.sandbox.model).toBe("deepseek-reasoner");
-        // Distinct resolved models ⇒ two provider instances over the one connection (D-SHARE).
+        // Distinct resolved models ⇒ two provider instances over the one connection.
         expect(runtime.sandbox.provider).not.toBe(runtime.conversation.provider);
         expect(calls).toContain("launch");
     });
@@ -532,7 +532,7 @@ describe("bootHarnessRuntime", () => {
     test("per-agent resolution order: an agent override wins over harness.model, which is the both-agents fallback", async () => {
         const calls: string[] = [];
         // harness.model = claude-test-model is the fallback; only sandbox overrides it. conversation
-        // therefore rides the fallback and sandbox rides its own override — the D2 order, per agent.
+        // therefore rides the fallback and sandbox rides its own override — the resolution order applied per agent.
         const result = await bootHarnessRuntime({
             seams: recordingSeams(calls),
             config: testConfig({ model: "claude-test-model" }),

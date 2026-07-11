@@ -19,6 +19,7 @@ import {
 
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
+import { createSwappableSandboxEmitters } from "./prov_bridge.ts";
 import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineComposition } from "./run_deps.ts";
 
 // All factories below construct lazily (pg pools connect on first query; the
@@ -36,6 +37,7 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
     const resolveWorkspaceRoot = (analysisId: string): string => join("/tmp/sessions", analysisId);
     const makeProvider = (model: string): ChatProvider => createAnthropicProvider({ baseURL: "http://proxy.test", token: "t", model, resolveBilling });
     const sandboxModel = overrides.sandbox ?? "claude-test";
+    const modelProvider = overrides.modelProvider ?? "anthropic";
     return {
         pool,
         embedding: createEmbeddingProvider({ baseURL: "http://emb.test/v1", token: "t", model: "text-embedding-3-small", resolveBilling }),
@@ -52,7 +54,10 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
         conversation: { provider: makeProvider("claude-test"), model: "claude-test" },
         sandbox: { provider: makeProvider(sandboxModel), model: sandboxModel },
         // The connection's configured provider slug (boot feeds it verbatim), shared across agents.
-        modelProvider: overrides.modelProvider ?? "anthropic",
+        modelProvider,
+        // The REAL swappable holder stamped with the boot name — the same stable handles boot injects, so
+        // `comp.sandboxEmitters.swap(...)` drives the exact live-switch path the snapshot-safety tests need.
+        sandboxEmitters: createSwappableSandboxEmitters(`${modelProvider}/${sandboxModel}`),
         skillsDir: "/tmp/skills",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
     };
@@ -153,6 +158,76 @@ describe("run-engine provenance wiring", () => {
         const stepEvent = captured[0]!;
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(stepEvent.model).toBe("deepseek/some-alias-v2");
+    });
+});
+
+// Snapshot-safety: the injected deps field must observe a live swap even when a consumer captured it
+// once at registration. The fake-swap tests in
+// agent_switch.test.ts prove the controller's TIMING; these prove the injection's EFFECTIVENESS through
+// the REAL bundles under the worst-case consumer — one that snapshots its deps field at registration
+// (exactly what destructuring `const { emitProvenance } = deps` in a consumer would do). Because the injected
+// value is the holder's STABLE delegating handle, the swap lands through the captured reference.
+describe("snapshot-safety — a captured deps field observes a live swap through the stable handle", () => {
+    let captured: StampedEvent[] = [];
+    function spy(event: StampedEvent): void {
+        captured.push(event);
+    }
+    afterEach(() => {
+        Bus.off("inflexa", spy);
+    });
+
+    const noSession = {} as unknown as AgentSession;
+    const callable = (async () => ({})) as unknown as ExecuteAnalysisDeps["sandboxStepCallable"];
+    const authorizer = {} as unknown as RunAuthorizer;
+
+    test("emitProvenance captured at registration stamps the NEW name after a swap through that captured reference", () => {
+        const comp = testComposition();
+        const deps = buildExecuteAnalysisDeps(comp, callable, authorizer);
+        // The worst case: a consumer snapshots the field ONCE, before any switch. A field mutation on a
+        // consumer-held object would leave this stale; a stable delegating handle does not.
+        const capturedEmit = deps.emitProvenance!;
+
+        comp.sandboxEmitters.swap("anthropic/claude-swapped");
+
+        captured = [];
+        Bus.on("inflexa", spy);
+        capturedEmit({ type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs: 1_700_000_000_000 });
+
+        const stepEvent = captured[0]!;
+        if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
+        expect(stepEvent.model).toBe("anthropic/claude-swapped");
+    });
+
+    test("artifactRegistry captured at registration stamps the NEW name on a command event after a swap", async () => {
+        const comp = testComposition();
+        const deps = buildSandboxStepDeps(comp);
+        const capturedRegistry = deps.artifactRegistry;
+
+        comp.sandboxEmitters.swap("anthropic/claude-swapped");
+
+        captured = [];
+        Bus.on("inflexa", spy);
+        // A command-producing registration: the shared producer record makes the registry emit a
+        // `prov.command_executed` whose `model` carries the stamped name.
+        const cmdRecord = {
+            outputPath: "output/r.csv",
+            producer: { type: "command", command: "python3 x.py", exitCode: 0, durationMs: 1, timestamp: "t" },
+            inputs: [],
+            scriptPath: null,
+        };
+        const collector = { getRecords: () => [cmdRecord], getTrackedInputs: () => [] } as unknown as ProvenanceCollector;
+        const input: ArtifactRegistrationInput = {
+            resourceId: "an-1",
+            runId: "run-1",
+            stepId: "step-1",
+            artifacts: [{ stepId: "step-1", runId: "run-1", path: "output/r.csv", size: 7, type: "output", hash: "sha256:deadbeef" }],
+            collector,
+        };
+        await capturedRegistry.register(input, noSession);
+
+        const cmdEvent = captured.find((e) => e.type === "prov.command_executed");
+        if (cmdEvent?.type !== "prov.command_executed") throw new Error("expected prov.command_executed");
+        expect(cmdEvent.model).toBe("anthropic/claude-swapped");
     });
 });
 

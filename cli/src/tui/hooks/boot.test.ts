@@ -123,7 +123,7 @@ describe("boot store transitions", () => {
     });
 });
 
-// The agent-models store mirrors the live agent switch (agent-model-selection group 4). These drive the REAL
+// The agent-models store mirrors the live agent switch. These drive the REAL
 // switch (agent_switch.ts) over a fake wiring and assert the reactive cell tracks it: seeded at the ready
 // edge, updated on an idle swap, and showing a scheduled switch as pending until it lands.
 describe("agent-models store (watchAgentModels)", () => {

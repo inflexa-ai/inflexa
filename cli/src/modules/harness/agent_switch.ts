@@ -6,7 +6,7 @@ import type { StampedEvent } from "../../types/events.ts";
 import type { ProvModelId } from "../../types/prov.ts";
 import { AGENT_NAMES, type AgentName } from "./config.ts";
 
-// The live agent-model switch (agent-model-selection D4). Two cooperating pieces live here because they
+// The live agent-model switch. Two cooperating pieces live here because they
 // are one decision: an agent-work GAUGE that reads whether any agent work is in flight, and the
 // pending-selection CONTROLLER that applies a persisted agent pick either immediately (gauge idle) or
 // at the moment the LAST in-flight work settles (gauge busy). Both are process singletons — there is
@@ -14,12 +14,14 @@ import { AGENT_NAMES, type AgentName } from "./config.ts";
 //
 // The mechanism is reconstruction-at-idle, never a mid-flight field flip. Application rebuilds the
 // affected agent's provider instance and — for the sandbox agent — its provenance emitters WITH the new
-// `{provider}/{model}` name (preserving PR #70's construction-time-stamping contract), then swaps them
+// `{provider}/{model}` name stamped at construction, then swaps them
 // atomically while the gauge is idle so no request observes a mix. The registered DBOS workflows are
-// NOT re-registered: they reach the swapped objects through stable delegating handles (the agent's
-// {@link SwappableChatProvider}) and through the deps-bundle fields they read lazily per-invocation
-// (the emitters, re-pointed by the `swapSandboxEmitters` closure the boot supplies). In-flight work
-// keeps the instances it started with because the swap waits for idle.
+// NOT re-registered: they reach the swapped objects through stable delegating handles injected once at
+// composition — the agent's {@link SwappableChatProvider} and the sandbox emitters' delegating
+// `artifactRegistry` / `emitProvenance` (re-pointed by the `swapSandboxEmitters` closure the boot
+// supplies). A swap replaces only the cli-owned inner behind each handle, so no field of a
+// consumer-held object is ever mutated and correctness never rides on when a workflow reads its deps.
+// In-flight work keeps the instances it started with because the swap waits for idle.
 
 /**
  * A {@link ChatProvider} whose delegated inner target can be swapped at runtime. The agent's provider on
@@ -30,15 +32,15 @@ import { AGENT_NAMES, type AgentName } from "./config.ts";
  */
 export type SwappableChatProvider = ChatProvider & {
     /**
-     * Replace the delegated inner target. Called ONLY at the idle transition (tasks 3.2/3.3) — the
+     * Replace the delegated inner target. Called ONLY at the idle transition — the
      * caller (the controller) swaps while {@link isAgentWorkIdle} holds, so no in-flight request ever
      * observes a mid-flight change of model.
      */
     swap(next: ChatProvider): void;
     /**
      * The live inner target. Introspection only — production reads an agent's current model from
-     * {@link currentAgentModels}, never by unwrapping this. Kept so the D-SHARE invariant (coincident
-     * agents share ONE underlying provider instance) stays assertable through the per-agent wrappers.
+     * {@link currentAgentModels}, never by unwrapping this. Kept so the invariant that coincident
+     * agents share ONE underlying provider instance stays assertable through the per-agent wrappers.
      */
     readonly current: ChatProvider;
 };
@@ -71,14 +73,14 @@ export function createSwappableProvider(initial: ChatProvider): SwappableChatPro
 
 /**
  * The live inner provider behind a possibly-swappable handle, or the provider itself when it is a plain
- * one. Lets a caller compare the UNDERLYING instances of two agent handles (the D-SHARE composition
- * invariant) without unwrapping the delegating wrapper by hand.
+ * one. Lets a caller compare the UNDERLYING instances of two agent handles — proving that agents on the
+ * same model share one instance — without unwrapping the delegating wrapper by hand.
  */
 export function agentProviderInner(provider: ChatProvider): ChatProvider {
     return "current" in provider && "swap" in provider ? (provider as SwappableChatProvider).current : provider;
 }
 
-// ---- Agent-work gauge (task 3.1) ----------------------------------------------------------------
+// ---- Agent-work gauge ---------------------------------------------------------------------------
 
 // One token per discrete unit of in-flight agent work. Idle ⇔ empty. A Set keyed by a stable id makes
 // enter/leave idempotent, which is what lets DBOS recovery re-emit `run_started` for a reclaimed run
@@ -151,13 +153,13 @@ export function enterChatTurn(): () => void {
 
 /**
  * Report a data profile's run state into the gauge. Push-fed by a host observer (the TUI's live
- * data-profile status watch — agent-model-selection group 4) rather than owned here, because the data
+ * data-profile status watch) rather than owned here, because the data
  * profile is a fire-and-forget DBOS workflow (`DBOS.startWorkflow`, handle not surfaced) that emits NO
  * `prov.*` bus events, so its running phase is observable ONLY through the `cortex_analysis_state`
  * ledger — which a synchronous gauge cannot read at decision time. The runtime module therefore cannot
  * self-observe a profile the way it observes runs (bus) and chat turns (call-site bracket); it exposes
  * THIS seam so the surface that already polls that ledger feeds start/settle. Absent such a feed a
- * post-boot profile is untracked — a documented boundary the group-4 status wiring closes.
+ * post-boot profile is untracked — a documented boundary the TUI status wiring closes.
  */
 export function noteDataProfileState(analysisId: string, running: boolean): void {
     const token = `data-profile:${analysisId}`;
@@ -171,7 +173,7 @@ export function __resetGaugeForTest(): void {
     idleListeners.clear();
 }
 
-// ---- Pending-selection controller + public seam (tasks 3.2/3.3) ---------------------------------
+// ---- Pending-selection controller + public seam ------------------------------------------------
 
 /**
  * The boot-supplied wiring the switch reconstructs through. The boot owns provider construction and the
@@ -185,12 +187,13 @@ export type AgentSwitchWiring = {
     readonly rebuildProvider: (model: string) => ChatProvider;
     /**
      * Re-point the sandbox agent's provenance emitters (artifact registry + run-lifecycle emitter) at
-     * new instances constructed WITH `name`. Supplied by the boot because it holds the registered deps
-     * bundles those emitters live on; the workflows read them lazily, so a re-point at idle re-stamps
-     * every FUTURE step while in-flight steps keep theirs.
+     * new inners constructed WITH `name`. Supplied by the boot because it owns the emitter holder the
+     * run-engine bundles injected as stable delegating handles; a re-point swaps only the inner behind
+     * those handles, so every FUTURE step re-stamps while in-flight steps keep theirs — and a workflow
+     * that snapshotted its deps field still observes the change.
      */
     readonly swapSandboxEmitters: (name: ProvModelId) => void;
-    /** The connection's provider slug — constant across an agent swap (D-SHARE: one connection), so only the model half of the provenance name changes. */
+    /** The connection's provider slug — constant across an agent swap (one shared connection), so only the model half of the provenance name changes. */
     readonly modelProvider: string;
     /** The models each agent booted on — the switch's starting `current` state. */
     readonly initialModels: Readonly<Record<AgentName, string>>;
@@ -208,7 +211,7 @@ type ActiveSwitch = {
 
 let active: ActiveSwitch | null = null;
 
-// Group-4 (TUI) reactors, notified on any current/pending change. Module-level so they survive the
+// TUI reactors, notified on any current/pending change. Module-level so they survive the
 // callback registration pattern; cleared when the runtime tears down.
 const stateListeners = new Set<() => void>();
 
@@ -283,7 +286,7 @@ export function clearAgentSwitch(): void {
 }
 
 /**
- * Apply — or schedule — an agent model change on the LIVE runtime (agent-model-selection D4). Assumes the
+ * Apply — or schedule — an agent model change on the LIVE runtime. Assumes the
  * caller already persisted the pick to `models.agents.<agent>` (config is the durable truth; this handles
  * only the runtime application). Returns `applied` when the change took effect immediately (the gauge
  * was idle, or the model already matched), or `scheduled` when it was recorded pending because agent

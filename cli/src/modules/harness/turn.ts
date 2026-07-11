@@ -141,7 +141,7 @@ type RunPhase = { readonly kind: "ok"; readonly fallbackText: string } | { reado
 export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = realTurnSeams): Promise<TurnOutcome> {
     const { pool, conversationAgent, chat, history, session, emit, signal, analysisId, threadId, userInput } = args;
 
-    // Bracket the whole turn as in-flight agent work (agent-model-selection 3.1): an agent switch requested
+    // Bracket the whole turn as in-flight agent work: an agent switch requested
     // mid-turn defers to the turn boundary, and the `finally` settling this token lands a pending switch
     // before the next turn begins. Bracketing HERE covers both surfaces — the TUI hook and the REPL both
     // drive this one engine — which is why the instrumentation is on the shared seam, not the call sites.

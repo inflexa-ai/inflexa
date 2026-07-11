@@ -1,44 +1,6 @@
-# agent-model-selection Specification
+# agent-model-selection — delta
 
-## Purpose
-Per-agent model selection over the one shared model connection: the `models.agents` config map
-for the two user-facing agents (conversation, sandbox), per-agent resolution and provider
-construction, the Provider-category palette commands with dynamic model listing, and the
-live/scheduled application semantics gated on agent-work idleness. Created by archiving change
-select-seat-models.
-## Requirements
-### Requirement: Per-agent model configuration over the shared connection
-
-The `models` config block SHALL carry an `agents` map with the two user-facing agents —
-`conversation` (the chat agent and its sub-agents) and `sandbox` (the catalog step agents, data
-profiling, and the ephemeral runner) — each an optional model id served by the ONE configured
-connection (`model-connection`); agent entries SHALL NOT name their own provider or endpoint.
-Internal model consumers (run synthesis, post-step metadata/summary, target assessment) SHALL
-follow the `sandbox` agent. Each agent's model resolves in order: `models.agents.<agent>` →
-`harness.model` (legacy both-agents fallback) → the connection's mode default (cliproxy
-auto-resolve under the provider-family guard; in direct mode an agent without a resolvable model
-fails boot actionably). The composition SHALL construct one chat-provider instance per DISTINCT
-resolved agent model over the shared connection, and every consumer of an agent's model identity
-(agent definitions, provenance emitters) SHALL receive that agent's resolved value.
-
-#### Scenario: Two agents, two models, one connection
-
-- **WHEN** the connection is cliproxy/anthropic and `models.agents` is `{ conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" }`
-- **THEN** chat turns run on `claude-opus-4-8`, step/profile agents run on `claude-sonnet-4-5`,
-  both against the same proxy endpoint and key, and provenance records
-  `anthropic/claude-sonnet-4-5` on step and command activities
-
-#### Scenario: Absent agents map preserves single-model behavior
-
-- **WHEN** `models.agents` is absent and `harness.model` (or the cliproxy default) resolves one id
-- **THEN** both agents resolve to that id, one provider instance is constructed, and behavior is
-  identical to the pre-change composition
-
-#### Scenario: Internal consumers follow the sandbox agent
-
-- **WHEN** the agents resolve to distinct models and a run reaches synthesis and post-step
-  metadata generation
-- **THEN** those activities run under the `sandbox` agent's model and provider
+## MODIFIED Requirements
 
 ### Requirement: Palette commands switch an agent's model through a listing picker
 
@@ -122,22 +84,3 @@ SHALL defer, never apply.
 - **THEN** the emitted event carries the NEW `{provider}/{model}` name — the swap is effective
   regardless of the consumer's read discipline, because the captured reference is the stable
   delegating handle
-
-### Requirement: The TUI surfaces the connection and the active and pending agent models
-
-The TUI SHALL render, from the runtime's boot/status state: the shared connection's identity —
-the configured provider slug and mode (`cliproxy` or `direct`) — and the active model of each
-user-facing agent, and SHALL surface a pending switch as such (selection made, applies when
-agent work settles) until it lands. The boot/status state SHALL carry per-agent resolved models,
-pending selections, and the connection identity.
-
-#### Scenario: Status shows the connection and what each agent runs on
-
-- **WHEN** the runtime is ready on a cliproxy/anthropic connection with distinct agent models
-- **THEN** the user can see the provider (`anthropic`), the mode, and both active models in the
-  TUI status surface without opening config
-
-#### Scenario: Pending switch is visible, not silent
-
-- **WHEN** a switch is scheduled behind a running analysis
-- **THEN** the TUI shows the pending selection and clears the pending state once applied

@@ -23,14 +23,12 @@ import {
     type AgentDefinition,
     type AgentSession,
     type AiSdkProviderConfig,
-    type ArtifactRegistry,
     type ChatProvider,
     type ConversationAssemblyDeps,
     type CoreWorkflowDeps,
     type DataProfileTriggerDeps,
     type DbosConfig,
     type EmbeddingProvider,
-    type ExecuteAnalysisDeps,
     type ExecuteAnalysisInput,
     type ExecuteAnalysisResult,
     type MachineBudget,
@@ -39,7 +37,6 @@ import {
     type RegisterReaperDeps,
     type RunAuthorizer,
     type RunLauncher,
-    type RunProvenanceEvent,
     type WatchdogDeps,
 } from "@inflexa-ai/harness";
 
@@ -63,7 +60,7 @@ import {
     type ModelConnectionIdentity,
 } from "./config.ts";
 import { noopExecIngress, startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
-import { createBusArtifactRegistry, createRunProvenanceEmitter } from "./prov_bridge.ts";
+import { createSwappableSandboxEmitters } from "./prov_bridge.ts";
 import {
     buildEphemeralDeps,
     buildExecuteAnalysisDeps,
@@ -116,7 +113,7 @@ export type RunTriggerDeps = {
 export type HarnessRuntime = {
     /**
      * The conversation agent's backend — the model id + chat-provider instance the `chat`/TUI path
-     * drives (`agent-model-selection` D1). `chat` passes {@link AgentBackend.provider} to `runAgent`
+     * drives. `chat` passes {@link AgentBackend.provider} to `runAgent`
      * without re-resolving the model or key; the boot store surfaces {@link AgentBackend.model}.
      */
     readonly conversation: AgentBackend;
@@ -142,9 +139,10 @@ export type HarnessRuntime = {
     readonly conversationAgent: AgentDefinition;
     /**
      * The shared connection's identity (provider slug + mode) the runtime booted on — the fact the TUI
-     * status surface renders beside the per-agent models (`agent-model-selection` group 7). Stamped once
-     * at boot from the resolved connection and never changed by a live agent-model swap (D-SHARE: one
-     * connection across agents), so the boot store can seed it a single time at the ready edge.
+     * status surface renders beside the per-agent models. Stamped once
+     * at boot from the resolved connection and never changed by a live agent-model swap (the connection
+     * is shared across agents, so a swap changes only a model), so the boot store can seed it a single
+     * time at the ready edge.
      */
     readonly connection: ModelConnectionIdentity;
     readonly ingress: ExecIngress;
@@ -240,8 +238,8 @@ export type BootSeams = {
      */
     readonly assemble: typeof assembleCoreRuntime;
     /**
-     * Cancel this executor's PENDING `ephemeral:*` rows BEFORE launch (design
-     * D2). Registering the ephemeral workflow makes a crashed turn's row
+     * Cancel this executor's PENDING `ephemeral:*` rows BEFORE launch.
+     * Registering the ephemeral workflow makes a crashed turn's row
      * re-dispatchable by recovery; the only race-free cancel point is a direct
      * pre-launch system-DB UPDATE.
      */
@@ -375,7 +373,7 @@ async function bootHarnessRuntimeOnce(
     if (embedderResult.isErr()) return err({ type: "embedding_unresolved", cause: embedderResult.error });
     const embedding = embedderResult.value;
 
-    // The chat credential is mode-specific (design D4/D6): cliproxy discovers the
+    // The chat credential is mode-specific: cliproxy discovers the
     // minted proxy client key (and contacts the proxy for auto-resolve below);
     // direct reads the env secret and NEVER touches the proxy. Resolved before the
     // probe so a missing credential fails as cheaply as the proxy-key path always did.
@@ -402,7 +400,7 @@ async function bootHarnessRuntimeOnce(
             : err({ type: "embedding_probe_failed", detail: e.detail });
     }
 
-    // Per-agent model resolution (design D2/D5). Each user-facing agent resolves in order:
+    // Per-agent model resolution. Each user-facing agent resolves in order:
     // `models.agents.<agent>` → `harness.model` (legacy both-agents fallback) → the connection's mode
     // default. cliproxy's default is the proxy's auto-resolved id (the `/models` ranking); direct has
     // no default, so an agent left with nothing fails boot — the agents that reached this are trusted to
@@ -539,11 +537,11 @@ async function bootHarnessRuntimeOnce(
         // here — the pre-flight above returned if either was null.
         //
         // One provider instance per DISTINCT resolved agent model over the SHARED
-        // connection (design D-SHARE): the wire model is baked into each `ChatProvider`
+        // connection: the wire model is baked into each `ChatProvider`
         // at construction (`ChatRequest` carries no model), so two agents on different
         // models mean two instances — but two agents on the SAME model share ONE instance
-        // referentially, which is the common no-`agents` config (one provider, exactly as
-        // before this change). One construction path for both connection modes: the
+        // referentially, which is the common no-`agents` config (one provider). One
+        // construction path for both connection modes: the
         // resolved connection + a bound model becomes an `AiSdkProviderConfig`. cliproxy
         // resolves to the Anthropic kind at the owned proxy URL with the proxy client key
         // — deliberately identical to what the harness's `createAnthropicProvider`
@@ -566,12 +564,12 @@ async function bootHarnessRuntimeOnce(
                     };
         const buildProvider = (agentModel: string): ChatProvider => createConfiguredAiSdkProvider({ resolveBilling, config: providerConfigFor(agentModel) });
         // Coincident agent models share the one INNER instance; only a genuinely distinct sandbox model
-        // constructs a second inner over the same connection (D-SHARE: one connection, one instance per
+        // constructs a second inner over the same shared connection (one connection, one instance per
         // DISTINCT model).
         const conversationInner = buildProvider(conversationModel);
         const sandboxInner = sandboxModel === conversationModel ? conversationInner : buildProvider(sandboxModel);
         // Each agent gets its OWN swappable handle even when the inners coincide, so a later switch of one
-        // agent re-points only that agent (agent-model-selection D4). The handle is the stable reference every
+        // agent re-points only that agent. The handle is the stable reference every
         // consumer captures — the run-engine deps bundles, the conversation agent's sub-agents, and the
         // streaming chat wrapper — so swapping its inner at the idle transition reaches them all at once.
         const conversationProvider = createSwappableProvider(conversationInner);
@@ -606,13 +604,20 @@ async function bootHarnessRuntimeOnce(
         // single seam realization drives every durable-run launch on this analysis.
         const runLauncher = createDbosRunLauncher();
 
+        // ONE holder of the sandbox agent's provenance emitters, stamped WITH the boot `{provider}/{model}`
+        // name and injected as STABLE delegating handles into the run-engine deps bundles below. The
+        // registered workflows hold these identities for the runtime's life; a live sandbox-model switch
+        // re-points only the cli-owned inner behind them via `emitters.swap`, so
+        // no harness-held object is mutated and the swap lands regardless of the workflows' read discipline.
+        const emitters = createSwappableSandboxEmitters(`${connection.provider}/${sandboxModel}`);
+
         const composition: RunEngineComposition = {
             pool,
             embedding,
             sandboxClient,
             workspaceFs,
             resolveWorkspaceRoot,
-            // Both user-facing agents carried on the one composition (design D1). The run-engine
+            // Both user-facing agents carried on the one composition. The run-engine
             // bundles draw `sandbox`; `conversation` rides so boot has a single carrier for the
             // conversation assembly and the handle. Each carries its resolved model bare (the API
             // model param); the prov-bridge emitters compose the `{provider}/{model}` provenance name
@@ -620,8 +625,10 @@ async function bootHarnessRuntimeOnce(
             conversation: conversationBackend,
             sandbox: sandboxBackend,
             // The connection's configured provider slug — the attested fact provenance records,
-            // shared across agents (design D2/D-SHARE), never derived from a model id.
+            // shared across agents, never derived from a model id.
             modelProvider: connection.provider,
+            // The stable delegating sandbox emitters the run-engine bundles inject.
+            sandboxEmitters: emitters,
             skillsDir: cfg.skillsDir,
             bioKeys: cfg.bioKeys,
         };
@@ -637,22 +644,14 @@ async function bootHarnessRuntimeOnce(
         // dead code. Everything lands before `launch`, the invariant that
         // matters: recovery resolves in-flight workflows by registered name, so
         // nothing the cli can trigger may register after.
-        // Captured as `buildExecuteAnalysis` runs inside `assembleCoreRuntime` (the parent's deps are
-        // built there, over the registered child callable, and otherwise unreachable afterward). The live
-        // agent switch re-points this bundle's `emitProvenance` field at the idle transition, so boot must
-        // hold the exact object the registered workflow reads.
-        let capturedExecuteAnalysisDeps: ExecuteAnalysisDeps | null = null;
         const workflows: CoreWorkflowDeps = {
             sandboxStep: buildSandboxStepDeps(composition),
-            buildExecuteAnalysis: (sandboxStep) => {
-                capturedExecuteAnalysisDeps = buildExecuteAnalysisDeps(composition, sandboxStep, runAuthorizer);
-                return capturedExecuteAnalysisDeps;
-            },
+            buildExecuteAnalysis: (sandboxStep) => buildExecuteAnalysisDeps(composition, sandboxStep, runAuthorizer),
             executeTargetAssessment: buildExecuteTargetAssessmentDeps(composition, runAuthorizer),
             // The data-profile deps stay an inline bundle: every field is a shared
             // backend plus the shared authorizer, so there is no reusable builder to
             // extract (unlike the two run-engine bundles). Data profiling is a SANDBOX-agent
-            // activity (`agent-model-selection` D1), so it takes the sandbox provider + model.
+            // activity, so it takes the sandbox provider + model.
             dataProfile: {
                 provider: sandboxProvider,
                 pool,
@@ -670,7 +669,7 @@ async function bootHarnessRuntimeOnce(
         // The conversation agent's dep surface minus the three fields
         // `assembleCoreRuntime` injects itself (both workflow callables + the resource
         // policy). Every non-chat backend is the shared instance; the chat provider +
-        // model are the CONVERSATION agent's (`agent-model-selection` D1). `templatesDir` is
+        // model are the CONVERSATION agent's. `templatesDir` is
         // non-null past the pre-flight gate; `chrome: {}` is the honest local default —
         // with the unavailable preview publisher, report preview short-circuits before
         // any Chrome connection.
@@ -690,21 +689,16 @@ async function bootHarnessRuntimeOnce(
         };
         const core = seams.assemble({ conversation, workflows, resourcePolicy: cfg.resourcePolicy });
 
-        // Re-point the sandbox agent's provenance emitters when its model switches live (agent-model-selection
-        // D4). The registered sandbox-step and execute-analysis workflows read `deps.artifactRegistry` /
-        // `deps.emitProvenance` lazily per-invocation (verified: `registerSandboxStep`/
-        // `registerExecuteAnalysis` close over the deps object and dereference these fields inside the
-        // body), so reassigning them re-stamps every FUTURE step/run with emitters constructed WITH the new
-        // `{provider}/{model}` name — construction-time stamping preserved (PR #70). In-flight work, excluded
-        // by the idle gate, keeps the emitters it started with. The `as` narrows to a mutable view of a
-        // field WE built (the run-deps bundles above), not harness-owned state; the conversation agent needs
-        // no equivalent because chat turns write the Solid store, never the provenance bus.
-        const swapSandboxEmitters = (name: `${string}/${string}`): void => {
-            (workflows.sandboxStep as { artifactRegistry: ArtifactRegistry }).artifactRegistry = createBusArtifactRegistry(name);
-            if (capturedExecuteAnalysisDeps) {
-                (capturedExecuteAnalysisDeps as { emitProvenance?: (event: RunProvenanceEvent) => void }).emitProvenance = createRunProvenanceEmitter(name);
-            }
-        };
+        // Re-point the sandbox agent's provenance emitters when its model switches live.
+        // The run-engine bundles injected the holder's STABLE `artifactRegistry` / `emitProvenance`
+        // handles, so the harness holds ONE identity for each for the runtime's life; a swap replaces only
+        // the cli-owned inner those handles delegate to, rebuilt WITH the new `{provider}/{model}` name
+        // stamped at construction. Correctness is therefore independent of when or how often
+        // the registered workflows read their deps fields — a field snapshotted at registration still sees
+        // the swap — so no harness read-discipline assumption is load-bearing here. In-flight work, excluded
+        // by the idle gate, keeps the emitters it started with; the conversation agent needs no equivalent
+        // because chat turns write the Solid store, never the provenance bus.
+        const swapSandboxEmitters = (name: `${string}/${string}`): void => emitters.swap(name);
         // Install the live-switch controller BEFORE `launch`: its run-bus subscription must be attached
         // when DBOS recovery re-emits `run_started` for reclaimed runs, or the gauge would miss them and
         // let a switch land mid-recovery.
@@ -754,7 +748,8 @@ async function bootHarnessRuntimeOnce(
             runTriggerDeps: { pool, executeAnalysis: core.workflows.executeAnalysis, runLauncher, runAuthorizer, budget: cfg.resourcePolicy.budget },
             conversationAgent: core.conversationAgent,
             // The connection's identity the boot resolved — surfaced by the status UI, immutable across
-            // live agent-model swaps (D-SHARE), so `provider`/`mode` are read straight off the connection.
+            // live agent-model swaps (the connection is shared by both agents, so a swap changes only a
+            // model), so `provider`/`mode` are read straight off the connection.
             connection: { provider: connection.provider, mode: connection.mode },
             ingress,
         };

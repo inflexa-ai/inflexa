@@ -116,16 +116,16 @@ describe("provider configuration front door", () => {
             apiKey: "shared-key",
             fetch: cap.fetch,
         };
-        const conversationSeat = createConfiguredAiSdkProvider({ config: { ...connection, model: "seat-model-a" }, resolveBilling: async () => ({}) });
-        const sandboxSeat = createConfiguredAiSdkProvider({ config: { ...connection, model: "seat-model-b" }, resolveBilling: async () => ({}) });
+        const conversationProvider = createConfiguredAiSdkProvider({ config: { ...connection, model: "model-a" }, resolveBilling: async () => ({}) });
+        const sandboxProvider = createConfiguredAiSdkProvider({ config: { ...connection, model: "model-b" }, resolveBilling: async () => ({}) });
 
-        const first = await conversationSeat.chat(request, makeSession());
-        const second = await sandboxSeat.chat(request, makeSession());
+        const first = await conversationProvider.chat(request, makeSession());
+        const second = await sandboxProvider.chat(request, makeSession());
 
         expect(first.isOk()).toBe(true);
         expect(second.isOk()).toBe(true);
-        // Same shared connection config; each seat's request carries the model
-        // its provider instance was constructed with — no per-request model.
-        expect(cap.bodies.map((body) => body.model)).toEqual(["seat-model-a", "seat-model-b"]);
+        // Same shared connection config; each provider instance's request carries the
+        // model it was constructed with — no per-request model.
+        expect(cap.bodies.map((body) => body.model)).toEqual(["model-a", "model-b"]);
     });
 });

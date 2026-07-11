@@ -36,11 +36,9 @@ export type ProvActor =
  * `anthropic/claude-opus-4-8`, `openai/gpt-5`), enforced by the template-literal type. The model
  * part is always the RESOLVED id (the config override, or the proxy-default resolution at boot;
  * never a config `null`). The provider part is an OPEN vocabulary — no closed union to keep in
- * step with any provider list; it becomes a user-configured fact once provider+model config lands
- * (PR #70 review), and until then the boot derives it from the model family (`unknown` when the
- * family is unrecognized — a fact we cannot attest is recorded as exactly that, never guessed
- * silently). NEVER carries API keys, credentialed URLs, or prompt content — the model's identity
- * is the whole record.
+ * step with any provider list — and is the connection's configured provider slug recorded verbatim,
+ * never derived from a model id. NEVER carries API keys, credentialed URLs, or prompt content — the
+ * model's identity is the whole record.
  */
 export type ProvModelId = `${string}/${string}`;
 

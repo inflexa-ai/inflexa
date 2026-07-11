@@ -125,7 +125,7 @@ describe("connection config writes", () => {
         writeDirectConnection({ provider: "deepseek", baseURL: "https://api.deepseek.com/v1" })._unsafeUnwrap();
         expect(readModels().agents).toEqual({ chat: "y" });
         // The written connection carries exactly mode/provider/baseURL — no apiKey/token field. The
-        // direct-mode secret lives only in INFLEXA_MODEL_API_KEY, never in config (design D4).
+        // direct-mode secret lives only in INFLEXA_MODEL_API_KEY, never in config.
         expect(Object.keys(readModels().connection as Record<string, unknown>).sort()).toEqual(["baseURL", "mode", "provider"]);
     });
 });

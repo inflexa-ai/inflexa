@@ -198,7 +198,7 @@ describe("createChatPrinter", () => {
     });
 });
 
-// The classification pieces the TUI adapter reuses instead of duplicating (D3).
+// The classification pieces the TUI adapter reuses instead of duplicating.
 describe("isSubAgentEvent", () => {
     test("top-level provenance (callPath length 1) is NOT sub-agent", () => {
         expect(isSubAgentEvent({ type: "tool-started", source: TOP, toolUseId: "t1", name: "grep", input: {} })).toBe(false);

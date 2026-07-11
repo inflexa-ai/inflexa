@@ -4,7 +4,7 @@ import type { AgentChat, AgentDefinition, ChatProvider, EmitFn, ModelMessage, Po
 
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
-import { createBusArtifactRegistry, createRunProvenanceEmitter } from "./prov_bridge.ts";
+import { createSwappableSandboxEmitters } from "./prov_bridge.ts";
 import { buildChatSession, runChatTurn, type ChatTurnSeams } from "./turn.ts";
 import {
     __resetGaugeForTest,
@@ -45,10 +45,10 @@ function agentModel(handle: SwappableChatProvider): string {
     return (agentProviderInner(handle) as TaggedProvider).__model;
 }
 
-// Install a switch over fully-faked wiring. `swapSandboxEmitters` mirrors `runtime.ts`: it reconstructs
-// the sandbox run emitter WITH the new name into a holder, and the returned emit helpers read that
-// holder at call time — so an event emitted before a swap carries the old name and one after carries the
-// new, exactly as an in-flight run's steps vs. a post-swap run's steps would.
+// Install a switch over faked wiring. `swapSandboxEmitters` matches `runtime.ts`'s realization: it
+// delegates to a REAL {@link createSwappableSandboxEmitters} holder, and the returned emit helpers read
+// that holder's stable emitter at call time — so an event emitted before a swap carries the old name and
+// one after carries the new, exactly as an in-flight run's steps vs. a post-swap run's steps would.
 function setup(models: { conversation: string; sandbox: string } = { conversation: "claude-conv", sandbox: "claude-sand" }): {
     swappable: Record<"conversation" | "sandbox", SwappableChatProvider>;
     rebuildCount: () => number;
@@ -61,7 +61,7 @@ function setup(models: { conversation: string; sandbox: string } = { conversatio
         conversation: createSwappableProvider(fakeProvider(models.conversation)),
         sandbox: createSwappableProvider(fakeProvider(models.sandbox)),
     };
-    let sandboxRunEmitter = createRunProvenanceEmitter(`anthropic/${models.sandbox}`);
+    const emitters = createSwappableSandboxEmitters(`anthropic/${models.sandbox}`);
     const emitterSwapNames: string[] = [];
     let rebuilds = 0;
 
@@ -71,12 +71,13 @@ function setup(models: { conversation: string; sandbox: string } = { conversatio
             rebuilds += 1;
             return fakeProvider(model);
         },
+        // `runtime.ts` realizes this seam as `emitters.swap(name)`; the fake delegates to the SAME real
+        // holder so the emit helpers below read through the stable delegating handle the boot injects.
+        // `emitterSwapNames` is a test-observation layered on top (proving the controller called the seam
+        // with the composed name), never a substitute for the holder's own swap.
         swapSandboxEmitters: (name) => {
             emitterSwapNames.push(name);
-            // The registry is reconstructed identically in the real closure; keep the parity even though
-            // these tests assert through the run emitter's `prov.step_completed`.
-            createBusArtifactRegistry(name);
-            sandboxRunEmitter = createRunProvenanceEmitter(name);
+            emitters.swap(name);
         },
         modelProvider: "anthropic",
         initialModels: { conversation: models.conversation, sandbox: models.sandbox },
@@ -97,9 +98,9 @@ function setup(models: { conversation: string; sandbox: string } = { conversatio
         swappable,
         rebuildCount: () => rebuilds,
         emitterSwapNames,
-        emitRunStarted: (runId) => sandboxRunEmitter(runStarted(runId)),
-        emitRunCompleted: (runId) => sandboxRunEmitter(runCompleted(runId)),
-        emitStepCompleted: () => sandboxRunEmitter(stepCompleted),
+        emitRunStarted: (runId) => emitters.emitProvenance(runStarted(runId)),
+        emitRunCompleted: (runId) => emitters.emitProvenance(runCompleted(runId)),
+        emitStepCompleted: () => emitters.emitProvenance(stepCompleted),
     };
 }
 
@@ -180,7 +181,7 @@ describe("agent switch — idle applies immediately", () => {
 
         expect(result).toEqual({ status: "applied" });
         expect(agentModel(h.swappable.conversation)).toBe("claude-chat-new");
-        // The sandbox agent's inner is untouched (independent per-agent handles — D4) and no emitter swapped
+        // The sandbox agent's inner is untouched (independent per-agent handles) and no emitter swapped
         // (the conversation agent drives no provenance).
         expect(agentProviderInner(h.swappable.sandbox)).toBe(sandboxInnerBefore);
         expect(h.emitterSwapNames).toEqual([]);
@@ -236,8 +237,8 @@ describe("agent switch — busy schedules, then lands at settlement", () => {
         expect(pendingAgentSelections().size).toBe(0);
     });
 
-    // The streaming-interruption defect (agent-model-selection task 8): the REPORTED gesture is switching
-    // the chat model WHILE a response streams. This drives the actual TUI turn engine (`runChatTurn`,
+    // The gesture under test: switching the chat model WHILE a response streams. This drives the actual
+    // TUI turn engine (`runChatTurn`,
     // which `conversation.send` awaits) — NOT a bare `enterChatTurn` — with a multi-chunk streaming
     // provider, and requests the switch from INSIDE the stream. It proves the gauge bracket the real
     // engine installs holds for the WHOLE streamed turn: the switch defers, the in-flight provider inner

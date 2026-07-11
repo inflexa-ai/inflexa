@@ -181,7 +181,7 @@ function agentLabel(agent: AgentName): string {
 }
 
 /**
- * Persist an agent's model pick to `models.agents.<agent>` (agent-model-selection D3: durable the instant it is
+ * Persist an agent's model pick to `models.agents.<agent>` (durable the instant it is
  * made), then hand it to the live runtime — which applies it immediately when idle or schedules it behind
  * in-flight agent work — and surface the outcome. Config is the source of truth, so a write failure stops
  * BEFORE any runtime change it would disagree with (next boot would only revert it).
@@ -201,15 +201,15 @@ function applyAgentSelection(agent: AgentName, model: string): void {
 }
 
 /**
- * The agent-parameterized model picker (agent-model-selection D6): a {@link SelectDialog} over the
+ * The agent-parameterized model picker: a {@link SelectDialog} over the
  * connection's live models with the agent's CURRENT model marked, degrading to a {@link PromptDialog}
- * free-text entry when listing failed (`models === null`, design D5). Purely presentational — the command
+ * free-text entry when listing failed (`models === null`). Purely presentational — the command
  * resolves the listing and wires `onSubmit` (persist + apply) and `onCancel` (close) — so it renders as an
  * inert design-gallery/test exhibit unchanged.
  */
 export function ModelPickerDialog(props: {
     agent: AgentName;
-    /** The connection's model ids, or `null` when listing failed (degrade to free-text entry — D5). */
+    /** The connection's model ids, or `null` when listing failed (degrade to free-text entry). */
     models: readonly string[] | null;
     /** The agent's currently-running model, marked `current` in the list and pre-filled in the free-text field. */
     current: string;
