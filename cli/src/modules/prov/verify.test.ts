@@ -141,7 +141,11 @@ async function captureConsole(fn: () => Promise<void>): Promise<{ output: string
         return { output, exitCode: process.exitCode };
     } finally {
         console.log = origLog;
-        process.exitCode = origExitCode;
+        // Bun ignores an `undefined` assignment to process.exitCode (Node treats it as a reset), so a
+        // captured failure code must be cleared with an explicit 0 — otherwise it leaks out of this
+        // helper and fails the whole single-process `bun test` run despite 0 failing tests. An unset
+        // code and 0 exit identically, so the substitution is behavior-preserving.
+        process.exitCode = origExitCode ?? 0;
     }
 }
 
