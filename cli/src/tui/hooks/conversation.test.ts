@@ -28,11 +28,12 @@ const SID = "s1";
 const AID = "a1";
 
 // A stub runtime whose pool/provider are never dereferenced: the fake engine drives the adapter and
-// returns an outcome without touching them. `createStreamingChat` reads `provider.capabilities` at
-// construction, so that one field is present; everything else is unused infrastructure.
+// returns an outcome without touching them. The chat path reads the CONVERSATION agent's provider, and
+// `createStreamingChat` reads `provider.capabilities` at construction, so that one field is present;
+// everything else is unused infrastructure.
 const stubRuntime = {
     pool: {},
-    provider: { capabilities: { toolCalling: true } },
+    conversation: { provider: { capabilities: { toolCalling: true } } },
     conversationAgent: {},
 } as unknown as HarnessRuntime;
 

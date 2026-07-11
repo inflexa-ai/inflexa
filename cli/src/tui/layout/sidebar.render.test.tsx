@@ -11,6 +11,7 @@ import { str256 } from "../../lib/types.ts";
 import { createAnalysis, addInputs } from "../../modules/analysis/analysis.ts";
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
 import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshSeams } from "../hooks/sidebar_live.ts";
+import { __setAgentModelsForTest, __setBootStateForTest } from "../hooks/boot.ts";
 import { Sidebar } from "./sidebar.tsx";
 import type { Analysis } from "../../types/analysis.ts";
 import type { CortexRunRow, DataProfileStatus } from "@inflexa-ai/harness";
@@ -35,6 +36,10 @@ afterEach(() => {
     rmSync(dirA, { recursive: true, force: true });
     rmSync(dirB, { recursive: true, force: true });
     __resetSidebarLiveForTest();
+    // The MODELS section reads the boot store's agentModels cell + the ready-state connection; reset both
+    // so one test's seed never bleeds into the next (mirrors __resetSidebarLiveForTest for the live sections).
+    __setAgentModelsForTest({ current: { conversation: "", sandbox: "" }, pending: new Map() });
+    __setBootStateForTest({ phase: "idle" });
 });
 
 // A minimal static Workspace: the test never swaps sessions, so a plain object (not the reactive
@@ -181,5 +186,61 @@ describe("Sidebar DATA PROFILE / RUNS live sections", () => {
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
         expect(frame).toContain("executeAnalysis");
         expect(frame).toContain("not profiled");
+    });
+});
+
+describe("Sidebar MODELS section", () => {
+    test("before the switch installs (empty models) the section reads 'runtime not ready'", async () => {
+        const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
+        expect(frame).toContain("MODELS");
+        // Two 'runtime not ready' lines can appear (DATA PROFILE + MODELS); assert MODELS is present and
+        // shows no model id.
+        expect(frame).toContain("runtime not ready");
+        expect(frame).not.toContain("chat claude");
+    });
+
+    test("renders each agent's active model", async () => {
+        __setAgentModelsForTest({ current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" }, pending: new Map() });
+        const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
+        expect(frame).toContain("MODELS");
+        expect(frame).toContain("chat");
+        expect(frame).toContain("claude-opus-4-8");
+        expect(frame).toContain("sandbox");
+        expect(frame).toContain("claude-sonnet-4-5");
+    });
+
+    test("a scheduled switch shows the pending model on its own indicator line", async () => {
+        __setAgentModelsForTest({
+            current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" },
+            pending: new Map([["sandbox", "claude-haiku-4-5"]]),
+        });
+        const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
+        expect(frame).toContain("claude-sonnet-4-5"); // still the active sandbox model
+        expect(frame).toContain("claude-haiku-4-5"); // the pending one
+        expect(frame).toContain("pending");
+    });
+});
+
+// The connection line (agent-model-selection group 7) rides the immutable boot-ready state, so each case
+// seeds a `ready` boot with the connection identity AND a non-empty agentModels (the section body is
+// gated on the switch's authority). It renders above the agent rows in both connection modes.
+describe("Sidebar MODELS connection line", () => {
+    test("cliproxy: shows the provider slug and the mode above the agent rows", async () => {
+        __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
+        __setAgentModelsForTest({ current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" }, pending: new Map() });
+        const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
+        expect(frame).toContain("MODELS");
+        expect(frame).toContain("conn");
+        expect(frame).toContain("anthropic"); // the configured provider slug
+        expect(frame).toContain("cliproxy"); // the connection mode
+    });
+
+    test("direct: shows the configured provider slug and the direct mode", async () => {
+        __setBootStateForTest({ phase: "ready", model: "deepseek-chat", connection: { provider: "deepseek", mode: "direct" } });
+        __setAgentModelsForTest({ current: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner" }, pending: new Map() });
+        const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
+        expect(frame).toContain("conn");
+        expect(frame).toContain("deepseek"); // the configured provider slug
+        expect(frame).toContain("direct"); // the connection mode
     });
 });

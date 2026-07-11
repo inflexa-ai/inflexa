@@ -10,12 +10,18 @@ import { env } from "../../lib/env.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { bootHarnessRuntime, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
+import { agentProviderInner } from "./agent_switch.ts";
 import type { ResolvedHarnessConfig, ResolvedModelConnection } from "./config.ts";
 import type { ExecIngress } from "./ingress.ts";
 
 /** A direct connection to a stubbed OpenAI-compatible endpoint — used by the direct-mode boot tests. */
 function directConnection(overrides: Partial<Extract<ResolvedModelConnection, { mode: "direct" }>> = {}): ResolvedModelConnection {
-    return { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1", protocol: "openai-compatible", ...overrides };
+    return { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1", protocol: "openai-compatible", agents: {}, ...overrides };
+}
+
+/** A cliproxy connection with the given provider and optional agent overrides — for the boot resolution tests. */
+function cliproxyConnection(provider: string, agents: ResolvedModelConnection["agents"] = {}): ResolvedModelConnection {
+    return { mode: "cliproxy", provider, agents };
 }
 
 let skillsDir: string;
@@ -205,12 +211,18 @@ describe("bootHarnessRuntime", () => {
             "launch",
         ]);
         expect(calls).not.toContain("ingress");
-        expect(runtime.model).toBe("claude-test-model");
+        // No `models.agents` and a single `harness.model` (claude-test-model): both agents resolve to it
+        // and share ONE underlying provider instance (D-SHARE). Each agent carries its own swappable HANDLE
+        // (so a later live switch of one agent re-points only that agent — agent-model-selection D4), but the
+        // handles delegate to the SAME inner, which is the referential invariant that matters.
+        expect(runtime.conversation.model).toBe("claude-test-model");
+        expect(runtime.sandbox.model).toBe("claude-test-model");
+        expect(agentProviderInner(runtime.sandbox.provider)).toBe(agentProviderInner(runtime.conversation.provider));
         expect(runtime.triggerDeps.workflow).toBeInstanceOf(Function);
-        // The assembled conversation agent + its provider are on the handle (the
-        // upcoming `chat` command drives `runAgent(conversationAgent, …, provider)`).
+        // The assembled conversation agent + its agent provider are on the handle (the `chat` command
+        // drives `runAgent(conversationAgent, …, conversation.provider)`).
         expect(runtime.conversationAgent.id).toBe("conversation-agent");
-        expect(runtime.provider).toBeDefined();
+        expect(runtime.conversation.provider).toBeDefined();
     });
 
     test("exposes run-trigger deps: the parent callable, a run launcher, and the run authorizer", async () => {
@@ -281,12 +293,16 @@ describe("bootHarnessRuntime", () => {
         }
     });
 
-    test("resolves the model from the proxy only when config has none", async () => {
+    test("resolves the model from the proxy only when config has none — both agents share the ONE auto-resolve", async () => {
         const calls: string[] = [];
-        const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig({ model: null }) });
+        const runtime = (await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig({ model: null }) }))._unsafeUnwrap();
 
-        expect(result._unsafeUnwrap().model).toBe("claude-from-proxy");
-        expect(calls).toContain("resolveModel");
+        // Both agents fall through to the proxy default; the auto-resolve is memoized, so `/models` is hit
+        // ONCE and both agents' swappable handles delegate to the resulting id's single provider instance.
+        expect(runtime.conversation.model).toBe("claude-from-proxy");
+        expect(runtime.sandbox.model).toBe("claude-from-proxy");
+        expect(agentProviderInner(runtime.sandbox.provider)).toBe(agentProviderInner(runtime.conversation.provider));
+        expect(calls.filter((c) => c === "resolveModel")).toHaveLength(1);
     });
 
     test("second boot reuses the runtime without re-running any seam", async () => {
@@ -402,7 +418,7 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({
             seams,
             config: testConfig({ model: null }),
-            connection: { mode: "cliproxy", provider: "anthropic" },
+            connection: cliproxyConnection("anthropic"),
         });
 
         expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_provider_mismatch", provider: "anthropic", model: "gemini-2.5-pro" });
@@ -421,10 +437,10 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({
             seams,
             config: testConfig({ model: null }),
-            connection: { mode: "cliproxy", provider: "openai" },
+            connection: cliproxyConnection("openai"),
         });
 
-        expect(result._unsafeUnwrap().model).toBe("gpt-4o");
+        expect(result._unsafeUnwrap().sandbox.model).toBe("gpt-4o");
         expect(calls).toContain("launch");
     });
 
@@ -433,10 +449,10 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({
             seams: recordingSeams(calls),
             config: testConfig({ model: "gpt-4o" }),
-            connection: { mode: "cliproxy", provider: "anthropic" },
+            connection: cliproxyConnection("anthropic"),
         });
 
-        expect(result._unsafeUnwrap().model).toBe("gpt-4o");
+        expect(result._unsafeUnwrap().sandbox.model).toBe("gpt-4o");
         expect(calls).toContain("launch");
     });
 
@@ -445,7 +461,7 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({
             seams: recordingSeams(calls),
             config: testConfig(),
-            connection: { mode: "cliproxy", provider: "anthropic", configError: { issues: "models.connection.baseURL: Required" } },
+            connection: { mode: "cliproxy", provider: "anthropic", agents: {}, configError: { issues: "models.connection.baseURL: Required" } },
         });
 
         expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_connection_invalid", issues: "models.connection.baseURL: Required" });
@@ -460,7 +476,9 @@ describe("bootHarnessRuntime", () => {
             connection: directConnection(),
         });
 
-        expect(result._unsafeUnwrap().model).toBe("some-alias-v2");
+        const runtime = result._unsafeUnwrap();
+        expect(runtime.conversation.model).toBe("some-alias-v2");
+        expect(runtime.sandbox.model).toBe("some-alias-v2");
         // The direct path reads the env secret, never the proxy client key, and never the proxy /models.
         expect(calls).toContain("readModelApiKey");
         expect(calls).not.toContain("readKey");
@@ -468,7 +486,7 @@ describe("bootHarnessRuntime", () => {
         expect(calls).toContain("launch");
     });
 
-    test("direct mode with no configured model fails boot with model_required (no proxy auto-resolve)", async () => {
+    test("direct mode with no configured model fails boot with model_required naming BOTH agents (no proxy auto-resolve)", async () => {
         const calls: string[] = [];
         const result = await bootHarnessRuntime({
             seams: recordingSeams(calls),
@@ -476,9 +494,73 @@ describe("bootHarnessRuntime", () => {
             connection: directConnection(),
         });
 
-        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_required" });
+        // Neither agent has an override nor a harness.model fallback, so the one actionable error names both.
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_required", agents: ["conversation", "sandbox"] });
         expect(calls).not.toContain("resolveModel");
         expect(calls).not.toContain("postgres");
+    });
+
+    test("direct mode with a per-agent override for only one agent fails naming just the unresolved agent", async () => {
+        const calls: string[] = [];
+        const result = await bootHarnessRuntime({
+            seams: recordingSeams(calls),
+            config: testConfig({ model: null }),
+            connection: directConnection({ agents: { conversation: "deepseek-chat" } }),
+        });
+
+        // conversation resolves from its override; sandbox has neither an override nor harness.model.
+        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_required", agents: ["sandbox"] });
+        expect(calls).not.toContain("postgres");
+    });
+
+    test("direct mode with both agents overridden boots on the distinct per-agent models, over two provider instances", async () => {
+        const calls: string[] = [];
+        const result = await bootHarnessRuntime({
+            seams: recordingSeams(calls),
+            config: testConfig({ model: null }),
+            connection: directConnection({ agents: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner" } }),
+        });
+
+        const runtime = result._unsafeUnwrap();
+        expect(runtime.conversation.model).toBe("deepseek-chat");
+        expect(runtime.sandbox.model).toBe("deepseek-reasoner");
+        // Distinct resolved models ⇒ two provider instances over the one connection (D-SHARE).
+        expect(runtime.sandbox.provider).not.toBe(runtime.conversation.provider);
+        expect(calls).toContain("launch");
+    });
+
+    test("per-agent resolution order: an agent override wins over harness.model, which is the both-agents fallback", async () => {
+        const calls: string[] = [];
+        // harness.model = claude-test-model is the fallback; only sandbox overrides it. conversation
+        // therefore rides the fallback and sandbox rides its own override — the D2 order, per agent.
+        const result = await bootHarnessRuntime({
+            seams: recordingSeams(calls),
+            config: testConfig({ model: "claude-test-model" }),
+            connection: cliproxyConnection("anthropic", { sandbox: "claude-sonnet-4-5" }),
+        });
+
+        const runtime = result._unsafeUnwrap();
+        expect(runtime.conversation.model).toBe("claude-test-model");
+        expect(runtime.sandbox.model).toBe("claude-sonnet-4-5");
+        expect(runtime.sandbox.provider).not.toBe(runtime.conversation.provider);
+        // An agent override is trusted like harness.model — the proxy /models is never consulted.
+        expect(calls).not.toContain("resolveModel");
+    });
+
+    test("an agent override in cliproxy mode is trusted off-family — the guard only checks the auto-resolved default", async () => {
+        const calls: string[] = [];
+        // Provider anthropic, but the sandbox agent names a gpt id explicitly; conversation falls to the
+        // auto-default (claude-from-proxy, family-guarded). The explicit sandbox override is NOT guarded.
+        const result = await bootHarnessRuntime({
+            seams: recordingSeams(calls),
+            config: testConfig({ model: null }),
+            connection: cliproxyConnection("anthropic", { sandbox: "gpt-4o" }),
+        });
+
+        const runtime = result._unsafeUnwrap();
+        expect(runtime.conversation.model).toBe("claude-from-proxy");
+        expect(runtime.sandbox.model).toBe("gpt-4o");
+        expect(calls).toContain("launch");
     });
 
     test("direct mode with an unset INFLEXA_MODEL_API_KEY fails boot naming the variable", async () => {

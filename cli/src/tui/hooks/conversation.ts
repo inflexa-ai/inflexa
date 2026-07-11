@@ -803,7 +803,7 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
     // Per-turn streaming wrapper: forward each provider text delta into the adapter as a `text-delta`
     // event, so answers accumulate in `streamText` as they arrive. Only this top-level
     // loop runs on the wrapper — sub-agent loops were wired to the plain provider at assembly.
-    const chat = createStreamingChat(runtime.provider, (text) => void emitForTurn({ type: "text-delta", text }));
+    const chat = createStreamingChat(runtime.conversation.provider, (text) => void emitForTurn({ type: "text-delta", text }));
     const session = buildChatSession("tui-chat", opts.analysisId, opts.sessionId);
 
     const outcome = await seams.runChatTurn({

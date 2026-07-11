@@ -1,4 +1,4 @@
-import type { JSX } from "solid-js";
+import { Show, type JSX } from "solid-js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 // Type-only — erased at compile time, so it does NOT pull tsprov/verify into the TUI's startup path.
@@ -11,7 +11,7 @@ import { SelectDialog } from "./components/dialog/select_dialog.tsx";
 import { FilePicker } from "./components/dialog/file_picker.tsx";
 import { ConfigApp } from "./app_config.tsx";
 import { DesignGallery } from "./layout/design_gallery.tsx";
-import { setTheme } from "./theme.ts";
+import { setTheme, theme } from "./theme.ts";
 import { notify } from "./hooks/notice.ts";
 import { queryRunsByAnalysis } from "@inflexa-ai/harness";
 
@@ -33,6 +33,9 @@ import {
     removeInput,
     matchAnalysis,
 } from "../modules/analysis/analysis.ts";
+import { writeAgentModel, type AgentName } from "../modules/harness/config.ts";
+import { listConnectionModels } from "../modules/harness/model_listing.ts";
+import { currentAgentModels, requestAgentModelChange } from "../modules/harness/agent_switch.ts";
 import { resolveInputPath } from "../modules/analysis/input.ts";
 import { resolveContext, describeContext } from "../modules/analysis/context.ts";
 import { openOutputDir } from "../modules/analysis/open.ts";
@@ -53,7 +56,7 @@ import type { Project } from "../types/project.ts";
 // co-located here as single-caller helpers; the reusable dialog shells live in `components/`.
 
 /** The categories a command groups under in the palette. A domain type, never a raw string. */
-export type CommandCategory = "Analysis" | "Session" | "Project" | "View" | "App";
+export type CommandCategory = "Analysis" | "Session" | "Project" | "View" | "Provider" | "App";
 
 /** A stable, dotted command id (e.g. `analysis.new`), decoupled from the display `title`. */
 export type CommandId = string;
@@ -170,6 +173,116 @@ function ThemePicker(): JSX.Element {
             }}
         />
     );
+}
+
+/** Display label for an agent in notices and picker titles. */
+function agentLabel(agent: AgentName): string {
+    return agent === "conversation" ? "Chat" : "Sandbox";
+}
+
+/**
+ * Persist an agent's model pick to `models.agents.<agent>` (agent-model-selection D3: durable the instant it is
+ * made), then hand it to the live runtime — which applies it immediately when idle or schedules it behind
+ * in-flight agent work — and surface the outcome. Config is the source of truth, so a write failure stops
+ * BEFORE any runtime change it would disagree with (next boot would only revert it).
+ */
+function applyAgentSelection(agent: AgentName, model: string): void {
+    writeAgentModel(agent, model).match(
+        () => {
+            const outcome = requestAgentModelChange(agent, model);
+            notify(
+                outcome.status === "applied"
+                    ? { kind: "info", text: `${agentLabel(agent)} model: ${model}` }
+                    : { kind: "info", text: `${agentLabel(agent)} model set to ${model} — applies when agent work settles` },
+            );
+        },
+        (e) => notify({ kind: "error", text: `Failed to save model: ${e.type}` }),
+    );
+}
+
+/**
+ * The agent-parameterized model picker (agent-model-selection D6): a {@link SelectDialog} over the
+ * connection's live models with the agent's CURRENT model marked, degrading to a {@link PromptDialog}
+ * free-text entry when listing failed (`models === null`, design D5). Purely presentational — the command
+ * resolves the listing and wires `onSubmit` (persist + apply) and `onCancel` (close) — so it renders as an
+ * inert design-gallery/test exhibit unchanged.
+ */
+export function ModelPickerDialog(props: {
+    agent: AgentName;
+    /** The connection's model ids, or `null` when listing failed (degrade to free-text entry — D5). */
+    models: readonly string[] | null;
+    /** The agent's currently-running model, marked `current` in the list and pre-filled in the free-text field. */
+    current: string;
+    /** Persist + apply the chosen/typed model. */
+    onSubmit: (model: string) => void;
+    /** Close without changing anything (esc, click-outside, ctrl+c). */
+    onCancel: () => void;
+}): JSX.Element {
+    // A thunk so the fixed-per-mount `props.agent` read lands inside JSX (a tracked scope), satisfying
+    // solid/reactivity without destructuring or a disable.
+    const title = (): string => (props.agent === "conversation" ? "Switch chat model" : "Switch sandbox model");
+    return (
+        <Show
+            when={props.models}
+            keyed
+            fallback={
+                <PromptDialog
+                    title={title()}
+                    value={props.current}
+                    placeholder="Enter a model id"
+                    description={() => <text fg={theme().fgMuted}>Could not list the connection's models — enter a model id manually.</text>}
+                    onCancel={props.onCancel}
+                    onSubmit={props.onSubmit}
+                />
+            }
+        >
+            {(models: readonly string[]) => (
+                <SelectDialog
+                    title={title()}
+                    placeholder={`Search models${GLYPHS.ellipsis}`}
+                    items={models.map((id) => ({ value: id, title: id, hint: id === props.current ? "current" : undefined }))}
+                    emptyText="No models listed by the connection"
+                    onCancel={props.onCancel}
+                    onSelect={props.onSubmit}
+                />
+            )}
+        </Show>
+    );
+}
+
+/**
+ * Open the model picker for `agent`. Boot-gated like `analysis.reprofile` (the picker needs the live
+ * runtime to apply against, and the listing hits the connection endpoint): refuse with a notice while
+ * booting rather than a silent no-op. Resolves the connection's models UNCACHED (`null` on failure →
+ * free-text mode) before opening, then hands the picker the current model to mark.
+ */
+async function openModelPicker(ctx: Workspace, agent: AgentName): Promise<void> {
+    if (bootState().phase !== "ready" || !harnessRuntime()) {
+        notify({ kind: "info", text: `Harness is still booting${GLYPHS.ellipsis}` });
+        return;
+    }
+    const current = currentAgentModels()[agent];
+    const models = (await listConnectionModels()).match(
+        (ids): readonly string[] | null => ids,
+        () => null,
+    );
+    ctx.openDialog(() => (
+        <ModelPickerDialog
+            agent={agent}
+            models={models}
+            current={current}
+            onSubmit={(model) => {
+                ctx.closeDialog();
+                const id = model.trim();
+                if (!id) {
+                    notify({ kind: "warn", text: "A model id is required." });
+                    return;
+                }
+                applyAgentSelection(agent, id);
+            }}
+            onCancel={() => ctx.closeDialog()}
+        />
+    ));
 }
 
 function NewProjectDialog(): JSX.Element {
@@ -1041,6 +1154,23 @@ export const commands: Command[] = [
         description: "Preview every stream-block state",
         category: "View",
         run: (ctx) => ctx.openDialog(() => <DesignGallery onClose={ctx.closeDialog} />),
+    },
+    // The model-switch commands form their own `Provider` group — declared here, after `View`, so
+    // the palette (which orders groups by a category's first appearance in this array) renders it as
+    // its own section near the end rather than folded into the display/settings `View` group.
+    {
+        id: "model.switch-chat",
+        title: "Switch chat model",
+        description: "Choose the model the chat agent (and its sub-agents) runs on",
+        category: "Provider",
+        run: (ctx) => openModelPicker(ctx, "conversation"),
+    },
+    {
+        id: "model.switch-sandbox",
+        title: "Switch sandbox model",
+        description: "Choose the model runs, data profiling, and the sandbox agents use",
+        category: "Provider",
+        run: (ctx) => openModelPicker(ctx, "sandbox"),
     },
     {
         id: "app.quit",

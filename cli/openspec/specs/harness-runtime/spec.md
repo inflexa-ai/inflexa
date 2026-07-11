@@ -176,8 +176,11 @@ chat-event and chat-part types.
 
 The composition SHALL realize the sandbox-step and execute-analysis dep bundles from
 deliberate local wiring, reusing the data-profile realizations where the seams are
-shared (pool, chat provider, sandbox client, workspace filesystem, session-tree base,
-model id, bio keys, local run authorizer). Specific to the run engine:
+shared (pool, sandbox client, workspace filesystem, session-tree base, bio keys,
+local run authorizer) — the chat provider and model id are the SANDBOX agent's (see
+`agent-model-selection`): the provider instance bound to the sandbox agent's resolved
+model over the shared connection, also serving run synthesis and post-step
+metadata/summary. Specific to the run engine:
 
 - The embedding dependency SHALL be a real `EmbeddingProvider` instance constructed
   from the same cli embedding config the profile path uses.
@@ -203,7 +206,7 @@ model id, bio keys, local run authorizer). Specific to the run engine:
 #### Scenario: Run deps resolve to their designated backends
 
 - **WHEN** the runtime composes the sandbox-step and execute-analysis dep bundles
-- **THEN** chat traffic targets the resolved model connection (the local proxy in `cliproxy` mode, the configured endpoint in `direct` mode), embedding traffic targets the configured embeddings endpoint, and everything else requires only the local Postgres and the Docker daemon
+- **THEN** chat traffic targets the resolved model connection under the sandbox agent's model (the local proxy in `cliproxy` mode, the configured endpoint in `direct` mode), embedding traffic targets the configured embeddings endpoint, and everything else requires only the local Postgres and the Docker daemon
 
 #### Scenario: Step agents come from the harness catalog
 
@@ -242,8 +245,10 @@ step failure instead of a hang until the step deadline.
 
 The composition SHALL realize the conversation agent's dependency surface from
 deliberate local wiring, reusing the existing realizations where the seams are shared
-(pool, chat provider, embedding provider, workspace filesystem, session-tree base,
-model id, bio keys, run authorizer, run launcher). Specific to the conversation
+(pool, embedding provider, workspace filesystem, session-tree base, bio keys, run
+authorizer, run launcher) — the chat provider and model id are the CONVERSATION
+agent's (see `agent-model-selection`): the provider instance bound to the conversation agent's resolved model over the shared connection, serving the chat agent and its
+sub-agents. Specific to the conversation
 surface:
 
 - `templatesDir` SHALL resolve like `skillsDir` does: a config-overridable path
@@ -258,7 +263,7 @@ surface:
 #### Scenario: Conversation deps resolve to their designated backends
 
 - **WHEN** the runtime composes the conversation agent
-- **THEN** chat traffic targets the resolved model connection (the local proxy in `cliproxy` mode, the configured endpoint in `direct` mode), threads and working memory live in the local Postgres, and templates resolve from the configured (or default root) templates directory
+- **THEN** chat traffic targets the resolved model connection under the conversation agent's model (the local proxy in `cliproxy` mode, the configured endpoint in `direct` mode), threads and working memory live in the local Postgres, and templates resolve from the configured (or default root) templates directory
 
 #### Scenario: Report preview degrades visibly, report building does not
 

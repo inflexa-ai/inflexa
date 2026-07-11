@@ -486,7 +486,7 @@ type DirectConnectionInput = {
 
 /**
  * Persist a direct-mode model connection. Spread-preserving: keeps every other config key and every
- * other key inside the `models` block (e.g. a future `seats`), rewriting only `connection`. The API
+ * other key inside the `models` block (e.g. the `agents` overrides), rewriting only `connection`. The API
  * key is NEVER written here — it comes from {@link MODEL_API_KEY_VAR} at provider construction (design
  * D4 / model-connection spec).
  */

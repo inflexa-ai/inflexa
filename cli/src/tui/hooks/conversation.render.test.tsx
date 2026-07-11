@@ -17,7 +17,7 @@ const AID = "a1";
 
 // A stub runtime whose pool/provider are never dereferenced (the fake engine never touches them);
 // `createStreamingChat` reads only `provider.capabilities` at construction.
-const stubRuntime = { pool: {}, provider: { capabilities: { toolCalling: true } }, conversationAgent: {} } as unknown as HarnessRuntime;
+const stubRuntime = { pool: {}, conversation: { provider: { capabilities: { toolCalling: true } } }, conversationAgent: {} } as unknown as HarnessRuntime;
 
 afterEach(() => resetHotState());
 

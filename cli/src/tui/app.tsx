@@ -10,7 +10,7 @@ import { shutdown } from "../lib/shutdown.ts";
 import { writeClipboard } from "../lib/clipboard.ts";
 import { theme, themeVariant, noticeColor, type Notice } from "./theme.ts";
 import { chatStatus } from "./hooks/status.ts";
-import { bootState, harnessRuntime } from "./hooks/boot.ts";
+import { bootState, harnessRuntime, watchAgentModels } from "./hooks/boot.ts";
 import * as conversation from "./hooks/conversation.ts";
 import { currentNotice, notify } from "./hooks/notice.ts";
 import { profileSnapshot, runsSnapshot, watchSidebarData, profileDetailLines } from "./hooks/sidebar_live.ts";
@@ -82,6 +82,11 @@ export function App(props: AppProps) {
     // active-work-gated poll. One call, under App's reactive owner (the store holds the snapshots the
     // Sidebar renders and the details views below snapshot on open).
     watchSidebarData(workspace);
+
+    // Mirror the live agent switch into the boot store's agentModels cell (agent-model-selection group 4): the
+    // status surface (sidebar MODELS section) renders each agent's active model + any pending switch. Seeds
+    // at the ready edge and follows every later swap/schedule. Under App's reactive owner.
+    watchAgentModels();
 
     // Open the DATA PROFILE details view. Snapshots the profile as of open (a
     // point-in-time view) and hands the composed lines to `ResultsDialog`, reused verbatim. The

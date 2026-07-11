@@ -7,6 +7,8 @@ import { GLYPHS, size } from "../../lib/design_system.ts";
 import type { ThemeColors } from "../../lib/design_system.ts";
 import { Bold, Fg } from "../components/emphasis.tsx";
 import { profileSnapshot, runsSnapshot, relAge, runMark, shortRunName } from "../hooks/sidebar_live.ts";
+import { agentModels, bootState } from "../hooks/boot.ts";
+import type { AgentName, ModelConnectionIdentity } from "../../modules/harness/config.ts";
 import { getSession, getAnchor, listAnalysisInputs } from "../../db/primary_query.ts";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { Bus } from "../../lib/bus.ts";
@@ -76,6 +78,58 @@ function profileLineOf(snap: ReturnType<typeof profileSnapshot>): LiveLine {
             return { glyph: null, role: "fgMuted", text: String(_exhaustive) };
         }
     }
+}
+
+/**
+ * One MODELS-section row: an agent's currently-running model (an em dash until the runtime installs the
+ * switch), and — when a switch is scheduled behind in-flight agent work — a warn-colored pending line
+ * naming the model that will take effect once the work settles. Reads the live `agentModels` store
+ * reactively, so a swap or a scheduled selection repaints without any wiring here.
+ */
+function AgentModelLine(props: { label: string; agent: AgentName }): JSX.Element {
+    const current = (): string => agentModels().current[props.agent];
+    const pending = (): string | undefined => agentModels().pending.get(props.agent);
+    return (
+        <>
+            <text>
+                <Fg role="fgMuted">{`${props.label} `}</Fg>
+                <Fg role="fg">{current() || GLYPHS.emDash}</Fg>
+            </text>
+            <Show when={pending()} keyed>
+                {(next: string) => (
+                    <text>
+                        <Fg role="warning">{`  ${GLYPHS.warning} ${GLYPHS.arrowRight} `}</Fg>
+                        <Fg role="fgMuted">{`${next} (pending)`}</Fg>
+                    </text>
+                )}
+            </Show>
+        </>
+    );
+}
+
+/**
+ * The MODELS-section connection line: the shared connection's identity — the configured provider slug and
+ * mode — rendered above the per-agent rows so the user sees which backend both agents run on. Reads the
+ * immutable boot-ready state, NOT the swap-tracking `agentModels` store, because a live agent-model swap
+ * never changes the connection (D-SHARE: one connection across agents); it is seeded once at the ready
+ * edge. Renders nothing before ready, when no identity exists yet.
+ */
+function ConnectionLine(): JSX.Element {
+    const identity = (): ModelConnectionIdentity | null => {
+        const boot = bootState();
+        return boot.phase === "ready" ? boot.connection : null;
+    };
+    return (
+        <Show when={identity()} keyed>
+            {(c: ModelConnectionIdentity) => (
+                <text>
+                    <Fg role="fgMuted">{"conn "}</Fg>
+                    <Fg role="accent">{c.provider}</Fg>
+                    <Fg role="fgMuted">{` ${GLYPHS.middot} ${c.mode}`}</Fg>
+                </text>
+            )}
+        </Show>
+    );
 }
 
 function Section(props: { label: string; children: JSX.Element; onActivate?: () => void }) {
@@ -153,6 +207,14 @@ export function Sidebar(props: SidebarProps) {
         return s.kind === "loaded" ? s.runs.slice(0, 4) : [];
     });
 
+    // The agent models are present exactly once the runtime installs the live switch at boot (both agents
+    // seed together), so an empty pair reads as "not ready" — decoupled from the boot phase so the
+    // section reflects the switch's own authority, not a second boot-phase read.
+    const modelsReady = createMemo((): boolean => {
+        const c = agentModels().current;
+        return c.conversation !== "" || c.sandbox !== "";
+    });
+
     return (
         <box
             width={size.railWidth}
@@ -223,6 +285,14 @@ export function Sidebar(props: SidebarProps) {
                         </Show>
                     </Match>
                 </Switch>
+            </Section>
+
+            <Section label="MODELS">
+                <Show when={modelsReady()} fallback={<text fg={theme().fgMuted}>runtime not ready</text>}>
+                    <ConnectionLine />
+                    <AgentModelLine label="chat" agent="conversation" />
+                    <AgentModelLine label="sandbox" agent="sandbox" />
+                </Show>
             </Section>
         </box>
     );

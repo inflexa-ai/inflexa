@@ -11,6 +11,7 @@ import type { Analysis } from "../../types/analysis.ts";
 import type { BusEvent } from "../../types/events.ts";
 import type { Notice } from "../theme.ts";
 import type { Workspace } from "../contexts/workspace.ts";
+import { __resetGaugeForTest } from "../../modules/harness/agent_switch.ts";
 import { __resetBootForTest, startHarnessBoot, type BootDriver } from "./boot.ts";
 import { __resetSidebarLiveForTest, refreshSidebarData, type RefreshSeams } from "./sidebar_live.ts";
 import type { DataProfileStatus } from "@inflexa-ai/harness";
@@ -222,10 +223,13 @@ afterEach(() => {
     __resetProfileParityForTest();
     __resetBootForTest();
     __resetSidebarLiveForTest();
+    // watchProfileParity now feeds the agent-switch gauge (data-profile SETTLE); its snapshot observer
+    // mutates the shared gauge singleton, so drop that state between tests to keep it out of later reads.
+    __resetGaugeForTest();
 });
 
 /** A booting driver that resolves ready, so `harnessRuntime()` becomes non-null and edge 1 can fire. */
-const readyDriver: BootDriver = async () => ok({ model: "m", pool: {} } as unknown as HarnessRuntime);
+const readyDriver: BootDriver = async () => ok({ conversation: { model: "m" }, pool: {} } as unknown as HarnessRuntime);
 
 /** A mutable workspace stand-in — the reactive edges read `.analysis` off it live (no reactive store). */
 function wsMut(id: string): Workspace {

@@ -2,7 +2,8 @@ import { availableParallelism, totalmem } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import type { MachineBudget, ResourceLimits, ResourcePolicy } from "@inflexa-ai/harness";
-import { modelsConfigSchema, readConfig } from "../../lib/config.ts";
+import { type Result } from "neverthrow";
+import { modelsConfigSchema, readConfig, writeConfig, type ConfigError } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { DEFAULT_SANDBOX_IMAGE } from "../libs/images.ts";
 
@@ -195,30 +196,87 @@ export function resolveHarnessConfig(): ResolvedHarnessConfig {
 export type ModelWireProtocol = "anthropic" | "openai-compatible";
 
 /**
+ * The two user-facing model agents (`agent-model-selection` D1): `conversation` (the chat agent and its
+ * sub-agents) and `sandbox` (the catalog step agents, data profiling, and the ephemeral runner).
+ * Internal agents — run synthesis, post-step metadata/summary, target assessment — follow `sandbox`.
+ * Derived from the `models.agents` schema keys so the domain type can never drift from the config
+ * surface it names.
+ */
+export type AgentName = keyof NonNullable<z.infer<typeof modelsConfigSchema>["agents"]>;
+
+/**
+ * The closed agent set as a runtime list — the source boot iterates for its per-agent resolution. The
+ * `satisfies` guard rejects any element that is not a {@link AgentName}, keeping the list honest.
+ */
+export const AGENT_NAMES = ["conversation", "sandbox"] as const satisfies readonly AgentName[];
+
+/**
+ * Per-agent model-id overrides from `models.agents`, each optional. An absent agent falls through the
+ * resolution order (D2: `models.agents.<agent>` → `harness.model` → connection default) at boot; this
+ * shape carries only what config stated, not the resolved id.
+ */
+export type AgentModelOverrides = { readonly [Agent in AgentName]?: string };
+
+/**
+ * Persist one agent's model id to `models.agents.<agent>` in config.json (agent-model-selection D3: the pick
+ * is durable the instant it is made, independent of when the live runtime applies it). Spread-preserving
+ * like `writeDirectConnection` — every other config key, the `models.connection` block, and the OTHER
+ * agent's override are kept; only this agent's entry is rewritten. Returns the write Result so the caller
+ * (the palette picker) surfaces a failure and does NOT then apply a runtime change config disagrees with.
+ */
+export function writeAgentModel(agent: AgentName, model: string): Result<void, ConfigError> {
+    const config = readConfig();
+    // `config.models` is `unknown` in lib/config.ts (validated downstream by resolveModelConnection), so
+    // spread both it and its nested `agents` as plain records to preserve the sibling keys this write does
+    // not manage (the connection, and the other agent).
+    const models = (config.models ?? {}) as Record<string, unknown>;
+    const agents = { ...(models.agents as Record<string, unknown> | undefined), [agent]: model };
+    return writeConfig({ ...config, models: { ...models, agents } });
+}
+
+/**
  * The model connection resolved to the concrete facts boot consumes. A discriminated union over
  * `mode`: `cliproxy` targets the owned proxy (boot supplies `env.cliproxyApiUrl` + the minted proxy
  * client key), `direct` carries the user's endpoint and wire protocol (secret via
  * `INFLEXA_MODEL_API_KEY`). `provider` is the CONFIGURED vendor slug in both modes — the fact
- * provenance records, never derived from a model id. `configError` is set when the `models` block
- * was present but failed validation: boot reports it and falls back to this default connection,
- * exactly as {@link ResolvedHarnessConfig.configError} does for the `harness` block.
+ * provenance records, never derived from a model id. `agents` carries the per-agent model overrides
+ * from `models.agents` verbatim (D-SHARE: one connection, per-agent model ids); the RESOLVED per-agent
+ * model is computed at boot, where the connection default is knowable. `configError` is set when the
+ * `models` block was present but failed validation: boot reports it and falls back to this default
+ * connection, exactly as {@link ResolvedHarnessConfig.configError} does for the `harness` block.
  */
 export type ResolvedModelConnection =
-    | { readonly mode: "cliproxy"; readonly provider: string; readonly configError?: { issues: string } }
+    | { readonly mode: "cliproxy"; readonly provider: string; readonly agents: AgentModelOverrides; readonly configError?: { issues: string } }
     | {
           readonly mode: "direct";
           readonly provider: string;
           /** The configured endpoint (required in direct mode). */
           readonly baseURL: string;
           readonly protocol: ModelWireProtocol;
+          readonly agents: AgentModelOverrides;
           readonly configError?: { issues: string };
       };
 
 /**
- * The zero-config connection: cliproxy mode, provider `anthropic` — today's behavior verbatim, so an
- * install without a `models` block boots, chats, and records provenance exactly as before this change.
+ * The shared connection's identity — the two facts the TUI surfaces beside the per-agent models
+ * (`agent-model-selection` group 7): the configured provider slug and the mode. A projection of
+ * {@link ResolvedModelConnection} carrying ONLY what the status surface renders (never the baseURL,
+ * secret, or agent overrides). Boot-resolved and immutable for the runtime's life — a live agent-model
+ * swap never changes the connection (D-SHARE: one connection across agents), so it is seeded once.
  */
-const DEFAULT_MODEL_CONNECTION: ResolvedModelConnection = { mode: "cliproxy", provider: "anthropic" };
+export type ModelConnectionIdentity = {
+    /** The configured vendor slug (`anthropic`, `openai`, …) — the attested fact, never derived from a model id. */
+    readonly provider: string;
+    /** Which backend the connection targets: the owned local proxy (`cliproxy`), or a user-supplied endpoint (`direct`). */
+    readonly mode: ResolvedModelConnection["mode"];
+};
+
+/**
+ * The zero-config connection: cliproxy mode, provider `anthropic`, no agent overrides — today's
+ * behavior verbatim, so an install without a `models` block boots, chats, and records provenance
+ * exactly as before this change (both agents resolve to the one auto-resolved model).
+ */
+const DEFAULT_MODEL_CONNECTION: ResolvedModelConnection = { mode: "cliproxy", provider: "anthropic", agents: {} };
 
 /**
  * Resolve the `models.connection` block the boot builds the chat provider from. The raw value comes
@@ -229,7 +287,10 @@ const DEFAULT_MODEL_CONNECTION: ResolvedModelConnection = { mode: "cliproxy", pr
  * direct endpoint is implied from the provider when unset (D3): `anthropic` ⇒ the Anthropic wire kind,
  * every other provider ⇒ OpenAI-compatible; an explicit `protocol` overrides (e.g. an Anthropic-fronting
  * gateway that speaks OpenAI-compatible). cliproxy has no protocol choice — the proxy always exposes the
- * Anthropic Messages route the chat path targets.
+ * Anthropic Messages route the chat path targets. The `models.agents` overrides ride through verbatim on
+ * every non-error branch — including an `agents`-only block (no `connection`), which resolves to the
+ * default connection carrying its agent overrides — so boot can resolve each agent's model (D2). A
+ * malformed block drops the overrides with the rest of it (they cannot be trusted past a parse failure).
  */
 export function resolveModelConnection(): ResolvedModelConnection {
     const raw = readConfig().models;
@@ -239,11 +300,12 @@ export function resolveModelConnection(): ResolvedModelConnection {
         const issues = parsed.error.issues.map((i) => `models.${i.path.join(".")}: ${i.message}`).join("; ");
         return { ...DEFAULT_MODEL_CONNECTION, configError: { issues } };
     }
+    const agents: AgentModelOverrides = parsed.data.agents ?? {};
     const connection = parsed.data.connection;
-    if (connection === undefined) return DEFAULT_MODEL_CONNECTION;
+    if (connection === undefined) return { ...DEFAULT_MODEL_CONNECTION, agents };
     if (connection.mode === "cliproxy") {
-        return { mode: "cliproxy", provider: connection.provider ?? "anthropic" };
+        return { mode: "cliproxy", provider: connection.provider ?? "anthropic", agents };
     }
     const protocol: ModelWireProtocol = connection.protocol ?? (connection.provider === "anthropic" ? "anthropic" : "openai-compatible");
-    return { mode: "direct", provider: connection.provider, baseURL: connection.baseURL, protocol };
+    return { mode: "direct", provider: connection.provider, baseURL: connection.baseURL, protocol, agents };
 }

@@ -119,8 +119,8 @@ export function describeBootError(e: HarnessBootError): string {
             ].join("\n");
         case "model_required":
             return [
-                "A direct model connection needs an explicit model — there is no proxy `/models` to auto-resolve one from.",
-                "Set `harness.model` in config.json to the model id your endpoint serves.",
+                `A direct model connection needs an explicit model for the ${e.agents.join(" and ")} agent${e.agents.length > 1 ? "s" : ""} — there is no proxy \`/models\` to auto-resolve one from.`,
+                "Set `harness.model` in config.json (applies to both agents), or `models.agents.<agent>` per agent, to the model id your endpoint serves.",
             ].join("\n");
         case "postgres_unavailable":
             return e.cause.message;
@@ -245,7 +245,7 @@ export async function runProfile(flags: ContextFlags): Promise<void> {
             return fail(describeBootError(e));
         },
     );
-    s.stop(`Runtime ready — model ${runtime.model}`);
+    s.stop(`Runtime ready — model ${runtime.sandbox.model}`);
 
     // A prior run that died between claiming the ledger and creating its DBOS
     // workflow leaves the row wedged at `running` with nothing for recovery to
