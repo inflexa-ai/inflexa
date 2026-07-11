@@ -401,7 +401,7 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
             return fail(describeBootError(e));
         },
     );
-    s.stop(`Runtime ready — model ${runtime.model}`);
+    s.stop(`Runtime ready — model ${runtime.sandbox.model}`);
 
     s.start("Staging inputs");
     const staged = (await stageInputs(analysis.id, workspaceDataRoot)).match(

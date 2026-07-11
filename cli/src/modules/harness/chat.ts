@@ -115,7 +115,7 @@ export async function runChat(flags: ContextFlags, threadRef: string | undefined
             return fail(describeBootError(e));
         },
     );
-    s.stop(`Runtime ready — model ${runtime.model}`);
+    s.stop(`Runtime ready — model ${runtime.conversation.model}`);
 
     // Select the thread: new-by-default, or resume the `--thread <id>` target
     // after an ownership pre-check (foreign/absent → the single not-found refusal).
@@ -176,7 +176,7 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
     // on the wrapper — sub-agent loops (planner, literature reviewer) were wired
     // to the plain provider at assembly, so their tokens never reach the sink.
     // Abort semantics are untouched: the wrapper re-throws an AbortError verbatim.
-    const chat = createStreamingChat(runtime.provider, (text) => void printer.emit({ type: "text-delta", text }));
+    const chat = createStreamingChat(runtime.conversation.provider, (text) => void printer.emit({ type: "text-delta", text }));
 
     // The REPL runs as the `"cli-chat"` agent. `buildChatSession` puts `threadId`
     // in scope (so a chat-launched plan stamps `cortex_runs.thread_id`) and gives

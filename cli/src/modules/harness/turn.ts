@@ -16,6 +16,7 @@ import {
 } from "@inflexa-ai/harness";
 
 import { getLogger } from "../../lib/log.ts";
+import { enterChatTurn } from "./agent_switch.ts";
 
 // The headless chat turn engine. One transport-free sequence —
 // `prepareChatTurn → runAgent → unconditional appendTurn` — shared by BOTH the
@@ -140,69 +141,78 @@ type RunPhase = { readonly kind: "ok"; readonly fallbackText: string } | { reado
 export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = realTurnSeams): Promise<TurnOutcome> {
     const { pool, conversationAgent, chat, history, session, emit, signal, analysisId, threadId, userInput } = args;
 
-    const prepared = await ResultAsync.fromPromise(seams.prepare({ pool }, { analysisId, threadId, userInput }), (e): unknown => e).match(
-        (r) => r,
-        (cause): { readonly kind: "prepare_failed"; readonly cause: unknown } => ({ kind: "prepare_failed", cause }),
-    );
-    if (prepared.kind === "prepare_failed") {
-        // pino serializes the whole structured cause into the file log; the surface renders only a
-        // one-liner, so this record is the ONLY place the full failure detail survives for later
-        // inspection.
-        getLogger("harness").error({ cause: prepared.cause }, "chat turn prepare failed");
-        return { kind: "prepare_failed", cause: prepared.cause };
-    }
-    // `prepareChatTurn` refuses ONLY a thread owned by another analysis — an absent id is
-    // re-created there, not refused — so this branch is the ownership refusal. It reports as
-    // "gone" because callers deliberately do not distinguish foreign from vanished threads.
-    if (prepared.kind === "not_found") return { kind: "thread_gone" };
-
-    const initial = prepared.messages;
-    const userMessage = prepared.userMessage;
-
-    const run = await ResultAsync.fromPromise(
-        seams.run(conversationAgent, initial, session, { provider: chat, signal, emit, runStep: passthroughStep }),
-        (e): unknown => e,
-    ).match(
-        (result): { readonly phase: RunPhase; readonly toPersist: ModelMessage[] } => ({
-            phase: { kind: "ok", fallbackText: finalText(result.messages) },
-            toPersist: [userMessage, ...result.messages.slice(initial.length)],
-        }),
-        // `runAgent` threw. Classify as an abort ONLY when the throw is the AbortError the streaming
-        // provider re-throws verbatim (`streaming-chat.ts` re-throws it as control flow, name
-        // "AbortError" — a DOMException, which IS an `Error` instance under bun/node) AND our own signal
-        // is aborted. A provider failure that merely RACED a Ctrl+C would otherwise be swallowed as an
-        // abort and never logged; everything but a genuine abort stays `failed`, carrying its cause.
-        (cause): { readonly phase: RunPhase; readonly toPersist: ModelMessage[] } => {
-            const aborted = signal.aborted && cause instanceof Error && cause.name === "AbortError";
-            return {
-                phase: aborted ? { kind: "aborted" } : { kind: "failed", cause },
-                toPersist: [userMessage],
-            };
-        },
-    );
-
-    // Persist unconditionally — the partial turn must survive an abort/throw. The
-    // append fault is carried on the outcome, never conflated with the turn's fate.
-    const appendError = (await history.appendTurn(threadId, run.toPersist)).match(
-        (): DbError | undefined => undefined,
-        (e): DbError | undefined => e,
-    );
-    // The persistence fault rides ORTHOGONALLY on the outcome (the turn may still have succeeded);
-    // log it here so the whole DbError survives even when the surface only shows a terse toast.
-    if (appendError) getLogger("harness").warn({ appendError }, "chat turn append failed");
-
-    switch (run.phase.kind) {
-        case "ok":
-            return { kind: "ok", fallbackText: run.phase.fallbackText, appendError };
-        case "aborted":
-            return { kind: "aborted", appendError };
-        case "failed":
-            // The one place the full run failure survives — the banner collapses it to a one-liner.
-            getLogger("harness").error({ cause: run.phase.cause }, "chat turn failed");
-            return { kind: "failed", cause: run.phase.cause, appendError };
-        default: {
-            const exhaustive: never = run.phase;
-            throw new Error(`unhandled run phase: ${JSON.stringify(exhaustive)}`);
+    // Bracket the whole turn as in-flight agent work (agent-model-selection 3.1): an agent switch requested
+    // mid-turn defers to the turn boundary, and the `finally` settling this token lands a pending switch
+    // before the next turn begins. Bracketing HERE covers both surfaces — the TUI hook and the REPL both
+    // drive this one engine — which is why the instrumentation is on the shared seam, not the call sites.
+    const leaveChatTurn = enterChatTurn();
+    try {
+        const prepared = await ResultAsync.fromPromise(seams.prepare({ pool }, { analysisId, threadId, userInput }), (e): unknown => e).match(
+            (r) => r,
+            (cause): { readonly kind: "prepare_failed"; readonly cause: unknown } => ({ kind: "prepare_failed", cause }),
+        );
+        if (prepared.kind === "prepare_failed") {
+            // pino serializes the whole structured cause into the file log; the surface renders only a
+            // one-liner, so this record is the ONLY place the full failure detail survives for later
+            // inspection.
+            getLogger("harness").error({ cause: prepared.cause }, "chat turn prepare failed");
+            return { kind: "prepare_failed", cause: prepared.cause };
         }
+        // `prepareChatTurn` refuses ONLY a thread owned by another analysis — an absent id is
+        // re-created there, not refused — so this branch is the ownership refusal. It reports as
+        // "gone" because callers deliberately do not distinguish foreign from vanished threads.
+        if (prepared.kind === "not_found") return { kind: "thread_gone" };
+
+        const initial = prepared.messages;
+        const userMessage = prepared.userMessage;
+
+        const run = await ResultAsync.fromPromise(
+            seams.run(conversationAgent, initial, session, { provider: chat, signal, emit, runStep: passthroughStep }),
+            (e): unknown => e,
+        ).match(
+            (result): { readonly phase: RunPhase; readonly toPersist: ModelMessage[] } => ({
+                phase: { kind: "ok", fallbackText: finalText(result.messages) },
+                toPersist: [userMessage, ...result.messages.slice(initial.length)],
+            }),
+            // `runAgent` threw. Classify as an abort ONLY when the throw is the AbortError the streaming
+            // provider re-throws verbatim (`streaming-chat.ts` re-throws it as control flow, name
+            // "AbortError" — a DOMException, which IS an `Error` instance under bun/node) AND our own signal
+            // is aborted. A provider failure that merely RACED a Ctrl+C would otherwise be swallowed as an
+            // abort and never logged; everything but a genuine abort stays `failed`, carrying its cause.
+            (cause): { readonly phase: RunPhase; readonly toPersist: ModelMessage[] } => {
+                const aborted = signal.aborted && cause instanceof Error && cause.name === "AbortError";
+                return {
+                    phase: aborted ? { kind: "aborted" } : { kind: "failed", cause },
+                    toPersist: [userMessage],
+                };
+            },
+        );
+
+        // Persist unconditionally — the partial turn must survive an abort/throw. The
+        // append fault is carried on the outcome, never conflated with the turn's fate.
+        const appendError = (await history.appendTurn(threadId, run.toPersist)).match(
+            (): DbError | undefined => undefined,
+            (e): DbError | undefined => e,
+        );
+        // The persistence fault rides ORTHOGONALLY on the outcome (the turn may still have succeeded);
+        // log it here so the whole DbError survives even when the surface only shows a terse toast.
+        if (appendError) getLogger("harness").warn({ appendError }, "chat turn append failed");
+
+        switch (run.phase.kind) {
+            case "ok":
+                return { kind: "ok", fallbackText: run.phase.fallbackText, appendError };
+            case "aborted":
+                return { kind: "aborted", appendError };
+            case "failed":
+                // The one place the full run failure survives — the banner collapses it to a one-liner.
+                getLogger("harness").error({ cause: run.phase.cause }, "chat turn failed");
+                return { kind: "failed", cause: run.phase.cause, appendError };
+            default: {
+                const exhaustive: never = run.phase;
+                throw new Error(`unhandled run phase: ${JSON.stringify(exhaustive)}`);
+            }
+        }
+    } finally {
+        leaveChatTurn();
     }
 }

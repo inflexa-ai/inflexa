@@ -96,12 +96,12 @@ describe("connection config writes", () => {
     });
 
     test("recording is spread-preserving — other config keys and other models keys survive", () => {
-        // A pre-existing sibling inside the models block (a stand-in for the future `seats`) and an
-        // unrelated top-level key must both survive the connection rewrite.
-        seedConfig({ telemetry: true, models: { seats: { chat: "x" }, connection: { mode: "cliproxy", provider: "openai" } } });
+        // A pre-existing sibling inside the models block (the `agents` block, opaque to the connection
+        // writer) and an unrelated top-level key must both survive the connection rewrite.
+        seedConfig({ telemetry: true, models: { agents: { chat: "x" }, connection: { mode: "cliproxy", provider: "openai" } } });
         recordCliproxyProvider("claude")._unsafeUnwrap();
         expect(readConfig().telemetry).toBe(true);
-        expect(readModels().seats).toEqual({ chat: "x" });
+        expect(readModels().agents).toEqual({ chat: "x" });
         expect(readModels().connection).toEqual({ mode: "cliproxy", provider: "anthropic" });
     });
 
@@ -121,9 +121,9 @@ describe("connection config writes", () => {
     });
 
     test("writeDirectConnection writes only endpoint facts (no secret key) and preserves models siblings", () => {
-        seedConfig({ telemetry: false, models: { seats: { chat: "y" } } });
+        seedConfig({ telemetry: false, models: { agents: { chat: "y" } } });
         writeDirectConnection({ provider: "deepseek", baseURL: "https://api.deepseek.com/v1" })._unsafeUnwrap();
-        expect(readModels().seats).toEqual({ chat: "y" });
+        expect(readModels().agents).toEqual({ chat: "y" });
         // The written connection carries exactly mode/provider/baseURL — no apiKey/token field. The
         // direct-mode secret lives only in INFLEXA_MODEL_API_KEY, never in config (design D4).
         expect(Object.keys(readModels().connection as Record<string, unknown>).sort()).toEqual(["baseURL", "mode", "provider"]);

@@ -1,8 +1,9 @@
-import { createSignal } from "solid-js";
+import { createEffect, createSignal, onCleanup } from "solid-js";
 
-import type { ResolvedHarnessConfig } from "../../modules/harness/config.ts";
+import type { ModelConnectionIdentity, ResolvedHarnessConfig } from "../../modules/harness/config.ts";
 import { bootHarnessRuntime, type HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { describeBootError } from "../../modules/harness/profile.ts";
+import { currentAgentModels, onAgentStateChange, pendingAgentSelections, type AgentName } from "../../modules/harness/agent_switch.ts";
 
 // The embedded harness runtime's boot lifecycle as seen by the chat UI, held here (not inside
 // `app.tsx`) so the holder is decoupled from its renderer — the launcher DRIVES it
@@ -18,11 +19,17 @@ import { describeBootError } from "../../modules/harness/profile.ts";
  * The boot phase surfaced to the chat UI:
  * - `idle` — no boot kicked off yet (the first frame before the launcher fires `startHarnessBoot`);
  * - `booting` — `bootHarnessRuntime` is in flight; the input is gated and the animation renders;
- * - `ready` — the runtime handle exists (carrying the resolved chat `model` for the status affordance);
+ * - `ready` — the runtime handle exists, carrying the conversation agent's resolved `model` (a one-time
+ *   boot snapshot) and the shared `connection` identity (provider slug + mode) the status surface renders;
  * - `failed` — boot could not complete, carrying the boot-error taxonomy's actionable `message` as a
  *   TERMINAL state (never a hang): the user reads the remedy and quits cleanly.
+ *
+ * The connection rides the `ready` variant — not the swap-tracking {@link agentModels} store — because it
+ * is a boot-resolved, immutable fact (a live agent-model swap never changes the connection, D-SHARE), so
+ * it is seeded ONCE at the ready edge, exactly matching this variant's set-once-and-never-mutate lifecycle.
  */
-export type BootState = { phase: "idle" } | { phase: "booting" } | { phase: "ready"; model: string } | { phase: "failed"; message: string };
+export type BootState =
+    { phase: "idle" } | { phase: "booting" } | { phase: "ready"; model: string; connection: ModelConnectionIdentity } | { phase: "failed"; message: string };
 
 const [state, setState] = createSignal<BootState>({ phase: "idle" });
 
@@ -64,7 +71,10 @@ export async function startHarnessBoot(config: ResolvedHarnessConfig, driver: Bo
     result.match(
         (rt) => {
             runtime = rt;
-            setState({ phase: "ready", model: rt.model });
+            // `model` snapshots the conversation agent's boot model; both agents' LIVE models render from the
+            // `agentModels` store (group 4). `connection` is the shared connection's identity, seeded here at
+            // the ready edge and immutable thereafter (D-SHARE), so the sidebar surfaces it beside the agents.
+            setState({ phase: "ready", model: rt.conversation.model, connection: rt.connection });
         },
         (e) => setState({ phase: "failed", message: describeBootError(e) }),
     );
@@ -74,4 +84,62 @@ export async function startHarnessBoot(config: ResolvedHarnessConfig, driver: Bo
 export function __resetBootForTest(): void {
     runtime = null;
     setState({ phase: "idle" });
+    setAgentModels(EMPTY_AGENT_MODELS);
+}
+
+// ── Live per-agent model state (agent-model-selection group 4) ───────────────────────────────────────
+//
+// The status surface renders each user-facing agent's CURRENTLY-running model plus any pending (scheduled
+// behind agent work) switch. The authority is the live agent switch (`agent_switch.ts`), which tracks
+// swaps the one-time boot snapshot (`BootState.model`) cannot; this store mirrors it into a reactive
+// cell the TUI reads. Kept beside the boot store because the agent models ARE a boot-resolved fact and
+// the affordance is gated on boot being ready — the same module the status surface already consults for
+// runtime readiness. A SEPARATE signal from `BootState` because the models change AFTER `ready` (on a
+// live switch) while the boot phase does not, so folding them into the `ready` variant would demand a
+// phase transition on every model change.
+
+/**
+ * The live per-agent model state the status surface renders: each agent's currently-running model, and any
+ * pending selection (persisted, scheduled behind in-flight agent work, not yet applied).
+ */
+export type AgentModelsState = {
+    /** Each user-facing agent's model as it is RUNNING right now — empty strings until the runtime installs the switch. */
+    readonly current: Readonly<Record<AgentName, string>>;
+    /** Agents with a persisted selection not yet applied to the live runtime (a switch scheduled behind agent work). */
+    readonly pending: ReadonlyMap<AgentName, string>;
+};
+
+const EMPTY_AGENT_MODELS: AgentModelsState = { current: { conversation: "", sandbox: "" }, pending: new Map() };
+
+const [agentModelsState, setAgentModels] = createSignal<AgentModelsState>(EMPTY_AGENT_MODELS);
+
+/** The live per-agent models + pending selections — read inside a tracking scope for reactivity. */
+export const agentModels = agentModelsState;
+
+/**
+ * Mirror the live agent switch into the {@link agentModels} store. Call ONCE from `App`'s setup (inside its
+ * reactive owner). Adapts the switch's plain `onAgentStateChange` callback to a Solid signal (a subscribe
+ * paired with `onCleanup`, per CLAUDE.md), and seeds the initial values at the `ready` edge — the seam
+ * carries real values only after `installAgentSwitch` ran during boot, and `onAgentStateChange` fires only
+ * on a LATER change, so the first values must be pulled when boot reaches `ready`.
+ */
+export function watchAgentModels(): void {
+    const refresh = (): void => {
+        setAgentModels({ current: currentAgentModels(), pending: pendingAgentSelections() });
+    };
+    const unsub = onAgentStateChange(refresh);
+    onCleanup(unsub);
+    createEffect(() => {
+        if (state().phase === "ready") refresh();
+    });
+}
+
+/** Test hook: set the agent-models store directly (no runtime, no switch). Test-only. */
+export function __setAgentModelsForTest(next: AgentModelsState): void {
+    setAgentModels(next);
+}
+
+/** Test hook: drive the boot phase directly (e.g. seed a `ready` state with a connection). Test-only. */
+export function __setBootStateForTest(next: BootState): void {
+    setState(next);
 }

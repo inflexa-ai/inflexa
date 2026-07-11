@@ -4,6 +4,7 @@ import type { DataProfileStatus } from "@inflexa-ai/harness";
 import { GLYPHS } from "../../lib/design_system.ts";
 import { Bus } from "../../lib/bus.ts";
 import { ensureProfileAtParity, forceReprofile, type ProfileParityOutcome } from "../../modules/harness/profile_trigger.ts";
+import { noteDataProfileState } from "../../modules/harness/agent_switch.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { StampedEvent } from "../../types/events.ts";
@@ -213,6 +214,45 @@ export function watchProfileParity(workspace: Workspace, seams: ParityWatchSeams
         const analysis = workspace.analysis;
         if (!runtime || !analysis) return;
         seams.drive(runtime, analysis, () => workspace.analysis?.id ?? null);
+    });
+
+    // Agent-switch gauge — data-profile SETTLE feed (agent-model-selection 4.0). The gauge's START half is
+    // pushed synchronously at dispatch (profile_trigger.ts `stageAndSeed`); this level-based observer of
+    // the OPEN analysis's profile snapshot — the ledger truth the sidebar already polls, the seam's
+    // intended feed — clears the token when the profile leaves the pending/running window (and notes it
+    // busy again idempotently, so a desync self-heals). Keyed to the open analysis id, never the OLD one:
+    // a profile still running on an analysis we swapped away from is unobservable here, so its token is
+    // left busy (the gauge fails CLOSED — a pending sandbox switch waits; config is already persisted and
+    // the next boot applies it). `inflexa profile`'s own process never reaches this observer, the same
+    // documented fail-closed boundary.
+    let prevGaugeAnalysisId: string | null = null;
+    createEffect(() => {
+        const snap = profileSnapshot();
+        const analysisId = workspace.analysis?.id ?? null;
+        const swapped = analysisId !== prevGaugeAnalysisId;
+        prevGaugeAnalysisId = analysisId;
+        // On a swap the snapshot still holds the previous analysis until `watchSidebarData` resets it (its
+        // effects run AFTER this watcher's — App wires watchProfileParity first), so attributing the
+        // snapshot to the NEW id would mis-key the gauge; skip the swap cycle and act only once the id is
+        // stable across a run (the snapshot then genuinely describes it).
+        if (analysisId === null || swapped) return;
+        switch (snap.kind) {
+            case "loaded":
+                noteDataProfileState(analysisId, snap.profile.status === "pending" || snap.profile.status === "running");
+                return;
+            case "absent":
+                noteDataProfileState(analysisId, false);
+                return;
+            case "not_ready":
+            case "unavailable":
+                // No trustworthy ledger truth (a pre-boot placeholder or a DB blip) — leave the token as
+                // it is so a busy profile is never cleared on an unavailable read.
+                return;
+            default: {
+                const _exhaustive: never = snap;
+                return void _exhaustive;
+            }
+        }
     });
 }
 

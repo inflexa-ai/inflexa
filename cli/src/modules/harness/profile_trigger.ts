@@ -15,6 +15,7 @@ import type { Analysis } from "../../types/analysis.ts";
 import { workspaceDataDir } from "../analysis/output.ts";
 import { enumerateInputSignatures, inputSignature, stageInputs } from "../staging/staging.ts";
 import { seedProfileLedger } from "./profile.ts";
+import { noteDataProfileState } from "./agent_switch.ts";
 import type { HarnessRuntime } from "./runtime.ts";
 
 // The headless data-profile parity checks. Two entry points, both writing NO terminal/TUI
@@ -149,6 +150,17 @@ async function stageAndSeed(runtime: HarnessRuntime, analysis: Analysis, seams: 
 
     const seedResult = await seams.seed(runtime.pool, analysis.id, stageResult.value);
     if (seedResult.isErr()) return err(`could not seed the analysis state (${seedResult.error.type})`);
+
+    // Feed the agent-switch gauge's data-profile START half (agent-model-selection 4.0). This is the ONE
+    // shared choke both TUI entry points (`ensureProfileAtParity`, `forceReprofile`) reach exactly when a
+    // (re-)trigger has been decided — the seed just landed and a trigger is imminent — so a single note
+    // here marks the sandbox agent busy synchronously, closing the fail-open window between dispatch and
+    // the sidebar poll catching up (the gauge's SETTLE half). The `inflexa profile` CLI path (profile.ts)
+    // is deliberately NOT instrumented: it runs in a separate, blocking process with no live palette to
+    // request an agent switch, so its gauge is moot. A trigger that then faults leaves the token busy until
+    // the SETTLE observer clears it on the ledger row's terminal state (fail-closed if that never comes:
+    // the pending selection waits; config is already the durable truth).
+    noteDataProfileState(analysis.id, true);
     return ok(seedResult.value);
 }
 

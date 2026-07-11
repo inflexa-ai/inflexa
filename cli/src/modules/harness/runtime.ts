@@ -23,12 +23,14 @@ import {
     type AgentDefinition,
     type AgentSession,
     type AiSdkProviderConfig,
+    type ArtifactRegistry,
     type ChatProvider,
     type ConversationAssemblyDeps,
     type CoreWorkflowDeps,
     type DataProfileTriggerDeps,
     type DbosConfig,
     type EmbeddingProvider,
+    type ExecuteAnalysisDeps,
     type ExecuteAnalysisInput,
     type ExecuteAnalysisResult,
     type MachineBudget,
@@ -37,6 +39,7 @@ import {
     type RegisterReaperDeps,
     type RunAuthorizer,
     type RunLauncher,
+    type RunProvenanceEvent,
     type WatchdogDeps,
 } from "@inflexa-ai/harness";
 
@@ -50,9 +53,26 @@ import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolv
 import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
 import { modelMatchesProvider, readApiKey, resolveModelId, type ChatSetupError } from "../proxy/models.ts";
-import { resolveHarnessConfig, resolveModelConnection, type ResolvedHarnessConfig, type ResolvedModelConnection } from "./config.ts";
+import {
+    resolveHarnessConfig,
+    resolveModelConnection,
+    AGENT_NAMES,
+    type ResolvedHarnessConfig,
+    type ResolvedModelConnection,
+    type AgentName,
+    type ModelConnectionIdentity,
+} from "./config.ts";
 import { noopExecIngress, startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
-import { buildEphemeralDeps, buildExecuteAnalysisDeps, buildExecuteTargetAssessmentDeps, buildSandboxStepDeps, type RunEngineComposition } from "./run_deps.ts";
+import { createBusArtifactRegistry, createRunProvenanceEmitter } from "./prov_bridge.ts";
+import {
+    buildEphemeralDeps,
+    buildExecuteAnalysisDeps,
+    buildExecuteTargetAssessmentDeps,
+    buildSandboxStepDeps,
+    type RunEngineComposition,
+    type AgentBackend,
+} from "./run_deps.ts";
+import { clearAgentSwitch, createSwappableProvider, installAgentSwitch } from "./agent_switch.ts";
 
 // The embedded-harness composition root. Boots lazily on the first profile
 // trigger (never from a passive flow — no-litter policy) and holds a process
@@ -94,8 +114,18 @@ export type RunTriggerDeps = {
 
 /** The booted runtime — everything the launch command needs to trigger and observe runs. */
 export type HarnessRuntime = {
-    /** Chat model id in use (config override or the proxy's default). */
-    readonly model: string;
+    /**
+     * The conversation agent's backend — the model id + chat-provider instance the `chat`/TUI path
+     * drives (`agent-model-selection` D1). `chat` passes {@link AgentBackend.provider} to `runAgent`
+     * without re-resolving the model or key; the boot store surfaces {@link AgentBackend.model}.
+     */
+    readonly conversation: AgentBackend;
+    /**
+     * The sandbox agent's backend — the model id + chat-provider instance the run engine (step agents,
+     * data profile, ephemeral runner) drives. Referentially identical to {@link
+     * HarnessRuntime.conversation} when both agents resolve to the same model (one provider instance).
+     */
+    readonly sandbox: AgentBackend;
     /** App pool over the provisioned Postgres — shared with the harness ledger queries. */
     readonly pool: Pool;
     /** Ready-to-use deps for `triggerDataProfile`. */
@@ -104,18 +134,19 @@ export type HarnessRuntime = {
     readonly runTriggerDeps: RunTriggerDeps;
     /**
      * The assembled conversation `AgentDefinition` — the `chat` command drives it
-     * with {@link HarnessRuntime.provider} via `runAgent`. Built by
+     * with {@link HarnessRuntime.conversation}'s provider via `runAgent`. Built by
      * `assembleCoreRuntime` over the same registered workflow callables the
      * trigger deps expose, so its `execute_plan` tool launches the identical
      * `executeAnalysis` parent.
      */
     readonly conversationAgent: AgentDefinition;
     /**
-     * The proxy-backed chat provider the conversation agent runs its tool loop on
-     * — the same instance the durable workflows use. Exposed so `chat` can pass it
-     * as the `runAgent` provider without re-resolving the model or key.
+     * The shared connection's identity (provider slug + mode) the runtime booted on — the fact the TUI
+     * status surface renders beside the per-agent models (`agent-model-selection` group 7). Stamped once
+     * at boot from the resolved connection and never changed by a live agent-model swap (D-SHARE: one
+     * connection across agents), so the boot store can seed it a single time at the ready edge.
      */
-    readonly provider: ChatProvider;
+    readonly connection: ModelConnectionIdentity;
     readonly ingress: ExecIngress;
 };
 
@@ -132,7 +163,7 @@ export type HarnessBootError =
     | { type: "model_api_key_missing" }
     | { type: "model_unresolved"; cause: ChatSetupError }
     | { type: "model_provider_mismatch"; provider: string; model: string }
-    | { type: "model_required" }
+    | { type: "model_required"; agents: readonly AgentName[] }
     | { type: "postgres_unavailable"; cause: PostgresError }
     | { type: "ingress_failed"; cause: IngressError }
     | { type: "runtime_already_active"; holderPid: number }
@@ -274,6 +305,9 @@ export function activeHarnessRuntime(): HarnessRuntime | null {
 export function __resetHarnessRuntimeForTest(): void {
     active = null;
     booting = null;
+    // Detach any switch controller a prior boot test installed, so its bus subscription + gauge state do
+    // not leak into the next test.
+    clearAgentSwitch();
 }
 
 /**
@@ -368,34 +402,57 @@ async function bootHarnessRuntimeOnce(
             : err({ type: "embedding_probe_failed", detail: e.detail });
     }
 
-    // Model resolution per mode (design D5). cliproxy keeps the auto-resolve
-    // (`harness.model` override, else the proxy's `/models` ranking) guarded by
-    // provider-family agreement; direct requires an explicit model and never
-    // contacts the proxy — direct users name the model their endpoint serves.
-    let model: string;
-    if (connection.mode === "cliproxy") {
-        const autoResolvedModel = cfg.model === null;
-        if (cfg.model === null) {
-            const modelResult = await seams.resolveModel(providerApiKey);
-            if (modelResult.isErr()) return err({ type: "model_unresolved", cause: modelResult.error });
-            model = modelResult.value;
-        } else {
-            model = cfg.model;
-        }
-        // The auto-resolver falls through to whatever family the proxy advertises when the configured
-        // provider's account is not the one authenticated; wiring a mismatched id into the provider's
-        // route fails only at the first model round, after the sandbox has spun up. Reject it at boot.
-        // `modelMatchesProvider` reads the family table in the provider→family direction ONLY (a sanity
-        // check, never id→provider identity). An explicit `harness.model` is trusted (it may be a proxy
-        // alias resolving to the right family), so this guards the auto path; with the default provider
-        // `anthropic` only Claude-family ids pass.
-        if (autoResolvedModel && !modelMatchesProvider(connection.provider, model)) {
-            return err({ type: "model_provider_mismatch", provider: connection.provider, model });
-        }
-    } else {
-        if (cfg.model === null) return err({ type: "model_required" });
-        model = cfg.model;
+    // Per-agent model resolution (design D2/D5). Each user-facing agent resolves in order:
+    // `models.agents.<agent>` → `harness.model` (legacy both-agents fallback) → the connection's mode
+    // default. cliproxy's default is the proxy's auto-resolved id (the `/models` ranking); direct has
+    // no default, so an agent left with nothing fails boot — the agents that reached this are trusted to
+    // resolve, so the failure is enumerated up front (below) rather than mid-loop.
+    //
+    // The cliproxy auto-default is memoized: when BOTH agents fall through to it (the common no-`agents`
+    // config), the proxy's `/models` is hit ONCE and the provider-family guard runs once. The guard
+    // applies ONLY to that auto-resolved id — an explicit agent override or `harness.model` is trusted
+    // (it may be a proxy alias resolving to the right family), exactly as the pre-agents path trusted an
+    // explicit `harness.model`. `modelMatchesProvider` reads the family table provider→family ONLY (a
+    // sanity check, never id→provider identity); with the default provider `anthropic` only Claude-family
+    // ids pass.
+    // Memoize the PROMISE so two agents falling through to the default share ONE `/models` fetch and one
+    // family-guard evaluation — even when they resolve concurrently. `.match` consumes the resolve
+    // Result and maps both arms back to a boot Result.
+    let cliproxyAutoDefault: Promise<Result<string, HarnessBootError>> | null = null;
+    const resolveDefaultModel = (): Promise<Result<string, HarnessBootError>> => {
+        if (cliproxyAutoDefault !== null) return cliproxyAutoDefault;
+        cliproxyAutoDefault = seams.resolveModel(providerApiKey).then((resolved) =>
+            resolved.match(
+                (m): Result<string, HarnessBootError> =>
+                    modelMatchesProvider(connection.provider, m) ? ok(m) : err({ type: "model_provider_mismatch", provider: connection.provider, model: m }),
+                (e): Result<string, HarnessBootError> => err({ type: "model_unresolved", cause: e }),
+            ),
+        );
+        return cliproxyAutoDefault;
+    };
+
+    // Direct mode has no auto-default: any agent lacking BOTH its own override and `harness.model` is
+    // unresolvable. Enumerate them into ONE actionable `model_required` naming every failing agent,
+    // before touching the proxy — direct users name the model their endpoint serves.
+    if (connection.mode === "direct") {
+        const unresolved = AGENT_NAMES.filter((agent) => connection.agents[agent] === undefined && cfg.model === null);
+        if (unresolved.length > 0) return err({ type: "model_required", agents: unresolved });
     }
+
+    const resolveAgentModel = async (agent: AgentName): Promise<Result<string, HarnessBootError>> => {
+        const override = connection.agents[agent];
+        if (override !== undefined) return ok(override);
+        if (cfg.model !== null) return ok(cfg.model);
+        // cliproxy only past the direct-mode guard above.
+        return resolveDefaultModel();
+    };
+
+    const conversationResolved = await resolveAgentModel("conversation");
+    if (conversationResolved.isErr()) return err(conversationResolved.error);
+    const sandboxResolved = await resolveAgentModel("sandbox");
+    if (sandboxResolved.isErr()) return err(sandboxResolved.error);
+    const conversationModel = conversationResolved.value;
+    const sandboxModel = sandboxResolved.value;
 
     const pgResult = await seams.ensurePostgres();
     if (pgResult.isErr()) return err({ type: "postgres_unavailable", cause: pgResult.error });
@@ -474,36 +531,53 @@ async function bootHarnessRuntimeOnce(
 
         // Shared backends built ONCE so the profile workflow, the sandbox-step
         // child, the execute-analysis parent, the ephemeral runner, and the
-        // conversation agent all close over the SAME instances. `provider` is a
-        // `ChatProvider` (it satisfies the sandbox-step's `AgentChat` seam too). The
-        // embedding provider is NOT built here — it was resolved up-front
-        // (`embedding`, via the resolveEmbedding seam) and is threaded through
-        // unchanged, so every path shares the one resolved instance. `cfg.skillsDir`
-        // and `cfg.templatesDir` are non-null here — the pre-flight above returned
-        // if either was null.
+        // conversation agent all close over the SAME instances — EXCEPT the chat
+        // provider, which splits per user-facing agent below. The embedding provider is
+        // NOT built here — it was resolved up-front (`embedding`, via the
+        // resolveEmbedding seam) and is threaded through unchanged, so every path shares
+        // the one resolved instance. `cfg.skillsDir` and `cfg.templatesDir` are non-null
+        // here — the pre-flight above returned if either was null.
         //
-        // One construction path for both modes (design D6): the resolved connection
-        // becomes an `AiSdkProviderConfig`. cliproxy resolves to the Anthropic kind
-        // at the owned proxy URL with the proxy client key — deliberately identical
-        // to what the harness's `createAnthropicProvider` convenience wrapper emits
-        // (same kind/baseURL/apiKey/model and `capabilities: { toolCalling: true }`),
-        // so the proxy path is indistinguishable from a bare Anthropic connection.
-        // direct resolves to the configured protocol kind at the configured endpoint
-        // with the env secret.
-        const providerConfig: AiSdkProviderConfig =
+        // One provider instance per DISTINCT resolved agent model over the SHARED
+        // connection (design D-SHARE): the wire model is baked into each `ChatProvider`
+        // at construction (`ChatRequest` carries no model), so two agents on different
+        // models mean two instances — but two agents on the SAME model share ONE instance
+        // referentially, which is the common no-`agents` config (one provider, exactly as
+        // before this change). One construction path for both connection modes: the
+        // resolved connection + a bound model becomes an `AiSdkProviderConfig`. cliproxy
+        // resolves to the Anthropic kind at the owned proxy URL with the proxy client key
+        // — deliberately identical to what the harness's `createAnthropicProvider`
+        // convenience wrapper emits (same kind/baseURL/apiKey/model and `capabilities: {
+        // toolCalling: true }`), so the proxy path is indistinguishable from a bare
+        // Anthropic connection. direct resolves to the configured protocol kind at the
+        // configured endpoint with the env secret.
+        const providerConfigFor = (agentModel: string): AiSdkProviderConfig =>
             connection.mode === "cliproxy"
-                ? { kind: "anthropic", baseURL: env.cliproxyApiUrl, apiKey: providerApiKey, model, capabilities: { toolCalling: true } }
+                ? { kind: "anthropic", baseURL: env.cliproxyApiUrl, apiKey: providerApiKey, model: agentModel, capabilities: { toolCalling: true } }
                 : connection.protocol === "anthropic"
-                  ? { kind: "anthropic", baseURL: connection.baseURL, apiKey: providerApiKey, model, capabilities: { toolCalling: true } }
+                  ? { kind: "anthropic", baseURL: connection.baseURL, apiKey: providerApiKey, model: agentModel, capabilities: { toolCalling: true } }
                   : {
                         kind: "openai-compatible",
                         name: connection.provider,
                         baseURL: connection.baseURL,
                         apiKey: providerApiKey,
-                        model,
+                        model: agentModel,
                         capabilities: { toolCalling: true },
                     };
-        const provider = createConfiguredAiSdkProvider({ resolveBilling, config: providerConfig });
+        const buildProvider = (agentModel: string): ChatProvider => createConfiguredAiSdkProvider({ resolveBilling, config: providerConfigFor(agentModel) });
+        // Coincident agent models share the one INNER instance; only a genuinely distinct sandbox model
+        // constructs a second inner over the same connection (D-SHARE: one connection, one instance per
+        // DISTINCT model).
+        const conversationInner = buildProvider(conversationModel);
+        const sandboxInner = sandboxModel === conversationModel ? conversationInner : buildProvider(sandboxModel);
+        // Each agent gets its OWN swappable handle even when the inners coincide, so a later switch of one
+        // agent re-points only that agent (agent-model-selection D4). The handle is the stable reference every
+        // consumer captures — the run-engine deps bundles, the conversation agent's sub-agents, and the
+        // streaming chat wrapper — so swapping its inner at the idle transition reaches them all at once.
+        const conversationProvider = createSwappableProvider(conversationInner);
+        const sandboxProvider = createSwappableProvider(sandboxInner);
+        const conversationBackend: AgentBackend = { provider: conversationProvider, model: conversationModel };
+        const sandboxBackend: AgentBackend = { provider: sandboxProvider, model: sandboxModel };
         const sandboxClient = createSandboxClient({
             pool,
             env: { backend: "docker", namespace: "" },
@@ -534,18 +608,19 @@ async function bootHarnessRuntimeOnce(
 
         const composition: RunEngineComposition = {
             pool,
-            provider,
             embedding,
             sandboxClient,
             workspaceFs,
             resolveWorkspaceRoot,
-            // The RESOLVED id — the config override or the proxy default resolved earlier in this
-            // boot; never a config `null`. Bare here (it is the API model param); the prov-bridge
-            // emitters compose the `{provider}/{model}` provenance name from it and the CONFIGURED
-            // provider slug below.
-            model,
+            // Both user-facing agents carried on the one composition (design D1). The run-engine
+            // bundles draw `sandbox`; `conversation` rides so boot has a single carrier for the
+            // conversation assembly and the handle. Each carries its resolved model bare (the API
+            // model param); the prov-bridge emitters compose the `{provider}/{model}` provenance name
+            // from the sandbox agent's model and the CONFIGURED provider slug below.
+            conversation: conversationBackend,
+            sandbox: sandboxBackend,
             // The connection's configured provider slug — the attested fact provenance records,
-            // never derived from the model id (design D2).
+            // shared across agents (design D2/D-SHARE), never derived from a model id.
             modelProvider: connection.provider,
             skillsDir: cfg.skillsDir,
             bioKeys: cfg.bioKeys,
@@ -562,20 +637,29 @@ async function bootHarnessRuntimeOnce(
         // dead code. Everything lands before `launch`, the invariant that
         // matters: recovery resolves in-flight workflows by registered name, so
         // nothing the cli can trigger may register after.
+        // Captured as `buildExecuteAnalysis` runs inside `assembleCoreRuntime` (the parent's deps are
+        // built there, over the registered child callable, and otherwise unreachable afterward). The live
+        // agent switch re-points this bundle's `emitProvenance` field at the idle transition, so boot must
+        // hold the exact object the registered workflow reads.
+        let capturedExecuteAnalysisDeps: ExecuteAnalysisDeps | null = null;
         const workflows: CoreWorkflowDeps = {
             sandboxStep: buildSandboxStepDeps(composition),
-            buildExecuteAnalysis: (sandboxStep) => buildExecuteAnalysisDeps(composition, sandboxStep, runAuthorizer),
+            buildExecuteAnalysis: (sandboxStep) => {
+                capturedExecuteAnalysisDeps = buildExecuteAnalysisDeps(composition, sandboxStep, runAuthorizer);
+                return capturedExecuteAnalysisDeps;
+            },
             executeTargetAssessment: buildExecuteTargetAssessmentDeps(composition, runAuthorizer),
             // The data-profile deps stay an inline bundle: every field is a shared
             // backend plus the shared authorizer, so there is no reusable builder to
-            // extract (unlike the two run-engine bundles).
+            // extract (unlike the two run-engine bundles). Data profiling is a SANDBOX-agent
+            // activity (`agent-model-selection` D1), so it takes the sandbox provider + model.
             dataProfile: {
-                provider,
+                provider: sandboxProvider,
                 pool,
                 sandboxClient,
                 workspaceFs,
                 resolveWorkspaceRoot,
-                model,
+                model: sandboxModel,
                 runAuthorizer,
                 bioKeys: cfg.bioKeys,
                 embedding,
@@ -585,16 +669,17 @@ async function bootHarnessRuntimeOnce(
         };
         // The conversation agent's dep surface minus the three fields
         // `assembleCoreRuntime` injects itself (both workflow callables + the resource
-        // policy). Every backend is the shared instance; `templatesDir` is non-null
-        // past the pre-flight gate; `chrome: {}` is the honest local default — with
-        // the unavailable preview publisher, report preview short-circuits before any
-        // Chrome connection.
+        // policy). Every non-chat backend is the shared instance; the chat provider +
+        // model are the CONVERSATION agent's (`agent-model-selection` D1). `templatesDir` is
+        // non-null past the pre-flight gate; `chrome: {}` is the honest local default —
+        // with the unavailable preview publisher, report preview short-circuits before
+        // any Chrome connection.
         const conversation: ConversationAssemblyDeps = {
-            provider,
+            provider: conversationProvider,
             pool,
             embedding,
             workspaceFs,
-            model,
+            model: conversationModel,
             resolveWorkspaceRoot,
             runAuthorizer,
             runLauncher,
@@ -604,6 +689,32 @@ async function bootHarnessRuntimeOnce(
             chrome: {},
         };
         const core = seams.assemble({ conversation, workflows, resourcePolicy: cfg.resourcePolicy });
+
+        // Re-point the sandbox agent's provenance emitters when its model switches live (agent-model-selection
+        // D4). The registered sandbox-step and execute-analysis workflows read `deps.artifactRegistry` /
+        // `deps.emitProvenance` lazily per-invocation (verified: `registerSandboxStep`/
+        // `registerExecuteAnalysis` close over the deps object and dereference these fields inside the
+        // body), so reassigning them re-stamps every FUTURE step/run with emitters constructed WITH the new
+        // `{provider}/{model}` name — construction-time stamping preserved (PR #70). In-flight work, excluded
+        // by the idle gate, keeps the emitters it started with. The `as` narrows to a mutable view of a
+        // field WE built (the run-deps bundles above), not harness-owned state; the conversation agent needs
+        // no equivalent because chat turns write the Solid store, never the provenance bus.
+        const swapSandboxEmitters = (name: `${string}/${string}`): void => {
+            (workflows.sandboxStep as { artifactRegistry: ArtifactRegistry }).artifactRegistry = createBusArtifactRegistry(name);
+            if (capturedExecuteAnalysisDeps) {
+                (capturedExecuteAnalysisDeps as { emitProvenance?: (event: RunProvenanceEvent) => void }).emitProvenance = createRunProvenanceEmitter(name);
+            }
+        };
+        // Install the live-switch controller BEFORE `launch`: its run-bus subscription must be attached
+        // when DBOS recovery re-emits `run_started` for reclaimed runs, or the gauge would miss them and
+        // let a switch land mid-recovery.
+        installAgentSwitch({
+            swappable: { conversation: conversationProvider, sandbox: sandboxProvider },
+            rebuildProvider: buildProvider,
+            swapSandboxEmitters,
+            modelProvider: connection.provider,
+            initialModels: { conversation: conversationModel, sandbox: sandboxModel },
+        });
 
         // Sandbox-hygiene crons: reaper tears down orphaned containers a killed
         // host left behind; the watchdog converts a dead sandbox into a prompt
@@ -636,12 +747,15 @@ async function bootHarnessRuntimeOnce(
         });
 
         const runtime: HarnessRuntime = {
-            model,
+            conversation: conversationBackend,
+            sandbox: sandboxBackend,
             pool,
             triggerDeps: { pool, runAuthorizer, workflow: core.workflows.dataProfile },
             runTriggerDeps: { pool, executeAnalysis: core.workflows.executeAnalysis, runLauncher, runAuthorizer, budget: cfg.resourcePolicy.budget },
             conversationAgent: core.conversationAgent,
-            provider,
+            // The connection's identity the boot resolved — surfaced by the status UI, immutable across
+            // live agent-model swaps (D-SHARE), so `provider`/`mode` are read straight off the connection.
+            connection: { provider: connection.provider, mode: connection.mode },
             ingress,
         };
         active = runtime;
@@ -655,6 +769,9 @@ async function bootHarnessRuntimeOnce(
             await runtime.pool.end().catch(() => {
                 // The process is exiting; a pool that won't drain must not block it.
             });
+            // Detach the live-switch controller (its bus subscription + gauge state) so nothing outlives
+            // the runtime it observed.
+            clearAgentSwitch();
             releaseInstanceLock(RUNTIME_LOCK_KEY);
             active = null;
         });
@@ -667,6 +784,9 @@ async function bootHarnessRuntimeOnce(
                 // Already failing boot; pool-drain noise would mask the real cause.
             });
         }
+        // `installAgentSwitch` may have run before the throw (it precedes `launch`); detach it so a failed
+        // boot leaves no dangling bus subscription behind.
+        clearAgentSwitch();
         releaseInstanceLock(RUNTIME_LOCK_KEY);
         return err({ type: "runtime_boot_failed", cause });
     }

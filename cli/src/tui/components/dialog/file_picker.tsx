@@ -29,7 +29,7 @@ import type { SelectItem } from "../list_core.tsx";
 // the picker hands a flat absolute string[] back and imports nothing from `modules/analysis/`
 // except `openerArgv` — that and `canonicalPath` are leaf-ish, render-free helpers (the same
 // class of exception as `chat.tsx` reaching for the marker grammar), which is what lets the
-// widget keep its `components/` seat.
+// widget keep its `components/` home.
 //
 // Keyboard model — INSERT / NORMAL, mirroring the app's pattern:
 //   INSERT (filter input focused): keys type into the filter; ↑/↓ + ctrl+p/n still move the

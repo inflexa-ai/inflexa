@@ -24,36 +24,51 @@ import type { ResolvedHarnessConfig } from "./config.ts";
 import { createBusArtifactRegistry, createRunProvenanceEmitter } from "./prov_bridge.ts";
 
 /**
- * The already-constructed backends both run-engine dep bundles draw from. The
- * boot builds each instance ONCE — one chat provider, one sandbox client, one
- * workspace filesystem, one embedding-provider instance — and threads them here
- * so the sandbox-step child and the execute-analysis parent close over the SAME
- * backends the data-profile workflow uses. Kept separate from the two per-seam
- * extras (`sandboxStepCallable`, `runAuthorizer`) that only the parent needs, so
- * this shape is exactly "the shared graph" and nothing more.
+ * One user-facing agent's chat backend (`agent-model-selection` D1): the {@link ChatProvider} instance
+ * bound to that agent's resolved model over the SHARED connection, plus the bare model id. Two agents
+ * with the same resolved model share ONE instance (the boot builds one provider per DISTINCT model);
+ * two agents with different models carry different instances differing only in the bound wire model.
+ */
+export type AgentBackend = {
+    /** Chat provider bound to `model` (`ChatProvider extends AgentChat`, so it satisfies both seams). */
+    readonly provider: ChatProvider;
+    /**
+     * This agent's RESOLVED model id (config agent override → `harness.model` → connection default),
+     * never a config `null`. Kept BARE (it is the id sent on every API call); the provenance identity
+     * composes it with {@link RunEngineComposition.modelProvider}.
+     */
+    readonly model: string;
+};
+
+/**
+ * The already-constructed backends the run-engine dep bundles draw from. The boot builds each shared
+ * instance ONCE — one sandbox client, one workspace filesystem, one embedding-provider instance — and
+ * threads them here so the sandbox-step child and the execute-analysis parent close over the SAME
+ * backends the data-profile workflow uses. The chat provider is NO LONGER shared: it splits per
+ * user-facing agent (`agent-model-selection` D1) — the run-engine bundles draw {@link
+ * RunEngineComposition.sandbox}; {@link RunEngineComposition.conversation} rides here so boot has one
+ * carrier for both agents + the handle. Kept separate from the two per-seam extras
+ * (`sandboxStepCallable`, `runAuthorizer`) that only the parent needs.
  */
 export type RunEngineComposition = {
     /** App pool over the provisioned Postgres — shared with the harness ledger queries. */
     readonly pool: Pool;
-    /** Proxy-backed chat provider (`ChatProvider extends AgentChat`, so it satisfies both seams). */
-    readonly provider: ChatProvider;
     /** Real embedding-provider INSTANCE (not the config shape the profile path passes). */
     readonly embedding: EmbeddingProvider;
     readonly sandboxClient: SandboxClient;
     readonly workspaceFs: WorkspaceFilesystem;
     /** The workspace-root seam realization (analysis id → `<anchor>/.inflexa/analyses/<slug>`). */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
+    /** The conversation agent's backend — drives the chat agent and its sub-agents (D1); not read by the run-engine bundles. */
+    readonly conversation: AgentBackend;
+    /** The sandbox agent's backend — drives the step agents, data profile, ephemeral runner, run synthesis, and post-step metadata (D1). */
+    readonly sandbox: AgentBackend;
     /**
-     * The chat/sandbox model id — also the synthesis model (one config id today; D6) — RESOLVED at
-     * boot (config override or proxy default), never a config `null`. Kept BARE (it is the id sent
-     * on every API call); the provenance identity composes it with `modelProvider` below.
-     */
-    readonly model: string;
-    /**
-     * The vendor slug naming `model`'s provider (`anthropic`, `openai`, …) — an open vocabulary,
-     * the model connection's CONFIGURED provider fed by boot (design D2), never derived from the
-     * model id. A separate FACT beside `model`, never a combined string, so the composition holds no
-     * redundant field to drift; the emitters compose the `{provider}/{model}` provenance name.
+     * The vendor slug naming every agent's provider (`anthropic`, `openai`, …) — an open vocabulary,
+     * the model connection's CONFIGURED provider fed by boot (design D2/D-SHARE: ONE connection across
+     * agents), never derived from a model id. A separate FACT beside each agent's `model`, never a
+     * combined string, so the composition holds no redundant field to drift; the emitters compose the
+     * `{provider}/{model}` provenance name from this slug and the sandbox agent's model.
      */
     readonly modelProvider: string;
     /** Absolute skills tree path — enables the sandbox agents' skill tools. */
@@ -79,13 +94,13 @@ export type RunEngineComposition = {
  */
 function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContext): AgentDefinition {
     const deps: SandboxAgentDeps = {
-        provider: comp.provider,
+        provider: comp.sandbox.provider,
         pool: comp.pool,
         sandboxClient: comp.sandboxClient,
         workspaceFs: comp.workspaceFs,
         embedding: comp.embedding,
         lineageCollector: ctx.lineageCollector,
-        model: comp.model,
+        model: comp.sandbox.model,
         skillsDir: comp.skillsDir,
         bioKeys: comp.bioKeys,
         blockerHolder: ctx.blockerHolder,
@@ -138,13 +153,13 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
 export function buildSandboxStepDeps(comp: RunEngineComposition): SandboxStepDeps {
     return {
         pool: comp.pool,
-        provider: comp.provider,
+        provider: comp.sandbox.provider,
         embedding: comp.embedding,
         sandboxClient: comp.sandboxClient,
-        artifactRegistry: createBusArtifactRegistry(`${comp.modelProvider}/${comp.model}`),
+        artifactRegistry: createBusArtifactRegistry(`${comp.modelProvider}/${comp.sandbox.model}`),
         workspaceFs: comp.workspaceFs,
         resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
-        model: comp.model,
+        model: comp.sandbox.model,
         buildAgent: (ctx) => buildStepAgent(comp, ctx),
         resolveWritePrefix: (input: SandboxStepInput) => join(comp.resolveWorkspaceRoot(input.analysisId), runStepDir(input.runId, input.stepId)),
     };
@@ -153,11 +168,11 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): SandboxStepDep
 /**
  * Assemble the {@link ExecuteAnalysisDeps} the parent workflow registers with.
  * `sandboxStepCallable` MUST be the callable returned by registering the child
- * first (the parent's dispatch closes over it). `synthesisModel`
- * reuses the one cli model id (splitting chat vs. synthesis is a later config
- * concern), `runCharge` is the harness no-op bracket, and `synthesisEnabled` is
- * left unset so it defaults to `true` — the skeleton proves the whole body
- * including run-level synthesis.
+ * first (the parent's dispatch closes over it). `synthesisModel` follows the
+ * SANDBOX agent (`agent-model-selection` D1: run synthesis is an internal agent that
+ * aliases `sandbox`), `runCharge` is the harness no-op bracket, and
+ * `synthesisEnabled` is left unset so it defaults to `true` — the skeleton proves
+ * the whole body including run-level synthesis.
  *
  * `emitProvenance` realizes the harness's optional run-lifecycle observer as bus
  * emission ({@link createRunProvenanceEmitter}), so the run's start/terminal
@@ -171,15 +186,15 @@ export function buildExecuteAnalysisDeps(
 ): ExecuteAnalysisDeps {
     return {
         pool: comp.pool,
-        provider: comp.provider,
+        provider: comp.sandbox.provider,
         embedding: comp.embedding,
         sandboxStepCallable,
         resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
-        synthesisModel: comp.model,
+        synthesisModel: comp.sandbox.model,
         bioKeys: comp.bioKeys,
         runCharge: createNoopRunCharge(),
         runAuthorizer,
-        emitProvenance: createRunProvenanceEmitter(`${comp.modelProvider}/${comp.model}`),
+        emitProvenance: createRunProvenanceEmitter(`${comp.modelProvider}/${comp.sandbox.model}`),
     };
 }
 
@@ -195,13 +210,13 @@ export function buildExecuteAnalysisDeps(
  */
 export function buildEphemeralDeps(comp: RunEngineComposition): CoreWorkflowDeps["ephemeral"] {
     return {
-        provider: comp.provider,
+        provider: comp.sandbox.provider,
         pool: comp.pool,
         sandboxClient: comp.sandboxClient,
         workspaceFs: comp.workspaceFs,
         embedding: comp.embedding,
         resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
-        model: comp.model,
+        model: comp.sandbox.model,
         bioKeys: comp.bioKeys,
     };
 }
@@ -210,10 +225,11 @@ export function buildEphemeralDeps(comp: RunEngineComposition): CoreWorkflowDeps
  * Assemble the target-assessment workflow's construction deps. Registered
  * deliberately untriggerable in the cli (no surface launches it), so
  * these deps exist only to satisfy `assembleCoreRuntime`'s one-cohort
- * registration — never exercised at runtime. `chatProvider` takes the one shared
- * provider (`ChatProvider extends AgentChat`); `decisionModel`/`synthesisModel`
- * reuse the single cli model id, and `ncbiApiKey` threads the optional NCBI key
- * for the Phase-1 collectors. The return type is sourced from
+ * registration — never exercised at runtime. `chatProvider` takes the SANDBOX
+ * agent's provider (`ChatProvider extends AgentChat`); `decisionModel`/`synthesisModel`
+ * follow the sandbox agent (target assessment is an internal agent aliasing `sandbox`,
+ * `agent-model-selection` D1), and `ncbiApiKey` threads the optional NCBI key for the
+ * Phase-1 collectors. The return type is sourced from
  * {@link CoreWorkflowDeps} (barrel) rather than the harness-internal
  * `ExecuteTargetAssessmentDeps`, which is not part of the embedder surface.
  */
@@ -222,8 +238,8 @@ export function buildExecuteTargetAssessmentDeps(comp: RunEngineComposition, run
         pool: comp.pool,
         runAuthorizer,
         ncbiApiKey: comp.bioKeys.ncbi,
-        chatProvider: comp.provider,
-        decisionModel: comp.model,
-        synthesisModel: comp.model,
+        chatProvider: comp.sandbox.provider,
+        decisionModel: comp.sandbox.model,
+        synthesisModel: comp.sandbox.model,
     };
 }

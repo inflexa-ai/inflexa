@@ -147,10 +147,10 @@ function toCommandRef(
  * harness can cross-reference its local ledger into the signed document, and does NOT emit
  * `prov.step_completed` (see the module note on the split and the producer grouping).
  *
- * `model` is the id of the model driving the step seat — resolved ONCE at boot (composition), so
+ * `model` is the id of the model driving the step agent — resolved ONCE at boot (composition), so
  * stamping the construction-time id on every `prov.command_executed` is exactly "the model this
  * run's steps ran on". It rides the event so the recorder never infers it across events; when the
- * seats split (chat/decision/synthesis, D6), this constructor takes the step seat's own id with no
+ * agents split (chat/decision/synthesis, D6), this constructor takes the step agent's own id with no
  * event-shape change.
  *
  * Three seam-contract facts shape the behavior:
@@ -301,7 +301,7 @@ export function createBusArtifactRegistry(model: ProvModelId): ArtifactRegistry 
  * run-lifecycle arms onto a `prov.*` event stamped with the system actor (cli version + commit).
  * This is the site that emits `prov.step_completed` (from the scheduler-settlement `step_completed`
  * arm — the only place every EXECUTED step is observed), NOT the artifact registry above. `model`
- * is the boot-resolved id of the model driving the step seat (see
+ * is the boot-resolved id of the model driving the step agent (see
  * {@link createBusArtifactRegistry}); it stamps `prov.step_completed` only — the run arms carry no
  * model because the issue scopes model association to the step and command activities the model
  * drove.

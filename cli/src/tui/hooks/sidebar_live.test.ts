@@ -232,7 +232,7 @@ describe("watchSidebarData — triggers and bounded poll", () => {
         const dispose = mountWatch(wsFor("A"), { refresh: async (id) => void refreshed.push(id), arm: () => () => {} });
         try {
             expect(refreshed).toHaveLength(0); // boot idle at mount → no refresh
-            const readyDriver: BootDriver = async () => ok({ model: "m", pool: {} } as unknown as HarnessRuntime);
+            const readyDriver: BootDriver = async () => ok({ conversation: { model: "m" }, pool: {} } as unknown as HarnessRuntime);
             await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver);
             expect(refreshed).toEqual(["A"]); // the ready edge fired the refresh
         } finally {
@@ -333,7 +333,7 @@ describe("watchSidebarData — swap resets the snapshots before the new analysis
 
         const dispose = mountWatch(ws, { refresh, arm: () => () => {} });
         try {
-            const readyDriver: BootDriver = async () => ok({ model: "m", pool: {} } as unknown as HarnessRuntime);
+            const readyDriver: BootDriver = async () => ok({ conversation: { model: "m" }, pool: {} } as unknown as HarnessRuntime);
             await startHarnessBoot({} as ResolvedHarnessConfig, readyDriver); // Trigger 1 fires refresh(A)
             await new Promise<void>((r) => setTimeout(r, 0)); // let A's ledger reads settle
             expect(profileSnapshot().kind).toBe("loaded"); // A's data is on screen — stale state to clear

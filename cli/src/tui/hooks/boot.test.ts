@@ -1,10 +1,20 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ok, err } from "neverthrow";
+import { createRoot } from "solid-js";
+import type { ChatProvider } from "@inflexa-ai/harness";
 
 import type { ResolvedHarnessConfig } from "../../modules/harness/config.ts";
 import type { HarnessRuntime, HarnessBootError } from "../../modules/harness/runtime.ts";
 import { describeBootError } from "../../modules/harness/profile.ts";
-import { bootState, harnessRuntime, startHarnessBoot, __resetBootForTest, type BootDriver } from "./boot.ts";
+import {
+    __resetGaugeForTest,
+    clearAgentSwitch,
+    createSwappableProvider,
+    enterChatTurn,
+    installAgentSwitch,
+    requestAgentModelChange,
+} from "../../modules/harness/agent_switch.ts";
+import { bootState, harnessRuntime, agentModels, startHarnessBoot, watchAgentModels, __resetBootForTest, type BootDriver } from "./boot.ts";
 
 afterEach(() => __resetBootForTest());
 
@@ -12,10 +22,11 @@ afterEach(() => __resetBootForTest());
 // the config matters — an empty stand-in cast keeps the transition tests offline.
 const cfg = {} as ResolvedHarnessConfig;
 
-// The store reads only `.model` off the handle; the rest of HarnessRuntime is infrastructure the
-// transition tests never exercise, so a partial stand-in cast is sound and keeps the test offline.
+// The store reads the CONVERSATION agent's `.model` and the `.connection` identity off the handle; the
+// rest of HarnessRuntime is infrastructure the transition tests never exercise, so a partial stand-in
+// cast is sound and offline.
 function fakeRuntime(model: string): HarnessRuntime {
-    return { model } as unknown as HarnessRuntime;
+    return { conversation: { model }, connection: { provider: "anthropic", mode: "cliproxy" } } as unknown as HarnessRuntime;
 }
 
 // Drivers keep `ok`/`err` in RETURN position (the neverthrow must-use rule flags a Result passed as an
@@ -45,7 +56,7 @@ describe("boot store transitions", () => {
         const settled = bootState();
         expect(settled.phase).toBe("ready");
         if (settled.phase === "ready") expect(settled.model).toBe("claude-test");
-        expect(harnessRuntime()?.model).toBe("claude-test");
+        expect(harnessRuntime()?.conversation.model).toBe("claude-test");
     });
 
     test("a boot failure publishes the actionable describeBootError message, no handle", async () => {
@@ -108,6 +119,86 @@ describe("boot store transitions", () => {
 
         const settled = bootState();
         if (settled.phase === "ready") expect(settled.model).toBe("claude-a");
-        expect(harnessRuntime()?.model).toBe("claude-a");
+        expect(harnessRuntime()?.conversation.model).toBe("claude-a");
+    });
+});
+
+// The agent-models store mirrors the live agent switch (agent-model-selection group 4). These drive the REAL
+// switch (agent_switch.ts) over a fake wiring and assert the reactive cell tracks it: seeded at the ready
+// edge, updated on an idle swap, and showing a scheduled switch as pending until it lands.
+describe("agent-models store (watchAgentModels)", () => {
+    afterEach(() => {
+        clearAgentSwitch();
+        __resetGaugeForTest();
+    });
+
+    // A structurally-minimal provider: the switch only swaps handles, never calls the wire, so `chat`/
+    // `chatStream` are never reached and the double cast is honest (mirrors agent_switch.test.ts).
+    function fakeProvider(): ChatProvider {
+        return {
+            capabilities: { toolCalling: true },
+            chat: () => {
+                throw new Error("unused in the agent-models store test");
+            },
+            chatStream: () => {
+                throw new Error("unused in the agent-models store test");
+            },
+        } as unknown as ChatProvider;
+    }
+
+    function installFakeSwitch(models: { conversation: string; sandbox: string }): void {
+        installAgentSwitch({
+            swappable: { conversation: createSwappableProvider(fakeProvider()), sandbox: createSwappableProvider(fakeProvider()) },
+            rebuildProvider: () => fakeProvider(),
+            swapSandboxEmitters: () => {},
+            modelProvider: "anthropic",
+            initialModels: models,
+        });
+    }
+
+    test("stays empty before ready, then seeds both agents' current models at the ready edge", async () => {
+        installFakeSwitch({ conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" });
+        let dispose!: () => void;
+        createRoot((d) => {
+            dispose = d;
+            watchAgentModels();
+        });
+        try {
+            expect(agentModels().current).toEqual({ conversation: "", sandbox: "" });
+            await startHarnessBoot(cfg, readyDriver("claude-opus-4-8"));
+            expect(agentModels().current).toEqual({ conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" });
+        } finally {
+            dispose();
+        }
+    });
+
+    test("an idle swap updates the store; a switch scheduled behind work shows as pending, then clears when it lands", async () => {
+        installFakeSwitch({ conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" });
+        let dispose!: () => void;
+        createRoot((d) => {
+            dispose = d;
+            watchAgentModels();
+        });
+        try {
+            await startHarnessBoot(cfg, readyDriver("claude-opus-4-8"));
+
+            // Idle → the sandbox swap applies immediately and the store follows.
+            requestAgentModelChange("sandbox", "claude-haiku-4-5");
+            expect(agentModels().current.sandbox).toBe("claude-haiku-4-5");
+            expect(agentModels().pending.size).toBe(0);
+
+            // Busy (a chat turn) → the chat switch schedules and shows pending without changing current.
+            const leaveTurn = enterChatTurn();
+            requestAgentModelChange("conversation", "claude-sonnet-4-5");
+            expect(agentModels().pending.get("conversation")).toBe("claude-sonnet-4-5");
+            expect(agentModels().current.conversation).toBe("claude-opus-4-8");
+
+            // The turn settles → the pending switch lands and clears.
+            leaveTurn();
+            expect(agentModels().current.conversation).toBe("claude-sonnet-4-5");
+            expect(agentModels().pending.size).toBe(0);
+        } finally {
+            dispose();
+        }
     });
 });

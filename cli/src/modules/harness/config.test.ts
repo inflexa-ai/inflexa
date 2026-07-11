@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
+import { readFileSync } from "node:fs";
+
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { resolveModelConnection } from "./config.ts";
+import { resolveModelConnection, writeAgentModel } from "./config.ts";
 
 // Drives resolveModelConnection through the real readConfig() surface against the sandboxed
 // env.configPath (set by the test preload), exercising the fail-closed + protocol-implication paths
@@ -28,31 +30,37 @@ function writeConfigWithModels(models: unknown): void {
 }
 
 describe("resolveModelConnection — defaults", () => {
-    test("an absent models block resolves to cliproxy mode with provider anthropic (today's behavior)", () => {
+    test("an absent models block resolves to cliproxy mode with provider anthropic and no agent overrides (today's behavior)", () => {
         writeConfigWithModels(undefined);
-        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "anthropic" });
+        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "anthropic", agents: {} });
     });
 
-    test("a models block with no connection keeps the default connection (forward-compatible with seats-only blocks)", () => {
+    test("a models block with no connection keeps the default connection (forward-compatible with agents-only blocks)", () => {
         writeConfigWithModels({});
-        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "anthropic" });
+        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "anthropic", agents: {} });
     });
 
     test("a cliproxy connection with no provider defaults the provider to anthropic", () => {
         writeConfigWithModels({ connection: { mode: "cliproxy" } });
-        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "anthropic" });
+        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "anthropic", agents: {} });
     });
 
     test("a cliproxy connection records the configured provider slug verbatim", () => {
         writeConfigWithModels({ connection: { mode: "cliproxy", provider: "openai" } });
-        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "openai" });
+        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "openai", agents: {} });
     });
 });
 
 describe("resolveModelConnection — direct protocol implication", () => {
     test("provider anthropic with no explicit protocol implies the anthropic wire kind", () => {
         writeConfigWithModels({ connection: { mode: "direct", provider: "anthropic", baseURL: "https://gw.example/v1" } });
-        expect(resolveModelConnection()).toEqual({ mode: "direct", provider: "anthropic", baseURL: "https://gw.example/v1", protocol: "anthropic" });
+        expect(resolveModelConnection()).toEqual({
+            mode: "direct",
+            provider: "anthropic",
+            baseURL: "https://gw.example/v1",
+            protocol: "anthropic",
+            agents: {},
+        });
     });
 
     test("any non-anthropic provider with no explicit protocol implies openai-compatible", () => {
@@ -62,6 +70,7 @@ describe("resolveModelConnection — direct protocol implication", () => {
             provider: "deepseek",
             baseURL: "https://api.deepseek.com/v1",
             protocol: "openai-compatible",
+            agents: {},
         });
     });
 
@@ -72,7 +81,55 @@ describe("resolveModelConnection — direct protocol implication", () => {
             provider: "anthropic",
             baseURL: "https://gw.example/v1",
             protocol: "openai-compatible",
+            agents: {},
         });
+    });
+});
+
+describe("resolveModelConnection — agent overrides ride through", () => {
+    test("a full agents map is carried verbatim onto the resolved connection", () => {
+        writeConfigWithModels({
+            connection: { mode: "cliproxy", provider: "anthropic" },
+            agents: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" },
+        });
+        expect(resolveModelConnection()).toEqual({
+            mode: "cliproxy",
+            provider: "anthropic",
+            agents: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" },
+        });
+    });
+
+    test("a partial agents map carries only the stated agent (the other falls through at boot)", () => {
+        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic" }, agents: { sandbox: "claude-sonnet-4-5" } });
+        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "anthropic", agents: { sandbox: "claude-sonnet-4-5" } });
+    });
+
+    test("an agents-only block (no connection) resolves to the default connection carrying the overrides", () => {
+        writeConfigWithModels({ agents: { conversation: "claude-opus-4-8" } });
+        expect(resolveModelConnection()).toEqual({ mode: "cliproxy", provider: "anthropic", agents: { conversation: "claude-opus-4-8" } });
+    });
+
+    test("a direct connection carries its agent overrides beside the endpoint facts", () => {
+        writeConfigWithModels({
+            connection: { mode: "direct", provider: "deepseek", baseURL: "https://api.deepseek.com/v1" },
+            agents: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner" },
+        });
+        expect(resolveModelConnection()).toEqual({
+            mode: "direct",
+            provider: "deepseek",
+            baseURL: "https://api.deepseek.com/v1",
+            protocol: "openai-compatible",
+            agents: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner" },
+        });
+    });
+
+    test("a malformed agent value fails closed to the default connection, dropping the overrides, carrying a configError", () => {
+        // A non-string agent id fails the whole `models` parse — the overrides cannot be trusted past a
+        // parse failure, so they drop with the rest of the block and boot reports the precise field.
+        writeConfigWithModels({ connection: { mode: "cliproxy", provider: "anthropic" }, agents: { conversation: 123 } });
+        const resolved = resolveModelConnection();
+        expect(resolved).toMatchObject({ mode: "cliproxy", provider: "anthropic", agents: {} });
+        expect(resolved.configError?.issues).toContain("models.agents.conversation");
     });
 });
 
@@ -90,5 +147,47 @@ describe("resolveModelConnection — fail closed", () => {
         const resolved = resolveModelConnection();
         expect(resolved).toMatchObject({ mode: "cliproxy", provider: "anthropic" });
         expect(resolved.configError).toBeDefined();
+    });
+});
+
+// The write side of the agent-model config surface (agent-model-selection D3): the palette pick persists
+// immediately, spread-preserving. Read back through the real config file so the test asserts the exact
+// on-disk shape resolveModelConnection then consumes.
+describe("writeAgentModel — persists models.agents spread-preserving", () => {
+    function readModelsBlock(): Record<string, unknown> {
+        const parsed = JSON.parse(readFileSync(env.configPath, "utf8")) as { models?: Record<string, unknown> };
+        return parsed.models ?? {};
+    }
+
+    test("writes the agent's model into models.agents and round-trips through resolveModelConnection", () => {
+        writeConfigWithModels(undefined); // a config with no models block at all
+        expect(writeAgentModel("sandbox", "claude-sonnet-4-5").isOk()).toBe(true);
+        expect(readModelsBlock()).toEqual({ agents: { sandbox: "claude-sonnet-4-5" } });
+        expect(resolveModelConnection().agents).toEqual({ sandbox: "claude-sonnet-4-5" });
+    });
+
+    test("keeps the connection block and the OTHER agent when rewriting one agent", () => {
+        writeConfigWithModels({
+            connection: { mode: "direct", provider: "anthropic", baseURL: "https://gw.example" },
+            agents: { conversation: "claude-opus-4-8" },
+        });
+        expect(writeAgentModel("sandbox", "claude-haiku-4-5").isOk()).toBe(true);
+        expect(readModelsBlock()).toEqual({
+            connection: { mode: "direct", provider: "anthropic", baseURL: "https://gw.example" },
+            agents: { conversation: "claude-opus-4-8", sandbox: "claude-haiku-4-5" },
+        });
+    });
+
+    test("overwrites an existing entry for the same agent", () => {
+        writeConfigWithModels({ agents: { conversation: "claude-opus-4-8" } });
+        expect(writeAgentModel("conversation", "claude-sonnet-4-5").isOk()).toBe(true);
+        expect(readModelsBlock()).toEqual({ agents: { conversation: "claude-sonnet-4-5" } });
+    });
+
+    test("preserves unrelated top-level config keys (telemetry)", () => {
+        writeConfigWithModels(undefined);
+        expect(writeAgentModel("conversation", "claude-opus-4-8").isOk()).toBe(true);
+        const parsed = JSON.parse(readFileSync(env.configPath, "utf8")) as { telemetry: boolean };
+        expect(parsed.telemetry).toBe(false);
     });
 });

@@ -10,6 +10,7 @@ import {
     SANDBOX_AGENT_META,
     type AgentSession,
     type ArtifactRegistrationInput,
+    type ChatProvider,
     type ExecuteAnalysisDeps,
     type ProvenanceCollector,
     type RunAuthorizer,
@@ -23,15 +24,20 @@ import { buildExecuteAnalysisDeps, buildSandboxStepDeps, type RunEngineCompositi
 // All factories below construct lazily (pg pools connect on first query; the
 // SDK clients open no socket at construction), so the whole module builds
 // offline — no Postgres, proxy, embeddings endpoint, or Docker daemon.
-function testComposition(overrides: Partial<Pick<RunEngineComposition, "model" | "modelProvider">> = {}): RunEngineComposition {
+//
+// `sandbox` overrides the SANDBOX agent's model id (the agent every run-engine builder draws), so a test
+// can prove an arbitrary configured provider/model flows into the recorded identity with no id sniffing;
+// the conversation agent stays fixed since no run-engine builder reads it.
+function testComposition(overrides: { sandbox?: string; modelProvider?: string } = {}): RunEngineComposition {
     const resolveBilling = createNoopBillingResolver();
     const pool = createPool({ host: "localhost", port: "5", database: "d", user: "u", password: "p", sslMode: "disable" });
     // A `<base>/<analysisId>` resolver keeps the byte layout the old fixed base
     // produced, so every expected path below stays literal and readable.
     const resolveWorkspaceRoot = (analysisId: string): string => join("/tmp/sessions", analysisId);
+    const makeProvider = (model: string): ChatProvider => createAnthropicProvider({ baseURL: "http://proxy.test", token: "t", model, resolveBilling });
+    const sandboxModel = overrides.sandbox ?? "claude-test";
     return {
         pool,
-        provider: createAnthropicProvider({ baseURL: "http://proxy.test", token: "t", model: "claude-test", resolveBilling }),
         embedding: createEmbeddingProvider({ baseURL: "http://emb.test/v1", token: "t", model: "text-embedding-3-small", resolveBilling }),
         sandboxClient: createSandboxClient({
             pool,
@@ -43,13 +49,12 @@ function testComposition(overrides: Partial<Pick<RunEngineComposition, "model" |
         }),
         workspaceFs: createWorkspaceFilesystem({ resolveWorkspaceRoot }),
         resolveWorkspaceRoot,
-        model: "claude-test",
-        // The connection's configured provider slug (boot feeds it verbatim); overridable so a test can
-        // prove an arbitrary configured provider flows into the recorded identity with no id sniffing.
-        modelProvider: "anthropic",
+        conversation: { provider: makeProvider("claude-test"), model: "claude-test" },
+        sandbox: { provider: makeProvider(sandboxModel), model: sandboxModel },
+        // The connection's configured provider slug (boot feeds it verbatim), shared across agents.
+        modelProvider: overrides.modelProvider ?? "anthropic",
         skillsDir: "/tmp/skills",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
-        ...overrides,
     };
 }
 
@@ -139,7 +144,7 @@ describe("run-engine provenance wiring", () => {
         // produce it from the opaque model alias.
         const callable = (async () => ({})) as unknown as ExecuteAnalysisDeps["sandboxStepCallable"];
         const authorizer = {} as unknown as RunAuthorizer;
-        const deps = buildExecuteAnalysisDeps(testComposition({ model: "some-alias-v2", modelProvider: "deepseek" }), callable, authorizer);
+        const deps = buildExecuteAnalysisDeps(testComposition({ sandbox: "some-alias-v2", modelProvider: "deepseek" }), callable, authorizer);
 
         captured = [];
         Bus.on("inflexa", spy);
@@ -148,6 +153,27 @@ describe("run-engine provenance wiring", () => {
         const stepEvent = captured[0]!;
         if (stepEvent.type !== "prov.step_completed") throw new Error("expected prov.step_completed");
         expect(stepEvent.model).toBe("deepseek/some-alias-v2");
+    });
+});
+
+describe("per-agent composition — run-engine bundles draw the sandbox agent", () => {
+    test("distinct agent models: the step + execute-analysis bundles carry the SANDBOX provider + model, never the conversation agent's", () => {
+        const comp = testComposition({ sandbox: "sandbox-model" });
+        // The two agents are genuinely distinct here — different resolved model, different provider instance.
+        expect(comp.conversation.model).not.toBe(comp.sandbox.model);
+        expect(comp.conversation.provider).not.toBe(comp.sandbox.provider);
+
+        // Every run-engine builder wires the sandbox agent's provider INSTANCE (reference equality) and model.
+        const stepDeps = buildSandboxStepDeps(comp);
+        expect(stepDeps.provider).toBe(comp.sandbox.provider);
+        expect(stepDeps.provider).not.toBe(comp.conversation.provider);
+        expect(stepDeps.model).toBe("sandbox-model");
+
+        const callable = (async () => ({})) as unknown as ExecuteAnalysisDeps["sandboxStepCallable"];
+        const authorizer = {} as unknown as RunAuthorizer;
+        const execDeps = buildExecuteAnalysisDeps(comp, callable, authorizer);
+        expect(execDeps.provider).toBe(comp.sandbox.provider);
+        expect(execDeps.synthesisModel).toBe("sandbox-model");
     });
 });
 
