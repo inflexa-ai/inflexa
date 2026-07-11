@@ -5,7 +5,7 @@ import { env } from "../../lib/env.ts";
 import { readApiKey, type ChatSetupError } from "../proxy/models.ts";
 import { resolveModelConnection, type ResolvedModelConnection } from "./config.ts";
 
-// Live model listing for the agent-model picker (agent-model-selection D5). Deliberately DISTINCT from
+// Live model listing for the agent-model picker. Deliberately DISTINCT from
 // `resolveModelId` (proxy/models.ts): that resolves ONE default id for boot and CACHES it per process
 // (a session's model is fixed, so caching is right there); the picker wants the CURRENT, UNCACHED list
 // on every open, and it must speak whatever protocol the CONFIGURED connection uses — the owned
@@ -16,7 +16,7 @@ import { resolveModelConnection, type ResolvedModelConnection } from "./config.t
 // would invert the harness → proxy module dependency direction (CLAUDE.md). It reuses proxy's
 // `readApiKey` (the cliproxy client-key discovery) for the cliproxy mode only.
 //
-// Listing failure is an EXPECTED outcome — the picker degrades to free-text entry (D5) — so every
+// Listing failure is an EXPECTED outcome — the picker degrades to free-text entry — so every
 // failure mode is modeled on the Result error channel, never thrown.
 
 // Every supported endpoint answers the OpenAI-style `{ data: [{ id }] }` shape: the cliproxy /models
@@ -31,7 +31,7 @@ const ANTHROPIC_VERSION = "2023-06-01";
 
 /**
  * Why a model listing could not be produced — each an EXPECTED degradation the picker maps to free-text
- * entry (design D5), never a crash:
+ * entry, never a crash:
  * - `connection_invalid` — the `models` config block failed validation (the same fields boot reports);
  * - `key_missing` — no credential to authenticate the listing request (the cliproxy client key is
  *   absent, or `INFLEXA_MODEL_API_KEY` is unset in direct mode);
@@ -79,11 +79,12 @@ async function requestFor(
     const key = seams.readModelApiKey();
     if (!key) return err({ type: "key_missing" });
     if (connection.protocol === "anthropic") {
-        // Anthropic's List Models is `GET {root}/v1/models` with the `x-api-key` + `anthropic-version`
-        // headers (design D5). Assumes the configured `baseURL` is the API root WITHOUT a trailing `/v1`
-        // (Anthropic's own convention); a baseURL that already carries `/v1` would 404 here and the picker
-        // degrades to free text — the designed fallback, so the ambiguity is non-fatal.
-        return ok({ url: `${connection.baseURL}/v1/models`, headers: { "x-api-key": key, "anthropic-version": ANTHROPIC_VERSION } });
+        // The configured `baseURL` is the `/v1`-terminated protocol root — the `@ai-sdk/anthropic`
+        // convention the chat path already relies on (it POSTs to `{baseURL}/messages`). Listing derives
+        // from that SAME value: `GET {baseURL}/models` (Anthropic's List Models route), with the
+        // `x-api-key` + `anthropic-version` headers. One configured URL serves both paths and neither
+        // re-derives the other's form, so there is no baseURL that lists but cannot chat (or vice versa).
+        return ok({ url: `${connection.baseURL}/models`, headers: { "x-api-key": key, "anthropic-version": ANTHROPIC_VERSION } });
     }
     // OpenAI-compatible: `GET {baseURL}/models` with bearer auth (the baseURL already carries `/v1` by
     // the OpenAI convention, so it is not re-appended).
@@ -91,9 +92,9 @@ async function requestFor(
 }
 
 /**
- * List the connection's available model ids for the agent-model picker (design D5), UNCACHED. Resolves
+ * List the connection's available model ids for the agent-model picker, UNCACHED. Resolves
  * the configured connection, shapes the mode-specific request (cliproxy `/models`, direct
- * OpenAI-compatible `/models`, direct Anthropic `/v1/models`), and parses the shared `{ data: [{ id }] }`
+ * OpenAI-compatible `/models`, direct Anthropic `/models` off the `/v1`-terminated root), and parses the shared `{ data: [{ id }] }`
  * response. Returns the id list, or a {@link ListModelsError} the picker maps to free-text entry — every
  * failure is on the Result channel because listing failure is an ordinary, designed outcome, not a fault.
  */

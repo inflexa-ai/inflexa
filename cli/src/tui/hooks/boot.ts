@@ -25,8 +25,9 @@ import { currentAgentModels, onAgentStateChange, pendingAgentSelections, type Ag
  *   TERMINAL state (never a hang): the user reads the remedy and quits cleanly.
  *
  * The connection rides the `ready` variant — not the swap-tracking {@link agentModels} store — because it
- * is a boot-resolved, immutable fact (a live agent-model swap never changes the connection, D-SHARE), so
- * it is seeded ONCE at the ready edge, exactly matching this variant's set-once-and-never-mutate lifecycle.
+ * is a boot-resolved, immutable fact (a live agent-model swap never changes the connection — both agents
+ * share one connection, so a swap changes only a model), so it is seeded ONCE at the ready edge, exactly
+ * matching this variant's set-once-and-never-mutate lifecycle.
  */
 export type BootState =
     { phase: "idle" } | { phase: "booting" } | { phase: "ready"; model: string; connection: ModelConnectionIdentity } | { phase: "failed"; message: string };
@@ -72,8 +73,9 @@ export async function startHarnessBoot(config: ResolvedHarnessConfig, driver: Bo
         (rt) => {
             runtime = rt;
             // `model` snapshots the conversation agent's boot model; both agents' LIVE models render from the
-            // `agentModels` store (group 4). `connection` is the shared connection's identity, seeded here at
-            // the ready edge and immutable thereafter (D-SHARE), so the sidebar surfaces it beside the agents.
+            // `agentModels` store. `connection` is the shared connection's identity, seeded here at
+            // the ready edge and immutable thereafter (a swap changes only a model, never the shared
+            // connection), so the sidebar surfaces it beside the agents.
             setState({ phase: "ready", model: rt.conversation.model, connection: rt.connection });
         },
         (e) => setState({ phase: "failed", message: describeBootError(e) }),
@@ -87,7 +89,7 @@ export function __resetBootForTest(): void {
     setAgentModels(EMPTY_AGENT_MODELS);
 }
 
-// ── Live per-agent model state (agent-model-selection group 4) ───────────────────────────────────────
+// ── Live per-agent model state ─────────────────────────────────────────────────────────────────────
 //
 // The status surface renders each user-facing agent's CURRENTLY-running model plus any pending (scheduled
 // behind agent work) switch. The authority is the live agent switch (`agent_switch.ts`), which tracks

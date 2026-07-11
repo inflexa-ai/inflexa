@@ -289,7 +289,7 @@ function commandGroupDigest(outputs: ProvFileKey[]): string {
  * The command-activity QName — `inflexa:cmd-{runId}-{stepId}-{digest(sorted output (path,hash) pairs)}`.
  *
  * The group is keyed by its OUTPUT SET, deliberately NOT by the producer's object identity or its
- * observation timestamp (design D1). A DBOS workflow re-execution rebuilds the collector and mints
+ * observation timestamp. A DBOS workflow re-execution rebuilds the collector and mints
  * fresh `Producer` objects with fresh timestamps, so neither is replay-stable; the surviving output
  * set IS, because the upstream collector is last-write-wins per output path — after collapse every
  * output path has exactly one producer, so two surviving groups within one step cannot share an output
@@ -313,8 +313,8 @@ export function commandQName(step: ProvStepRef, outputs: ProvFileKey[]): string 
  * recovery, so each execution builder can be invoked twice for one logical event with a *fresh*
  * observer clock; a naive re-stamp would therefore crash the flush's `unified()`. Omitting the
  * already-recorded time keeps re-emission's record mergeable (the surviving activity retains the
- * first-recorded time). This realizes the design's replay-idempotency goal, which the D4 record
- * shape alone does not: the shape (activity with a start/end time) is preserved; only the *source*
+ * first-recorded time). This achieves replay idempotency, which the record shape (activity with a
+ * start/end time) alone does not: the shape is preserved; only the *source*
  * of the value is made idempotent. The durable alternative is a tsprov change making formal times
  * last-write-wins on merge (tsprov is first-party) instead of throwing; until that lands, this
  * keep-first guard is the local workaround and lives here.
@@ -422,7 +422,7 @@ export function appendStepCompleted(doc: ProvDocument, analysisId: string, actor
  * outputs: it writes each `gen-{fileDigest}` edge under the SAME id `appendFileWritten` would have used
  * for the step-level edge, so a produced file (whose `appendFileWritten` is told `generation: "command"`
  * and skips its own gen edge) ends up with exactly ONE generation record — this activity's. No formal
- * times: only a replay-unstable observation timestamp exists at this seam (design D1/D3), so ordering
+ * times: only a replay-unstable observation timestamp exists at this seam, so ordering
  * rides the `wasInformedBy` edge to the step, which carries the replay-stable settlement times.
  *
  * The activity QName and every relation id are keyed by the group's output-set digest (see
@@ -537,7 +537,7 @@ export function appendFileWritten(
  */
 export function appendInputUsed(doc: ProvDocument, analysisId: string, actor: ProvActor, step: ProvStepRef, input: ProvUsedInputRef): void {
     // Called for its agent-declaration side effect only (the `used` edge and the input entity carry
-    // no agent, per the spec) — so the responsible agent is present even if this input read is the
+    // no agent) — so the responsible agent is present even if this input read is the
     // first execution record recorded. Its wall-clock `time` is deliberately discarded: no formal
     // position on these records reads the clock.
     recordPreamble(doc, analysisId, actor);

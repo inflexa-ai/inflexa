@@ -22,7 +22,7 @@ import { systemActor } from "../prov/prov.ts";
 // skipped entirely for a step with an empty reconciled manifest and never reached by a failed step, so
 // it is NOT the site that observes every executed step.
 //
-// Producer grouping (design D5): the manifest entries are partitioned by their collector record's
+// Producer grouping: the manifest entries are partitioned by their collector record's
 // `producer` OBJECT reference (mirroring the reference implementation's per-execution grouping) into
 // command/file-tool groups, with entries that have no record forming the LEAF bucket. The partition is
 // exclusive by construction — a single record lookup decides each entry's bucket — which keeps a file
@@ -70,7 +70,7 @@ function scopeScriptPath(scriptPath: string, resourceId: string, runId: string, 
 
 /**
  * Map one command's per-command reads to command-scoped {@link ProvCommandInputRef}s in the shared
- * file-QName space (design D4). `data`/`upstream`/`prior` reads pass through with their `/{resourceId}/`
+ * file-QName space. `data`/`upstream`/`prior` reads pass through with their `/{resourceId}/`
  * mount prefix stripped to analysis-relative; a hash-less such ref is SKIPPED silently — it is attested
  * upstream and the step-level `prov.input_used` loop is the site that reports it in `failed`, so failing
  * it here too would double-count. An `"artifacts"`-source read is the step's OWN prior output — the
@@ -114,7 +114,7 @@ function toCommandInputs(reads: readonly CollectorInputRef[], resourceId: string
  * analysis-scoped `(path, hash)` outputs, and its command-scoped inputs; a `file_tool` producer carries
  * only the tool name and outputs (agent-authored content has no reads, by construction). The producer's
  * observation `timestamp` is NEVER forwarded — it is re-minted on every DBOS replay and would poison the
- * document's replay-idempotency if it leaked into an identifier or formal position (design D1).
+ * document's replay-idempotency if it leaked into an identifier or formal position.
  */
 function toCommandRef(
     record: CollectorRecord,
@@ -150,7 +150,7 @@ function toCommandRef(
  * `model` is the id of the model driving the step agent — resolved ONCE at boot (composition), so
  * stamping the construction-time id on every `prov.command_executed` is exactly "the model this
  * run's steps ran on". It rides the event so the recorder never infers it across events; when the
- * agents split (chat/decision/synthesis, D6), this constructor takes the step agent's own id with no
+ * agents split (chat/decision/synthesis), this constructor takes the step agent's own id with no
  * event-shape change.
  *
  * Three seam-contract facts shape the behavior:
@@ -192,14 +192,14 @@ export function createBusArtifactRegistry(model: ProvModelId): ArtifactRegistry 
             for (const rec of input.collector.getRecords()) recordByPath.set(rec.outputPath, rec);
 
             // The analysis-scoped path → surviving content hash of every file entity this registration
-            // WILL register — the map an intra-step `"artifacts"` self-read resolves against (design D4),
+            // WILL register — the map an intra-step `"artifacts"` self-read resolves against,
             // keying its `used` edge onto the hash actually registered rather than the read's own. Hash-
             // less entries are excluded: they fail below and never register an entity, so a read of one
             // finds no key and is dropped rather than dangling.
             const producedHashByPath = new Map<string, string>();
             for (const entry of input.artifacts) if (entry.hash) producedHashByPath.set(scopePath(entry.path), entry.hash);
 
-            // Partition (design D5): one lookup per entry buckets it by its record's `producer` OBJECT, or
+            // Partition: one lookup per entry buckets it by its record's `producer` OBJECT, or
             // into the leaf bucket when it has no record. Exclusive by construction — this single get()
             // decides — so a file can never land in both a command group and the leaf bucket (which would
             // write two `wasGeneratedBy` edges for one entity). Insertion order is preserved for emission.
@@ -353,5 +353,53 @@ export function createRunProvenanceEmitter(model: ProvModelId): (event: RunProve
                 throw new Error(`unhandled run provenance event: ${JSON.stringify(never)}`);
             }
         }
+    };
+}
+
+/**
+ * A pair of sandbox provenance emitters whose stamped `{provider}/{model}` name can be swapped live,
+ * exposed as STABLE delegating handles — the same shape the chat provider's `SwappableChatProvider`
+ * gives. The run-engine deps bundles inject `artifactRegistry` and
+ * `emitProvenance` ONCE at composition; a live model switch calls {@link swap}, which rebuilds only the
+ * cli-owned inner emitters WITH the new name and re-points delegation. No field of any consumer-held
+ * object is ever mutated, so a consumer that snapshots either reference at registration still observes
+ * the swap — correctness is independent of when or how often the consumer reads its deps fields.
+ */
+export type SwappableSandboxEmitters = {
+    /** Stable {@link ArtifactRegistry} the deps bundles inject — forwards `register` AND `sync` to the current inner. */
+    readonly artifactRegistry: ArtifactRegistry;
+    /** Stable run-provenance emitter fn the deps bundles inject — forwards to the current inner. */
+    readonly emitProvenance: (event: RunProvenanceEvent) => void;
+    /** Rebuild both inners WITH `name` stamped into each at construction, and re-point delegation. */
+    swap(name: ProvModelId): void;
+};
+
+/**
+ * Build the {@link SwappableSandboxEmitters} holder over an initial `{provider}/{model}` name.
+ *
+ * The two inners (`registry`, `emitter`) are the ONLY state a swap mutates; no consumer ever holds
+ * them — consumers hold the stable outer `artifactRegistry` object and `emitProvenance` function, whose
+ * methods read the CURRENT inner at call time. That is what makes the swap effective regardless of the
+ * consumer's read discipline: re-pointing the inner is visible through every captured outer reference at
+ * once, exactly as `SwappableChatProvider` re-points every captured provider handle. The name is baked
+ * into each inner at construction (via the two prov-bridge constructors), so a swap re-stamps every
+ * FUTURE step/run while in-flight work — excluded by the switch's idle gate — keeps its emitters.
+ */
+export function createSwappableSandboxEmitters(initialName: ProvModelId): SwappableSandboxEmitters {
+    let registry = createBusArtifactRegistry(initialName);
+    let emitter = createRunProvenanceEmitter(initialName);
+    return {
+        // Stable outer object: `register`/`sync` forward to whichever inner `swap` last installed. Both
+        // params are contextually typed by the `ArtifactRegistry` seam, so no local type annotation is needed.
+        artifactRegistry: {
+            register: (input, session) => registry.register(input, session),
+            sync: (input, session) => registry.sync(input, session),
+        },
+        // Stable outer function: reads the current inner emitter at call time.
+        emitProvenance: (event) => emitter(event),
+        swap(name) {
+            registry = createBusArtifactRegistry(name);
+            emitter = createRunProvenanceEmitter(name);
+        },
     };
 }

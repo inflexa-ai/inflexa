@@ -216,7 +216,7 @@ export function watchProfileParity(workspace: Workspace, seams: ParityWatchSeams
         seams.drive(runtime, analysis, () => workspace.analysis?.id ?? null);
     });
 
-    // Agent-switch gauge — data-profile SETTLE feed (agent-model-selection 4.0). The gauge's START half is
+    // Agent-switch gauge — data-profile SETTLE feed. The gauge's START half is
     // pushed synchronously at dispatch (profile_trigger.ts `stageAndSeed`); this level-based observer of
     // the OPEN analysis's profile snapshot — the ledger truth the sidebar already polls, the seam's
     // intended feed — clears the token when the profile leaves the pending/running window (and notes it
@@ -287,8 +287,8 @@ const realParityDriverSeams: ParityDriverSeams = {
 };
 
 /**
- * Run the helper and map its outcome onto the notice channel; managed-parity skips stay silent (design
- * D8). Exported for the unit test — production calls it via {@link watchProfileParity} with the real seams.
+ * Run the helper and map its outcome onto the notice channel; managed-parity skips stay silent.
+ * Exported for the unit test — production calls it via {@link watchProfileParity} with the real seams.
  *
  * `currentAnalysisId` is a LIVE read of the open analysis, checked once `check` resolves. `check` stages
  * the analysis's inputs (hundreds of ms), during which the user can swap analyses. This is the ONE

@@ -4,14 +4,14 @@ import { makeLocalAuth, type DataProfileInputFile, type DataProfileStatus, type 
 
 import { ensureProfileAtParity, forceReprofile, type ProfileParitySeams } from "./profile_trigger.ts";
 import { __resetGaugeForTest } from "./agent_switch.ts";
-
-// `stageAndSeed` now feeds the agent-switch gauge (marks a data profile busy on dispatch); it mutates
-// the shared gauge singleton, so drop that state between tests to keep it out of any later gauge read.
-afterEach(() => __resetGaugeForTest());
 import { seedProfileLedger } from "./profile.ts";
 import type { HarnessRuntime } from "./runtime.ts";
 import { inputSignature, type StagedInput } from "../staging/staging.ts";
 import type { Analysis } from "../../types/analysis.ts";
+
+// `stageAndSeed` feeds the agent-switch gauge (marks a data profile busy on dispatch); it mutates
+// the shared gauge singleton, so drop that state between tests to keep it out of any later gauge read.
+afterEach(() => __resetGaugeForTest());
 
 // The parity ladder is exercised entirely offline: reconcile, enumerate, the ledger read, clear,
 // the workspace data-dir resolution, staging, seed, trigger, and the force-only retry-claim/run edges

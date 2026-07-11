@@ -91,7 +91,7 @@ export function pickDefaultModel(ids: string[]): string {
 
 /**
  * True when `modelId`'s family matches the configured provider slug — the cliproxy auto-resolve
- * agreement guard (design D5). Reads {@link MODEL_FAMILIES} in the provider→family direction ONLY:
+ * agreement guard. Reads {@link MODEL_FAMILIES} in the provider→family direction ONLY:
  * the configured provider names one or more families, and the auto-resolved id must contain one of
  * them (case-insensitive substring, same mechanics as {@link pickDefaultModel}). This is NOT
  * id→provider derivation — it never produces a provider identity, only answers "is this the family I

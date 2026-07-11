@@ -5,7 +5,7 @@ import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
 import type { ProvModelId } from "../../types/prov.ts";
 import { fileQName } from "../prov/document.ts";
-import { createBusArtifactRegistry, createRunProvenanceEmitter } from "./prov_bridge.ts";
+import { createBusArtifactRegistry, createRunProvenanceEmitter, createSwappableSandboxEmitters } from "./prov_bridge.ts";
 
 // Bus-spy harness: capture every `inflexa` event the adapter emits, always detaching in cleanup so
 // the listener never leaks across tests (a lingering spy would double-count later files' events).
@@ -101,7 +101,7 @@ describe("createBusArtifactRegistry — register", () => {
             { path: "runs/run-001/de-analysis/output/de_results.csv", hash: "sha256:aaa" },
             { path: "runs/run-001/de-analysis/figures/heatmap.png", hash: "sha256:bbb" },
         ]);
-        // The producer's replay-unstable observation timestamp NEVER crosses the bus (design D1).
+        // The producer's replay-unstable observation timestamp NEVER crosses the bus.
         expect(JSON.stringify(cmds[0]!)).not.toContain("timestamp");
         expect(cmds[0]!.step).toEqual({ runId: "run-001", stepId: "de-analysis" });
         expect(cmds[0]!.actor.kind).toBe("system");
@@ -278,7 +278,7 @@ describe("createBusArtifactRegistry — register", () => {
         const inputEvent = captured.find((e) => e.type === "prov.input_used");
         if (inputEvent?.type !== "prov.input_used") throw new Error("expected a prov.input_used event");
         // Byte-identical to the analysis-scoped path run-001's step-de `prov.file_written` carried, so
-        // fileQName resolves both to one entity — the cross-run chain the design keys on.
+        // fileQName resolves both to one entity — the match that chains lineage across runs.
         expect(inputEvent.input.path).toBe("runs/run-001/step-de/output/results.csv");
         expect(fileQName(inputEvent.input)).toBe(fileQName({ path: "runs/run-001/step-de/output/results.csv", hash: "sha256:same" }));
     });
@@ -464,5 +464,62 @@ describe("createRunProvenanceEmitter", () => {
         expect(busEvent.analysisId).toBe("an-1");
         expect(busEvent.actor.kind).toBe("system");
         expect(busEvent.outcome).toEqual({ runId: "run-001", status: "completed", completedAtMs: 1_700_000_300_000, durationMs: 300_000 });
+    });
+});
+
+describe("createSwappableSandboxEmitters", () => {
+    type StepEvent = Extract<StampedEvent, { type: "prov.step_completed" }>;
+    const stepModels = (): string[] => captured.filter((e): e is StepEvent => e.type === "prov.step_completed").map((e) => e.model);
+
+    // A step_completed event carrying an ascending `atMs` so successive emits stay distinguishable.
+    function stepAt(atMs: number): RunProvenanceEvent {
+        return { type: "step_completed", analysisId: "an-1", runId: "run-1", stepId: "step-1", status: "completed", atMs };
+    }
+    // One command-producing registration input — its `prov.command_executed` carries the stamped model.
+    function commandInput(): ArtifactRegistrationInput {
+        const cmd: FakeProducer = { type: "command", command: "python3 de.py", exitCode: 0, durationMs: 100, timestamp: "t" };
+        return {
+            resourceId: "an-1",
+            runId: "run-001",
+            stepId: "de-analysis",
+            artifacts: [entry("output/de.csv", "sha256:aaa", 10)],
+            collector: fakeCollector([{ outputPath: "output/de.csv", producer: cmd }]),
+        };
+    }
+
+    test("emitProvenance stamps the pre-swap name, then the post-swap name, through ONE captured function reference", () => {
+        const emitters = createSwappableSandboxEmitters("anthropic/claude-old");
+        // Snapshot the handle exactly as a registration-time consumer would — the worst case for a swap.
+        const emit = emitters.emitProvenance;
+
+        emit(stepAt(1));
+        emitters.swap("anthropic/claude-new");
+        emit(stepAt(2));
+
+        // The captured reference stamped the old name before the swap and the new name after — the swap
+        // re-pointed the inner behind the stable handle, not the handle the consumer holds.
+        expect(stepModels()).toEqual(["anthropic/claude-old", "anthropic/claude-new"]);
+    });
+
+    test("artifactRegistry forwards register to the current inner across a swap, through ONE captured object reference", async () => {
+        const emitters = createSwappableSandboxEmitters("anthropic/claude-old");
+        const registry = emitters.artifactRegistry;
+
+        await registry.register(commandInput(), noSession);
+        emitters.swap("anthropic/claude-new");
+        await registry.register(commandInput(), noSession);
+
+        expect(commandEvents().map((c) => c.model)).toEqual(["anthropic/claude-old", "anthropic/claude-new"]);
+    });
+
+    test("swap leaves the outer emitProvenance function and artifactRegistry object identities unchanged", () => {
+        const emitters = createSwappableSandboxEmitters("anthropic/claude-old");
+        const emit = emitters.emitProvenance;
+        const registry = emitters.artifactRegistry;
+
+        emitters.swap("anthropic/claude-new");
+
+        expect(emitters.emitProvenance).toBe(emit);
+        expect(emitters.artifactRegistry).toBe(registry);
     });
 });

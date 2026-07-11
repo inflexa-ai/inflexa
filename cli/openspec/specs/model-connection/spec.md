@@ -20,6 +20,14 @@ block SHALL resolve to `{ mode: "cliproxy", provider: "anthropic" }` — behavio
 pre-change CLI. An invalid block SHALL fail closed to the default with a reported config error
 (the existing config-schema pattern), never a silent partial parse.
 
+`baseURL` SHALL be a single value every consumer derives from — one configured URL serves both
+the chat wire path and any auxiliary request (model listing). Its convention is the protocol's:
+for the `anthropic` protocol it is the `/v1`-terminated API root the wire layer appends
+`/messages` to (e.g. `https://api.anthropic.com/v1` — the `@ai-sdk/anthropic` convention); for
+`openai-compatible` it is the `/v1`-terminated root the wire layer appends `/chat/completions`
+to. No consumer SHALL assume a different form of the same `baseURL` (e.g. re-appending `/v1`),
+and setup's endpoint prompt SHALL state the expected form.
+
 #### Scenario: Absent block reproduces today's behavior
 
 - **WHEN** `config.json` has no `models` block
@@ -36,6 +44,12 @@ pre-change CLI. An invalid block SHALL fail closed to the default with a reporte
 
 - **WHEN** the connection is `{ mode: "direct", provider: "anthropic", baseURL: <gateway>, protocol: "openai-compatible" }`
 - **THEN** the provider identity records `anthropic` while the wire protocol is OpenAI-compatible
+
+#### Scenario: One anthropic baseURL serves chat and listing
+
+- **WHEN** the connection is `{ mode: "direct", provider: "anthropic", baseURL: "https://api.anthropic.com/v1" }`
+- **THEN** chat requests target `{baseURL}/messages` and the model listing targets
+  `{baseURL}/models` — the same configured value satisfies both, with no second convention
 
 ### Requirement: The direct-mode secret comes from the environment only
 

@@ -46,7 +46,7 @@ function firstLine(error: string | null): string {
     return line.length > 0 ? line : "failed";
 }
 
-/** Map a {@link ProfileSnapshot} to its D3 line: muted placeholders, warn "profiling…", success count+age, error one-liner. */
+/** Map a {@link ProfileSnapshot} to its display line: muted placeholders, warn "profiling…", success count+age, error one-liner. */
 function profileLineOf(snap: ReturnType<typeof profileSnapshot>): LiveLine {
     switch (snap.kind) {
         case "not_ready":
@@ -111,8 +111,8 @@ function AgentModelLine(props: { label: string; agent: AgentName }): JSX.Element
  * The MODELS-section connection line: the shared connection's identity — the configured provider slug and
  * mode — rendered above the per-agent rows so the user sees which backend both agents run on. Reads the
  * immutable boot-ready state, NOT the swap-tracking `agentModels` store, because a live agent-model swap
- * never changes the connection (D-SHARE: one connection across agents); it is seeded once at the ready
- * edge. Renders nothing before ready, when no identity exists yet.
+ * never changes the connection — the connection is shared by both agents, so a swap changes only a model;
+ * it is seeded once at the ready edge. Renders nothing before ready, when no identity exists yet.
  */
 function ConnectionLine(): JSX.Element {
     const identity = (): ModelConnectionIdentity | null => {

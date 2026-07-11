@@ -449,10 +449,16 @@ async function chooseConnectionMode(preselected: ConnectionMode | undefined): Pr
  * Collect a direct connection interactively: the endpoint URL (must parse as a URL), the provider slug
  * (open vocabulary, lowercased, non-empty), and an optional wire protocol. "Infer from provider" leaves
  * the protocol unset so `resolveModelConnection` (modules/harness/config.ts) implies it from the
- * provider (design D3).
+ * provider.
+ *
+ * The endpoint prompt names the `/v1`-terminated protocol root (e.g. `https://api.anthropic.com/v1`)
+ * because that one configured value feeds BOTH the chat wire path (anthropic `{baseURL}/messages`,
+ * openai-compatible `{baseURL}/chat/completions`) and the model listing (`{baseURL}/models`). A bare
+ * root without `/v1` would 404 the chat path, so steering users to the terminated form here prevents a
+ * connection that can list models but never chat.
  */
 async function promptDirectConnection(): Promise<DirectConnectionInput> {
-    const baseURL = await promptText("Model endpoint URL", {
+    const baseURL = await promptText("Model endpoint URL — the /v1-terminated root (e.g. https://api.openai.com/v1 or https://api.anthropic.com/v1)", {
         placeholder: "https://api.openai.com/v1",
         validate: (v) => {
             const s = v.trim();
@@ -487,8 +493,7 @@ type DirectConnectionInput = {
 /**
  * Persist a direct-mode model connection. Spread-preserving: keeps every other config key and every
  * other key inside the `models` block (e.g. the `agents` overrides), rewriting only `connection`. The API
- * key is NEVER written here — it comes from {@link MODEL_API_KEY_VAR} at provider construction (design
- * D4 / model-connection spec).
+ * key is NEVER written here — it comes from {@link MODEL_API_KEY_VAR} at provider construction.
  */
 export function writeDirectConnection(input: DirectConnectionInput): Result<void, ConfigError> {
     const config = readConfig();
@@ -499,7 +504,7 @@ export function writeDirectConnection(input: DirectConnectionInput): Result<void
         mode: "direct",
         provider: input.provider,
         baseURL: input.baseURL,
-        // Omit `protocol` when absent so the resolver implies it from the provider (D3).
+        // Omit `protocol` when absent so the resolver implies it from the provider.
         ...(input.protocol !== undefined && { protocol: input.protocol }),
     };
     return writeConfig({ ...config, models: { ...models, connection } });
@@ -509,8 +514,8 @@ export function writeDirectConnection(input: DirectConnectionInput): Result<void
  * Account-kind → provider-slug map. It lives ONLY here because the account kind is a KNOWN FACT at
  * login time: setup drove exactly this provider's OAuth flow, so it names the vendor directly. That is
  * why recording it here is legitimate where deriving a provider from a model id is not — this is the
- * configured fact, captured at its source, not a guess reverse-engineered from a served model id (the
- * fabricated-provenance path this change removed).
+ * configured fact, captured at its source, not a guess reverse-engineered from a served model id, which
+ * would fabricate provenance.
  */
 const PROVIDER_SLUG: Record<Provider, string> = {
     claude: "anthropic",
@@ -779,7 +784,7 @@ async function authenticate(rt: ContainerRuntime, preselected: Provider | undefi
  * proxy-SPECIFIC phases (writing the proxy config, provider OAuth) run only in
  * `cliproxy` mode: a `direct` connection reaches its own endpoint with
  * `INFLEXA_MODEL_API_KEY`, so the proxy is neither configured, authenticated, nor
- * required for chat (design D6 / model-connection spec). Returns a
+ * required for chat. Returns a
  * {@link ProxyError} or {@link ContainerRuntimeError} on the error channel with
  * actionable guidance when it can't proceed.
  */

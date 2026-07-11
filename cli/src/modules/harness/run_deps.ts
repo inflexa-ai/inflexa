@@ -21,10 +21,10 @@ import {
 } from "@inflexa-ai/harness";
 
 import type { ResolvedHarnessConfig } from "./config.ts";
-import { createBusArtifactRegistry, createRunProvenanceEmitter } from "./prov_bridge.ts";
+import type { SwappableSandboxEmitters } from "./prov_bridge.ts";
 
 /**
- * One user-facing agent's chat backend (`agent-model-selection` D1): the {@link ChatProvider} instance
+ * One user-facing agent's chat backend: the {@link ChatProvider} instance
  * bound to that agent's resolved model over the SHARED connection, plus the bare model id. Two agents
  * with the same resolved model share ONE instance (the boot builds one provider per DISTINCT model);
  * two agents with different models carry different instances differing only in the bound wire model.
@@ -45,7 +45,7 @@ export type AgentBackend = {
  * instance ONCE — one sandbox client, one workspace filesystem, one embedding-provider instance — and
  * threads them here so the sandbox-step child and the execute-analysis parent close over the SAME
  * backends the data-profile workflow uses. The chat provider is NO LONGER shared: it splits per
- * user-facing agent (`agent-model-selection` D1) — the run-engine bundles draw {@link
+ * user-facing agent — the run-engine bundles draw {@link
  * RunEngineComposition.sandbox}; {@link RunEngineComposition.conversation} rides here so boot has one
  * carrier for both agents + the handle. Kept separate from the two per-seam extras
  * (`sandboxStepCallable`, `runAuthorizer`) that only the parent needs.
@@ -59,18 +59,28 @@ export type RunEngineComposition = {
     readonly workspaceFs: WorkspaceFilesystem;
     /** The workspace-root seam realization (analysis id → `<anchor>/.inflexa/analyses/<slug>`). */
     readonly resolveWorkspaceRoot: ResolveWorkspaceRoot;
-    /** The conversation agent's backend — drives the chat agent and its sub-agents (D1); not read by the run-engine bundles. */
+    /** The conversation agent's backend — drives the chat agent and its sub-agents; not read by the run-engine bundles. */
     readonly conversation: AgentBackend;
-    /** The sandbox agent's backend — drives the step agents, data profile, ephemeral runner, run synthesis, and post-step metadata (D1). */
+    /** The sandbox agent's backend — drives the step agents, data profile, ephemeral runner, run synthesis, and post-step metadata. */
     readonly sandbox: AgentBackend;
     /**
      * The vendor slug naming every agent's provider (`anthropic`, `openai`, …) — an open vocabulary,
-     * the model connection's CONFIGURED provider fed by boot (design D2/D-SHARE: ONE connection across
+     * the model connection's CONFIGURED provider fed by boot (one connection across
      * agents), never derived from a model id. A separate FACT beside each agent's `model`, never a
-     * combined string, so the composition holds no redundant field to drift; the emitters compose the
-     * `{provider}/{model}` provenance name from this slug and the sandbox agent's model.
+     * combined string, so the composition holds no redundant field to drift; boot composes the
+     * `{provider}/{model}` provenance name from this slug and the sandbox agent's model when it builds
+     * {@link sandboxEmitters}.
      */
     readonly modelProvider: string;
+    /**
+     * The sandbox agent's provenance emitters as STABLE delegating handles. The run-engine
+     * bundles inject `sandboxEmitters.artifactRegistry` / `sandboxEmitters.emitProvenance` verbatim
+     * rather than constructing emitters themselves, so the registered workflows hold ONE identity for
+     * the runtime's life. A live sandbox-model switch calls {@link SwappableSandboxEmitters.swap}, which
+     * re-points only the cli-owned inner behind these handles — no consumer-held field is mutated, so
+     * the swap lands no matter when a consumer reads its deps fields.
+     */
+    readonly sandboxEmitters: SwappableSandboxEmitters;
     /** Absolute skills tree path — enables the sandbox agents' skill tools. */
     readonly skillsDir: string;
     /** Bio/chem API keys; absent keys pass as empty strings and surface per-call. */
@@ -135,20 +145,22 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
 
 /**
  * Assemble the {@link SandboxStepDeps} the child workflow registers with. The
- * bus-adapter registry ({@link createBusArtifactRegistry}) and the catalog-backed
- * `buildAgent` are the only run-specific realizations; everything else is a
- * straight pass-through of the shared backends. `resolveWritePrefix` follows the
- * harness's own path convention (`workspace/paths.ts`) resolved to an
- * ABSOLUTE path under the analysis's workspace root, matching how the profile
- * path builds `allowedWritePrefix`.
+ * composition's stable delegating artifact registry ({@link
+ * RunEngineComposition.sandboxEmitters}) and the catalog-backed `buildAgent` are
+ * the only run-specific realizations; everything else is a straight pass-through
+ * of the shared backends. `resolveWritePrefix` follows the harness's own path
+ * convention (`workspace/paths.ts`) resolved to an ABSOLUTE path under the
+ * analysis's workspace root, matching how the profile path builds
+ * `allowedWritePrefix`.
  *
- * The registry realization emits `prov.command_executed` / `prov.file_written` /
+ * The injected registry emits `prov.command_executed` / `prov.file_written` /
  * `prov.input_used` events, each stamped with the composed `{provider}/{model}` name (never
- * `prov.step_completed` — that comes from the scheduler settlement via
- * `createRunProvenanceEmitter` — and never a `cortex_artifacts` write: the
- * harness owns that ledger AROUND the seam, and writes the returned external id
- * back onto its own row), so a registered step's outputs land in the analysis's
- * signed tsprov document.
+ * `prov.step_completed` — that comes from the scheduler settlement via the
+ * emitter half of the holder — and never a `cortex_artifacts` write: the harness
+ * owns that ledger AROUND the seam, and writes the returned external id back onto
+ * its own row), so a registered step's outputs land in the analysis's signed
+ * tsprov document. It is the SAME stable object the switch re-points on a live
+ * model change, so the registered workflow observes the swap without re-registration.
  */
 export function buildSandboxStepDeps(comp: RunEngineComposition): SandboxStepDeps {
     return {
@@ -156,7 +168,7 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): SandboxStepDep
         provider: comp.sandbox.provider,
         embedding: comp.embedding,
         sandboxClient: comp.sandboxClient,
-        artifactRegistry: createBusArtifactRegistry(`${comp.modelProvider}/${comp.sandbox.model}`),
+        artifactRegistry: comp.sandboxEmitters.artifactRegistry,
         workspaceFs: comp.workspaceFs,
         resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
         model: comp.sandbox.model,
@@ -169,15 +181,17 @@ export function buildSandboxStepDeps(comp: RunEngineComposition): SandboxStepDep
  * Assemble the {@link ExecuteAnalysisDeps} the parent workflow registers with.
  * `sandboxStepCallable` MUST be the callable returned by registering the child
  * first (the parent's dispatch closes over it). `synthesisModel` follows the
- * SANDBOX agent (`agent-model-selection` D1: run synthesis is an internal agent that
- * aliases `sandbox`), `runCharge` is the harness no-op bracket, and
+ * SANDBOX agent (run synthesis is an internal agent that aliases `sandbox`),
+ * `runCharge` is the harness no-op bracket, and
  * `synthesisEnabled` is left unset so it defaults to `true` — the skeleton proves
  * the whole body including run-level synthesis.
  *
- * `emitProvenance` realizes the harness's optional run-lifecycle observer as bus
- * emission ({@link createRunProvenanceEmitter}), so the run's start/terminal
+ * `emitProvenance` is the composition's stable delegating run-lifecycle emitter
+ * ({@link RunEngineComposition.sandboxEmitters}), so the run's start/terminal
  * boundaries land as `prov.run_started` / `prov.run_completed` in the signed
- * document — including on a DBOS recovery boot, where body re-execution re-fires it.
+ * document — including on a DBOS recovery boot, where body re-execution re-fires
+ * it. It is the SAME stable function the switch re-points on a live model change,
+ * so the registered parent workflow observes the swap without re-registration.
  */
 export function buildExecuteAnalysisDeps(
     comp: RunEngineComposition,
@@ -194,7 +208,7 @@ export function buildExecuteAnalysisDeps(
         bioKeys: comp.bioKeys,
         runCharge: createNoopRunCharge(),
         runAuthorizer,
-        emitProvenance: createRunProvenanceEmitter(`${comp.modelProvider}/${comp.sandbox.model}`),
+        emitProvenance: comp.sandboxEmitters.emitProvenance,
     };
 }
 
@@ -227,8 +241,8 @@ export function buildEphemeralDeps(comp: RunEngineComposition): CoreWorkflowDeps
  * these deps exist only to satisfy `assembleCoreRuntime`'s one-cohort
  * registration — never exercised at runtime. `chatProvider` takes the SANDBOX
  * agent's provider (`ChatProvider extends AgentChat`); `decisionModel`/`synthesisModel`
- * follow the sandbox agent (target assessment is an internal agent aliasing `sandbox`,
- * `agent-model-selection` D1), and `ncbiApiKey` threads the optional NCBI key for the
+ * follow the sandbox agent (target assessment is an internal agent aliasing `sandbox`),
+ * and `ncbiApiKey` threads the optional NCBI key for the
  * Phase-1 collectors. The return type is sourced from
  * {@link CoreWorkflowDeps} (barrel) rather than the harness-internal
  * `ExecuteTargetAssessmentDeps`, which is not part of the embedder surface.

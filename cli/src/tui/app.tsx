@@ -83,7 +83,7 @@ export function App(props: AppProps) {
     // Sidebar renders and the details views below snapshot on open).
     watchSidebarData(workspace);
 
-    // Mirror the live agent switch into the boot store's agentModels cell (agent-model-selection group 4): the
+    // Mirror the live agent switch into the boot store's agentModels cell: the
     // status surface (sidebar MODELS section) renders each agent's active model + any pending switch. Seeds
     // at the ready edge and follows every later swap/schedule. Under App's reactive owner.
     watchAgentModels();

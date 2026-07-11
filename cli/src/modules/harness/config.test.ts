@@ -150,7 +150,7 @@ describe("resolveModelConnection — fail closed", () => {
     });
 });
 
-// The write side of the agent-model config surface (agent-model-selection D3): the palette pick persists
+// The write side of the agent-model config surface: the palette pick persists
 // immediately, spread-preserving. Read back through the real config file so the test asserts the exact
 // on-disk shape resolveModelConnection then consumes.
 describe("writeAgentModel — persists models.agents spread-preserving", () => {
