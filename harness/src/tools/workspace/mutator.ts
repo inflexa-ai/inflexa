@@ -121,6 +121,14 @@ export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMut
             // sandbox exec frame this write produces is deliberately not fed to
             // `feedExecFrame`: doing so would mint a `python3`+base64 command
             // record, the very misattribution this file-tool record supersedes.
+            //
+            // `timestamp` is a write-time wall clock — normally a replay hazard in
+            // provenance, but safe here because the record contributes only producer
+            // IDENTITY downstream: the bridge drops it (the cli's file-tool ref has no
+            // timestamp field) and the signed `inflexa:FileToolWrite` activity carries
+            // just the tool name, so a re-execution's fresh stamp changes nothing in
+            // the attested graph. Do NOT start forwarding it into an identifier or a
+            // formal PROV position without making it replay-stable first.
             if (deps.lineageCollector) {
                 deps.lineageCollector.recordFileToolWrite({
                     path: relative,
