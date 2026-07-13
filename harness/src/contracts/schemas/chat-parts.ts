@@ -73,6 +73,15 @@ export const RunCardPartSchema = z.object({
     stepCount: z.number(),
 });
 
+// ── Briefing card ───────────────────────────────────────────────────
+
+export const BriefingCardPartSchema = z.object({
+    type: z.literal("data-briefing-card"),
+    id: z.string(),
+    name: z.string(),
+    caption: z.string(),
+});
+
 // ── File reference ──────────────────────────────────────────────────
 
 export const FileReferenceEntrySchema = z.object({
@@ -325,6 +334,7 @@ export const CortexChatPartSchema = z.discriminatedUnion("type", [
     PresentationPartSchema,
     PlanPartSchema,
     RunCardPartSchema,
+    BriefingCardPartSchema,
     FileReferencePartSchema,
     RunStartedPartSchema,
     DagStatePartSchema,

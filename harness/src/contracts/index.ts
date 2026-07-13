@@ -4,6 +4,7 @@ export type {
     PresentationPart,
     PlanPart,
     RunCardPart,
+    BriefingCardPart,
     FileReferenceEntry,
     FileReferencePart,
     RunStartedPart,

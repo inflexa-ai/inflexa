@@ -4,20 +4,59 @@ import { z } from "zod";
 
 export const SUPPORTED_AI_SDK_MAJOR = 7;
 
-export const StoredMessageEnvelopeSchema = z.object({
+/** A conversation-turn message: the AI SDK major plus the inner `ModelMessage`. */
+export const ModelMessageEnvelopeSchema = z.object({
     kind: z.literal("ai-sdk-model-message"),
     aiSdkMajor: z.literal(SUPPORTED_AI_SDK_MAJOR),
     message: modelMessageSchema,
 });
 
-export type StoredMessageEnvelope = z.infer<typeof StoredMessageEnvelopeSchema>;
+/**
+ * A standing briefing, persisted verbatim: the definition `name`, the rendered
+ * `caption`, and the wrapped `user` message exactly as injected. The stored
+ * message is the source of truth for what the model saw — a briefing template
+ * change never migrates or rewrites existing rows.
+ */
+export const BriefingEnvelopeSchema = z.object({
+    kind: z.literal("briefing"),
+    name: z.string(),
+    caption: z.string(),
+    aiSdkMajor: z.literal(SUPPORTED_AI_SDK_MAJOR),
+    message: modelMessageSchema,
+});
 
-export function envelopeMessage(message: ModelMessage): StoredMessageEnvelope {
+/**
+ * The closed envelope union. Validation is fail-closed: an unknown `kind` or an
+ * unsupported `aiSdkMajor` is rejected rather than silently coerced.
+ */
+export const StoredMessageEnvelopeSchema = z.discriminatedUnion("kind", [ModelMessageEnvelopeSchema, BriefingEnvelopeSchema]);
+
+export type StoredMessageEnvelope = z.infer<typeof StoredMessageEnvelopeSchema>;
+export type ModelMessageEnvelope = z.infer<typeof ModelMessageEnvelopeSchema>;
+export type BriefingEnvelope = z.infer<typeof BriefingEnvelopeSchema>;
+
+export function envelopeMessage(message: ModelMessage): ModelMessageEnvelope {
     return {
         kind: "ai-sdk-model-message",
         aiSdkMajor: SUPPORTED_AI_SDK_MAJOR,
         message,
     };
+}
+
+/** Build a `briefing` envelope from a composed briefing's parts. */
+export function briefingEnvelope(name: string, caption: string, message: ModelMessage): BriefingEnvelope {
+    return {
+        kind: "briefing",
+        name,
+        caption,
+        aiSdkMajor: SUPPORTED_AI_SDK_MAJOR,
+        message,
+    };
+}
+
+/** Narrow an envelope to a briefing — the kind-aware turn-boundary predicate. */
+export function isBriefingEnvelope(envelope: StoredMessageEnvelope): envelope is BriefingEnvelope {
+    return envelope.kind === "briefing";
 }
 
 export function parseStoredMessageEnvelope(value: unknown, identity: string): StoredMessageEnvelope {

@@ -61,6 +61,22 @@ export interface RunCardPart {
     stepCount: number;
 }
 
+// ── Briefing card (chat-rendered marker for an injected standing briefing) ──
+
+/**
+ * Emitted once per standing briefing injected at conversation start, so a host
+ * can render a one-line "the agent was briefed" marker. `name` is the briefing
+ * definition's registry key; `caption` is its at-a-glance summary. Rolling
+ * briefings emit nothing.
+ */
+export interface BriefingCardPart {
+    type: "data-briefing-card";
+    /** Stable id — `briefing-<name>`, one per briefing within a thread. */
+    id: string;
+    name: string;
+    caption: string;
+}
+
 // ── File reference (artifact-store-backed, resolved at render time) ──────────
 
 export interface FileReferenceEntry {
@@ -364,6 +380,7 @@ export type CortexChatPart =
     | PresentationPart
     | PlanPart
     | RunCardPart
+    | BriefingCardPart
     | FileReferencePart
     | RunStartedPart
     | DagStatePart

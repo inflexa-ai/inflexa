@@ -4,6 +4,7 @@ export {
     PresentationPartSchema,
     PlanPartSchema,
     RunCardPartSchema,
+    BriefingCardPartSchema,
     FileReferenceEntrySchema,
     FileReferencePartSchema,
     RunStartedPartSchema,

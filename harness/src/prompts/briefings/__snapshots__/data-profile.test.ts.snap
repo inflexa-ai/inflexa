@@ -1,0 +1,14 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`dataProfileBriefing renders its fixture in isolation, matching the snapshot 1`] = `
+"# Data profile
+
+Bulk RNA-seq dataset: a raw count matrix (12 samples × 18,412 genes) with a matching sample sheet and a small variant call set. Two experimental groups (treated vs. control), 6 replicates each.
+
+## Files
+- data/inputs/f1/counts.csv — Raw gene-level count matrix (genes × samples).
+- data/inputs/f2/samples.tsv — Sample sheet: condition, replicate, batch.
+- data/inputs/f3/variants.vcf — Germline variant calls for the cohort."
+`;
+
+exports[`dataProfileBriefing renders its fixture in isolation, matching the snapshot 2`] = `"3 files · CSV, TSV, VCF · profiled 2026-06-09 10:00"`;

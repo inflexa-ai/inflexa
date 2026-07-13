@@ -6,7 +6,7 @@ import type { Pool } from "pg";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { countTokens } from "./count-tokens.js";
-import { __resetThreadHistoryMetricsForTest, createThreadHistory, type ThreadHistory } from "./thread-history.js";
+import { __resetThreadHistoryMetricsForTest, type AppendableBriefing, createThreadHistory, type ThreadHistory } from "./thread-history.js";
 
 const THREAD = "analysis-thread-1";
 
@@ -29,6 +29,9 @@ function userToolResult(id: string, content: string): ModelMessage {
 }
 function assistantThinking(thinking: string, signature: string): ModelMessage {
     return { role: "assistant", content: [{ type: "reasoning", text: thinking, providerOptions: { anthropic: { signature } } }] };
+}
+function briefing(name: string, caption: string, content: string): AppendableBriefing {
+    return { name, caption, message: { role: "user", content: `<briefing name="${name}">\n${content}\n</briefing>` } };
 }
 
 /** Token cost of a turn — the same per-message count `appendTurn` stamps. */
@@ -262,6 +265,86 @@ describe("loadRecent numeric seq ordering", () => {
     });
 });
 
+// --- pinned briefings -------------------------------------------------------
+
+describe("loadRecent pinned briefings", () => {
+    it("returns briefing rows ahead of the window, exempt from the token budget", async () => {
+        const b = briefing("data-profile", "3 files", "the profile summary block");
+        (await history.appendBriefings(THREAD, [b]))._unsafeUnwrap();
+
+        const turn1 = [userText("first question here"), assistantText("first answer here")];
+        const turn2 = [userText("second question here"), assistantText("second answer here")];
+        const turn3 = [userText("third question here"), assistantText("third answer here")];
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn3))._unsafeUnwrap();
+
+        // Budget fits only the most recent turn — turns 1 and 2 evict, the
+        // briefing rides ahead regardless.
+        const loaded = (await history.loadRecent(THREAD, turnCost(turn3)))._unsafeUnwrap();
+
+        expect(loaded[0]).toEqual(b.message);
+        expect(loaded.slice(1)).toEqual(turn3);
+        assertValidSequence(loaded);
+    });
+
+    it("does not let briefing tokens shrink the turn window", async () => {
+        const bigBriefing = briefing("data-profile", "cap", "x ".repeat(500));
+        const turn1 = [userText("q one about the dataset"), assistantText("a one about the dataset")];
+        const turn2 = [userText("q two about the genes"), assistantText("a two about the genes")];
+
+        (await history.appendBriefings("with-briefing", [bigBriefing]))._unsafeUnwrap();
+        (await history.appendTurn("with-briefing", turn1))._unsafeUnwrap();
+        (await history.appendTurn("with-briefing", turn2))._unsafeUnwrap();
+
+        (await history.appendTurn("no-briefing", turn1))._unsafeUnwrap();
+        (await history.appendTurn("no-briefing", turn2))._unsafeUnwrap();
+
+        const budget = turnCost(turn1) + turnCost(turn2);
+        const withB = (await history.loadRecent("with-briefing", budget))._unsafeUnwrap();
+        const withoutB = (await history.loadRecent("no-briefing", budget))._unsafeUnwrap();
+
+        // The briefing prefix does not consume the budget: both threads window
+        // to the same turns.
+        expect(withoutB).toEqual([...turn1, ...turn2]);
+        expect(withB.slice(1)).toEqual(withoutB);
+        expect(withB[0]).toEqual(bigBriefing.message);
+    });
+
+    it("never anchors the window on a briefing row at the briefing/turn seam", async () => {
+        const b = briefing("data-profile", "cap", "profile block");
+        const turn1 = [userText("earliest question here"), assistantText("earliest answer here")];
+        const turn2 = [userText("latest question here"), assistantText("latest answer here")];
+
+        (await history.appendBriefings(THREAD, [b]))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+
+        // Only turn2 fits; the cut lands at the briefing/turn seam. The window
+        // must start on turn2's genuine user message, never on the briefing row.
+        const loaded = (await history.loadRecent(THREAD, turnCost(turn2)))._unsafeUnwrap();
+
+        expect(loaded[0]).toEqual(b.message);
+        expect(loaded[1]!.role).toBe("user");
+        expect(loaded.slice(1)).toEqual(turn2);
+        assertValidSequence(loaded);
+    });
+
+    it("appends one briefing set under concurrent first turns (first writer wins)", async () => {
+        const setA: AppendableBriefing[] = [briefing("data-profile", "caption-A", "A")];
+        const setB: AppendableBriefing[] = [briefing("data-profile", "caption-B", "B")];
+
+        await Promise.all([history.appendBriefings(THREAD, setA), history.appendBriefings(THREAD, setB)]);
+
+        const { rows } = await pool.query<{ message_envelope: { caption: string } }>(
+            "SELECT message_envelope FROM messages WHERE thread_id = $1 AND message_envelope->>'kind' = 'briefing' ORDER BY seq ASC",
+            [THREAD],
+        );
+        expect(rows).toHaveLength(1);
+        expect(["caption-A", "caption-B"]).toContain(rows[0]!.message_envelope.caption);
+    });
+});
+
 // --- overflow metric --------------------------------------------------------
 
 describe("loadRecent overflow metric", () => {
@@ -298,5 +381,23 @@ describe("loadRecent overflow metric", () => {
         const evictedPoint = evicted!.dataPoints[0]!;
         expect((evictedPoint.value as { sum: number }).sum).toBe(2);
         expect(evictedPoint.attributes.eviction).toBe(true);
+    });
+
+    it("counts evicted turns only — the pinned briefing is never counted", async () => {
+        (await history.appendBriefings(THREAD, [briefing("data-profile", "cap", "profile block")]))._unsafeUnwrap();
+        const turn1 = [userText("question one here"), assistantText("answer one here")];
+        const turn2 = [userText("question two here"), assistantText("answer two here")];
+        const turn3 = [userText("question three here"), assistantText("answer three here")];
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn3))._unsafeUnwrap();
+
+        // Only the most recent turn fits — the two older turns evict; the
+        // briefing does not participate in the count.
+        (await history.loadRecent(THREAD, turnCost(turn3)))._unsafeUnwrap();
+
+        const collected = await collectMetrics();
+        const evicted = collected.find((m) => m.descriptor.name === "cortex.harness.thread.turns_evicted");
+        expect((evicted!.dataPoints[0]!.value as { sum: number }).sum).toBe(2);
     });
 });

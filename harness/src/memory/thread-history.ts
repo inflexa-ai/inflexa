@@ -28,7 +28,7 @@ import type { Pool } from "pg";
 
 import { type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
 import { countTokens } from "./count-tokens.js";
-import { envelopeMessage, parseStoredMessageEnvelope, type StoredMessageEnvelope } from "./ai-sdk-message-storage.js";
+import { briefingEnvelope, envelopeMessage, isBriefingEnvelope, parseStoredMessageEnvelope, type StoredMessageEnvelope } from "./ai-sdk-message-storage.js";
 
 /** A resolved `ok(undefined)` ResultAsync — the empty/seed transaction step. */
 function okVoid<E = DbError>(): ResultAsync<void, E> {
@@ -62,8 +62,20 @@ export interface MessagePage {
 }
 
 /**
- * The conversation message store. Two methods, by design — no generic row
- * insert (see the harness-thread-store spec). `threadId` is the conversation scope — one UI thread.
+ * A composed standing briefing ready to persist — the `name`/`caption` for
+ * the briefing-card event plus the wrapped `user` message exactly as injected.
+ * Structurally matches `ComposedBriefing` from `prompts/briefings/compose.ts`;
+ * kept local so the store does not depend on the prompts layer.
+ */
+export interface AppendableBriefing {
+    readonly name: string;
+    readonly caption: string;
+    readonly message: ModelMessage;
+}
+
+/**
+ * The conversation message store. No generic row insert (see the
+ * harness-thread-store spec). `threadId` is the conversation scope — one UI thread.
  */
 export interface ThreadHistory {
     /**
@@ -72,8 +84,16 @@ export interface ThreadHistory {
      */
     appendTurn(threadId: string, messages: readonly ModelMessage[]): ResultAsync<void, DbError>;
     /**
-     * Return the most recent messages whose cumulative `tokens` fit
-     * `tokenBudget`, oldest-first, snapped to a valid AI SDK model-message sequence.
+     * Persist a thread's standing briefings once, idempotently: one
+     * transaction, `seq` values preceding every turn, and a no-op when the
+     * thread already has briefing rows (first writer wins under concurrent
+     * first turns). Runs at thread start, before any `appendTurn`.
+     */
+    appendBriefings(threadId: string, briefings: readonly AppendableBriefing[]): ResultAsync<void, DbError>;
+    /**
+     * Return the thread's briefing rows first (ascending `seq`, exempt from the
+     * budget), followed by the most recent turns whose cumulative `tokens` fit
+     * `tokenBudget`, snapped to a valid AI SDK model-message sequence.
      */
     loadRecent(threadId: string, tokenBudget: number): ResultAsync<ModelMessage[], DbError>;
     /**
@@ -192,6 +212,57 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
         );
     }
 
+    function appendBriefings(threadId: string, briefings: readonly AppendableBriefing[]): ResultAsync<void, DbError> {
+        if (briefings.length === 0) return okVoid();
+        return withTransaction(pool, "thread-history.appendBriefings", (client) =>
+            // Same advisory lock as `appendTurn` (hashtext(threadId)) — it serializes
+            // the briefing append against both racing first-turn appends AND any
+            // concurrent `appendTurn`, so briefing rows land at seq 0..k-1 with no
+            // primary-key collision. Released at COMMIT/ROLLBACK.
+            tryQuery("thread-history.appendBriefings.lock", () => client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [threadId]))
+                .andThen(() =>
+                    tryQuery("thread-history.appendBriefings.exists", async () => {
+                        const { rows } = await client.query<{ has: boolean }>(
+                            "SELECT EXISTS(SELECT 1 FROM messages WHERE thread_id = $1 AND message_envelope->>'kind' = 'briefing') AS has",
+                            [threadId],
+                        );
+                        return rows[0]!.has;
+                    }),
+                )
+                .andThen((hasBriefings) => {
+                    // First writer wins: standing briefings are immutable, so a later
+                    // racer (even with a different set) is a no-op, not an overwrite.
+                    if (hasBriefings) return okVoid<DbError>();
+                    return tryQuery("thread-history.appendBriefings.maxSeq", async () => {
+                        const { rows } = await client.query<{ max_seq: string }>(
+                            "SELECT COALESCE(MAX(seq), -1)::text AS max_seq FROM messages WHERE thread_id = $1",
+                            [threadId],
+                        );
+                        return Number(rows[0]!.max_seq) + 1;
+                    }).andThen((startSeq) =>
+                        briefings.reduce(
+                            (chain, briefing, i) =>
+                                chain.andThen(() =>
+                                    tryMutation("thread-history.appendBriefings.insert", () =>
+                                        client.query(
+                                            `INSERT INTO messages (thread_id, seq, message_envelope, tokens)
+                     VALUES ($1, $2, $3::jsonb, $4)`,
+                                            [
+                                                threadId,
+                                                startSeq + i,
+                                                JSON.stringify(briefingEnvelope(briefing.name, briefing.caption, briefing.message)),
+                                                countTokens(briefing.message.content),
+                                            ],
+                                        ),
+                                    ).map(() => undefined),
+                                ),
+                            okVoid<DbError>(),
+                        ),
+                    );
+                }),
+        );
+    }
+
     function loadRecent(threadId: string, tokenBudget: number): ResultAsync<ModelMessage[], DbError> {
         return tryQuery("thread-history.loadRecent", async () => {
             const { rows } = await pool.query<MessageRow>(
@@ -204,12 +275,20 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
          FROM messages WHERE thread_id = $1 ORDER BY messages.seq ASC`,
                 [threadId],
             );
-            const parsed = rows.map((row) => ({
-                message: parseStoredMessageEnvelope(row.message_envelope, `${threadId}/${row.seq}`).message,
-                tokens: row.tokens,
-            }));
+            const parsed = rows.map((row) => {
+                const envelope = parseStoredMessageEnvelope(row.message_envelope, `${threadId}/${row.seq}`);
+                return { envelope, message: envelope.message, tokens: row.tokens };
+            });
 
-            const turns = groupTurns(parsed, (row) => isGenuineUserStart(row.message));
+            // Partition on envelope kind: briefing rows are the pinned prefix (always
+            // returned first, exempt from the budget), and only the turn rows are
+            // windowed. Because briefings are removed before grouping, a briefing row
+            // (role `user`, kind `briefing`) can never be mistaken for a turn start,
+            // and its seq always precedes the turns (appended at thread start).
+            const briefings = parsed.filter((r) => isBriefingEnvelope(r.envelope));
+            const turnRows = parsed.filter((r) => !isBriefingEnvelope(r.envelope));
+
+            const turns = groupTurns(turnRows, (row) => isGenuineUserStart(row.message));
             const turnTokens = turns.map((turn) => turn.reduce((sum, row) => sum + row.tokens, 0));
             const threadTotal = turnTokens.reduce((sum, n) => sum + n, 0);
 
@@ -230,10 +309,13 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
             totalTokens.record(threadTotal, attributes);
             turnsEvictedHist.record(turnsEvicted, attributes);
 
-            return turns
-                .slice(turns.length - included)
-                .flat()
-                .map((row) => row.message);
+            return [
+                ...briefings.map((r) => r.message),
+                ...turns
+                    .slice(turns.length - included)
+                    .flat()
+                    .map((row) => row.message),
+            ];
         });
     }
 
@@ -268,13 +350,20 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
                 return { seq: Number(r.seq), envelope, message: envelope.message };
             });
 
-            const turns = groupTurns(stored, (row) => isGenuineUserStart(row.message));
+            // Briefing rows are a pinned prefix, not conversation turns: keep `total`
+            // and the page window turn-based (the documented contract) by grouping
+            // only the turn rows, and surface the briefing prefix on the first page.
+            const briefings = stored.filter((s) => isBriefingEnvelope(s.envelope));
+            const turnStored = stored.filter((s) => !isBriefingEnvelope(s.envelope));
+
+            const turns = groupTurns(turnStored, (row) => isGenuineUserStart(row.message));
             const total = turns.length;
             const offset = safePage * safePerPage;
             const pageTurns = turns.slice(offset, offset + safePerPage);
+            const pageMessages = pageTurns.flat();
 
             return {
-                messages: pageTurns.flat(),
+                messages: safePage === 0 ? [...briefings, ...pageMessages] : pageMessages,
                 total,
                 page: safePage,
                 perPage: safePerPage,
@@ -283,5 +372,5 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
         });
     }
 
-    return { appendTurn, loadRecent, loadPage };
+    return { appendTurn, appendBriefings, loadRecent, loadPage };
 }

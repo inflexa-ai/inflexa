@@ -131,6 +131,7 @@ export type {
     PresentationContent,
     PlanPart,
     RunCardPart,
+    BriefingCardPart,
     FileReferencePart,
     FileReferenceEntry,
     RunStartedPart,

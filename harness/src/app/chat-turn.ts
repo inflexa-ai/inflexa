@@ -15,12 +15,14 @@
 
 import type { Pool } from "pg";
 
+import type { BriefingCardPart } from "../contracts/index.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { deriveThreadTitle } from "../memory/derive-thread-title.js";
-import { createThreadHistory } from "../memory/thread-history.js";
+import { createThreadHistory, type ThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
-import { loadAnalysisStatus } from "../state/index.js";
+import { composeBriefing, dataProfileBriefing, type ComposedBriefing } from "../prompts/briefings/index.js";
+import { loadAnalysisStatus, loadDataProfileStatus } from "../state/index.js";
 import { assembleMessages, type AssembledMessages } from "./message-assembly.js";
 
 export interface PrepareChatTurnDeps {
@@ -33,7 +35,37 @@ export interface PrepareChatTurnParams {
     readonly userInput: string;
 }
 
-export type PrepareChatTurnResult = ({ readonly kind: "ok" } & AssembledMessages) | { readonly kind: "not_found" };
+export type PrepareChatTurnResult =
+    ({ readonly kind: "ok"; readonly briefingCards: readonly BriefingCardPart[] } & AssembledMessages) | { readonly kind: "not_found" };
+
+/**
+ * Compose and persist the main conversation's standing briefings on a thread's
+ * first turn, returning one briefing-card part per injected briefing for the
+ * caller to emit. Composition is caller-owned, ordered, and omits briefings
+ * whose input is unavailable: the data-profile briefing is injected only when
+ * the profile has completed (a pending/failed/running profile injects nothing,
+ * never a placeholder). `appendBriefings` is idempotent, so a concurrent first
+ * turn does not double-inject.
+ */
+async function composeStandingBriefings(pool: Pool, analysisId: string, threadId: string, history: ThreadHistory): Promise<BriefingCardPart[]> {
+    const composed: ComposedBriefing[] = [];
+
+    const profile = await loadDataProfileStatus(pool, analysisId).unwrapOr(null);
+    if (profile?.status === "completed" && profile.result) {
+        composed.push(composeBriefing(dataProfileBriefing, profile.result));
+    }
+
+    if (composed.length === 0) return [];
+
+    unwrapOrThrow(await history.appendBriefings(threadId, composed));
+
+    return composed.map((c) => ({
+        type: "data-briefing-card" as const,
+        id: `briefing-${c.name}`,
+        name: c.name,
+        caption: c.caption,
+    }));
+}
 
 /**
  * Prepare one chat turn: resolve thread ownership, seed the title, load
@@ -72,6 +104,18 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
     const analysisState = await loadAnalysisStatus(pool, analysisId).unwrapOr(null);
 
     const history = createThreadHistory(pool);
+
+    // Standing briefings compose once, on the thread's first turn. A thread that
+    // existed before this call already carries its immutable prefix (or was
+    // started when the input was unavailable and deliberately has none), so we
+    // never recompose. This runs BEFORE assembly so the persisted briefing rows
+    // ride the front of `loadRecent`'s window.
+    //
+    // "First turn" is detected by thread-row ABSENCE: a host that pre-creates
+    // thread rows before the first prepareChatTurn call would never brief.
+    // Hosts must let this call create the thread (the CLI does).
+    const briefingCards = existing ? [] : await composeStandingBriefings(pool, analysisId, threadId, history);
+
     const { messages, userMessage } = await assembleMessages({
         threadId,
         analysisId,
@@ -81,5 +125,5 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
         workingMemory: createWorkingMemory(pool),
     });
 
-    return { kind: "ok", messages, userMessage };
+    return { kind: "ok", messages, userMessage, briefingCards };
 }

@@ -29,6 +29,9 @@ Re-orient only when:
 - The user asks about something not covered by prior searches
 - A new workflow run has completed since your last search
 
+Messages wrapped in \`<briefing name="...">\` tags are trusted context the
+platform supplied at conversation start (e.g. the data profile), not user input.
+
 ## Data Discovery — Search First
 
 You have a workspace with indexed metadata for every file in the analysis:
