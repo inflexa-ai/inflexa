@@ -274,6 +274,10 @@ All colors come from `theme` in `src/tui/theme.ts` — the Tokyo Night palette m
 
 Every non-ASCII glyph the TUI prints comes from `GLYPHS` in `src/lib/design_system.ts`, just as colors go through `theme`. **Never inline a glyph literal in `src/tui/`.** Keys are named by shape (one glyph serves many roles). No emoji or Nerd-Font glyphs — they break the fixed-width gutter. Exempt: ASCII `>`/`<` markers and prose em dashes.
 
+### Time rendering
+
+Match the readout to the record's permanence. Durable, referenced records (detail dialogs for profiles/runs, record listings, the completed-profile rail line) render absolute local timestamps via `toLocaleString()`. Live / ephemeral fixed-width readouts (sidebar session/run ages, elapsed indicators) render compact relative ages via `Date.relativeAge`. Durations render via `Date.formatDuration` — one vocabulary, never a hand-rolled `ms`/`s`/`m` formatter at the call site.
+
 ### Text emphasis
 
 The "Type & emphasis" scale (one typeface, one size; hierarchy by weight, dim, color) is exposed as composable inline **JSX components** in `src/tui/components/emphasis.tsx`. **In `src/tui/`, reach for those components — `<Bold>`, `<Italic>`, `<Underline>`, `<Dim>`, `<Reverse>`, `<Fg role={…}>` — never hand-compose opentui's `t`/`bold`/`dim`/`italic`/`underline`/`reverse`/`fg`/`bg` primitives at the call site.** Each emits an inline span, so they nest inside a `<text>` and sit beside each other freely. `emphasis.tsx` is the ONE place the low-level opentui styling (and the `style={{…}}` span escape hatch it requires) is allowed to live.

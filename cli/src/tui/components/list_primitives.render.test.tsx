@@ -125,7 +125,7 @@ describe("cursor and navigation", () => {
         }
     });
 
-    test("ctrl+p/ctrl+n move; a new query resets the cursor to the best match", async () => {
+    test("ctrl+p/ctrl+n move; a new query resets the cursor; ctrl+p on the first row wraps to the last", async () => {
         const [query, setQuery] = createSignal("");
         const setup = await testRender(
             () => (
@@ -147,8 +147,8 @@ describe("cursor and navigation", () => {
             setQuery("");
             setup.mockInput.pressKey("p", { ctrl: true });
             frame = await settle(setup);
-            // Query reset put the cursor at 0; ctrl+p clamps there.
-            expect(frame).toContain(`${GLYPHS.chevronRight} apple`);
+            // Query reset put the cursor at row 0; ctrl+p wraps up to the last row (daikon).
+            expect(frame).toContain(`${GLYPHS.chevronRight} daikon`);
         } finally {
             setup.renderer.destroy();
         }
@@ -174,6 +174,135 @@ describe("cursor and navigation", () => {
             for (let i = 0; i < 29; i++) setup.mockInput.pressArrow("down");
             frame = await settle(setup);
             expect(frame).toContain(`${GLYPHS.chevronRight} row-29`);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("FixedList wraps: down off the last row returns to the first", async () => {
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={FRUIT} emptyText="none" />
+                </Harness>
+            ),
+            { width: 40, height: 14 },
+        );
+        try {
+            let frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} apple`);
+
+            setup.mockInput.pressKey("g", { shift: true }); // G → daikon (last row)
+            frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} daikon`);
+
+            setup.mockInput.pressArrow("down"); // one past the end wraps to the top
+            frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} apple`);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("FixedList wraps: up off the first row lands on the last and scrolls it into view", async () => {
+        const many: SelectItem<number>[] = Array.from({ length: 30 }, (_, i) => ({ value: i, title: `row-${String(i).padStart(2, "0")}` }));
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <box width="100%" height={8}>
+                        <FixedList items={many} emptyText="none" />
+                    </box>
+                </Harness>
+            ),
+            { width: 40, height: 8 },
+        );
+        try {
+            let frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} row-00`);
+            expect(frame).not.toContain("row-29");
+
+            setup.mockInput.pressArrow("up"); // wraps from the top to the last row, off-screen until now
+            frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} row-29`);
+            expect(frame).not.toContain("row-00");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("FixedList: a single-row list keeps the cursor put on up/down (wrap is a no-op)", async () => {
+        const one: SelectItem<string>[] = [{ value: "solo", title: "solo" }];
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={one} emptyText="none" />
+                </Harness>
+            ),
+            { width: 40, height: 8 },
+        );
+        try {
+            let frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} solo`);
+
+            setup.mockInput.pressArrow("down");
+            setup.mockInput.pressArrow("up");
+            setup.mockInput.pressKey("j");
+            setup.mockInput.pressKey("k");
+            frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} solo`);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("DynamicList clamps at the ends (no wrap): up on the first stays put, down on the last stays put", async () => {
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <DynamicList items={FRUIT} emptyText="none" />
+                </Harness>
+            ),
+            { width: 40, height: 14 },
+        );
+        try {
+            let frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} apple`);
+
+            setup.mockInput.pressArrow("up"); // first row: clamps, does not wrap to the bottom
+            frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} apple`);
+
+            setup.mockInput.pressKey("g", { shift: true }); // G → daikon (last row)
+            setup.mockInput.pressArrow("down"); // last row: clamps, does not wrap to the top
+            frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} daikon`);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("FixedList: page keys clamp at the ends and never wrap", async () => {
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={FRUIT} emptyText="none" />
+                </Harness>
+            ),
+            { width: 40, height: 14 },
+        );
+        try {
+            let frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} apple`);
+
+            // A page jump larger than the list clamps to the last row instead of wrapping...
+            await setup.mockInput.pressKeys(["\x1b[6~"]); // pageDown
+            frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} daikon`);
+
+            // ...and paging back up clamps to the first row, never past it.
+            await setup.mockInput.pressKeys(["\x1b[5~"]); // pageUp
+            frame = await settle(setup);
+            expect(frame).toContain(`${GLYPHS.chevronRight} apple`);
         } finally {
             setup.renderer.destroy();
         }

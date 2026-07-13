@@ -4,7 +4,7 @@ import type { JSX } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 
 import { rankBy } from "../../lib/fuzzy.ts";
-import { GLYPHS } from "../../lib/design_system.ts";
+import { GLYPHS, space } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
 import { KEYS } from "../keymap.ts";
 import { useDialogBindings } from "./dialog/dialog_host.tsx";
@@ -88,6 +88,15 @@ type ListCoreProps<T> = ListProps<T> & {
      * `for_scrollbox.render.test.tsx`.
      */
     strategy: "for" | "index";
+    /**
+     * When set, single-step cursor movement (arrows, ctrl+p/n, j/k) wraps between the first and
+     * last rows instead of stopping at them: stepping down off the bottom lands on the top, up
+     * off the top on the bottom. Enabled only for a fixed row set, whose ends are stable, so
+     * wrapping is a predictable convenience. A reactive source stays clamping — its rows can
+     * refilter out from under the cursor, and a wrap there would fling it to a disorienting far
+     * end. Page jumps (`moveBy`) and `gg`/`G` clamp regardless.
+     */
+    wrapNavigation?: boolean;
 };
 
 /** Flat position + the header this row must render above itself (it starts a category group). */
@@ -169,10 +178,18 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
     createEffect(() => props.onCursorChange?.(flat()[cursor()]?.value));
 
     function up(): void {
-        setCursor((i) => Math.max(0, i - 1));
+        setCursor((i) => {
+            const n = flat().length;
+            if (n === 0) return 0;
+            return props.wrapNavigation ? (i - 1 + n) % n : Math.max(0, i - 1);
+        });
     }
     function down(): void {
-        setCursor((i) => Math.min(flat().length - 1, i + 1));
+        setCursor((i) => {
+            const n = flat().length;
+            if (n === 0) return 0;
+            return props.wrapNavigation ? (i + 1) % n : Math.min(n - 1, i + 1);
+        });
     }
     function moveBy(delta: number): void {
         setCursor((i) => Math.max(0, Math.min(flat().length - 1, i + delta)));
@@ -303,9 +320,12 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
                 </Show>
             </ScrollPane>
             {/* Full-width painted box, not a bare <text>: a fixed row directly below a flexGrow
-                scrollbox must opaquely reclaim its row (the yoga one-cell overlap quirk). */}
+                scrollbox must opaquely reclaim its row (the yoga one-cell overlap quirk). The
+                breathing-room paddingTop lives INSIDE this painted box on purpose — a transparent gap
+                row above it would let the scrollbox bleed show through; the painted pad row reclaims
+                the bled cell instead. */}
             <Show when={flat()[cursor()]?.description}>
-                <box width="100%" flexShrink={0} backgroundColor={theme().bgRaised}>
+                <box width="100%" flexShrink={0} paddingTop={space.sm} backgroundColor={theme().bgRaised}>
                     <text fg={theme().fgMuted}>{flat()[cursor()]?.description ?? ""}</text>
                 </box>
             </Show>

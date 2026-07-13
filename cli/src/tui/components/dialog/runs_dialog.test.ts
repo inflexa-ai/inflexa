@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { StepExecutionRow } from "@inflexa-ai/harness";
 
-import { stepStateOf } from "./runs_dialog.tsx";
+import { stepStateOf } from "../../hooks/sidebar_live.ts";
 import type { RunStepView } from "../run_block.tsx";
 
 // A total map keyed by every harness step status: the `Record` type is a compile-time exhaustiveness

@@ -45,3 +45,40 @@ describe("MessageBlock text rendering", () => {
         expect(frame).toContain("live tokens");
     });
 });
+
+// The user turn's body rides a left border rule; the border glyph eats one gutter cell, so the body pads
+// by space.sm (1) inside the box instead of space.md (2) to land in the SAME column as an assistant body.
+// This pins that alignment invariant: break the border-1 + padding-1 === md arithmetic and the two body
+// texts stop starting in the same column. Rendered together so the columns share one coordinate system.
+describe("MessageBlock user-turn left rule alignment", () => {
+    /** Column (0-based) at which `needle` starts on its frame row, or -1 if not found. */
+    function columnOf(frame: string, needle: string): number {
+        for (const line of frame.split("\n")) {
+            const idx = line.indexOf(needle);
+            if (idx !== -1) return idx;
+        }
+        return -1;
+    }
+
+    test("a user body and an assistant body start in the same column, and the user body carries the border glyph", async () => {
+        const frame = await frameWith(
+            () => (
+                <box flexDirection="column" width="100%">
+                    <MessageBlock index={1} role="user" parts={[textPart("USERBODY")]} streamPartId={() => null} streamText={() => ""} />
+                    <MessageBlock index={2} role="assistant" parts={[textPart("ASSTBODY")]} streamPartId={() => null} streamText={() => ""} />
+                </box>
+            ),
+            "ASSTBODY",
+        );
+        const userCol = columnOf(frame, "USERBODY");
+        const asstCol = columnOf(frame, "ASSTBODY");
+        expect(userCol).toBeGreaterThanOrEqual(0);
+        expect(asstCol).toBeGreaterThanOrEqual(0);
+        expect(userCol).toBe(asstCol);
+        // The left rule ("│", U+2502) sits in the gutter of the user body row; the assistant body has none.
+        const userRow = frame.split("\n").find((line) => line.includes("USERBODY")) ?? "";
+        const asstRow = frame.split("\n").find((line) => line.includes("ASSTBODY")) ?? "";
+        expect(userRow).toContain("│");
+        expect(asstRow).not.toContain("│");
+    });
+});

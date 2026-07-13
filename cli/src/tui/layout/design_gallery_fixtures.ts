@@ -146,6 +146,34 @@ export const mockRun: Run = {
     ],
 };
 
+/**
+ * MOCK sample: a long run whose step count exceeds the chat sticky row's window (`maxSteps=6`), so the
+ * gallery exhibit shows the window engaging — centered on the frontier (the first non-done step),
+ * clamped to the ends — while the bar and `done/total` still reflect the full 12-step run.
+ */
+export const mockLongRun: Run = {
+    id: "mock-long-run",
+    name: "cohort-screen",
+    tag: "T9S2",
+    status: "running",
+    done: 7,
+    total: 12,
+    steps: [
+        { id: "mock-lstep-1", label: "ingest cohort", state: "done" },
+        { id: "mock-lstep-2", label: "harmonize schemas", state: "done" },
+        { id: "mock-lstep-3", label: "qc filter", state: "done" },
+        { id: "mock-lstep-4", label: "normalize", state: "done" },
+        { id: "mock-lstep-5", label: "batch correct", state: "done" },
+        { id: "mock-lstep-6", label: "cluster", state: "done" },
+        { id: "mock-lstep-7", label: "annotate types", state: "done" },
+        { id: "mock-lstep-8", label: "differential test", state: "running" },
+        { id: "mock-lstep-9", label: "pathway enrich", state: "queued" },
+        { id: "mock-lstep-10", label: "score targets", state: "queued" },
+        { id: "mock-lstep-11", label: "rank consensus", state: "queued" },
+        { id: "mock-lstep-12", label: "build report", state: "queued" },
+    ],
+};
+
 /** Sample age helper: an ISO timestamp `ms` in the past, so gallery exhibits show fresh relative ages. */
 function ago(ms: number): string {
     return new Date(Date.now() - ms).toISOString();

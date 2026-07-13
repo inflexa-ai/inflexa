@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { createSignal, Show } from "solid-js";
 import type { Renderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
@@ -5,7 +6,7 @@ import { errAsync } from "neverthrow";
 import { queryStepsByRun, type StepExecutionRow, type DbError } from "@inflexa-ai/harness";
 
 import { causeDetailLines } from "../lib/cause.ts";
-import { GLYPHS, zIndex } from "../lib/design_system.ts";
+import { GLYPHS, size, zIndex } from "../lib/design_system.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { writeClipboard } from "../lib/clipboard.ts";
 import { theme, themeVariant, noticeColor, type Notice } from "./theme.ts";
@@ -24,6 +25,7 @@ import { StatusBar } from "./layout/status_bar.tsx";
 import { Chat } from "./components/chat.tsx";
 import { BootIndicator } from "./components/boot_indicator.tsx";
 import { ChatBar } from "./layout/chat_bar.tsx";
+import { RunProgressRow } from "./layout/run_progress_row.tsx";
 import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
 import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
@@ -36,6 +38,18 @@ type AppProps = {
     workingDir: string;
     analysis: Analysis;
 };
+
+/**
+ * Contract the user's home-directory prefix to `~` for a compact display path. A single-caller
+ * affordance for the wide-terminal status bar, kept beside its use per the no-extract-helper rule.
+ * Only a true path-boundary prefix contracts (exact home, or home followed by a separator), so a
+ * sibling like `/home/alice-backup` is left untouched rather than mangled into `~-backup`.
+ */
+function contractHome(path: string): string {
+    const home = homedir();
+    if (path === home) return "~";
+    return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+}
 
 export function App(props: AppProps) {
     const dims = useTerminalDimensions();
@@ -234,6 +248,22 @@ export function App(props: AppProps) {
         ],
     }));
 
+    // esc clears a live text selection — and nothing else. A mode-less layer slotted at priority 50:
+    // above the dialog host's structural esc (priority 0) so a span selected inside a dialog
+    // deselects WITHOUT closing the dialog, and below the abort chord (priority 100), which owns its
+    // own selection-aware copy path. Mode-less (not MODE_BASE) on purpose: a selection can be live
+    // while a dialog is stacked, and MODE_BASE layers are suspended under a modal — this must still
+    // fire there. The arm predicate reads the SELECTED TEXT, not `hasSelection`: a plain click on
+    // selectable text leaves a non-null but EMPTY Selection, so `hasSelection` would arm on every
+    // click and swallow esc's real jobs (dialog cancel, INSERT→NORMAL). Clear only — copy-on-select
+    // already wrote the clipboard on mouse-up, so esc must not re-copy. With no selected text the
+    // layer is disabled and esc falls through unchanged to every existing binding.
+    useBindings(() => ({
+        priority: 50,
+        enabled: !!renderer.getSelection()?.getSelectedText(),
+        bindings: [{ chord: KEYS.escape, run: () => renderer.clearSelection(), desc: "Clear selection", group: "App" }],
+    }));
+
     function runCommandById(id: string): void {
         const cmd = commands.find((c) => c.id === id);
         if (cmd) void runCommand(cmd, workspace);
@@ -397,6 +427,10 @@ export function App(props: AppProps) {
                     title="inflexa"
                     subtitle={workspace.analysis?.name}
                     state={statusState()}
+                    // The working directory is a wide-terminal-only affordance: at/above the breakpoint the
+                    // rail and a comfortable chat both fit, so the path earns its space; below it the sidebar
+                    // carries the path instead, so gating here keeps it on exactly one surface at any width.
+                    path={dims().width >= size.breakpointWide ? contractHome(workspace.workingDir) : undefined}
                     hints={[keybindLabel("app.command-palette"), keybindLabel("app.toggle-sidebar"), keybindLabel("app.abort")]}
                 />
 
@@ -406,6 +440,11 @@ export function App(props: AppProps) {
                     <box flexDirection="column" flexGrow={1} minHeight={0}>
                         {/* The live conversation: stream + error banner, all state in hooks/conversation.ts */}
                         <Chat onScrollPaneRef={(r: ScrollBoxRenderable) => (scrollPaneRef = r)} />
+
+                        {/* Sticky run-progress row: pinned below the stream while the newest run is
+                        non-terminal (renders null otherwise). Its own opaque, full-width flexShrink={0}
+                        box reclaims the scrollbox's 1-cell bleed — same recipe as the boot indicator. */}
+                        <RunProgressRow />
 
                         {/* Boot animation / failed-boot message, shown until the runtime is ready. A
                         full-width box painted with the app background and flexShrink={0}: it sits

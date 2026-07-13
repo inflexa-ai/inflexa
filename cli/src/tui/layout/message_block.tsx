@@ -39,71 +39,89 @@ export type MessageBlockProps = {
  * accessors and flips to the stored text once the part completes.
  */
 export function MessageBlock(props: MessageBlockProps) {
-    // `· #N`, plus `· Ns` for a completed assistant turn (whole seconds, matching the thinking
-    // block's readout). User turns and not-yet-finished assistant turns show only the number.
+    // `· #N`, plus `· <dur>` for a completed assistant turn (via the shared Date.formatDuration
+    // vocabulary). User turns and not-yet-finished assistant turns show only the number.
     const meta = (): string => {
-        const dur = props.role === "assistant" && props.durationMs !== undefined ? ` ${GLYPHS.middot} ${Math.round(props.durationMs / 1000)}s` : "";
+        const dur = props.role === "assistant" && props.durationMs !== undefined ? ` ${GLYPHS.middot} ${Date.formatDuration(props.durationMs)}` : "";
         return `  ${GLYPHS.middot} #${props.index}${dur}`;
     };
+    // Body indent, kept gutter-aligned across roles. An assistant body pads by space.md (2). A user
+    // body rides a left border rule (the quoted-content idiom), whose glyph eats one gutter cell — so it
+    // pads by space.sm (1) instead: border(1) + padding(1) === space.md, landing user and assistant
+    // body text in the SAME column. This sum is the invariant: change one term and the other must move
+    // to match, or the two roles misalign under their headers.
+    const bodyPadLeft = (): number => (props.role === "user" ? space.sm : space.md);
+    const parts = (): JSX.Element => (
+        <For each={props.parts}>
+            {(part): JSX.Element => {
+                switch (part.type) {
+                    case "text": {
+                        const isStreaming = (): boolean => props.streamPartId() === part.id;
+                        const content = (): string => (isStreaming() ? props.streamText() : part.text);
+                        return (
+                            <Show when={content()}>
+                                {/* Mirror opencode's markdown config exactly. `streaming` is pinned true, NOT
+                                    isStreaming(): in @opentui/core 0.4.0 `<markdown streaming={false}>` renders
+                                    nothing (verified headlessly), so a finalized/reloaded part would vanish the
+                                    instant the stream ends. `internalBlockMode="top-level"` is the streaming
+                                    block mode — without it, incrementally-grown content left inline syntax
+                                    (`**bold**`) rendered as raw literal `**`. content() switches source (live
+                                    streamText while streaming, stored part.text once flushed). */}
+                                <markdown
+                                    content={content()}
+                                    fg={theme().fg}
+                                    syntaxStyle={syntaxStyle()}
+                                    streaming={true}
+                                    internalBlockMode="top-level"
+                                    paddingLeft={bodyPadLeft()}
+                                />
+                            </Show>
+                        );
+                    }
+                    case "thinking":
+                        return <ThinkingBlock text={part.text} durationMs={part.durationMs} />;
+                    case "tool-call":
+                        return (
+                            <ToolBlock
+                                name={part.name}
+                                target={part.target}
+                                result={part.result}
+                                filetype={part.filetype}
+                                status={part.status}
+                                durationMs={part.durationMs}
+                            />
+                        );
+                    case "file-edit":
+                        return <DiffBlock path={part.path} diff={part.diff} added={part.added} removed={part.removed} />;
+                    case "plan-card":
+                        return <PlanCardBlock planId={part.planId} title={part.title} steps={part.steps} />;
+                    case "run-card":
+                        return <RunCardBlock runId={part.runId} title={part.title} stepCount={part.stepCount} />;
+                    default: {
+                        // Exhaustive: a new Part kind without a case fails the build here.
+                        const _exhaustive: never = part;
+                        return _exhaustive;
+                    }
+                }
+            }}
+        </For>
+    );
     return (
         <box width="100%" flexDirection="column" paddingBottom={space.sm}>
             <text fg={theme()[props.role === "user" ? MARKERS.you.role : MARKERS.assistant.role]}>
                 <Bold>{props.role === "user" ? `${MARKERS.you.glyph} You` : `${MARKERS.assistant.glyph} Inflexa`}</Bold>
                 <Fg role="fgMuted">{meta()}</Fg>
             </text>
-            <For each={props.parts}>
-                {(part): JSX.Element => {
-                    switch (part.type) {
-                        case "text": {
-                            const isStreaming = (): boolean => props.streamPartId() === part.id;
-                            const content = (): string => (isStreaming() ? props.streamText() : part.text);
-                            return (
-                                <Show when={content()}>
-                                    {/* Mirror opencode's markdown config exactly. `streaming` is pinned true, NOT
-                                        isStreaming(): in @opentui/core 0.4.0 `<markdown streaming={false}>` renders
-                                        nothing (verified headlessly), so a finalized/reloaded part would vanish the
-                                        instant the stream ends. `internalBlockMode="top-level"` is the streaming
-                                        block mode — without it, incrementally-grown content left inline syntax
-                                        (`**bold**`) rendered as raw literal `**`. content() switches source (live
-                                        streamText while streaming, stored part.text once flushed). */}
-                                    <markdown
-                                        content={content()}
-                                        fg={theme().fg}
-                                        syntaxStyle={syntaxStyle()}
-                                        streaming={true}
-                                        internalBlockMode="top-level"
-                                        paddingLeft={space.md}
-                                    />
-                                </Show>
-                            );
-                        }
-                        case "thinking":
-                            return <ThinkingBlock text={part.text} durationMs={part.durationMs} />;
-                        case "tool-call":
-                            return (
-                                <ToolBlock
-                                    name={part.name}
-                                    target={part.target}
-                                    result={part.result}
-                                    filetype={part.filetype}
-                                    status={part.status}
-                                    durationMs={part.durationMs}
-                                />
-                            );
-                        case "file-edit":
-                            return <DiffBlock path={part.path} diff={part.diff} added={part.added} removed={part.removed} />;
-                        case "plan-card":
-                            return <PlanCardBlock planId={part.planId} title={part.title} steps={part.steps} />;
-                        case "run-card":
-                            return <RunCardBlock runId={part.runId} title={part.title} stepCount={part.stepCount} />;
-                        default: {
-                            // Exhaustive: a new Part kind without a case fails the build here.
-                            const _exhaustive: never = part;
-                            return _exhaustive;
-                        }
-                    }
-                }}
-            </For>
+            {props.role === "user" ? (
+                // The user turn's body rides a left border rule in the user color (the quoted-content idiom
+                // shared with the thinking / plan-card / run blocks). The header sits OUTSIDE this box so its
+                // gutter marker column never shifts; only the body is indented under the rule.
+                <box flexDirection="column" border={["left"]} borderColor={theme().user}>
+                    {parts()}
+                </box>
+            ) : (
+                parts()
+            )}
         </box>
     );
 }

@@ -701,6 +701,12 @@ export const size = {
     statusBar: 1,
     /** Sidebar / rail width, in columns. */
     railWidth: 40,
+    /**
+     * Terminal-column threshold at/above which wide-terminal placements engage. A calibration
+     * value: the 40-column {@link size.railWidth} plus a comfortable ~80-column chat both fit at
+     * 120, so that is where the extra-wide layout earns its space. Tunable.
+     */
+    breakpointWide: 120,
     /** Composer minimum height; grows with input. */
     composerMin: 1,
     /** Palette rows visible before it scrolls. */

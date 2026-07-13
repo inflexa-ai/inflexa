@@ -24,7 +24,7 @@ export type ThinkingBlockProps = {
  * affordance. The body sits under a left rule so it reads as quoted reasoning.
  */
 export function ThinkingBlock(props: ThinkingBlockProps) {
-    const duration = (): string => (props.durationMs ? ` ${GLYPHS.middot} ${Math.round(props.durationMs / 1000)}s` : "");
+    const duration = (): string => (props.durationMs ? ` ${GLYPHS.middot} ${Date.formatDuration(props.durationMs)}` : "");
     return (
         <box flexDirection="column" paddingBottom={space.sm}>
             <text>

@@ -1,19 +1,19 @@
 import { createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
+import { useTerminalDimensions } from "@opentui/solid";
 import type { CortexRunRow } from "@inflexa-ai/harness";
 
 import { theme } from "../theme.ts";
-import { GLYPHS, size } from "../../lib/design_system.ts";
+import { GLYPHS, size, space } from "../../lib/design_system.ts";
 import type { ThemeColors } from "../../lib/design_system.ts";
 import { Bold, Fg } from "../components/emphasis.tsx";
-import { profileSnapshot, runsSnapshot, relAge, runMark, shortRunName } from "../hooks/sidebar_live.ts";
+import { profileSnapshot, runsSnapshot, absTime, relAge, runMark, shortRunName } from "../hooks/sidebar_live.ts";
 import { agentModels, bootState } from "../hooks/boot.ts";
 import type { AgentName, ModelConnectionIdentity } from "../../modules/harness/config.ts";
 import { getSession, getAnchor, listAnalysisInputs } from "../../db/primary_query.ts";
 import { useWorkspace } from "../contexts/workspace.ts";
 import { Bus } from "../../lib/bus.ts";
 import type { StampedEvent } from "../../types/events.ts";
-import type { Analysis } from "../../types/analysis.ts";
 import type { Session } from "../../types/session.ts";
 import type { Anchor } from "../../types/anchor.ts";
 
@@ -63,7 +63,10 @@ function profileLineOf(snap: ReturnType<typeof profileSnapshot>): LiveLine {
                     return { glyph: GLYPHS.warning, role: "warning", text: `profiling${GLYPHS.ellipsis}` };
                 case "completed": {
                     const n = p.result?.files.length ?? 0;
-                    return { glyph: GLYPHS.check, role: "success", text: `${n} file${n === 1 ? "" : "s"} ${GLYPHS.middot} ${relAge(p.completedAt)}` };
+                    // Absolute local completed time (not a compact relative age): a finished profile is a
+                    // durable record read long after "8h ago" lost its anchor, so the rail matches the
+                    // details dialog. It may soft-wrap on long locales — acceptable in the fixed-width rail.
+                    return { glyph: GLYPHS.check, role: "success", text: `${n} file${n === 1 ? "" : "s"} ${GLYPHS.middot} ${absTime(p.completedAt)}` };
                 }
                 case "failed":
                     return { glyph: GLYPHS.cross, role: "error", text: firstLine(p.error) };
@@ -132,14 +135,60 @@ function ConnectionLine(): JSX.Element {
     );
 }
 
-function Section(props: { label: string; children: JSX.Element; onActivate?: () => void }) {
+// A single-line left border occupies exactly one terminal column; the rail draws one on its left edge.
+const RAIL_BORDER_COLS = 1;
+
+/**
+ * A rail content row's usable width in terminal cells: the rail's fixed width less its left border
+ * and its symmetric horizontal padding. opentui lays out on a character grid (one character = one
+ * cell), so a header can merge its value onto the label row only when the label, a gap, and the
+ * value together measure within this budget. Derived from the same tokens the rail box applies, so
+ * the check can never drift from the real geometry.
+ */
+const RAIL_CONTENT_WIDTH = size.railWidth - RAIL_BORDER_COLS - space.sm * 2;
+
+/**
+ * A sidebar section: a bold muted LABEL over its content rows. When a `value` is supplied AND it
+ * fits beside the label on one rail row — the label, a one-cell gap, and the value all within
+ * {@link RAIL_CONTENT_WIDTH} — the header collapses to a single `LABEL … value` row (label keeps its
+ * bold muted style; value right-aligned by a flexGrow spacer in the section's fg color). When it does
+ * not fit, it renders exactly the stacked layout: the label row, then the value as its own full-width
+ * line below — never truncated or squeezed into a right-hand cell. The remaining children follow in
+ * either case, so a section only ever moves its value, never duplicates it.
+ */
+function Section(props: { label: string; value?: string; children: JSX.Element; onActivate?: () => void }) {
+    // Read reactively so a later value change (session swap, analysis rename) re-decides the fit. The
+    // one-cell gap is space.sm — the minimum separation so label and value never abut on a full row.
+    const fitsOnLabelRow = (): boolean => {
+        const value = props.value;
+        return value !== undefined && props.label.length + space.sm + value.length <= RAIL_CONTENT_WIDTH;
+    };
     // The arrow reads `props.onActivate` at click time (reactive-safe, and the section activation is
     // inert on the sections that pass none — only DATA PROFILE / RUNS supply a callback).
     return (
         <box flexDirection="column" paddingTop={1} onMouseUp={() => props.onActivate?.()}>
-            <text fg={theme().fgMuted}>
-                <Bold>{props.label}</Bold>
-            </text>
+            <Show
+                when={fitsOnLabelRow()}
+                fallback={
+                    <>
+                        <text fg={theme().fgMuted}>
+                            <Bold>{props.label}</Bold>
+                        </text>
+                        <Show when={props.value} keyed>
+                            {(value: string) => <text fg={theme().fg}>{value}</text>}
+                        </Show>
+                    </>
+                }
+            >
+                <box flexDirection="row">
+                    <text fg={theme().fgMuted}>
+                        <Bold>{props.label}</Bold>
+                    </text>
+                    {/* Spacer pushes the value to the rail's right edge — the StatusBar/ChatBar idiom. */}
+                    <box flexGrow={1} />
+                    <text fg={theme().fg}>{props.value}</text>
+                </box>
+            </Show>
             {props.children}
         </box>
     );
@@ -158,6 +207,11 @@ function Section(props: { label: string; children: JSX.Element; onActivate?: () 
  */
 export function Sidebar(props: SidebarProps) {
     const ws = useWorkspace();
+    // The wide-layout flip: at/above the breakpoint the ANALYSIS path line yields to the badge moving
+    // onto the meta line. Reads the SAME `size.breakpointWide` token the status bar gates its path on,
+    // so both surfaces flip together and the working-directory path shows on exactly one of them.
+    const dims = useTerminalDimensions();
+    const isWide = (): boolean => dims().width >= size.breakpointWide;
     const session = createMemo(() =>
         getSession(ws.sessionId).match(
             (s) => s,
@@ -175,6 +229,14 @@ export function Sidebar(props: SidebarProps) {
             () => null,
         );
     });
+    // The anchor-marker health badge (marker written vs missing), or "" when no anchor exists. Muted
+    // to match the surrounding meta text — it flags marker health quietly, without a status color.
+    // Below the breakpoint it prefixes the path line; at/above it, the path line is dropped and this
+    // prefixes the meta line instead, so the signal stays visible in exactly one spot at any width.
+    const markerBadge = (): string => {
+        const a = anchor();
+        return a ? (a.markerWritten ? GLYPHS.check : GLYPHS.warning) : "";
+    };
     // The input count is a DB read with no reactive dependency of its own, so input-change bus
     // events tick a version signal the memo reads — the picker (and any future writer) updates
     // the sidebar live without a session swap. Filtered to THIS analysis: provenance events for
@@ -220,14 +282,13 @@ export function Sidebar(props: SidebarProps) {
             width={size.railWidth}
             flexShrink={0}
             flexDirection="column"
-            paddingLeft={1}
-            paddingRight={1}
+            paddingLeft={space.sm}
+            paddingRight={space.sm}
             border={["left"]}
             borderColor={theme().border}
             backgroundColor={theme().bgRaised}
         >
-            <Section label="SESSION">
-                <text fg={theme().fg}>{shortId(ws.sessionId)}</text>
+            <Section label="SESSION" value={shortId(ws.sessionId)}>
                 <Show when={session()} keyed>
                     {(s: Session) => (
                         <text fg={theme().fgMuted}>
@@ -237,18 +298,25 @@ export function Sidebar(props: SidebarProps) {
                 </Show>
             </Section>
 
-            <Section label="ANALYSIS">
-                <Show when={ws.analysis} keyed fallback={<text fg={theme().fgMuted}>no analysis</text>}>
-                    {(a: Analysis) => <text fg={theme().fg}>{a.name}</text>}
+            <Section label="ANALYSIS" value={ws.analysis?.name}>
+                {/* The name rides the label row (or stacks under it, both via Section); only the
+                    no-analysis fallback needs its own line here, since Section renders nothing when
+                    the value is undefined. */}
+                <Show when={!ws.analysis}>
+                    <text fg={theme().fgMuted}>no analysis</text>
                 </Show>
-                <Show when={anchor()} keyed>
+                {/* Below the breakpoint the marker badge sits on its own line beside the resolved path. */}
+                <Show when={!isWide() && anchor()} keyed>
                     {(a: Anchor) => (
                         <text fg={theme().fgMuted}>
                             {a.markerWritten ? GLYPHS.check : GLYPHS.warning} {a.cachedPath}
                         </text>
                     )}
                 </Show>
+                {/* At/above the breakpoint the path line is dropped and the badge joins this meta line
+                    (badge first, then the inputs/project text). */}
                 <text fg={theme().fgMuted}>
+                    {isWide() && markerBadge() ? `${markerBadge()} ` : ""}
                     {inputCount()} input{inputCount() === 1 ? "" : "s"}
                     {ws.project ? ` ${GLYPHS.middot} proj: ${ws.project.name}` : ""}
                 </text>

@@ -12,46 +12,7 @@ import { useDialogBindings, useDialogCancel, useDialogEntry } from "./dialog_hos
 import { DialogPanel } from "./dialog_panel.tsx";
 import { ScrollPane, SCROLL_HINT } from "../scroll_pane.tsx";
 import { RunBlock, type RunStepView } from "../run_block.tsx";
-import { relAge, runMark, shortRunName, type RunsSnapshot } from "../../hooks/sidebar_live.ts";
-
-/**
- * Map a harness step-execution status onto the design-system run-step state. Pure and
- * exhaustive over {@link StepExecutionRow.status} — a `never`-typed default breaks the build if the
- * harness enum grows, so a new status is classified honestly rather than silently mis-bucketed.
- *
- * The four buckets are `done | running | failed | queued`; the honest mapping of the seven harness
- * statuses:
- *  - `pending` / `skipped` → `queued` — neither ran: pending awaits its turn, skipped never will.
- *    The muted hollow glyph reads as "inactive", which is truthful for both (skipped is not a
- *    success and not an error).
- *  - `running` → `running`, `completed` → `done`, `failed` → `failed` — direct.
- *  - `canceled` → `failed` — a fail-fast sibling stopped mid-flight; a non-success terminal, shown
- *    error-toned to match the sidebar's run-level `canceled`.
- *  - `blocked` → `failed` — an agent-declared blocker; `executeAnalysis` treats it as a failure
- *    (`step_blocked`), so the error tone is the honest signal.
- */
-export function stepStateOf(status: StepExecutionRow["status"]): RunStepView["state"] {
-    switch (status) {
-        case "pending":
-        case "skipped":
-            return "queued";
-        case "running":
-            return "running";
-        case "completed":
-            return "done";
-        case "failed":
-        case "canceled":
-        case "blocked":
-            return "failed";
-        default: {
-            const _exhaustive: never = status;
-            // Unreachable: the `never` assignment above proves every status is handled. The cast only
-            // satisfies the return type on this dead branch — if it ever runs, the harness added a
-            // status the switch does not cover, and we surface its raw string rather than crash.
-            return String(_exhaustive) as RunStepView["state"];
-        }
-    }
-}
+import { absTime, idTail, runMark, shortRunName, stepStateOf, type RunsSnapshot } from "../../hooks/sidebar_live.ts";
 
 /** The latest run's step-fetch state — fetched once on open, not by the sidebar poll. */
 type StepsState = { kind: "loading" } | { kind: "loaded"; views: RunStepView[] } | { kind: "unavailable" };
@@ -74,11 +35,6 @@ export type RunsDialogProps = {
     /** Wired to every non-commit close (esc, click-outside, ctrl+c) and the q/enter close keys. */
     onClose: () => void;
 };
-
-/** A short, human-scannable tail of a uuid (dashes stripped). */
-function idTail(id: string): string {
-    return id.replace(/-/g, "").slice(-6);
-}
 
 /**
  * The runs details view: a read-only, scrollable list of the analysis's recent runs plus the latest
@@ -144,7 +100,7 @@ export function RunsDialog(props: RunsDialogProps): JSX.Element {
                                             <text>
                                                 <Fg role={m.role}>{`${m.glyph} `}</Fg>
                                                 <Fg role="fg">{idTail(run.runId)}</Fg>
-                                                <Fg role="fgMuted">{` ${GLYPHS.middot} ${run.status} ${GLYPHS.middot} ${relAge(run.startedAt)}`}</Fg>
+                                                <Fg role="fgMuted">{` ${GLYPHS.middot} ${run.status} ${GLYPHS.middot} ${absTime(run.startedAt)}`}</Fg>
                                             </text>
                                         );
                                     }}

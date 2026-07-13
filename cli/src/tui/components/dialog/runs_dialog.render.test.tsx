@@ -115,7 +115,7 @@ describe("RunsDialog snapshot ladder", () => {
         expect(frame).not.toContain("RECENT RUNS");
     });
 
-    test("loaded → the run list, keyed by the id tail and the status", async () => {
+    test("loaded → the run list, keyed by the id tail, the status, and the absolute started time", async () => {
         const rows = [run(), run({ runId: "aaaaaaaa-bbbb-cccc-dddd-eeeeffff0000", status: "failed" })];
         const frame = await frameOf({ kind: "loaded", runs: rows }, parkedLoad);
         expect(frame).toContain("RECENT RUNS");
@@ -123,6 +123,9 @@ describe("RunsDialog snapshot ladder", () => {
         expect(frame).toContain("ff0000");
         expect(frame).toContain("completed");
         expect(frame).toContain("failed");
+        // Detail dialogs render the durable, absolute started time (not the rail's relative age) —
+        // assert via the same toLocaleString the row runs on the fixture timestamp, not a locale string.
+        expect(frame).toContain(new Date("2026-01-01T00:00:00.000Z").toLocaleString());
     });
 });
 

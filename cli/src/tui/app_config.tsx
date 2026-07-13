@@ -276,8 +276,12 @@ export function ConfigApp(props: { onClose?: () => void }) {
                     else toggleFocused();
                 },
             },
-            { chord: KEYS.up, run: () => setSection(Math.max(0, section() - 1)) },
-            { chord: KEYS.down, run: () => setSection(Math.min(sections.length - 1, section() + 1)) },
+            // Section nav wraps end-to-end so a long form is fully reachable without a direction
+            // change: stepping down off the last section lands on the first, up off the first on
+            // the last. (The radios' left/right value stepping stays clamped — wrapping a setting's
+            // value past its ends would be a surprise, not a convenience.)
+            { chord: KEYS.up, run: () => setSection((section() - 1 + sections.length) % sections.length) },
+            { chord: KEYS.down, run: () => setSection((section() + 1) % sections.length) },
             { chord: KEYS.left, run: () => step(-1) },
             { chord: KEYS.right, run: () => step(1) },
         ],
