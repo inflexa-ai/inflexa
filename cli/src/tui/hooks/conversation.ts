@@ -23,7 +23,7 @@ import { leaderSeq, sequenceLabel } from "../keymap.ts";
 import { harnessRuntime } from "./boot.ts";
 import { notify } from "./notice.ts";
 import { setChatStatus } from "./status.ts";
-import type { OpenableCardPart, OpenableEntry, Part, PresentationPart, TextPart, ToolCallPart } from "../../types/session.ts";
+import type { OpenableCardPart, OpenableEntry, Part, PlanCardPart, PresentationPart, TextPart, ToolCallPart } from "../../types/session.ts";
 
 // The chat's hot state — the message list, the in-flight streaming buffer, and the last error —
 // held here (not inside `app.tsx`) so the holder of the state is decoupled from its renderer, the
@@ -951,4 +951,17 @@ export function sessionOpenables(): SessionOpenable[] {
         }
     }
     return out;
+}
+
+/** The most recently emitted plan card in the mounted transcript, or null when none exists. */
+export function latestPlanCard(): PlanCardPart | null {
+    for (let mi = messages.length - 1; mi >= 0; mi--) {
+        const message = messages[mi];
+        if (!message) continue;
+        for (let pi = message.parts.length - 1; pi >= 0; pi--) {
+            const part = message.parts[pi];
+            if (part?.type === "plan-card") return part;
+        }
+    }
+    return null;
 }

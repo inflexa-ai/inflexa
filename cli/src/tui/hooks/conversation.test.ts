@@ -169,7 +169,10 @@ describe("send() drives the adapter + engine", () => {
         const plan = findPart((p): p is PlanCardPart => p.type === "plan-card");
         expect(plan?.planId).toBe("plan-1");
         expect(plan?.title).toBe("DE analysis");
-        expect(plan?.steps).toEqual([{ id: "s1", name: "QC", agent: "prep" }]);
+        expect(plan?.steps[0]?.id).toBe("s1");
+        expect(plan?.steps[0]?.name).toBe("QC");
+        expect(plan?.steps[0]?.agent).toBe("prep");
+        expect(plan?.steps[0]?.depends_on).toEqual([]);
     });
 
     test("data-run-card becomes a run-card via readRunCard", async () => {

@@ -10,7 +10,7 @@
 
 import type { CortexRunRow, DataProfileStatus, StepExecutionRow } from "@inflexa-ai/harness";
 
-import type { TextPart, ThinkingPart, ToolCallPart, FileEditPart, PlanCardPart, RunCardPart } from "../../types/session.ts";
+import type { TextPart, ThinkingPart, ToolCallPart, FileEditPart, PlanCardPart, PlanCardStepView, RunCardPart } from "../../types/session.ts";
 
 /** A run step's lifecycle state (mirrors `RunStepView.state`). */
 export type StepState = "done" | "running" | "failed" | "queued";
@@ -115,11 +115,85 @@ export const mockPlanCard: PlanCardPart = {
     planId: "plan-8f21",
     title: "Differential expression across conditions",
     steps: [
-        { id: "s1", name: "QC & normalize counts", agent: "rna-preprocess" },
-        { id: "s2", name: "Fit DE model", agent: "deseq2" },
-        { id: "s3", name: "Pathway enrichment on DE genes", agent: "pathway" },
+        {
+            id: "s1",
+            name: "QC & normalize counts",
+            agent: "rna-preprocess",
+            question: "Are the count matrices suitable for differential analysis?",
+            acceptance_criteria: ["All samples pass count-depth checks", "Normalized matrix is written"],
+            constraints: ["Preserve sample labels"],
+            caveats: [],
+            depends_on: [],
+            resources: { cpu: 2, memoryGb: 4, gpuCount: 0 },
+            track: "preprocess",
+            step_type: "analysis",
+        },
+        {
+            id: "s2",
+            name: "Fit DE model",
+            agent: "deseq2",
+            question: "Which genes differ between conditions?",
+            acceptance_criteria: ["Adjusted p-values are reported"],
+            constraints: [],
+            caveats: ["Small cohorts reduce power"],
+            depends_on: ["s1"],
+            resources: { cpu: 4, memoryGb: 8, gpuCount: 0 },
+            track: "differential-expression",
+            step_type: "analysis",
+        },
+        {
+            id: "s3",
+            name: "Pathway enrichment on DE genes",
+            agent: "pathway",
+            question: "Which pathways explain the differential signal?",
+            acceptance_criteria: ["Enriched pathways include effect direction"],
+            constraints: [],
+            caveats: ["Gene-set overlap may inflate related terms"],
+            depends_on: ["s2"],
+            resources: { cpu: 2, memoryGb: 4, gpuCount: 0 },
+            track: "interpretation",
+            step_type: "analysis",
+        },
     ],
 };
+
+function galleryPlanStep(id: string, name: string, depends_on: string[] = []): PlanCardStepView {
+    return {
+        id,
+        name,
+        agent: "scientific-executor",
+        question: `What should ${name.toLowerCase()} establish?`,
+        acceptance_criteria: ["Produces a reviewable result"],
+        constraints: [],
+        caveats: [],
+        depends_on,
+        resources: { cpu: 2, memoryGb: 4, gpuCount: 0 },
+        track: "analysis",
+        step_type: "analysis",
+    };
+}
+
+export const mockPlanStepDetail = galleryPlanStep("B", "Expression analysis", ["A"]);
+
+/** MOCK plan shapes that pin every dependency-graph gallery state. */
+export const mockPlanGraphExhibits = {
+    linear: [galleryPlanStep("A", "Load inputs"), galleryPlanStep("B", "Analyze", ["A"]), galleryPlanStep("C", "Summarize", ["B"])],
+    branching: [
+        galleryPlanStep("A", "Load inputs"),
+        mockPlanStepDetail,
+        galleryPlanStep("C", "Variant analysis", ["A"]),
+        galleryPlanStep("D", "Integrate findings", ["B", "C"]),
+    ],
+    wide: [
+        galleryPlanStep("A", "Load inputs"),
+        galleryPlanStep("B1", "QC", ["A"]),
+        galleryPlanStep("B2", "Expression", ["A"]),
+        galleryPlanStep("B3", "Variants", ["A"]),
+        galleryPlanStep("B4", "Pathways", ["A"]),
+    ],
+    longLabel: [galleryPlanStep("A", "A deliberately long plan step label that must truncate")],
+    empty: [],
+} satisfies Record<string, PlanCardStepView[]>;
 
 /** MOCK sample: a launched run card (identity + step count; no live status field, per the contract). */
 export const mockRunCard: RunCardPart = {

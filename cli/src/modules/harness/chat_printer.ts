@@ -3,7 +3,8 @@ import { pathToFileURL } from "node:url";
 import type { EmitFn, EventSource } from "@inflexa-ai/harness";
 
 import { materializeTarget, readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "./artifact_open.ts";
-import type { OpenableEntry, OpenTarget, PresentationBody } from "../../types/session.ts";
+import { planToDag } from "./plan_dag.ts";
+import type { OpenableEntry, OpenTarget, PlanCardStepView, PresentationBody } from "../../types/session.ts";
 
 // The `inflexa chat` emit sink — renders one in-process `EmitFn` stream to a
 // plain-text terminal. It is deliberately coarse: this
@@ -105,7 +106,7 @@ function formatMs(ms: number): string {
  * Exported so the TUI adapter extracts card fields with this exact reader rather
  * than duplicating the coercion.
  */
-export function readPlanCard(data: unknown): { planId: string; title: string; steps: { id: string; name: string; agent: string }[] } {
+export function readPlanCard(data: unknown): { planId: string; title: string; steps: PlanCardStepView[] } {
     // `data` is external/loop-owned; treat it as a loose record and pull only
     // what renders, coercing missing/mistyped fields to empty rather than throwing.
     const d = (data ?? {}) as Record<string, unknown>;
@@ -114,10 +115,30 @@ export function readPlanCard(data: unknown): { planId: string; title: string; st
         // Same rationale as `d`: each step is untrusted `unknown`, cast to a loose
         // record so every field below is read-and-coerced, never trusted.
         const step = (s ?? {}) as Record<string, unknown>;
+        // Nested resource objects come from the same untrusted payload. These loose
+        // records are only read through explicit primitive checks below.
+        const resources = (step.resources ?? {}) as Record<string, unknown>;
+        const gpu = (resources.gpu ?? {}) as Record<string, unknown>;
+        const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
+        const hasResources = typeof resources.cpu === "number" || typeof resources.memoryGb === "number" || typeof gpu.count === "number";
         return {
             id: typeof step.id === "string" ? step.id : "",
             name: typeof step.name === "string" ? step.name : "",
             agent: typeof step.agent === "string" ? step.agent : "",
+            question: typeof step.question === "string" ? step.question : "",
+            acceptance_criteria: strings(step.acceptance_criteria),
+            constraints: strings(step.constraints),
+            caveats: strings(step.caveats),
+            depends_on: strings(step.depends_on),
+            resources: hasResources
+                ? {
+                      cpu: typeof resources.cpu === "number" ? resources.cpu : 0,
+                      memoryGb: typeof resources.memoryGb === "number" ? resources.memoryGb : 0,
+                      gpuCount: typeof gpu.count === "number" ? gpu.count : 0,
+                  }
+                : null,
+            track: typeof step.track === "string" ? step.track : "",
+            step_type: typeof step.step_type === "string" ? step.step_type : "",
         };
     });
     return {
@@ -233,7 +254,18 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
                 const plan = readPlanCard(data);
                 const heading = plan.title || plan.planId;
                 sink.out(`\n  [plan] ${heading} (${plan.planId})\n`);
-                for (const step of plan.steps) sink.out(`    - ${step.id} ${step.name} [${step.agent}]\n`);
+                const graph =
+                    plan.steps.length > 0
+                        ? planToDag(plan.steps).match(
+                              (value) => value || null,
+                              () => null,
+                          )
+                        : null;
+                if (graph) {
+                    for (const line of graph.split("\n")) sink.out(`    ${line}\n`);
+                } else {
+                    for (const step of plan.steps) sink.out(`    - ${step.id} ${step.name} [${step.agent}]\n`);
+                }
                 return;
             }
             case "data-run-card": {

@@ -56,7 +56,7 @@ describe("createChatPrinter", () => {
         expect(h.out()).toContain("[tool] read_file error");
     });
 
-    test("data-plan renders id, title, and per-step lines", () => {
+    test("data-plan renders id, title, and a branching dependency graph", () => {
         const h = harness();
         h.emit({
             type: "data-plan",
@@ -66,15 +66,19 @@ describe("createChatPrinter", () => {
                 planId: "pln-abc12345",
                 title: "Differential expression",
                 steps: [
-                    { id: "T1S1", name: "align", agent: "scientific-executor" },
-                    { id: "T1S2", name: "quantify", agent: "scientific-executor" },
+                    { id: "T1S1", name: "load", agent: "scientific-executor", depends_on: [] },
+                    { id: "T2S1", name: "align", agent: "scientific-executor", depends_on: ["T1S1"] },
+                    { id: "T3S1", name: "quantify", agent: "scientific-executor", depends_on: ["T1S1"] },
                 ],
             },
         });
         const out = h.out();
         expect(out).toContain("[plan] Differential expression (pln-abc12345)");
-        expect(out).toContain("- T1S1 align [scientific-executor]");
-        expect(out).toContain("- T1S2 quantify [scientific-executor]");
+        expect(out).toContain("T1S1 load");
+        expect(out).toContain("T2S1 align");
+        expect(out).toContain("T3S1 quantify");
+        expect(out).toContain("┴");
+        expect(out).not.toContain("- T1S1");
     });
 
     test("data-plan falls back to planId as heading when title is absent", () => {
@@ -280,8 +284,45 @@ describe("isSubAgentEvent", () => {
 
 describe("readPlanCard", () => {
     test("extracts planId, title, and per-step fields", () => {
-        const card = readPlanCard({ id: "pres-1", planId: "pln-abc", title: "DE", steps: [{ id: "S1", name: "align", agent: "exec" }] });
-        expect(card).toEqual({ planId: "pln-abc", title: "DE", steps: [{ id: "S1", name: "align", agent: "exec" }] });
+        const card = readPlanCard({
+            id: "pres-1",
+            planId: "pln-abc",
+            title: "DE",
+            steps: [
+                {
+                    id: "S1",
+                    name: "align",
+                    agent: "exec",
+                    question: "Which reads align?",
+                    acceptance_criteria: ["BAM produced"],
+                    constraints: ["paired-end"],
+                    caveats: ["reference bias"],
+                    depends_on: ["S0"],
+                    resources: { cpu: 4, memoryGb: 8, gpu: { count: 1 } },
+                    track: "alignment",
+                    step_type: "analysis",
+                },
+            ],
+        });
+        expect(card).toEqual({
+            planId: "pln-abc",
+            title: "DE",
+            steps: [
+                {
+                    id: "S1",
+                    name: "align",
+                    agent: "exec",
+                    question: "Which reads align?",
+                    acceptance_criteria: ["BAM produced"],
+                    constraints: ["paired-end"],
+                    caveats: ["reference bias"],
+                    depends_on: ["S0"],
+                    resources: { cpu: 4, memoryGb: 8, gpuCount: 1 },
+                    track: "alignment",
+                    step_type: "analysis",
+                },
+            ],
+        });
     });
 
     test("coerces missing/mistyped fields to empty rather than throwing", () => {
@@ -291,10 +332,31 @@ describe("readPlanCard", () => {
     });
 
     test("copies each step — no reference to the source data survives", () => {
-        const steps = [{ id: "S1", name: "one", agent: "a1" }];
+        const steps = [{ id: "S1", name: "one", agent: "a1", depends_on: ["S0"], constraints: ["fast"], resources: { cpu: 2, memoryGb: 4 } }];
         const card = readPlanCard({ planId: "pln-abc", steps });
         steps[0]!.name = "MUTATED";
+        steps[0]!.depends_on[0] = "MUTATED";
+        steps[0]!.resources.cpu = 99;
         expect(card.steps[0]!.name).toBe("one");
+        expect(card.steps[0]!.depends_on).toEqual(["S0"]);
+        expect(card.steps[0]!.resources).toEqual({ cpu: 2, memoryGb: 4, gpuCount: 0 });
+    });
+
+    test("coerces malformed nested step fields without throwing", () => {
+        const card = readPlanCard({ planId: "pln-abc", steps: [{ depends_on: ["S0", 1], resources: "large", constraints: {} }] });
+        expect(card.steps[0]).toEqual({
+            id: "",
+            name: "",
+            agent: "",
+            question: "",
+            acceptance_criteria: [],
+            constraints: [],
+            caveats: [],
+            depends_on: ["S0"],
+            resources: null,
+            track: "",
+            step_type: "",
+        });
     });
 });
 

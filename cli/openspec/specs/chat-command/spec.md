@@ -90,7 +90,9 @@ exist or belongs to a different analysis SHALL be refused with an actionable mes
 The command's emit sink SHALL render, to stdout: accumulated `text-delta` content as it
 arrives (no paced/typewriter reveal), one-line tool chips on `tool-started` completed on
 `tool-finished` (tool name and outcome), and text renderings of the `data-plan` (plan
-id, title, step list) and `data-run-card` (run id, title, step count — the fields the
+id, title, and the step dependency graph — the same `planToDag` rendering the TUI
+plan-card block uses, emitted as plain text, falling back to a per-step list when steps
+are absent or rendering fails) and `data-run-card` (run id, title, step count — the fields the
 harness `RunCardData` contract carries; it has no run-status field) parts. Text-shaped
 `data-presentation` parts (`markdown`, `code`, `table`) SHALL print inline as text
 (markdown source; code fenced; tables as aligned text). Pixel-shaped parts —
@@ -118,7 +120,7 @@ the agent loop). Diagnostics go to stderr; stdout carries only the conversation.
 #### Scenario: A plan part renders readably
 
 - **WHEN** the agent presents a plan via `show_plan`
-- **THEN** stdout renders the plan id, title, and per-step lines from the embedded plan content
+- **THEN** stdout renders the plan id, title, and the step dependency graph as plain text, falling back to a per-step list when the plan has no steps or the graph fails to render
 
 #### Scenario: An openable renders as a linked path
 
@@ -169,4 +171,3 @@ while an abort is already in flight MAY force-exit the process.
 
 - **WHEN** the user presses Ctrl+C (or Ctrl+D) at the idle prompt
 - **THEN** the process releases the analysis lock, shuts the runtime down gracefully, and exits zero
-

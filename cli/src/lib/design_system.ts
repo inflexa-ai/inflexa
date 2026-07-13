@@ -73,6 +73,28 @@ export const GLYPHS = {
     ellipsis: "…",
     /** U+2014 — em dash standing in for a value that is unavailable / not yet tracked. */
     emDash: "—",
+    /** U+2500 — light horizontal box-drawing line. */
+    lineHorizontal: "─",
+    /** U+2502 — light vertical box-drawing line. */
+    lineVertical: "│",
+    /** U+250C — light down-and-right corner. */
+    cornerDownRight: "┌",
+    /** U+2510 — light down-and-left corner. */
+    cornerDownLeft: "┐",
+    /** U+2514 — light up-and-right corner. */
+    cornerUpRight: "└",
+    /** U+2518 — light up-and-left corner. */
+    cornerUpLeft: "┘",
+    /** U+252C — light down-facing tee. */
+    teeDown: "┬",
+    /** U+2534 — light up-facing tee. */
+    teeUp: "┴",
+    /** U+251C — light right-facing tee. */
+    teeRight: "├",
+    /** U+2524 — light left-facing tee. */
+    teeLeft: "┤",
+    /** U+253C — light box-drawing cross. */
+    lineCross: "┼",
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────

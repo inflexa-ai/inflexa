@@ -323,6 +323,7 @@ export function App(props: AppProps) {
         bindings: [
             { chord: resolveKeybind("app.command-palette"), run: () => dialogPush(() => <CommandPalette commands={commands} />) },
             { chord: resolveKeybind("app.toggle-sidebar"), run: () => setSidebarOpen((open) => !open) },
+            { chord: resolveKeybind("plan.explore-steps"), run: () => runCommandById("plan.explore-steps") },
             {
                 chord: leaderSeq("k"),
                 run: () => dialogPush(() => <CommandPalette commands={commands} />),

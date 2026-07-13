@@ -14,6 +14,7 @@ import { ConfirmDialog } from "../components/dialog/confirm_dialog.tsx";
 import { AlertDialog } from "../components/dialog/alert_dialog.tsx";
 import { ResultsDialog } from "../components/dialog/results_dialog.tsx";
 import { ExportOptionsDialog } from "../components/dialog/export_options_dialog.tsx";
+import { PlanStepDetailDialog } from "../components/dialog/plan_step_detail_dialog.tsx";
 import { Welcome } from "../components/welcome.tsx";
 import { ThinkingBlock } from "../components/thinking_block.tsx";
 import { ThinkingIndicator } from "../components/thinking_indicator.tsx";
@@ -24,6 +25,7 @@ import { RunBlock } from "../components/run_block.tsx";
 import { ErrorBlock } from "../components/error_block.tsx";
 import { PresentationBlock } from "../components/presentation_block.tsx";
 import { OpenableCardBlock } from "../components/openable_card_block.tsx";
+import { PlanCardBlock } from "../components/plan_card_block.tsx";
 import { MessageBlock } from "./message_block.tsx";
 import { Bold, Italic, Underline, Dim, Reverse, Fg } from "../components/emphasis.tsx";
 import { TextArea } from "../components/text_area.tsx";
@@ -43,6 +45,8 @@ import {
     mockRun,
     mockLongRun,
     mockPlanCard,
+    mockPlanGraphExhibits,
+    mockPlanStepDetail,
     mockRunCard,
     mockCortexRuns,
     mockRunSteps,
@@ -220,6 +224,10 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             onCancel={noop}
                         />
                     </DialogShowcase>
+                    <text fg={theme().fgMuted}>PlanStepDetailDialog — copied plan-step fields:</text>
+                    <DialogShowcase>
+                        <PlanStepDetailDialog step={mockPlanStepDetail} onClose={noop} />
+                    </DialogShowcase>
                 </State>
                 <State n="12" label="select lists — FixedList / DynamicList / SelectDialog (inert exhibits)">
                     <text fg={theme().fgMuted}>single mode — {GLYPHS.chevronRight} chevron cursor, headers group by category:</text>
@@ -334,6 +342,16 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                 <State n="16" label="harness cards — plan card & run card">
                     <MessageBlock index={1} role="assistant" parts={[mockPlanCard]} streamPartId={noStreamId} streamText={noStreamText} />
                     <MessageBlock index={2} role="assistant" parts={[mockRunCard]} streamPartId={noStreamId} streamText={noStreamText} />
+                    <text fg={theme().fgMuted}>plan dependency graph — linear:</text>
+                    <PlanCardBlock planId="mock-linear" title="Linear plan" steps={mockPlanGraphExhibits.linear} />
+                    <text fg={theme().fgMuted}>branching + merge:</text>
+                    <PlanCardBlock planId="mock-branching" title="Branching plan" steps={mockPlanGraphExhibits.branching} />
+                    <text fg={theme().fgMuted}>wide fan-out (horizontal overflow):</text>
+                    <PlanCardBlock planId="mock-wide" title="Wide plan" steps={mockPlanGraphExhibits.wide} />
+                    <text fg={theme().fgMuted}>long-label truncation:</text>
+                    <PlanCardBlock planId="mock-long-label" title="Long-label plan" steps={mockPlanGraphExhibits.longLabel} />
+                    <text fg={theme().fgMuted}>empty fallback:</text>
+                    <PlanCardBlock planId="mock-empty" title="Empty plan" steps={mockPlanGraphExhibits.empty} />
                 </State>
                 <State n="17" label="sidebar details — data profile & runs (inert exhibits)">
                     {/* Profile details reuse ResultsDialog verbatim; the lines are composed by the REAL
