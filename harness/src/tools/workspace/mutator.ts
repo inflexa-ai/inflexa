@@ -12,6 +12,8 @@
  * instead of being a per-tool convention.
  */
 
+import { computeSha256 } from "../../lib/fs-helpers.js";
+import type { ProvenanceCollector } from "../../provenance/collector.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { SandboxRef } from "../../sandbox/types.js";
 import { resolveForWrite } from "../../workspace/paths.js";
@@ -25,6 +27,14 @@ export type WriteFileResult =
     | { readonly status: "out_of_scope"; readonly path: string }
     | { readonly status: "out_of_prefix"; readonly path: string }
     | ({ readonly status: "write_failed"; readonly path: string } & BoundedExecResult);
+
+/**
+ * Agent-visible name of the tool driving a confined write. Rides the write args
+ * so a successful write is attributed to the invoking tool in provenance
+ * (`inflexa:tool` in the signed document) — the seam records the write without
+ * inspecting its caller.
+ */
+export type MutateToolName = "write_file" | "edit_file";
 
 export interface WorkspaceMutatorDeps {
     readonly sandboxClient: SandboxClient;
@@ -46,15 +56,23 @@ export interface WorkspaceMutatorDeps {
     readonly sandboxWorkingDir: string;
     readonly nextFunctionId: () => string;
     readonly deadlineMs: () => number;
+    /**
+     * Step-scoped lineage collector. On a successful confined write the seam
+     * records a file-tool provenance record here — hash and size computed
+     * in-process from the exact bytes written. Omit to skip recording; the
+     * write itself proceeds unchanged.
+     */
+    readonly lineageCollector?: ProvenanceCollector;
 }
 
 export interface WorkspaceMutator {
     /**
      * Resolve `path` against the working directory (relative) or analysis root
      * (absolute `/{analysisId}/...`), confine the result to the working
-     * directory, and write `content` through the sandbox.
+     * directory, and write `content` through the sandbox. `toolName` names the
+     * invoking tool so a successful write is attributed to it in provenance.
      */
-    writeFile(args: { readonly path: string; readonly content: string; readonly emit: EmitFn }): Promise<WriteFileResult>;
+    writeFile(args: { readonly path: string; readonly content: string; readonly toolName: MutateToolName; readonly emit: EmitFn }): Promise<WriteFileResult>;
 }
 
 const WRITE_BYTES_PROGRAM = [
@@ -66,7 +84,7 @@ const WRITE_BYTES_PROGRAM = [
 
 export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMutator {
     return {
-        async writeFile({ path, content, emit }) {
+        async writeFile({ path, content, toolName, emit }) {
             const scoped = resolveForWrite({
                 workspaceRoot: deps.workspaceRoot,
                 analysisId: deps.analysisId,
@@ -76,7 +94,11 @@ export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMut
             if (scoped.kind === "out_of_scope") return { status: "out_of_scope", path };
             if (scoped.kind === "out_of_prefix") return { status: "out_of_prefix", path };
 
-            const sandboxPath = `/${deps.analysisId}/${scoped.relative.split("\\").join("/")}`;
+            // Analysis-root-relative, forward-slashed: the sandbox path prepends
+            // the `/{analysisId}` mount; the provenance record uses the bare tail
+            // (the collector normalizes it step-relative itself).
+            const relative = scoped.relative.split("\\").join("/");
+            const sandboxPath = `/${deps.analysisId}/${relative}`;
             const contentBytes = Buffer.from(content, "utf8");
 
             const execId = `${deps.workflowId}:${deps.stepId}:${deps.nextFunctionId()}`;
@@ -92,6 +114,21 @@ export function createWorkspaceMutator(deps: WorkspaceMutatorDeps): WorkspaceMut
 
             if (result.exitCode !== 0) {
                 return { status: "write_failed", path: sandboxPath, ...boundExecResult(result) };
+            }
+
+            // Attest the write in-process from the exact bytes just written — the
+            // seam owns write provenance the same way it owns confinement. The
+            // sandbox exec frame this write produces is deliberately not fed to
+            // `feedExecFrame`: doing so would mint a `python3`+base64 command
+            // record, the very misattribution this file-tool record supersedes.
+            if (deps.lineageCollector) {
+                deps.lineageCollector.recordFileToolWrite({
+                    path: relative,
+                    hash: computeSha256(contentBytes),
+                    size: contentBytes.length,
+                    toolName,
+                    timestamp: new Date().toISOString(),
+                });
             }
 
             return { status: "ok", path: sandboxPath, bytesWritten: contentBytes.length };

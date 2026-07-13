@@ -11,7 +11,7 @@ export interface ArtifactRecord {
     size: number;
     /**
      * The filesystem operation that created this artifact (`write_file`,
-     * `append_file`, etc.). Undefined for files discovered by disk scan —
+     * `edit_file`). Undefined for files discovered by disk scan —
      * their provenance comes from the collector.
      */
     toolName?: string;

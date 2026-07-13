@@ -123,6 +123,7 @@ export function createEditFileTool(deps: EditFileDeps) {
             const result = await deps.mutator.writeFile({
                 path,
                 content: replaced.content,
+                toolName: "edit_file",
                 emit: ctx.emit,
             });
             if (result.status !== "ok") return ok(result);
