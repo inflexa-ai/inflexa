@@ -91,16 +91,15 @@ function recordingSeams(calls: string[]): BootSeams {
             calls.push("resolveEmbedding");
             return ok(fakeEmbedding());
         },
-        sweepEphemeral: async () => {
-            calls.push("sweepEphemeral");
-        },
-        assemble: (deps) => {
-            calls.push("assemble");
-            // The boot hands the composition root the run-engine realizations on the
-            // workflow deps and the conversation bundle. `assembleCoreRuntime` owns
-            // child-before-parent registration internally, so the offline seam only
-            // asserts the deps arrived shaped correctly, then returns the callables.
-            const { workflows, conversation } = deps;
+        boot: async (deps) => {
+            calls.push("boot");
+            // The shape assertions that used to live in the `assemble` seam now
+            // inspect `deps.core`: the real `bootHarness` calls `assembleCoreRuntime`
+            // over it internally (child-before-parent registration is the harness's
+            // invariant, proven by the harness's own boot test). So this offline seam
+            // asserts the deps arrived shaped correctly, runs the embedder's
+            // pre-launch hook, and returns the registered callables + a no-op shutdown.
+            const { workflows, conversation } = deps.core;
             // The sandbox-step child carries the catalog-backed builder and the
             // bus-adapter artifact registry (its `register`/`sync` translate a step's
             // artifacts into `prov.*` events).
@@ -128,20 +127,44 @@ function recordingSeams(calls: string[]): BootSeams {
             expect(workflows.ephemeral.sandboxClient).toBeDefined();
             expect(workflows.executeTargetAssessment.chatProvider).toBeDefined();
             // The conversation bundle carries the local realizations: the configured
-            // templates tree, the unavailable-preview factory, and the shared launcher.
+            // templates tree, the read-only report-html skills tree, the
+            // unavailable-preview factory, and the shared launcher.
             expect(conversation.templatesDir).toBe(templatesDir);
+            expect(conversation.skillsDir).toBe(skillsDir);
             expect(conversation.createPreviewPublisher).toBeInstanceOf(Function);
             expect(conversation.runLauncher.launch).toBeInstanceOf(Function);
+            // The embedder hands the harness its skills root and its own no-op
+            // telemetry (the CLI owns OTel); the boot handle owns skills validation,
+            // state init, the connection budget, assemble, and launch itself.
+            expect(deps.skillsDir).toBe(skillsDir);
+            expect(deps.initTelemetry).toBeInstanceOf(Function);
+            // Run the embedder's pre-launch hook so its sweep → agent-switch install →
+            // crons execute in order, exactly as the real `bootHarness` runs it after
+            // registration and before launch.
+            await deps.beforeLaunch?.();
             return {
-                conversationAgent: { id: "conversation-agent", systemPrompt: "", model: "claude-test-model", tools: [], maxIterations: 50 },
-                workflows: {
-                    executeAnalysis: async () => ({ runId: "", workflowId: "", status: "completed", completedSteps: [], failedSteps: [], canceledSteps: [] }),
-                    sandboxStep: async () => ({ status: "complete", durationMs: 0, finishReason: null, error: null }),
-                    executeTargetAssessment: async () => ({ assessmentId: "", status: "completed", bytes: 0 }),
-                    dataProfile: async () => {},
-                    ephemeral: async () => ({ text: "", durationMs: 0, stepsUsed: 0 }),
+                runtime: {
+                    conversationAgent: { id: "conversation-agent", systemPrompt: "", model: "claude-test-model", tools: [], maxIterations: 50 },
+                    workflows: {
+                        executeAnalysis: async () => ({
+                            runId: "",
+                            workflowId: "",
+                            status: "completed",
+                            completedSteps: [],
+                            failedSteps: [],
+                            canceledSteps: [],
+                        }),
+                        sandboxStep: async () => ({ status: "complete", durationMs: 0, finishReason: null, error: null }),
+                        executeTargetAssessment: async () => ({ assessmentId: "", status: "completed", bytes: 0 }),
+                        dataProfile: async () => {},
+                        ephemeral: async () => ({ text: "", durationMs: 0, stepsUsed: 0 }),
+                    },
                 },
+                shutdown: async () => {},
             };
+        },
+        sweepEphemeral: async () => {
+            calls.push("sweepEphemeral");
         },
         registerReaper: () => {
             calls.push("registerReaper");
@@ -154,12 +177,6 @@ function recordingSeams(calls: string[]): BootSeams {
         },
         registerNotificationSweep: () => {
             calls.push("registerNotificationSweep");
-        },
-        initState: async () => {
-            calls.push("initState");
-        },
-        launch: async () => {
-            calls.push("launch");
         },
         probeEmbedding: async () => {
             calls.push("probeEmbedding");
@@ -185,30 +202,30 @@ afterEach(() => {
 });
 
 describe("bootHarnessRuntime", () => {
-    test("boots in the contract order: prereqs → postgres → schema init → ephemeral sweep → assemble → crons → launch", async () => {
+    test("boots in the contract order: prereqs → postgres → bootHarness (which runs the embedder's beforeLaunch: sweep → crons)", async () => {
         const calls: string[] = [];
         const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
 
         const runtime = result._unsafeUnwrap();
-        // The embedding provider resolves first (local-embeddings boots
-        // ahead of the proxy key). The ephemeral sweep runs strictly between schema
-        // init and assembly (cancel stale rows before recovery can
-        // re-dispatch them), then the composition root registers the whole workflow
-        // cohort in one call, then the three sandbox-hygiene crons, all before the
-        // single launch. The CLI is a poll-mode embedder, so it binds NO
+        // The embedding provider resolves first (local-embeddings boots ahead of the
+        // proxy key). This root then resolves Postgres and hands the harness's
+        // `bootHarness` the deps; the harness owns skills validation, state init, the
+        // connection budget, assemble, and launch (each proven by the harness's own
+        // boot test, not re-asserted here). The embedder's `beforeLaunch` hook — which
+        // `bootHarness` runs after registration and before launch — cancels stale
+        // ephemeral rows, installs the agent switch, then registers the three
+        // sandbox-hygiene crons. The CLI is a poll-mode embedder, so it binds NO
         // callback ingress — `startIngress` is never called.
         expect(calls).toEqual([
             "resolveEmbedding",
             "readKey",
             "probeEmbedding",
             "postgres",
-            "initState",
+            "boot",
             "sweepEphemeral",
-            "assemble",
             "registerReaper",
             "registerWatchdog",
             "registerNotificationSweep",
-            "launch",
         ]);
         expect(calls).not.toContain("ingress");
         // No `models.agents` and a single `harness.model` (claude-test-model): both agents resolve to it
@@ -236,43 +253,40 @@ describe("bootHarnessRuntime", () => {
         expect(runtime.runTriggerDeps.pool).toBe(runtime.pool);
     });
 
-    test("sweeps ephemerals after schema init, assembles once before launch, and registers the whole cohort pre-launch", async () => {
+    test("delegates the boot tail to bootHarness once, and its beforeLaunch hook sweeps ephemerals before registering the crons", async () => {
         const calls: string[] = [];
         await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
 
-        const initState = calls.indexOf("initState");
+        const boot = calls.indexOf("boot");
         const sweep = calls.indexOf("sweepEphemeral");
-        const assemble = calls.indexOf("assemble");
-        const launch = calls.indexOf("launch");
-        // The sweep is the single race-free pre-launch cancel point: it
-        // must follow schema init and precede assembly (which registers the ephemeral
-        // workflow) — and, transitively, launch.
-        expect(initState).toBeLessThan(sweep);
-        expect(sweep).toBeLessThan(assemble);
-        // Child-before-parent ordering now lives inside `assembleCoreRuntime` (one
-        // call), so the boot only proves the whole cohort — the composition root plus
-        // the three crons — lands before the one launch (recovery finds workflows by
-        // registered name at launch; nothing may register after).
-        const registrations = ["assemble", "registerReaper", "registerWatchdog", "registerNotificationSweep"];
-        for (const name of registrations) {
-            const at = calls.indexOf(name);
-            expect(at).toBeGreaterThanOrEqual(0);
-            expect(at).toBeLessThan(launch);
+        // The harness owns the whole boot tail (state init → connection budget →
+        // assemble → beforeLaunch → launch), so this root calls `boot` exactly once
+        // and never re-drives those steps itself. Schema init / assemble / launch are
+        // the harness's job — proven by the harness's own boot test, not observable
+        // in this offline seam.
+        expect(boot).toBeGreaterThanOrEqual(0);
+        expect(calls.filter((c) => c === "boot")).toHaveLength(1);
+        // The embedder's `beforeLaunch` hook (which `bootHarness` runs after
+        // registration and before launch) sweeps stale ephemeral rows FIRST, then
+        // registers the three sandbox-hygiene crons — all after `boot` is entered.
+        expect(boot).toBeLessThan(sweep);
+        for (const name of ["registerReaper", "registerWatchdog", "registerNotificationSweep"]) {
+            expect(sweep).toBeLessThan(calls.indexOf(name));
         }
-        expect(calls.filter((c) => c === "assemble")).toHaveLength(1);
-        expect(calls.filter((c) => c === "launch")).toHaveLength(1);
     });
 
-    test("registers all three sandbox-hygiene scheduled workflows before launch", async () => {
+    test("its beforeLaunch hook registers all three sandbox-hygiene scheduled workflows", async () => {
         const calls: string[] = [];
         await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
 
         expect(calls).toContain("registerReaper");
         expect(calls).toContain("registerWatchdog");
         expect(calls).toContain("registerNotificationSweep");
-        const launch = calls.indexOf("launch");
+        // The crons register inside `beforeLaunch`, which `bootHarness` runs before
+        // it launches DBOS — so each records after `boot` is entered.
+        const boot = calls.indexOf("boot");
         for (const name of ["registerReaper", "registerWatchdog", "registerNotificationSweep"]) {
-            expect(calls.indexOf(name)).toBeLessThan(launch);
+            expect(calls.indexOf(name)).toBeGreaterThan(boot);
         }
     });
 
@@ -288,7 +302,9 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
         expect(result.isErr()).toBe(true);
-        for (const name of ["sweepEphemeral", "assemble", "registerReaper", "registerWatchdog", "registerNotificationSweep", "launch"]) {
+        // A failed prereq short-circuits before the harness boot is even entered, so
+        // neither `bootHarness` nor anything its `beforeLaunch` hook drives runs.
+        for (const name of ["boot", "sweepEphemeral", "registerReaper", "registerWatchdog", "registerNotificationSweep"]) {
             expect(calls).not.toContain(name);
         }
     });
@@ -327,10 +343,9 @@ describe("bootHarnessRuntime", () => {
 
         const runtime = r1._unsafeUnwrap();
         expect(r2._unsafeUnwrap()).toBe(runtime); // one runtime, shared by both callers
-        // The whole sequence ran exactly once — `assemble` (registration cohort) and `launch` (its tail)
-        // each appear a single time, so no second boot registered anything.
-        expect(calls.filter((c) => c === "assemble")).toHaveLength(1);
-        expect(calls.filter((c) => c === "launch")).toHaveLength(1);
+        // The whole sequence ran exactly once — `boot` (the harness boot tail: assemble
+        // + launch) appears a single time, so no second boot registered anything.
+        expect(calls.filter((c) => c === "boot")).toHaveLength(1);
     });
 
     test("unavailable Postgres short-circuits before ingress/register/launch", async () => {
@@ -441,7 +456,7 @@ describe("bootHarnessRuntime", () => {
         });
 
         expect(result._unsafeUnwrap().sandbox.model).toBe("gpt-4o");
-        expect(calls).toContain("launch");
+        expect(calls).toContain("boot");
     });
 
     test("an explicitly-configured off-family model is trusted (the guard only checks the auto path)", async () => {
@@ -453,7 +468,7 @@ describe("bootHarnessRuntime", () => {
         });
 
         expect(result._unsafeUnwrap().sandbox.model).toBe("gpt-4o");
-        expect(calls).toContain("launch");
+        expect(calls).toContain("boot");
     });
 
     test("a malformed models.connection block fails boot before any side effect", async () => {
@@ -483,7 +498,7 @@ describe("bootHarnessRuntime", () => {
         expect(calls).toContain("readModelApiKey");
         expect(calls).not.toContain("readKey");
         expect(calls).not.toContain("resolveModel");
-        expect(calls).toContain("launch");
+        expect(calls).toContain("boot");
     });
 
     test("direct mode with no configured model fails boot with model_required naming BOTH agents (no proxy auto-resolve)", async () => {
@@ -526,7 +541,7 @@ describe("bootHarnessRuntime", () => {
         expect(runtime.sandbox.model).toBe("deepseek-reasoner");
         // Distinct resolved models ⇒ two provider instances over the one connection.
         expect(runtime.sandbox.provider).not.toBe(runtime.conversation.provider);
-        expect(calls).toContain("launch");
+        expect(calls).toContain("boot");
     });
 
     test("per-agent resolution order: an agent override wins over harness.model, which is the both-agents fallback", async () => {
@@ -560,7 +575,7 @@ describe("bootHarnessRuntime", () => {
         const runtime = result._unsafeUnwrap();
         expect(runtime.conversation.model).toBe("claude-from-proxy");
         expect(runtime.sandbox.model).toBe("gpt-4o");
-        expect(calls).toContain("launch");
+        expect(calls).toContain("boot");
     });
 
     test("direct mode with an unset INFLEXA_MODEL_API_KEY fails boot naming the variable", async () => {
@@ -601,22 +616,23 @@ describe("bootHarnessRuntime", () => {
         expect(calls).toEqual([]);
     });
 
-    test("a throwing launch is bridged to runtime_boot_failed", async () => {
+    test("a throwing bootHarness is bridged to runtime_boot_failed", async () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
-            launch: async () => {
-                calls.push("launch");
+            boot: async () => {
+                calls.push("boot");
                 throw new Error("dbos exploded");
             },
         };
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
-        // The DBOS-SDK throw is bridged to a Result. Poll mode bound no ingress, so
-        // the failure path has nothing to tear down but the (in-process-reclaimable)
-        // runtime lock.
+        // `bootHarness` propagates its boot-step failures as throws (validate skills,
+        // state init, launch), which this root bridges to a Result. Poll mode bound no
+        // ingress, so the failure path has nothing to tear down but the
+        // (in-process-reclaimable) runtime lock.
         expect(result._unsafeUnwrapErr()).toMatchObject({ type: "runtime_boot_failed" });
-        expect(calls).toContain("launch");
+        expect(calls).toContain("boot");
     });
 
     test("a runtime lock held by a live foreign process blocks the boot before launch, having bound no ingress", async () => {
@@ -636,7 +652,7 @@ describe("bootHarnessRuntime", () => {
             // Poll mode never bound an ingress, so there is nothing to leak, and the
             // boot must stop before launching DBOS.
             expect(calls).not.toContain("ingress");
-            expect(calls).not.toContain("launch");
+            expect(calls).not.toContain("boot");
         } finally {
             rmSync(lockPath, { force: true });
             holder.kill();
