@@ -2,7 +2,7 @@ import { createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import type { InputRenderable } from "@opentui/core";
 
-import { GLYPHS } from "../../../lib/design_system.ts";
+import { GLYPHS, space } from "../../../lib/design_system.ts";
 import { KEYS, chordLabel, type Chord } from "../../keymap.ts";
 import { useDialogBindings, useDialogCancel, useDialogCloseGuard, useDialogEntry } from "./dialog_host.tsx";
 import { DialogPanel } from "./dialog_panel.tsx";
@@ -90,7 +90,7 @@ export function SelectDialog<T>(props: SelectDialogProps<T>): JSX.Element {
     }
 
     return (
-        <DialogPanel title={props.title} size="lg" footer={footer()}>
+        <DialogPanel title={props.title} size="lg" padY footer={footer()}>
             <TextInput
                 chrome="bare"
                 /* Showcased exhibits must not grab focus at mount — see DialogEntryHandle.inert. */
@@ -103,6 +103,10 @@ export function SelectDialog<T>(props: SelectDialogProps<T>): JSX.Element {
                 onFocusChange={setInputFocused}
                 onInput={setQuery}
             />
+            {/* Breathing room between the filter and the list. Safe as a transparent gap because it
+                sits ABOVE the list's flexGrow scrollbox — the one-cell scrollbox bleed only spills
+                onto the sibling BELOW it (there the list's own painted detail box reclaims the row). */}
+            <box height={space.sm} flexShrink={0} />
             <FixedList
                 items={props.items}
                 query={query()}

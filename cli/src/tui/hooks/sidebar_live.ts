@@ -3,17 +3,20 @@ import { ResultAsync } from "neverthrow";
 import {
     loadDataProfileStatus,
     queryRunsByAnalysis,
+    queryStepsByRun,
     type CortexRunRow,
     type DataProfileStatus,
     type DbError,
     type Pool,
     type RunStatus,
+    type StepExecutionRow,
 } from "@inflexa-ai/harness";
 
 import { GLYPHS } from "../../lib/design_system.ts";
 import type { ThemeColors } from "../../lib/design_system.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { Workspace } from "../contexts/workspace.ts";
+import type { RunStepView } from "../components/run_block.tsx";
 import { bootState, harnessRuntime } from "./boot.ts";
 import { chatStatus, type ChatStatus } from "./status.ts";
 
@@ -44,23 +47,49 @@ export type ProfileSnapshot = { kind: "not_ready" } | { kind: "unavailable" } | 
  */
 export type RunsSnapshot = { kind: "not_ready" } | { kind: "unavailable" } | { kind: "loaded"; runs: CortexRunRow[] };
 
+/**
+ * Live progress of the analysis's NEWEST run, published ONLY while that run is non-terminal — the
+ * feed for the chat column's sticky progress row (the run-block vocabulary: the segmented bar,
+ * `done/total`, and the ordered steps). `null` means nothing is pinned: the analysis has no runs, its
+ * newest run already reached a terminal state, or the runtime is not booted. Refreshed on the same
+ * cadence as the sidebar sections (the same non-terminal newest run also arms {@link hasActiveWork}),
+ * so the row and the poll rise and fall together.
+ */
+export type ActiveRunProgress = {
+    /** The run's short label (see {@link shortRunName}). */
+    name: string;
+    /** The run's short id tail (see {@link idTail}). */
+    tag: string;
+    /** Completed step count (bar numerator). */
+    done: number;
+    /** Total step count (bar denominator). */
+    total: number;
+    /** The run's ordered step views. */
+    steps: RunStepView[];
+};
+
 const [profile, setProfile] = createSignal<ProfileSnapshot>({ kind: "not_ready" });
 const [runs, setRuns] = createSignal<RunsSnapshot>({ kind: "not_ready" });
+const [activeRun, setActiveRun] = createSignal<ActiveRunProgress | null>(null);
 
 /** The data-profile snapshot — read in a tracking scope to repaint on refresh. */
 export const profileSnapshot = profile;
 /** The runs snapshot — read in a tracking scope to repaint on refresh. */
 export const runsSnapshot = runs;
+/** The newest non-terminal run's progress, or `null` when nothing is active — read in a tracking scope. */
+export const activeRunProgress = activeRun;
 
 /**
- * Relative age of an ISO timestamp, or an em dash when absent/unparseable — never a raw date. The
- * em-dash fallback (not the raw ISO string) is the shared choice across every caller: the sidebar
- * rail, the runs dialog, and the data-profile detail lines all render into fixed-width surfaces where
- * a raw timestamp would overflow, so an absent/bad time collapses to the em dash uniformly.
+ * Compact relative age of an ISO timestamp (`5m31s`, `8h54m`), or an em dash when absent/unparseable.
+ * This is the live-rail vocabulary: the sidebar's fixed-width readouts (the session age, the run rows)
+ * answer "how long ago" at a glance, where a full timestamp would overflow the rail and a slightly-stale
+ * age still reads right. Durable-record readouts render the opposite — an absolute local time (see
+ * {@link absTime}) — because a referenced record (a detail dialog, the rail's completed-profile line)
+ * is read long after "5m ago" meant anything.
  *
- * Homed in this hooks module (not `layout/sidebar.tsx`) because {@link profileDetailLines} below also
- * needs it AND `sidebar.tsx` imports this module — a `relAge` living in `sidebar.tsx` would force this
- * module to import back into the layout, an import cycle. This is the lowest layer all callers share.
+ * Homed in this hooks module (not `layout/sidebar.tsx`) beside {@link runMark} / {@link shortRunName},
+ * the pure sidebar helpers the rail and the runs dialog share, so callers reach them without importing
+ * the JSX layout and nothing forces this module to import back into it.
  */
 export function relAge(iso: string | null): string {
     if (iso === null) return GLYPHS.emDash;
@@ -69,11 +98,25 @@ export function relAge(iso: string | null): string {
 }
 
 /**
+ * Absolute local timestamp of an ISO string (`toLocaleString`), or an em dash when absent/unparseable.
+ * The detail-dialog counterpart to {@link relAge}: the data-profile and runs dialogs render durable,
+ * referenced records read long after the fact — when a compact "5m" has lost its anchor — so they pin
+ * the full local time. Same em-dash guard shape as {@link relAge}, so an absent/bad time collapses
+ * identically across the rail and the dialogs.
+ */
+export function absTime(iso: string | null): string {
+    if (iso === null) return GLYPHS.emDash;
+    const t = Date.parse(iso);
+    return Number.isNaN(t) ? GLYPHS.emDash : new Date(t).toLocaleString();
+}
+
+/**
  * Compose the DATA PROFILE details view's lines from a {@link ProfileSnapshot}. Pure
  * (snapshot → string[]) so every kind is unit-testable: the degraded kinds each yield one placeholder
- * line, and `loaded` yields the ledger truth — a status line, the started/completed relative times,
- * the error (on failure), the summary split into lines, the per-file `path — description`, and the
- * seed-input count. Rendered verbatim by `ResultsDialog` (the design gallery drives it over a mock).
+ * line, and `loaded` yields the ledger truth — a status line, the started/completed absolute local
+ * times plus the run duration (or the elapsed-at-open age while a profile is still running), the error
+ * (on failure), the summary split into lines, the per-file `path — description`, and the seed-input
+ * count. Rendered verbatim by `ResultsDialog` (the design gallery drives it over a mock).
  */
 export function profileDetailLines(snap: ProfileSnapshot): string[] {
     switch (snap.kind) {
@@ -86,8 +129,18 @@ export function profileDetailLines(snap: ProfileSnapshot): string[] {
         case "loaded": {
             const p = snap.profile;
             const lines: string[] = [`status: ${p.status}`];
-            if (p.startedAt) lines.push(`started ${relAge(p.startedAt)}`);
-            if (p.completedAt) lines.push(`completed ${relAge(p.completedAt)}`);
+            if (p.startedAt) lines.push(`started ${absTime(p.startedAt)}`);
+            if (p.completedAt) lines.push(`completed ${absTime(p.completedAt)}`);
+            // A finished profile (completed OR failed — the ledger stamps `completedAt` on both) shows
+            // how long it took; a still-running profile has no end yet, so the dialog — a point-in-time
+            // snapshot — shows the age elapsed at the moment it was opened instead of a duration.
+            const startedMs = p.startedAt ? Date.parse(p.startedAt) : NaN;
+            const completedMs = p.completedAt ? Date.parse(p.completedAt) : NaN;
+            if (!Number.isNaN(startedMs) && !Number.isNaN(completedMs)) {
+                lines.push(`duration ${Date.formatDuration(completedMs - startedMs)}`);
+            } else if (!Number.isNaN(startedMs)) {
+                lines.push(`elapsed ${Date.relativeAge(startedMs)}`);
+            }
             if (p.status === "failed" && p.error) {
                 lines.push("");
                 for (const line of p.error.split("\n")) lines.push(line);
@@ -157,6 +210,54 @@ export function shortRunName(run: CortexRunRow): string {
     return id.replace(/-/g, "").slice(-6);
 }
 
+/** A short, human-scannable tail of a uuid (dashes stripped) — the run tag the runs dialog + sticky row show. */
+export function idTail(id: string): string {
+    return id.replace(/-/g, "").slice(-6);
+}
+
+/**
+ * Map a harness step-execution status onto the design-system run-step state. Pure and
+ * exhaustive over {@link StepExecutionRow.status} — a `never`-typed default breaks the build if the
+ * harness enum grows, so a new status is classified honestly rather than silently mis-bucketed.
+ *
+ * The four buckets are `done | running | failed | queued`; the honest mapping of the seven harness
+ * statuses:
+ *  - `pending` / `skipped` → `queued` — neither ran: pending awaits its turn, skipped never will.
+ *    The muted hollow glyph reads as "inactive", which is truthful for both (skipped is not a
+ *    success and not an error).
+ *  - `running` → `running`, `completed` → `done`, `failed` → `failed` — direct.
+ *  - `canceled` → `failed` — a fail-fast sibling stopped mid-flight; a non-success terminal, shown
+ *    error-toned to match the sidebar's run-level `canceled`.
+ *  - `blocked` → `failed` — an agent-declared blocker; `executeAnalysis` treats it as a failure
+ *    (`step_blocked`), so the error tone is the honest signal.
+ *
+ * Homed here beside {@link runMark} / {@link shortRunName} (the pure, non-JSX run helpers) so both the
+ * runs dialog and the sidebar-live refresh loop share the identical status→state mapping without one
+ * reaching into the other.
+ */
+export function stepStateOf(status: StepExecutionRow["status"]): RunStepView["state"] {
+    switch (status) {
+        case "pending":
+        case "skipped":
+            return "queued";
+        case "running":
+            return "running";
+        case "completed":
+            return "done";
+        case "failed":
+        case "canceled":
+        case "blocked":
+            return "failed";
+        default: {
+            const _exhaustive: never = status;
+            // Unreachable: the `never` assignment above proves every status is handled. The cast only
+            // satisfies the return type on this dead branch — if it ever runs, the harness added a
+            // status the switch does not cover, and we surface its raw string rather than crash.
+            return String(_exhaustive) as RunStepView["state"];
+        }
+    }
+}
+
 /** How many run rows a refresh pulls. The sidebar renders the newest few; the store holds the head. */
 const RUNS_LIMIT = 10;
 
@@ -216,12 +317,15 @@ export type RefreshSeams = {
     readonly loadProfile: (pool: Pool, analysisId: string) => ResultAsync<DataProfileStatus | null, DbError>;
     /** Read the analysis's newest runs (newest-first, capped). Real: `queryRunsByAnalysis` @ {@link RUNS_LIMIT}. */
     readonly loadRuns: (pool: Pool, analysisId: string) => ResultAsync<CortexRunRow[], DbError>;
+    /** Read a run's step ledger — fired only for a non-terminal newest run. Real: `queryStepsByRun`. */
+    readonly loadSteps: (pool: Pool, runId: string) => ResultAsync<StepExecutionRow[], DbError>;
 };
 
 const realRefreshSeams: RefreshSeams = {
     runtime: harnessRuntime,
     loadProfile: loadDataProfileStatus,
     loadRuns: (pool, analysisId) => queryRunsByAnalysis(pool, analysisId, { limit: RUNS_LIMIT }),
+    loadSteps: queryStepsByRun,
 };
 
 // Monotonic token identifying the newest refresh. Two rapid analysis swaps interleave their async
@@ -232,25 +336,34 @@ const realRefreshSeams: RefreshSeams = {
 let refreshGeneration = 0;
 
 /**
- * Reset BOTH snapshots to `not_ready` together (the torn-pair guarantee) and invalidate any in-flight
- * refresh. Used at an analysis swap so the previous analysis's DATA PROFILE / RUNS never render (nor get
- * dialog-snapshotted) during the swap's one-ledger-round-trip refresh window, and by the test reset hook.
+ * Reset BOTH snapshots to `not_ready` together (the torn-pair guarantee), clear the sticky run-progress
+ * row, and invalidate any in-flight refresh. Used at an analysis swap so the previous analysis's DATA
+ * PROFILE / RUNS / progress row never render (nor get dialog-snapshotted) during the swap's
+ * one-ledger-round-trip refresh window, and by the test reset hook.
  */
 function resetSnapshots(): void {
     refreshGeneration += 1;
     setProfile({ kind: "not_ready" });
     setRuns({ kind: "not_ready" });
+    setActiveRun(null);
 }
 
 /**
- * Repopulate both snapshots for `analysisId` from the booted runtime's pool. No-ops to `not_ready`
- * (both snapshots) when the runtime is not booted — the sidebar renders a muted placeholder and no
- * query runs (the no-op guard). Otherwise the two ledger reads are awaited in turn and each
- * `.match`es INDEPENDENTLY into its snapshot: a `DbError` becomes `unavailable` (never a crash), a
- * null profile row becomes `absent`, and every write is a fresh object so Solid always reconciles.
+ * Repopulate both snapshots (and the sticky run-progress row) for `analysisId` from the booted
+ * runtime's pool. No-ops to `not_ready` (both snapshots) and clears the progress row when the runtime
+ * is not booted — the sidebar renders a muted placeholder and no query runs (the no-op guard).
+ * Otherwise the two ledger reads are awaited in turn and each `.match`es INDEPENDENTLY into its
+ * snapshot: a `DbError` becomes `unavailable` (never a crash), a null profile row becomes `absent`,
+ * and every write is a fresh object so Solid always reconciles.
+ *
+ * The sticky row is derived from the runs read: when the NEWEST run is non-terminal a third read
+ * fetches its steps and publishes {@link activeRunProgress}; a terminal (or absent) newest run clears
+ * it and fires NO step query — so an idle analysis stays at zero step reads. A failed step read keeps
+ * the previous row rather than blinking away a genuinely running run.
  *
  * Staleness: the refresh claims a {@link refreshGeneration} token at entry and re-checks it after
- * each read; a refresh superseded by a newer swap silently drops rather than writing stale rows.
+ * each read (including the step read); a refresh superseded by a newer swap silently drops rather than
+ * writing stale rows.
  */
 export async function refreshSidebarData(analysisId: string, seams: RefreshSeams = realRefreshSeams): Promise<void> {
     // Bump BEFORE the runtime guard so even the not_ready path invalidates any in-flight older refresh
@@ -260,6 +373,7 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
     if (!runtime) {
         setProfile({ kind: "not_ready" });
         setRuns({ kind: "not_ready" });
+        setActiveRun(null);
         return;
     }
 
@@ -277,9 +391,35 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
         (row) => setProfile(row === null ? { kind: "absent" } : { kind: "loaded", profile: row }),
         () => setProfile({ kind: "unavailable" }),
     );
-    runsRes.match(
-        (rows) => setRuns({ kind: "loaded", runs: rows }),
-        () => setRuns({ kind: "unavailable" }),
+
+    // The sticky chat progress row pins the NEWEST run while it is non-terminal, fed by this same
+    // refresh. A terminal newest run (or no runs) clears it; only a non-terminal newest run fires the
+    // extra step read, so an idle analysis issues zero step queries.
+    await runsRes.match(
+        async (rows) => {
+            setRuns({ kind: "loaded", runs: rows });
+            const newest = rows[0];
+            if (!newest || RUN_STATUS_TERMINAL[newest.status]) {
+                setActiveRun(null);
+                return;
+            }
+            const stepsRes = await seams.loadSteps(runtime.pool, newest.runId);
+            if (myRefresh !== refreshGeneration) return;
+            stepsRes.match(
+                (stepRows) => {
+                    const steps: RunStepView[] = stepRows.map((r) => ({ label: r.stepId, state: stepStateOf(r.status) }));
+                    const done = steps.filter((s) => s.state === "done").length;
+                    setActiveRun({ name: shortRunName(newest), tag: idTail(newest.runId), done, total: steps.length, steps });
+                },
+                // The run is active but its steps could not be read (a transient DB blip). Keep the
+                // previous row rather than clearing — the bounded poll self-heals on the next tick, and
+                // clearing would blink away a genuinely running run.
+                () => {},
+            );
+        },
+        // A runs `DbError` is a transient degrade that itself re-arms the poll (`hasActiveWork`). Keep
+        // any existing progress row so a blip does not flash the sticky row away and back on recovery.
+        async () => setRuns({ kind: "unavailable" }),
     );
 }
 
@@ -389,8 +529,8 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
 }
 
 /**
- * Test hook: reset both snapshots to `not_ready` and invalidate any in-flight refresh. Test-only —
- * mirrors `__resetBootForTest`.
+ * Test hook: reset both snapshots to `not_ready`, clear the sticky run-progress row, and invalidate any
+ * in-flight refresh. Test-only — mirrors `__resetBootForTest`.
  */
 export function __resetSidebarLiveForTest(): void {
     resetSnapshots();

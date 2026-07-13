@@ -436,12 +436,15 @@ describe("config screen over the dialog host (the swallowed-keystroke regression
         try {
             await settle();
 
-            // Walk to the last section (a postgres field — down past the end clamps) and open it.
-            for (let i = 0; i < 40; i++) setup.mockInput.pressArrow("down");
+            // Walk to the last section — the postgres password field — and open its edit prompt.
+            // Section nav wraps end-to-end, so the count must be exact: overshooting loops back to
+            // the top. Sections are the telemetry toggle, the theme + runtime radios, then the five
+            // postgres fields (host/port/database/user/password), so the last sits 7 steps down.
+            for (let i = 0; i < 7; i++) setup.mockInput.pressArrow("down");
             await settle();
             setup.mockInput.pressEnter();
             await settle();
-            expect(frame()).toContain("postgres.");
+            expect(frame()).toContain("postgres.password");
 
             // `q` must type into the field, not exit the screen; `s` must not fire save;
             // space must not toggle anything. Any form action here is the old mode-gating bug.

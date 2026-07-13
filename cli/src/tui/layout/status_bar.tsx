@@ -15,6 +15,12 @@ export type StatusBarProps = {
     subtitle?: string;
     /** Optional middle region — the chat's live state or config's unsaved indicator. Omitted when undefined. */
     state?: { text: string; tone: StatusTone };
+    /**
+     * Optional working-directory path, shown muted immediately after the state as part of the
+     * left-flowing segments (NOT a right hint). A wide-terminal-only affordance the caller gates on
+     * the layout breakpoint; StatusBar stays dumb and simply renders whatever string it is handed.
+     */
+    path?: string;
     /** Right-aligned affordance labels (sourced from the keymap by the caller). */
     hints: string[];
 };
@@ -40,6 +46,9 @@ export function StatusBar(props: StatusBarProps) {
             </Show>
             <Show when={props.state} keyed>
                 {(state: { text: string; tone: StatusTone }) => <text fg={toneColor(state.tone)}> | {state.text}</text>}
+            </Show>
+            <Show when={props.path} keyed>
+                {(path: string) => <text fg={theme().fgMuted}> | {path}</text>}
             </Show>
             {/* Spacer pushes the affordance hints to the right edge. */}
             <box flexGrow={1} />

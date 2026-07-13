@@ -31,6 +31,16 @@ export type RunBlockProps = {
      * would advertise an affordance that does not exist.
      */
     hint?: boolean;
+    /**
+     * Cap on how many step rows to render at once. When the run has MORE steps than this, the list
+     * shows a WINDOW of `maxSteps` rows centered on the frontier of work (the first step that is not
+     * yet done), clamped to the list ends. The progress bar and `done/total` always reflect the FULL
+     * run — only the step list is windowed. Absent → the whole list renders (the runs dialog keeps its
+     * complete view). Exists because the chat's sticky progress row sits in a fixed slice of the chat
+     * column: a long run must not grow the row without bound, and the window keeps it anchored to where
+     * work actually is.
+     */
+    maxSteps?: number;
 };
 
 /** The themed glyph + color role for a step's state. */
@@ -49,6 +59,18 @@ function stepMark(state: RunStepView["state"]): { glyph: string; role: "success"
 export function RunBlock(props: RunBlockProps) {
     const filled = (): string => GLYPHS.bar.repeat(props.done);
     const empty = (): string => GLYPHS.bar.repeat(Math.max(0, props.total - props.done));
+    // The visible slice of the step list. Full list unless `maxSteps` caps it; then a window of that
+    // many rows centered on the frontier — the first not-yet-done step — clamped so it never runs past
+    // either end. When every step is done the frontier is the tail, so the window shows the run's end.
+    const windowedSteps = (): RunStepView[] => {
+        const all = props.steps;
+        const max = props.maxSteps;
+        if (max === undefined || all.length <= max) return all;
+        const frontier = all.findIndex((s) => s.state !== "done");
+        const pivot = frontier === -1 ? all.length - 1 : frontier;
+        const start = Math.max(0, Math.min(pivot - Math.floor(max / 2), all.length - max));
+        return all.slice(start, start + max);
+    };
     return (
         <box flexDirection="column" paddingBottom={space.sm}>
             <text>
@@ -60,7 +82,7 @@ export function RunBlock(props: RunBlockProps) {
                 <Fg role="fgSubtle">{empty()}</Fg> <Fg role="fgMuted">{`${props.done}/${props.total}`}</Fg>
             </text>
             <box paddingLeft={space.md} flexDirection="column" border={["left"]} borderColor={theme().border}>
-                <For each={props.steps}>
+                <For each={windowedSteps()}>
                     {(step) => {
                         const m = stepMark(step.state);
                         return (

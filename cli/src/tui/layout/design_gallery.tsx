@@ -39,6 +39,7 @@ import {
     mockToolCall,
     mockFileEdit,
     mockRun,
+    mockLongRun,
     mockPlanCard,
     mockRunCard,
     mockCortexRuns,
@@ -89,6 +90,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
         bindings: [{ chord: KEYS.q, run: () => props.onClose() }],
     }));
     const runSteps = mockRun.steps.map((s) => ({ label: s.label, state: s.state }));
+    const longRunSteps = mockLongRun.steps.map((s) => ({ label: s.label, state: s.state }));
     return (
         <DialogPanel title="Design system — stream blocks" size="xl" footer={`${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}>
             <ScrollPane focusOnMount={false} onRef={(r) => dialog?.setInitialFocus(r)} flexGrow={1} width="100%" paddingTop={space.sm}>
@@ -318,11 +320,14 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     />
                 </State>
                 <State n="15" label="live tool activity — running / done (with duration) / error">
-                    {/* The harness emit adapter mints these from tool-started/tool-finished: no
-                        result panel (live events carry no output), just name + outcome + timing. */}
-                    <ToolBlock name="grep" target="src/**/*.ts" status="running" />
-                    <ToolBlock name="read_file" target="src/db/types.ts :55-105" status="ok" durationMs={1240} />
-                    <ToolBlock name="write_file" target="out/report.html" status="error" durationMs={320} />
+                    {/* The harness emit adapter mints these from tool-started/tool-finished: no result
+                        panel (live events carry no output), so the outcome folds onto the name line
+                        (`▸ name target  ✓ ok · 14ms`). `inlineStatus` is pinned true to document the form
+                        explicitly; a result-less block would derive it anyway. Contrast State 4, whose
+                        result fixture keeps the outcome on its own line below the panel. */}
+                    <ToolBlock name="grep" target="src/**/*.ts" status="running" inlineStatus={true} />
+                    <ToolBlock name="read_file" target="src/db/types.ts :55-105" status="ok" durationMs={1240} inlineStatus={true} />
+                    <ToolBlock name="write_file" target="out/report.html" status="error" durationMs={320} inlineStatus={true} />
                 </State>
                 <State n="16" label="harness cards — plan card & run card">
                     <MessageBlock index={1} role="assistant" parts={[mockPlanCard]} streamPartId={noStreamId} streamText={noStreamText} />
@@ -350,6 +355,24 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             onClose={noop}
                         />
                     </DialogShowcase>
+                </State>
+                <State n="18" label="chat sticky run-progress row — bounded step window">
+                    {/* The chat column's sticky row (RunProgressRow) pins the newest non-terminal run
+                        between the stream and the input. A long run shows a WINDOW of steps centered on
+                        the frontier (maxSteps=6, hint=false — the same props the row passes), while the
+                        bar and done/total reflect the full run. Driven from the long-run fixture. */}
+                    <text fg={theme().fgMuted}>
+                        pinned below the chat stream while the newest run is non-terminal; long runs window their steps (maxSteps=6):
+                    </text>
+                    <RunBlock
+                        name={mockLongRun.name}
+                        tag={mockLongRun.tag}
+                        done={mockLongRun.done}
+                        total={mockLongRun.total}
+                        steps={longRunSteps}
+                        maxSteps={6}
+                        hint={false}
+                    />
                 </State>
             </ScrollPane>
         </DialogPanel>
