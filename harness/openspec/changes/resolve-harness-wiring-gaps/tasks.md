@@ -46,7 +46,7 @@ per decision. `openspec validate resolve-harness-wiring-gaps --strict` passes.
 - [x] `createSkillTools({ skillsDir, skills: ["report-html"] })` wired into the report-builder roster (`execution/report-runner.ts`)
 - [x] CLI supplies `skillsDir` to the conversation deps; verified end-to-end (CLI `tsc` clean of harness errors after `dist` rebuild)
 - [x] `iterative-report` spec delta: report-builder has `report-html` skill-tool access
-- [ ] **Open** — `skills/report-pdf` + `skills/report-pptx` remain orphaned (not in scope of the report-builder skill decision); keep or remove per roadmap.
+- [x] Removed the orphan `skills/report-pdf` + `skills/report-pptx` packs (no agent, no roster, no PDF/PPTX render path referenced them); updated the `skills/` README and added an `agent-skill-assignment` pack-inventory delta (23 → 21 packs)
 
 ## 4. Decision 4 — 402-resume path
 
