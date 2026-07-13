@@ -7,6 +7,7 @@ import type { CortexRunRow, StepExecutionRow } from "@inflexa-ai/harness";
 import { RunProgressRow } from "./run_progress_row.tsx";
 import { ScrollPane } from "../components/scroll_pane.tsx";
 import { theme } from "../theme.ts";
+import { GLYPHS } from "../../lib/design_system.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { __resetSidebarLiveForTest, activeRunProgress, refreshSidebarData, type RefreshSeams } from "../hooks/sidebar_live.ts";
 
@@ -117,6 +118,36 @@ describe("RunProgressRow — presence and the bounded step window", () => {
             expect(frame).toContain("step-09");
             expect(frame).not.toContain("step-00"); // before the window
             expect(frame).not.toContain("step-11"); // after the window
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("caps the meter width for a long run while done/total keeps the true counts", async () => {
+        // 30 steps > BAR_BUDGET (20): a one-cell-per-step meter would soft-wrap the narrow sticky mount,
+        // so the meter must scale to at most 20 cells. 25 are done, so the bar is partially filled.
+        const steps: StepExecutionRow[] = Array.from({ length: 30 }, (_unused, i) =>
+            stepRow(`step-${String(i).padStart(2, "0")}`, i < 25 ? "completed" : i === 25 ? "running" : "pending"),
+        );
+        await publish(steps);
+        expect(activeRunProgress()).not.toBeNull();
+
+        const setup = await testRender(
+            () => (
+                <box width="100%" height="100%">
+                    <RunProgressRow />
+                </box>
+            ),
+            { width: 50, height: 16 },
+        );
+        try {
+            await setup.renderOnce();
+            const frame = setup.captureCharFrame();
+            // The meter is the only source of the bar glyph, so its total cell count is the frame's whole
+            // count: capped to 20 (BAR_BUDGET), never the raw 30 steps.
+            expect(occurrences(frame, GLYPHS.bar)).toBe(20);
+            // The done/total text still reports the FULL run, not the scaled cell counts.
+            expect(frame).toContain("25/30");
         } finally {
             setup.renderer.destroy();
         }

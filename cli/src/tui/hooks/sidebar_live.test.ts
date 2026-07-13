@@ -16,6 +16,7 @@ import {
     __resetSidebarLiveForTest,
     activeRunProgress,
     hasActiveWork,
+    idTail,
     profileDetailLines,
     profileSnapshot,
     refreshSidebarData,
@@ -333,6 +334,28 @@ describe("refreshSidebarData — sticky run-progress row", () => {
         };
         await refreshSidebarData("A", s);
         expect(activeRunProgress()).toBe(first); // same reference — the blip did not clear it
+    });
+
+    test("a step-read DbError for a DIFFERENT newest run clears the row rather than showing the old run's progress", async () => {
+        // Prime with run A pinned.
+        await refreshSidebarData(
+            "A",
+            seams(null, [runRow({ runId: "run-a", status: "running" })], () => fakeRuntime, [stepRow("s", "running")]),
+        );
+        const first = activeRunProgress();
+        expect(first).not.toBeNull();
+        if (first) expect(first.tag).toBe(idTail("run-a"));
+
+        // The newest run is now B (A went terminal, B took its place) and B's step read blips. The kept
+        // row belongs to A, so holding it would misattribute A's progress to B — the row must clear.
+        const s: RefreshSeams = {
+            runtime: () => fakeRuntime,
+            loadProfile: () => okAsync(null),
+            loadRuns: () => okAsync([runRow({ runId: "run-b", status: "running" }), runRow({ runId: "run-a", status: "completed" })]),
+            loadSteps: () => errAsync(dbErr),
+        };
+        await refreshSidebarData("A", s);
+        expect(activeRunProgress()).toBeNull();
     });
 
     test("the runtime-not-ready no-op clears the row", async () => {

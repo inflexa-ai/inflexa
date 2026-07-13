@@ -359,7 +359,8 @@ function resetSnapshots(): void {
  * The sticky row is derived from the runs read: when the NEWEST run is non-terminal a third read
  * fetches its steps and publishes {@link activeRunProgress}; a terminal (or absent) newest run clears
  * it and fires NO step query — so an idle analysis stays at zero step reads. A failed step read keeps
- * the previous row rather than blinking away a genuinely running run.
+ * the previous row only when it is THIS run's (avoiding a blink of a genuinely running run); if the
+ * newest run changed on the same tick it clears instead, so one run's progress is never shown for another.
  *
  * Staleness: the refresh claims a {@link refreshGeneration} token at entry and re-checks it after
  * each read (including the step read); a refresh superseded by a newer swap silently drops rather than
@@ -412,9 +413,13 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
                     setActiveRun({ name: shortRunName(newest), tag: idTail(newest.runId), done, total: steps.length, steps });
                 },
                 // The run is active but its steps could not be read (a transient DB blip). Keep the
-                // previous row rather than clearing — the bounded poll self-heals on the next tick, and
-                // clearing would blink away a genuinely running run.
-                () => {},
+                // previous row ONLY when it belongs to THIS run (its tag is the run's id tail) — the
+                // bounded poll then self-heals on the next tick without blinking a genuinely running run
+                // away. But when the newest run CHANGED on this same tick (the prior newest went terminal
+                // and a different run took its place), the previous row is a DIFFERENT run's progress;
+                // holding it would misattribute one run's steps to another, so drop to null — a briefly
+                // missing row is better than a confidently wrong one.
+                () => setActiveRun((prev) => (prev && prev.tag === idTail(newest.runId) ? prev : null)),
             );
         },
         // A runs `DbError` is a transient degrade that itself re-arms the poll (`hasActiveWork`). Keep

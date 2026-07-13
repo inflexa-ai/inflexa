@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
+import { sep } from "node:path";
 import { createSignal, Show } from "solid-js";
-import type { Renderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core";
+import type { CliRenderer, Renderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
 import { errAsync } from "neverthrow";
 import { queryStepsByRun, type StepExecutionRow, type DbError } from "@inflexa-ai/harness";
@@ -20,7 +21,7 @@ import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
 import { RunsDialog } from "./components/dialog/runs_dialog.tsx";
 import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./components/dialog/dialog_host.tsx";
-import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, leaderSeq, KEYS } from "./keymap.ts";
+import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, leaderSeq, KEYS, type LayerConfig } from "./keymap.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { Chat } from "./components/chat.tsx";
 import { BootIndicator } from "./components/boot_indicator.tsx";
@@ -40,6 +41,7 @@ type AppProps = {
 };
 
 /**
+ * TODO(slop): Please extract this to somewhere in `lib`
  * Contract the user's home-directory prefix to `~` for a compact display path. A single-caller
  * affordance for the wide-terminal status bar, kept beside its use per the no-extract-helper rule.
  * Only a true path-boundary prefix contracts (exact home, or home followed by a separator), so a
@@ -48,7 +50,36 @@ type AppProps = {
 function contractHome(path: string): string {
     const home = homedir();
     if (path === home) return "~";
-    return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+    // A path-boundary prefix is home followed by the platform separator (`/` on POSIX, `\` on Windows).
+    // Both `homedir()` and `canonicalPath` (which backs these paths via realpathSync/resolve) yield
+    // platform-native separators — they are NOT normalized to `/` — so hard-coding `/` would fail to
+    // contract any path on Windows. Using `sep` keeps a sibling like `/home/alice-backup` untouched
+    // (no separator boundary) rather than mangling it into `~-backup`.
+    return path.startsWith(`${home}${sep}`) ? `~${path.slice(home.length)}` : path;
+}
+
+/**
+ * The real "esc clears a live text selection" key layer, built as a pure factory over the renderer so
+ * the render test drives the SAME config `App` installs — not a hand-copied replica that could silently
+ * drift out of sync. `App` registers it with `useBindings(() => selectionClearLayer(renderer))`, which
+ * re-invokes it on every keystroke so `enabled` re-reads the live selection.
+ *
+ * It is mode-less and priority 50 on purpose: above the dialog host's structural esc (priority 0), so a
+ * span selected inside a dialog deselects WITHOUT closing the dialog, and below the abort chord
+ * (priority 100), which owns its own selection-aware copy path. Mode-less (not MODE_BASE) because a
+ * selection can be live while a dialog is stacked and MODE_BASE layers suspend under a modal — this must
+ * still fire there. `enabled` reads the SELECTED TEXT, not `hasSelection`: a plain click on selectable
+ * text leaves a non-null but EMPTY Selection, so `hasSelection` would arm on every click and swallow
+ * esc's real jobs (dialog cancel, INSERT→NORMAL). Clear only — copy-on-select already wrote the
+ * clipboard on mouse-up, so esc must not re-copy. With no selected text the layer is disabled and esc
+ * falls through unchanged to every existing binding.
+ */
+export function selectionClearLayer(renderer: CliRenderer): LayerConfig {
+    return {
+        priority: 50,
+        enabled: !!renderer.getSelection()?.getSelectedText(),
+        bindings: [{ chord: KEYS.escape, run: () => renderer.clearSelection(), desc: "Clear selection", group: "App" }],
+    };
 }
 
 export function App(props: AppProps) {
@@ -248,21 +279,11 @@ export function App(props: AppProps) {
         ],
     }));
 
-    // esc clears a live text selection — and nothing else. A mode-less layer slotted at priority 50:
-    // above the dialog host's structural esc (priority 0) so a span selected inside a dialog
-    // deselects WITHOUT closing the dialog, and below the abort chord (priority 100), which owns its
-    // own selection-aware copy path. Mode-less (not MODE_BASE) on purpose: a selection can be live
-    // while a dialog is stacked, and MODE_BASE layers are suspended under a modal — this must still
-    // fire there. The arm predicate reads the SELECTED TEXT, not `hasSelection`: a plain click on
-    // selectable text leaves a non-null but EMPTY Selection, so `hasSelection` would arm on every
-    // click and swallow esc's real jobs (dialog cancel, INSERT→NORMAL). Clear only — copy-on-select
-    // already wrote the clipboard on mouse-up, so esc must not re-copy. With no selected text the
-    // layer is disabled and esc falls through unchanged to every existing binding.
-    useBindings(() => ({
-        priority: 50,
-        enabled: !!renderer.getSelection()?.getSelectedText(),
-        bindings: [{ chord: KEYS.escape, run: () => renderer.clearSelection(), desc: "Clear selection", group: "App" }],
-    }));
+    // esc clears a live text selection — and nothing else. The layer config is the exported
+    // `selectionClearLayer` factory (its full rationale lives on that export); registering it via a
+    // thunk re-invokes it each keystroke so `enabled` re-reads the live selection. The render test
+    // installs the SAME factory, so the two can never drift.
+    useBindings(() => selectionClearLayer(renderer));
 
     function runCommandById(id: string): void {
         const cmd = commands.find((c) => c.id === id);

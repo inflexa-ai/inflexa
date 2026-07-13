@@ -148,6 +148,20 @@ const RAIL_BORDER_COLS = 1;
 const RAIL_CONTENT_WIDTH = size.railWidth - RAIL_BORDER_COLS - space.sm * 2;
 
 /**
+ * Every character the {@link GLYPHS} registry can print, as single characters. The design system's
+ * own contract is that each registry value occupies exactly ONE terminal cell — it bans emoji and
+ * Nerd-Font glyphs precisely because the fixed-width TUI layout assumes one cell per glyph — so any
+ * character in this set can be trusted as width 1, which a bare `.length` UTF-16 count cannot prove.
+ * Built once here (flattening the multi-frame spinner value to its characters) so the fit check can
+ * measure a value built from ASCII + registry glyphs (e.g. the SESSION handle `S·2f9a`) exactly.
+ */
+const SINGLE_CELL_GLYPHS: ReadonlySet<string> = new Set(
+    Object.values(GLYPHS)
+        .flat()
+        .flatMap((s) => [...s]),
+);
+
+/**
  * A sidebar section: a bold muted LABEL over its content rows. When a `value` is supplied AND it
  * fits beside the label on one rail row — the label, a one-cell gap, and the value all within
  * {@link RAIL_CONTENT_WIDTH} — the header collapses to a single `LABEL … value` row (label keeps its
@@ -161,7 +175,19 @@ function Section(props: { label: string; value?: string; children: JSX.Element; 
     // one-cell gap is space.sm — the minimum separation so label and value never abut on a full row.
     const fitsOnLabelRow = (): boolean => {
         const value = props.value;
-        return value !== undefined && props.label.length + space.sm + value.length <= RAIL_CONTENT_WIDTH;
+        if (value === undefined) return false;
+        // `.length` counts UTF-16 units, which equal terminal cells only for characters we can vouch
+        // are single-cell: printable ASCII, and the design-system GLYPHS (single-cell by the registry's
+        // contract — see SINGLE_CELL_GLYPHS). So the SESSION handle `S·2f9a`, whose `·` is GLYPHS.middot,
+        // measures reliably and may merge. Any OTHER non-ASCII character (a CJK glyph is one unit but two
+        // cells, an emoji several units for one-or-two) has a cell width we cannot cheaply trust — rather
+        // than embed a wcwidth table, take the safe path and stack the whole value on its own full line,
+        // where the width is never guessed wrong. The label is always an ASCII section name.
+        const chars = [...value];
+        for (const ch of chars) {
+            if (!/[\x20-\x7e]/.test(ch) && !SINGLE_CELL_GLYPHS.has(ch)) return false;
+        }
+        return props.label.length + space.sm + chars.length <= RAIL_CONTENT_WIDTH;
     };
     // The arrow reads `props.onActivate` at click time (reactive-safe, and the section activation is
     // inert on the sections that pass none — only DATA PROFILE / RUNS supply a callback).

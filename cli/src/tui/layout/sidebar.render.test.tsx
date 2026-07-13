@@ -307,12 +307,14 @@ describe("Sidebar responsive ANALYSIS badge + path", () => {
 // A Section merges its value onto the label row when it fits the rail's usable width, else stacks it
 // on the line below — the rail is a fixed width, so this depends on value length, not terminal width.
 describe("Sidebar Section header merge vs stacked fallback", () => {
-    test("short values share their section's label row", async () => {
+    test("a short ASCII value shares its section's label row; a middot-bearing handle merges too", async () => {
         writeFileSync(join(dirA, "one.txt"), "x");
         const a = createAnalysis({ cwd: dirA, name: str256("alpha")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] })._unsafeUnwrap();
         const frame = await renderFrame(sidebarNode(wsFor(a, dirA)), { width: 44, height: 24 });
-        expect(lineContaining(frame, "SESSION")).toContain("nosu"); // the short session id merges up
-        expect(lineContaining(frame, "ANALYSIS")).toContain("alpha"); // the short analysis name merges up
+        expect(lineContaining(frame, "ANALYSIS")).toContain("alpha"); // pure-ASCII name is cell-accurate → merges up
+        // The SESSION handle is `S·nosu` — its `·` is GLYPHS.middot, a single-cell registry glyph the fit
+        // check trusts as width 1, so the whole handle (well within the rail) merges onto the label row.
+        expect(lineContaining(frame, "SESSION")).toContain("nosu");
     });
 
     test("a value too long to fit stacks below the label, rendered in full (never truncated)", async () => {
@@ -322,5 +324,17 @@ describe("Sidebar Section header merge vs stacked fallback", () => {
         const frame = await renderFrame(sidebarNode(wsFor(a, dirA)), { width: 44, height: 24 });
         expect(lineContaining(frame, "ANALYSIS")).not.toContain(longName); // label row holds only the label
         expect(frame).toContain(longName); // the name renders in full on its own line
+    });
+
+    test("a non-ASCII (CJK) name stacks even when its .length would fit, since cells ≠ UTF-16 units", async () => {
+        writeFileSync(join(dirA, "one.txt"), "x");
+        // `分析proj`: .length is 6, so the old unit-count check would MERGE it onto the label row — but the
+        // two CJK glyphs are two cells each, so that fit is measured wrong. The conservative guard stacks
+        // any non-ASCII value instead. The ASCII `proj` tail is the reliable capture probe (wide-glyph
+        // capture is not); the workspace has no linked project, so `proj` appears only in the name.
+        const a = createAnalysis({ cwd: dirA, name: str256("分析proj")._unsafeUnwrap(), inputPaths: [join(dirA, "one.txt")] })._unsafeUnwrap();
+        const frame = await renderFrame(sidebarNode(wsFor(a, dirA)), { width: 44, height: 24 });
+        expect(lineContaining(frame, "ANALYSIS")).not.toContain("proj"); // did not merge onto the label row
+        expect(frame).toContain("proj"); // stacked on its own full line below the label
     });
 });

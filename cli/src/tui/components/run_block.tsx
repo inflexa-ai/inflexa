@@ -43,6 +43,14 @@ export type RunBlockProps = {
     maxSteps?: number;
 };
 
+/**
+ * Cell budget for the progress meter in the narrow (windowed) mount. The default meter is one cell per
+ * step, which soft-wraps the ~40-column sticky slice once a run passes ~30 steps; when `maxSteps`
+ * signals that narrow mount the meter is scaled to at most this many cells instead. ~20 keeps it
+ * comfortably inside the rail while still reading as a proportional bar.
+ */
+const BAR_BUDGET = 20;
+
 /** The themed glyph + color role for a step's state. */
 function stepMark(state: RunStepView["state"]): { glyph: string; role: "success" | "warning" | "error" | "fgSubtle" } {
     if (state === "done") return { glyph: GLYPHS.check, role: "success" };
@@ -57,8 +65,24 @@ function stepMark(state: RunStepView["state"]): { glyph: string; role: "success"
  * and the detach/abort affordance.
  */
 export function RunBlock(props: RunBlockProps) {
-    const filled = (): string => GLYPHS.bar.repeat(props.done);
-    const empty = (): string => GLYPHS.bar.repeat(Math.max(0, props.total - props.done));
+    // The meter's cell counts. Without `maxSteps` it stays one cell per step — the dialog + gallery full
+    // view, where the block owns its whole width. With `maxSteps` (the narrow sticky mount, where a
+    // 30+-step per-step bar soft-wraps the ~40-column slice) it scales to at most BAR_BUDGET cells,
+    // `filled` proportional to done/total. A partially-done run is clamped to [1, cells−1] so mid-flight
+    // work never paints as fully filled or fully empty — an honest signal beats a rounding artifact.
+    const barCells = (): { filled: number; total: number } => {
+        if (props.maxSteps === undefined) return { filled: props.done, total: props.total };
+        const cells = Math.min(props.total, BAR_BUDGET);
+        if (props.total <= 0) return { filled: 0, total: cells };
+        const proportional = Math.round((props.done / props.total) * cells);
+        const partial = props.done > 0 && props.done < props.total;
+        return { filled: partial ? Math.min(cells - 1, Math.max(1, proportional)) : proportional, total: cells };
+    };
+    const filled = (): string => GLYPHS.bar.repeat(barCells().filled);
+    const empty = (): string => {
+        const c = barCells();
+        return GLYPHS.bar.repeat(Math.max(0, c.total - c.filled));
+    };
     // The visible slice of the step list. Full list unless `maxSteps` caps it; then a window of that
     // many rows centered on the frontier — the first not-yet-done step — clamped so it never runs past
     // either end. When every step is done the frontier is the tail, so the window shows the run's end.
