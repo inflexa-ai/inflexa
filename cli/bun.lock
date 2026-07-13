@@ -7,7 +7,7 @@
       "dependencies": {
         "@clack/prompts": "^1.5.1",
         "@inflexa-ai/harness": "file:../harness",
-        "@inflexa-ai/tsprov": "0.4.0",
+        "@inflexa-ai/tsprov": "0.5.1",
         "@opentelemetry/api": "^1.9.1",
         "@opentelemetry/api-logs": "^0.219.0",
         "@opentelemetry/exporter-logs-otlp-http": "^0.219.0",
@@ -153,7 +153,7 @@
 
     "@inflexa-ai/harness": ["@inflexa-ai/harness@file:../harness", { "dependencies": { "@anthropic-ai/sdk": "^0.107.0", "@dbos-inc/dbos-sdk": "^4.23.0", "@kubernetes/client-node": "^1.0.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/core": "^2.8.0", "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.219.0", "@opentelemetry/resources": "^2.8.0", "@opentelemetry/sdk-metrics": "^2.8.0", "@opentelemetry/sdk-trace-base": "^2.8.0", "@opentelemetry/sdk-trace-node": "^2.8.0", "@opentelemetry/semantic-conventions": "^1.41.1", "cheerio": "^1.0.0", "dockerode": "^4.0.0", "fast-xml-parser": "^4.5.0", "hono": "^4.0.0", "js-tiktoken": "^1.0.0", "mime": "^4.0.0", "nanoid": "^5.0.0", "neverthrow": "^8.2.0", "nunjucks": "^3.2.4", "openai": "^4.77.0", "pdf-parse": "^2.4.0", "pg": "^8.13.0", "pino": "^10.3.1", "puppeteer-core": "^23.0.0", "zod": "^4.4.3" }, "devDependencies": { "@types/dockerode": "^3.3.0", "@types/node": "^24.0.0", "@types/nunjucks": "^3.2.6", "@types/pdf-parse": "^1.1.4", "@types/pg": "^8.11.0", "testcontainers": "^10.0.0", "typescript": "^6.0.3" } }],
 
-    "@inflexa-ai/tsprov": ["@inflexa-ai/tsprov@0.4.0", "https://npm.pkg.github.com/download/@inflexa-ai/tsprov/0.4.0/5943ec9a774358a40a0a0ede23eb0815d50c1557", { "dependencies": { "luxon": "^3.7.2" } }, "sha512-vSSdO2ILt+BBs1qVznUhXezaalFleEvP6sTCNfh05cplleelpvsd06O/YwbHIIvRP9C4SrPqIy8wxqE6hXInlQ=="],
+    "@inflexa-ai/tsprov": ["@inflexa-ai/tsprov@0.5.1", "https://npm.pkg.github.com/download/@inflexa-ai/tsprov/0.5.1/fa0bf13a43f0e27caa8db3403ececfc3ed7ec035", { "dependencies": { "luxon": "^3.7.2" } }, "sha512-9/UmWOABRdkNdqKqOP89td8EueP/vRjId5y4tEKjDB/ble61zASTvuxH2F+y3DeDB//pYeic1R1VX+j+WOScUw=="],
 
     "@isaacs/cliui": ["@isaacs/cliui@8.0.2", "", { "dependencies": { "string-width": "^5.1.2", "string-width-cjs": "npm:string-width@^4.2.0", "strip-ansi": "^7.0.1", "strip-ansi-cjs": "npm:strip-ansi@^6.0.1", "wrap-ansi": "^8.1.0", "wrap-ansi-cjs": "npm:wrap-ansi@^7.0.0" } }, "sha512-O8jcjabXaleOG9DQ0+ARXWZBTfnP4WNAqzuiJK7ll44AmxGKv/J2M4TPjxjY3znBCfvBXFzucm1twdyFybFqEA=="],
 
