@@ -181,10 +181,12 @@ describe("docker createSandbox — transport modes", () => {
         const sandbox = sandboxOf(created)!;
         expect(sandbox.capDrop).toEqual(["ALL"]);
         expect(sandbox.securityOpt).toEqual(["no-new-privileges"]);
-        // Poll mode starts as root so the entrypoint can install the firewall, then
-        // NET_ADMIN is granted for exactly that — the entrypoint `setpriv`-drops after.
+        // Poll mode starts as root with exactly the capabilities the entrypoint's setup
+        // consumes: NET_ADMIN installs the egress iptables rules, SETUID/SETGID perform the
+        // setpriv uid/gid drop to the workload user, and SETPCAP applies its bounding-set
+        // clear. All are dropped before the workload runs, leaving its capability sets empty.
         expect(sandbox.user).toBe("0:0");
-        expect(sandbox.capAdd).toEqual(["NET_ADMIN"]);
+        expect(sandbox.capAdd).toEqual(["NET_ADMIN", "SETUID", "SETGID", "SETPCAP"]);
 
         const env = envMapOf(sandbox);
         expect(env.SANDBOX_TRANSPORT).toBe("poll");

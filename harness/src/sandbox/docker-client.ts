@@ -285,9 +285,14 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                                 [`${SANDBOX_SERVER_PORT}/tcp`]: [{ HostIp: SANDBOX_PORT_HOST_IP, HostPort: "0" }],
                             },
                             CapDrop: ["ALL"],
-                            // Poll mode grants NET_ADMIN to the ROOT entrypoint only, to install
-                            // the egress firewall; `setpriv` drops it before the workload runs.
-                            ...(pollMode ? { CapAdd: ["NET_ADMIN"] } : {}),
+                            // Poll mode grants the ROOT entrypoint exactly what its privileged
+                            // setup needs: NET_ADMIN to install the egress iptables rules,
+                            // SETUID/SETGID for the setpriv uid/gid drop to the workload user
+                            // (setresuid/setresgid fail EPERM without them), and SETPCAP to apply
+                            // setpriv's `--bounding-set=-all`. The entrypoint drops all of them
+                            // before the workload runs — the workload's capability sets end empty
+                            // — and `no-new-privileges` prevents regaining any.
+                            ...(pollMode ? { CapAdd: ["NET_ADMIN", "SETUID", "SETGID", "SETPCAP"] } : {}),
                             SecurityOpt: ["no-new-privileges"],
                             NanoCpus: Math.round(spec.cpu * 1e9),
                             Memory: spec.memoryGb * 1024 ** 3,
