@@ -40,6 +40,6 @@ export function createWriteFileTool(deps: WriteFileDeps) {
             "variant (no I/O), and one escaping the analysis tree returns " +
             "`out_of_scope`.",
         inputSchema: WriteFileInputSchema,
-        execute: async ({ path, content }, ctx) => ok(await deps.mutator.writeFile({ path, content, emit: ctx.emit })),
+        execute: async ({ path, content }, ctx) => ok(await deps.mutator.writeFile({ path, content, toolName: "write_file", emit: ctx.emit })),
     });
 }

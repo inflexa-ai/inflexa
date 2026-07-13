@@ -214,19 +214,25 @@ export class ProvenanceCollector {
     }
 
     /**
-     * Record a file tool write (write_file, append_file, copy_file).
+     * Record a file tool write (write_file, edit_file).
      * Called after the data-mount filesystem records the artifact.
      *
      * File tool writes are agent-authored content — not derived from input
      * files via execution — so no inputs are attributed.
      */
     recordFileToolWrite(artifact: ArtifactRecord): void {
+        // Normalize analysis-relative paths to step-relative (mirroring
+        // recordCommandExecution) so file-tool and command records land in one
+        // keyspace. Without this the cross-feed last-write-wins unlink dead-fires
+        // and registration's step-relative lookup never finds this record.
+        const outputPath = artifact.path.startsWith(this.stepPrefix) ? artifact.path.slice(this.stepPrefix.length) : artifact.path;
+
         // Last-write-wins: unlink any command record for this path.
-        // Post-step overwrites (e.g., summary generation) replace the command output.
-        this.commandRecords.delete(artifact.path);
+        // Post-step overwrites (e.g. summary generation) replace the command output.
+        this.commandRecords.delete(outputPath);
 
         const record: ProvenanceRecord = {
-            outputPath: artifact.path,
+            outputPath,
             outputHash: artifact.hash,
             outputSize: artifact.size,
             producer: {
@@ -241,7 +247,7 @@ export class ProvenanceCollector {
             runId: this.runId,
         };
 
-        this.fileToolRecords.set(artifact.path, record);
+        this.fileToolRecords.set(outputPath, record);
     }
 
     /**

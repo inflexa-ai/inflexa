@@ -11,7 +11,7 @@ import { z } from "zod";
 
 // ── Producer ────────────────────────────────────────────────────────
 
-/** File tool write (write_file, append_file, copy_file). */
+/** File tool write (write_file, edit_file). */
 export const FileToolProducerSchema = z.object({
     type: z.literal("file_tool"),
     tool: z.string(),

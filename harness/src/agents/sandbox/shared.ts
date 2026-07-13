@@ -251,6 +251,7 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] 
                   sandboxWorkingDir,
                   nextFunctionId: step.nextFunctionId,
                   deadlineMs: step.deadlineMs,
+                  ...(lineageCollector ? { lineageCollector } : {}),
               });
               return [createWriteFileTool({ mutator }), createEditFileTool({ mutator, workspaceFilesystem: workspaceFs, workingDir: hostWorkingDir })];
           })();
