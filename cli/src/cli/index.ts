@@ -217,14 +217,16 @@ prov.command("export <analysis>")
         await runExportProvenance(analysisRef, { format: options.format, output: options.output });
     });
 
-prov.command("lineage <analysis> <file>")
-    .description("Trace where a file came from (or, with --forward, what came from it) through the recorded provenance graph")
+prov.command("lineage <analysis> <ref>")
+    .description(
+        "Trace lineage through the recorded provenance graph — <ref> is a file path, content hash, hash prefix, or search string over paths/commands/tools",
+    )
     .option("--forward", "Walk forward: what was derived from this file")
     .option("--depth <n>", "Bound the walk to n generation hops (default: unbounded)")
-    .option("--format <format>", "tree (human) or json (flat graph)", "tree")
-    .action(async (analysisRef: string, fileRef: string, options: { forward?: boolean; depth?: string; format?: string }) => {
+    .option("--format <format>", "tree (human), json (flat graph), or dot (Graphviz)", "tree")
+    .action(async (analysisRef: string, ref: string, options: { forward?: boolean; depth?: string; format?: string }) => {
         const { runProvLineage } = await import("../modules/prov/lineage.ts");
-        runProvLineage(analysisRef, fileRef, options);
+        runProvLineage(analysisRef, ref, options);
     });
 
 prov.command("verify <analysis>")
