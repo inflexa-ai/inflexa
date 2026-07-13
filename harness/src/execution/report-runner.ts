@@ -54,7 +54,11 @@ import {
 } from "../tools/report/index.js";
 import { createReportBuilderAgent, REPORT_BUILDER_AGENT_ID } from "../agents/report-builder.js";
 import type { PreviewPublisher } from "../tools/report/preview-publisher.js";
+import { createSkillTools } from "../tools/sandbox/skills.js";
 import type { ChromeConfig } from "../lib/chrome.js";
+
+/** Skill pack the report-builder prompt directs the model to read (design-system reference). */
+const REPORT_BUILDER_SKILLS = ["report-html"] as const;
 
 const REPORT_AGENT_MAX_STEPS = 75;
 
@@ -65,6 +69,8 @@ export interface ReportRunnerDeps {
     readonly model: string;
     /** Root templates dir; `report-html` is joined onto it. */
     readonly templatesDir: string;
+    /** Skills root; the report-builder gets read-only `report-html` skill tools. */
+    readonly skillsDir: string;
     readonly chrome: ChromeConfig;
 }
 
@@ -194,6 +200,7 @@ export async function runReportIteration(deps: ReportRunnerDeps, opts: ReportRun
                 chrome: deps.chrome,
             }),
             ...createVersionFsTools({ versionDir: versionDirAbs }),
+            ...Object.values(createSkillTools({ skillsDir: deps.skillsDir, skills: [...REPORT_BUILDER_SKILLS] })),
         ];
 
         const agent = createReportBuilderAgent({ model: deps.model, tools });

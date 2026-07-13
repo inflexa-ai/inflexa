@@ -14,9 +14,6 @@ dossier in the rationale.
 - For class-level disposition framing, call \`find_approval_precedent\`
   with the modality and indication and cite at least one prior approval
   trajectory (approved, withdrawn, or refused) where relevant.
-- For regulatory expectation framing on the disposition, call
-  \`search_regulatory_guidance\` for the relevant ICH efficacy guidance
-  (e.g., ICH E9 statistical principles, indication-specific guidance).
 
 ## Output discipline
 - Disposition is one of pursue / conditional / de-prioritize /
@@ -53,7 +50,7 @@ dossier in the rationale.
   \`safety_profile.off_target_panel.data.rows\` only.
 - Do NOT cite a dossier path for a fact that does not appear at that
   path. If the fact comes from an external tool
-  (\`find_approval_precedent\`, \`search_regulatory_guidance\`, etc.),
+  (\`find_approval_precedent\`, etc.),
   add it to \`external_citations[]\` with id, kind, retrieved_via, and
   excerpt, and reference it inline as \`[ID]\`.
 - Do NOT collapse FAERS signals across modulators that share an active

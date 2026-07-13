@@ -11,9 +11,6 @@ organ-system vocabulary (hepatobiliary, renal, cardiac, etc.) — colloquial
 substitutes are rejected by the voice probe.
 
 ## Tool use
-- For ICH-aligned mitigation paths, call \`search_regulatory_guidance\`
-  with the relevant ICH code (e.g., "ICH S7A safety pharmacology",
-  "ICH E14 thorough QT").
 - For class precedents withdrawn or labelled for the same liability,
   call \`find_approval_precedent\` and cite Drugs@FDA NDA/BLA §<section>.
 

@@ -2,9 +2,10 @@
  * Resume helper for the `executeAnalysis` parent workflow.
  *
  * The actual resume *entry-point* (the HTTP route, the operator CLI hook,
- * the analytics-tier replay) is owned by change 9 — that change exposes
- * resume to the world. This module owns the **internal contract** every
- * resume call site MUST satisfy so the parent body re-opens the running
+ * the analytics-tier replay) is not built yet — no caller in this repo, and
+ * this module is not on the public barrel, so the 402-pause resume path is
+ * currently unreachable. This module owns the **internal contract** every
+ * future resume call site MUST satisfy so the parent body re-opens the running
  * charge correctly after a 402 pause.
  *
  * Contract:
@@ -40,7 +41,7 @@
  *     without `suspended_insufficient_funds` on the analysis): the helper
  *     still bumps the counter so a defensive retry is harmless, but the
  *     caller SHOULD skip the resume — the workflow already ran to
- *     completion. Change 9's entry point owns this guard.
+ *     completion. The future resume entry point owns this guard.
  */
 
 import type { Pool } from "pg";

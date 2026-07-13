@@ -173,8 +173,9 @@ CREATE TABLE IF NOT EXISTS cortex_off_target_annotations (
 );
 
 -- Regulatory guidance corpus — pre-indexed FDA CDER, FDA CBER, and ICH
--- guidance documents. Quarterly refresh via scripts/index-regulatory-corpus.ts.
--- Used by the search_regulatory_guidance tool wired into the synthesis agents.
+-- guidance documents. Written/refreshed via tasks/refresh-regulatory-corpus.ts
+-- and searched (top-K cosine) via lib/regulatory-corpus.ts. No synthesis tool
+-- consumes it yet — a search_regulatory_guidance tool is not wired.
 CREATE TABLE IF NOT EXISTS cortex_regulatory_chunks (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   source          TEXT NOT NULL,

@@ -238,6 +238,8 @@ export interface IterateReportDeps {
     readonly model: string;
     /** Root templates dir; report-runner joins `report-html`. */
     readonly templatesDir: string;
+    /** Skills root; report-runner gives the report-builder `report-html` skill tools. */
+    readonly skillsDir: string;
     readonly chrome: ChromeConfig;
     /**
      * Builds the preview-publishing seam for this iteration. A managed
@@ -377,6 +379,7 @@ export function createIterateReportTool(deps: IterateReportDeps): Tool {
                     pool: deps.pool,
                     model: deps.model,
                     templatesDir: deps.templatesDir,
+                    skillsDir: deps.skillsDir,
                     chrome: deps.chrome,
                 },
                 {

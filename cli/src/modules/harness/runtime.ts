@@ -685,6 +685,8 @@ async function bootHarnessRuntimeOnce(
             createPreviewPublisher: async () => new UnavailablePreviewPublisher(),
             bioKeys: cfg.bioKeys,
             templatesDir: cfg.templatesDir,
+            // The in-process report-builder gets read-only `report-html` skill tools.
+            skillsDir: cfg.skillsDir,
             chrome: {},
         };
         const core = seams.assemble({ conversation, workflows, resourcePolicy: cfg.resourcePolicy });
