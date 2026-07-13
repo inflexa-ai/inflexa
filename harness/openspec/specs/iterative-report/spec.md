@@ -28,9 +28,9 @@ Each iteration is a new version directory under
 `{workspaceRoot}/previews/{previewId}/v{N}`; `assets/` is shared across versions.
 (`previews/{analysisId}/{previewId}` is the content-token `res` claim — URL
 space, not a filesystem sub-path.)
-On success the tool emits a `data-preview` chat part; on any pre-flight, build,
-or submit failure it emits `data-preview-failed`. The hosted preview surface is
-reached only through the injected `PreviewPublisher` seam (the OSS default
+On success the tool emits a `data-report-preview` chat part; on any pre-flight,
+build, or submit failure it emits `data-report-preview-failed`. The hosted preview
+surface is reached only through the injected `PreviewPublisher` seam (the OSS default
 returns "unavailable" so reports still build without a hosted preview).
 ## Requirements
 ### Requirement: iterate_report exposes mutually-exclusive creation and iteration modes
@@ -189,4 +189,3 @@ on failure it SHALL emit `data-report-preview-failed`
 
 - **WHEN** `submit_report` records a success for version N
 - **THEN** `iterate_report` emits a `data-report-preview` part carrying the title, `v{N}/index.html` preview path, and format, and returns `{ previewId, version: N, previewPath }`
-

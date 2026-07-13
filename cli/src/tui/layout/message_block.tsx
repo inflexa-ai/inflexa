@@ -150,6 +150,10 @@ function OpenableCard(props: { part: OpenableCardPart }) {
             path: resolveEntryPath(props.part.analysisId, entry.target),
             degraded: entryDegraded(props.part.analysisId, entry.target),
         }));
+    function openFolder(): void {
+        const folderPath = props.part.folderPath;
+        if (folderPath) openArtifactFolder(props.part.analysisId, folderPath);
+    }
     return (
         <OpenableCardBlock
             title={props.part.title}
@@ -159,7 +163,7 @@ function OpenableCard(props: { part: OpenableCardPart }) {
                 const entry = props.part.entries[index];
                 if (entry) openArtifact(props.part.analysisId, entry);
             }}
-            onOpenFolder={props.part.folderPath ? () => openArtifactFolder(props.part.analysisId, props.part.folderPath!) : undefined}
+            onOpenFolder={props.part.folderPath ? openFolder : undefined}
         />
     );
 }
