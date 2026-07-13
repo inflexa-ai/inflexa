@@ -72,6 +72,6 @@ describe("inflexa help & usage (e2e)", () => {
     test("an unknown lineage --format fails listing the accepted values", () => {
         const result = runCli(["prov", "lineage", "anything", "anything", "--format", "svg"]);
         expect(result.exitCode).toBe(1);
-        expect(result.stderr).toContain('Unknown format "svg". Use "tree", "json", or "dot".');
+        expect(result.stderr).toContain('Unknown format "svg". Use "tree", "json", "dot", or "mermaid".');
     });
 });

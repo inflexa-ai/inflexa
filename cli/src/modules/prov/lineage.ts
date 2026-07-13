@@ -15,7 +15,8 @@ import {
 
 import { dieOn, fail } from "../../lib/cli.ts";
 import { getAnalysisProvenance } from "../../db/primary_query.ts";
-import { findAnalysisForProv, loadDocument, PROV_UNIFY_OPTIONS } from "./document.ts";
+import { loadDocument, PROV_UNIFY_OPTIONS } from "./document.ts";
+import { requireAnalysisForProv } from "./prov.ts";
 
 // The lineage traversal: the read-side answer to "where did this file come from?" (and, with
 // --forward, "what came from this file?"). It reads the SAME stored bytes `export` serializes and
@@ -132,29 +133,34 @@ function toFileInfo(rec: ProvRecord): LineageFileInfo {
 }
 
 /**
- * Every `inflexa:file-*` entity in the document, carrying the walk-independent path/hash facts the
- * not-found sample needs. The candidate set is keyed on the QName scheme, not on `prov:type` — an
- * input-only entity (a `used` read that no write registered) carries a path/hash but no
- * `inflexa:File` type — matching how the resolution probes see file entities.
+ * Every pathed entity in the document — whatever its QName scheme — carrying the facts the
+ * not-found sample needs. The predicate is the attribute itself, not an identifier convention,
+ * because a freshly-profiled analysis may carry ONLY `input-*` entities and the orientation hint
+ * must still name their paths (the substring tier already matches these same entities). The
+ * attribute lookup cannot throw here: every document this module loads declares the `inflexa`
+ * namespace, so the name always resolves.
  */
 function fileEntities(graph: ProvGraph): LineageFileInfo[] {
-    const outcome = resolve(graph, { type: ProvEntity, where: (r) => r.identifier?.localpart.startsWith("file-") ?? false });
+    const outcome = resolve(graph, { type: ProvEntity, where: (r) => r.getAttribute("inflexa:path").length > 0 });
     return outcome.kind === "matched" ? outcome.records.map(toFileInfo) : [];
 }
 
 /**
- * Resolve a lineage ref through four tiers: exact `inflexa:path` (ALL entities carrying it — the
+ * Resolve a lineage ref through five tiers: exact `inflexa:path` (ALL entities carrying it — the
  * same path re-written across runs is several genuinely distinct entities, surfaced, not hidden),
- * exact `inflexa:hash`, an unambiguous hash prefix of ≥ {@link MIN_HASH_PREFIX} chars, and finally
- * a case-sensitive substring search over recorded paths, command lines, and tool names. Hashes are
- * deliberately never substring-searched — hash addressing stays exact-or-prefix, git-style; a
- * substring hit inside a digest is noise, never intent. A single search match resolves (an
- * activity match roots the walk there); matches that are all entities of ONE path collapse to that
- * path's entity set — the same multiplicity the exact-path tier surfaces; any other mix fails with
- * kind-tagged candidates rather than walking a surprise forest. No match at all fails with a
- * sample of the paths the document does know. Every probe is a typed selector, so a same-valued
- * attribute on the other record kind can never shadow an exact tier's match. Directory-style refs
- * carry no special semantics: they land in the candidate or not-found failure like any string.
+ * exact `inflexa:hash`, an unambiguous hash prefix of ≥ {@link MIN_HASH_PREFIX} chars, a
+ * case-sensitive substring search over recorded paths, command lines, and tool names, and — when
+ * even the search finds nothing — an exact-identifier match against entity and activity QNames,
+ * accepting the full prefixed form (`inflexa:input-…`) or the bare localpart (`input-…`): the
+ * token a user copies straight out of the exported PROV. Hashes are deliberately never
+ * substring-searched — hash addressing stays exact-or-prefix, git-style; a substring hit inside a
+ * digest is noise, never intent — and identifier matching is exact only, placed last so it can
+ * never shadow an attribute tier. A single search match resolves (an activity match roots the
+ * walk there); matches that are all entities of ONE path collapse to that path's entity set — the
+ * same multiplicity the exact-path tier surfaces; any other mix fails with kind-tagged candidates
+ * rather than walking a surprise forest. No match at any tier fails with a sample of the paths
+ * the document does know. Directory-style refs carry no special semantics: they land in the
+ * candidate or not-found failure like any string.
  */
 export function resolveLineageRef(graph: ProvGraph, ref: string): Result<LineageRoots, LineageRefError> {
     const byPath = resolve(graph, { type: ProvEntity, attributes: [{ name: "inflexa:path", equals: ref }] });
@@ -173,6 +179,17 @@ export function resolveLineageRef(graph: ProvGraph, ref: string): Result<Lineage
             });
         }
     }
+
+    // Shared by every ambiguous outcome below, so the substring and identifier tiers can never
+    // drift on how a candidate is described.
+    const toCandidates = (records: readonly ProvRecord[]): LineageSearchCandidate[] =>
+        records.slice(0, SEARCH_CANDIDATE_CAP).map((rec): LineageSearchCandidate => {
+            if (rec instanceof ProvEntity) {
+                const info = toFileInfo(rec);
+                return { kind: "file", path: info.path, hash: info.hash };
+            }
+            return { kind: "activity", line: activityFacts(activityMeta(graph, rec.identifier?.uri ?? "")) };
+        });
 
     // Search tier: the ref as a substring over the three searchable targets, in a fixed probe
     // order so candidate listings are deterministic. Entities and activities are disjoint record
@@ -207,18 +224,30 @@ export function resolveLineageRef(graph: ProvGraph, ref: string): Result<Lineage
             const only = matches[0]!;
             return ok({ kind: "activity", qn: only.identifier?.toString() ?? "" });
         }
-        const candidates = matches.slice(0, SEARCH_CANDIDATE_CAP).map((rec): LineageSearchCandidate => {
-            if (rec instanceof ProvEntity) {
-                const info = toFileInfo(rec);
-                return { kind: "file", path: info.path, hash: info.hash };
-            }
-            return { kind: "activity", line: activityFacts(activityMeta(graph, rec.identifier?.uri ?? "")) };
-        });
-        return err({ type: "ambiguous_search", candidates, total: matches.length });
+        return err({ type: "ambiguous_search", candidates: toCandidates(matches), total: matches.length });
+    }
+
+    // Identifier tier: the ref as the record's own address — the exact token a user copies out of
+    // the exported PROV (e.g. `prov:usedEntity: "inflexa:input-…"`). Exact only, and last, so no
+    // attribute tier is ever shadowed by an identifier coincidence. Two accepted forms: the full
+    // prefixed QName (resolved through the document's namespaces — a string with no known prefix
+    // simply misses) and the bare localpart. Relations carry identifiers too (`gen-…`) but are not
+    // lineage roots in this grammar, so both probes are constrained to entities and activities.
+    const byQName = resolve(graph, { id: ref, type: [ProvEntity, ProvActivity] });
+    const byIdentifier =
+        byQName.kind === "matched" ? byQName : resolve(graph, { type: [ProvEntity, ProvActivity], where: (r) => r.identifier?.localpart === ref });
+    if (byIdentifier.kind === "matched") {
+        // Identifiers are unique after unification, so several hits are a malformed edge case
+        // (e.g. two prefixes sharing a localpart) — list rather than guess.
+        if (byIdentifier.records.length > 1) {
+            return err({ type: "ambiguous_search", candidates: toCandidates(byIdentifier.records), total: byIdentifier.records.length });
+        }
+        const rec = byIdentifier.records[0]!; // length checked: exactly one
+        return rec instanceof ProvEntity ? ok({ kind: "files", infos: [toFileInfo(rec)] }) : ok({ kind: "activity", qn: rec.identifier?.toString() ?? "" });
     }
 
     // The document's own not-found sample mixes every record kind; the contract promises file PATHS,
-    // so the sample comes from the file-entity sweep instead.
+    // so the sample comes from the pathed-entity sweep instead.
     const knownPaths = [
         ...new Set(
             fileEntities(graph)
@@ -604,13 +633,68 @@ export function formatDot(graph: ProvGraph, result: LineageResult): string {
     return lines.join("\n");
 }
 
+/** A Mermaid quoted label: embedded double quotes become Mermaid's entity escape, so any command line survives inside the quotes. */
+function mermaidLabel(label: string): string {
+    return `"${label.replaceAll('"', "#quot;")}"`;
+}
+
+/**
+ * Render the walk as Mermaid `flowchart` source — a pure text emitter over the same flat
+ * projection `formatJson` exposes; the user pipes it into any Mermaid consumer (nothing here
+ * renders). Node ids are a grammar-safe transform of the prefixed QNames (Mermaid ids reject `:`):
+ * every character outside `[A-Za-z0-9_]` becomes `_`, with a numeric suffix on the rare collision
+ * so distinct records can never share an id. Entities render rounded (`id(["…"])`), activities as
+ * rectangles (`id["…"]`) — the PROV visual convention — labeled with the same facts the tree
+ * shows, always in the quoted form with embedded `"` escaped, so command lines carrying quotes or
+ * punctuation still parse. Edges are exactly the JSON edge set in asserted PROV orientation, the
+ * relation visible in both the arrow style and its label: solid `-->|wasGeneratedBy|`, dotted
+ * `-.->|used|`. Unlike the tree, a shared intermediate appears ONCE with all its edges — this is
+ * the format that shows the true DAG shape.
+ */
+export function formatMermaid(graph: ProvGraph, result: LineageResult): string {
+    const flat = formatJson(graph, result);
+    // QName → grammar-safe id. The sanitize is injective over realistic QNames; the suffix loop
+    // makes uniqueness airtight rather than assumed.
+    const ids = new Map<string, string>();
+    const taken = new Set<string>();
+    const idOf = (qn: string): string => {
+        const existing = ids.get(qn);
+        if (existing !== undefined) return existing;
+        const base = qn.replaceAll(/[^A-Za-z0-9_]/g, "_");
+        let id = base;
+        for (let n = 2; taken.has(id); n++) id = `${base}_${n}`;
+        ids.set(qn, id);
+        taken.add(id);
+        return id;
+    };
+    const lines: string[] = ["flowchart LR"];
+    for (const [qn, node] of Object.entries(flat.nodes)) {
+        if (node.kind === "file") {
+            const truncated = node.truncated === true;
+            const label = `${node.path ?? qn}  (hash ${shortHash(node.hash)})${truncated ? "  [truncated]" : ""}`;
+            lines.push(`    ${idOf(qn)}([${mermaidLabel(label)}])`);
+        } else {
+            lines.push(`    ${idOf(qn)}[${mermaidLabel(activityFacts({ qn, ...node }))}]`);
+        }
+    }
+    for (const edge of flat.edges) {
+        lines.push(
+            edge.kind === "wasGeneratedBy"
+                ? `    ${idOf(edge.from)} -->|wasGeneratedBy| ${idOf(edge.to)}`
+                : `    ${idOf(edge.from)} -.->|used| ${idOf(edge.to)}`,
+        );
+    }
+    return lines.join("\n");
+}
+
 /** The validated `prov lineage` options, parsed at the CLI boundary. */
-type LineageOptions = { forward: boolean; depth?: number; format: "tree" | "json" | "dot" };
+type LineageOptions = { forward: boolean; depth?: number; format: "tree" | "json" | "dot" | "mermaid" };
 
 /** Validate the raw commander options; any invalid flag fails with the accepted values. */
 function parseOptions(opts: { forward?: boolean; depth?: string; format?: string }): LineageOptions {
     const format = (opts.format ?? "tree").toLowerCase();
-    if (format !== "tree" && format !== "json" && format !== "dot") fail(`Unknown format "${opts.format}". Use "tree", "json", or "dot".`);
+    if (format !== "tree" && format !== "json" && format !== "dot" && format !== "mermaid")
+        fail(`Unknown format "${opts.format}". Use "tree", "json", "dot", or "mermaid".`);
     let depth: number | undefined;
     if (opts.depth !== undefined) {
         depth = Number(opts.depth);
@@ -620,17 +704,16 @@ function parseOptions(opts: { forward?: boolean; depth?: string; format?: string
 }
 
 /**
- * `inflexa prov lineage <analysis> <ref> [--forward] [--depth n] [--format tree|json|dot]` —
- * resolve the ref (a file path, content hash, hash prefix, or search string) in the analysis's
- * stored provenance document and print its lineage. Reads the same stored bytes `export`
- * serializes; an analysis with no recorded provenance fails with an actionable message rather than
- * an empty walk.
+ * `inflexa prov lineage <analysis> <ref> [--forward] [--depth n] [--format tree|json|dot|mermaid]`
+ * — resolve the ref (a file path, content hash, hash prefix, search string, or record QName) in
+ * the analysis's stored provenance document and print its lineage. Reads the same stored bytes
+ * `export` serializes; an analysis with no recorded provenance fails with an actionable message
+ * rather than an empty walk.
  */
 export function runProvLineage(analysisRef: string, ref: string, rawOpts: { forward?: boolean; depth?: string; format?: string }): void {
     const opts = parseOptions(rawOpts);
 
-    const analysis = findAnalysisForProv(analysisRef).match((a) => a, dieOn("Failed to resolve analysis"));
-    if (!analysis) fail(`No analysis found matching "${analysisRef}".`);
+    const analysis = requireAnalysisForProv(analysisRef);
 
     const stored = getAnalysisProvenance(analysis.id).match((s) => s, dieOn("Failed to read provenance"));
     if (stored === null) fail(`No provenance recorded for "${analysis.name}" yet — run an analysis first.`);
@@ -660,5 +743,6 @@ export function runProvLineage(analysisRef: string, ref: string, rawOpts: { forw
     const result = computeLineage(graph, roots, { forward: opts.forward, depth: opts.depth });
     if (opts.format === "json") console.log(JSON.stringify(formatJson(graph, result), null, 2));
     else if (opts.format === "dot") console.log(formatDot(graph, result));
+    else if (opts.format === "mermaid") console.log(formatMermaid(graph, result));
     else console.log(formatTree(graph, result, { forward: opts.forward, depth: opts.depth }));
 }

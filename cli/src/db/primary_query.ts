@@ -248,6 +248,38 @@ export function findAnalysesByRef(ref: IdOrName): Result<Analysis[], DbError> {
     });
 }
 
+// Derived from ANALYSIS_COLS (one source for the column list) and qualified+aliased because the
+// joined `anchors` table shares column names (`id`, `created_at`, `updated_at`) — unqualified
+// selection would be ambiguous.
+const ANALYSIS_COLS_QUALIFIED = ANALYSIS_COLS.split(", ")
+    .map((c) => `analyses.${c} AS ${c}`)
+    .join(", ");
+
+/** An {@link AnalysisRow} joined to its anchor's cached path — `null` when the anchor row is gone (a normal local-state desync). */
+type AnalysisWithAnchorRow = AnalysisRow & { anchor_cached_path: string | null };
+
+/**
+ * The {@link findAnalysesByRef} candidate selection, each row joined to its anchor folder's
+ * last-known path — the disambiguating fact an ambiguity listing shows (same-named analyses
+ * usually differ by WHERE they live). LEFT JOIN because the anchor row may legitimately be
+ * missing (the user owns both the DB file and the folders, and the two can desync); the path is
+ * then `null` on the ok channel, never an error. Same id-first, newest-first ordering as the
+ * unjoined resolver.
+ */
+export function findAnalysesByRefWithAnchor(ref: IdOrName): Result<{ analysis: Analysis; anchorPath: string | null }[], DbError> {
+    return tryQuery("findAnalysesByRefWithAnchor", (conn) => {
+        const rows = conn
+            .query(
+                `SELECT ${ANALYSIS_COLS_QUALIFIED}, anchors.cached_path AS anchor_cached_path
+                 FROM analyses LEFT JOIN anchors ON anchors.id = analyses.anchor_id
+                 WHERE analyses.id = $ref OR analyses.slug = $ref OR analyses.name = $ref
+                 ORDER BY (analyses.id = $ref) DESC, analyses.created_at DESC`,
+            )
+            .all({ $ref: ref }) as AnalysisWithAnchorRow[];
+        return rows.map((r) => ({ analysis: analysisFromRow(r), anchorPath: r.anchor_cached_path }));
+    });
+}
+
 /** Every analysis, newest first. */
 export function listAnalyses(): Result<Analysis[], DbError> {
     return tryQuery("listAnalyses", (conn) => {

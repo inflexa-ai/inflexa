@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { ProvDocument } from "@inflexa-ai/tsprov";
 
 import { freshDb } from "../../test_support/db.ts";
+import { db } from "../../db/primary.ts";
 import { insertAnchor, insertAnalysis } from "../../db/primary_mutation.ts";
 import { getAnalysisProvenance } from "../../db/primary_query.ts";
 import { Bus } from "../../lib/bus.ts";
@@ -37,7 +38,7 @@ import {
     serializeProvenance,
 } from "./document.ts";
 import { updateAnalysisProvenance } from "../../db/primary_mutation.ts";
-import { initProvenanceRecording, flushProvenanceAsync, resetProvenanceRecorderForTests } from "./prov.ts";
+import { initProvenanceRecording, flushProvenanceAsync, resetProvenanceRecorderForTests, resolveAnalysisForProv } from "./prov.ts";
 import { getAnalysisIntegrity } from "../../db/primary_query.ts";
 import { computeChainHash, computePayloadDigest, verifyHexDigest, resetSigningForTests, loadOrGenerateKeypair } from "./signing.ts";
 import { verifyProvenance, verifyPayload } from "./verify.ts";
@@ -1100,5 +1101,65 @@ describe("provenance recorder handles execution events (bus → flush → signed
 
         resetSigningForTests(null);
         rmSync(tmpDir, { recursive: true, force: true });
+    });
+});
+
+describe("resolveAnalysisForProv (ambiguity-aware analysis resolution)", () => {
+    beforeEach(() => {
+        freshDb();
+        insertAnchor({ id: "anchor1", createdAt: 1, updatedAt: 1, cachedPath: "/tmp/x", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+    });
+
+    function mkAnalysis(id: string, name: string, slug: string, createdAt: number): Analysis {
+        return { id, createdAt, updatedAt: createdAt, name: asStr256(name), slug, anchorId: "anchor1", projectId: null };
+    }
+
+    test("three same-named analyses fail as ambiguous, carrying every candidate newest-first", () => {
+        insertAnalysis(mkAnalysis("id-1", "dup", "dup-1", 100))._unsafeUnwrap();
+        insertAnalysis(mkAnalysis("id-2", "dup", "dup-2", 200))._unsafeUnwrap();
+        insertAnalysis(mkAnalysis("id-3", "dup", "dup-3", 300))._unsafeUnwrap();
+
+        const err = resolveAnalysisForProv("dup")._unsafeUnwrapErr();
+        expect(err.type).toBe("ambiguous");
+        if (err.type === "ambiguous") {
+            expect(err.candidates.map((c) => c.id)).toEqual(["id-3", "id-2", "id-1"]);
+            expect(err.candidates[0]).toEqual({ id: "id-3", name: "dup", createdAt: 300, anchorPath: "/tmp/x" });
+        }
+    });
+
+    test("a candidate whose anchor row is gone still lists, with a null path", () => {
+        insertAnchor({ id: "anchor2", createdAt: 1, updatedAt: 1, cachedPath: "/tmp/y", markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis(mkAnalysis("id-a", "dup", "dup-a", 100))._unsafeUnwrap();
+        insertAnalysis({ ...mkAnalysis("id-b", "dup", "dup-b", 200), anchorId: "anchor2" })._unsafeUnwrap();
+
+        // The user owns both the DB file and the folders, so a dangling anchor reference is a
+        // legitimate state (e.g. an out-of-band restore); the FK pragma cannot see it happen, so
+        // the desync is constructed directly on the test connection.
+        const conn = db()._unsafeUnwrap();
+        conn.run("PRAGMA foreign_keys = OFF");
+        conn.run("DELETE FROM anchors WHERE id = 'anchor2'");
+        conn.run("PRAGMA foreign_keys = ON");
+
+        const err = resolveAnalysisForProv("dup")._unsafeUnwrapErr();
+        expect(err.type).toBe("ambiguous");
+        if (err.type === "ambiguous") {
+            expect(err.candidates).toEqual([
+                { id: "id-b", name: "dup", createdAt: 200, anchorPath: null },
+                { id: "id-a", name: "dup", createdAt: 100, anchorPath: "/tmp/x" },
+            ]);
+        }
+    });
+
+    test("an exact id resolves even when the ref is also another analysis's name", () => {
+        insertAnalysis(mkAnalysis("shared", "Base", "base", 100))._unsafeUnwrap();
+        insertAnalysis(mkAnalysis("id-9", "shared", "shared-name", 200))._unsafeUnwrap();
+
+        // Two rows match ("shared" hits one id and one name) — the id row sorts first and wins.
+        expect(resolveAnalysisForProv("shared")._unsafeUnwrap().id).toBe("shared");
+    });
+
+    test("a unique name resolves with no ambiguity failure", () => {
+        insertAnalysis(mkAnalysis("id-solo", "solo", "solo", 100))._unsafeUnwrap();
+        expect(resolveAnalysisForProv("solo")._unsafeUnwrap().id).toBe("id-solo");
     });
 });

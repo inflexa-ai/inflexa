@@ -8,6 +8,7 @@ import type { ProvActor, ProvCommandRef, ProvFileRef, ProvModelId, ProvStepRef }
 import {
     appendCommandExecuted,
     appendFileWritten,
+    appendInputAdded,
     appendInputUsed,
     appendRunStarted,
     appendStepCompleted,
@@ -20,6 +21,7 @@ import {
     computeLineage,
     formatDot,
     formatJson,
+    formatMermaid,
     formatTree,
     lineageGraph,
     resolveLineageRef,
@@ -239,6 +241,17 @@ describe("resolveLineageRef search tier", () => {
         // ...and one matching nothing keeps the known-paths orientation.
         const missing = resolveLineageRef(graph, "nowhere/")._unsafeUnwrapErr();
         expect(missing.type).toBe("not_found");
+    });
+
+    test("a profile-only document still orients an unmatched reference", () => {
+        // No file writes at all — the only pathed entity is the analysis-lifecycle input.
+        const doc = freshDocument(analysis);
+        appendInputAdded(doc, "a1", system, { path: "data/inputs/counts.csv", isDir: false, anchorId: "anchor1" }, null);
+        const g = lineageGraph(doc);
+
+        const err = resolveLineageRef(g, "no/such/ref.bin")._unsafeUnwrapErr();
+        expect(err.type).toBe("not_found");
+        if (err.type === "not_found") expect(err.knownPaths).toEqual(["data/inputs/counts.csv"]);
     });
 
     test("an exact path that also occurs as a substring elsewhere resolves via the exact tier only", () => {
@@ -579,5 +592,124 @@ describe("formatDot", () => {
         const dot = formatDot(g, computeLineage(g, roots, { forward: false }));
         // The command's quote and backslash must round-trip escaped inside the emitted label.
         expect(dot).toContain('bash -c \\"echo \\\\ hi\\"');
+    });
+});
+
+describe("identifier resolution tier", () => {
+    test("a record's bare localpart and prefixed QName both resolve it", () => {
+        const doc = freshDocument(analysis);
+        appendInputAdded(doc, "a1", system, { path: "data/raw", isDir: true, anchorId: "anchor1" }, null);
+        const g = lineageGraph(doc);
+        // The identifier is discovered from the document itself — the token a user copies out of
+        // the exported PROV, not a re-derivation of the QName hash.
+        const inputQn = g.nodes.map((n) => n.element.identifier?.toString() ?? "").find((q) => q.startsWith("inflexa:input-"))!;
+
+        const byLocalpart = resolveLineageRef(g, inputQn.slice("inflexa:".length))._unsafeUnwrap();
+        expect(byLocalpart.kind).toBe("files");
+        if (byLocalpart.kind === "files") expect(byLocalpart.infos.map((i) => i.qn)).toEqual([inputQn]);
+
+        const byPrefixed = resolveLineageRef(g, inputQn)._unsafeUnwrap();
+        expect(byPrefixed).toEqual(byLocalpart);
+    });
+
+    test("a command activity's QName roots an activity walk", () => {
+        const bQn = commandQName(stepRef, cmdB.outputs);
+        expect(resolveLineageRef(graph, bQn)._unsafeUnwrap()).toEqual({ kind: "activity", qn: bQn });
+        const { tree } = lineageOf(graph, bQn, { forward: false });
+        expect(tree.split("\n")[0]).toBe("python plot.py (exit 0) — step step-de, run run-001");
+    });
+
+    test("an exact path that equals another record's localpart resolves via the path tier", () => {
+        const doc = freshDocument(analysis);
+        appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
+        const firstKey = { path: "output/first.csv", hash: "hashFirst1" };
+        appendFileWritten(doc, "a1", system, fileRefOf(firstKey), stepRef, "step");
+        // A second file recorded AT the first entity's localpart as its path — the deliberate collision.
+        const collidingPath = fileQName(firstKey).slice("inflexa:".length);
+        const secondKey = { path: collidingPath, hash: "hashSecond" };
+        appendFileWritten(doc, "a1", system, fileRefOf(secondKey), stepRef, "step");
+        const g = lineageGraph(doc);
+
+        const roots = resolveLineageRef(g, collidingPath)._unsafeUnwrap();
+        expect(roots.kind).toBe("files");
+        if (roots.kind === "files") {
+            expect(roots.infos).toHaveLength(1);
+            // The exact-path tier wins; the identifier tier (which names the FIRST file) is never reached.
+            expect(roots.infos[0]!.qn).toBe(fileQName(secondKey));
+        }
+    });
+});
+
+describe("formatMermaid", () => {
+    test("emits flowchart source with grammar-safe ids and the JSON edge set", () => {
+        const roots = resolveLineageRef(graph, heatmapKey.path)._unsafeUnwrap();
+        const result = computeLineage(graph, roots, { forward: false });
+        const json = formatJson(graph, result);
+        const mermaid = formatMermaid(graph, result);
+
+        const lines = mermaid.split("\n");
+        expect(lines[0]).toBe("flowchart LR");
+
+        // Every remaining line is either a node definition or an edge — nothing unclassified.
+        const nodeLines = lines.slice(1).filter((l) => /^\s+[A-Za-z0-9_]+(\(\[|\[)"/.test(l));
+        const edgeLines = lines.slice(1).filter((l) => l.includes("-->") || l.includes("-.->"));
+        expect(nodeLines.length + edgeLines.length).toBe(lines.length - 1);
+
+        // Node ids are strictly grammar-safe and labels are quoted.
+        for (const l of nodeLines) {
+            expect(/^\s+([A-Za-z0-9_]+)(\(\[|\[)"(.*)"(\]\)|\])$/.test(l)).toBe(true);
+        }
+
+        // The edge set equals the JSON edges after the same qn → id transform, arrow style agreeing
+        // with the labeled relation (solid generation, dotted usage).
+        const idOf = (qn: string): string => qn.replace(/[^A-Za-z0-9_]/g, "_");
+        const expected = json.edges.map((e) => `${idOf(e.from)}|${e.kind}|${idOf(e.to)}`).sort();
+        const parsed = edgeLines.map((l) => {
+            const m = /^\s+([A-Za-z0-9_]+) (-->|-\.->)\|(wasGeneratedBy|used)\| ([A-Za-z0-9_]+)$/.exec(l);
+            expect(m).not.toBeNull();
+            expect(m![2]).toBe(m![3] === "wasGeneratedBy" ? "-->" : "-.->");
+            return `${m![1]}|${m![3]}|${m![4]}`;
+        });
+        expect(parsed.sort()).toEqual(expected);
+    });
+
+    test("a shared intermediate is one node with several edges — the true DAG shape", () => {
+        const doc = freshDocument(analysis);
+        const selfKey = { path: "runs/run-001/step-de/output/self.csv", hash: "hashSelf01" };
+        const selfRead: ProvCommandRef = { kind: "command", command: "bash gen.sh", exitCode: 0, outputs: [selfKey], inputs: [{ ...selfKey, source: "step" }] };
+        appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
+        appendCommandExecuted(doc, "a1", system, stepRef, selfRead, model);
+        appendFileWritten(doc, "a1", system, fileRefOf(selfKey), stepRef, "command");
+        const g = lineageGraph(doc);
+
+        const roots = resolveLineageRef(g, selfKey.path)._unsafeUnwrap();
+        const mermaid = formatMermaid(g, computeLineage(g, roots, { forward: false }));
+        const lines = mermaid.split("\n");
+        // The tree renders this entity twice (the root and a marked re-encounter); the graph draws
+        // it ONCE, carrying both its generation and its self-read usage edge.
+        const fileId = fileQName(selfKey).replace(/[^A-Za-z0-9_]/g, "_");
+        expect(lines.filter((l) => l.trimStart().startsWith(`${fileId}([`))).toHaveLength(1);
+        const incident = lines.filter((l) => (l.includes("-->") || l.includes("-.->")) && l.includes(fileId));
+        expect(incident).toHaveLength(2);
+    });
+
+    test("labels with mermaid-significant characters are quoted and escaped", () => {
+        const doc = freshDocument(analysis);
+        const outKey = { path: "runs/run-001/step-de/output/esc.txt", hash: "hashEscape" };
+        const tricky: ProvCommandRef = { kind: "command", command: 'grep "x" (a) #tag', exitCode: 0, outputs: [outKey], inputs: [] };
+        appendStepCompleted(doc, "a1", system, { runId: "run-001", stepId: "step-de", status: "completed", completedAtMs: 1 }, model);
+        appendCommandExecuted(doc, "a1", system, stepRef, tricky, model);
+        appendFileWritten(doc, "a1", system, fileRefOf(outKey), stepRef, "command");
+        const g = lineageGraph(doc);
+
+        const roots = resolveLineageRef(g, outKey.path)._unsafeUnwrap();
+        const mermaid = formatMermaid(g, computeLineage(g, roots, { forward: false }));
+        // The embedded quotes arrive as Mermaid's entity escape; parentheses and hashes ride
+        // inside the quoted label untouched.
+        expect(mermaid).toContain("grep #quot;x#quot; (a) #tag (exit 0)");
+        // No label body carries a raw double quote — only the wrapping quotes remain.
+        const labels = [...mermaid.matchAll(/(\(\[|\[)"(.*)"(\]\)|\])/g)].map((m) => m[2]!);
+        expect(labels.length).toBeGreaterThan(0);
+        for (const label of labels) expect(label.includes('"')).toBe(false);
     });
 });
