@@ -73,6 +73,20 @@ export type ToolCallPart = {
  * primitive fields the harness `readPlanCard` reader extracts — never a harness
  * object — so nothing mutable from the in-process emit stream reaches the store.
  */
+export type PlanCardStepView = {
+    id: string;
+    name: string;
+    agent: string;
+    question: string;
+    acceptance_criteria: string[];
+    constraints: string[];
+    caveats: string[];
+    depends_on: string[];
+    resources: { cpu: number; memoryGb: number; gpuCount: number } | null;
+    track: string;
+    step_type: string;
+};
+
 export type PlanCardPart = {
     id: string;
     type: "plan-card";
@@ -80,8 +94,8 @@ export type PlanCardPart = {
     planId: string;
     /** Plan title (empty when the harness card carried none). */
     title: string;
-    /** Ordered plan steps, each a flat primitive triple. */
-    steps: { id: string; name: string; agent: string }[];
+    /** Ordered plan steps, copied into the CLI-owned primitive view at receipt. */
+    steps: PlanCardStepView[];
 };
 
 /**

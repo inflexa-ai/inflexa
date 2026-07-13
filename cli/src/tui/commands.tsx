@@ -8,6 +8,7 @@ import type { VerifyResult } from "../types/prov.ts";
 import { PromptDialog } from "./components/dialog/prompt_dialog.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
 import { SelectDialog } from "./components/dialog/select_dialog.tsx";
+import { PlanStepDetailDialog } from "./components/dialog/plan_step_detail_dialog.tsx";
 import { FilePicker } from "./components/dialog/file_picker.tsx";
 import { ConfigApp } from "./app_config.tsx";
 import { DesignGallery } from "./layout/design_gallery.tsx";
@@ -16,7 +17,7 @@ import { notify } from "./hooks/notice.ts";
 import { queryRunsByAnalysis } from "@inflexa-ai/harness";
 
 import { bootState, harnessRuntime } from "./hooks/boot.ts";
-import { sessionOpenables, type SessionOpenable } from "./hooks/conversation.ts";
+import { latestPlanCard, sessionOpenables, type SessionOpenable } from "./hooks/conversation.ts";
 import { openArtifact } from "./hooks/artifacts.ts";
 import { resolveEntryPath } from "../modules/harness/artifact_open.ts";
 import { driveForceReprofile, profileWorkInFlight } from "./hooks/profile_parity.ts";
@@ -1192,6 +1193,30 @@ export const commands: Command[] = [
         description: "Open a chart, figure, file, or report shown in this session",
         category: "View",
         run: (ctx) => ctx.openDialog(() => <BrowseArtifactsDialog />),
+    },
+    {
+        id: "plan.explore-steps",
+        title: "Explore plan steps…",
+        description: "Inspect the latest plan's questions, constraints, and resources",
+        category: "View",
+        keybind: keybindLabel("plan.explore-steps"),
+        enabled: () => latestPlanCard() !== null,
+        run: (ctx) => {
+            const plan = latestPlanCard();
+            if (!plan) return;
+            ctx.openDialog(() => (
+                <SelectDialog
+                    title="Plan steps"
+                    items={plan.steps.map((step) => ({ value: step, title: `${step.id} ${step.name}`, hint: step.agent }))}
+                    emptyText="No plan steps"
+                    onCancel={ctx.closeDialog}
+                    onSelect={(step) => {
+                        ctx.closeDialog();
+                        ctx.openDialog(() => <PlanStepDetailDialog step={step} onClose={ctx.closeDialog} />);
+                    }}
+                />
+            ));
+        },
     },
     // The model-switch commands form their own `Provider` group — declared here, after `View`, so
     // the palette (which orders groups by a category's first appearance in this array) renders it as

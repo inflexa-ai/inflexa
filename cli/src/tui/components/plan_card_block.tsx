@@ -1,18 +1,12 @@
-import { For, Show } from "solid-js";
+import { createMemo, For, Show } from "solid-js";
+import type { Accessor } from "solid-js";
 
 import { theme } from "../theme.ts";
 import { GLYPHS, space } from "../../lib/design_system.ts";
+import { planToDag } from "../../modules/harness/plan_dag.ts";
 import { Fg } from "./emphasis.tsx";
-
-/** One plan step's display shape — the three primitive fields the plan card carries per step. */
-export type PlanCardStepView = {
-    /** The plan-local step id (e.g. `s1`). */
-    id: string;
-    /** Human step name. */
-    name: string;
-    /** The sandbox agent that runs the step. */
-    agent: string;
-};
+import { ScrollPane } from "./scroll_pane.tsx";
+import type { PlanCardStepView } from "../../types/session.ts";
 
 /** Props for {@link PlanCardBlock}. */
 export type PlanCardBlockProps = {
@@ -32,6 +26,14 @@ export type PlanCardBlockProps = {
  */
 export function PlanCardBlock(props: PlanCardBlockProps) {
     const heading = (): string => props.title || props.planId;
+    const graph = createMemo((): string | null => {
+        if (props.steps.length === 0) return null;
+        return planToDag(props.steps).match(
+            (value) => value || null,
+            () => null,
+        );
+    });
+    const graphHeight = (): number => (graph()?.split("\n").length ?? 0) + 1;
     return (
         <box flexDirection="column" paddingBottom={space.sm}>
             <text>
@@ -44,15 +46,26 @@ export function PlanCardBlock(props: PlanCardBlockProps) {
                 </Show>
             </text>
             <box paddingLeft={space.md} flexDirection="column" border={["left"]} borderColor={theme().border}>
-                <For each={props.steps}>
-                    {(step) => (
-                        <text>
-                            <Fg role="fgMuted">{`${step.id} `}</Fg>
-                            <Fg role="fg">{step.name}</Fg>
-                            <Fg role="tool">{` [${step.agent}]`}</Fg>
-                        </text>
+                <Show
+                    when={graph()}
+                    fallback={
+                        <For each={props.steps}>
+                            {(step) => (
+                                <text>
+                                    <Fg role="fgMuted">{`${step.id} `}</Fg>
+                                    <Fg role="fg">{step.name}</Fg>
+                                    <Fg role="tool">{` [${step.agent}]`}</Fg>
+                                </text>
+                            )}
+                        </For>
+                    }
+                >
+                    {(value: Accessor<string>) => (
+                        <ScrollPane focusOnMount={false} height={graphHeight()} width="100%" scrollX scrollY={false}>
+                            <text wrapMode="none">{value()}</text>
+                        </ScrollPane>
                     )}
-                </For>
+                </Show>
             </box>
         </box>
     );

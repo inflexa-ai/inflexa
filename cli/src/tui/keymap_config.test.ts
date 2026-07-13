@@ -57,6 +57,12 @@ describe("keybind resolution — config override", () => {
         expect(keybindLabel("app.command-palette")).toBe("ctrl+p");
     });
 
+    test("the plan-step command id is remappable", () => {
+        writeKeybinds({ "plan.explore-steps": "ctrl+p" });
+        expect(resolveKeybind("plan.explore-steps")).toEqual(parseChord("ctrl+p"));
+        expect(keybindLabel("plan.explore-steps")).toBe("ctrl+p");
+    });
+
     test("end-to-end: a remapped command fires on its new chord, not the old default", () => {
         writeKeybinds({ "app.command-palette": "ctrl+p" });
         withRoot(() => {

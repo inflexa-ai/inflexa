@@ -42,8 +42,14 @@ export type ScrollPaneProps = {
     flexGrow?: number;
     /** Minimum height (pass 0 to let a flex column shrink the pane instead of its siblings). */
     minHeight?: number;
+    /** Fixed pane height when the host knows its content row count. */
+    height?: number;
     /** Pane width. */
     width?: number | `${number}%`;
+    /** Enable horizontal overflow and its scrollbar. */
+    scrollX?: boolean;
+    /** Enable vertical overflow; defaults to opentui's `true`. */
+    scrollY?: boolean;
     /** Inner padding. */
     paddingTop?: number;
     paddingBottom?: number;
@@ -111,7 +117,10 @@ export function ScrollPane(props: ScrollPaneProps): JSX.Element {
             }}
             flexGrow={props.flexGrow}
             minHeight={props.minHeight}
+            height={props.height}
             width={props.width}
+            scrollX={props.scrollX}
+            scrollY={props.scrollY}
             stickyScroll={props.stickyScroll}
             stickyStart={props.stickyStart}
             paddingTop={props.paddingTop}
