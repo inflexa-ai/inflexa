@@ -2,9 +2,7 @@
 
 ## Purpose
 The `inflexa chat <analysis>` command — a dev/E2E surface (a clack/stdout REPL, not a TUI) that converses with the harness conversation agent scoped to a resolved analysis, exercising the whole embedded conversational loop headlessly. The product conversation surface is the TUI chat (capability `tui-harness-chat`); this REPL is registered only in the dev channel (see `dev-commands`) and is absent from release builds. Both surfaces drive the same shared turn engine (`src/modules/harness/turn.ts`). Lives in `src/modules/harness/chat.ts` (+ `chat_printer.ts`).
-
 ## Requirements
-
 ### Requirement: Chat is a dev-channel harness REPL
 
 The system SHALL provide a dedicated `inflexa chat <analysis>` command — a clack/stdout REPL, not a
@@ -37,7 +35,6 @@ acquire the per-analysis instance lock after resolution and before boot.
 
 - **WHEN** the analysis is already held by another live inflexa process
 - **THEN** the command prints the conflict to stderr and exits non-zero without booting the runtime
-
 
 ### Requirement: The turn loop runs through the harness app-fn seam
 
@@ -94,8 +91,15 @@ The command's emit sink SHALL render, to stdout: accumulated `text-delta` conten
 arrives (no paced/typewriter reveal), one-line tool chips on `tool-started` completed on
 `tool-finished` (tool name and outcome), and text renderings of the `data-plan` (plan
 id, title, step list) and `data-run-card` (run id, title, step count — the fields the
-harness `RunCardData` contract carries; it has no run-status field) parts. Events
-originating from sub-agents (call path deeper than the top-level agent) SHALL be dropped. Any other
+harness `RunCardData` contract carries; it has no run-status field) parts. Text-shaped
+`data-presentation` parts (`markdown`, `code`, `table`) SHALL print inline as text
+(markdown source; code fenced; tables as aligned text). Pixel-shaped parts —
+`echart`/`svg` presentations (materialized through the shared cache),
+`data-file-reference` entries, and `data-report-preview` — SHALL print one line per
+entry carrying a kind tag, title, and the resolved path wrapped in an OSC 8 `file://`
+hyperlink with the plain path visible for terminals without hyperlink support;
+`data-report-preview-failed` prints its reason. Events originating from sub-agents
+(call path deeper than the top-level agent) SHALL be dropped. Any other
 conversation-emitted part SHALL print a one-line tagged fallback rather than being
 silently swallowed. The sink SHALL extract what it renders at receipt and SHALL NOT
 retain received event or part objects (in-process emit shares mutable references with
@@ -115,6 +119,11 @@ the agent loop). Diagnostics go to stderr; stdout carries only the conversation.
 
 - **WHEN** the agent presents a plan via `show_plan`
 - **THEN** stdout renders the plan id, title, and per-step lines from the embedded plan content
+
+#### Scenario: An openable renders as a linked path
+
+- **WHEN** the agent shows a file via `show_file`
+- **THEN** stdout prints a line per file with its caption and resolved absolute path, hyperlinked via OSC 8 and readable as plain text
 
 #### Scenario: Sub-agent traffic stays out of the transcript
 
@@ -160,3 +169,4 @@ while an abort is already in flight MAY force-exit the process.
 
 - **WHEN** the user presses Ctrl+C (or Ctrl+D) at the idle prompt
 - **THEN** the process releases the analysis lock, shuts the runtime down gracefully, and exits zero
+
