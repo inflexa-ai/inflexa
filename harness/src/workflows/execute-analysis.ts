@@ -105,6 +105,15 @@ export interface ExecuteAnalysisInput {
     readonly promptByStepId: Readonly<Record<string, string>>;
     /** Per-step agent id (sandbox catalog entry). */
     readonly agentByStepId: Readonly<Record<string, string>>;
+    /**
+     * Per-step human-readable plan name. Projects the upstream step identity a
+     * dependent step's handoff briefings caption with (see the
+     * conversation-briefings spec). `buildChildInput` reads it to build each
+     * child's `handoffSources`. Optional-with-empty-default so a workflow input
+     * persisted before this field existed replays with no names — captions fall
+     * back to the upstream step id.
+     */
+    readonly nameByStepId?: Readonly<Record<string, string>>;
     /** Per-step planner-estimated sandbox resource request. */
     readonly resourcesByStepId: Readonly<Record<string, ResourceSpec>>;
     /**
@@ -299,6 +308,16 @@ export function buildChildInput(args: {
     if (!resources) {
         throw new Error(`executeAnalysis: step "${stepId}" missing from resourcesByStepId — every step must declare resources`);
     }
+    // Upstream identity for this step's handoff briefings: one entry per
+    // `depends_on` step, in array order, carrying the upstream step id + name.
+    // Only the parent knows the DAG; the child loads each upstream's summary +
+    // artifacts itself. Name falls back to the step id when `nameByStepId`
+    // lacks an entry (older persisted input).
+    const dependsOn = input.steps.find((s) => s.id === stepId)?.depends_on ?? [];
+    const handoffSources = dependsOn.map((upstreamId) => ({
+        stepId: upstreamId,
+        name: input.nameByStepId?.[upstreamId] ?? upstreamId,
+    }));
     return {
         analysisId: input.analysisId,
         runId,
@@ -310,6 +329,7 @@ export function buildChildInput(args: {
         parentWorkflowId: workflowId,
         resources,
         timeoutSeconds: input.timeoutByStepId?.[stepId],
+        handoffSources,
     };
 }
 

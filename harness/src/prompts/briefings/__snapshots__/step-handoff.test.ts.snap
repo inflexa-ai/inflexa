@@ -1,0 +1,26 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`stepHandoffBriefing renders its fixture in isolation, matching the snapshot 1`] = `
+"# Upstream step s2 — "normalize"
+
+This step's dependency completed. Its interpretation summary and artifact locations follow.
+
+## Normalization
+
+Applied median-of-ratios size-factor normalization to the raw count matrix
+(24,183 genes × 18 samples). Removed 1,204 genes below the minimum-count
+threshold, leaving 22,979 for downstream testing. Sample \`S14\` was flagged as
+a library-size outlier (2.3× median depth) but retained.
+
+**Key outputs:** the normalized AnnData (\`normalized.h5ad\`) and a per-sample QC
+table are the inputs the differential-expression step should consume.
+
+## Artifacts
+
+- /analysis_ad01/runs/run_7c2e/s2/output/normalized.h5ad
+- /analysis_ad01/runs/run_7c2e/s2/output/qc_metrics.csv
+- /analysis_ad01/runs/run_7c2e/s2/figures/library_size.png
+- /analysis_ad01/runs/run_7c2e/s2/scripts/normalize.py"
+`;
+
+exports[`stepHandoffBriefing renders its fixture in isolation, matching the snapshot 2`] = `"step s2 "normalize" · 4 artifacts"`;

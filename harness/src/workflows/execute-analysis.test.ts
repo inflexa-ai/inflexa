@@ -30,7 +30,7 @@ import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat
 
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 
-import { runExecuteAnalysisBody } from "./execute-analysis.js";
+import { buildChildInput, runExecuteAnalysisBody } from "./execute-analysis.js";
 import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunProvenanceEvent } from "./execute-analysis.js";
 import type { SandboxStepInput, SandboxStepResult } from "./sandbox-step.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
@@ -301,6 +301,39 @@ function input(steps: Array<{ id: string; depends_on?: readonly string[] }>, bud
         },
     };
 }
+
+// ── buildChildInput handoff-source projection ─────────────────────────
+
+describe("buildChildInput handoffSources projection", () => {
+    const base = (nameByStepId?: Record<string, string>): ExecuteAnalysisInput => ({
+        ...input([{ id: "s1" }, { id: "s2" }, { id: "s3", depends_on: ["s1", "s2"] }]),
+        ...(nameByStepId ? { nameByStepId } : {}),
+    });
+    const build = (inp: ExecuteAnalysisInput, stepId: string) =>
+        buildChildInput({ input: inp, stepId, level: 0, runId: "run-test", workflowId: "wf-1", attempt: 0 });
+
+    it("derives one handoff source per depends_on entry, in array order, carrying the upstream name", () => {
+        const child = build(base({ s1: "qc", s2: "normalize" }), "s3");
+        expect(child.handoffSources).toEqual([
+            { stepId: "s1", name: "qc" },
+            { stepId: "s2", name: "normalize" },
+        ]);
+    });
+
+    it("gives a root step (no depends_on) no handoff sources", () => {
+        const child = build(base({ s1: "qc" }), "s1");
+        expect(child.handoffSources).toEqual([]);
+    });
+
+    it("falls back to the upstream step id when nameByStepId lacks an entry", () => {
+        // No nameByStepId at all — an input persisted before the field existed.
+        const child = build(base(), "s3");
+        expect(child.handoffSources).toEqual([
+            { stepId: "s1", name: "s1" },
+            { stepId: "s2", name: "s2" },
+        ]);
+    });
+});
 
 // ── 10.7 Fail-fast cascade ───────────────────────────────────────────
 

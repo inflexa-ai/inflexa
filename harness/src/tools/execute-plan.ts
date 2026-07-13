@@ -222,6 +222,7 @@ export function createExecutePlanTool(deps: ExecutePlanToolDeps) {
                 })),
                 promptByStepId: Object.fromEntries(plan.steps.map((s) => [s.id, renderStepPrompt(s)])),
                 agentByStepId: Object.fromEntries(plan.steps.map((s) => [s.id, s.agent ?? "unknown"])),
+                nameByStepId: Object.fromEntries(plan.steps.map((s) => [s.id, s.name])),
                 resourcesByStepId: Object.fromEntries(
                     plan.steps.map((s) => {
                         if (!s.resources) {

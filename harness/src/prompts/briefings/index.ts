@@ -12,3 +12,4 @@ export { composeBriefing, wrapBriefingContent, type ComposedBriefing } from "./c
 export { dataProfileBriefing, DATA_PROFILE_BRIEFING_NAME } from "./data-profile.js";
 export { priorRunsBriefing, PRIOR_RUNS_BRIEFING_NAME } from "./prior-runs.js";
 export { priorPlanBriefing, PRIOR_PLAN_BRIEFING_NAME, type PriorPlanInput } from "./prior-plan.js";
+export { stepHandoffBriefing, STEP_HANDOFF_BRIEFING_NAME, type StepHandoffInput } from "./step-handoff.js";

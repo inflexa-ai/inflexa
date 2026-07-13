@@ -47,9 +47,10 @@ import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
-import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { runStepDir, stepWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactRegistry } from "../execution/artifact-registry.js";
 import { walkStepArtifacts } from "../execution/post-step.js";
+import { composeBriefing, stepHandoffBriefing, type StepHandoffInput } from "../prompts/briefings/index.js";
 import {
     collectStepOutputs,
     generateStepFileMetadata,
@@ -78,6 +79,16 @@ export interface SandboxStepInput {
     readonly level: number;
     /** User-content prompt the agent receives as its initial message. */
     readonly prompt: string;
+    /**
+     * Upstream `depends_on` step identities, in array order, that this step's
+     * handoff briefings are built from (see the conversation-briefings spec).
+     * The parent projects identity only; the child loads each upstream's
+     * interpretation summary + artifact listing inside the `handoff.load`
+     * durable step and composes one `step-handoff` briefing per surviving
+     * entry. Optional-with-empty-default: absent (root step, or a child input
+     * persisted before this field existed) → no handoff briefings.
+     */
+    readonly handoffSources?: readonly { readonly stepId: string; readonly name: string }[];
     /**
      * 0-based resume attempt. The parent passes its own attempt counter so
      * the child's LLM step names include `:${attempt}` and resumed calls
@@ -320,6 +331,64 @@ function userFacingStepFailure(errorClass: "agent_loop" | "lineage_attestation")
     return errorClass === "lineage_attestation" ? "Step results could not be finalized." : "Step failed during execution.";
 }
 
+/**
+ * The upstream artifact (relative to the step write prefix) that is the handoff
+ * briefing's body, not a listed artifact — excluded from `artifactPaths`.
+ */
+const HANDOFF_SUMMARY_REL_PATH = "output/summary.md";
+
+/**
+ * Load each upstream step's handoff payload: the persisted interpretation
+ * summary (read via the workspace read seam) plus the upstream step's artifact
+ * locations (walked from the step tree, rendered as sandbox-canonical absolute
+ * paths). Omit-on-missing per edge — an upstream with no readable
+ * `output/summary.md` contributes nothing and its siblings are unaffected;
+ * `output/summary.md` itself is the briefing body, so it is excluded from the
+ * artifact list. Does no DBOS work: the body wraps this in the checkpointed
+ * `handoff.load` step so a replay composes byte-identical initial messages
+ * without re-touching disk.
+ */
+export async function loadHandoffPayloads(
+    deps: Pick<SandboxStepDeps, "workspaceFs" | "resolveWorkspaceRoot">,
+    session: RunSession,
+    input: Pick<SandboxStepInput, "analysisId" | "runId" | "handoffSources">,
+): Promise<StepHandoffInput[]> {
+    const sources = input.handoffSources ?? [];
+    if (sources.length === 0) return [];
+    const workspaceRoot = deps.resolveWorkspaceRoot(input.analysisId);
+    const payloads: StepHandoffInput[] = [];
+    for (const source of sources) {
+        const summaryPath = `${runStepDir(input.runId, source.stepId)}/${HANDOFF_SUMMARY_REL_PATH}`;
+        // A not_found / out_of_scope / truncated read OR a genuine I/O err all
+        // omit this edge — never a placeholder. `unwrapOr(null)` folds the err
+        // channel into the same non-ok path so one upstream's absence or read
+        // failure never drops its siblings.
+        const read = await deps.workspaceFs.readFile({ session, path: summaryPath }).unwrapOr(null);
+        if (!read || read.kind !== "ok") continue;
+        const summaryMarkdown = read.content.toString("utf8");
+        const stepPrefix = stepWritePrefix({ workspaceRoot, runId: input.runId, stepId: source.stepId });
+        const manifest = await walkStepArtifacts({ writePrefix: stepPrefix, stepId: source.stepId, runId: input.runId });
+        const artifactPaths = manifest
+            .map((entry) => entry.path)
+            .filter((rel) => rel !== HANDOFF_SUMMARY_REL_PATH)
+            .sort()
+            .map((rel) => `/${input.analysisId}/${runStepDir(input.runId, source.stepId)}/${rel}`);
+        payloads.push({ stepId: source.stepId, name: source.name, summaryMarkdown, artifactPaths });
+    }
+    return payloads;
+}
+
+/**
+ * Compose a step loop's initial messages: one `<briefing name="step-handoff">`
+ * user message per loaded upstream payload, in order, ahead of the step-prompt
+ * user message. Pure. An empty payload list (root step, or a degraded handoff
+ * load) yields prompt-only — today's behavior.
+ */
+export function composeInitialMessages(prompt: string, payloads: readonly StepHandoffInput[]): LoopMessage[] {
+    const handoffMessages = payloads.map((payload) => composeBriefing(stepHandoffBriefing, payload).message);
+    return [...handoffMessages, { role: "user", content: prompt }];
+}
+
 // ── The child workflow body ───────────────────────────────────────────
 
 /**
@@ -558,7 +627,24 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
         }
     };
 
-    const initial: LoopMessage[] = [{ role: "user", content: input.prompt }];
+    // Handoff briefings (see the conversation-briefings spec): one per upstream
+    // `depends_on` step, injected as UNPERSISTED structured initial messages
+    // ahead of the step prompt — workflow loops keep no thread history, so no
+    // rows, no `loadRecent`, no briefing-card parts. The load is a single
+    // checkpointed durable step so a replayed workflow composes byte-identical
+    // initial messages without re-reading disk; a load failure is non-fatal and
+    // degrades to prompt-only (the pre-handoff behavior). Root steps skip the
+    // step entirely, keeping the DBOS step sequence unchanged for them.
+    const handoffSources = input.handoffSources ?? [];
+    const handoffPayloads =
+        handoffSources.length > 0
+            ? await safeRunValue(
+                  () => DBOS.runStep(() => loadHandoffPayloads(deps, session, input), { name: "handoff.load" }),
+                  "handoff.load",
+                  [] as StepHandoffInput[],
+              )
+            : [];
+    const initial: LoopMessage[] = composeInitialMessages(input.prompt, handoffPayloads);
 
     await emitActivity("executing", `Running ${input.agentId}`);
 
