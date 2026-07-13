@@ -90,39 +90,6 @@ function isPartialUniqueViolation(err: unknown): boolean {
 }
 
 /**
- * Atomically bump and return the parent-workflow resume attempt counter.
- *
- * Called by the resume entry-point (change 9) before
- * `DBOS.resumeWorkflow(parentWorkflowId)`. The parent body reads
- * `cortex_runs.attempt_count` at entry and uses it in the
- * `open-running-charge:${attempt}` durableStep name so the re-open misses
- * the DBOS step cache and a fresh charge is opened after the budget pause
- * closed the previous one. The same attempt is threaded to children
- * via `SandboxStepInput.attempt`, where it drives the attempt-numbered LLM
- * step names (NOTES #3).
- */
-export function bumpRunAttemptCount(pool: Querier, runId: string): ResultAsync<number, DbError> {
-    // A missing row here is an invariant violation, not the ordinary
-    // "not found" — callers (`prepareExecuteAnalysisResume`) guard with
-    // `queryRun` first. Throwing inside the mutation body surfaces it as
-    // `err(mutation_failed)` carrying the diagnostic message on `.cause`.
-    return tryMutation("runs.bumpRunAttemptCount", async () => {
-        const result = await pool.query<{ attempt_count: number }>({
-            text: `UPDATE cortex_runs
-             SET attempt_count = attempt_count + 1
-             WHERE run_id = $1
-             RETURNING attempt_count`,
-            values: [runId],
-        });
-        const row = result.rows[0];
-        if (!row) {
-            throw new Error(`bumpRunAttemptCount: no cortex_runs row for runId=${runId}`);
-        }
-        return row.attempt_count;
-    });
-}
-
-/**
  * Recover the active run row for `(analysisId, planId)` after `insertRun`
  * raises `RunDedupCollisionError`. The partial-unique index guarantees at
  * most one match.
@@ -132,7 +99,7 @@ export function queryActiveRun(pool: Querier, analysisId: string, planId: string
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, parts,
-                   mandate_jti, mandate_expires_at, plan_id, attempt_count -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                   mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1
               AND plan_id IS NOT DISTINCT FROM $2
@@ -178,7 +145,7 @@ export function queryRun(pool: Querier, runId: string): ResultAsync<CortexRunRow
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, parts,
-                   mandate_jti, mandate_expires_at, plan_id, attempt_count -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                   mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE run_id = $1`,
             values: [runId],
@@ -197,7 +164,7 @@ export function queryRunsByAnalysis(
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, parts,
-                   mandate_jti, mandate_expires_at, plan_id, attempt_count -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                   mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1
             ORDER BY started_at DESC LIMIT $2 OFFSET $3`,
@@ -217,7 +184,7 @@ export function queryRunsByThread(
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
                    status, started_at, completed_at, error, parts,
-                   mandate_jti, mandate_expires_at, plan_id, attempt_count -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                   mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1 AND thread_id = $2
             ORDER BY started_at DESC LIMIT $3 OFFSET $4`,
@@ -272,6 +239,5 @@ function mapRunRow(row: Record<string, unknown>): CortexRunRow {
         mandateJti: (row.mandate_jti as string) ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
         mandateExpiresAt: (row.mandate_expires_at as string) ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
         planId: (row.plan_id as string) ?? null,
-        attemptCount: typeof row.attempt_count === "number" ? row.attempt_count : 0,
     };
 }

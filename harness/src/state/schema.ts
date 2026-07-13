@@ -62,11 +62,6 @@ export const CortexRunRowSchema = z.object({
     mandateJti: z.string().nullable(), // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
     mandateExpiresAt: z.string().nullable(), // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
     planId: z.string().nullable(),
-    // Parent-workflow resume attempt counter. Bumped by the resume entry-point
-    // (change 9) before `DBOS.resumeWorkflow`; consumed by the parent body to
-    // produce attempt-numbered `open-running-charge:${attempt}` step names so
-    // the post-402 charge re-open misses the DBOS cache.
-    attemptCount: z.number().int().nonnegative().default(0),
 });
 export type CortexRunRow = z.infer<typeof CortexRunRowSchema>;
 

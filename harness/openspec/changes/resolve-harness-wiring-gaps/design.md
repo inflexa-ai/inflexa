@@ -186,7 +186,7 @@ in-tree caller and is not exported from the barrel; its doc says the entry point
 Confirm change 9's status first. If it is still planned, **A** (and annotate it
 so it stops reading as orphaned). If not, **B**.
 
-### RESOLVED (validity checked) — "change 9" does not exist: this repo names changes by dated kebab slug, never numerically, and no change (active or archived) owns the resume entry point. The `prepareExecuteAnalysisResume` module is internally coherent but unreachable (no caller, not on the barrel). The phantom "change 9" doc references were corrected to say the entry point is unbuilt. Retire-vs-build the resume path is left to the owner (tasks.md §4).
+### RESOLVED — retired (option B). "Change 9" does not exist (this repo names changes by kebab slug, never numerically; no change owns the resume entry point), so the `prepareExecuteAnalysisResume` module was unreachable scaffolding. Retired: deleted `resume-execute-analysis.ts` + its test, removed the `bumpRunAttemptCount` helper, the `cortex_runs.attempt_count` column, the `CortexRunRow.attemptCount` field, and the whole `attempt` cache-busting thread through `execute-analysis.ts` / `sandbox-step.ts` (step names lose their now-always-`0` suffix). The 402-PAUSE itself is KEPT (a budget-exceeded run still suspends to `suspended_insufficient_funds` with a DBOS-resumable `CANCELLED` parent) — only the never-built resume half went. Specs updated: `run-state-persistence` and `workflow-failure-lifecycle` deltas drop the removed pieces. The deferred resume capability is captured as a new placeholder change `resume-analysis-after-budget-pause`.
 
 ## Non-goals
 

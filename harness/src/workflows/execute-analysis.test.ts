@@ -306,9 +306,7 @@ function input(steps: Array<{ id: string; depends_on?: readonly string[] }>, bud
 
 describe("executeAnalysis body", () => {
     it("10.7 fail-fast: B errors → A and C cancelled; charge=error, mandate=failed", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         // Real-world dispatch: A/B/C race; B fails fast; parent cancels A & C
         // in-flight. Their `getResult` then returns the canceled result. Model
         // that by configuring A/C as canceled (sibling cancel = no
@@ -358,9 +356,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("blocked fail-fast: B blocked → A and C cancelled; status failed", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -390,9 +386,7 @@ describe("executeAnalysis body", () => {
     // ── waitFirst: multi-child completion ──────────────────────────────
 
     it("waitFirst settles one child per iteration → all-complete sets, status completed", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -414,9 +408,7 @@ describe("executeAnalysis body", () => {
     // ── Budget admission ────────────────────────────────────────────────
 
     it("budget admission serializes dispatch, surfaces queued steps, and completes the run", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -450,9 +442,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("budget admission: a step that can never fit fails the run with a budget-naming error", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         // No childResults — nothing may be dispatched.
         const { deps, record } = makeDeps({ pool, childResults: new Map() });
 
@@ -471,9 +461,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("no budget in the workflow input keeps the legacy full fan-out", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -498,9 +486,7 @@ describe("executeAnalysis body", () => {
     // ── 10.8 External cancel cascade ───────────────────────────────────
 
     it("10.8 external cancel: every child returns canceled (no failure) → status canceled, mandate workflow-canceled", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         // Operator cancelled the parent — propagated cancel to every child.
         // No child failed; no child reported budget_exceeded.
         const { deps, record } = makeDeps({
@@ -538,9 +524,7 @@ describe("executeAnalysis body", () => {
     // ── 10.10 Stream emission ──────────────────────────────────────────
 
     it("10.10 every UI part flows through emitStreamPart; cortex_runs.parts is never written", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -581,9 +565,7 @@ describe("executeAnalysis body", () => {
     // keep the emitter conformant don't break it.
 
     it("conformance: every part from a completed run validates against the wire schema", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -609,9 +591,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("conformance: data-run-failed from a failed run carries a string error", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }]]),
@@ -629,9 +609,7 @@ describe("executeAnalysis body", () => {
     // ── 10.11 Terminal billing close paths ─────────────────────────────
 
     it("10.11 success path closes charge with `ok` + revokes mandate workflow-completed", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -654,9 +632,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("10.11 budget-exceeded path closes charge with budget_exceeded + revokes workflow-suspended + suspends analysis", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -687,9 +663,7 @@ describe("executeAnalysis body", () => {
         // both `completed.size > 0` and `budgetExceeded` hold. A synthesis throw
         // must win: the run fails (charge=error, mandate=workflow-failed), is NOT
         // suspended as a resumable budget pause, and the workflow re-throws.
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             synthesisEnabled: true,
@@ -710,9 +684,7 @@ describe("executeAnalysis body", () => {
     // ── 10.14 No conversation-thread write ─────────────────────────────
 
     it("10.14 collectAndComplete writes nothing to the conversation thread", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
@@ -737,9 +709,7 @@ describe("executeAnalysis body", () => {
     // ── Run-lifecycle provenance callback ──────────────────────────────
 
     it("without emitProvenance the run completes (absent callback changes nothing)", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
@@ -751,9 +721,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("emitProvenance collects run_started, step_completed, then run_completed on the success path with stub-sourced times", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const events: RunProvenanceEvent[] = [];
         const { deps } = makeDeps({
             pool,
@@ -790,9 +758,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("emitProvenance emits step_completed(failed) and run_completed(failed) on the failed path", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const events: RunProvenanceEvent[] = [];
         const { deps } = makeDeps({
             pool,
@@ -826,9 +792,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("step_completed records completed/failed/canceled per settled child; a never-dispatched dependent emits nothing", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const events: RunProvenanceEvent[] = [];
         // A/B/C dispatch together at level 0; D depends on the failing B. A
         // completes, B fails (fail-fast cancels the in-flight C), and C settles
@@ -867,9 +831,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("a zero-artifact completed step still emits step_completed(completed) — settlement is registration-independent", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const events: RunProvenanceEvent[] = [];
         // Body-level settlement observes only the child's status — there is no
         // ArtifactRegistry in this path, so a step producing no artifact still
@@ -889,9 +851,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("a DBOS-recovery re-execution re-emits identical timestamps (values come from the checkpointed clock, not Date.now())", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const events: RunProvenanceEvent[] = [];
         const { deps } = makeDeps({
             pool,
@@ -923,9 +883,7 @@ describe("executeAnalysis body", () => {
     });
 
     it("a throwing emitProvenance observer does not fail the run", async () => {
-        const pool = makeFakePool({
-            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
-        });
+        const pool = makeFakePool();
         const { deps } = makeDeps({
             pool,
             emitProvenance: () => {

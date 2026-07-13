@@ -152,7 +152,6 @@ function runRow(over: Partial<CortexRunRow>): CortexRunRow {
         mandateJti: null,
         mandateExpiresAt: null,
         planId: null,
-        attemptCount: 0,
         ...over,
     };
 }

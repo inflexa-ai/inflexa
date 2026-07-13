@@ -365,11 +365,6 @@ export async function initCortexState(pool: Pool): Promise<void> {
                     "WHERE status IN ('running','suspended_insufficient_funds')",
                 "ALTER TABLE cortex_step_executions ADD COLUMN IF NOT EXISTS child_workflow_id TEXT",
                 "CREATE INDEX IF NOT EXISTS idx_cortex_step_exec_child_workflow " + "ON cortex_step_executions(child_workflow_id)",
-                // Parent-workflow resume attempt counter. Bumped by the resume entry
-                // point (change 9) before `DBOS.resumeWorkflow` so the parent body's
-                // `open-running-charge:${attempt}` durableStep name misses the cache
-                // and re-opens the charge closed on the 402 pause path.
-                "ALTER TABLE cortex_runs ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE cortex_analysis_state ADD COLUMN IF NOT EXISTS seed_input_file_ids JSONB",
                 // Databases created before `data_profile_status` became nullable still
                 // carry the NOT NULL floor, which would reject a clear. Idempotent:

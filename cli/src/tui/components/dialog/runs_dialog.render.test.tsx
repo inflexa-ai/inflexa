@@ -55,7 +55,6 @@ function run(overrides: Partial<CortexRunRow> = {}): CortexRunRow {
         mandateJti: null,
         mandateExpiresAt: null,
         planId: null,
-        attemptCount: 0,
         ...overrides,
     };
 }

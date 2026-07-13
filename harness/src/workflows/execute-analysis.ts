@@ -36,9 +36,9 @@
  *       then self-cancel the parent to `CANCELLED` (NOT `ERROR` — ERROR
  *       isn't resumable; NOTES #3)
  *     - the analysis flips to `suspended_insufficient_funds` in
- *       `collectAndComplete`; on top-up, `DBOS.resumeWorkflow` replays this
- *       parent, completed children return cached, the parent re-awaits and
- *       explicitly resumes each CANCELLED child
+ *       `collectAndComplete`. The paused parent lands in `CANCELLED`, a
+ *       durably reschedulable state; re-driving it after a top-up is a
+ *       future enhancement, not yet wired here.
  *  5. `synthesizeFindings` (single sequential block, no sandbox)
  *  6. `collectAndComplete` (terminal — runs on ALL paths)
  *     - determine final status from completed/cancelled/failed counts
@@ -60,14 +60,7 @@ import { forStep } from "../auth/types.js";
 import type { RunSession } from "../auth/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
 import { unwrapOrThrow } from "../lib/result.js";
-import {
-    RunDedupCollisionError,
-    countArtifactsForRun,
-    queryActiveRun,
-    queryRun,
-    suspendAnalysis as suspendAnalysisQuery,
-    updateRunStatus,
-} from "../state/index.js";
+import { RunDedupCollisionError, countArtifactsForRun, queryActiveRun, suspendAnalysis as suspendAnalysisQuery, updateRunStatus } from "../state/index.js";
 import { isBudgetExceeded } from "../loop/budget-exceeded.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
@@ -292,9 +285,8 @@ export function buildChildInput(args: {
     level: number;
     runId: string;
     workflowId: string;
-    attempt: number;
 }): Omit<SandboxStepInput, "runSession"> {
-    const { input, stepId, level, runId, workflowId, attempt } = args;
+    const { input, stepId, level, runId, workflowId } = args;
     const resources = input.resourcesByStepId[stepId];
     if (!resources) {
         throw new Error(`executeAnalysis: step "${stepId}" missing from resourcesByStepId — every step must declare resources`);
@@ -306,7 +298,6 @@ export function buildChildInput(args: {
         agentId: input.agentByStepId[stepId] ?? "scientific-executor",
         level,
         prompt: input.promptByStepId[stepId] ?? "",
-        attempt,
         parentWorkflowId: workflowId,
         resources,
         timeoutSeconds: input.timeoutByStepId?.[stepId],
@@ -410,7 +401,6 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
             canceledSteps: [],
         };
     }
-    const { attempt } = init;
 
     // One checkpointed clock read stamps the run's start; the terminal read in
     // `collectAndComplete` subtracts it for the true run span. Checkpointed →
@@ -438,7 +428,6 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         runId,
         workflowId,
         levels,
-        attempt,
         deps,
     });
 
@@ -477,7 +466,6 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         input,
         runId,
         workflowId,
-        attempt,
         startedAtMs,
         completed: final.completed,
         failed: final.failed,
@@ -514,8 +502,6 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
 
 interface ValidateAndInitFresh {
     readonly kind: "fresh";
-    /** Parent's attempt counter — bumped on resume; threaded to each child. */
-    readonly attempt: number;
 }
 
 interface ValidateAndInitJoinedExisting {
@@ -555,15 +541,6 @@ async function validateAndInit(input: ExecuteAnalysisInput, runId: string, deps:
         { name: "init-run-filesystem" },
     );
 
-    // Read the parent-workflow attempt counter and use it in the charge-open
-    // step name. On a fresh run the counter is 0, so the step name is
-    // `open-running-charge:0` and DBOS caches it normally. On a resume the
-    // resume entry-point (change 9) has already called `bumpRunAttemptCount`,
-    // so the next entry reads a non-zero attempt, the step name misses the
-    // cache, and the charge is re-opened.
-    const row = unwrapOrThrow(await queryRun(deps.pool, runId));
-    const attempt = row?.attemptCount ?? 0;
-
     await DBOS.runStep(
         () =>
             deps.runCharge.open({
@@ -571,10 +548,10 @@ async function validateAndInit(input: ExecuteAnalysisInput, runId: string, deps:
                 runId,
                 session: input.runSession,
             }),
-        { name: `open-running-charge:${attempt}` },
+        { name: "open-running-charge" },
     );
 
-    return { kind: "fresh", attempt };
+    return { kind: "fresh" };
 }
 
 // ── (2-4) Scheduler loop ──────────────────────────────────────────────
@@ -584,7 +561,6 @@ interface SchedulerLoopArgs {
     readonly runId: string;
     readonly workflowId: string;
     readonly levels: ReadonlyMap<string, number>;
-    readonly attempt: number;
     readonly deps: ExecuteAnalysisDeps;
 }
 
@@ -597,7 +573,7 @@ interface SchedulerLoopOutcome {
 }
 
 async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopOutcome> {
-    const { input, runId, workflowId, levels, attempt, deps } = args;
+    const { input, runId, workflowId, levels, deps } = args;
 
     const completed = new Set<string>();
     const failed = new Set<string>();
@@ -699,7 +675,6 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 level: levels.get(stepId) ?? 0,
                 runId,
                 workflowId,
-                attempt,
             });
             const childInput: SandboxStepInput = {
                 ...baseChildInput,
@@ -728,7 +703,8 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         inFlight.delete(childId);
 
         let settled:
-            { childId: string; stepId: string; kind: "result"; result: SandboxStepResult } | { childId: string; stepId: string; kind: "error"; err: unknown };
+            | { childId: string; stepId: string; kind: "result"; result: SandboxStepResult }
+            | { childId: string; stepId: string; kind: "error"; err: unknown };
         try {
             const result = await entry.handle.getResult();
             settled = { childId, stepId: entry.stepId, kind: "result", result };
@@ -884,7 +860,6 @@ interface CollectAndCompleteArgs {
     readonly input: ExecuteAnalysisInput;
     readonly runId: string;
     readonly workflowId: string;
-    readonly attempt: number;
     /** `run_started` `atMs` (a `DBOS.now()` read) — subtracted for `run_completed.durationMs`. */
     readonly startedAtMs: number;
     readonly completed: ReadonlySet<string>;
@@ -900,7 +875,7 @@ interface CollectAndCompleteArgs {
 }
 
 async function collectAndComplete(args: CollectAndCompleteArgs): Promise<ExecuteAnalysisResult> {
-    const { input, runId, workflowId, attempt, startedAtMs, completed, failed, canceled, budgetExceeded, failureReason, forceFailed, deps } = args;
+    const { input, runId, workflowId, startedAtMs, completed, failed, canceled, budgetExceeded, failureReason, forceFailed, deps } = args;
 
     const status = forceFailed
         ? "failed"
@@ -980,7 +955,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                     reason: chargeReason,
                     session: input.runSession,
                 }),
-            { name: `close-running-charge:${attempt}` },
+            { name: "close-running-charge" },
         );
     } catch (err) {
         console.error(`[executeAnalysis] closeRunningCharge failed for run ${runId} (reason=${chargeReason}):`, err);
@@ -994,7 +969,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         ownsMandate: input.ownsMandate ?? true, // oss-core-managed-ok
     };
     try {
-        await DBOS.runStep(() => deps.runAuthorizer.revoke(authorization, revokeReason), { name: `revoke-run-auth:${attempt}` });
+        await DBOS.runStep(() => deps.runAuthorizer.revoke(authorization, revokeReason), { name: "revoke-run-auth" });
     } catch (err) {
         console.error(`[executeAnalysis] revokeRunAuthorization failed for run ${runId} (reason=${revokeReason}):`, err);
     }

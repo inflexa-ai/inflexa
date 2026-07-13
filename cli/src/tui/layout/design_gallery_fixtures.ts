@@ -268,7 +268,6 @@ export const mockCortexRuns: CortexRunRow[] = [
         mandateJti: null,
         mandateExpiresAt: null,
         planId: "mock-plan-8f21",
-        attemptCount: 0,
     },
     {
         runId: "mock-run-71bd0e55",
@@ -283,7 +282,6 @@ export const mockCortexRuns: CortexRunRow[] = [
         mandateJti: null,
         mandateExpiresAt: null,
         planId: "mock-plan-6b0c",
-        attemptCount: 0,
     },
     {
         runId: "mock-run-2c07af90",
@@ -298,7 +296,6 @@ export const mockCortexRuns: CortexRunRow[] = [
         mandateJti: null,
         mandateExpiresAt: null,
         planId: null,
-        attemptCount: 1,
     },
 ];
 

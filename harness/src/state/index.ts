@@ -30,7 +30,6 @@ export {
     updateRunStatus,
     promoteFailedToPartial,
     setRunMandate, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
-    bumpRunAttemptCount,
     queryRun,
     queryActiveRun,
     queryRunsByAnalysis,

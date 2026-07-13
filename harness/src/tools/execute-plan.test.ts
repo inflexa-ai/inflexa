@@ -190,7 +190,6 @@ describe("createExecutePlanTool", () => {
                     parts: null,
                     mandate_jti: "jti-existing",
                     mandate_expires_at: "2099-01-01T00:00:00Z",
-                    attempt_count: 0,
                 },
             ],
         });
