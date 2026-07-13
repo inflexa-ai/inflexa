@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-import { sep } from "node:path";
 import { createSignal, Show } from "solid-js";
 import type { CliRenderer, Renderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
@@ -8,6 +6,7 @@ import { queryStepsByRun, type StepExecutionRow, type DbError } from "@inflexa-a
 
 import { causeDetailLines } from "../lib/cause.ts";
 import { GLYPHS, size, zIndex } from "../lib/design_system.ts";
+import { contractHome } from "../lib/paths.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { writeClipboard } from "../lib/clipboard.ts";
 import { theme, themeVariant, noticeColor, type Notice } from "./theme.ts";
@@ -39,24 +38,6 @@ type AppProps = {
     workingDir: string;
     analysis: Analysis;
 };
-
-/**
- * TODO(slop): Please extract this to somewhere in `lib`
- * Contract the user's home-directory prefix to `~` for a compact display path. A single-caller
- * affordance for the wide-terminal status bar, kept beside its use per the no-extract-helper rule.
- * Only a true path-boundary prefix contracts (exact home, or home followed by a separator), so a
- * sibling like `/home/alice-backup` is left untouched rather than mangled into `~-backup`.
- */
-function contractHome(path: string): string {
-    const home = homedir();
-    if (path === home) return "~";
-    // A path-boundary prefix is home followed by the platform separator (`/` on POSIX, `\` on Windows).
-    // Both `homedir()` and `canonicalPath` (which backs these paths via realpathSync/resolve) yield
-    // platform-native separators — they are NOT normalized to `/` — so hard-coding `/` would fail to
-    // contract any path on Windows. Using `sep` keeps a sibling like `/home/alice-backup` untouched
-    // (no separator boundary) rather than mangling it into `~-backup`.
-    return path.startsWith(`${home}${sep}`) ? `~${path.slice(home.length)}` : path;
-}
 
 /**
  * The real "esc clears a live text selection" key layer, built as a pure factory over the renderer so
