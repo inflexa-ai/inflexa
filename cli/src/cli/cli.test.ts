@@ -54,4 +54,24 @@ describe("inflexa help & usage (e2e)", () => {
         expect(result.exitCode).toBe(0);
         expect(result.stderr).not.toContain("unknown option");
     });
+
+    // A fast `fail()` bail-out exits before the event loop turns, so the log file's fd must be
+    // ready from construction (lib/log.ts opens it synchronously) or pino's exit-hook flushSync
+    // throws "sonic boom is not ready yet" and sprays a stack trace after the command's real
+    // message. Pin the quiet exit: the failure message must be the only stderr output.
+    test("a fast fail() exit prints only its message — no log-stream crash on exit", () => {
+        const result = runCli(["prov", "lineage", "nonexistent-analysis", "whatever"]);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('No analysis found matching "nonexistent-analysis"');
+        expect(result.stderr).not.toContain("sonic boom");
+        expect(result.stderr).not.toContain("flushSync");
+    });
+
+    // An unknown --format must fail listing every accepted value. Option validation runs before
+    // analysis resolution, so the placeholder arguments never need to exist.
+    test("an unknown lineage --format fails listing the accepted values", () => {
+        const result = runCli(["prov", "lineage", "anything", "anything", "--format", "svg"]);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('Unknown format "svg". Use "tree", "json", or "dot".');
+    });
 });

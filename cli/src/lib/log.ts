@@ -1,4 +1,4 @@
-import { readdirSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, openSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import pino from "pino";
 
@@ -49,7 +49,30 @@ function resolveLevel(): pino.Level {
 
 const level = resolveLevel();
 
-const fileDestination = pino.destination({ dest: rotatedLogFile(), mkdir: true, sync: false });
+/**
+ * The file destination's fd must be valid from construction: pino registers an exit hook that
+ * flush-syncs this stream, and a fast-failing command (a `fail()` at the CLI boundary) can reach
+ * `process.exit` before an asynchronous open completes — sonic-boom's `flushSync` then throws
+ * "sonic boom is not ready yet" on the still-unopened stream, spraying a stack trace after the
+ * command's real message. A numeric `dest` is adopted as the stream's fd synchronously in its
+ * constructor, so the one-time synchronous open here closes that window; `sync: false` still keeps
+ * every WRITE asynchronous (the terminal-safety and throughput intent of the destination).
+ */
+function openFileDestination(): ReturnType<typeof pino.destination> {
+    const file = rotatedLogFile();
+    try {
+        mkdirSync(env.logDir, { recursive: true });
+        return pino.destination({ dest: openSync(file, "a"), sync: false });
+    } catch {
+        // Unwritable log location (a broken environment): fall back to the path-based asynchronous
+        // open, which reports failures on the stream instead of throwing here — logging is
+        // best-effort and must never take the command down with it. The exit-flush window remains
+        // open in this corner, but only where logging is already failing anyway.
+        return pino.destination({ dest: file, mkdir: true, sync: false });
+    }
+}
+
+const fileDestination = openFileDestination();
 
 const streams = pino.multistream([{ level, stream: fileDestination }]);
 
