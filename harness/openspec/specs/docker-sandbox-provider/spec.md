@@ -78,23 +78,27 @@ runtime configuration:
 - It SHALL pass `SANDBOX_TRANSPORT` (`poll` | `callback`) into the container env in
   both modes, and pass `SANDBOX_CALLBACK_SECRET` in both modes.
 - In **poll mode** it SHALL create the container on the default bridge with
-  `CapAdd: ["NET_ADMIN"]` and set the Docker-poll firewall env flag, so the image's
-  root entrypoint installs the egress-deny firewall and then de-privileges to the
-  workload uid. It SHALL NOT set `CORTEX_BASE_URL`.
+  `CapAdd: ["NET_ADMIN", "SETUID", "SETGID", "SETPCAP"]` and set the Docker-poll
+  firewall env flag, so the image's root entrypoint installs the egress-deny
+  firewall and then de-privileges to the workload uid. It SHALL NOT set
+  `CORTEX_BASE_URL`.
 - In **callback mode** it SHALL set `CORTEX_BASE_URL` to the host callback ingress,
-  SHALL NOT add `NET_ADMIN`, and SHALL NOT set the firewall flag (egress is
+  SHALL NOT add any capability, and SHALL NOT set the firewall flag (egress is
   permitted); no `--internal` network and no gateway sidecar are created.
 
 The workload posture SHALL be otherwise unchanged (uid 1000, `no-new-privileges`);
-`NET_ADMIN` is added only so the root entrypoint can install the firewall and is
-dropped before the workload runs.
+the added capabilities exist solely for the root entrypoint's privileged setup —
+`NET_ADMIN` to install the firewall rules, `SETUID`/`SETGID` for the `setpriv`
+drop to the workload uid/gid, and `SETPCAP` to clear the bounding set — and every
+one of them SHALL be dropped before the workload runs, leaving the workload's
+capability sets empty.
 
 #### Scenario: Poll mode adds the egress firewall
 
 - **GIVEN** the transport is `poll`
 - **WHEN** `createSandbox` creates the container
 - **THEN** the container env SHALL carry `SANDBOX_TRANSPORT=poll` and the firewall flag
-- **AND** the `HostConfig` SHALL add `NET_ADMIN`
+- **AND** the `HostConfig` SHALL add exactly `NET_ADMIN`, `SETUID`, `SETGID`, and `SETPCAP`
 - **AND** no `CORTEX_BASE_URL` SHALL be set
 
 #### Scenario: Callback mode permits egress with no gateway
@@ -102,7 +106,7 @@ dropped before the workload runs.
 - **GIVEN** the transport is `callback`
 - **WHEN** `createSandbox` creates the container
 - **THEN** the container env SHALL carry `SANDBOX_TRANSPORT=callback` and `CORTEX_BASE_URL`
-- **AND** the `HostConfig` SHALL NOT add `NET_ADMIN` and SHALL NOT set the firewall flag
+- **AND** the `HostConfig` SHALL NOT add any capability and SHALL NOT set the firewall flag
 - **AND** no `--internal` network and no gateway container SHALL be created
 
 ### Requirement: Image source is config default overridden per step
