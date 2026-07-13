@@ -47,6 +47,9 @@ export type { ActiveSandboxRow } from "./active-sandboxes.js";
 export { insertPlan, loadPlan } from "./plans.js";
 export type { InsertPlanInput } from "./plans.js";
 
+export { loadRunIndex, RUN_INDEX_CAP } from "./run-index.js";
+export type { PriorRunsInput, PriorRunEntry, PriorRunStepOutcomes } from "./run-index.js";
+
 export {
     tryStartDataProfile,
     tryRetryDataProfile,

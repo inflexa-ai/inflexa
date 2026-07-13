@@ -1,0 +1,15 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`priorPlanBriefing renders its fixture in isolation, matching the snapshot 1`] = `
+"## Prior plan (pln-1a2b3c4d — being iterated)
+
+**Analytical narrative:** Contrast lesional against control skin to surface differentially expressed genes, then map them to enriched pathways.
+
+**Steps:**
+- **T1S1** (bulk-transcriptomics-agent): Differential expression — Which genes are differentially expressed between AD_lesional and Control?
+- **T1S2** (enrichment-agent): Pathway enrichment — Which pathways are enriched among the significant DE genes? [deps: T1S1]
+
+The user is iterating on this plan. Preserve steps and IDs that are not being changed; modify only what the user constraints describe. Reuse step IDs when a step's purpose is unchanged so downstream references survive."
+`;
+
+exports[`priorPlanBriefing renders its fixture in isolation, matching the snapshot 2`] = `"iterating pln-1a2b3c4d · 2 steps"`;

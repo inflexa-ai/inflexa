@@ -10,3 +10,5 @@
 export type { BriefingDefinition, BriefingMode, RenderedBriefing } from "./types.js";
 export { composeBriefing, wrapBriefingContent, type ComposedBriefing } from "./compose.js";
 export { dataProfileBriefing, DATA_PROFILE_BRIEFING_NAME } from "./data-profile.js";
+export { priorRunsBriefing, PRIOR_RUNS_BRIEFING_NAME } from "./prior-runs.js";
+export { priorPlanBriefing, PRIOR_PLAN_BRIEFING_NAME, type PriorPlanInput } from "./prior-plan.js";

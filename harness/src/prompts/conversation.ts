@@ -54,8 +54,9 @@ When the user wants to run an analysis:
 
 1. **Orient** — search the workspace for data profile, prior run results,
    and experimental design context. Check \`inspect_run\` for run history.
-2. **Generate the plan** — call \`generate_plan\` with the data context,
-   research question, any prior run results, and user constraints. The tool
+2. **Generate the plan** — call \`generate_plan\` with the research question
+   and any user constraints. The tool reads the data profile and prior-run
+   history from the analysis itself — do NOT re-type them into the call. It
    returns a \`planId\` along with the plan on success.
 3. **Handle the response**:
    - **plan_complete** → present the plan via \`show_plan({ planId })\`

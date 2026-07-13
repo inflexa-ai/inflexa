@@ -21,8 +21,8 @@ import { deriveThreadTitle } from "../memory/derive-thread-title.js";
 import { createThreadHistory, type ThreadHistory } from "../memory/thread-history.js";
 import { createThreadStore } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
-import { composeBriefing, dataProfileBriefing, type ComposedBriefing } from "../prompts/briefings/index.js";
-import { loadAnalysisStatus, loadDataProfileStatus } from "../state/index.js";
+import { composeBriefing, dataProfileBriefing, priorRunsBriefing, type ComposedBriefing } from "../prompts/briefings/index.js";
+import { loadAnalysisStatus, loadDataProfileStatus, loadRunIndex } from "../state/index.js";
 import { assembleMessages, type AssembledMessages } from "./message-assembly.js";
 
 export interface PrepareChatTurnDeps {
@@ -41,11 +41,13 @@ export type PrepareChatTurnResult =
 /**
  * Compose and persist the main conversation's standing briefings on a thread's
  * first turn, returning one briefing-card part per injected briefing for the
- * caller to emit. Composition is caller-owned, ordered, and omits briefings
- * whose input is unavailable: the data-profile briefing is injected only when
- * the profile has completed (a pending/failed/running profile injects nothing,
- * never a placeholder). `appendBriefings` is idempotent, so a concurrent first
- * turn does not double-inject.
+ * caller to emit. Composition is caller-owned, ordered `[data-profile,
+ * prior-runs]`, and omits briefings whose input is unavailable — each
+ * independently: the data-profile briefing is injected only when the profile
+ * has completed (a pending/failed/running profile injects nothing, never a
+ * placeholder), and the prior-runs briefing only when the analysis has at least
+ * one terminal run. `appendBriefings` is idempotent, so a concurrent first turn
+ * does not double-inject.
  */
 async function composeStandingBriefings(pool: Pool, analysisId: string, threadId: string, history: ThreadHistory): Promise<BriefingCardPart[]> {
     const composed: ComposedBriefing[] = [];
@@ -53,6 +55,11 @@ async function composeStandingBriefings(pool: Pool, analysisId: string, threadId
     const profile = await loadDataProfileStatus(pool, analysisId).unwrapOr(null);
     if (profile?.status === "completed" && profile.result) {
         composed.push(composeBriefing(dataProfileBriefing, profile.result));
+    }
+
+    const runIndex = await loadRunIndex(pool, analysisId);
+    if (runIndex.entries.length > 0) {
+        composed.push(composeBriefing(priorRunsBriefing, runIndex));
     }
 
     if (composed.length === 0) return [];

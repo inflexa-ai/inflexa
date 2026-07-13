@@ -2,10 +2,13 @@
  * generatePlan — a loop-driving tool: a focused `runAgent` loop that builds
  * an analysis plan (a DAG of steps).
  *
- * The outer tool receives structured context from the conversation agent
- * (data profile, research question, prior runs, constraints) and drives an
- * internal "planner" agent that communicates outcomes EXCLUSIVELY via four
- * terminal tool calls:
+ * The outer tool receives only the ask from the conversation agent
+ * (`researchQuestion`, `userConstraints?`, `parentPlanId?`) and composes the
+ * planner's context itself from harness-owned state — the data-profile,
+ * prior-runs, and (when iterating) prior-plan briefings, injected as
+ * unpersisted initial messages before the user message (see the
+ * conversation-briefings spec, D8). It then drives an internal "planner" agent
+ * that communicates outcomes EXCLUSIVELY via four terminal tool calls:
  *
  *   - validate_plan(plan)       → non-terminal dry-run (Zod + semantic)
  *   - submit_plan(plan)         → terminal success: re-validates + persists
@@ -18,6 +21,7 @@
  * terminal-tool surface above.
  */
 
+import type { ModelMessage } from "ai";
 import { ok, type Result } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
@@ -32,11 +36,12 @@ import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 
 import { DEFAULT_SANDBOX_MAX_STEPS, type ResourcePolicy } from "../../config/resource-limits.js";
 import { plannerPrompt } from "../../prompts/planner.js";
+import { composeBriefing, dataProfileBriefing, priorPlanBriefing, priorRunsBriefing, type ComposedBriefing } from "../../prompts/briefings/index.js";
 import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAgentOutput } from "../../schemas/plan-schemas.js";
 import { validatePlan } from "../../schemas/validate-plan.js";
-import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
+import { AnalysisPlanSchema, type AnalysisPlan } from "../../schemas/workflow-state.js";
 import { unwrapOrThrow } from "../../lib/result.js";
-import { insertPlan, loadPlan } from "../../state/index.js";
+import { insertPlan, loadDataProfileStatus, loadPlan, loadRunIndex } from "../../state/index.js";
 
 // ── Tool-level config ──────────────────────────────────────────────
 
@@ -90,37 +95,6 @@ interface ValidationIssue {
 }
 
 type SubmitPlanOutput = { accepted: false; issues: ValidationIssue[] } | { accepted: true; planId: string };
-
-// ── Prior plan serialization (iteration context) ───────────────────
-
-/**
- * Format a loaded prior plan as a markdown block the planner can read —
- * narrative + one line per step. Used only when `parentPlanId` is set.
- */
-function formatPriorPlan(parentPlanId: string, plan: unknown): string | null {
-    const parsed = AnalysisPlanSchema.safeParse(plan);
-    if (!parsed.success) return null;
-    const p = parsed.data;
-
-    const stepLines = p.steps.map((s) => {
-        const deps = s.depends_on.length ? ` [deps: ${s.depends_on.join(", ")}]` : "";
-        const agent = s.agent ? ` (${s.agent})` : "";
-        return `- **${s.id}**${agent}: ${s.name} — ${s.question}${deps}`;
-    });
-
-    return [
-        `## Prior Plan (${parentPlanId} — being iterated)`,
-        "",
-        ...(p.analytical_narrative ? [`**Analytical narrative:** ${p.analytical_narrative}`, ""] : []),
-        "**Steps:**",
-        ...stepLines,
-        "",
-        "The user is iterating on this plan. Preserve steps and IDs that are " +
-            "not being changed; modify only what `userConstraints` describes. " +
-            "Reuse step IDs when a step's purpose is unchanged so downstream " +
-            "references survive.",
-    ].join("\n");
-}
 
 // ── Persistence ─────────────────────────────────────────────────────
 
@@ -404,20 +378,14 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
     return defineTool({
         id: "generate_plan",
         description:
-            "Generate an analysis plan (DAG of steps) for the given data context " +
-            "and research question. Pass all relevant context: data profile " +
-            "summary, omics type, experimental design, prior run results, and " +
-            "user constraints. Returns a structured plan ready for show_plan and " +
+            "Generate an analysis plan (DAG of steps) for the given research " +
+            "question. The tool reads the data profile and prior-run history from " +
+            "the analysis itself — do NOT re-type them. Pass the research question, " +
+            "any user constraints, and, when revising an existing plan, its " +
+            "parentPlanId. Returns a structured plan ready for show_plan and " +
             "execute_plan, or a clarification question if context is insufficient.",
         inputSchema: z.object({
-            dataContext: z
-                .string()
-                .describe("Data profile summary: data type, modality, file descriptions, " + "feature/sample counts, experimental design, condition names."),
             researchQuestion: z.string().describe("What the user wants to analyze — their goal and specific questions."),
-            priorRuns: z
-                .string()
-                .optional()
-                .describe("Summary of prior run results if any exist: which steps ran, " + "what succeeded/failed, key findings. Omit if no prior runs."),
             userConstraints: z
                 .string()
                 .optional()
@@ -433,22 +401,21 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
 
             // If iterating, load the parent plan so the planner sees what it is
             // revising. Fails fast with the sanitized message submit_plan would
-            // have surfaced — saves a wasted planner run.
-            let priorPlanBlock: string | null = null;
+            // have surfaced — saves a wasted planner run. A malformed stored plan
+            // parses to nothing and simply omits the prior-plan briefing (the
+            // planner then treats the request as fresh).
+            let priorPlan: AnalysisPlan | null = null;
             if (input.parentPlanId) {
                 try {
-                    const priorPlan = unwrapOrThrow(
-                        await loadPlan(deps.pool, input.parentPlanId, {
-                            analysisId,
-                        }),
-                    );
-                    if (!priorPlan) {
+                    const loaded = unwrapOrThrow(await loadPlan(deps.pool, input.parentPlanId, { analysisId }));
+                    if (!loaded) {
                         return ok({
                             event: "error",
                             error: "parentPlanId is not a valid plan for this analysis",
                         } satisfies PlanningAgentOutput);
                     }
-                    priorPlanBlock = formatPriorPlan(input.parentPlanId, priorPlan);
+                    const parsed = AnalysisPlanSchema.safeParse(loaded);
+                    priorPlan = parsed.success ? parsed.data : null;
                 } catch {
                     return ok({
                         event: "error",
@@ -457,16 +424,36 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 }
             }
 
-            const prompt = [
-                ...(priorPlanBlock ? [priorPlanBlock, ""] : []),
-                "## Data Context",
-                input.dataContext,
-                "",
-                "## Research Question",
-                input.researchQuestion,
-                ...(input.priorRuns ? ["", "## Prior Run Results", input.priorRuns] : []),
-                ...(input.userConstraints ? ["", "## User Constraints", input.userConstraints] : []),
-            ].join("\n");
+            // Compose the planner's context from harness-owned state as
+            // unpersisted initial messages, in order [data-profile, prior-runs,
+            // prior-plan], each omitted when its input is unavailable. The user
+            // message — the actual ask — follows them.
+            const briefings: ComposedBriefing[] = [];
+
+            const profile = await loadDataProfileStatus(deps.pool, analysisId).unwrapOr(null);
+            if (profile?.status === "completed" && profile.result) {
+                briefings.push(composeBriefing(dataProfileBriefing, profile.result));
+            }
+
+            const runIndex = await loadRunIndex(deps.pool, analysisId);
+            if (runIndex.entries.length > 0) {
+                briefings.push(composeBriefing(priorRunsBriefing, runIndex));
+            }
+
+            if (priorPlan) {
+                briefings.push(composeBriefing(priorPlanBriefing, { planId: input.parentPlanId!, plan: priorPlan }));
+            }
+
+            const userMessage: ModelMessage = {
+                role: "user",
+                content: [
+                    "## Research question",
+                    input.researchQuestion,
+                    ...(input.userConstraints ? ["", "## User constraints", input.userConstraints] : []),
+                ].join("\n"),
+            };
+
+            const initialMessages: ModelMessage[] = [...briefings.map((b) => b.message), userMessage];
 
             const holder: OutcomeHolder = { outcome: null };
             const persistCtx: PersistContext = {
@@ -490,7 +477,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
             try {
                 await runToTerminal(
                     planner,
-                    [{ role: "user", content: prompt }],
+                    initialMessages,
                     forSubAgent(ctx.session, PLANNER_AGENT_ID),
                     {
                         provider: deps.provider,

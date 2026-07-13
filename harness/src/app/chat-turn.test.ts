@@ -32,6 +32,22 @@ async function seedAnalysis(pool: Pool, analysisId: string, dpStatus: string, re
     });
 }
 
+/** Seed one terminal run (plus optional steps) for the prior-runs briefing. */
+async function seedTerminalRun(pool: Pool, analysisId: string, runId: string, steps: Array<{ stepId: string; status: string }> = []): Promise<void> {
+    await pool.query({
+        text: `INSERT INTO cortex_runs (run_id, analysis_id, workflow_name, status, started_at, completed_at)
+               VALUES ($1, $2, 'executeAnalysis', 'completed', '2026-07-05T10:00:00.000Z', '2026-07-05T11:00:00.000Z')`,
+        values: [runId, analysisId],
+    });
+    for (const s of steps) {
+        await pool.query({
+            text: `INSERT INTO cortex_step_executions (run_id, step_id, analysis_id, wave, agent_id, status, started_at)
+                   VALUES ($1, $2, $3, 0, 'a', $4, '2026-07-05T10:00:00.000Z')`,
+            values: [runId, s.stepId, analysisId, s.status],
+        });
+    }
+}
+
 /** Count a thread's persisted briefing rows. */
 async function briefingRowCount(pool: Pool, threadId: string): Promise<number> {
     const res = await pool.query<{ n: string }>({
@@ -204,5 +220,60 @@ describe("prepareChatTurn standing briefings", () => {
         expect(await briefingRowCount(pool, "t-second")).toBe(1);
         const briefingMessages = second.messages.filter((m) => contentText(m.content).includes("<briefing"));
         expect(briefingMessages).toHaveLength(1);
+    });
+
+    it("composes data-profile then prior-runs in order, surfacing both cards", async () => {
+        await seedAnalysis(pool, ANALYSIS_A, "completed", COMPLETED_PROFILE);
+        await seedTerminalRun(pool, ANALYSIS_A, "run-x", [
+            { stepId: "s1", status: "completed" },
+            { stepId: "s2", status: "completed" },
+        ]);
+
+        const result = await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "t-both", userInput: "hi" });
+
+        expect(result.kind).toBe("ok");
+        if (result.kind !== "ok") throw new Error("unreachable");
+
+        // Array order: data-profile then prior-runs.
+        const briefingTexts = result.messages.map((m) => contentText(m.content)).filter((t) => t.includes("<briefing"));
+        expect(briefingTexts).toHaveLength(2);
+        expect(briefingTexts[0]).toContain('<briefing name="data-profile">');
+        expect(briefingTexts[1]).toContain('<briefing name="prior-runs">');
+        expect(briefingTexts[1]).toContain("**run-x**");
+
+        expect(result.briefingCards.map((c) => c.name)).toEqual(["data-profile", "prior-runs"]);
+        expect(await briefingRowCount(pool, "t-both")).toBe(2);
+    });
+
+    it("injects no prior-runs briefing when the analysis has no terminal runs", async () => {
+        await seedAnalysis(pool, ANALYSIS_A, "completed", COMPLETED_PROFILE);
+        // A running (non-terminal) run must not produce a prior-runs briefing.
+        await pool.query({
+            text: `INSERT INTO cortex_runs (run_id, analysis_id, workflow_name, status, started_at)
+                   VALUES ('run-live', $1, 'executeAnalysis', 'running', '2026-07-05T10:00:00.000Z')`,
+            values: [ANALYSIS_A],
+        });
+
+        const result = await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "t-norun", userInput: "hi" });
+
+        expect(result.kind).toBe("ok");
+        if (result.kind !== "ok") throw new Error("unreachable");
+        expect(result.briefingCards.map((c) => c.name)).toEqual(["data-profile"]);
+        const joined = result.messages.map((m) => contentText(m.content)).join("\n");
+        expect(joined).not.toContain('<briefing name="prior-runs">');
+    });
+
+    it("injects prior-runs alone when the profile never completed", async () => {
+        await seedAnalysis(pool, ANALYSIS_A, "pending", null);
+        await seedTerminalRun(pool, ANALYSIS_A, "run-y", [{ stepId: "s1", status: "completed" }]);
+
+        const result = await prepareChatTurn({ pool }, { analysisId: ANALYSIS_A, threadId: "t-runonly", userInput: "hi" });
+
+        expect(result.kind).toBe("ok");
+        if (result.kind !== "ok") throw new Error("unreachable");
+        expect(result.briefingCards.map((c) => c.name)).toEqual(["prior-runs"]);
+        const first = contentText(result.messages[0]!.content);
+        expect(first).toContain('<briefing name="prior-runs">');
+        expect(await briefingRowCount(pool, "t-runonly")).toBe(1);
     });
 });

@@ -1,0 +1,14 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`priorRunsBriefing renders its fixture in isolation, matching the snapshot 1`] = `
+"# Prior runs
+
+- **run_8f3a** — AD lesional vs control DE + pathways
+  completed · 6/7 steps completed, failed: qc_step · 2026-07-10 14:30
+- **run_2b1c** — Bulk RNA-seq differential expression
+  failed · 1/4 steps completed, failed: align_reads · 2026-07-08 09:12
+
+Details for any run (step summaries, synthesis) are retrievable via the \`inspect_run\` tool."
+`;
+
+exports[`priorRunsBriefing renders its fixture in isolation, matching the snapshot 2`] = `"2 prior runs · latest run_8f3a 6/7 steps · 2026-07-10"`;
