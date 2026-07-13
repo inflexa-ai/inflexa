@@ -649,11 +649,13 @@ async function reportTerminal(pool: Pool, final: CortexRunRow, s: Spinner): Prom
             return failViaShutdown(`Run canceled — canceled step(s): ${fmtSteps(canceled)}.${errTail}`);
         case "suspended_insufficient_funds":
             s.error("Run suspended");
-            // Do NOT promise "re-run to resume": resuming a suspended run needs the
-            // resume entry-point that change 9 owns (`resume-execute-analysis.ts`),
-            // not wired here yet. `queryActiveRun` counts this row as active, so a
-            // re-run of the same plan dedups onto it and re-reports suspended rather
-            // than resuming — the message must not imply otherwise.
+            // Do NOT promise "re-run to resume": no resume entry point exists. The
+            // 402-pause suspends the run (a DBOS-resumable CANCELLED parent), but the
+            // resume path is a deferred enhancement (harness change
+            // `resume-analysis-after-budget-pause`), not wired. `queryActiveRun`
+            // counts this row as active, so a re-run of the same plan dedups onto it
+            // and re-reports suspended rather than resuming — the message must not
+            // imply otherwise.
             return failViaShutdown(
                 `Run suspended for insufficient funds — add funds, then resume it once run resume lands (track it with \`inflexa run --status\`).${errTail}`,
             );

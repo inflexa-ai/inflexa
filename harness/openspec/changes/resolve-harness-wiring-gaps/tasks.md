@@ -38,7 +38,7 @@ per decision. `openspec validate resolve-harness-wiring-gaps --strict` passes.
 - [x] Barrel export `bootHarness` + `BootHarnessDeps` / `BootedHarness`
 - [x] `runtime/boot.test.ts` — fail-fast on bad skillsDir before pool/launch; telemetry init runs first
 - [x] Telemetry kept injectable (default no-op) so the CLI's own OTel is not double-initialized (would print a banner into the TUI)
-- [ ] **Open — CLI adoption.** `cli/src/modules/harness/runtime.ts` still hand-rolls the sequence (7 seams). Collapse to one `bootHarness` call (sweep + agent-switch + crons in `beforeLaunch`; `initTelemetry: () => {}`; `exit: () => {}`); route the shutdown hook through `booted.shutdown`. Deferred: outward-facing lifecycle refactor (instance lock, ingress, shutdown ordering) — needs a `bun run dev` smoke test, not just tsc.
+- [x] **CLI adoption — done.** `cli/src/modules/harness/runtime.ts` now collapses onto one `bootHarness` call: `sweepEphemeral` + agent-switch install + the sandbox-hygiene crons moved into `beforeLaunch`; `initTelemetry`/`exit` are CLI-side no-ops; the shutdown hook routes through `booted.shutdown`. The `initState`/`assemble`/`launch` boot seams collapsed to one `boot: typeof bootHarness` seam. CLI typecheck clean of harness errors; `runtime.test.ts` (28 tests) green. Still wants a `bun run dev` smoke test for the live instance-lock / shutdown-ordering path.
 
 ## 3. Decision 3 — Report-builder skills — DONE
 
@@ -50,11 +50,14 @@ per decision. `openspec validate resolve-harness-wiring-gaps --strict` passes.
 
 ## 4. Decision 4 — 402-resume path
 
-- [x] Verified: `prepareExecuteAnalysisResume` is coherent internal-contract code, but unreachable (no caller, not on the barrel); "change 9" is phantom (this repo names changes by dated kebab, never numerically)
-- [x] Corrected the phantom "change 9" doc references to state the entry point is unbuilt
-- [ ] **Open** — retire the resume scaffolding, or build the entry point, per roadmap
+- [x] Verified: `prepareExecuteAnalysisResume` is coherent internal-contract code, but unreachable (no caller, not on the barrel); "change 9" is phantom (this repo names changes by kebab slug, never numerically)
+- [x] Retired the scaffolding (option B): deleted `resume-execute-analysis.ts` + its test; removed `bumpRunAttemptCount`, the `cortex_runs.attempt_count` column, `CortexRunRow.attemptCount`, and the `attempt` cache-busting thread through `execute-analysis.ts` / `sandbox-step.ts`. Kept the 402-PAUSE (`suspended_insufficient_funds` + DBOS-resumable `CANCELLED` parent).
+- [x] Spec deltas: `run-state-persistence` (drop attempt_count / attemptCount / bumpRunAttemptCount) and `workflow-failure-lifecycle` (drop the resume scenario referencing the removed attempt naming; reframe resume as deferred)
+- [x] Corrected the CLI `run.ts` "change 9" comment to point at the deferred `resume-analysis-after-budget-pause` change
+- [x] Captured the deferred resume capability as the placeholder change `resume-analysis-after-budget-pause`
 
 ## 5. Close-out
 
-- [ ] Land the CLI boot adoption (Decision 2) + decide `find_approval_precedent` wiring (Decision 1)
-- [ ] `openspec archive resolve-harness-wiring-gaps` once the open items are closed
+- [x] CLI boot adoption (Decision 2) landed
+- [ ] **Open** — decide `find_approval_precedent` wiring (Decision 1)
+- [ ] `openspec archive resolve-harness-wiring-gaps` once the remaining open item is closed

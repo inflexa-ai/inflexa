@@ -8,9 +8,7 @@
  *  1. `mark-running`        — update `cortex_step_executions` to running.
  *  2. `createSandbox`       — provision the sandbox; persist its handle.
  *  3. `runAgent`            — the harness agent loop. Every LLM and tool
- *                             call inside is its own durableStep, named
- *                             with the parent's resume attempt so a 402
- *                             resume hits a fresh cache slot (NOTES #3).
+ *                             call inside is its own durableStep.
  *                             Catches `isBudgetExceeded` and self-cancels
  *                             via `DBOS.cancelWorkflow(self)` to CANCELLED
  *                             (resumable, not ERROR).
@@ -37,7 +35,7 @@ import { insertStepExecution, updateStepExecution } from "../state/index.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { isBudgetExceeded } from "../loop/budget-exceeded.js";
 import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
-import { runAgent, type StepNameFormatter } from "../loop/run-agent.js";
+import { runAgent } from "../loop/run-agent.js";
 import { durableStep } from "../loop/run-step.js";
 import { activityForTool, applyTreeDelta, isChatDataPart, sandboxTreeDelta } from "../sandbox/sandbox-step-translate.js";
 import type { AgentChat, EmbeddingProvider } from "../providers/types.js";
@@ -78,12 +76,6 @@ export interface SandboxStepInput {
     readonly level: number;
     /** User-content prompt the agent receives as its initial message. */
     readonly prompt: string;
-    /**
-     * 0-based resume attempt. The parent passes its own attempt counter so
-     * the child's LLM step names include `:${attempt}` and resumed calls
-     * miss the prior cached 402 instead of returning it (NOTES #3).
-     */
-    readonly attempt: number;
     /**
      * DBOS workflow id of the parent (`executeAnalysis`). The child uses
      * this to address the parent for the budget-exceeded side-channel
@@ -279,19 +271,6 @@ export interface PostStepContext {
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-/**
- * Build an attempt-aware step-name formatter. Names land in the DBOS step
- * cache, so the `:${attempt}` suffix is the load-bearing 402-resume
- * mechanism: on resume the formatter returns a name that has never been
- * seen, the cache misses, and the LLM call fires fresh.
- */
-export function attemptStepNameFormatter(attempt: number): StepNameFormatter {
-    return {
-        llm: (iteration) => `llm:${iteration}:${attempt}`,
-        tool: (toolName, toolUseId) => `tool:${toolName}:${toolUseId}:${attempt}`,
-    };
-}
-
 function nextFunctionIdFactory(): () => string {
     let n = 0;
     return () => `fn-${(n++).toString(36)}`;
@@ -421,7 +400,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
         { name: "sandbox.recheck-alive" },
     );
 
-    // (3) runAgent — the harness loop with durableStep + attempt-aware names.
+    // (3) runAgent — the harness loop with durableStep.
     // The step deadline is captured ONCE at step start from the checkpointed
     // clock so it reproduces on replay — the `awaitExec` recv loop gates on this
     // absolute deadline, so a raw `Date.now()` here would shift the recorded
@@ -502,7 +481,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
                         status: "failed",
                         durationMs,
                         error: safe,
-                        attempts: input.attempt + 1,
+                        attempts: 1,
                         lastErrorClass: errorClass,
                     }),
                 );
@@ -575,7 +554,10 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
             signal: neverAbort,
             emit,
             runStep: durableStep,
-            formatStepName: attemptStepNameFormatter(input.attempt),
+            formatStepName: {
+                llm: (iteration) => `llm:${iteration}`,
+                tool: (toolName, toolUseId) => `tool:${toolName}:${toolUseId}`,
+            },
             isFatalLoopError: (err) => err instanceof DBOSErrors.DBOSWorkflowCancelledError,
         });
         transcript = agentResult.messages;
@@ -621,7 +603,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
                             status: "canceled",
                             durationMs,
                             error: "budget_exceeded",
-                            attempts: input.attempt + 1,
+                            attempts: 1,
                             lastErrorClass: "budget_exceeded",
                         }),
                     );
@@ -654,7 +636,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
                         durationMs,
                         error: blockerOutcome.reason,
                         blockedReason: blockerOutcome.reason,
-                        attempts: input.attempt + 1,
+                        attempts: 1,
                         lastErrorClass: "blocked",
                         finishReason,
                         hitMaxSteps,
@@ -776,7 +758,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
                 await updateStepExecution(deps.pool, input.runId, input.stepId, {
                     status: "completed",
                     durationMs,
-                    attempts: input.attempt + 1,
+                    attempts: 1,
                     lastErrorClass: null,
                     finishReason,
                     hitMaxSteps,
