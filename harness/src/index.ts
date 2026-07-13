@@ -8,6 +8,11 @@
 // Runtime assembly + composition root.
 export { assembleCoreRuntime } from "./runtime/assemble.js";
 export type { CoreRuntime, CoreRuntimeDeps, CoreWorkflowDeps, RegisteredWorkflows, ConversationAssemblyDeps, SandboxStepCallable } from "./runtime/assemble.js";
+// The harness-owned boot sequence: ordered boot steps around `assembleCoreRuntime`
+// (skill validation → state init → connection budget → assemble → launch) + a
+// `shutdown` handle the embedder wires to its process signals.
+export { bootHarness } from "./runtime/boot.js";
+export type { BootHarnessDeps, BootedHarness } from "./runtime/boot.js";
 
 export { createConversationAgent } from "./agents/conversation-agent.js";
 export type { ConversationAgentDeps } from "./agents/conversation-agent.js";

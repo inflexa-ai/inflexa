@@ -12,9 +12,6 @@ counts (FAERS n=NN, IMPC p=...) verbatim from the dossier.
 - For class precedents not present in the dossier, call
   \`find_approval_precedent\` with the modality and mechanism hint and
   cite the returned NDA/BLA + label section.
-- For mitigation framing or regulatory expectation, call
-  \`search_regulatory_guidance\` with a focused query (e.g., "ICH S7A
-  cardiovascular safety pharmacology") and cite the returned document.
 
 ## Output discipline
 - Severity is one of high / medium / low.

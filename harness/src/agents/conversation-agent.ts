@@ -142,6 +142,8 @@ export interface ConversationAgentDeps {
     readonly bioKeys: BioToolKeys;
     /** Root templates dir for in-process report rendering (`iterateReport`). */
     readonly templatesDir: string;
+    /** Skills root; the in-process report-builder gets `report-html` skill tools. */
+    readonly skillsDir: string;
     /** Headless-Chrome config for report snapshot/preview rendering. */
     readonly chrome: ChromeConfig;
     /**
@@ -169,6 +171,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createPreviewPublisher,
         bioKeys,
         templatesDir,
+        skillsDir,
         chrome,
         resourcePolicy,
     } = deps;
@@ -234,6 +237,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             resolveWorkspaceRoot,
             model,
             templatesDir,
+            skillsDir,
             chrome,
             createPreviewPublisher,
         }),
