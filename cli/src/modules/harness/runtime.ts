@@ -1,8 +1,7 @@
 import { existsSync } from "node:fs";
-import type pino from "pino";
 import { ok, err, type Result } from "neverthrow";
 import {
-    assembleCoreRuntime,
+    bootHarness,
     createConfiguredAiSdkProvider,
     createDbosRunLauncher,
     createLocalRunAuthorizer,
@@ -10,14 +9,11 @@ import {
     createPool,
     createSandboxClient,
     createWorkspaceFilesystem,
-    initCortexState,
-    launchDbos,
     makeLocalAuth,
     queryActiveSandboxes,
     registerNotificationSweep,
     registerSandboxReaper,
     registerWatchdog,
-    shutdownDbos,
     sweepEphemeralWorkflows,
     UnavailablePreviewPublisher,
     type AgentDefinition,
@@ -27,7 +23,6 @@ import {
     type ConversationAssemblyDeps,
     type CoreWorkflowDeps,
     type DataProfileTriggerDeps,
-    type DbosConfig,
     type EmbeddingProvider,
     type ExecuteAnalysisInput,
     type ExecuteAnalysisResult,
@@ -77,12 +72,17 @@ import { clearAgentSwitch, createSwappableProvider, installAgentSwitch } from ".
 // re-registering a name, so there is exactly one runtime per process, one
 // workspace-root resolver, one registration cohort.
 //
-// Registration happens BEFORE `launchDbos`: `DBOS.launch()` runs recovery
-// synchronously and resolves in-flight workflows by their registered name, so a
-// workflow not registered at launch cannot be reclaimed. `assembleCoreRuntime`
-// (the harness composition root) owns the whole registration cohort in one call —
-// it is the declared source of truth for wiring order (child-before-parent), so
-// the boot hands it the deps and never registers a durable workflow by hand.
+// The ordered, effectful tail of boot — validate skills → init state → assert
+// the connection budget → assemble the workflow cohort → run the embedder's
+// pre-launch hook → launch DBOS — is the harness's own `bootHarness`. This root
+// resolves the host-specific inputs (Postgres, providers, models, ingress, the
+// instance lock) and hands them to `bootHarness`, which owns the sequencing
+// invariant: registration happens BEFORE `launchDbos`, because `DBOS.launch()`
+// runs recovery synchronously and resolves in-flight workflows by their
+// registered name, so a workflow not registered at launch cannot be reclaimed.
+// The CLI's host-specific pre-launch work (the ephemeral sweep, the agent-switch
+// install, the sandbox-hygiene crons) rides `bootHarness`'s `beforeLaunch` hook,
+// which runs after registration and before launch.
 
 /**
  * Ready-to-use deps for the analysis-run trigger flow (`inflexa run`). Mirrors
@@ -231,17 +231,20 @@ export type BootSeams = {
     readonly resolveModel: (apiKey: string) => Promise<Result<string, ChatSetupError>>;
     readonly resolveEmbedding: () => Result<EmbeddingProvider, EmbeddingResolveError>;
     /**
-     * The harness composition root — registers all five durable workflows
-     * (child-before-parent, one cohort) and builds the conversation agent over
-     * the registered callables. Replaces the hand-maintained per-workflow
-     * registration seams; the ordering invariant now lives in the harness.
+     * The harness-owned boot sequence: validate skills → init state → assert the
+     * connection budget → `assembleCoreRuntime` (child-before-parent registration
+     * of all five durable workflows) → the embedder's `beforeLaunch` hook →
+     * launch DBOS; returns a `{ runtime, shutdown }` handle. The register-before-
+     * launch ordering invariant lives in the harness, not here — this root only
+     * supplies the deps and the pre-launch hook.
      */
-    readonly assemble: typeof assembleCoreRuntime;
+    readonly boot: typeof bootHarness;
     /**
-     * Cancel this executor's PENDING `ephemeral:*` rows BEFORE launch.
-     * Registering the ephemeral workflow makes a crashed turn's row
-     * re-dispatchable by recovery; the only race-free cancel point is a direct
-     * pre-launch system-DB UPDATE.
+     * Cancel this executor's PENDING `ephemeral:*` rows BEFORE launch, run inside
+     * `bootHarness`'s `beforeLaunch` hook. Registering the ephemeral workflow (in
+     * the assemble step) makes a crashed turn's row re-dispatchable by launch-time
+     * recovery; the only race-free cancel point is a direct system-DB UPDATE that
+     * completes before launch — which `beforeLaunch` guarantees.
      */
     readonly sweepEphemeral: typeof sweepEphemeralWorkflows;
     /** Register the orphaned-container reaper scheduled workflow. */
@@ -250,8 +253,6 @@ export type BootSeams = {
     readonly registerWatchdog: (deps: WatchdogDeps) => void;
     /** Register the stale-notification sweep scheduled workflow. */
     readonly registerNotificationSweep: (deps: RegisterNotificationSweepDeps) => void;
-    readonly initState: (pool: Pool) => Promise<void>;
-    readonly launch: (args: { config: DbosConfig; logger: pino.Logger }) => Promise<void>;
     readonly probeEmbedding: typeof probeEmbeddingProvider;
 };
 
@@ -262,13 +263,11 @@ const realSeams: BootSeams = {
     readModelApiKey: () => env.modelApiKey,
     resolveModel: resolveModelId,
     resolveEmbedding: () => resolveEmbedder(readConfig()),
-    assemble: assembleCoreRuntime,
+    boot: bootHarness,
     sweepEphemeral: sweepEphemeralWorkflows,
     registerReaper: registerSandboxReaper,
     registerWatchdog,
     registerNotificationSweep,
-    initState: initCortexState,
-    launch: launchDbos,
     probeEmbedding: probeEmbeddingProvider,
 };
 
@@ -334,10 +333,14 @@ export function bootHarnessRuntime(
 }
 
 /**
- * One boot attempt, run under the {@link bootHarnessRuntime} in-flight guard. Sequence: prerequisites →
- * Postgres readiness → callback ingress → schema init → ephemeral sweep → composition root
- * (`assembleCoreRuntime`) → sandbox-hygiene crons → DBOS launch. The shutdown hook is registered once,
- * on success.
+ * One boot attempt, run under the {@link bootHarnessRuntime} in-flight guard.
+ * This root resolves the host-specific inputs — prerequisites → Postgres
+ * readiness → callback ingress → providers/models → instance lock → pool — then
+ * hands them to the harness's `bootHarness` (via the `boot` seam), which owns the
+ * ordered tail: validate skills → init state → connection budget → assemble the
+ * cohort → the embedder's `beforeLaunch` hook (ephemeral sweep, agent-switch
+ * install, sandbox-hygiene crons) → DBOS launch. The shutdown hook is registered
+ * once, on success, and drives the boot handle's graceful-shutdown sequence.
  */
 async function bootHarnessRuntimeOnce(
     seams: BootSeams,
@@ -494,19 +497,6 @@ async function bootHarnessRuntimeOnce(
             password: conn.password,
             sslMode: "disable",
         });
-
-        // Harness app tables (cortex_*) must exist before launch: DBOS recovery
-        // may resume a profile workflow that queries them on its first step.
-        await seams.initState(pool);
-
-        // Cancel this executor's stale PENDING `ephemeral:*` rows BEFORE launch
-        //. Once `assembleCoreRuntime` registers the ephemeral workflow
-        // below, a prior crash's row becomes re-dispatchable by launch-time
-        // recovery — a sandbox for a chat turn whose awaiter is long gone. The only
-        // race-free cancel point is a direct system-DB UPDATE before launch, so the
-        // sweep sits strictly between schema init and assembly, never after launch.
-        // `executorId "local"` matches `launchDbos`'s stable executor id below.
-        await seams.sweepEphemeral({ pool, logger, executorId: "local" });
 
         const resolveBilling = createNoopBillingResolver();
 
@@ -689,8 +679,6 @@ async function bootHarnessRuntimeOnce(
             skillsDir: cfg.skillsDir,
             chrome: {},
         };
-        const core = seams.assemble({ conversation, workflows, resourcePolicy: cfg.resourcePolicy });
-
         // Re-point the sandbox agent's provenance emitters when its model switches live.
         // The run-engine bundles injected the holder's STABLE `artifactRegistry` / `emitProvenance`
         // handles, so the harness holds ONE identity for each for the runtime's life; a swap replaces only
@@ -701,31 +689,46 @@ async function bootHarnessRuntimeOnce(
         // by the idle gate, keeps the emitters it started with; the conversation agent needs no equivalent
         // because chat turns write the Solid store, never the provenance bus.
         const swapSandboxEmitters = (name: `${string}/${string}`): void => emitters.swap(name);
-        // Install the live-switch controller BEFORE `launch`: its run-bus subscription must be attached
-        // when DBOS recovery re-emits `run_started` for reclaimed runs, or the gauge would miss them and
-        // let a switch land mid-recovery.
-        installAgentSwitch({
-            swappable: { conversation: conversationProvider, sandbox: sandboxProvider },
-            rebuildProvider: buildProvider,
-            swapSandboxEmitters,
-            modelProvider: connection.provider,
-            initialModels: { conversation: conversationModel, sandbox: sandboxModel },
-        });
 
-        // Sandbox-hygiene crons: reaper tears down orphaned containers a killed
-        // host left behind; the watchdog converts a dead sandbox into a prompt
-        // step failure instead of a deadline-long hang; the sweep clears stale
-        // notification rows. They act only on rows/containers the harness created.
-        // They stay the boot's own duty — `assembleCoreRuntime` does not own them —
-        // and register before `launch` alongside the durable cohort.
-        seams.registerReaper({ pool, sandboxClient, logger });
-        // `composition.pool` (typed `Pool`) rather than the `Pool | null`-typed
-        // `pool` local, whose narrowing a deferred closure does not preserve.
-        seams.registerWatchdog({ queryActiveSandboxes: () => queryActiveSandboxes(composition.pool), sandboxClient, logger });
-        seams.registerNotificationSweep({ pool, logger });
+        // Host-specific pre-launch work, run by `bootHarness` AFTER it registers
+        // the workflow cohort and BEFORE `DBOS.launch()`:
+        //   1. Cancel this executor's stale PENDING `ephemeral:*` rows. The assemble
+        //      step makes a prior crash's row re-dispatchable by launch-time
+        //      recovery; the only race-free cancel point is a direct system-DB
+        //      UPDATE that lands before launch — which `beforeLaunch` guarantees.
+        //   2. Install the live-switch controller. Its run-bus subscription must be
+        //      attached when launch-time recovery re-emits `run_started` for
+        //      reclaimed runs, or the gauge would miss them and let a switch land
+        //      mid-recovery.
+        //   3. Register the sandbox-hygiene crons (reaper tears down orphaned
+        //      containers, watchdog converts a dead sandbox into a step failure,
+        //      sweep clears stale notification rows) — the embedder's duty, acting
+        //      only on rows/containers the harness created.
+        // Every pool read uses `composition.pool` (typed `Pool`), not the
+        // `Pool | null` local whose narrowing this deferred closure does not preserve.
+        const beforeLaunch = async (): Promise<void> => {
+            await seams.sweepEphemeral({ pool: composition.pool, logger, executorId: "local" });
+            installAgentSwitch({
+                swappable: { conversation: conversationProvider, sandbox: sandboxProvider },
+                rebuildProvider: buildProvider,
+                swapSandboxEmitters,
+                modelProvider: connection.provider,
+                initialModels: { conversation: conversationModel, sandbox: sandboxModel },
+            });
+            seams.registerReaper({ pool: composition.pool, sandboxClient, logger });
+            seams.registerWatchdog({ queryActiveSandboxes: () => queryActiveSandboxes(composition.pool), sandboxClient, logger });
+            seams.registerNotificationSweep({ pool: composition.pool, logger });
+        };
 
-        await seams.launch({
-            config: {
+        // Hand the harness the resolved inputs and let it own the ordered boot
+        // tail — validate skills → init state → assert the connection budget →
+        // assemble the durable cohort → `beforeLaunch` → launch — plus the
+        // graceful-shutdown handle wired to close this pool.
+        const booted = await seams.boot({
+            core: { conversation, workflows, resourcePolicy: cfg.resourcePolicy },
+            pool: composition.pool,
+            skillsDir: cfg.skillsDir,
+            dbos: {
                 dbHost: conn.host,
                 dbPort: String(conn.port),
                 dbName: conn.database,
@@ -739,8 +742,24 @@ async function bootHarnessRuntimeOnce(
                 // profile command's clack output; warnings still surface.
                 logLevel: "warn",
             },
+            // Local single-pod CLI: no `DB_POOL_MAX` override, so the guard reads
+            // the default app-pool size.
+            connectionBudget: {},
             logger,
+            beforeLaunch,
+            // The CLI owns its OWN OpenTelemetry (`lib/otel.ts`); the harness must
+            // NOT double-init — its `initOtel` prints a console banner that would
+            // corrupt the TUI. Telemetry init/flush stay CLI-side, so they are
+            // no-ops here (the boot handle's default).
+            initTelemetry: () => {},
+            // The harness's HTTP-drain slot. In poll mode the ingress is a no-op,
+            // but wiring it keeps the drain ordered ahead of DBOS shutdown.
+            closeHttpServer: async () => ingress.stop(),
+            // The CLI owns process exit (`lib/shutdown.ts` flushes logs/otel then
+            // exits), so the harness shutdown must not call `process.exit`.
+            exit: () => {},
         });
+        const core = booted.runtime;
 
         const runtime: HarnessRuntime = {
             conversation: conversationBackend,
@@ -758,16 +777,14 @@ async function bootHarnessRuntimeOnce(
         active = runtime;
 
         onShutdown(async () => {
-            // DBOS first (it never throws and needs the DB), then the listener,
-            // then the pool the harness queries with, then the runtime lock so the
-            // next boot can acquire it.
-            await shutdownDbos({ logger });
-            ingress.stop();
-            await runtime.pool.end().catch(() => {
-                // The process is exiting; a pool that won't drain must not block it.
-            });
-            // Detach the live-switch controller (its bus subscription + gauge state) so nothing outlives
-            // the runtime it observed.
+            // The harness's graceful-shutdown handle drives the durability-ordered
+            // teardown: mark draining, drain the ingress (via `closeHttpServer`),
+            // shut DBOS down, then close the pool. `exit` is a no-op — the CLI owns
+            // process exit.
+            await booted.shutdown("cli-shutdown");
+            // CLI-owned teardown the harness has no slot for: detach the live-switch
+            // controller (its bus subscription + gauge) and release the machine-wide
+            // runtime lock so the next boot can acquire it.
             clearAgentSwitch();
             releaseInstanceLock(RUNTIME_LOCK_KEY);
             active = null;
