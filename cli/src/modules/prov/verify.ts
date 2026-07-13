@@ -1,9 +1,8 @@
 import { readFileSync, existsSync } from "node:fs";
 import { z } from "zod";
 import type { VerifyResult } from "../../types/prov.ts";
-import type { IdOrName } from "../../lib/types.ts";
 import { getAnalysisIntegrity } from "../../db/primary_query.ts";
-import { findAnalysisForProv } from "./document.ts";
+import { requireAnalysisForProv } from "./prov.ts";
 import { type Result, err } from "neverthrow";
 import { getLogger } from "../../lib/log.ts";
 import {
@@ -16,7 +15,7 @@ import {
     signHexDigest,
     type SigningError,
 } from "./signing.ts";
-import { dieOn, fail } from "../../lib/cli.ts";
+import { fail } from "../../lib/cli.ts";
 
 const log = getLogger("prov:verify");
 
@@ -137,8 +136,7 @@ export async function verifyAnalysisIntegrity(analysisId: string): Promise<Verif
  * from the DB, load the public key, run verification, and print the result.
  */
 export async function runVerifyProvenance(ref: string): Promise<void> {
-    const analysis = findAnalysisForProv(ref as IdOrName).match((a) => a, dieOn("Failed to resolve analysis"));
-    if (!analysis) fail(`No analysis found matching "${ref}".`);
+    const analysis = requireAnalysisForProv(ref);
 
     const result = await verifyAnalysisIntegrity(analysis.id);
     if (!result) fail(`No analysis row for "${ref}".`);

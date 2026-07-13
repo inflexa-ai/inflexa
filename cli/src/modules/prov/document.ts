@@ -15,9 +15,8 @@ import type {
     ProvFileKey,
     ProvCommandRef,
 } from "../../types/prov.ts";
-import type { IdOrName } from "../../lib/types.ts";
 import type { DbError } from "../../db/errors.ts";
-import { getAnalysisProvenance, findAnalysesByRef } from "../../db/primary_query.ts";
+import { getAnalysisProvenance } from "../../db/primary_query.ts";
 
 // The tsprov-facing layer: seeding, appending to, and serializing an analysis's PROV document. The
 // `@inflexa-ai/tsprov` dependency is confined to this file — the recorder (`prov.ts`) and the export
@@ -571,13 +570,4 @@ export function serializeProvenance(analysis: Analysis, format: BuiltinProvForma
                 .mapErr((e): DbError => ({ type: "query_failed", op: "serializeProvenance:deserialize", cause: e.cause }))
         );
     });
-}
-
-/**
- * Resolve an id-or-name ref to one analysis for export, via the db resolver (id-first ordering) —
- * keeping ref resolution inside the prov module so `export.ts` need not import `analysis`'s own
- * `findAnalysis`. `null` when none match.
- */
-export function findAnalysisForProv(ref: IdOrName): Result<Analysis | null, DbError> {
-    return findAnalysesByRef(ref).map((rows) => rows[0] ?? null);
 }

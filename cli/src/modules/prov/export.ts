@@ -1,7 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
-import { findAnalysisForProv, serializeProvenance } from "./document.ts";
+import { serializeProvenance } from "./document.ts";
+import { requireAnalysisForProv } from "./prov.ts";
 import { buildSidecar } from "./verify.ts";
 import { ensureOutputDir } from "../analysis/output.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
@@ -19,8 +20,7 @@ import { dieOn, fail } from "../../lib/cli.ts";
  */
 export async function runExportProvenance(ref: string, opts: { format?: string; output?: string }): Promise<void> {
     const format = parseFormat(opts.format);
-    const analysis = findAnalysisForProv(ref).match((a) => a, dieOn("Failed to resolve analysis"));
-    if (!analysis) fail(`No analysis found matching "${ref}".`);
+    const analysis = requireAnalysisForProv(ref);
 
     const document = serializeProvenance(analysis, format).match((s) => s, dieOn("Failed to build provenance"));
 
