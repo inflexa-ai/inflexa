@@ -466,6 +466,71 @@ describe("PROV command builders (appendCommandExecuted + generation move)", () =
         expect(provn).toContain(fileQName({ path: scriptPath, hash: "hashScr001" }));
     });
 
+    test("an unresolvable scriptPath is recorded as inflexa:unresolvedScript, minting no entity and no used edge", () => {
+        const doc = freshDocument(analysis);
+        appendStepCompleted(doc, "a1", system, stepOutcome, model);
+        // cmdRunDe's scriptPath "scripts/de.R" matches neither its output (de_results.csv) nor its
+        // input (counts.csv) — the unkeyable-script case the recorder must now surface, not drop.
+        appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe, model);
+        const unified = doc.unified();
+        const cmdQn = commandQName(stepRef, cmdRunDe.outputs);
+        const json = JSON.parse(unified.serialize("json")) as {
+            activity?: Record<string, Record<string, unknown>>;
+            entity?: Record<string, Record<string, unknown>>;
+        };
+
+        // The lost attribution rides the command activity as a deterministic attribute.
+        expect(json.activity?.[cmdQn]?.["inflexa:unresolvedScript"]).toBe("scripts/de.R");
+        // No entity was minted for the unresolvable path (it has no (path, hash) key)...
+        const entityPaths = Object.values(json.entity ?? {}).map((e) => e["inflexa:path"]);
+        expect(entityPaths).not.toContain("scripts/de.R");
+        // ...and no script used edge was drawn — only the single data input's used edge stands.
+        const provn = unified.serialize("provn");
+        expect((provn.match(/used\(inflexa:used-cmd-/g) ?? []).length).toBe(1);
+    });
+
+    test("a resolvable scriptPath draws its used edge and stamps NO unresolvedScript attribute", () => {
+        const doc = freshDocument(analysis);
+        appendStepCompleted(doc, "a1", system, stepOutcome, model);
+        // The script IS one of the command's inputs, so it resolves to that entity — the unchanged path.
+        const scriptPath = "runs/run-001/step-de/scripts/de.R";
+        const withScript: ProvCommandRef = {
+            kind: "command",
+            command: "Rscript scripts/de.R",
+            exitCode: 0,
+            scriptPath,
+            outputs: [{ path: "runs/run-001/step-de/output/x.csv", hash: "hashX00001" }],
+            inputs: [{ path: scriptPath, hash: "hashScr001", source: "step" }],
+        };
+        appendCommandExecuted(doc, "a1", system, stepRef, withScript, model);
+        const unified = doc.unified();
+        const cmdQn = commandQName(stepRef, withScript.outputs);
+
+        const provn = unified.serialize("provn");
+        // The script resolves to its input entity — a used edge, exactly as before.
+        expect(provn).toContain(fileQName({ path: scriptPath, hash: "hashScr001" }));
+        // ...and no attribution gap is recorded (the resolved path is not a gap).
+        expect(provn).not.toContain("inflexa:unresolvedScript");
+        const json = JSON.parse(unified.serialize("json")) as { activity?: Record<string, Record<string, unknown>> };
+        expect(json.activity?.[cmdQn]?.["inflexa:unresolvedScript"]).toBeUndefined();
+    });
+
+    test("re-emitting the same unresolvable-script command dedups the attribute to one value on one activity", () => {
+        const doc = freshDocument(analysis);
+        appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe, model);
+        appendCommandExecuted(doc, "a1", system, stepRef, cmdRunDe, model); // body re-execution on recovery
+        const unified = doc.unified();
+        const cmdQn = commandQName(stepRef, cmdRunDe.outputs);
+
+        // One activity record under the command QName after unify.
+        const ids = unified.getRecords().map((r) => r.identifier?.toString() ?? "");
+        expect(ids.filter((id) => id === cmdQn).length).toBe(1);
+        // The attribute carries exactly one value — serialized as a bare string, never a two-element
+        // array (value dedup under unified() collapses the byte-identical re-emission).
+        const json = JSON.parse(unified.serialize("json")) as { activity?: Record<string, Record<string, unknown>> };
+        expect(json.activity?.[cmdQn]?.["inflexa:unresolvedScript"]).toBe("scripts/de.R");
+    });
+
     // Replay idempotency: DBOS re-executes the body, re-emitting the same command group. Deterministic
     // output-set QNames + relation ids collapse the re-emission to one record set under unified().
     test("duplicate command emission dedups the activity and every relation by the output-set QName", () => {

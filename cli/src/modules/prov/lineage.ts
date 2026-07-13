@@ -78,6 +78,13 @@ export type LineageActivity = {
     command?: string;
     exitCode?: number;
     tool?: string;
+    /**
+     * A script path the command referenced that resolved to no recorded file entity — a lost input
+     * attribution the recorder saw and could not key. Present only on a `command` activity whose
+     * `scriptPath` matched neither an output nor an input; carried as activity metadata, never a graph
+     * node (the unattributable path has no `(path, hash)` key), so the renderer can word the gap.
+     */
+    unresolvedScript?: string;
     runId?: string;
     stepId?: string;
     files: LineageFile[];
@@ -305,6 +312,7 @@ function activityMeta(graph: ProvGraph, uri: string): Omit<LineageActivity, "fil
     const exitCodeRaw = element === undefined ? undefined : firstAttr(element, "inflexa:exitCode");
     const exitCode = exitCodeRaw !== undefined && Number.isFinite(Number(exitCodeRaw)) ? Number(exitCodeRaw) : undefined;
     const tool = element === undefined ? undefined : firstAttr(element, "inflexa:tool");
+    const unresolvedScript = element === undefined ? undefined : firstAttr(element, "inflexa:unresolvedScript");
     let runId = element === undefined ? undefined : firstAttr(element, "inflexa:runId");
     let stepId = element === undefined ? undefined : firstAttr(element, "inflexa:stepId");
     if (runId === undefined && stepId === undefined) {
@@ -319,6 +327,7 @@ function activityMeta(graph: ProvGraph, uri: string): Omit<LineageActivity, "fil
         ...(command !== undefined ? { command } : {}),
         ...(exitCode !== undefined ? { exitCode } : {}),
         ...(tool !== undefined ? { tool } : {}),
+        ...(unresolvedScript !== undefined ? { unresolvedScript } : {}),
         ...(runId !== undefined ? { runId } : {}),
         ...(stepId !== undefined ? { stepId } : {}),
     };
@@ -463,6 +472,12 @@ function activityLine(activity: LineageActivity, forward: boolean): string {
  * files it used (backward) or generated (forward) beneath. An expanded file with no activities is
  * labeled a terminal ("no recorded …") rather than left bare — absence of recorded inputs must
  * never read as certainty that none existed (tool reads are a known recording gap).
+ *
+ * An activity's empty branch is worded by what the record CLAIMS, not one hedge for all: a file-tool
+ * write reads nothing by design (a positive claim), a command hedges, a step scopes to step grain.
+ * A command that referenced a script the recorder could not attribute (`inflexa:unresolvedScript`)
+ * prints that script as a distinct child line — never a file — and the walk ends with one note
+ * counting such gaps, so a reviewer cannot mistake the understated tree for the whole story.
  */
 export function formatTree(graph: ProvGraph, result: LineageResult, opts: { forward: boolean; depth?: number }): string {
     const forward = opts.forward;
@@ -472,6 +487,49 @@ export function formatTree(graph: ProvGraph, result: LineageResult, opts: { forw
     const roots = result.roots.map((uri) => buildRootTree(graph, edges, frontier, uri, forward, budget));
 
     const lines: string[] = [];
+    // Distinct activities the render surfaced an attribution gap under, deduped by QName — a diamond
+    // that renders one gap activity twice is still one lost attribution, so the footer counts it once.
+    const gapActivities = new Set<string>();
+
+    // The wording for an activity's empty branch, scoped to what the record CLAIMS: a file-tool write
+    // attests agent-authored bytes (a POSITIVE by-design absence, not a hedge — no unobserved reads
+    // exist to hedge against); a command hedges (tool reads ARE a known recording gap); a step scopes
+    // its claim to step grain (commands inside the step carry their own reads/outputs). Forward, the
+    // side is outputs, so the only honest wording is "no recorded readers" regardless of kind.
+    const emptyLabel = (activity: LineageActivity): string => {
+        if (activity.kind === "step") return forward ? "no step-grain outputs (command outputs are attributed to their commands)" : "no step-grain inputs";
+        if (forward) return "no recorded readers of this output";
+        if (activity.kind === "file_tool") return "agent-authored — no file inputs by design";
+        return "no recorded inputs";
+    };
+
+    // The unresolved script to surface beneath an activity, or undefined. Backward only: it is a lost
+    // INPUT attribution, meaningless on the output side. A `used` edge to a file at that path is the
+    // stronger claim (a mixed old/new document could re-emit both the attribute and the resolved edge),
+    // so the gap is suppressed when that resolved read is present among the activity's used files.
+    const gapOf = (activity: LineageActivity): string | undefined => {
+        if (forward || activity.unresolvedScript === undefined) return undefined;
+        if (activity.files.some((f) => f.path === activity.unresolvedScript)) return undefined;
+        return activity.unresolvedScript;
+    };
+
+    const renderActivityChildren = (activity: LineageActivity, prefix: string): void => {
+        const gap = gapOf(activity);
+        if (activity.files.length === 0 && gap === undefined) {
+            lines.push(`${prefix}└─ ${emptyLabel(activity)}`);
+            return;
+        }
+        for (const [j, child] of activity.files.entries()) {
+            // The gap line, when present, is the branch's tail — so an unattributable script never
+            // sits above a real input file, and a real file is never mistaken for the whole story.
+            renderFile(child, prefix, gap === undefined && j === activity.files.length - 1, false);
+        }
+        if (gap !== undefined) {
+            gapActivities.add(activity.qn);
+            lines.push(`${prefix}└─ script ${gap} — not attributable to a recorded file`);
+        }
+    };
+
     const renderFile = (file: LineageFile, prefix: string, isLast: boolean, isRoot: boolean): void => {
         if (isRoot) lines.push(fileLine(file));
         else lines.push(`${prefix}${isLast ? "└─ " : "├─ "}${fileLine(file)}`);
@@ -484,42 +542,25 @@ export function formatTree(graph: ProvGraph, result: LineageResult, opts: { forw
         for (const [i, activity] of file.activities.entries()) {
             const lastActivity = i === file.activities.length - 1;
             lines.push(`${childPrefix}${lastActivity ? "└─ " : "├─ "}${activityLine(activity, forward)}`);
-            const filePrefix = `${childPrefix}${lastActivity ? "   " : "│  "}`;
-            if (activity.files.length === 0) {
-                // A step's absence claim is scoped to its own grain: commands inside the step may
-                // well have recorded reads/outputs of their own — those are attributed to them.
-                const label =
-                    activity.kind === "step"
-                        ? forward
-                            ? "no step-grain outputs (command outputs are attributed to their commands)"
-                            : "no step-grain inputs"
-                        : forward
-                          ? "no recorded readers of this output"
-                          : "no recorded inputs";
-                lines.push(`${filePrefix}└─ ${label}`);
-                continue;
-            }
-            for (const [j, child] of activity.files.entries()) {
-                renderFile(child, filePrefix, j === activity.files.length - 1, false);
-            }
+            renderActivityChildren(activity, `${childPrefix}${lastActivity ? "   " : "│  "}`);
         }
     };
     const renderActivityRoot = (activity: LineageActivity): void => {
         lines.push(activityFacts(activity));
-        if (activity.files.length === 0) {
-            // A searchable activity is a command or file tool by construction (steps carry neither
-            // a command nor a tool), so the step-grain absence wordings can never apply here.
-            lines.push(`└─ ${forward ? "no recorded readers of this output" : "no recorded inputs"}`);
-            return;
-        }
-        for (const [j, child] of activity.files.entries()) {
-            renderFile(child, "", j === activity.files.length - 1, false);
-        }
+        renderActivityChildren(activity, "");
     };
     for (const [i, root] of roots.entries()) {
         if (i > 0) lines.push("");
         if (root.kind === "activity") renderActivityRoot(root.activity);
         else renderFile(root.file, "", true, true);
+    }
+    // One trailing note when the rendered walk surfaced any attribution gap — counting only rendered
+    // activities keeps it about what the reader is looking at, never gaps elsewhere in the document. A
+    // zero-gap walk (the common case, and every document predating the attribute) appends nothing, so
+    // its output stays byte-identical to before.
+    if (gapActivities.size > 0) {
+        lines.push("");
+        lines.push(`${gapActivities.size} attribution gap${gapActivities.size === 1 ? "" : "s"}: script paths that resolved to no recorded file`);
     }
     return lines.join("\n");
 }
@@ -527,7 +568,7 @@ export function formatTree(graph: ProvGraph, result: LineageResult, opts: { forw
 /** A node of the flat JSON graph — kind-discriminated, carrying only the facts that kind has. */
 export type LineageJsonNode =
     | { kind: "file"; path: string | null; hash: string | null; source: string | null; truncated?: true }
-    | { kind: "command"; command?: string; exitCode?: number; runId?: string; stepId?: string }
+    | { kind: "command"; command?: string; exitCode?: number; unresolvedScript?: string; runId?: string; stepId?: string }
     | { kind: "file_tool"; tool?: string; runId?: string; stepId?: string }
     | { kind: "step" | "activity"; runId?: string; stepId?: string };
 
@@ -611,7 +652,8 @@ function dotNodeStatement(qn: string, node: LineageJsonNode): string {
         const label = `${node.path ?? qn}  (hash ${shortHash(node.hash)})${truncated ? "  [truncated]" : ""}`;
         return `    ${dotQuoted(qn)} [shape=box${truncated ? ", style=dashed" : ""}, label=${dotQuoted(label)}];`;
     }
-    return `    ${dotQuoted(qn)} [shape=ellipse, label=${dotQuoted(activityFacts({ qn, ...node }))}];`;
+    const gap = node.kind === "command" && node.unresolvedScript !== undefined ? `  [unresolved script ${node.unresolvedScript}]` : "";
+    return `    ${dotQuoted(qn)} [shape=ellipse, label=${dotQuoted(`${activityFacts({ qn, ...node })}${gap}`)}];`;
 }
 
 /**
@@ -674,7 +716,8 @@ export function formatMermaid(graph: ProvGraph, result: LineageResult): string {
             const label = `${node.path ?? qn}  (hash ${shortHash(node.hash)})${truncated ? "  [truncated]" : ""}`;
             lines.push(`    ${idOf(qn)}([${mermaidLabel(label)}])`);
         } else {
-            lines.push(`    ${idOf(qn)}[${mermaidLabel(activityFacts({ qn, ...node }))}]`);
+            const gap = node.kind === "command" && node.unresolvedScript !== undefined ? `  [unresolved script ${node.unresolvedScript}]` : "";
+            lines.push(`    ${idOf(qn)}[${mermaidLabel(`${activityFacts({ qn, ...node })}${gap}`)}]`);
         }
     }
     for (const edge of flat.edges) {

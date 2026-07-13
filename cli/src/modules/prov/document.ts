@@ -441,6 +441,21 @@ export function appendCommandExecuted(
     const groupDigest = commandGroupDigest(command.outputs);
     const cmdQn = commandQName(step, command.outputs);
 
+    // The command's script (Cortex's `scriptIndex` analogue): the ref carries only `scriptPath`, no
+    // hash, so recover the hash by matching the path against a `(path,hash)` pair we already hold — the
+    // group's own outputs or its inputs (an intra-step read of a script an earlier file-tool wrote
+    // surfaces here as an input). Resolved BEFORE the activity is written so the outcome can shape its
+    // attributes: a path matching NEITHER has no `(path, hash)` key, so it can seed no entity and no
+    // `used` edge — a hash-less entity would corrupt the shared QName space (the no-dangle rule). But
+    // dropping it silently erases that an attribution existed and was lost, so the unresolvable path
+    // rides the activity as `inflexa:unresolvedScript`: deterministic from the payload (re-emission
+    // writes the identical value and `unified()` dedups it), metadata about the activity, not a node.
+    const scriptKey =
+        command.kind === "command" && command.scriptPath !== undefined
+            ? (command.outputs.find((o) => o.path === command.scriptPath) ?? command.inputs.find((i) => i.path === command.scriptPath))
+            : undefined;
+    const unresolvedScript = command.kind === "command" && command.scriptPath !== undefined && scriptKey === undefined ? command.scriptPath : undefined;
+
     // Per-kind attributes; args are joined into one string (the same lossy-but-faithful shape Cortex
     // ships). No formal start/end time — the only timestamp at this seam is replay-unstable.
     const attributes =
@@ -451,6 +466,7 @@ export function appendCommandExecuted(
                   ...(command.args ? { "inflexa:args": command.args.join(" ") } : {}),
                   "inflexa:exitCode": command.exitCode,
                   ...(command.durationMs !== undefined ? { "inflexa:durationMs": command.durationMs } : {}),
+                  ...(unresolvedScript !== undefined ? { "inflexa:unresolvedScript": unresolvedScript } : {}),
               }
             : { "prov:type": "inflexa:FileToolWrite", "inflexa:tool": command.tool };
     doc.activity(cmdQn, undefined, undefined, attributes);
@@ -469,21 +485,15 @@ export function appendCommandExecuted(
     // Only a `command` kind reads inputs; a `file_tool` write is agent-authored content with none.
     if (command.kind === "command") {
         // Every command-scoped `used` id is keyed on (command group + the read entity's `(path,hash)`
-        // digest). This is deliberate: when the script below resolves to an entity already among these
+        // digest). This is deliberate: when the script resolves to an entity already among these
         // inputs, its `used` edge gets the SAME id and merges — the command reads one entity once.
         const usedId = (key: ProvFileKey): string => `${NS_PREFIX}:used-cmd-${step.runId}-${step.stepId}-${groupDigest}-${fileDigest(key)}`;
         for (const input of command.inputs) {
             doc.used(cmdQn, fileQName(input), undefined, usedId(input));
         }
-        // The script edge (Cortex's `scriptIndex` analogue): the ref carries only `scriptPath`, no hash,
-        // so recover the hash by matching the path against a `(path,hash)` pair we already hold — the
-        // group's own outputs or its inputs (an intra-step read of a script an earlier file-tool wrote
-        // surfaces here as an input). If it matches NEITHER, skip the edge rather than mint an
-        // unkeyable, dangling entity — an unresolvable script contributes no `used` edge.
-        if (command.scriptPath !== undefined) {
-            const scriptKey = command.outputs.find((o) => o.path === command.scriptPath) ?? command.inputs.find((i) => i.path === command.scriptPath);
-            if (scriptKey) doc.used(cmdQn, fileQName(scriptKey), undefined, usedId(scriptKey));
-        }
+        // A resolved script draws its `used` edge; an unresolvable one drew none — the
+        // `inflexa:unresolvedScript` attribute (stamped above) carries that lost attribution instead.
+        if (scriptKey) doc.used(cmdQn, fileQName(scriptKey), undefined, usedId(scriptKey));
     }
 }
 
