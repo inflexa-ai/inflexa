@@ -63,7 +63,7 @@ comment. Regulatory grounding is worth doing — but as a designed, speced featu
 not as resurrected scaffolding. If product wants it now, choose A and this change
 splits Decision 1 into its own spec-driven change.
 
-### OPEN — owner: Radu. Is regulatory grounding a committed near-term capability (→ A) or should the scaffolding be removed until it is (→ B)?
+### RESOLVED — remove references to what does not exist; keep what does. The `search_regulatory_guidance` (no such tool) instructions were stripped from the four briefs and the false `state/init.ts` comment corrected. `find_approval_precedent` (the tool exists) is kept; wiring it into the single-shot synthesis path is a follow-up (see tasks.md §1).
 
 ## Decision 2 — Boot lifecycle & observability ownership
 
@@ -119,7 +119,7 @@ for a library), and makes the OTel/shutdown wiring an explicit, exported,
 documented embedder step. `validateAgentSkills` wiring is the highest-value,
 lowest-risk item in this whole change and should land regardless of the rest.
 
-### OPEN — owner: Radu. Confirm the split: harness-owned skill validation in `assembleCoreRuntime` + embedder-owned otel/shutdown wiring (A)? Or should the harness own the full boot/shutdown lifecycle (B)?
+### RESOLVED — the harness owns an ordered boot sequence. Implemented as `bootHarness` (`runtime/boot.ts`) wrapping a still-pure `assembleCoreRuntime`; it runs `validateAgentSkills` before launch and returns a `shutdown` handle. Telemetry stays injectable (default no-op) so the CLI's own OTel is not double-initialized. CLI adoption of `bootHarness` is the remaining step (tasks.md §2).
 
 ## Decision 3 — Report-builder skill reachability
 
@@ -159,7 +159,7 @@ lines) as unlinked content.
 depends on it). **Remove** `report-pdf`/`report-pptx` unless a report-format
 roadmap claims them — right now they are pure orphan content.
 
-### OPEN — owner: Radu. Grant report-builder skill-tool access (A) or strip the prompt (B)? And are report-pdf / report-pptx roadmap or removable?
+### RESOLVED — option A, done. `report-html` skill tools (`skill_search`/`skill_read`) are wired into the report-builder roster; `skillsDir` threads from the embedder through the conversation deps. Verified end-to-end (CLI tsc clean after `dist` rebuild). `report-pdf` / `report-pptx` remain orphaned — still open per roadmap.
 
 ## Decision 4 — 402-resume path: confirm or retire
 
@@ -186,7 +186,7 @@ in-tree caller and is not exported from the barrel; its doc says the entry point
 Confirm change 9's status first. If it is still planned, **A** (and annotate it
 so it stops reading as orphaned). If not, **B**.
 
-### OPEN — owner: Radu. Is "change 9" (the 402-resume entry point) still planned?
+### RESOLVED (validity checked) — "change 9" does not exist: this repo names changes by dated kebab slug, never numerically, and no change (active or archived) owns the resume entry point. The `prepareExecuteAnalysisResume` module is internally coherent but unreachable (no caller, not on the barrel). The phantom "change 9" doc references were corrected to say the entry point is unbuilt. Retire-vs-build the resume path is left to the owner (tasks.md §4).
 
 ## Non-goals
 
