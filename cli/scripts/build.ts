@@ -11,6 +11,8 @@ import { dirname, join, relative } from "node:path";
 
 import { createSolidTransformPlugin, resetSolidTransformPluginState } from "@opentui/solid/bun-plugin";
 
+import { audienceInvalidReason } from "../src/modules/auth/auth.ts";
+
 // This process autoloads the repo bunfig.toml, whose preload installs
 // opentui's runtime plugin support and sets a global resolvePath that
 // rewrites imports to virtual `opentui:runtime-module:` specifiers only the
@@ -61,6 +63,18 @@ for (const name of bakedVars) {
 }
 if (missing.length > 0) {
     console.error(`error: refusing to build a binary without these baked in: ${missing.join(", ")}`);
+    process.exit(1);
+}
+
+// The audience must be the product API's identifier (a URI), not a pasted credential or the Auth0
+// Management API — either would compile fine but break every login at runtime. Catch it here, where the
+// operator can see it, using the SAME predicate the runtime resolver applies (one truth table, two
+// gates). Non-null: the missing-var loop above guarantees both vars are present and non-empty.
+const audienceReason = audienceInvalidReason(process.env.INFLEXA_AUTH0_AUDIENCE!, process.env.INFLEXA_AUTH0_DOMAIN!);
+if (audienceReason !== null) {
+    console.error(
+        `error: INFLEXA_AUTH0_AUDIENCE is not a usable API identifier (${audienceReason}) — it must be the dedicated resource-server URI, not a credential or the Auth0 Management API`,
+    );
     process.exit(1);
 }
 

@@ -69,8 +69,18 @@ export type DeviceCodeResponse = {
     interval: number;
 };
 
+/**
+ * Why a configured `INFLEXA_AUTH0_AUDIENCE` cannot identify the product API.
+ * `not_a_uri`: the value has no scheme, so it is not a resource-server
+ * identifier at all — a pasted credential blob lands here. `management_api`: the
+ * value is the Auth0 Management API, which never issues refresh tokens and so
+ * cannot back inflexa's sliding session.
+ */
+export type AudienceInvalidReason = "not_a_uri" | "management_api";
+
 export type AuthError =
     | { type: "missing_config"; missingVars: string[] }
+    | { type: "invalid_audience"; variable: "INFLEXA_AUTH0_AUDIENCE"; reason: AudienceInvalidReason; valuePrefix: string }
     | { type: "not_authenticated" }
     | { type: "device_code_request_failed"; detail: string }
     | { type: "token_poll_failed"; detail: string }
@@ -107,6 +117,15 @@ export function describeAuthError(error: AuthError): string {
     switch (error.type) {
         case "missing_config":
             return `This build has no Auth0 configuration (missing: ${error.missingVars.join(", ")}). Release binaries are built with these baked in; for development, set them in your environment or .env.`;
+        case "invalid_audience":
+            // Indexed by reason so exhaustiveness is enforced by construction: a new
+            // AudienceInvalidReason makes this indexing a compile error for the missing key. Only the
+            // truncated `valuePrefix` is interpolated — never the raw value, which may be a pasted secret.
+            return {
+                not_a_uri: `INFLEXA_AUTH0_AUDIENCE ("${error.valuePrefix}") is not an API identifier (a URI). Check what was pasted into INFLEXA_AUTH0_AUDIENCE — it must be the product API's identifier, not a credential.`,
+                management_api:
+                    "The Auth0 Management API cannot serve as the product audience — it never issues refresh tokens, so the sliding session could never renew. Set INFLEXA_AUTH0_AUDIENCE to the dedicated API identifier instead.",
+            }[error.reason];
         case "not_authenticated":
             return "Not logged in — run `inflexa auth login`.";
         case "device_code_request_failed":
@@ -128,18 +147,54 @@ export function describeAuthError(error: AuthError): string {
     }
 }
 
-export function resolveAuth0Config(): Result<Auth0Config, AuthError> {
-    const domain = bakedEnv.auth0Domain;
-    const clientId = bakedEnv.auth0ClientId;
-    const audience = bakedEnv.auth0Audience;
-    if (domain && clientId && audience) return ok({ domain, clientId, audience });
+/**
+ * Validates a configured audience against the Auth0 domain, returning the failure reason or null when
+ * the value is a usable resource-server identifier. Kept pure and dependency-free — only `URL.canParse`
+ * plus a string comparison — so the release build script can share this one truth table without pulling
+ * in the runtime extensions (`JSON.parseWith`, …) that only the CLI entry point installs.
+ */
+export function audienceInvalidReason(audience: string, domain: string): AudienceInvalidReason | null {
+    // Any scheme is a legitimate API identifier (`urn:inflexa:api` is valid); a base64url secret has no
+    // scheme and does not parse as a URI, which is exactly how a pasted credential is caught here.
+    if (!URL.canParse(audience)) return "not_a_uri";
+    // The Management API is a real URI, so it clears the parse check — reject it explicitly. A
+    // third-party API whose path merely contains `/api/v2/` on a different host is not equal and passes.
+    if (audience === `https://${domain}/api/v2/`) return "management_api";
+    return null;
+}
 
-    const missingVars = [
-        ...(domain ? [] : ["INFLEXA_AUTH0_DOMAIN"]),
-        ...(clientId ? [] : ["INFLEXA_AUTH0_CLIENT_ID"]),
-        ...(audience ? [] : ["INFLEXA_AUTH0_AUDIENCE"]),
-    ];
-    return err({ type: "missing_config", missingVars });
+/**
+ * Pure resolution of the three Auth0 values into a validated config. Split out from
+ * {@link resolveAuth0Config} so its truth table is unit-testable: the wrapper reads `bakedEnv`, which
+ * freezes `process.env` at import and so cannot be varied inside a test process (the same idiom as
+ * `isDevelopmentBuild`/`devCommandsActive` in lib/env.ts). Missing-var reporting is checked
+ * first so an unconfigured build names exactly which variables to set before it complains about the
+ * validity of a value that is not even present.
+ */
+export function resolveAuth0ConfigFrom(domain: string | undefined, clientId: string | undefined, audience: string | undefined): Result<Auth0Config, AuthError> {
+    if (!domain || !clientId || !audience) {
+        const missingVars = [
+            ...(domain ? [] : ["INFLEXA_AUTH0_DOMAIN"]),
+            ...(clientId ? [] : ["INFLEXA_AUTH0_CLIENT_ID"]),
+            ...(audience ? [] : ["INFLEXA_AUTH0_AUDIENCE"]),
+        ];
+        return err({ type: "missing_config", missingVars });
+    }
+
+    const reason = audienceInvalidReason(audience, domain);
+    if (reason !== null) {
+        // Truncate to the first 12 characters (with an ellipsis when clipped): this failure class exists
+        // because credentials get pasted into the audience slot, so the error must never replay a full
+        // secret into terminal scrollback or log files.
+        const valuePrefix = audience.length > 12 ? audience.slice(0, 12) + "…" : audience;
+        return err({ type: "invalid_audience", variable: "INFLEXA_AUTH0_AUDIENCE", reason, valuePrefix });
+    }
+
+    return ok({ domain, clientId, audience });
+}
+
+export function resolveAuth0Config(): Result<Auth0Config, AuthError> {
+    return resolveAuth0ConfigFrom(bakedEnv.auth0Domain, bakedEnv.auth0ClientId, bakedEnv.auth0Audience);
 }
 
 export function loadAuth(): Result<StoredAuth, AuthError> {
