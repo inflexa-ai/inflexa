@@ -159,7 +159,7 @@ lines) as unlinked content.
 depends on it). **Remove** `report-pdf`/`report-pptx` unless a report-format
 roadmap claims them — right now they are pure orphan content.
 
-### RESOLVED — option A, done. `report-html` skill tools (`skill_search`/`skill_read`) are wired into the report-builder roster; `skillsDir` threads from the embedder through the conversation deps. Verified end-to-end (CLI tsc clean after `dist` rebuild). `report-pdf` / `report-pptx` remain orphaned — still open per roadmap.
+### RESOLVED — option A, done, plus the orphan packs removed. `report-html` skill tools (`skill_search`/`skill_read`) are wired into the report-builder roster; `skillsDir` threads from the embedder through the conversation deps. Verified end-to-end (CLI tsc clean after `dist` rebuild). The orphan `report-pdf` / `report-pptx` packs were REMOVED (no agent, no roster, no PDF/PPTX render path referenced them); the `skills/` README and the `agent-skill-assignment` pack-inventory requirement (23 → 21 packs) were updated to match.
 
 ## Decision 4 — 402-resume path: confirm or retire
 

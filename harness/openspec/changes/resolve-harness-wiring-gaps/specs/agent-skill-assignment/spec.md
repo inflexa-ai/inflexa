@@ -33,3 +33,21 @@ any Postgres or DBOS cost is paid. `bootHarness` therefore SHALL require
 - **GIVEN** `bootHarness` is called with a `skillsDir` under which a declared pack has no readable `SKILL.md`
 - **WHEN** the harness boots
 - **THEN** `bootHarness` SHALL reject before state init, the connection-budget guard, and `launchDbos` run, so no durable engine is launched
+
+### Requirement: Skill pack inventory
+
+The `skills/` tree SHALL contain 21 packs: 19 agent-specific packs, the shared
+`shared/omics-general` pack, and 1 report pack (`report-html`).
+
+The `report-pdf` and `report-pptx` packs are REMOVED: no agent declared them,
+no roster loaded them, and no report path renders PDF or PPTX — they were orphan
+content referenced only by the skills `README.md`. A PDF/PPTX report path, if
+built, SHALL re-introduce its pack as a first-class rostered capability.
+
+#### Scenario: The inventory matches the agent roster
+
+- **WHEN** the `skills/` tree is listed
+- **THEN** the 19 agent-specific packs exist: `bulk-transcriptomics`, `single-cell`, `multimodal-single-cell`, `spatial-omics`, `proteomics`, `metabolomics`, `genomic-variants`, `dna-methylation`, `chromatin-regulation`, `microbiome`, `enrichment`, `network-regulatory`, `statistical-modeling`, `multi-omics-integration`, `cheminformatics`, `drug-repurposing`, `immune-profiling`, `pkpd-clinical-response`, `translational-safety`
+- **AND** the shared pack `shared/omics-general` exists
+- **AND** the report pack `report-html` exists
+- **AND** neither `report-pdf` nor `report-pptx` exists

@@ -14,7 +14,7 @@ Runtime knowledge packs the harness loads into its sandbox agents on demand — 
 - **Immunology / microbiome** — `immune-profiling`, `microbiome`
 - **Integration / stats** — `multi-omics-integration`, `network-regulatory`, `statistical-modeling`, `enrichment`
 - **Chem / drug / translational** — `cheminformatics`, `drug-repurposing`, `translational-safety`, `pkpd-clinical-response`
-- **Reporting** — `report-html`, `report-pdf`, `report-pptx`
+- **Reporting** — `report-html`
 
 `shared/` holds cross-cutting packs declared by (almost) every agent — currently `shared/omics-general`.
 
