@@ -8,35 +8,18 @@
  *
  * The `id` is derived deterministically from the file group, so an identical
  * re-emission carries the same id (downstream reconciliation handles dedup).
+ * The card payload is built by the shared `buildFileReferenceCardData`, so the
+ * live emit and the reconstruct-on-read path produce byte-identical cards.
  */
-
-import { createHash } from "node:crypto";
 
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import { buildFileReferenceCardData, deriveRunId, fileGroupHash, MAX_FILES } from "../../memory/card-builders.js";
 import { defineTool, type ToolError } from "../define-tool.js";
 import { validatePath } from "../lib/path-validation.js";
 
 type ShowFileOutput = { shown: false; reason: "invalid_path" } | { shown: true; id: string };
-
-const MAX_FILES = 10;
-
-/** Extracts `runId` from paths shaped `runs/{runId}/...`; undefined otherwise. */
-function deriveRunId(path: string): string | undefined {
-    const segments = path.split("/");
-    if (segments.length >= 2 && segments[0] === "runs" && segments[1]!.length > 0) {
-        return segments[1];
-    }
-    return undefined;
-}
-
-/** Stable dedup key over sorted paths + optional title. */
-function groupHash(paths: string[], title: string | undefined): string {
-    const sorted = [...paths].sort();
-    const material = JSON.stringify({ title: title ?? null, paths: sorted });
-    return createHash("sha256").update(material).digest("hex").slice(0, 16);
-}
 
 const ShowFileInputSchema = z.object({
     title: z.string().optional().describe("Group heading shown above the card or gallery"),
@@ -61,38 +44,23 @@ export const showFileTool = defineTool({
         "File content is fetched when the user views the card — you do not need to provide it.",
     inputSchema: ShowFileInputSchema,
     execute: async (input, ctx): Promise<Result<ShowFileOutput, ToolError>> => {
-        const { title, files } = input;
-
-        for (const entry of files) {
-            if (validatePath(entry.path) !== null) {
-                // A malformed path is an expected outcome the model can self-correct
-                // — a data variant, not a thrown error.
-                return ok({ shown: false as const, reason: "invalid_path" as const });
-            }
+        const card = buildFileReferenceCardData(input);
+        // A malformed/traversal path yields no card — an expected outcome the model can self-correct
+        // (a data variant, not a thrown error). Zod already guarantees 1..MAX_FILES entries, so
+        // `invalid_path` is the only reason the builder returns null here.
+        if (card === null) {
+            return ok({ shown: false as const, reason: "invalid_path" as const });
         }
-
-        const id = `pres-${groupHash(
-            files.map((f) => f.path),
-            title,
-        )}`;
-        const entries = files.map((f) => {
-            const runId = deriveRunId(f.path);
-            return {
-                path: f.path,
-                ...(runId !== undefined ? { runId } : {}),
-                ...(f.caption !== undefined ? { caption: f.caption } : {}),
-            };
-        });
 
         await ctx.emit({
             type: "data-file-reference",
             source: ctx.session.provenance,
-            data: { id, ...(title !== undefined ? { title } : {}), files: entries },
+            data: card,
         });
 
-        return ok({ shown: true as const, id });
+        return ok({ shown: true as const, id: card.id });
     },
 });
 
 /** Exposed for tests. */
-export const __testing = { validatePath, deriveRunId, groupHash, MAX_FILES };
+export const __testing = { validatePath, deriveRunId, groupHash: fileGroupHash, MAX_FILES };

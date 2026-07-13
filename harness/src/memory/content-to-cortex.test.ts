@@ -363,6 +363,71 @@ describe("contentToCortexMessages", () => {
             },
         ]);
     });
+
+    it("reconstructs a data-presentation card for a show_user echart with a valid dataPath", async () => {
+        const input = { kind: "echart", title: "DE", spec: { series: [{ type: "scatter" }] }, dataPath: "runs/run-abc/step-2/output/de.csv" };
+        const cortex = await contentToCortexMessages(
+            [stored(0, { role: "assistant", content: [{ type: "tool-call", toolCallId: "call-su", toolName: "show_user", input }] })],
+            createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews"),
+        );
+
+        const card = cortex[0]!.parts[0] as unknown as Record<string, unknown>;
+        expect(card.type).toBe("data-presentation");
+        expect((card.content as Record<string, unknown>).dataPath).toBe(input.dataPath);
+    });
+
+    it("drops the presentation card when a reloaded show_user echart carries a traversal dataPath (security)", async () => {
+        const cortex = await contentToCortexMessages(
+            [
+                stored(0, {
+                    role: "assistant",
+                    content: [
+                        { type: "tool-call", toolCallId: "call-su", toolName: "show_user", input: { kind: "echart", spec: {}, dataPath: "../../etc/passwd" } },
+                    ],
+                }),
+            ],
+            createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews"),
+        );
+
+        // The live tool rejected this path and emitted nothing; the reload path must not resurrect an
+        // unvalidated path, so the card is dropped and a generic tool chip stands in.
+        expect(cortex[0]!.parts).toEqual([{ type: "tool-call", toolCallId: "call-su", toolName: "show_user", status: "finished" }]);
+    });
+
+    it("reconstructs a data-file-reference card from a show_file tool-call", async () => {
+        const input = {
+            title: "Figures",
+            files: [{ path: "runs/run-abc/step-1/figures/volcano.png", caption: "volcano" }, { path: "runs/run-abc/step-1/figures/heatmap.png" }],
+        };
+        const cortex = await contentToCortexMessages(
+            [stored(0, { role: "assistant", content: [{ type: "tool-call", toolCallId: "call-sf", toolName: "show_file", input }] })],
+            createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews"),
+        );
+
+        expect(cortex[0]!.parts[0]).toMatchObject({
+            type: "data-file-reference",
+            id: expect.stringMatching(/^pres-[0-9a-f]{16}$/),
+            title: "Figures",
+            files: [
+                { path: "runs/run-abc/step-1/figures/volcano.png", runId: "run-abc", caption: "volcano" },
+                { path: "runs/run-abc/step-1/figures/heatmap.png", runId: "run-abc" },
+            ],
+        });
+    });
+
+    it("drops the file-reference card when a reloaded show_file carries a traversal path (security)", async () => {
+        const cortex = await contentToCortexMessages(
+            [
+                stored(0, {
+                    role: "assistant",
+                    content: [{ type: "tool-call", toolCallId: "call-sf", toolName: "show_file", input: { files: [{ path: "../../etc/passwd" }] } }],
+                }),
+            ],
+            createCardResolver(pool, "analysis-x", "/tmp/cortex-test-no-previews"),
+        );
+
+        expect(cortex[0]!.parts).toEqual([{ type: "tool-call", toolCallId: "call-sf", toolName: "show_file", status: "finished" }]);
+    });
 });
 
 describe("ThreadHistory.loadPage", () => {

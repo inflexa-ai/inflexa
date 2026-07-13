@@ -1,5 +1,7 @@
-import { readFileSync } from "node:fs";
-import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
     echartHtml,
@@ -10,6 +12,11 @@ import {
     readReportPreview,
     readReportPreviewFailed,
 } from "./artifact_open.ts";
+import { insertAnalysis, insertAnchor } from "../../db/primary_mutation.ts";
+import { asStr256 } from "../../lib/types.ts";
+import { freshDb } from "../../test_support/db.ts";
+import { writeMarker } from "../anchor/marker.ts";
+import { invalidateWorkspaceRoot, workspaceRootForAnalysisId } from "../analysis/output.ts";
 import type { OpenTarget } from "../../types/session.ts";
 
 describe("readPresentation", () => {
@@ -143,5 +150,93 @@ describe("materializeTarget idempotence", () => {
         const path = materializeTarget("a1", target)._unsafeUnwrap();
         expect(path.endsWith("pres-idem-svg.svg")).toBe(true);
         expect(readFileSync(path, "utf8")).toBe("<svg><rect/></svg>");
+    });
+
+    test("an inline chart (no dataPath) is reused from cache without rewrite", () => {
+        const target: OpenTarget = { kind: "echart", presId: "pres-inline-norewrite", spec: { series: [{ type: "bar" }] } };
+        const dest = materializeTarget("a1", target)._unsafeUnwrap();
+        // Tamper with the cached file; a re-open that rewrote it would clobber the sentinel. The
+        // existsSync shortcut — valid only because the pres- id is a genuine content hash for an inline
+        // chart — serves the file untouched.
+        writeFileSync(dest, "SENTINEL");
+        const again = materializeTarget("a1", target)._unsafeUnwrap();
+        expect(again).toBe(dest);
+        expect(readFileSync(again, "utf8")).toBe("SENTINEL");
+    });
+
+    test("an untrusted traversal dataPath is refused before any read — the chart degrades to the no-data note", () => {
+        // validatePath rejects the shape before workspaceRootForAnalysisId is ever consulted (no DB
+        // needed), so nothing is read and the chart renders with the degraded-data note.
+        const target: OpenTarget = { kind: "echart", presId: "pres-traversal-guard", spec: { series: [] }, dataPath: "../../etc/passwd" };
+        const html = readFileSync(materializeTarget("ana-nonexistent", target)._unsafeUnwrap(), "utf8");
+        expect(html).toContain("could not be loaded");
+    });
+});
+
+describe("materializeEchart dataPath charts — analysis-scoped, rematerialize-on-open", () => {
+    const created: string[] = [];
+
+    function tmp(): string {
+        const dir = mkdtempSync(join(tmpdir(), "inflexa-artifact-"));
+        created.push(dir);
+        return dir;
+    }
+
+    /** Seed a resolvable analysis (anchor marker + rows) and return its materialized workspace root. */
+    function seedAnalysis(analysisId: string, slug: string): string {
+        const home = tmp();
+        writeMarker(home, "A1")._unsafeUnwrap();
+        insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: home, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        insertAnalysis({ id: analysisId, createdAt: 1, updatedAt: 1, name: asStr256("A"), slug, anchorId: "A1", projectId: null })._unsafeUnwrap();
+        const root = workspaceRootForAnalysisId(analysisId)._unsafeUnwrap();
+        mkdirSync(root, { recursive: true });
+        return root;
+    }
+
+    beforeEach(() => {
+        freshDb();
+        // The workspace-root memo is process state that outlives freshDb(); each test rebuilds its own
+        // anchor under a fresh tmpdir, so a carried-over entry would resolve onto a prior test's home.
+        invalidateWorkspaceRoot();
+    });
+
+    afterEach(() => {
+        for (const dir of created) rmSync(dir, { recursive: true, force: true });
+        created.length = 0;
+    });
+
+    test("a degraded 'could not be loaded' shell heals once the CSV appears (rematerialize-on-open)", () => {
+        const root = seedAnalysis("ana-heal", "heal");
+        const target: OpenTarget = { kind: "echart", presId: "pres-heal", spec: { series: [{ type: "line" }] }, dataPath: "runs/r/out.csv" };
+
+        const first = materializeTarget("ana-heal", target)._unsafeUnwrap();
+        expect(readFileSync(first, "utf8")).toContain("could not be loaded");
+        // The dataPath chart's file is scoped by analysis, not the bare pres- id.
+        expect(first.endsWith("pres-heal.html")).toBe(false);
+
+        mkdirSync(join(root, "runs", "r"), { recursive: true });
+        writeFileSync(join(root, "runs", "r", "out.csv"), "x,y\n1,2\n3,4");
+
+        const second = materializeTarget("ana-heal", target)._unsafeUnwrap();
+        const healed = readFileSync(second, "utf8");
+        expect(second).toBe(first); // same analysis-scoped file, rewritten in place
+        expect(healed).not.toContain("could not be loaded");
+        expect(healed).toContain('"dataset"');
+    });
+
+    test("a rewritten CSV yields an updated dataset on the next materialization (never stale)", () => {
+        const root = seedAnalysis("ana-rw", "rw");
+        mkdirSync(join(root, "runs", "r"), { recursive: true });
+        const csv = join(root, "runs", "r", "out.csv");
+        const target: OpenTarget = { kind: "echart", presId: "pres-rw", spec: {}, dataPath: "runs/r/out.csv" };
+
+        writeFileSync(csv, "label,value\nA,10");
+        const v1 = readFileSync(materializeTarget("ana-rw", target)._unsafeUnwrap(), "utf8");
+        expect(v1).toContain('["A",10]');
+
+        writeFileSync(csv, "label,value\nA,999");
+        const v2 = readFileSync(materializeTarget("ana-rw", target)._unsafeUnwrap(), "utf8");
+        expect(v2).toContain('["A",999]');
+        expect(v2).not.toContain('["A",10]'); // the prior dataset is gone, not a stale cache
     });
 });
