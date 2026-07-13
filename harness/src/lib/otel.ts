@@ -11,9 +11,9 @@
  *          is set. Custom Cortex metrics are defined in metrics.ts.
  *
  * Note: OTEL's instrumentation-http patches node:http but does not cover
- *        Hono's request handling or Node 22's undici-based globalThis.fetch.
- *        Inbound trace context is extracted by the Hono middleware in
- *        trace-context.ts; outbound propagation is handled by trace-fetch-patch.ts.
+ *        Hono's request handling or Node 22's undici-based globalThis.fetch,
+ *        so inbound/outbound trace-context propagation across those paths is
+ *        not currently wired.
  */
 
 import { propagation, metrics, trace } from "@opentelemetry/api";

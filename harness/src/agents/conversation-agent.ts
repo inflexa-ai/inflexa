@@ -20,8 +20,10 @@
  * the workflow and it is never recovered. `iterateReport` is wired here too — in-process Nunjucks
  * rendering driven by the in-process `report-builder` agent (no sandbox);
  * the 4 custom report tools (`build_report`, `submit_report`,
- * `preview_snapshot`, `mint_preview_url`) are constructed inside the runner
- * so they share closure-captured outcome state + preview-dir paths.
+ * `preview_snapshot`, `mint_preview_url`) plus the version-fs write tools
+ * (`write_file`, `edit_file`, `read_file`, `mkdir` from `createVersionFsTools`)
+ * are constructed inside the runner so they share closure-captured outcome
+ * state + preview-dir paths.
  * The workspace read surface (`read_file`, `grep`, `workspace_search`) is
  * wired here over the `WorkspaceFilesystem` seam.
  */

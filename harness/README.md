@@ -18,7 +18,7 @@ tsc -p tsconfig.json              # build: emit dist/ from src/ (also `npm run b
 bun test                          # run the test suite
 ```
 
-The package emits `dist/` from `src/` and publishes only `dist`. Most configuration arrives through dependency objects passed to the composition point; helper modules read conventional env vars (`ANTHROPIC_*`, `DB_PG_*`, sandbox limits) — see `CONTEXT.md` and the specs for the catalog.
+The package emits `dist/` from `src/` and publishes only `dist`. Most configuration arrives through dependency objects passed to the composition point — the LLM backend, for instance, is a fully injected provider config (endpoint/key/model or a `LanguageModel` instance), not read from env; helper modules read conventional env vars (`DB_PG_*`, sandbox limits) — see `CONTEXT.md` and the specs for the catalog.
 
 ## Public surface
 
