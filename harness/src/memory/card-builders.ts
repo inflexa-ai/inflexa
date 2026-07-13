@@ -1,13 +1,14 @@
 /**
  * Shared builders for the display-card data parts (`data-plan`,
- * `data-presentation`, `data-run-card`).
+ * `data-presentation`, `data-run-card`, `data-file-reference`).
  *
- * Display tools (`show_plan`, `show_user`) emit these cards live over the
- * chat SSE stream, but the persisted turn keeps only the Anthropic transcript
- * (text / tool_use / tool_result) — the cards are not stored. To re-render a
- * card on reload, `content-to-cortex` reconstructs it from the tool_use block
- * via these same builders, so the live and replayed cards are byte-identical
- * (the deterministic `id` matches, enabling downstream reconciliation).
+ * Display tools (`show_plan`, `show_user`, `show_file`) emit these cards live
+ * over the chat SSE stream, but the persisted turn keeps only the Anthropic
+ * transcript (text / tool_use / tool_result) — the cards are not stored. To
+ * re-render a card on reload, `content-to-cortex` reconstructs it from the
+ * tool_use block via these same builders, so the live and replayed cards are
+ * byte-identical (the deterministic `id` matches, enabling downstream
+ * reconciliation).
  *
  * The builders return the FLAT wire `data` payload (no `type` wrapper, no
  * `source`): the tool emits `{ type, source, data }` (the emit pipeline
@@ -26,6 +27,7 @@ import { tryQuery, type DbError } from "../lib/db-result.js";
 import { tryFs, type FsError } from "../lib/fs-result.js";
 import { AnalysisPlanSchema } from "../schemas/workflow-state.js";
 import { loadPlan } from "../state/index.js";
+import { validatePath } from "../tools/lib/path-validation.js";
 import { latestPreviewVersion, previewDir, PREVIEWS_ROOT } from "../workspace/paths.js";
 
 const PREVIEW_META_FILE = "preview-meta.json";
@@ -148,6 +150,74 @@ export function buildPresentationCardData(input: Record<string, unknown>): Prese
         ...(typeof title === "string" ? { title } : {}),
         content: { kind, ...rest },
     };
+}
+
+/** Max files a `show_file` group may reference; multiple render as a gallery. */
+export const MAX_FILES = 10;
+
+/** One referenced file in a `data-file-reference` card. */
+export interface FileReferenceEntryData {
+    path: string;
+    runId?: string;
+    caption?: string;
+}
+
+/** The `data-file-reference` payload: a group of referenced analysis artifacts. */
+export interface FileReferenceCardData {
+    id: string;
+    title?: string;
+    files: FileReferenceEntryData[];
+}
+
+/** Extracts `runId` from paths shaped `runs/{runId}/...`; undefined otherwise. */
+export function deriveRunId(path: string): string | undefined {
+    const segments = path.split("/");
+    if (segments.length >= 2 && segments[0] === "runs" && segments[1]!.length > 0) {
+        return segments[1];
+    }
+    return undefined;
+}
+
+/** Stable dedup key over sorted paths + optional title. */
+export function fileGroupHash(paths: string[], title: string | undefined): string {
+    const sorted = [...paths].sort();
+    const material = JSON.stringify({ title: title ?? null, paths: sorted });
+    return createHash("sha256").update(material).digest("hex").slice(0, 16);
+}
+
+/**
+ * Build the `data-file-reference` payload from the `show_file` tool input. Shared by the live emit
+ * and the reconstruct-on-read path so both cards are byte-identical (same group-hash id, per-entry
+ * `runId` derivation, captions). `null` when no valid group can be built — no files, too many, or ANY
+ * path failing the shared shape rules (leading slash / `..` traversal). The live tool maps `null` to
+ * its `invalid_path` variant and emits nothing; the read path falls back to a generic tool chip.
+ * Validating here is load-bearing: the transcript persists the raw tool_use, so without it a traversal
+ * path the live tool rejected would be resurrected into a card on reload.
+ */
+export function buildFileReferenceCardData(input: Record<string, unknown>): FileReferenceCardData | null {
+    const title = typeof input.title === "string" ? input.title : undefined;
+    const rawFiles = Array.isArray(input.files) ? input.files : [];
+    if (rawFiles.length === 0 || rawFiles.length > MAX_FILES) return null;
+
+    const files: FileReferenceEntryData[] = [];
+    for (const raw of rawFiles) {
+        const file = (raw ?? {}) as Record<string, unknown>;
+        const path = typeof file.path === "string" ? file.path : "";
+        if (validatePath(path) !== null) return null;
+        const runId = deriveRunId(path);
+        const caption = typeof file.caption === "string" ? file.caption : undefined;
+        files.push({
+            path,
+            ...(runId !== undefined ? { runId } : {}),
+            ...(caption !== undefined ? { caption } : {}),
+        });
+    }
+
+    const id = `pres-${fileGroupHash(
+        files.map((f) => f.path),
+        title,
+    )}`;
+    return { id, ...(title !== undefined ? { title } : {}), files };
 }
 
 interface StoredPreviewMeta {

@@ -160,10 +160,12 @@ export const env = Object.freeze({
     embeddingModelPath: join(dataDir(), "inflexa", "models", "bge-small-en-v1.5-q8_0.gguf"),
     /**
      * CLI-owned render cache for display cards: materialized `echart` HTML shells and `svg` files,
-     * keyed by the deterministic `pres-` id (`<presentationCacheDir>/<pres-id>.{html,svg}`). Outside
-     * any analysis workspace (the workspace layout is harness-owned; a host render cache does not
-     * belong in it) and DISPOSABLE — every file is regenerable from the transcript, so wiping it
-     * loses nothing. See src/modules/harness/artifact_open.ts.
+     * keyed by the deterministic `pres-` id (`<presentationCacheDir>/<pres-id>.{html,svg}`). A
+     * `dataPath` echart, whose content also depends on the analysis and its CSV bytes, is scoped by
+     * analysis (`<pres-id>.<analysis-hash>.html`) and rematerialized on open. Outside any analysis
+     * workspace (the workspace layout is harness-owned; a host render cache does not belong in it) and
+     * DISPOSABLE — every file is regenerable from the transcript, so wiping it loses nothing. See
+     * src/modules/harness/artifact_open.ts.
      */
     presentationCacheDir: join(dataDir(), "inflexa", "cache", "presentations"),
     /**

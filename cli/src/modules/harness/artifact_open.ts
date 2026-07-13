@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import { validatePath } from "@inflexa-ai/harness/tools/lib/path-validation";
 import { err, ok, type Result } from "neverthrow";
 
 import { env } from "../../lib/env.ts";
@@ -209,7 +211,7 @@ export function resolveEntryPath(analysisId: string, target: OpenTarget): string
                 () => null,
             );
         case "echart":
-            return join(env.presentationCacheDir, `${target.presId}.html`);
+            return echartCachePath(analysisId, target);
         case "svg":
             return join(env.presentationCacheDir, `${target.presId}.svg`);
         case "unavailable":
@@ -315,28 +317,57 @@ function materializeSvg(target: Extract<OpenTarget, { kind: "svg" }>): Result<st
 }
 
 /**
- * Materialize an `echart` presentation as a self-contained `<pres-id>.html` shell, reusing the file when
- * it exists (idempotent — the `pres-` id is a content hash, so an identical card is the same file). For an
- * artifact-sourced chart (`dataPath`), the workspace CSV is read and injected as `dataset.source`; a
- * missing/unparseable CSV degrades to a chart shown without its data (a visible notice), never a crash.
+ * The render-cache file for an echart target. An INLINE chart's `pres-` id is a genuine content hash of
+ * the whole tool input, so its file is byte-identical for an identical card and needs no further scope.
+ * A `dataPath` chart's rendered content ALSO depends on which analysis it belongs to (the workspace root)
+ * and the CSV bytes on disk — neither captured by the input-hashed id — so its filename is scoped by
+ * analysis, keeping two analyses whose identical input hashes to the same `pres-` id from aliasing onto
+ * one file.
+ */
+function echartCachePath(analysisId: string, target: Extract<OpenTarget, { kind: "echart" }>): string {
+    if (target.dataPath === undefined) return join(env.presentationCacheDir, `${target.presId}.html`);
+    const scope = createHash("sha256").update(analysisId).digest("hex").slice(0, 12);
+    return join(env.presentationCacheDir, `${target.presId}.${scope}.html`);
+}
+
+/**
+ * Materialize an `echart` presentation as a self-contained HTML shell. For an INLINE chart the `pres-`
+ * id is a genuine content hash of the whole tool input, so the file is reused when it already exists
+ * (idempotent). For an artifact-sourced chart (`dataPath`) the rendered content also depends on the
+ * workspace root and the CSV bytes — neither captured by the id — so the file is analysis-scoped and
+ * ALWAYS rewritten on open: the CSV is reread and injected as `dataset.source`, which heals a
+ * previously-degraded shell once the file appears and reflects a rewritten CSV. A missing/unparseable
+ * CSV degrades to a chart shown without its data (a visible notice), never a crash, and that degraded
+ * variant is never persisted for reuse — a later successful read overwrites it for free.
  */
 function materializeEchart(analysisId: string, target: Extract<OpenTarget, { kind: "echart" }>): Result<string, OpenArtifactError> {
-    const dest = join(env.presentationCacheDir, `${target.presId}.html`);
-    if (existsSync(dest)) return ok(dest);
-    let spec = target.spec;
-    let dataNote: string | null = null;
-    if (target.dataPath) {
-        const source = readCsvSource(analysisId, target.dataPath);
-        if (source !== null) spec = { ...spec, dataset: { source } };
-        else dataNote = `Data file "${target.dataPath}" could not be loaded — the chart is shown without its data.`;
+    const dest = echartCachePath(analysisId, target);
+    if (target.dataPath === undefined) {
+        if (existsSync(dest)) return ok(dest);
+        return writeCache(dest, echartHtml(target.spec, null));
     }
+    const source = readCsvSource(analysisId, target.dataPath);
+    const spec = source !== null ? { ...target.spec, dataset: { source } } : target.spec;
+    const dataNote = source !== null ? null : `Data file "${target.dataPath}" could not be loaded — the chart is shown without its data.`;
     return writeCache(dest, echartHtml(spec, dataNote));
 }
 
-/** Read + parse the workspace CSV at the analysis-rooted `dataPath` into an ECharts `dataset.source`, or `null` on any failure. */
+/**
+ * Read + parse the workspace CSV at the analysis-rooted `dataPath` into an ECharts `dataset.source`, or
+ * `null` on any failure or a path that escapes the workspace root. `dataPath` is UNTRUSTED — it survives
+ * a reload from a persisted tool_use, bypassing the live tool's validation.
+ */
 function readCsvSource(analysisId: string, dataPath: string): unknown[][] | null {
+    // Two-stage guard: reject a malformed/traversal SHAPE, then confirm the resolved absolute path stays
+    // under the resolved workspace root. `join("/ws/root", "../../etc/passwd")` would otherwise escape the
+    // analysis tree and read an arbitrary file into the chart HTML.
+    if (validatePath(dataPath) !== null) return null;
     const path = workspaceRootForAnalysisId(analysisId).match(
-        (root): string | null => join(root, dataPath),
+        (root): string | null => {
+            const rootAbs = resolve(root);
+            const abs = resolve(rootAbs, dataPath);
+            return abs === rootAbs || abs.startsWith(rootAbs + sep) ? abs : null;
+        },
         () => null,
     );
     if (path === null || !existsSync(path)) return null;

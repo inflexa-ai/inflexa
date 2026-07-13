@@ -1,8 +1,9 @@
 /**
  * Read-path reconstruction of display cards from a persisted turn.
  *
- * `show_plan` / `show_user` / `execute_plan` / `iterate_report` emit
- * `data-plan` / `data-presentation` / `data-run-card` / `data-report-preview` cards
+ * `show_plan` / `show_user` / `show_file` / `execute_plan` / `iterate_report` emit
+ * `data-plan` / `data-presentation` / `data-file-reference` / `data-run-card` /
+ * `data-report-preview` cards
  * live over the chat SSE stream. On reload, `content-to-cortex` calls this
  * resolver for each AI SDK tool-call part: a recognised display tool yields its card (rebuilt via the
  * shared `card-builders`); anything else yields `null` and falls back to a
@@ -15,7 +16,8 @@ import type { CortexPart } from "@inflexa-ai/harness/contracts/message.js";
 import type { Pool } from "pg";
 
 import { unwrapOrThrow } from "../lib/result.js";
-import { buildPlanCardData, buildPresentationCardData, buildPreviewCardData, buildRunCardData } from "./card-builders.js";
+import { validatePath } from "../tools/lib/path-validation.js";
+import { buildFileReferenceCardData, buildPlanCardData, buildPresentationCardData, buildPreviewCardData, buildRunCardData } from "./card-builders.js";
 
 export interface StoredToolCallForCard {
     readonly type: "tool_use";
@@ -44,8 +46,18 @@ export function createCardResolver(pool: Pool, analysisId: string, workspaceRoot
         }
 
         if (block.name === "show_user") {
+            // The live tool rejects a malformed/traversal echart `dataPath` and emits nothing; the
+            // persisted tool_use still carries it, so the reload path MUST re-validate before building
+            // the card — otherwise an unvalidated path is resurrected for the host to join into the
+            // workspace root. Invalid → no card (chip fallback), matching the live "emitted nothing".
+            if (typeof input.dataPath === "string" && validatePath(input.dataPath) !== null) return null;
             const card = buildPresentationCardData(input);
             return card ? ({ type: "data-presentation", ...card } as CortexPart) : null;
+        }
+
+        if (block.name === "show_file") {
+            const card = buildFileReferenceCardData(input);
+            return card ? ({ type: "data-file-reference", ...card } as CortexPart) : null;
         }
 
         if (block.name === "show_plan") {

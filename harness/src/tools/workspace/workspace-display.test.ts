@@ -3,6 +3,7 @@ import { okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import type { EmbeddingProvider } from "../../providers/types.js";
+import { createCardResolver } from "../../memory/reconstruct-cards.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { showFileTool } from "./show-file.js";
 import { createShowPlanTool } from "./show-plan.js";
@@ -133,6 +134,25 @@ describe("showFile", () => {
         expect(result.shown).toBe(false);
         if (!result.shown) expect(result.reason).toBe("invalid_path");
         expect(emitted).toHaveLength(0);
+    });
+
+    it("reconstructs a show_file card byte-identical to the live-emitted card data (reload parity)", async () => {
+        const input = {
+            title: "Figures",
+            files: [{ path: "runs/run-abc/step-1/figures/volcano.png", caption: "volcano" }, { path: "runs/run-abc/step-1/figures/heatmap.png" }],
+        };
+
+        const { ctx, emitted } = makeToolContext();
+        (await showFileTool.execute(input, ctx))._unsafeUnwrap();
+        const liveData = (emitted[0] as { data: Record<string, unknown> }).data;
+
+        // The show_file resolver branch touches neither the pool nor the workspace, so a fake pool +
+        // dummy root suffice. The reconstructed part is the live card data spread under the part type.
+        const resolver = createCardResolver({} as unknown as Pool, "analysis-x", "/tmp/none");
+        const reconstructed = (await resolver({ type: "tool_use", id: "call-1", name: "show_file", input })) as Record<string, unknown>;
+        const { type, ...cardData } = reconstructed;
+        expect(type).toBe("data-file-reference");
+        expect(cardData).toEqual(liveData);
     });
 });
 
