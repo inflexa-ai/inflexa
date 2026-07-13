@@ -189,8 +189,10 @@ sandbox-server as the unprivileged workload uid. It SHALL:
 2. Mirror the same rules with `ip6tables` when the container has an IPv6 stack
    (a dual-stack bridge), so IPv6 is not a hole through the IPv4 firewall; a
    present IPv6 stack whose rules cannot be installed SHALL abort the start.
-3. Drop `CAP_NET_ADMIN` from the process before exec'ing the workload, so the
-   uid-1000 sandbox-server cannot alter or flush the rules.
+3. Drop every capability the container granted the entrypoint's setup — the
+   inheritable set and the bounding set are cleared — before exec'ing the
+   workload, so the uid-1000 sandbox-server cannot alter or flush the rules or
+   regain any privilege.
 4. Exec sandbox-server as uid 1000 (the entrypoint holds no long-lived privilege).
 
 When the flag is unset (K8s, or callback mode where confinement is by
@@ -205,7 +207,7 @@ create-time failure.
 
 #### Scenario: Firewall installed then workload de-privileged (Docker poll)
 
-- **GIVEN** the Docker-poll firewall flag is set and the container has `CAP_NET_ADMIN`
+- **GIVEN** the Docker-poll firewall flag is set and the container carries the entrypoint's setup capabilities (`NET_ADMIN` among them)
 - **WHEN** the container starts
 - **THEN** `OUTPUT` policy SHALL be `DROP` with loopback and established traffic allowed
 - **AND** sandbox-server SHALL run as uid 1000 and SHALL be unable to flush the rules
