@@ -52,7 +52,7 @@ The sandbox client includes Docker and Kubernetes backends. The `SANDBOX_BACKEND
 
 ### Design Principles
 
-1. **Hand-rolled `runAgent` loop, ~80 LOC.** `loop/run-agent.ts`. Pure async TypeScript that owns the message loop and nothing else. Durability (`runStep`) and the event sink (`emit`) are injected — the loop runs identically in a host request path (passthrough step) and inside DBOS workflow steps (`DBOS.runStep` wrapper). Same body, two execution modes.
+1. **Hand-rolled `runAgent` loop, ~230 LOC.** `loop/run-agent.ts`. Pure async TypeScript that owns the message loop and nothing else. Durability (`runStep`) and the event sink (`emit`) are injected — the loop runs identically in a host request path (passthrough step) and inside DBOS workflow steps (`DBOS.runStep` wrapper). Same body, two execution modes.
 2. **AI SDK `ModelMessage` is the harness lingua franca** ([harness-providers](openspec/specs/harness-providers/spec.md)). The loop's working message array is AI SDK `ModelMessage`; thread history stores each one in a versioned envelope (`{kind: "ai-sdk-model-message", aiSdkMajor, message}`). Signed provider metadata (Anthropic thinking signatures, cache control) rides provider-scoped in `providerOptions` and round-trips through storage.
 3. **Two narrow provider interfaces** in `providers/types.ts`:
    - `ChatProvider.chat(req, session, signal?) → ResultAsync<ChatResponse, ProviderError>` — non-streaming; cacheable as a DBOS step.

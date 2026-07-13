@@ -7,7 +7,7 @@
  * `defineTool(...)`; a dependency-bearing tool is a factory closure that
  * captures its deps and calls `defineTool`.
  *
- * `ToolContext` carries exactly the three request-scoped values every tool
+ * `ToolContext` carries exactly the four request-scoped values every tool
  * may need — no pool, no sandbox, no logger. The error contract: an expected
  * outcome ("not found", "no results") stays in the ok channel as a data
  * variant (`ok({ found: false })`); an unexpected failure is an `err(ToolError)`
