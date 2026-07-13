@@ -32,11 +32,8 @@ On success the tool emits a `data-preview` chat part; on any pre-flight, build,
 or submit failure it emits `data-preview-failed`. The hosted preview surface is
 reached only through the injected `PreviewPublisher` seam (the OSS default
 returns "unavailable" so reports still build without a hosted preview).
-
 ## Requirements
-
 ### Requirement: iterate_report exposes mutually-exclusive creation and iteration modes
-
 
 The conversation agent SHALL have an `iterate_report` tool with two modes, and
 the input SHALL require exactly one of `report` (creation) or `modifications`
@@ -57,7 +54,6 @@ rejected). It SHALL return `{ previewId, version, previewPath, error?, notes? }`
 - **THEN** the tool generates a `prv-`-prefixed id, produces version 1, and returns `{ previewId, version: 1, previewPath }`
 
 ### Requirement: The report brief is a typed section union with intent and content
-
 
 A creation `report` SHALL contain `title`, `audience`, optional `styleGuidance`,
 a `sources` array, and a non-empty `sections` array. Each section SHALL be one of
@@ -82,22 +78,20 @@ string — the builder reads the prior template and applies it surgically.
 
 ### Requirement: Pre-flight stages sources and cross-checks creation briefs
 
-
 Before invoking the builder, `iterate_report` SHALL copy every declared source
 into the preview's shared `assets/` dir and enrich the brief with each asset's
 kind, size, columns, head rows, and row count. For a creation brief it SHALL
 verify that every section asset reference (`figure.imageAsset`,
 `table.dataAsset`, `chart.dataAsset`) is among the staged assets. A pre-flight or
-cross-check failure SHALL emit `data-preview-failed` and return an error result
-without running the builder.
+cross-check failure SHALL emit `data-report-preview-failed` and return an error
+result without running the builder.
 
 #### Scenario: A section references an unstaged asset
 
 - **WHEN** a creation brief has a `figure` whose `imageAsset` is not present in `report.sources`
-- **THEN** the tool emits `data-preview-failed` (errorKind `build`) and returns an error naming the missing reference, without starting the builder
+- **THEN** the tool emits `data-report-preview-failed` (errorKind `build`) and returns an error naming the missing reference, without starting the builder
 
 ### Requirement: The report-builder runs in-process via runToTerminal, with no sandbox or Python
-
 
 The report-builder agent SHALL be a non-plannable in-process agent (not a member
 of the sandbox-agent catalog) driven by `runToTerminal` over `passthroughStep`.
@@ -119,7 +113,6 @@ or any sandbox/Python build path, and SHALL have no workspace discovery tools.
 - **THEN** it calls the `build_report` tool (in-process Nunjucks) — there is no `execute_command` and no `python build.py` to invoke
 
 ### Requirement: Version directories are managed Cortex-side with shared assets and rollback
-
 
 The runner SHALL serialize iterations per `previewId` (`withPreviewLock`),
 resolve the new version as `max(latest, baseVersion) + 1`, create
@@ -144,7 +137,6 @@ shared `assets/` untouched, and return a structured failure with `errorKind` in
 
 ### Requirement: build_report renders the template via in-process Nunjucks
 
-
 The `build_report` tool SHALL render `v{N}/report.html.j2` to `v{N}/index.html`
 through the Node-side `renderReport` (Nunjucks, autoescape off). The loader
 resolution order SHALL be `[versionDir, templatesDir/report-html]` so the
@@ -162,7 +154,6 @@ available), never thrown.
 
 ### Requirement: preview_snapshot validates the rendered report in headless Chrome
 
-
 The `preview_snapshot` tool SHALL navigate headless Chrome to the rendered
 report URL, wait for the `inflexa-theme-ready` signal, and return a base64 PNG
 screenshot together with collected console errors and failed network requests.
@@ -178,7 +169,6 @@ rather than throwing.
 
 ### Requirement: submit_report is the postcondition gate and emits the preview part
 
-
 `submit_report` SHALL be the only signal that finalizes a version: it validates
 that `index.html` exists and is non-empty, contains no unrendered Jinja markers,
 and that every referenced local asset path resolves on disk, returning
@@ -186,15 +176,17 @@ and that every referenced local asset path resolves on disk, returning
 outcome (with optional `notes`). The runner SHALL additionally apply a
 phantom-success guard — treating a claimed success whose `index.html` is missing
 or empty as a failure. On a recorded success `iterate_report` SHALL emit a
-`data-preview` part `{ id, previewId, version, title, previewPath, format }`; on
-failure it SHALL emit `data-preview-failed` `{ id, previewId, version, reason, errorKind }`.
+`data-report-preview` part `{ id, previewId, version, title, previewPath, format }`;
+on failure it SHALL emit `data-report-preview-failed`
+`{ id, previewId, version, reason, errorKind }`.
 
 #### Scenario: submit_report rejects unrendered Jinja
 
 - **WHEN** `index.html` still contains `{{ … }}` or `{% … %}` markers
 - **THEN** `submit_report` returns `problems[]`, does not record success, and the agent must fix and re-submit
 
-#### Scenario: A clean submit emits data-preview
+#### Scenario: A clean submit emits data-report-preview
 
 - **WHEN** `submit_report` records a success for version N
-- **THEN** `iterate_report` emits a `data-preview` part carrying the title, `v{N}/index.html` preview path, and format, and returns `{ previewId, version: N, previewPath }`
+- **THEN** `iterate_report` emits a `data-report-preview` part carrying the title, `v{N}/index.html` preview path, and format, and returns `{ previewId, version: N, previewPath }`
+
