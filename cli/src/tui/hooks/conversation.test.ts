@@ -189,11 +189,94 @@ describe("send() drives the adapter + engine", () => {
 
     test("an unknown data part renders a visible tagged mention, not swallowed", async () => {
         const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
-            void emit({ type: "data-file-reference", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, data: { files: [] } });
+            // A `data-*` type the store has no first-class renderer for still surfaces as a tag.
+            void emit({ type: "data-widget", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, data: {} } as never);
         });
         await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
-        const mention = findPart((p): p is Part & { type: "text" } => p.type === "text" && "text" in p && p.text.includes("[part:data-file-reference]"));
+        const mention = findPart((p): p is Part & { type: "text" } => p.type === "text" && "text" in p && p.text.includes("[part:data-widget]"));
         expect(mention).toBeDefined();
+    });
+
+    test("data-presentation (markdown) becomes an inline presentation part", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({
+                type: "data-presentation",
+                source: { agentId: "tui-chat", callPath: ["tui-chat"] },
+                data: { id: "pres-1", title: "Finding", content: { kind: "markdown", body: "**TP53** up" } },
+            });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        const pres = findPart((p): p is Extract<Part, { type: "presentation" }> => p.type === "presentation");
+        expect(pres?.title).toBe("Finding");
+        expect(pres?.body).toEqual({ kind: "markdown", body: "**TP53** up" });
+    });
+
+    test("data-presentation (echart) becomes an openable card carrying the spec + analysis scope", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({
+                type: "data-presentation",
+                source: { agentId: "tui-chat", callPath: ["tui-chat"] },
+                data: { id: "pres-chart", title: "Volcano", content: { kind: "echart", spec: { series: [{ type: "scatter" }] }, dataPath: "runs/r/out.csv" } },
+            });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        const card = findPart((p): p is Extract<Part, { type: "openable-card" }> => p.type === "openable-card");
+        expect(card?.analysisId).toBe(AID);
+        const target = card?.entries[0]?.target;
+        expect(target?.kind).toBe("echart");
+        if (target?.kind === "echart") {
+            expect(target.presId).toBe("pres-chart");
+            expect(target.dataPath).toBe("runs/r/out.csv");
+            expect(target.spec).toEqual({ series: [{ type: "scatter" }] });
+        }
+    });
+
+    test("data-file-reference becomes an openable gallery card with a folder for multiple files", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({
+                type: "data-file-reference",
+                source: { agentId: "tui-chat", callPath: ["tui-chat"] },
+                data: { id: "pres-g", title: "Figures", files: [{ path: "runs/r/figures/a.png" }, { path: "runs/r/figures/b.png", caption: "heatmap" }] },
+            });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        const card = findPart((p): p is Extract<Part, { type: "openable-card" }> => p.type === "openable-card");
+        expect(card?.entries.length).toBe(2);
+        expect(card?.entries[0]?.name).toBe("a.png");
+        expect(card?.entries[1]?.caption).toBe("heatmap");
+        expect(card?.folderPath).toBe("runs/r/figures");
+    });
+
+    test("data-report-preview-failed becomes a degraded openable card naming the reason", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({
+                type: "data-report-preview-failed",
+                source: { agentId: "tui-chat", callPath: ["tui-chat"] },
+                data: { id: "x", previewId: "p", version: 2, reason: "render timed out" },
+            });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        const card = findPart((p): p is Extract<Part, { type: "openable-card" }> => p.type === "openable-card");
+        const target = card?.entries[0]?.target;
+        expect(target?.kind).toBe("unavailable");
+        if (target?.kind === "unavailable") expect(target.reason).toBe("render timed out");
+    });
+
+    test("copy-on-receive: mutating an emitted echart spec after emit does not corrupt the store", async () => {
+        let spec: Record<string, unknown> = {};
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            spec = { series: [{ type: "bar" }] };
+            void emit({
+                type: "data-presentation",
+                source: { agentId: "tui-chat", callPath: ["tui-chat"] },
+                data: { id: "pres-m", content: { kind: "echart", spec } },
+            });
+            (spec.series as { type: string }[])[0]!.type = "MUTATED";
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+        const card = findPart((p): p is Extract<Part, { type: "openable-card" }> => p.type === "openable-card");
+        const target = card?.entries[0]?.target;
+        if (target?.kind === "echart") expect(target.spec).toEqual({ series: [{ type: "bar" }] });
     });
 
     test("sub-agent events (callPath depth > 1) are dropped", async () => {
@@ -938,5 +1021,54 @@ describe("send() closes the emit sink at turn completion", () => {
         // The closed sink dropped the straggler: no new tool chip, the finished message is untouched.
         expect(messages[1]?.parts.length).toBe(partsBefore);
         expect(findPart((p): p is ToolCallPart => p.type === "tool-call")).toBeUndefined();
+    });
+});
+
+// The chat-view contract: a display card emitted live and the same card reconstructed on reload (via
+// `cortexToUiMessage` over the flat parts the harness rebuilds) must yield the SAME UI part — the shared
+// builders read through the same `artifact_open` readers on both paths.
+describe("display-card parts map identically live and on reload", () => {
+    const TOP = { agentId: "tui-chat", callPath: ["tui-chat"] };
+
+    test("a markdown presentation maps to the same inline part in both paths", async () => {
+        const data = { id: "pres-1", title: "Finding", content: { kind: "markdown", body: "**TP53** up" } };
+        await send(
+            { sessionId: SID, analysisId: AID, userText: "?" },
+            fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => void emit({ type: "data-presentation", source: TOP, data })),
+        );
+        const live = messages[1]?.parts.find((p) => p.type === "presentation");
+
+        const reloaded = cortexToUiMessage({ id: "m1", role: "assistant", parts: [{ type: "data-presentation", ...data }] } as unknown as CortexMsg, SID, AID);
+        const reloadedPart = reloaded.parts.find((p) => p.type === "presentation");
+
+        expect(live?.type === "presentation" ? live.body : null).toEqual({ kind: "markdown", body: "**TP53** up" });
+        expect(reloadedPart?.type === "presentation" ? reloadedPart.body : null).toEqual({ kind: "markdown", body: "**TP53** up" });
+    });
+
+    test("a file-reference gallery maps to the same openable card in both paths", async () => {
+        const data = { id: "pres-g", title: "Figures", files: [{ path: "runs/r/a.png" }, { path: "runs/r/b.png", caption: "heatmap" }] };
+        await send(
+            { sessionId: SID, analysisId: AID, userText: "?" },
+            fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => void emit({ type: "data-file-reference", source: TOP, data })),
+        );
+        const live = messages[1]?.parts.find((p) => p.type === "openable-card");
+
+        const reloaded = cortexToUiMessage(
+            { id: "m1", role: "assistant", parts: [{ type: "data-file-reference", ...data }] } as unknown as CortexMsg,
+            SID,
+            AID,
+        );
+        const reloadedPart = reloaded.parts.find((p) => p.type === "openable-card");
+
+        expect(live?.type === "openable-card" ? live.entries.length : 0).toBe(2);
+        expect(reloadedPart?.type === "openable-card" ? reloadedPart.entries.length : 0).toBe(2);
+        expect(reloadedPart?.type === "openable-card" ? reloadedPart.analysisId : null).toBe(AID);
+        expect(reloadedPart?.type === "openable-card" ? reloadedPart.folderPath : null).toBe("runs/r");
+    });
+
+    test("an unknown reconstructed part still surfaces as a tagged mention on reload", () => {
+        const reloaded = cortexToUiMessage({ id: "m1", role: "assistant", parts: [{ type: "data-widget" }] } as unknown as CortexMsg, SID, AID);
+        const mention = reloaded.parts.find((p) => p.type === "text" && "text" in p && p.text.includes("[part:data-widget]"));
+        expect(mention).toBeDefined();
     });
 });

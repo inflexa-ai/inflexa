@@ -163,7 +163,9 @@ export async function runChat(flags: ContextFlags, threadRef: string | undefined
 async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: string): Promise<void> {
     const history = createThreadHistory(runtime.pool);
     const sink: ChatSink = { out: (str) => void process.stdout.write(str), errLine: (str) => console.error(str) };
-    const printer = createChatPrinter(sink);
+    // The analysis scopes openable references so `show_file`/`show_user` cards resolve to workspace/cache
+    // paths for their OSC 8 `file://` links.
+    const printer = createChatPrinter(sink, { analysisId });
 
     // Live token streaming. `runAgent`'s `provider` option is `AgentChat` (one
     // collapsed response per call — `RunAgentOptions`, harness loop/run-agent.ts),

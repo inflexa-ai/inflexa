@@ -288,7 +288,7 @@ describe("contentToCortexMessages", () => {
         });
     });
 
-    it("reconstructs a data-preview from a migrated iterateReport tool-call", async () => {
+    it("reconstructs a data-report-preview from a migrated iterateReport tool-call", async () => {
         const analysisId = "analysis-preview-reconstruct";
         const previewId = "prv-3860785d";
         const sessions = await mkdtemp(join(tmpdir(), "cortex-preview-rc-"));
@@ -321,7 +321,7 @@ describe("contentToCortexMessages", () => {
 
             expect(cortex[0]!.parts).toEqual([
                 {
-                    type: "data-preview",
+                    type: "data-report-preview",
                     id: expect.stringMatching(/^prev-[0-9a-f]{16}$/),
                     previewId,
                     version: 1,

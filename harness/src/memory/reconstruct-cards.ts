@@ -2,7 +2,7 @@
  * Read-path reconstruction of display cards from a persisted turn.
  *
  * `show_plan` / `show_user` / `execute_plan` / `iterate_report` emit
- * `data-plan` / `data-presentation` / `data-run-card` / `data-preview` cards
+ * `data-plan` / `data-presentation` / `data-run-card` / `data-report-preview` cards
  * live over the chat SSE stream. On reload, `content-to-cortex` calls this
  * resolver for each AI SDK tool-call part: a recognised display tool yields its card (rebuilt via the
  * shared `card-builders`); anything else yields `null` and falls back to a
@@ -40,7 +40,7 @@ export function createCardResolver(pool: Pool, analysisId: string, workspaceRoot
                 title: report && typeof report.title === "string" ? report.title : undefined,
                 format: input.format === "pdf" || input.format === "html" ? input.format : undefined,
             });
-            return card ? ({ type: "data-preview", ...card } as CortexPart) : null;
+            return card ? ({ type: "data-report-preview", ...card } as CortexPart) : null;
         }
 
         if (block.name === "show_user") {

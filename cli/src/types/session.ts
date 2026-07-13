@@ -101,6 +101,77 @@ export type RunCardPart = {
 };
 
 /**
+ * The text-shaped body of an inline `show_user` presentation, rendered through the `<markdown>`
+ * renderable. Primitive fields only (strings and string arrays), extracted at receipt so nothing
+ * mutable from the in-process emit stream reaches the store. `echart`/`svg` are pixel-shaped and
+ * become {@link OpenableCardPart}s instead, so they are absent from this union.
+ */
+export type PresentationBody =
+    | { kind: "markdown"; body: string }
+    | { kind: "code"; code: string; language: string }
+    | { kind: "table"; headers: string[]; rows: string[][]; caption?: string };
+
+/**
+ * Agent-synthesized text-shaped content the conversation agent presented via `show_user`
+ * (`markdown`/`code`/`table`). Renders inline through the `<markdown>` renderable — no open step.
+ * Carries only the primitive body extracted at receipt (copy-on-receive), never a harness object.
+ */
+export type PresentationPart = {
+    id: string;
+    type: "presentation";
+    /** Optional heading shown above the content. */
+    title?: string;
+    /** The text-shaped body to render. */
+    body: PresentationBody;
+};
+
+/** The glyph shape a card entry's row shows in the gutter — chosen by content kind, mapped to `GLYPHS` by the block. */
+export type OpenableIcon = "chart" | "image" | "document" | "report";
+
+/**
+ * How an openable card entry resolves to something to open — the SEMANTIC reference, never a resolved
+ * location (the artifact-open spec's open-time-resolution rule). Resolution happens when the user opens:
+ * `workspace-file` joins the analysis workspace root; `echart`/`svg` materialize a cache file from the
+ * embedded spec/markup; `unavailable` is a card with nothing to open (a failed report preview).
+ */
+export type OpenTarget =
+    | { kind: "workspace-file"; path: string }
+    | { kind: "echart"; presId: string; spec: Record<string, unknown>; dataPath?: string }
+    | { kind: "svg"; presId: string; markup: string }
+    | { kind: "unavailable"; reason: string };
+
+/** One row of an openable card: its glyph, name, optional caption, and the reference resolved at open time. */
+export type OpenableEntry = {
+    /** Glyph shape for the row marker. */
+    icon: OpenableIcon;
+    /** Row name (file basename, chart title, "Report vN"). */
+    name: string;
+    /** Optional one-line context beside the name. */
+    caption?: string;
+    /** The semantic reference this row opens. */
+    target: OpenTarget;
+};
+
+/**
+ * Pixel-shaped content a terminal cannot paint — `echart`/`svg` presentations, `show_file` galleries,
+ * and report previews — rendered as a card whose rows open externally. Carries only the semantic
+ * reference fields extracted at receipt (copy-on-receive); `analysisId` scopes resolution of every
+ * entry's `workspace-file`/`dataPath` reference against the analysis workspace root at open time.
+ */
+export type OpenableCardPart = {
+    id: string;
+    type: "openable-card";
+    /** The analysis whose workspace root + render cache resolve this card's entries at open time. */
+    analysisId: string;
+    /** Optional card heading. */
+    title?: string;
+    /** One row per openable item (a multi-file gallery has several). */
+    entries: OpenableEntry[];
+    /** Analysis-rooted containing folder for a multi-file gallery (the reveal-folder affordance); absent otherwise. */
+    folderPath?: string;
+};
+
+/**
  * MOCK part: a file edit. Not produced by the live engine and not persisted —
  * drives the "diff / file edit" stream state from fixtures.
  */
@@ -122,12 +193,12 @@ export type FileEditPart = {
 
 /**
  * A message part. `TextPart` is the only kind persisted to SQLite; `tool-call`,
- * `plan-card`, and `run-card` are produced live by the harness emit adapter (and
- * reconstructed on transcript reload); `thinking`/`file-edit` remain MOCK
- * (fixture-driven) so the gallery can render every design-system state.
- * Discriminated on `type`.
+ * `plan-card`, `run-card`, `presentation`, and `openable-card` are produced live by
+ * the harness emit adapter (and reconstructed on transcript reload); `thinking`/
+ * `file-edit` remain MOCK (fixture-driven) so the gallery can render every
+ * design-system state. Discriminated on `type`.
  */
-export type Part = TextPart | ThinkingPart | ToolCallPart | FileEditPart | PlanCardPart | RunCardPart;
+export type Part = TextPart | ThinkingPart | ToolCallPart | FileEditPart | PlanCardPart | RunCardPart | PresentationPart | OpenableCardPart;
 
 export type StoredMessage = {
     info: Message;

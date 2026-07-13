@@ -1,6 +1,6 @@
 /**
  * submit_report tool — postcondition gate. The runner refuses to emit
- * `data-preview` until this tool writes the success outcome.
+ * `data-report-preview` until this tool writes the success outcome.
  *
  * Checks:
  *   - index.html exists at versionDir/ with size > 0

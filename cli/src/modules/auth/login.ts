@@ -1,3 +1,4 @@
+import { openExternal } from "../../lib/open_external.ts";
 import { type Auth0Config, describeAuthError, pollForToken, requestDeviceCode, resolveAuth0Config, saveAuth } from "./auth.ts";
 
 export async function login(): Promise<void> {
@@ -21,7 +22,11 @@ export async function login(): Promise<void> {
     console.log("\n  To log in, open this URL in your browser:\n");
     console.log(`    ${device.value.verificationUriComplete}\n`);
     console.log(`  and confirm the code: ${device.value.userCode}\n`);
-    openBrowser(device.value.verificationUriComplete);
+    // Best-effort — the URL is always printed above, so a failed open just means the user opens it manually.
+    openExternal(device.value.verificationUriComplete).match(
+        () => {},
+        () => {},
+    );
     console.log("  Waiting for confirmation...");
 
     const grant = await pollForToken(config, device.value);
@@ -41,18 +46,4 @@ export async function login(): Promise<void> {
             process.exitCode = 1;
         },
     );
-}
-
-/**
- * Best-effort sugar — the URL is always printed, so headless/SSH sessions
- * just open it manually.
- */
-function openBrowser(url: string): void {
-    const cmd = process.platform === "darwin" ? ["open", url] : process.platform === "win32" ? ["cmd", "/c", "start", "", url] : ["xdg-open", url];
-    try {
-        // unref: the opener must not keep the CLI's event loop alive.
-        Bun.spawn({ cmd, stdout: "ignore", stderr: "ignore" }).unref();
-    } catch {
-        // Missing opener binary (e.g. no xdg-open) — the printed URL covers it.
-    }
 }

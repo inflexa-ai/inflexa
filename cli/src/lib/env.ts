@@ -159,6 +159,14 @@ export const env = Object.freeze({
     /** The local embedding GGUF path — `<modelDir>/bge-small-en-v1.5-q8_0.gguf`. */
     embeddingModelPath: join(dataDir(), "inflexa", "models", "bge-small-en-v1.5-q8_0.gguf"),
     /**
+     * CLI-owned render cache for display cards: materialized `echart` HTML shells and `svg` files,
+     * keyed by the deterministic `pres-` id (`<presentationCacheDir>/<pres-id>.{html,svg}`). Outside
+     * any analysis workspace (the workspace layout is harness-owned; a host render cache does not
+     * belong in it) and DISPOSABLE — every file is regenerable from the transcript, so wiping it
+     * loses nothing. See src/modules/harness/artifact_open.ts.
+     */
+    presentationCacheDir: join(dataDir(), "inflexa", "cache", "presentations"),
+    /**
      * CLIProxyAPI runs in a container (Docker or Podman, see
      * src/modules/infra/setup.ts). The config and the provider-credential dir are
      * state we own, so they live under our data dir and are bind-mounted into the
@@ -245,6 +253,12 @@ export const envDoc: Readonly<
         kind: "path",
         label: "embedding model",
         description: "the bge-small-en-v1.5 GGUF used by the local embedding provider",
+        baseVar: dataVar,
+    },
+    presentationCacheDir: {
+        kind: "path",
+        label: "render cache",
+        description: "materialized chart/SVG files for external viewing (disposable, regenerable)",
         baseVar: dataVar,
     },
     cliproxyConfigPath: { kind: "path", label: "proxy config", description: "CLIProxyAPI config, mounted into the proxy container", baseVar: dataVar },

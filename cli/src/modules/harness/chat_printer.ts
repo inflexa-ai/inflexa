@@ -1,4 +1,9 @@
+import { pathToFileURL } from "node:url";
+
 import type { EmitFn, EventSource } from "@inflexa-ai/harness";
+
+import { materializeTarget, readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "./artifact_open.ts";
+import type { OpenableEntry, OpenTarget, PresentationBody } from "../../types/session.ts";
 
 // The `inflexa chat` emit sink — renders one in-process `EmitFn` stream to a
 // plain-text terminal. It is deliberately coarse: this
@@ -140,12 +145,44 @@ export function readRunCard(data: unknown): { runId: string; title: string; step
     };
 }
 
+/** Build an OSC 8 hyperlink whose VISIBLE text is `text` and whose target is `uri` — degrades to plain `text` on terminals without link support. */
+function hyperlink(uri: string, text: string): string {
+    return `\x1b]8;;${uri}\x07${text}\x1b]8;;\x07`;
+}
+
+/** Render a text-shaped presentation table as aligned monospace columns (the REPL's plain-text table form). */
+function formatTable(headers: string[], rows: string[][]): string {
+    const widths = headers.map((h, ci) => Math.max(h.length, ...rows.map((r) => (r[ci] ?? "").length)));
+    const line = (cells: string[]): string => `    ${cells.map((c, ci) => (c ?? "").padEnd(widths[ci] ?? 0)).join("  ")}`.trimEnd();
+    return [line(headers), line(widths.map((w) => "-".repeat(w))), ...rows.map((r) => line(headers.map((_, ci) => r[ci] ?? "")))].join("\n");
+}
+
+/**
+ * How the printer resolves an openable entry to the absolute path it links to (materializing `echart`/`svg`
+ * into the shared cache). Injectable so the printer's openable rendering is unit-testable without a booted
+ * workspace; production omits it and gets the real {@link materializeTarget}.
+ */
+export type PrinterOptions = {
+    /** The analysis whose workspace root + render cache resolve openable references. */
+    readonly analysisId?: string;
+    /** Resolve an entry's target to an absolute path (materializing when needed), or `null` when unavailable. */
+    readonly resolvePath?: (analysisId: string, target: OpenTarget) => string | null;
+};
+
 /**
  * Build a chat printer over `sink`. Holds only per-turn primitive state (the
  * streamed-text flag and open tool chips keyed by id → name+start-time) — never
  * a received object — so copy-on-receive holds by construction.
  */
-export function createChatPrinter(sink: ChatSink): ChatPrinter {
+export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}): ChatPrinter {
+    const analysisId = options.analysisId ?? "";
+    const resolvePath =
+        options.resolvePath ??
+        ((aid: string, target: OpenTarget): string | null =>
+            materializeTarget(aid, target).match(
+                (path) => path,
+                () => null,
+            ));
     let streamedText = false;
     // toolUseId → the primitives needed to close its chip. Storing the extracted
     // name (a string copy) and a timestamp, never the event, keeps copy-on-receive.
@@ -204,10 +241,69 @@ export function createChatPrinter(sink: ChatSink): ChatPrinter {
                 sink.out(`\n  [run] ${run.runId}: ${run.title} (${run.stepCount} step(s))\n`);
                 return;
             }
+            case "data-presentation": {
+                const view = readPresentation(data);
+                if (view.shape === "inline") renderInlinePresentation(view.title, view.body);
+                else renderOpenables(view.title, [view.entry]);
+                return;
+            }
+            case "data-file-reference": {
+                const view = readFileReference(data);
+                renderOpenables(view.title, view.entries);
+                return;
+            }
+            case "data-report-preview": {
+                const view = readReportPreview(data);
+                renderOpenables(view.title, [view.entry]);
+                return;
+            }
+            case "data-report-preview-failed": {
+                const view = readReportPreviewFailed(data);
+                sink.out(`\n  [report] ${view.entry.name}: ${view.entry.caption ?? "failed"}\n`);
+                return;
+            }
             default:
                 // Rule 3: observe unknown parts, do not swallow them.
                 sink.out(`  [part:${type}]\n`);
                 return;
+        }
+    }
+
+    /** Print a text-shaped presentation inline: markdown source verbatim, code fenced, tables as aligned text. */
+    function renderInlinePresentation(title: string | undefined, body: PresentationBody): void {
+        if (title) sink.out(`\n  [show] ${title}\n`);
+        switch (body.kind) {
+            case "markdown":
+                sink.out(`${body.body}\n`);
+                return;
+            case "code":
+                sink.out("```" + body.language + "\n" + body.code + "\n```\n");
+                return;
+            case "table":
+                sink.out(`${formatTable(body.headers, body.rows)}\n`);
+                if (body.caption) sink.out(`    ${body.caption}\n`);
+                return;
+            default: {
+                const _exhaustive: never = body;
+                return _exhaustive;
+            }
+        }
+    }
+
+    /** Print openable entries: one line per entry with the resolved path as an OSC 8 `file://` link (plain path visible). */
+    function renderOpenables(title: string | undefined, entries: OpenableEntry[]): void {
+        if (title) sink.out(`\n  [show] ${title}\n`);
+        for (const entry of entries) {
+            if (entry.target.kind === "unavailable") {
+                sink.out(`    ${entry.name}: ${entry.caption ?? "unavailable"}\n`);
+                continue;
+            }
+            const path = resolvePath(analysisId, entry.target);
+            const suffix = entry.caption ? ` — ${entry.caption}` : "";
+            // The visible text stays the raw path; the link TARGET is a percent-encoded `file://` URI
+            // (via `pathToFileURL`) so spaces / `#` in the path don't truncate or mangle the OSC 8 target.
+            if (path) sink.out(`    ${entry.name}  ${hyperlink(pathToFileURL(path).href, path)}${suffix}\n`);
+            else sink.out(`    ${entry.name}  (path unavailable)${suffix}\n`);
         }
     }
 

@@ -20,6 +20,9 @@ export const PresentationContentSchema = z.discriminatedUnion("kind", [
     z.object({
         kind: z.literal("echart"),
         spec: z.record(z.string(), z.unknown()),
+        // Analysis-rooted CSV path the host resolves to `dataset.source` at render time; optional
+        // because a self-contained spec may embed its own data.
+        dataPath: z.string().optional(),
     }),
     z.object({
         kind: z.literal("markdown"),
@@ -299,7 +302,7 @@ export const RunFailedPartSchema = z.object({
 // ── Preview ────────────────────────────────────────────────────────
 
 export const PreviewPartSchema = z.object({
-    type: z.literal("data-preview"),
+    type: z.literal("data-report-preview"),
     id: z.string(),
     previewId: z.string(),
     version: z.number(),
@@ -311,7 +314,7 @@ export const PreviewPartSchema = z.object({
 // ── Preview Failed ─────────────────────────────────────────────────
 
 export const DataPreviewFailedPartSchema = z.object({
-    type: z.literal("data-preview-failed"),
+    type: z.literal("data-report-preview-failed"),
     id: z.string(),
     previewId: z.string(),
     version: z.number(),

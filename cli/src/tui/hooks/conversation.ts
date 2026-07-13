@@ -16,13 +16,14 @@ import {
 import { describeCause } from "../../lib/cause.ts";
 import { workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
 import { isSubAgentEvent, readPlanCard, readRunCard } from "../../modules/harness/chat_printer.ts";
+import { readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "../../modules/harness/artifact_open.ts";
 import { buildChatSession, runChatTurn, type TurnOutcome } from "../../modules/harness/turn.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { leaderSeq, sequenceLabel } from "../keymap.ts";
 import { harnessRuntime } from "./boot.ts";
 import { notify } from "./notice.ts";
 import { setChatStatus } from "./status.ts";
-import type { Part, TextPart, ToolCallPart } from "../../types/session.ts";
+import type { OpenableCardPart, OpenableEntry, Part, PresentationPart, TextPart, ToolCallPart } from "../../types/session.ts";
 
 // The chat's hot state — the message list, the in-flight streaming buffer, and the last error —
 // held here (not inside `app.tsx`) so the holder of the state is decoupled from its renderer, the
@@ -90,6 +91,9 @@ export function setError(msg: string | null): void {
 // copy-on-receive rule holds by construction). Module-private: only the send lifecycle touches them.
 let currentAssistantId: string | null = null;
 let currentSessionId: string | null = null;
+// The analysis this turn belongs to — stamped onto every openable-card part so its references resolve
+// against the right workspace root at open time (the card stores the reference, never a resolved path).
+let currentAnalysisId: string | null = null;
 const openTools = new Map<string, number>();
 
 /**
@@ -325,6 +329,18 @@ function renderDataPart(type: `data-${string}`, data: unknown): void {
             appendPart({ id: randomUUIDv7(), type: "run-card", runId: run.runId, title: run.title, stepCount: run.stepCount });
             return;
         }
+        case "data-presentation":
+            appendPart(presentationPart(data, currentAnalysisId ?? ""));
+            return;
+        case "data-file-reference":
+            appendPart(fileReferencePart(data, currentAnalysisId ?? ""));
+            return;
+        case "data-report-preview":
+            appendPart(reportPreviewPart(data, currentAnalysisId ?? ""));
+            return;
+        case "data-report-preview-failed":
+            appendPart(reportPreviewFailedPart(data, currentAnalysisId ?? ""));
+            return;
         default:
             // Observe an unknown conversation part as a one-line tagged mention — never swallowed.
             appendPart({
@@ -337,6 +353,46 @@ function renderDataPart(type: `data-${string}`, data: unknown): void {
             });
             return;
     }
+}
+
+// The display-card builders — SHARED by the live reducer ({@link applyEmitEvent}) and the reload path
+// ({@link cortexToUiMessage}), so a reloaded transcript renders byte-identical cards to the live turn.
+// Each mints a fresh part id and reads through the `artifact_open` readers, which copy every primitive at
+// receipt (copy-on-receive): the live path passes the harness event's `data`, the reload path passes the
+// flat reconstructed part (the readers narrow off any loose record), and both yield the same part.
+
+/** Build the part for a `data-presentation`: text-shaped → an inline presentation part; `echart`/`svg` → an openable card. */
+function presentationPart(data: unknown, analysisId: string): PresentationPart | OpenableCardPart {
+    const view = readPresentation(data);
+    if (view.shape === "inline") {
+        return { id: randomUUIDv7(), type: "presentation", ...(view.title !== undefined ? { title: view.title } : {}), body: view.body };
+    }
+    return { id: randomUUIDv7(), type: "openable-card", analysisId, ...(view.title !== undefined ? { title: view.title } : {}), entries: [view.entry] };
+}
+
+/** Build the openable-card part for a `data-file-reference` (one entry per file, plus a gallery folder). */
+function fileReferencePart(data: unknown, analysisId: string): OpenableCardPart {
+    const view = readFileReference(data);
+    return {
+        id: randomUUIDv7(),
+        type: "openable-card",
+        analysisId,
+        ...(view.title !== undefined ? { title: view.title } : {}),
+        entries: view.entries,
+        ...(view.folderPath !== undefined ? { folderPath: view.folderPath } : {}),
+    };
+}
+
+/** Build the openable-card part for a `data-report-preview`. */
+function reportPreviewPart(data: unknown, analysisId: string): OpenableCardPart {
+    const view = readReportPreview(data);
+    return { id: randomUUIDv7(), type: "openable-card", analysisId, ...(view.title !== undefined ? { title: view.title } : {}), entries: [view.entry] };
+}
+
+/** Build the degraded openable-card part for a `data-report-preview-failed` (naming the reason, nothing to open). */
+function reportPreviewFailedPart(data: unknown, analysisId: string): OpenableCardPart {
+    const view = readReportPreviewFailed(data);
+    return { id: randomUUIDv7(), type: "openable-card", analysisId, entries: [view.entry] };
 }
 
 /** Push the user's turn as its own message, with its text part, re-enforcing the mount cap. */
@@ -517,7 +573,7 @@ export type CortexMsg = Awaited<ReturnType<typeof contentToCortexMessages>>[numb
  * results). Card parts are FLAT on the reconstructed part, and the readers narrow off any object, so
  * the part is passed straight through.
  */
-export function cortexToUiMessage(m: CortexMsg, sessionId: string): UIMessage {
+export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = ""): UIMessage {
     // TODO(extend): content-fidelity gap, deliberately deferred. Any non-user role collapses onto
     // "assistant" here because UIMessage.role is a two-value union — a `system` turn loses its framing
     // and reads as the assistant. Widen UIMessage.role (and MessageBlock) to carry system turns
@@ -555,11 +611,23 @@ export function cortexToUiMessage(m: CortexMsg, sessionId: string): UIMessage {
                 parts.push({ id: randomUUIDv7(), type: "run-card", runId: run.runId, title: run.title, stepCount: run.stepCount });
                 break;
             }
+            case "data-presentation":
+                // The reconstructed part is FLAT (fields spread under `part.type`); the readers narrow off
+                // any loose record, so the same builders the live path uses map it to a byte-identical card.
+                parts.push(presentationPart(part, analysisId));
+                break;
+            case "data-file-reference":
+                parts.push(fileReferencePart(part, analysisId));
+                break;
+            case "data-report-preview":
+                parts.push(reportPreviewPart(part, analysisId));
+                break;
+            case "data-report-preview-failed":
+                parts.push(reportPreviewFailedPart(part, analysisId));
+                break;
             default:
-                // TODO(extend): observe-don't-swallow, but low fidelity. A reconstructed part the UI
-                // has no first-class renderer for (e.g. `data-presentation`, `data-preview`) collapses
-                // to a one-line `[part:<type>]` mention instead of its real content. Add real renderers
-                // for these kinds so a reload shows their substance rather than just their tag.
+                // Observe a reconstructed part the UI has no first-class renderer for as a one-line tagged
+                // mention — never swallowed. (The recognized display cards are handled in the cases above.)
                 parts.push({ id: randomUUIDv7(), sessionId, messageId: m.id, type: "text", text: `[part:${part.type}]`, createdAt: 0 });
                 break;
         }
@@ -683,7 +751,7 @@ export async function loadMessages(sessionId: string, analysisId: string, seams:
         // newest MESSAGE_CAP so the mounted window matches the live-append cap. Record the session this
         // load mounted so `send` knows the history is already on screen and skips its post-turn reload.
         (cortex) => {
-            setMessages(cortex.map((m) => cortexToUiMessage(m, sessionId)).slice(-MESSAGE_CAP));
+            setMessages(cortex.map((m) => cortexToUiMessage(m, sessionId, analysisId)).slice(-MESSAGE_CAP));
             loadedSessionId = sessionId;
         },
         (cause) => {
@@ -717,6 +785,7 @@ export function resetHotState(): void {
     abortController = null;
     currentAssistantId = null;
     currentSessionId = null;
+    currentAnalysisId = null;
     openTools.clear();
     setStreamPartId(null);
     setStreamText("");
@@ -785,6 +854,8 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
 
     pushUserMessage(opts.sessionId, opts.userText);
     const assistantId = startAssistantTurn(opts.sessionId);
+    // Stamp the turn's analysis so openable-card parts carry the scope their references resolve against.
+    currentAnalysisId = opts.analysisId;
     setChatStatus("busy");
     const startedAt = Date.now();
 
@@ -838,6 +909,7 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
     abortController = null;
     currentAssistantId = null;
     currentSessionId = null;
+    currentAnalysisId = null;
 
     // Retry a transcript load THIS turn superseded. `Chat` fires the initial load at the boot-ready
     // edge — the same instant the submit gate opens — so a message pre-typed while booting bumps
@@ -854,4 +926,29 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
 /** Cancel the in-flight chat request, if any (the abort keybinding). */
 export function abort(): void {
     abortController?.abort();
+}
+
+/** One openable the `o` binding or the "Browse artifacts…" picker can act on: the analysis scope + the entry. */
+export type SessionOpenable = { analysisId: string; entry: OpenableEntry };
+
+/**
+ * Every openable card entry currently in the transcript, NEWEST first (latest message + latest-emitted
+ * part first), excluding the non-openable `unavailable` entries (a failed preview has nothing to open).
+ * The `o` binding opens `[0]` (the most recent); the picker lists them all. Read in a tracking scope —
+ * reactive on the message store.
+ */
+export function sessionOpenables(): SessionOpenable[] {
+    const out: SessionOpenable[] = [];
+    for (let mi = messages.length - 1; mi >= 0; mi--) {
+        const parts = messages[mi]!.parts;
+        for (let pi = parts.length - 1; pi >= 0; pi--) {
+            const part = parts[pi]!;
+            if (part.type !== "openable-card") continue;
+            for (let ei = part.entries.length - 1; ei >= 0; ei--) {
+                const entry = part.entries[ei]!;
+                if (entry.target.kind !== "unavailable") out.push({ analysisId: part.analysisId, entry });
+            }
+        }
+    }
+    return out;
 }

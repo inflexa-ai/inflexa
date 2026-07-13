@@ -24,7 +24,9 @@ export interface PlanStep {
 }
 
 export type PresentationContent =
-    | { kind: "echart"; spec: Record<string, unknown> }
+    /** `dataPath` (optional): an analysis-rooted CSV artifact path the host loads and injects as the
+     *  chart's `dataset.source` at render time — the data never rides through the context window. */
+    | { kind: "echart"; spec: Record<string, unknown>; dataPath?: string }
     | { kind: "markdown"; body: string }
     | { kind: "code"; code: string; language: string }
     | { kind: "svg"; markup: string }
@@ -327,7 +329,7 @@ export interface RunFailedPart {
 // ── Preview (iterative report) ─────────────────────────────────────
 
 export interface PreviewPart {
-    type: "data-preview";
+    type: "data-report-preview";
     /** Unique per emission (UUID). */
     id: string;
     /** Groups all versions of the same preview. */
@@ -345,7 +347,7 @@ export interface PreviewPart {
 // ── Preview Failed (iterative report) ──────────────────────────────
 
 export interface DataPreviewFailedPart {
-    type: "data-preview-failed";
+    type: "data-report-preview-failed";
     /** Unique per emission (UUID). */
     id: string;
     /** Groups all versions of the same preview. */

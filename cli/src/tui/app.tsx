@@ -15,6 +15,7 @@ import { chatStatus } from "./hooks/status.ts";
 import { bootState, harnessRuntime, watchAgentModels } from "./hooks/boot.ts";
 import * as conversation from "./hooks/conversation.ts";
 import { currentNotice, notify } from "./hooks/notice.ts";
+import { openArtifact } from "./hooks/artifacts.ts";
 import { profileSnapshot, runsSnapshot, watchSidebarData, profileDetailLines } from "./hooks/sidebar_live.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
@@ -290,6 +291,18 @@ export function App(props: AppProps) {
         if (cmd) void runCommand(cmd, workspace);
     }
 
+    // Open the most recent openable artifact card in the transcript (the `o` binding). Covers the
+    // dominant "the agent just showed me something" case with zero transcript-focus machinery; the
+    // "Browse artifacts…" palette command reaches the long tail.
+    function openLatestArtifact(): void {
+        const latest = conversation.sessionOpenables()[0];
+        if (!latest) {
+            notify({ kind: "info", text: "No artifacts to open yet." });
+            return;
+        }
+        openArtifact(latest.analysisId, latest.entry);
+    }
+
     // Per-palette selection highlight. Dark themes keep OpenTUI's native highlight (each cell's fg becomes
     // its selection bg) — vivid against their bright syntax; light themes invert into mush, so there we
     // flatten the bg to `bgActive` and leave the fg alone (each token keeps its syntax color). Applied on
@@ -371,6 +384,7 @@ export function App(props: AppProps) {
         bindings: [
             { chord: { key: "i" }, run: () => textareaRef?.focus(), desc: "Insert mode", group: "Input" },
             { chord: KEYS.enter, run: () => textareaRef?.focus(), desc: "Focus input", group: "Input" },
+            { chord: resolveKeybind("artifact.open-latest"), run: openLatestArtifact, desc: "Open latest artifact", group: "Artifacts" },
         ],
     }));
 

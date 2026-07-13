@@ -237,6 +237,9 @@ export const KEYBIND_DEFAULTS = {
     "app.abort": "ctrl+c",
     "app.clear-input": "ctrl+u",
     "app.leader": "ctrl+x",
+    // Opens the most recent openable artifact card. A bare printable, so it lives in the NORMAL-mode
+    // (scroll-pane-focused) layer only — never active while the composer holds focus.
+    "artifact.open-latest": "o",
 } satisfies Record<string, string>;
 
 /** A remappable keybinding id — a key of {@link KEYBIND_DEFAULTS}. */
