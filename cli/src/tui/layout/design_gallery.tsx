@@ -22,6 +22,8 @@ import { ToolBlock } from "../components/tool_block.tsx";
 import { DiffBlock } from "../components/diff_block.tsx";
 import { RunBlock } from "../components/run_block.tsx";
 import { ErrorBlock } from "../components/error_block.tsx";
+import { PresentationBlock } from "../components/presentation_block.tsx";
+import { OpenableCardBlock } from "../components/openable_card_block.tsx";
 import { MessageBlock } from "./message_block.tsx";
 import { Bold, Italic, Underline, Dim, Reverse, Fg } from "../components/emphasis.tsx";
 import { TextArea } from "../components/text_area.tsx";
@@ -372,6 +374,73 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         steps={longRunSteps}
                         maxSteps={6}
                         hint={false}
+                    />
+                </State>
+                <State n="19" label="inline presentation — text-shaped show_user (markdown / code / table)">
+                    {/* Text-shaped `show_user` content rendered inline through the <markdown> renderable. */}
+                    <PresentationBlock
+                        title="Key finding"
+                        body={{ kind: "markdown", body: "**TP53** is significantly upregulated (log2FC 2.4, _padj_ 3e-8)." }}
+                    />
+                    <PresentationBlock title="Normalization snippet" body={{ kind: "code", code: "dds <- DESeq(dds)\nres <- results(dds)", language: "r" }} />
+                    <PresentationBlock
+                        title="Top DE genes"
+                        body={{
+                            kind: "table",
+                            headers: ["gene", "log2FC", "padj"],
+                            rows: [
+                                ["TP53", "2.4", "3e-8"],
+                                ["MYC", "-1.8", "1e-5"],
+                            ],
+                            caption: "differential expression, condition A vs B",
+                        }}
+                    />
+                </State>
+                <State n="20" label="openable card — pixel-shaped content (chart / gallery + folder / missing / failed)">
+                    {/* Pixel-shaped content a terminal can't paint: click a row to open it externally.
+                        onOpen is inert here — the gallery renders the pure block with resolved fixtures. */}
+                    <OpenableCardBlock
+                        title="Volcano plot"
+                        rows={[{ icon: "chart", name: "Volcano plot", path: "~/.local/share/inflexa/cache/presentations/pres-9f21a3.html", degraded: false }]}
+                        onOpen={noop}
+                    />
+                    <OpenableCardBlock
+                        title="Figures"
+                        rows={[
+                            {
+                                icon: "image",
+                                name: "volcano.png",
+                                caption: "condition A vs B",
+                                path: "~/proj/.inflexa/analyses/rna/runs/run-abc/figures/volcano.png",
+                                degraded: false,
+                            },
+                            {
+                                icon: "image",
+                                name: "heatmap.png",
+                                caption: "top 50 DE genes",
+                                path: "~/proj/.inflexa/analyses/rna/runs/run-abc/figures/heatmap.png",
+                                degraded: false,
+                            },
+                        ]}
+                        folderLabel="Open containing folder"
+                        onOpen={noop}
+                        onOpenFolder={noop}
+                    />
+                    <OpenableCardBlock
+                        title="Referenced file"
+                        rows={[
+                            {
+                                icon: "document",
+                                name: "de-summary.csv",
+                                path: "~/proj/.inflexa/analyses/rna/runs/run-abc/output/de-summary.csv",
+                                degraded: true,
+                            },
+                        ]}
+                        onOpen={noop}
+                    />
+                    <OpenableCardBlock
+                        rows={[{ icon: "report", name: "Report preview v2 failed", caption: "render timed out after 60s", path: null, degraded: true }]}
+                        onOpen={noop}
                     />
                 </State>
             </ScrollPane>

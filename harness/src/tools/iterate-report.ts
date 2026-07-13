@@ -11,7 +11,7 @@
  *    existing `previewId`. Optional top-level `sources` adds new assets
  *    on top of the existing assets/ dir.
  *
- * Emits a `data-preview` chat data part on success or `data-preview-failed`
+ * Emits a `data-report-preview` chat data part on success or `data-report-preview-failed`
  * on pre-flight or builder failure. The hosted preview surface is reached
  * through an injected `PreviewPublisher` seam (managed default mints a
  * short-lived run-authorization grant; local default returns "unavailable").
@@ -288,7 +288,7 @@ export function createIterateReportTool(deps: IterateReportDeps): Tool {
             const metaPathAbs = join(previewRootAbs, PREVIEW_META_FILE);
 
             // Iteration mode: recover the title from the creation-time meta file
-            // so the data-preview part keeps the original title across versions.
+            // so the data-report-preview part keeps the original title across versions.
             const existingMeta = input.report ? null : await readPreviewMeta(metaPathAbs);
 
             // Build the preview-publishing seam for this iteration. The managed
@@ -324,7 +324,7 @@ export function createIterateReportTool(deps: IterateReportDeps): Tool {
                 });
                 if (!result.ok) {
                     await ctx.emit({
-                        type: "data-preview-failed",
+                        type: "data-report-preview-failed",
                         data: {
                             id: randomUUID(),
                             previewId,
@@ -351,7 +351,7 @@ export function createIterateReportTool(deps: IterateReportDeps): Tool {
                 if (missing.length > 0) {
                     const reason = `section asset references not staged: ${missing.join(", ")} (pass them in report.sources)`;
                     await ctx.emit({
-                        type: "data-preview-failed",
+                        type: "data-report-preview-failed",
                         data: {
                             id: randomUUID(),
                             previewId,
@@ -395,7 +395,7 @@ export function createIterateReportTool(deps: IterateReportDeps): Tool {
 
             if (!result.ok) {
                 await ctx.emit({
-                    type: "data-preview-failed",
+                    type: "data-report-preview-failed",
                     data: {
                         id: randomUUID(),
                         previewId: result.previewId,
@@ -429,7 +429,7 @@ export function createIterateReportTool(deps: IterateReportDeps): Tool {
             const previewTitle = input.report?.title ?? existingMeta?.title ?? "Report";
 
             await ctx.emit({
-                type: "data-preview",
+                type: "data-report-preview",
                 data: {
                     id: randomUUID(),
                     previewId: result.previewId,

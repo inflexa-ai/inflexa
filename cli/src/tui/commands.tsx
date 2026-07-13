@@ -16,6 +16,9 @@ import { notify } from "./hooks/notice.ts";
 import { queryRunsByAnalysis } from "@inflexa-ai/harness";
 
 import { bootState, harnessRuntime } from "./hooks/boot.ts";
+import { sessionOpenables, type SessionOpenable } from "./hooks/conversation.ts";
+import { openArtifact } from "./hooks/artifacts.ts";
+import { resolveEntryPath } from "../modules/harness/artifact_open.ts";
 import { driveForceReprofile, profileWorkInFlight } from "./hooks/profile_parity.ts";
 import { RUN_STATUS_TERMINAL } from "./hooks/sidebar_live.ts";
 import { chatStatus } from "./hooks/status.ts";
@@ -414,6 +417,34 @@ function AnalysesListDialog(): JSX.Element {
         (e) => [`Failed to list analyses: ${e.type}`],
     );
     return <ResultsDialog title="Analyses" lines={lines} emptyText="No analyses yet" onClose={() => ws.closeDialog()} />;
+}
+
+/**
+ * Reach-back picker over the session's openable artifacts (charts, figures, files, report previews),
+ * newest-first. Each row shows the entry name + its resolved path; selecting one opens it externally
+ * through the shared opener. Complements the `o` binding (which opens the single most-recent card).
+ */
+function BrowseArtifactsDialog(): JSX.Element {
+    const ws = useWorkspace();
+    const openables = sessionOpenables();
+    const items = openables.map((openable) => ({
+        value: openable,
+        title: openable.entry.name,
+        description: resolveEntryPath(openable.analysisId, openable.entry.target) ?? openable.entry.caption,
+    }));
+    return (
+        <SelectDialog
+            title="Browse artifacts"
+            placeholder={`Search artifacts${GLYPHS.ellipsis}`}
+            items={items}
+            emptyText="No artifacts shown in this session yet"
+            onCancel={() => ws.closeDialog()}
+            onSelect={(openable: SessionOpenable) => {
+                ws.closeDialog();
+                openArtifact(openable.analysisId, openable.entry);
+            }}
+        />
+    );
 }
 
 function StatusDialog(): JSX.Element {
@@ -1154,6 +1185,13 @@ export const commands: Command[] = [
         description: "Preview every stream-block state",
         category: "View",
         run: (ctx) => ctx.openDialog(() => <DesignGallery onClose={ctx.closeDialog} />),
+    },
+    {
+        id: "artifact.browse",
+        title: "Browse artifacts…",
+        description: "Open a chart, figure, file, or report shown in this session",
+        category: "View",
+        run: (ctx) => ctx.openDialog(() => <BrowseArtifactsDialog />),
     },
     // The model-switch commands form their own `Provider` group — declared here, after `View`, so
     // the palette (which orders groups by a category's first appearance in this array) renders it as

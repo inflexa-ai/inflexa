@@ -8,8 +8,12 @@ import { ToolBlock } from "../components/tool_block.tsx";
 import { DiffBlock } from "../components/diff_block.tsx";
 import { PlanCardBlock } from "../components/plan_card_block.tsx";
 import { RunCardBlock } from "../components/run_card_block.tsx";
+import { PresentationBlock } from "../components/presentation_block.tsx";
+import { OpenableCardBlock, type OpenableRowView } from "../components/openable_card_block.tsx";
 import { Bold, Fg } from "../components/emphasis.tsx";
-import type { Part } from "../../types/session.ts";
+import { entryDegraded, resolveEntryPath } from "../../modules/harness/artifact_open.ts";
+import { openArtifact, openArtifactFolder } from "../hooks/artifacts.ts";
+import type { OpenableCardPart, Part } from "../../types/session.ts";
 
 /** A chat turn's author. */
 export type MessageRole = "user" | "assistant";
@@ -97,6 +101,10 @@ export function MessageBlock(props: MessageBlockProps) {
                         return <PlanCardBlock planId={part.planId} title={part.title} steps={part.steps} />;
                     case "run-card":
                         return <RunCardBlock runId={part.runId} title={part.title} stepCount={part.stepCount} />;
+                    case "presentation":
+                        return <PresentationBlock title={part.title} body={part.body} />;
+                    case "openable-card":
+                        return <OpenableCard part={part} />;
                     default: {
                         // Exhaustive: a new Part kind without a case fails the build here.
                         const _exhaustive: never = part;
@@ -123,5 +131,35 @@ export function MessageBlock(props: MessageBlockProps) {
                 parts()
             )}
         </box>
+    );
+}
+
+/**
+ * Wire an {@link OpenableCardPart} to the pure {@link OpenableCardBlock}: resolve each entry's display path
+ * and degraded state at render time (open-time resolution — the part stores only the reference), and hand
+ * clicks to the shared opener. Co-located with {@link MessageBlock}, its only caller. Resolution reads the
+ * memoized workspace root, so the one-time read per mount is cheap; parts are immutable after receipt, so a
+ * static resolution is correct.
+ */
+function OpenableCard(props: { part: OpenableCardPart }) {
+    const rows = (): OpenableRowView[] =>
+        props.part.entries.map((entry) => ({
+            icon: entry.icon,
+            name: entry.name,
+            ...(entry.caption !== undefined ? { caption: entry.caption } : {}),
+            path: resolveEntryPath(props.part.analysisId, entry.target),
+            degraded: entryDegraded(props.part.analysisId, entry.target),
+        }));
+    return (
+        <OpenableCardBlock
+            title={props.part.title}
+            rows={rows()}
+            folderLabel={props.part.folderPath ? "Open containing folder" : undefined}
+            onOpen={(index) => {
+                const entry = props.part.entries[index];
+                if (entry) openArtifact(props.part.analysisId, entry);
+            }}
+            onOpenFolder={props.part.folderPath ? () => openArtifactFolder(props.part.analysisId, props.part.folderPath!) : undefined}
+        />
     );
 }

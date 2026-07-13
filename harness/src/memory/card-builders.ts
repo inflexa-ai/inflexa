@@ -187,7 +187,7 @@ function latestPreviewId(previewsRootAbs: string): ResultAsync<string | null, Fs
 }
 
 /**
- * Build the `data-preview` payload for an `iterate_report` tool_use. The
+ * Build the `data-report-preview` payload for an `iterate_report` tool_use. The
  * preview's source of truth is the filesystem under
  * `previews/{previewId}/`: directory layout yields `version`
  * (latest `vN`) + `previewPath`, and `preview-meta.json` yields title/format.

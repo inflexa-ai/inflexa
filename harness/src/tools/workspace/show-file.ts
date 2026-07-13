@@ -16,22 +16,11 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
+import { validatePath } from "../lib/path-validation.js";
 
 type ShowFileOutput = { shown: false; reason: "invalid_path" } | { shown: true; id: string };
 
 const MAX_FILES = 10;
-const MAX_PATH_LEN = 1024;
-
-/** Returns null for a legal analysis-rooted path, an error code otherwise. */
-function validatePath(path: string): null | "invalid_path" {
-    if (path.length === 0 || path.length > MAX_PATH_LEN) return "invalid_path";
-    if (path.includes("\0")) return "invalid_path";
-    if (path.startsWith("/")) return "invalid_path";
-    for (const segment of path.split("/")) {
-        if (segment === "..") return "invalid_path";
-    }
-    return null;
-}
 
 /** Extracts `runId` from paths shaped `runs/{runId}/...`; undefined otherwise. */
 function deriveRunId(path: string): string | undefined {

@@ -538,6 +538,16 @@ single monolithic markdown card.
 The show_user \`title\` renders as a card header above the chart canvas.
 Follow these rules to prevent overlapping elements:
 
+- **Data source — reference, don't inline.** When the data already exists as
+  a chart-ready CSV artifact (e.g. a sandbox step wrote it to \`output/\` or
+  \`figures/\`), pass its analysis-rooted path as \`dataPath\` and author
+  \`encode\`/dimensions against the CSV's column names — read only the header to
+  learn the columns, and omit \`dataset.source\` from the spec. The host loads
+  the CSV as the dataset at render time; never pull the rows through your
+  context window. Inline \`dataset.source\` is only for a handful of numbers you
+  just computed in conversation that exist nowhere as an artifact. If the raw
+  data is not chart-ready (needs aggregation, filtering, or reshaping), do that
+  in a sandbox step that writes a chart-ready CSV — not in the spec.
 - **No duplicate title.** Omit \`title\` from the ECharts spec — the
   show_user \`title\` param is the visible heading.
 - **Legend at bottom.** Set \`legend: { bottom: 0 }\` so it never collides

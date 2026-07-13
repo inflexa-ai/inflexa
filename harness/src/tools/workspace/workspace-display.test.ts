@@ -50,6 +50,12 @@ describe("createWorkspaceSearchTool (dependency-bearing factory)", () => {
     });
 });
 
+/** Narrows a `show_user` result to the shown variant, failing the test otherwise. */
+function shownId(result: { shown: false; reason: string } | { id: string }): string {
+    if (!("id" in result)) throw new Error(`show_user returned invalid_path: ${result.reason}`);
+    return result.id;
+}
+
 describe("showUser", () => {
     it("emits a data-presentation event with the content payload", async () => {
         const { ctx, emitted } = makeToolContext();
@@ -61,7 +67,7 @@ describe("showUser", () => {
             data: { id: string; title?: string; content: { kind: string; body?: string } };
         };
         expect(event.type).toBe("data-presentation");
-        expect(event.data.id).toBe(result.id);
+        expect(event.data.id).toBe(shownId(result));
         expect(event.data.title).toBe("Findings");
         expect(event.data.content.kind).toBe("markdown");
         expect(event.data.content.body).toBe("## Hello");
@@ -72,7 +78,37 @@ describe("showUser", () => {
         const b = makeToolContext();
         const r1 = (await showUserTool.execute({ kind: "code", code: "x <- 1" }, a.ctx))._unsafeUnwrap();
         const r2 = (await showUserTool.execute({ kind: "code", code: "x <- 1" }, b.ctx))._unsafeUnwrap();
-        expect(r1.id).toBe(r2.id);
+        expect(shownId(r1)).toBe(shownId(r2));
+    });
+
+    it("carries dataPath into the deterministic id — identical input matches, differing dataPath differs", async () => {
+        const base = {
+            kind: "echart" as const,
+            title: "DE genes",
+            spec: { series: [{ type: "scatter" }] },
+            dataPath: "runs/run-abc/step-2/output/de-summary.csv",
+        };
+        const a = makeToolContext();
+        const b = makeToolContext();
+        const c = makeToolContext();
+        const r1 = (await showUserTool.execute(base, a.ctx))._unsafeUnwrap();
+        const r2 = (await showUserTool.execute(base, b.ctx))._unsafeUnwrap();
+        const r3 = (await showUserTool.execute({ ...base, dataPath: "runs/run-abc/step-2/output/other.csv" }, c.ctx))._unsafeUnwrap();
+
+        expect(shownId(r1)).toBe(shownId(r2));
+        expect(shownId(r1)).not.toBe(shownId(r3));
+        // The emitted card content carries the dataPath reference.
+        const event = a.emitted[0] as { data: { content: { dataPath?: string } } };
+        expect(event.data.content.dataPath).toBe(base.dataPath);
+    });
+
+    it("returns the invalid_path variant for a traversal dataPath and does not emit", async () => {
+        const { ctx, emitted } = makeToolContext();
+        const result = (await showUserTool.execute({ kind: "echart", spec: {}, dataPath: "../outside.csv" }, ctx))._unsafeUnwrap();
+
+        expect("id" in result).toBe(false);
+        if (!("id" in result)) expect(result.reason).toBe("invalid_path");
+        expect(emitted).toHaveLength(0);
     });
 });
 

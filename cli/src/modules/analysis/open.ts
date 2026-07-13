@@ -1,40 +1,11 @@
-import { ok, err, type Result } from "neverthrow";
+import { ok, type Result } from "neverthrow";
 import { findAnalysis } from "./analysis.ts";
 import { ensureOutputDir, locateExistingOutputDir } from "./output.ts";
+import { openExternal } from "../../lib/open_external.ts";
 import { dieOn, fail } from "../../lib/cli.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { IdOrName } from "../../lib/types.ts";
 import type { WorkspaceError } from "./output.ts";
-
-/**
- * The OS-specific argv that opens `dir` in the file browser. `platform` defaults to the running OS
- * (the opener is derived from the OS, not config, so it stays out of env.ts); it is a parameter only
- * so tests can exercise each branch without mutating the global `process.platform`.
- */
-export function openerArgv(dir: string, platform: NodeJS.Platform = process.platform): string[] {
-    switch (platform) {
-        case "darwin":
-            return ["open", dir];
-        case "win32":
-            return ["cmd", "/c", "start", "", dir];
-        default:
-            return ["xdg-open", dir];
-    }
-}
-
-/**
- * Spawn the OS opener for `dir`, Result-wrapped: `Bun.spawn` throws synchronously when the
- * opener binary is missing (ENOENT — e.g. a headless Linux box without xdg-open), and callers
- * inside key handlers must surface that as a notice, never a crash.
- */
-export function openInFileBrowser(dir: string): Result<void, Error> {
-    try {
-        Bun.spawn(openerArgv(dir), { stdout: "ignore", stderr: "ignore" });
-        return ok(undefined);
-    } catch (cause) {
-        return err(cause instanceof Error ? cause : new Error(String(cause)));
-    }
-}
 
 /**
  * Open an analysis's workspace root in the OS file browser; returns the opened path. The revealed
@@ -50,11 +21,12 @@ export function openOutputDir(analysis: Analysis): Result<string, WorkspaceError
     return locateExistingOutputDir(analysis)
         .andThen((existing): Result<string, WorkspaceError> => (existing !== null ? ok(existing) : ensureOutputDir(analysis)))
         .map((dir) => {
-            try {
-                Bun.spawn(openerArgv(dir), { stdout: "inherit", stderr: "inherit" });
-            } catch {
-                // Fire-and-forget: a missing opener (ENOENT) is not worth crashing for.
-            }
+            // Fire-and-forget reveal: a missing opener (ENOENT) is not worth crashing for — the caller
+            // still gets the resolved dir to print, and under WSL this routes through wslview/explorer.exe.
+            openExternal(dir).match(
+                () => {},
+                () => {},
+            );
             return dir;
         });
 }

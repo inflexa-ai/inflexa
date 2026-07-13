@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { EmitFn, EventSource } from "@inflexa-ai/harness";
 
-import { createChatPrinter, isSubAgentEvent, readPlanCard, readRunCard, type ChatSink } from "./chat_printer.ts";
+import { createChatPrinter, isSubAgentEvent, readPlanCard, readRunCard, type ChatSink, type PrinterOptions } from "./chat_printer.ts";
 
 /**
  * A recording sink + printer. `out()` accumulates conversation output; `errs`
@@ -9,11 +9,11 @@ import { createChatPrinter, isSubAgentEvent, readPlanCard, readRunCard, type Cha
  * emit is synchronous, but `EmitFn`'s declared type is `void | Promise<void>`,
  * so the wrapper keeps the call sites free of floating-promise noise.
  */
-function harness(): { emit: (e: Parameters<EmitFn>[0]) => void; finishTurn: (t?: string) => void; out: () => string; errs: string[] } {
+function harness(options?: PrinterOptions): { emit: (e: Parameters<EmitFn>[0]) => void; finishTurn: (t?: string) => void; out: () => string; errs: string[] } {
     const outChunks: string[] = [];
     const errs: string[] = [];
     const sink: ChatSink = { out: (s) => outChunks.push(s), errLine: (s) => errs.push(s) };
-    const printer = createChatPrinter(sink);
+    const printer = createChatPrinter(sink, options);
     return { emit: (e) => void printer.emit(e), finishTurn: printer.finishTurn, out: () => outChunks.join(""), errs };
 }
 
@@ -89,10 +89,62 @@ describe("createChatPrinter", () => {
         expect(h.out()).toContain("[run] run-xyz: DE run (3 step(s))");
     });
 
-    test("unknown conversation parts print a one-line tagged mention, not swallowed", () => {
+    test("a text-shaped markdown presentation prints inline, not as a tag", () => {
         const h = harness();
-        h.emit({ type: "data-presentation", source: TOP, data: { id: "x", content: { kind: "markdown", body: "hi" } } });
-        expect(h.out()).toContain("[part:data-presentation]");
+        h.emit({ type: "data-presentation", source: TOP, data: { id: "x", title: "Finding", content: { kind: "markdown", body: "hi there" } } });
+        expect(h.out()).toContain("hi there");
+        expect(h.out()).not.toContain("[part:data-presentation]");
+    });
+
+    test("a text-shaped code presentation prints fenced", () => {
+        const h = harness();
+        h.emit({ type: "data-presentation", source: TOP, data: { id: "c", content: { kind: "code", code: "x <- 1", language: "r" } } });
+        expect(h.out()).toContain("```r");
+        expect(h.out()).toContain("x <- 1");
+    });
+
+    test("show_file openables print one line per entry with an OSC 8 file:// link and the plain path visible", () => {
+        const h = harness({ analysisId: "a1", resolvePath: () => "/ws/figures/volcano.png" });
+        h.emit({
+            type: "data-file-reference",
+            source: TOP,
+            data: { id: "g", title: "Figures", files: [{ path: "runs/r/figures/volcano.png", caption: "A vs B" }] },
+        });
+        const out = h.out();
+        expect(out).toContain("volcano.png"); // the entry name
+        expect(out).toContain("/ws/figures/volcano.png"); // the plain path is visible
+        expect(out).toContain("\x1b]8;;file:///ws/figures/volcano.png"); // wrapped in an OSC 8 hyperlink
+        expect(out).toContain("A vs B"); // the caption
+    });
+
+    test("an echart presentation resolves through the injected cache resolver and links to it", () => {
+        const h = harness({ analysisId: "a1", resolvePath: () => "/cache/pres-chart.html" });
+        h.emit({ type: "data-presentation", source: TOP, data: { id: "pres-chart", title: "Volcano", content: { kind: "echart", spec: { series: [] } } } });
+        const out = h.out();
+        expect(out).toContain("Volcano");
+        expect(out).toContain("/cache/pres-chart.html");
+        expect(out).toContain("\x1b]8;;file:///cache/pres-chart.html");
+    });
+
+    test("a path with a space percent-encodes the file:// link target but keeps the plain path visible", () => {
+        const h = harness({ analysisId: "a1", resolvePath: () => "/ws/my figures/volcano plot.png" });
+        h.emit({
+            type: "data-file-reference",
+            source: TOP,
+            data: { id: "g", title: "Figures", files: [{ path: "runs/r/figures/volcano plot.png" }] },
+        });
+        const out = h.out();
+        // The visible text is the raw path (spaces intact) …
+        expect(out).toContain("/ws/my figures/volcano plot.png");
+        // … while the OSC 8 target is percent-encoded so the space cannot truncate the link.
+        expect(out).toContain("\x1b]8;;file:///ws/my%20figures/volcano%20plot.png");
+        expect(out).not.toContain("\x1b]8;;file:///ws/my figures/volcano plot.png");
+    });
+
+    test("data-report-preview-failed prints its reason, not a link", () => {
+        const h = harness();
+        h.emit({ type: "data-report-preview-failed", source: TOP, data: { id: "x", previewId: "p", version: 3, reason: "render timed out" } });
+        expect(h.out()).toContain("render timed out");
     });
 
     test("copy-on-receive: mutating a part after emit does not change output", () => {

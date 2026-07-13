@@ -10,7 +10,7 @@ import { theme } from "../../theme.ts";
 import { KEYS, chordLabel, type Chord } from "../../keymap.ts";
 import { statResult } from "../../../lib/fs.ts";
 import { canonicalPath } from "../../../modules/anchor/marker.ts";
-import { openInFileBrowser } from "../../../modules/analysis/open.ts";
+import { openExternal } from "../../../lib/open_external.ts";
 import { notify } from "../../hooks/notice.ts";
 import { useDialogBindings, useDialogCancel, useDialogCloseGuard } from "./dialog_host.tsx";
 import { DialogPanel } from "./dialog_panel.tsx";
@@ -199,7 +199,7 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
     function openExplorer(): void {
         const abs = cursorAbs();
         const dir = abs === undefined ? cwd() : isDirRow(abs) ? abs : dirname(abs);
-        openInFileBrowser(dir).match(
+        openExternal(dir).match(
             () => notify({ kind: "info", text: `Opened ${dir}` }),
             () => notify({ kind: "error", text: "No system file browser available." }),
         );
