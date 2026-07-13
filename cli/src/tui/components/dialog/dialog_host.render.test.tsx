@@ -257,6 +257,46 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
         }
     });
 
+    test("SelectDialog: a cursor round-trip leaves the frame identical and keeps the one input↔list gap row", async () => {
+        // The list's scroll surface carries NO top padding: padding inside a scrollbox is scrollable
+        // content, so any top pad scrolls away on the first scroll and never returns — the input↔list
+        // spacing would silently lose a row after one round-trip. Separation is a static gap box OUTSIDE
+        // the scrollbox, so walking the cursor to the bottom and back must reproduce the opening frame.
+        const items = Array.from({ length: 20 }, (_, i) => ({
+            value: `v${i}`,
+            title: `item ${String(i).padStart(2, "0")}`,
+            description: `detail for item ${i}`,
+            category: "All",
+        }));
+        const setup = await testRender(() => <Harness />, { width: 80, height: 20 });
+        const settle = makeSettle(setup);
+        const frame = () => setup.captureCharFrame();
+        try {
+            await settle();
+            dialogPush(() => <SelectDialog title="Pick" items={items} emptyText="none" onSelect={() => {}} onCancel={() => {}} />);
+            await settle();
+            const opening = frame();
+
+            // Exactly one static gap row sits between the filter input and the first group header — no
+            // more (a scroll-away pad row), no less (flush against the input).
+            const lines = opening.split("\n");
+            const inputIdx = lines.findIndex((l) => l.includes("Type to filter"));
+            const headerIdx = lines.findIndex((l) => l.includes("All"));
+            expect(inputIdx).toBeGreaterThanOrEqual(0);
+            expect(headerIdx - inputIdx).toBe(2); // input row, one gap row, then the header
+            expect(lines[inputIdx + 1]).not.toContain("item"); // the row between is the empty gap
+
+            // Walk the cursor to the bottom and all the way back: the frame must match the opening one.
+            for (let i = 0; i < 12; i++) setup.mockInput.pressArrow("down");
+            await settle();
+            for (let i = 0; i < 12; i++) setup.mockInput.pressArrow("up");
+            await settle();
+            expect(frame()).toBe(opening);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
     test("close-then-open keeps the next dialog's initial focus and the app restore chain", async () => {
         // The palette pattern: onSelect closes the palette, then the command pushes its own
         // dialog in the same tick. The overlay's deferred app-focus restore (scheduled at N→0)

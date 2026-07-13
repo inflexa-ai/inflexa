@@ -77,6 +77,12 @@ describe("Date.relativeAge", () => {
             now.mockRestore();
         }
     });
+
+    test("a non-finite `since` renders 0s rather than a NaN string", () => {
+        expect(Date.relativeAge(NaN)).toBe("0s");
+        expect(Date.relativeAge(Infinity)).toBe("0s");
+        expect(Date.relativeAge(-Infinity)).toBe("0s");
+    });
 });
 
 describe("Date.formatDuration", () => {
@@ -93,6 +99,13 @@ describe("Date.formatDuration", () => {
         expect(Date.formatDuration(59_999)).toBe("60.0s"); // still the seconds branch (rounds up to 60.0)
     });
 
+    test("a sub-second span that rounds up to 1000ms reads 1.0s, never 1000ms", () => {
+        // The branch is decided on the rounded value, so 999.6ms crosses into the seconds range instead
+        // of printing an out-of-range "1000ms".
+        expect(Date.formatDuration(999.6)).toBe("1.0s");
+        expect(Date.formatDuration(999.4)).toBe("999ms"); // rounds down → stays in the ms range
+    });
+
     test("a minute or more renders minutes + zero-padded seconds, no spaces", () => {
         expect(Date.formatDuration(60_000)).toBe("1m00s"); // the seconds→minutes boundary
         expect(Date.formatDuration(125_000)).toBe("2m05s");
@@ -101,6 +114,12 @@ describe("Date.formatDuration", () => {
 
     test("clamps a negative duration to 0ms", () => {
         expect(Date.formatDuration(-5)).toBe("0ms");
+    });
+
+    test("a non-finite duration renders 0ms rather than a NaN string", () => {
+        expect(Date.formatDuration(NaN)).toBe("0ms");
+        expect(Date.formatDuration(Infinity)).toBe("0ms");
+        expect(Date.formatDuration(-Infinity)).toBe("0ms");
     });
 });
 

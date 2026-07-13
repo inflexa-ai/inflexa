@@ -1,5 +1,5 @@
 import { Show } from "solid-js";
-import type { JSX } from "solid-js";
+import type { Accessor, JSX } from "solid-js";
 
 import { theme } from "../theme.ts";
 import { RunBlock } from "../components/run_block.tsx";
@@ -22,16 +22,24 @@ import { activeRunProgress, type ActiveRunProgress } from "../hooks/sidebar_live
  * `hint={false}` drops the detach/abort footer — those keys are the chat's to own here, not the row's.
  */
 export function RunProgressRow(): JSX.Element {
+    // NON-keyed Show with the accessor form. Each sidebar refresh mints a FRESH ActiveRunProgress object,
+    // so `keyed` (which re-runs children on reference change) would tear down and rebuild the whole
+    // RunBlock subtree on every ~5s poll tick. Non-keyed mounts once on the null→present edge and
+    // unmounts on present→null; `progress` is Show's non-null-narrowed accessor, so reading through it
+    // (`progress().name`, …) updates each RunBlock prop fine-grained in place — no `!`, no remount.
     return (
-        <Show when={activeRunProgress()} keyed>
-            {(progress: ActiveRunProgress) => (
+        <Show when={activeRunProgress()}>
+            {/* `progress` is Show's non-null-narrowed accessor for the truthy branch (the opentui/solid
+                JSX types don't infer it, so it is annotated); Show only runs this child while the signal
+                is non-null, so `progress()` is always an `ActiveRunProgress`. */}
+            {(progress: Accessor<ActiveRunProgress>) => (
                 <box width="100%" flexShrink={0} backgroundColor={theme().bg} paddingLeft={1} paddingRight={1}>
                     <RunBlock
-                        name={progress.name}
-                        tag={progress.tag}
-                        done={progress.done}
-                        total={progress.total}
-                        steps={progress.steps}
+                        name={progress().name}
+                        tag={progress().tag}
+                        done={progress().done}
+                        total={progress().total}
+                        steps={progress().steps}
                         maxSteps={6}
                         hint={false}
                     />

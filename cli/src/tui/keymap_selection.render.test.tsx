@@ -4,6 +4,7 @@ import { testRender, useRenderer } from "@opentui/solid";
 import type { ScrollBoxRenderable, TextRenderable, TextareaRenderable } from "@opentui/core";
 
 import { useKeymapRoot, useBindings, MODE_BASE, KEYS, __resetKeybindCache } from "./keymap.ts";
+import { selectionClearLayer } from "./app.tsx";
 import { ScrollPane } from "./components/scroll_pane.tsx";
 import { DialogOverlay, dialogPush, dialogClear, dialogIsOpen } from "./components/dialog/dialog_host.tsx";
 
@@ -11,11 +12,11 @@ import { DialogOverlay, dialogPush, dialogClear, dialogIsOpen } from "./componen
 // REAL engine: a headless selection over selectable text arms the layer, then mockInput drives
 // opentui's keyboard bus → useKeymapRoot → dispatchKey → the winning layer. The App itself needs
 // the whole workspace/DB/conversation stack to mount (out of scope here — tsc covers App's wiring),
-// so — exactly as keymap_scroll.render.test does — the esc wiring under test is REPLICATED here:
-// the priority-50 mode-less clear-selection layer, the textarea-targeted esc→pane (INSERT→NORMAL)
-// fall-through, and the dialog host's structural esc (via DialogOverlay). The layer copies is
-// character-for-character the one in app.tsx; keeping the two in sync is the maintenance cost of
-// not mounting the full App (the same trade keymap_scroll accepts).
+// so the Harness registers the ACTUAL layer under test — app.tsx's exported `selectionClearLayer`
+// factory — instead of a hand-copied replica, so the test can never drift from app.tsx's real config.
+// Only the destinations esc competes with are minimal stand-ins: the textarea-targeted esc→pane
+// (INSERT→NORMAL) fall-through and the dialog host's structural esc (via DialogOverlay), which give
+// esc's other jobs a real place to land.
 
 const LINES = Array.from({ length: 20 }, (_, i) => `line ${i}`);
 
@@ -37,13 +38,10 @@ function Harness(props: { onRefs: (refs: Refs) => void }) {
         if (text && ta && sb) props.onRefs({ text, ta, sb });
     };
 
-    // The layer under test, mirroring app.tsx exactly: mode-less, priority 50, armed ONLY on real
-    // selected text (empty Selection from a bare click must not arm), clears and nothing else.
-    useBindings(() => ({
-        priority: 50,
-        enabled: !!renderer.getSelection()?.getSelectedText(),
-        bindings: [{ chord: KEYS.escape, run: () => renderer.clearSelection() }],
-    }));
+    // The REAL layer under test: app.tsx's exported factory, registered here over the same renderer so
+    // the test exercises app.tsx's actual config (arm-on-selected-text, priority 50, clear-only) rather
+    // than a copy that could drift.
+    useBindings(() => selectionClearLayer(renderer));
 
     // app.tsx's INSERT→NORMAL fall-through: esc while the textarea is focused FOCUSES the pane; i
     // returns. Present so the "no selection → esc flips to NORMAL" case has a real destination.

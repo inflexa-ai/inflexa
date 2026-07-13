@@ -340,6 +340,10 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
                     onFocusChange={setInputFocused}
                     onInput={setQuery}
                 />
+                {/* Breathing room between the filter and the list. Safe as a transparent gap because it
+                    sits ABOVE the list's flexGrow scrollbox — the one-cell scrollbox bleed only spills
+                    onto the sibling BELOW it (there the list's own painted detail box reclaims the row). */}
+                <box height={space.sm} flexShrink={0} />
                 <DynamicList
                     items={items()}
                     query={query()}

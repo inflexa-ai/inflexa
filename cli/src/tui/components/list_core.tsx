@@ -287,6 +287,10 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
 
     return (
         <>
+            {/* No paddingTop: padding inside a scrollbox is scrollable content, so any top pad
+                scrolls away on the first scroll and never returns (scrollChildIntoView back to row 0
+                stops at the content top, not the pad). Separation above the list is static chrome the
+                host paints OUTSIDE this surface, never scrollbox padding. */}
             <ScrollPane
                 focusOnMount={false}
                 onRef={(r: ScrollBoxRenderable) => {
@@ -295,7 +299,6 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
                 flexGrow={1}
                 width="100%"
                 minHeight={0}
-                paddingTop={1}
             >
                 <Show
                     when={flat().length > 0}
