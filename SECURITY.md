@@ -2,13 +2,13 @@
 
 _Last updated: 2026-06-17 · Maintained by Inflexa, Inc._
 
-We take the security of Inflexa seriously. Because Inflexa is a local agent that **executes AI-generated analysis code on your data inside a Docker sandbox**, its security model is central to the product, not an afterthought. This document explains how to report a vulnerability, what we consider in scope, and how the sandbox boundary is meant to work.
+We take the security of Inflexa seriously. Because Inflexa is a local agent that **executes AI-generated analysis code on your data inside a containerized sandbox**, its security model is central to the product, not an afterthought. This document explains how to report a vulnerability, what we consider in scope, and how the sandbox boundary is meant to work.
 
 ## The security model in brief
 
 Two facts shape what counts as a vulnerability:
 
-1. **The Docker sandbox is the containment boundary.** Generated code runs inside the sandbox image as a **non-root user (uid 1000)** with **all Linux capabilities dropped** and **`no-new-privileges`** set, under **CPU and memory limits**. It gets a **read-only** mount of the analysis tree and may write **only to the current step's output directory**; the library and reference stores are mounted read-only. It is **not given the sandbox callback secret or any other host credential**. The most serious class of issue is anything that breaks this boundary. The sandbox protocol is implemented in [`harness/`](./harness) — see [`harness/CONTEXT.md`](./harness/CONTEXT.md).
+1. **The containerized sandbox is the containment boundary.** Generated code runs inside the sandbox image as a **non-root user (uid 1000)** with **all Linux capabilities dropped** and **`no-new-privileges`** set, under **CPU and memory limits**. It gets a **read-only** mount of the analysis tree and may write **only to the current step's output directory**; the library and reference stores are mounted read-only. It is **not given the sandbox callback secret or any other host credential**. The most serious class of issue is anything that breaks this boundary. The sandbox protocol is implemented in [`harness/`](./harness) — see [`harness/CONTEXT.md`](./harness/CONTEXT.md).
 
    **Network egress is confined, and by default the sandbox initiates nothing.** The host retrieves a command's result over one of two transports. In the default **poll** mode the host *polls* the sandbox for results — the sandbox never dials out and needs no egress. On Docker it is confined by an **in-container egress firewall**: the container is published to `127.0.0.1` only (reachable from the host, not the LAN), and a root entrypoint holding `CAP_NET_ADMIN` installs `iptables -P OUTPUT DROP` (allowing loopback and established return traffic) before dropping to the uid-1000 workload, which can neither open a new outbound connection nor flush the rules. The host's inbound poll rides the established connection, so polling works with egress hard-blocked. In the opt-in **callback** mode the sandbox is instead *permitted* egress to POST signed callbacks to the Inflexa process. There is no gateway sidecar and no `--internal` network. What that means for reachability differs by mode: in poll mode a sandbox can reach no other container — the egress firewall blocks it from initiating any connection, and `sandbox-server` refuses to start if the firewall flag is set but the entrypoint's privilege drop did not run — while in callback mode containers on the shared bridge are mutually *reachable*, and what keeps one sandbox (of the same or another analysis) from driving another is the signature authentication on the exec endpoints, described next.
 
@@ -56,7 +56,7 @@ We practice **coordinated disclosure**: we ask that you give us a reasonable opp
 
 Given the architecture, the highest-value reports concern:
 
-- **Sandbox escape** - generated or executed code escaping the Docker sandbox to reach the host filesystem or host processes.
+- **Sandbox escape** - generated or executed code escaping the containerized sandbox to reach the host filesystem or host processes.
 - **Isolation weaknesses** - the sandbox running with more access than documented: writes outside the current step's output directory, reads outside the analysis tree, capability or privilege escalation, or access to host credentials or environment.
 - **Escaping network confinement** - in the default poll mode the sandbox should reach *nothing* outbound — any new outbound connection (internet, LAN, host, or any other container) is a finding. In callback mode egress is *permitted* by design — the mode exists for managed deployments whose confinement is provided outside the container — so network reachability there is not itself a finding; what is a finding in **both** modes is *authenticating* to another sandbox's `/exec` (same or different analysis) while holding only your own per-sandbox secret. See the security model above.
 - **Forging the exec or provenance channel** - code running inside the sandbox producing a completion, exit code, stdout, or provenance frame that the harness accepts as authentic — or a request that `sandbox-server`'s signature-authenticated `/exec` endpoints accept. The callback secret is deliberately withheld from spawned commands; a way to recover it, or to sign without it, is a serious report.
@@ -64,7 +64,7 @@ Given the architecture, the highest-value reports concern:
 - **Provenance integrity** - tampering with, forging, or silently corrupting the SQLite lineage/audit record.
 - **Unexpected data egress** - data leaving the machine in a mode where it should not (e.g. data sent to a provider while in a local-only configuration).
 - **Secret and credential handling** - leakage of LLM provider API keys or other secrets via logs, error messages, the provenance store, or telemetry.
-- **Supply-chain integrity** - issues affecting the integrity or authenticity of the published npm package or the Docker sandbox image, including problems with signing, SBOMs, or build provenance.
+- **Supply-chain integrity** - issues affecting the integrity or authenticity of the published npm package or the containerized sandbox image, including problems with signing, SBOMs, or build provenance.
 - **Dependency vulnerabilities** with a realistic, demonstrated exploit path through Inflexa.
 
 ## Out of scope

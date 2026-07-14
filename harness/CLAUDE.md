@@ -176,7 +176,7 @@ An analysis is created, enters an active state where it can handle chat messages
 
 ### Target Assessment
 
-Separate top-level entity (NOT a kind of analysis). Snapshot-style target dossiers. Backed by `cortex_target_assessments` and the `executeTargetAssessment` workflow (`workflows/target-assessment/`). The dossier schema lives in `src/contracts/target-dossier.ts` and is the contract with consumers. Coverage discipline is a hard schema invariant: every enrichment-dependent section carries `coverage: "available" | "queried_no_data" | "not_loaded"`. Hosts choose how to expose progress to clients. See `docs/target-assessment/architecture.md`.
+Separate top-level entity (NOT a kind of analysis). Snapshot-style target dossiers. Backed by `cortex_target_assessments` and the `executeTargetAssessment` workflow (`workflows/target-assessment/`). The dossier schema lives in `src/contracts/target-dossier.ts` and is the contract with consumers. Coverage discipline is a hard schema invariant: every enrichment-dependent section carries `coverage: "available" | "queried_no_data" | "not_loaded"`. Hosts choose how to expose progress to clients.
 
 ### Memory
 
@@ -263,6 +263,5 @@ If the only thing a comment can say is "this used to be X, now it's Y" or "chang
 ## References
 
 - **Context glossary**: [`CONTEXT.md`](CONTEXT.md) — operative domain language + load-bearing patterns
-- **ADRs**: [`openspec/specs/`](openspec/specs/) — feature specs and the source of truth for design decisions (ADR rationale now lives here; there is no docs/adr)
-- **Specs**: [`openspec/specs/`](openspec/specs/) — feature specifications
-- **Docs**: [`docs/`](docs/) — harness architecture and integration notes
+- **Specs / ADRs**: [`openspec/specs/`](openspec/specs/) — feature specifications and the source of truth for design decisions. ADR rationale lives here; there is no `docs/adr` and no `docs/`.
+- **Package README**: [`README.md`](README.md) — the embedder-facing surface and how the harness executes

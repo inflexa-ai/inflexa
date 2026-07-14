@@ -17,7 +17,7 @@ Everything you need to do real, auditable analysis locally:
 - **Full local analysis** across the supported workflows.
 - **Agentic orchestration** - the local analysis agent that plans and runs your work.
 - **Full provenance and lineage**, stored locally in SQLite, with reproduction and export.
-- **Docker sandbox execution** of all generated code.
+- **Sandbox execution** of all generated code.
 - **Local report / dossier generation.**
 - **Bring-your-own-key to any supported LLM provider, plus local models** - so you can run end-to-end offline if you choose.
 - **Single-user, single-machine** operation with no account required.

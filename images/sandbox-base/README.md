@@ -23,9 +23,12 @@ Base stays lean deliberately: it is the image the **managed** service pulls per
 node (a few hundred MB of conda tools would be a real cold-start tax), and it
 mounts the per-track tarballs read-only over its empty `/mnt/libs`. An **OSS
 user** instead runs `sandbox-python`/`sandbox-python-r` directly — the store is
-baked in, no mount. All three publish to GHCR (`ghcr.io/inflexa-ai/inf-cli/*`)
-for `linux/amd64` and `linux/arm64` via
-[`.github/workflows/lib-store.yml`](../../.github/workflows/lib-store.yml).
+baked in, no mount. All three publish to GHCR
+(`ghcr.io/inflexa-ai/sandbox-{base,python,python-r}`) for `linux/amd64` and
+`linux/arm64` via
+[`.github/workflows/lib-store.yml`](../../.github/workflows/lib-store.yml). See
+[`../README.md`](../README.md) for the image ladder, the manifest, and how to
+extend or build the images.
 
 ## What's here
 
