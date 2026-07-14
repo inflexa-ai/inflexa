@@ -1,0 +1,81 @@
+name: Scorecard
+
+# Runs OpenSSF Scorecard, which grades the repo's security posture (branch protection,
+# pinned dependencies, token permissions, SAST, signed releases, …) and publishes the
+# result to the public OpenSSF API that backs the README badge.
+#
+# Why publish at all: the score is the point. `publish_results: true` is what makes the
+# badge and the scorecard.dev viewer resolve — without it this workflow is a private
+# SARIF generator and the badge stays "unknown". Publishing exposes nothing that is not
+# already public: the repo is public, and the API stores the score, not the source.
+#
+# Actions here are pinned by commit SHA while the other workflows still track tags. That
+# is deliberate, not an inconsistency: this is the only job in the repo granted
+# `id-token: write` (OIDC) and `security-events: write`, so a hijacked mutable tag would
+# be the highest-impact supply-chain vector we have. The version comment on each `uses:`
+# is the human-readable half of the pin — keep them in sync when bumping.
+on:
+  # Scorecard can only publish from the default branch: fork PRs get no OIDC token, so a
+  # `pull_request` trigger would produce runs that cannot update the badge. Scoring is
+  # therefore a property of `main`, not of a proposed change.
+  push:
+    branches: [main]
+  # Re-score when branch protection changes — it is one of the heaviest-weighted checks,
+  # and it is exactly the setting that drifts without anyone noticing.
+  branch_protection_rule:
+  # Weekly, because most checks (Maintained, Vulnerabilities, Dependency-Update-Tool)
+  # measure things that decay over time rather than things a commit changes.
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: analysis
+    runs-on: ubuntu-latest
+    permissions:
+      # Upload the SARIF so findings land in the Security tab as code-scanning alerts
+      # (free for public repos) rather than living only inside the run log.
+      security-events: write
+      # OIDC token — the credential Scorecard exchanges to publish to the OpenSSF API.
+      # This is the permission that makes the badge work.
+      id-token: write
+      contents: read
+      # Scorecard reads the repo's own workflow definitions to grade Token-Permissions
+      # and Dangerous-Workflow.
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Leave no usable git credential in the workspace for the analysis steps that
+          # follow; Scorecard needs the tree, never the ability to push.
+          persist-credentials: false
+
+      # `repo_token` is intentionally not supplied. A PAT would let the Branch-Protection
+      # check read the full ruleset (the GITHUB_TOKEN sees only part of it, so that
+      # sub-score reads lower than reality), but that means a long-lived, broadly-scoped
+      # secret sitting in the repo forever to improve one number — a worse security
+      # posture than the one it would be reporting. Accepted trade-off.
+      - name: Run analysis
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      # Retained briefly so a surprising score can be diffed against the raw findings
+      # even if the code-scanning upload is what failed.
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@02c5e83432fe5497fd85b873b6c9f16a8578e1d9 # v3.37.0
+        with:
+          sarif_file: results.sarif
