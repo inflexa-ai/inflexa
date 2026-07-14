@@ -1,9 +1,12 @@
 version: 2
 updates:
   # JavaScript dependencies. The "npm" ecosystem covers Bun projects —
-  # Dependabot reads package.json and bun.lock.
+  # Dependabot reads package.json and bun.lock. The two real manifests live in
+  # cli/ and harness/; the repo root has none, so scanning "/" finds nothing.
   - package-ecosystem: "npm"
-    directory: "/"
+    directories:
+      - "/cli"
+      - "/harness"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
@@ -14,6 +17,39 @@ updates:
       include: "scope"
     # Cut PR noise: batch routine minor/patch bumps, but keep major bumps as
     # individual PRs since they are likely to need real review.
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Go module behind the sandbox-server binary.
+  - package-ecosystem: "gomod"
+    directory: "/images/sandbox-base/server"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Base images referenced by the sandbox Dockerfiles.
+  - package-ecosystem: "docker"
+    directories:
+      - "/images/sandbox-base"
+      - "/images/sandbox-python"
+      - "/images/sandbox-python-r"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build"
+      include: "scope"
     groups:
       minor-and-patch:
         update-types:

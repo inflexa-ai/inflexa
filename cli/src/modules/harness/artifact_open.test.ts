@@ -86,9 +86,10 @@ describe("readReportPreview / readReportPreviewFailed", () => {
 });
 
 describe("echartHtml", () => {
-    test("embeds the spec, a pinned-major CDN script, and a visible offline fallback notice", () => {
+    test("embeds the spec, an SRI-pinned exact-version CDN script, and a visible offline fallback notice", () => {
         const html = echartHtml({ series: [{ type: "line" }] }, null, null);
-        expect(html).toContain("cdn.jsdelivr.net/npm/echarts@5");
+        expect(html).toContain('cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" integrity="sha384-');
+        expect(html).toContain('crossorigin="anonymous"');
         expect(html).toContain('"series"');
         expect(html).toContain("could not load"); // offline fallback notice
         expect(html).not.toContain("papaparse"); // an inline chart carries no parser
@@ -104,7 +105,7 @@ describe("echartHtml", () => {
         const html = echartHtml({}, "../runs/r/out.csv", null);
         expect(html).toContain('var dataUrl = "../runs/r/out.csv"');
         expect(html).toContain("fetch(dataUrl)");
-        expect(html).toContain("cdn.jsdelivr.net/npm/papaparse@5"); // pinned-major in-page parser
+        expect(html).toContain('cdn.jsdelivr.net/npm/papaparse@5.5.4/papaparse.min.js" integrity="sha384-'); // SRI-pinned in-page parser
         expect(html).toContain('id="datanote" style="display:none"'); // note hidden until a load failure
     });
 

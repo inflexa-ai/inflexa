@@ -10,7 +10,7 @@
 
 ## 3. Config value
 
-- [x] 3.1 Replace `INFLEXA_AUTH0_AUDIENCE` in `.env.example` with `https://api.inflexa.ai` (the dedicated resource-server identifier from inflexa-ai/nexus#143)
+- [x] 3.1 Replace `INFLEXA_AUTH0_AUDIENCE` in `.env.example` with `https://api.inflexa.ai` (the dedicated resource-server identifier)
 
 ## 4. Tests
 

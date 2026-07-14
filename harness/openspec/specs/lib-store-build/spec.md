@@ -88,7 +88,7 @@ hooks, and SHALL contain **no** analysis packages. `sandbox-python` SHALL add
 the Python libraries, the bioconda CLI tools, and the Node packages.
 `sandbox-python-r` SHALL add the R libraries. Each image SHALL be published for
 both `linux/amd64` and `linux/arm64` to GitHub Packages (GHCR) on the
-`inflexa-ai/inf-cli` repository (`ghcr.io/inflexa-ai/inf-cli/<image>`) as a
+`inflexa-ai/inflexa` repository (`ghcr.io/inflexa-ai/<image>`) as a
 multi-arch manifest, and each SHALL have a committed Dockerfile that a user can
 edit or `FROM`.
 

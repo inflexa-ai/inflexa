@@ -295,7 +295,7 @@ FROM ${SANDBOX_PYTHON_IMAGE} AS runtime
 ARG INFLEXA_LIB_ROOT
 
 # OCI metadata: link the package to its source repo and describe this layer.
-LABEL org.opencontainers.image.source="https://github.com/inflexa-ai/inf-cli"
+LABEL org.opencontainers.image.source="https://github.com/inflexa-ai/inflexa"
 LABEL org.opencontainers.image.description="Inflexa sandbox with the full baked library store — Python + R 4.6 (CRAN, Bioconductor, GitHub) + Node — at /mnt/libs/current; the complete OSS/managed sandbox image."
 
 USER root

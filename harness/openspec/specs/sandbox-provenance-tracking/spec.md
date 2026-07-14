@@ -32,6 +32,19 @@ provenance collector and content-attested at registration (see the
 exec-provenance-lineage and artifact-manifest specs). The frame is path-only — it
 names files, never their bytes — so hashes are recomputed from disk downstream.
 
+**Scope — operation lineage is advisory, not tamper-proof.** This tracking is a
+lineage-capture aid, not a security boundary. Layers 1–2 run inside the observed
+workload process itself (same uid, sharing the per-command collection socket), and
+the whole capture path lives within the sandbox trust boundary. The operation frame
+is therefore self-reported by the observed code: an adversarial workload can forge
+or omit datagrams, or bypass the hooks entirely (unset `LD_PRELOAD`, static
+binaries, raw syscalls). Treat the reported reads/writes/deletes as **advisory** for
+a hostile workload — not a tamper-proof attestation of what untrusted code did. What
+survives an adversary is artifact *content*, not lineage: hashes are recomputed
+host-side from disk at registration (see the exec-provenance-lineage and
+artifact-manifest specs), so content integrity holds even when the self-reported
+operation frame cannot be trusted.
+
 ## Requirements
 
 ### Requirement: Python audit hook tracks file I/O via sitecustomize.py

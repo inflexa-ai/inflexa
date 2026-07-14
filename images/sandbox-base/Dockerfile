@@ -7,13 +7,13 @@
 #           sandbox-server (Go static binary for HTTP-based command execution)
 
 # Must match lib-store-manifest.yaml base_image. CI passes --build-arg.
-ARG BASE_IMAGE=rocker/r-ver:4.6.0
+ARG BASE_IMAGE=rocker/r-ver:4.6.0@sha256:6f05a1a8b8c52328f181593923909b01cbfd14c9caea93bf75ddc65e806d8eac
 
 # =============================================================================
 # Stage 1: Build sandbox-server (Go static binary)
 # =============================================================================
 
-FROM golang:1.26-bookworm AS server-builder
+FROM golang:1.26-bookworm@sha256:e60d708a92ad26a6d61901334510d3debd23ddcba125663ecd6008d42e8ec669 AS server-builder
 
 WORKDIR /build
 COPY images/sandbox-base/server/go.mod images/sandbox-base/server/go.sum ./
@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /sandbox-server .
 # Stage 2: Build provenance LD_PRELOAD library
 # =============================================================================
 
-FROM gcc:bookworm AS provtrack-builder
+FROM gcc:bookworm@sha256:9ca91b05c7b07d2979f16413e8b2cd6ec8a7c80ffca4121ccab0aeba33f90460 AS provtrack-builder
 
 COPY images/sandbox-base/provenance/provtrack.c /build/provtrack.c
 RUN gcc -shared -fPIC -O2 -pthread -fstack-protector-strong -Wformat -Wformat-security -o /provtrack.so /build/provtrack.c -ldl
@@ -38,7 +38,7 @@ FROM ${BASE_IMAGE}
 
 # OCI metadata: link the published package to its source repo (so GHCR files it
 # under the repo and it inherits repo access) and give it a specific description.
-LABEL org.opencontainers.image.source="https://github.com/inflexa-ai/inf-cli"
+LABEL org.opencontainers.image.source="https://github.com/inflexa-ai/inflexa"
 LABEL org.opencontainers.image.description="Inflexa sandbox base — minimal runtime (rocker/r-ver + system Python 3.12) with the sandbox server and provenance hooks; the layer sandbox-python and sandbox-python-r build on."
 
 # =============================================================================
@@ -84,6 +84,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Node.js 20
 # =============================================================================
 
+# TODO(supply-chain): this pipes NodeSource's setup script straight into bash, so
+# its contents are fetched and executed unpinned. A streamed script can't be
+# `sha256sum -c`-verified; hardening means installing the NodeSource apt key and
+# repo line by hand (or a pinned nodejs .deb verified by digest) instead of `| bash`.
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
@@ -93,6 +97,10 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 # =============================================================================
 
 ENV UV_VERSION=0.7.12
+# TODO(supply-chain): `| sh` runs Astral's installer before anything can verify it.
+# UV_VERSION pins which uv is installed, but the install.sh itself is fetched
+# unpinned; hardening means downloading the versioned uv tarball and checking it
+# against Astral's published sha256 before running, not piping to sh.
 RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
     && cp /root/.local/bin/uv /usr/local/bin/uv \
     && cp /root/.local/bin/uvx /usr/local/bin/uvx \
@@ -104,15 +112,25 @@ RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
 
 ENV TAILWINDCSS_VERSION=v4.1.4
 ARG TARGETARCH
+# SHA-256 sums from the v4.1.4 release's published sha256sums.txt; verifying the
+# fetched binary closes the supply-chain gap of trusting a bare HTTPS download.
 RUN TW_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "linux-arm64" || echo "linux-x64") \
+    && TW_SHA=$([ "$TARGETARCH" = "arm64" ] \
+         && echo "a14537ef51a99c1a55c3764b73b81681d84ff75197ad766f9a6628d610cf274f" \
+         || echo "0fa8bbb8beca7242f6455bf01bbe35d3083878f6308ec4a4cec30aed16bca46d") \
     && curl -sSL -o /usr/local/bin/tailwindcss \
        "https://github.com/tailwindlabs/tailwindcss/releases/download/${TAILWINDCSS_VERSION}/tailwindcss-${TW_ARCH}" \
+    && echo "${TW_SHA}  /usr/local/bin/tailwindcss" | sha256sum -c - \
     && chmod +x /usr/local/bin/tailwindcss
 
 # =============================================================================
 # Fonts — Inter and JetBrains Mono (OFL licensed)
 # =============================================================================
 
+# TODO(supply-chain): pin these zips by SHA-256. Neither the rsms/inter v4.0 nor
+# the JetBrains/JetBrainsMono v2.304 GitHub release ships a checksums file, so
+# there is no upstream digest to `sha256sum -c` against — adding one would mean
+# trusting a locally computed hash (TOFU), not verified provenance.
 RUN mkdir -p /usr/local/share/fonts \
     && curl -sSL -o /tmp/inter.zip \
        "https://github.com/rsms/inter/releases/download/v4.0/Inter-4.0.zip" \

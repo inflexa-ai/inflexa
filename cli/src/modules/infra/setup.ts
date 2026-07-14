@@ -660,7 +660,9 @@ async function isAuthenticated(): Promise<boolean> {
  */
 async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promise<boolean> {
     const port = PROVIDER_CALLBACK_PORT[provider];
-    const publish = port === null ? [] : ["-p", `${port}:${port}`];
+    // Loopback-only: publish the OAuth callback port where only this host can reach it, never the LAN. A remote/SSH
+    // login still works — the SSH local-forward hinted below targets localhost on this host, which is the loopback bind.
+    const publish = port === null ? [] : ["-p", `127.0.0.1:${port}:${port}`];
     // No `-t`: the `--no-browser` flow doesn't need a PTY. Dropping it lets us
     // pipe stdout/stderr to capture the auth URL without hanging.
     const args = ["run", "--rm", "-i", ...volumeArgs(rt), ...publish, IMAGE, CONTAINER_BINARY, PROVIDER_LOGIN_FLAG[provider], "--no-browser"];

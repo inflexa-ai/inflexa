@@ -320,7 +320,7 @@ FROM runtime-${TARGETARCH} AS runtime
 ARG INFLEXA_LIB_ROOT
 
 # OCI metadata: link the package to its source repo and describe this layer.
-LABEL org.opencontainers.image.source="https://github.com/inflexa-ai/inf-cli"
+LABEL org.opencontainers.image.source="https://github.com/inflexa-ai/inflexa"
 LABEL org.opencontainers.image.description="Inflexa sandbox with a baked Python 3.12 library store — pip packages, bioconda CLI tools, and Node — installed at /mnt/libs/current so a plain docker run resolves imports with no mount."
 
 USER root

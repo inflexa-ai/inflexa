@@ -1,6 +1,6 @@
 ## Why
 
-A 2026-07-13 audit found the committed `.env.example` audience value was not an API identifier at all (it was the inf-cli application's client secret, pasted into the wrong slot — since rotated), and the working dev value pointed at the Auth0 Management API — an audience that can never issue refresh tokens (`allow_offline_access` is immutably false), so `inflexa auth login` cannot complete its sliding-session design. Nothing in the CLI rejects a nonsensical audience today: any non-empty string passes `resolveAuth0Config` and, worse, bakes silently into release binaries. A dedicated resource server (identifier `https://api.inflexa.ai`) is being created in the tenant (tracked in inflexa-ai/nexus#143); the CLI must point at it and refuse the whole class of paste-the-wrong-field config errors.
+A 2026-07-13 audit found the committed `.env.example` audience value was not an API identifier at all (a credential-shaped value had been pasted into the wrong slot — since corrected), and the working dev value pointed at the Auth0 Management API — an audience that can never issue refresh tokens (`allow_offline_access` is immutably false), so `inflexa auth login` cannot complete its sliding-session design. Nothing in the CLI rejects a nonsensical audience today: any non-empty string passes `resolveAuth0Config` and, worse, bakes silently into release binaries. A dedicated resource server (identifier `https://api.inflexa.ai`) is being created in the tenant; the CLI must point at it and refuse the whole class of paste-the-wrong-field config errors.
 
 ## What Changes
 
@@ -25,4 +25,4 @@ _None._
 - `.env.example` — audience line replaced.
 - `openspec/specs/auth-session/spec.md` — via this change's delta spec.
 - No new dependencies (`URL.canParse` / `new URL` is in-runtime). No behavior change for any command that does not use Auth0.
-- Coordination: the real tenant object is created under inflexa-ai/nexus#143; this change is implementable immediately (the guard and spec don't depend on the tenant), and `.env.example` carries the agreed identifier.
+- Coordination: the real tenant object is created out of band; this change is implementable immediately (the guard and spec don't depend on the tenant), and `.env.example` carries the agreed identifier.

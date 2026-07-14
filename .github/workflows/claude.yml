@@ -60,4 +60,4 @@ jobs:
           # This repo is an independent-subsystem monorepo (cli/, harness/, ...).
           # Review each changed subsystem against its own CLAUDE.md conventions.
           claude_args: |
-            --append-system-prompt "This is the inflexa-ai/inf-cli monorepo of independent subsystems (cli/, harness/, skills/, templates/, images/). Each subsystem is self-contained with its own CLAUDE.md — review changed code against the conventions of the subsystem it lives in. Focus on correctness bugs, security issues, and missing tests; skip style nits."
+            --append-system-prompt "This is the inflexa-ai/inflexa monorepo of independent subsystems (cli/, harness/, skills/, templates/, images/). Each subsystem is self-contained with its own CLAUDE.md — review changed code against the conventions of the subsystem it lives in. Focus on correctness bugs, security issues, and missing tests; skip style nits."

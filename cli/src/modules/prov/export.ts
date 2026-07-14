@@ -41,6 +41,12 @@ export async function runExportProvenance(ref: string, opts: { format?: string; 
 
 /** Write the verification sidecar (`<dest>.sig.json`) alongside the exported provenance file. */
 async function writeSidecar(provJson: string, provDest: string): Promise<void> {
+    // The signature makes THIS document tamper-evident: a verifier can prove the exported JSON was
+    // not altered after signing, and its artifact hashes are recomputed host-side from disk, so they
+    // bind the real bytes on disk. It does NOT attest that the operation lineage the document records
+    // is a faithful account of what untrusted code did — those read/write/delete edges are
+    // self-reported by hooks running inside the sandbox at the workload's own uid, so an adversarial
+    // workload can forge or omit them. Signing certifies the document, not the sandbox's self-report.
     const result = await buildSidecar(provJson);
     if (result.isErr()) {
         fail(`Signing failed (${result.error.type}) — provenance is never exported unsigned.`);

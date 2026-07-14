@@ -1,7 +1,11 @@
 # lib-store-manifest.yaml
 r_version: "4.6.0"
 python_version: "3.12"
-base_image: "rocker/r-ver:4.6.0"
+# Digest-pinned so CI's `--build-arg BASE_IMAGE` and the Dockerfile default resolve the same
+# immutable image, closing the supply-chain gap of building the published image off a movable tag.
+# The @sha256 must be refreshed whenever the r_version tag advances — Dependabot's docker updater
+# tracks the Dockerfiles, not this manifest.
+base_image: "rocker/r-ver:4.6.0@sha256:6f05a1a8b8c52328f181593923909b01cbfd14c9caea93bf75ddc65e806d8eac"
 
 r:
   cran:

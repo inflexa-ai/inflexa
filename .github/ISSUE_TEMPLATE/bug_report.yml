@@ -9,7 +9,7 @@ body:
 
         ⚠️ Do not paste private data, datasets, or secrets (API keys, tokens) into logs. Redact before posting.
 
-        For security vulnerabilities, **stop** and follow [`SECURITY.md`](https://github.com/inflexa-ai/inf-cli/blob/main/SECURITY.md) instead — do not file them here.
+        For security vulnerabilities, **stop** and follow [`SECURITY.md`](https://github.com/inflexa-ai/inflexa/blob/main/SECURITY.md) instead — do not file them here.
   - type: checkboxes
     attributes:
       label: Pre-flight

@@ -1,6 +1,6 @@
 ## Context
 
-inf-cli (Bun + TypeScript, cac command registry, neverthrow `Result` error style) needs Auth0 authentication so it can call the Nexus server's protected API. The sibling Go CLI `nxctl` (`~/repos/inferentia/nexus/cmd/nxctl/internal/auth.go`) is the protocol reference: it hand-rolls the device flow against `POST /oauth/device/code` + polled `POST /oauth/token`. nxctl deliberately omits refresh tokens (high-privilege admin tool); inf-cli is user-facing and explicitly requires the opposite — login once, ~30-day sliding session, silent renewal on use.
+inf-cli (Bun + TypeScript, cac command registry, neverthrow `Result` error style) needs Auth0 authentication so it can call the Nexus server's protected API. A sibling admin CLI is the protocol reference: it hand-rolls the device flow against `POST /oauth/device/code` + polled `POST /oauth/token`. That admin tool deliberately omits refresh tokens (it is high-privilege); inf-cli is user-facing and explicitly requires the opposite — login once, ~30-day sliding session, silent renewal on use.
 
 Repo constraints that shape this design: no new dependencies; `src/lib/env.ts` is the only `process.env` reader (ESLint-enforced); named exports only; domain types instead of raw strings; lib-layer errors as neverthrow `Result`s.
 
@@ -16,13 +16,13 @@ Repo constraints that shape this design: no new dependencies; `src/lib/env.ts` i
 **Non-Goals:**
 
 - Calling any Nexus server endpoint (whoami is local-only; the chat backend integration is a later change).
-- OS keychain storage (file with `0600` perms, matching nxctl).
+- OS keychain storage (file with `0600` perms, matching the sibling admin CLI).
 - Auth0 tenant provisioning (rotation, lifetimes, grant types are dashboard config owned by the user).
 - ID/access token signature verification — tokens arrive directly from Auth0 over TLS; signature checks are the API server's job.
 
 ## Decisions
 
-**1. Hand-rolled `fetch`, no SDK.** Auth0 ships no Node SDK for device flow (the official `auth0` npm package has no device-flow initiation method; verified against its source). `openid-client` would add 3 packages / ~800 KB to save a ~20-line poll loop. Hand-rolling matches both the repo's no-deps rule and nxctl precedent. Alternatives considered: `openid-client@6` (best library, rejected on dependency weight), `oauth4webapi` (zero-dep but still requires writing the poll loop — worst of both).
+**1. Hand-rolled `fetch`, no SDK.** Auth0 ships no Node SDK for device flow (the official `auth0` npm package has no device-flow initiation method; verified against its source). `openid-client` would add 3 packages / ~800 KB to save a ~20-line poll loop. Hand-rolling matches both the repo's no-deps rule and the sibling admin CLI's precedent. Alternatives considered: `openid-client@6` (best library, rejected on dependency weight), `oauth4webapi` (zero-dep but still requires writing the poll loop — worst of both).
 
 **2. Poll-loop errors keyed off the JSON body's `error` field, not HTTP status.** Auth0 deviates from RFC 8628's uniform 400 (it returns 403 for `authorization_pending`, 429 for `slow_down`). Handling: `authorization_pending` → continue; `slow_down` → interval += 5s (RFC 8628 §3.5); `expired_token` → fail "code expired, run login again"; `access_denied` → fail "denied". Hard deadline from `expires_in`.
 
@@ -45,7 +45,7 @@ Repo constraints that shape this design: no new dependencies; `src/lib/env.ts` i
 ## Risks / Trade-offs
 
 - [Stale rotated refresh token: two concurrent inf processes refresh simultaneously; the loser's token is revoked by reuse detection, killing the family] → Accepted for now: refresh happens at most once per access-token lifetime (hours), making the race window tiny; recovery is just `inf login`. Documented as a `TODO(robustness)` candidate (file locking) rather than built speculatively.
-- [Plaintext token on disk] → `0600` perms, same posture as nxctl, gh, and most CLIs; keychain integration would need a dependency or platform-specific shelling.
+- [Plaintext token on disk] → `0600` perms, same posture as the sibling admin CLI, gh, and most CLIs; keychain integration would need a dependency or platform-specific shelling.
 - [Clock skew makes a locally-"valid" token rejected by the server] → 60s early-refresh buffer; the eventual API client treats a 401 as a refresh trigger (future change).
 - [User's Auth0 app misconfigured (grant types, offline access)] → Auth0 returns descriptive `error_description` on the device-code request; surface it verbatim.
 

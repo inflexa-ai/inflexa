@@ -121,7 +121,18 @@ describe("compose file generation", () => {
         expect(yaml).toContain('POSTGRES_DB: "testdb"');
         expect(yaml).toContain('POSTGRES_USER: "testuser"');
         expect(yaml).toContain('POSTGRES_PASSWORD: "testpass"');
-        expect(yaml).toContain('"9999:5432"');
+        expect(yaml).toContain('"127.0.0.1:9999:5432"');
+    });
+
+    test("published ports bind to loopback only, never all interfaces (LAN)", () => {
+        const conn = { host: "localhost", port: 9999, database: "testdb", user: "testuser", password: "testpass" };
+        const yaml = generateComposeFile(conn, "cliproxy");
+        // Docker publishes a bare "host:container" mapping on 0.0.0.0 (every
+        // interface); the 127.0.0.1 prefix keeps Postgres and the credential-bearing
+        // proxy reachable only from this host. A bare numeric mapping is the
+        // regression this guards — it would re-expose both services to the LAN.
+        expect(yaml).toContain('"127.0.0.1:9999:5432"');
+        expect(yaml).not.toMatch(/-\s+"\d+:\d+"/);
     });
 
     test("generated compose file uses the fixed pgvector image", () => {
