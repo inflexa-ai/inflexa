@@ -896,6 +896,7 @@ async function openRunsPicker(ctx: Workspace): Promise<void> {
     const planIds = [...new Set(rows.map((r) => r.planId).filter((id): id is string => id !== null))];
     const titleByPlanId = new Map<string, string>();
     await Promise.all(
+        // TODO(robustness): make a batch plan load here. An analysis has a low number of runs, it will not exceed tens of runs (most probably).
         planIds.map((planId) =>
             loadPlan(runtime.pool, planId, { analysisId: analysis.id }).match(
                 (plan) => {
