@@ -314,6 +314,39 @@ describe("list_available_refs", () => {
         expect(client.outputs.every((output) => Buffer.byteLength(output) <= 64_001)).toBe(true);
     });
 
+    // A single unparseable receipt used to abort the scan loop, silently dropping every receipt
+    // that sorted after it — so one corrupt file stripped the labels off datasets that were fine.
+    it("keeps enriching from the receipts that parse when one of them is corrupt", async () => {
+        const root = await mkdtemp(join(tmpdir(), "refs-bad-receipt-"));
+        const version = join(root, "managed", "wikipathways-human", "2026.07.10");
+        await mkdir(version, { recursive: true });
+        await mkdir(join(root, ".inflexa", "receipts"), { recursive: true });
+        await writeFile(join(version, "wikipathways_Homo_sapiens.gmt"), "pathway\tdescription\tGENE");
+
+        // "aaa" sorts before "wikipathways", so a loop that dies on the bad file never reaches the good one.
+        await writeFile(join(root, ".inflexa", "receipts", "aaa-corrupt.json"), "{ not json");
+        await writeFile(
+            join(root, ".inflexa", "receipts", "wikipathways-human.json"),
+            JSON.stringify({
+                version: 1,
+                datasetId: "wikipathways-human",
+                datasetVersion: "2026.07.10",
+                activatedAt: "2026-07-14T10:30:00.000Z",
+                artifacts: [{ path: "wikipathways_Homo_sapiens.gmt", bytes: 31, sha256: HASH, integrity: "pinned" }],
+            }),
+        );
+
+        const tool = createFilesystemTool(makeExecutingClient(), root);
+        const result = (await tool.execute({ path: "/mnt/refs/managed/wikipathways-human/2026.07.10" }, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(result.state).toBe("populated");
+        expect(result.entries[0]).toMatchObject({
+            path: "/mnt/refs/managed/wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt",
+            kind: "file",
+            metadata: { datasetId: "wikipathways-human", title: "WikiPathways human pathways" },
+        });
+    });
+
     it("bounds the real scanner and final tool envelope for large subtrees and metadata", async () => {
         const root = await mkdtemp(join(tmpdir(), "refs-large-"));
         await mkdir(join(root, "shards"), { recursive: true });

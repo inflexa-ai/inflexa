@@ -160,11 +160,18 @@ try:
         path = os.path.join(receipts_dir, name)
         if kind != "file":
             continue
-        with open(path, "rb") as handle:
-            raw = handle.read(16385)
-        if len(raw) > 16384 or receipt_bytes + len(raw) > 32768:
+        # Per-file, so one unreadable or malformed receipt costs only its own labels.
+        # A shared try would abandon the loop and silently drop every receipt sorting
+        # after the bad one, quietly stripping metadata from datasets that are fine.
+        try:
+            with open(path, "rb") as handle:
+                raw = handle.read(16385)
+            if len(raw) > 16384 or receipt_bytes + len(raw) > 32768:
+                continue
+            parsed = json.loads(raw)
+        except Exception:
             continue
-        receipts.append(json.loads(raw))
+        receipts.append(parsed)
         receipt_bytes += len(raw)
 except Exception:
     pass
