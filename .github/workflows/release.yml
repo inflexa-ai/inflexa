@@ -25,6 +25,8 @@ permissions:
   # attest-build-provenance signs with the workflow's OIDC identity.
   id-token: write
   attestations: write
+  # The final step dispatches homebrew.yml via `gh workflow run`.
+  actions: write
 
 # Never cancel a half-published release; later pushes queue behind it and
 # their gate then sees the new tag and no-ops.
@@ -162,3 +164,13 @@ jobs:
             --title "v$VERSION" \
             --generate-notes \
             dist/inflexa-* dist/SHA256SUMS dist/THIRD-PARTY-NOTICES.txt
+
+      # The tap update is its own dispatched workflow (homebrew.yml explains
+      # why a `release:` trigger cannot work) so a tap failure never taints
+      # this run and stays re-runnable after the gate starts no-op'ing.
+      - name: Dispatch the Homebrew tap update
+        if: steps.gate.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: gh workflow run homebrew.yml --field version="$VERSION"

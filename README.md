@@ -31,7 +31,13 @@ It is built for scientists, bioinformaticians, and engineers who need analysis t
 
 ## Quick start
 
-> **Note:** the global installer is coming soon. Until it lands, [run from source](#running-from-source).
+Install with [Homebrew](https://brew.sh) (macOS, or Linux on x86_64):
+
+```bash
+brew install inflexa-ai/tap/inflexa
+```
+
+On other platforms, download a binary from the [latest release](https://github.com/inflexa-ai/inflexa/releases/latest), or [run from source](#running-from-source).
 
 All you need is [Docker](https://www.docker.com/), running locally — analyses execute in the sandbox image. The `inflexa` CLI itself is self-contained.
 

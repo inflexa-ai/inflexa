@@ -1,0 +1,96 @@
+name: Homebrew tap
+
+# Publishes Formula/inflexa.rb to inflexa-ai/homebrew-tap for a released
+# version. release.yml dispatches this after creating the GitHub release — a
+# `release:` trigger could never fire there, because events created with a
+# workflow's own GITHUB_TOKEN don't start workflows (API-triggered
+# workflow_dispatch is the documented exception to that rule). Keeping the
+# tap update out of release.yml also keeps it independently re-runnable: the
+# release gate no-ops once the tag exists, so a failed tap push (missing app
+# credentials, tap outage) is retried by dispatching this workflow again,
+# never by re-releasing.
+#
+# The push authorizes via an org-owned GitHub App (contents:write, installed
+# on homebrew-tap only) — the default GITHUB_TOKEN cannot write to another
+# repository, and a PAT would tie releases to one member's account and its
+# expiry. Requires the TAP_APP_ID repo variable and TAP_APP_PRIVATE_KEY
+# secret on this repo.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Released version to publish (bare semver, e.g. 0.1.0); defaults to the latest GitHub release"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve and validate the version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          version="${INPUT_VERSION#v}"
+          if [ -z "$version" ]; then
+            version=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName | ltrimstr("v")')
+          fi
+          # The formula must only ever point at published, downloadable
+          # assets — fail here if the version has no release.
+          gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download the release manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --pattern SHA256SUMS --pattern THIRD-PARTY-NOTICES.txt --dir assets
+
+      - name: Render the formula
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: .github/homebrew/render.sh "$VERSION" assets > inflexa.rb
+
+      - name: Mint a tap-scoped token
+        id: tap-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: inflexa-ai
+          repositories: homebrew-tap
+
+      - name: Push to the tap
+        env:
+          TAP_TOKEN: ${{ steps.tap-token.outputs.token }}
+          # Used to look up the app's bot user id, and safe for the git push
+          # too — it's the same installation token.
+          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          APP_SLUG: ${{ steps.tap-token.outputs.app-slug }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/inflexa-ai/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp inflexa.rb tap/Formula/inflexa.rb
+          cd tap
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "tap already points at v$VERSION — nothing to push"
+            exit 0
+          fi
+          # Attribute the commit to the app's bot user; the numeric id in the
+          # noreply address is what makes GitHub link the bot's identity.
+          bot_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git add Formula/inflexa.rb
+          git commit -m "inflexa $VERSION"
+          git push origin HEAD:main
