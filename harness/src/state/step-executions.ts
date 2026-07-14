@@ -10,6 +10,43 @@ import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
 import type { PersistedSandboxRef, StepExecutionRow } from "./schema.js";
 
+export interface SeedStepExecutionRow {
+    runId: string;
+    stepId: string;
+    analysisId: string;
+    wave: number;
+    agentId: string;
+}
+
+/**
+ * Seed one `pending` row per plan step at run start (`started_at` NULL — no
+ * attempt has happened yet; `attempts`/`hit_max_steps` lean on their column
+ * defaults). `ON CONFLICT DO NOTHING`, NOT the mark-running upsert: on DBOS
+ * recovery the parent body replays this seed against rows a prior execution
+ * already advanced, and an upsert would reset them — DO NOTHING makes the seed
+ * idempotent and monotone (it can only ever add missing rows). From the first
+ * seed, `queryStepsByRun` returns the run's full DAG, so consumers can render
+ * honest done/total progress including not-yet-started steps.
+ */
+export function seedStepExecutions(pool: Querier, rows: readonly SeedStepExecutionRow[]): ResultAsync<void, DbError> {
+    return tryMutation("stepExecutions.seedStepExecutions", async () => {
+        if (rows.length === 0) return;
+        const values: (string | number)[] = [];
+        const tuples = rows.map((row) => {
+            values.push(row.runId, row.stepId, row.analysisId, row.wave, row.agentId);
+            const base = values.length - 5;
+            return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, 'pending')`;
+        });
+        await pool.query({
+            text: `INSERT INTO cortex_step_executions
+          (run_id, step_id, analysis_id, wave, agent_id, status)
+          VALUES ${tuples.join(", ")}
+          ON CONFLICT (run_id, step_id) DO NOTHING`,
+            values,
+        });
+    });
+}
+
 export interface InsertStepExecutionInput {
     runId: string;
     stepId: string;
@@ -133,6 +170,26 @@ export function updateStepExecution(pool: Querier, runId: string, stepId: string
     });
 }
 
+/**
+ * Sweep a run's still-`pending` rows to `skipped` ("never ran, never will") at
+ * finalisation, stamping `completed_at`. Only genuinely-terminal paths may call
+ * this — the resumable budget-pause branch must NOT, because the resumed
+ * workflow still executes those steps (see the workflow-failure-lifecycle
+ * spec). `skipped`, not `canceled`: canceled means torn down mid-flight, and
+ * these steps never started.
+ */
+export function sweepPendingStepExecutions(pool: Querier, runId: string): ResultAsync<void, DbError> {
+    const now = new Date().toISOString();
+    return tryMutation("stepExecutions.sweepPendingStepExecutions", async () => {
+        await pool.query({
+            text: `UPDATE cortex_step_executions
+          SET status = 'skipped', completed_at = $2
+          WHERE run_id = $1 AND status = 'pending'`,
+            values: [runId, now],
+        });
+    });
+}
+
 export function queryStepsByRun(pool: Querier, runId: string): ResultAsync<StepExecutionRow[], DbError> {
     return tryQuery("stepExecutions.queryStepsByRun", async () => {
         const result = await pool.query({
@@ -142,7 +199,7 @@ export function queryStepsByRun(pool: Querier, runId: string): ResultAsync<StepE
                  blocked_reason, sandbox_ref, exec_id, child_workflow_id
           FROM cortex_step_executions
           WHERE run_id = $1
-          ORDER BY wave, started_at`,
+          ORDER BY wave, started_at NULLS LAST, step_id`,
             values: [runId],
         });
         return result.rows.map(mapStepExecutionRow);

@@ -60,7 +60,15 @@ import { forStep } from "../auth/types.js";
 import type { RunSession } from "../auth/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
 import { unwrapOrThrow } from "../lib/result.js";
-import { RunDedupCollisionError, countArtifactsForRun, queryActiveRun, suspendAnalysis as suspendAnalysisQuery, updateRunStatus } from "../state/index.js";
+import {
+    RunDedupCollisionError,
+    countArtifactsForRun,
+    queryActiveRun,
+    seedStepExecutions,
+    suspendAnalysis as suspendAnalysisQuery,
+    sweepPendingStepExecutions,
+    updateRunStatus,
+} from "../state/index.js";
 import { isBudgetExceeded } from "../loop/budget-exceeded.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
@@ -401,6 +409,29 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
             canceledSteps: [],
         };
     }
+
+    // Seed the full DAG as `pending` rows so ledger readers see every step from
+    // run start (honest done/total), not just the ones that began executing.
+    // The seed's DO NOTHING conflict action makes this replay-safe; the agent
+    // fallback mirrors `buildChildInput` so seed and mark-running agree on the
+    // row a step's child later upserts.
+    await DBOS.runStep(
+        async () => {
+            unwrapOrThrow(
+                await seedStepExecutions(
+                    deps.pool,
+                    input.steps.map((step) => ({
+                        runId,
+                        stepId: step.id,
+                        analysisId: input.analysisId,
+                        wave: levels.get(step.id) ?? 0,
+                        agentId: input.agentByStepId[step.id] ?? "scientific-executor",
+                    })),
+                ),
+            );
+        },
+        { name: "seed-step-executions" },
+    );
 
     // One checkpointed clock read stamps the run's start; the terminal read in
     // `collectAndComplete` subtracts it for the true run span. Checkpointed →
@@ -929,6 +960,24 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         );
     } catch (err) {
         console.error(`[executeAnalysis] persist-final-status failed for run ${runId} (status=${status}):`, err);
+    }
+
+    // Sweep never-started steps to `skipped` — but ONLY on genuinely-terminal
+    // paths. The gate is the BRANCH, not the written run status: the resumable
+    // 402 pause below also writes "canceled", yet its pending rows must survive
+    // for the resumed workflow to execute. Log-don't-rollback, like every other
+    // finalisation step here.
+    if (!(budgetExceeded && !forceFailed)) {
+        try {
+            await DBOS.runStep(
+                async () => {
+                    unwrapOrThrow(await sweepPendingStepExecutions(deps.pool, runId));
+                },
+                { name: "sweep-pending-steps" },
+            );
+        } catch (err) {
+            console.error(`[executeAnalysis] sweep-pending-steps failed for run ${runId}:`, err);
+        }
     }
 
     // A forced failure (synthesis threw) is terminal, not a resumable budget
