@@ -1,0 +1,59 @@
+name: Installers
+
+# End-to-end tests of the curl|bash and irm|iex installers against the real
+# published releases — the full first-command path a new user takes: platform
+# detect, latest-version resolve, download, checksum verify, install, and a
+# --version run of the installed binary. This is the only place install.ps1
+# is ever executed pre-merge (development happens on macOS), so it runs on
+# both PowerShell engines a Windows user might be in.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - install.sh
+      - install.ps1
+      - .github/workflows/installers.yml
+
+permissions:
+  contents: read
+
+jobs:
+  bash:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install latest, then a pinned version
+        run: |
+          INFLEXA_INSTALL_DIR="$RUNNER_TEMP/bin" bash install.sh
+          "$RUNNER_TEMP/bin/inflexa" --version
+          INFLEXA_INSTALL_DIR="$RUNNER_TEMP/bin-pinned" bash install.sh 0.1.0
+          got=$("$RUNNER_TEMP/bin-pinned/inflexa" --version)
+          if [ "$got" != "0.1.0" ]; then
+            echo "::error::pinned install produced version $got, expected 0.1.0"
+            exit 1
+          fi
+
+  powershell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Windows PowerShell 5.1 is what a stock machine's `irm | iex` runs in;
+      # it exercises the HttpWebResponse redirect branch and TLS pinning.
+      - name: Windows PowerShell 5.1 - latest
+        shell: powershell
+        run: |
+          & .\install.ps1 -InstallDir "$env:RUNNER_TEMP\bin51"
+          $v = & "$env:RUNNER_TEMP\bin51\inflexa.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "installed binary failed to run" }
+          Write-Host "PowerShell 5.1 installed: $v"
+      # PowerShell 7 exercises the HttpRequestMessage branch and the -Version pin.
+      - name: PowerShell 7 - pinned
+        shell: pwsh
+        run: |
+          & .\install.ps1 -Version 0.1.0 -InstallDir "$env:RUNNER_TEMP\bin7"
+          $v = & "$env:RUNNER_TEMP\bin7\inflexa.exe" --version
+          if ("$v" -ne "0.1.0") { throw "pinned install produced version '$v', expected 0.1.0" }
