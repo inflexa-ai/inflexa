@@ -12,7 +12,7 @@ export const meta: AgentMeta = {
     capabilities: ["peak detection", "feature alignment", "metabolite annotation", "normalization", "statistical analysis", "pathway mapping"],
     suitableFor: ["untargeted-metabolomics", "targeted-metabolomics", "lipidomics"],
     skills: ["metabolomics", "shared/omics-general"],
-    tools: [...BASE_SANDBOX_TOOLS, "searchPubMed", "getArticleDetails", "getArticleFullText"],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed"],
 };
 
 export function createMetabolomicsAgent(deps: SandboxAgentDeps): AgentDefinition {

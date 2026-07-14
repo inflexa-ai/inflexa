@@ -43,7 +43,7 @@ describe("createConversationAgent", () => {
         expect(agent.id).toBe(CONVERSATION_AGENT_ID);
         expect(agent.model).toBe("anthropic/claude-opus-4-7");
         expect(agent.maxIterations).toBe(50);
-        expect(agent.tools.length).toBe(46);
+        expect(agent.tools.length).toBe(34);
     });
 
     test("the system prompt is static SOUL composition", () => {
@@ -67,7 +67,11 @@ describe("createConversationAgent", () => {
         const ids = new Set(agent.tools.map((t) => t.id));
         for (const expected of [
             "search_gene",
-            "search_compounds",
+            "chembl",
+            "pubchem",
+            "opentargets",
+            "pubmed",
+            "comptox",
             "generate_plan",
             "literature_reviewer",
             "generate_analogy_report",

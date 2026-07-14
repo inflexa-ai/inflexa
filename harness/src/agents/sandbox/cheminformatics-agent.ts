@@ -41,25 +41,7 @@ export const meta: AgentMeta = {
         "perturbation-signatures",
     ],
     skills: ["cheminformatics", "shared/omics-general"],
-    tools: [
-        ...BASE_SANDBOX_TOOLS,
-        "searchPubMed",
-        "getArticleDetails",
-        "getArticleFullText",
-        "searchGene",
-        "searchPathway",
-        "lookupGoTerm",
-        "searchInteractions",
-        "searchCompounds",
-        "getBioactivity",
-        "searchTargets",
-        "getMechanism",
-        "getDrugInfo",
-        "searchDgidb",
-        "searchPubchemCompound",
-        "getPubchemCrossRefs",
-        "getPubchemAssays",
-    ],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "searchPathway", "lookupGoTerm", "searchInteractions", "chembl", "searchDgidb", "pubchem"],
 };
 
 export function createCheminformaticsAgent(deps: SandboxAgentDeps): AgentDefinition {

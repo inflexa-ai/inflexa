@@ -68,8 +68,8 @@ describe("generateAnalogyReport sub-agent tool", () => {
         expect(ctx.session.provenance.agentId).toBe("conversation-agent");
         expect(ctx.session.provenance.callPath).toEqual(["conversation-agent"]);
 
-        // Tool roster: 6 (3 cross-domain + 3 biology literature).
-        expect(Object.keys(provider.calls[0]!.tools)).toHaveLength(6);
+        // Tool roster: 4 (3 cross-domain + the consolidated `pubmed` tool).
+        expect(Object.keys(provider.calls[0]!.tools)).toHaveLength(4);
 
         // Only one provider call — fast path skipped the conversion retry.
         expect(provider.calls).toHaveLength(1);

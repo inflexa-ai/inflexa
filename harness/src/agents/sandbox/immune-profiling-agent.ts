@@ -28,19 +28,7 @@ export const meta: AgentMeta = {
         "immune-cell-composition",
     ],
     skills: ["immune-profiling", "shared/omics-general"],
-    tools: [
-        ...BASE_SANDBOX_TOOLS,
-        "searchPubMed",
-        "getArticleDetails",
-        "getArticleFullText",
-        "searchGene",
-        "searchPathway",
-        "lookupGoTerm",
-        "searchInteractions",
-        "searchGeoDatasets",
-        "searchOpenTargets",
-        "getTargetSafety",
-    ],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "searchPathway", "lookupGoTerm", "searchInteractions", "searchGeoDatasets", "opentargets"],
 };
 
 export function createImmuneProfilingAgent(deps: SandboxAgentDeps): AgentDefinition {

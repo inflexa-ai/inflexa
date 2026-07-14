@@ -13,16 +13,7 @@ export const meta: AgentMeta = {
     capabilities: ["data inspection", "quick statistics", "data transformation", "table preview"],
     suitableFor: ["bulk-rna-seq", "single-cell", "proteomics", "metabolomics", "genomics", "transcriptomics", "general-omics"],
     skills: ["shared/omics-general"],
-    tools: [
-        ...BASE_SANDBOX_TOOLS,
-        "searchPubMed",
-        "getArticleDetails",
-        "getArticleFullText",
-        "searchGene",
-        "searchPathway",
-        "lookupGoTerm",
-        "searchInteractions",
-    ],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "searchPathway", "lookupGoTerm", "searchInteractions"],
     plannable: false,
 };
 

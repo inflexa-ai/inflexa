@@ -12,7 +12,7 @@ export const meta: AgentMeta = {
     capabilities: ["diversity analysis", "differential abundance", "taxonomic profiling", "functional profiling", "compositional analysis"],
     suitableFor: ["16s-amplicon", "its-amplicon", "shotgun-metagenomics", "functional-profiling"],
     skills: ["microbiome", "shared/omics-general"],
-    tools: [...BASE_SANDBOX_TOOLS, "searchPubMed", "getArticleDetails", "getArticleFullText"],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed"],
 };
 
 export function createMicrobiomeAgent(deps: SandboxAgentDeps): AgentDefinition {

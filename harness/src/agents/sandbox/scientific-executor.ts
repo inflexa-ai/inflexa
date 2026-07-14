@@ -43,16 +43,7 @@ export const meta: AgentMeta = {
         "drug-repurposing",
         "shared/omics-general",
     ],
-    tools: [
-        ...BASE_SANDBOX_TOOLS,
-        "searchPubMed",
-        "getArticleDetails",
-        "getArticleFullText",
-        "searchGene",
-        "searchPathway",
-        "lookupGoTerm",
-        "searchInteractions",
-    ],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "searchPathway", "lookupGoTerm", "searchInteractions"],
     plannable: false,
 };
 

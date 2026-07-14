@@ -12,7 +12,7 @@ export const meta: AgentMeta = {
     capabilities: ["multimodal integration", "joint embedding", "cross-modality analysis", "protein quantification", "chromatin accessibility"],
     suitableFor: ["cite-seq", "multiome", "tea-seq", "dogma-seq"],
     skills: ["multimodal-single-cell", "shared/omics-general"],
-    tools: [...BASE_SANDBOX_TOOLS, "searchPubMed", "getArticleDetails", "getArticleFullText"],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed"],
 };
 
 export function createMultimodalScAgent(deps: SandboxAgentDeps): AgentDefinition {

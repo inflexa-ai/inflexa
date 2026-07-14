@@ -48,16 +48,9 @@ import {
     searchPathwayTool,
     lookupGoTermTool,
     searchInteractionsTool,
-    searchCompoundsTool,
-    getBioactivityTool,
-    searchTargetsTool,
-    getMechanismTool,
-    getDrugInfoTool,
-    searchPubchemCompoundTool,
-    getPubchemCrossRefsTool,
-    getPubchemAssaysTool,
-    searchOpenTargetsTool,
-    getTargetSafetyTool,
+    chemblTool,
+    pubchemTool,
+    openTargetsTool,
     searchPharmgkbTool,
     searchFaersTool,
     searchClinicalTrialsTool,
@@ -191,22 +184,14 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         searchPathwayTool,
         lookupGoTermTool,
         searchInteractionsTool,
-        ncbi.searchPubMed,
-        ncbi.getArticleDetails,
-        ncbi.getArticleFullText,
-        // ChEMBL.
-        searchCompoundsTool,
-        getBioactivityTool,
-        searchTargetsTool,
-        getMechanismTool,
-        getDrugInfoTool,
-        // PubChem.
-        searchPubchemCompoundTool,
-        getPubchemCrossRefsTool,
-        getPubchemAssaysTool,
+        // Literature (search / details / fulltext behind one action).
+        ncbi.pubmed,
+        // ChEMBL (compounds / drug / mechanism / bioactivity / targets behind one action).
+        chemblTool,
+        // PubChem (compound / crossrefs / assays behind one action).
+        pubchemTool,
         // Translational medicine.
-        searchOpenTargetsTool,
-        getTargetSafetyTool,
+        openTargetsTool,
         searchPharmgkbTool,
         searchFaersTool,
         searchClinicalTrialsTool,
@@ -217,11 +202,8 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         getImpcKoProfileTool,
         // Off-target liability.
         checkSafetyPanelTool,
-        // EPA CompTox.
-        chemDb.searchToxcast,
-        chemDb.searchCtxHazard,
-        chemDb.searchCtxChemical,
-        chemDb.searchCtxExposure,
+        // EPA CompTox (toxcast / hazard / chemical / exposure behind one dataset).
+        chemDb.comptox,
         // Execution.
         createInspectRunTool(pool),
         // The dataset's own record. No file backs it — the DB row is the only copy.

@@ -25,24 +25,24 @@ analysis after orientation.
 Upstream steps (enrichment, transcriptomics) produced a target list.
 Acquire compound data via ChEMBL tools:
 
-1. \`search_targets\` with gene symbols → target ChEMBL IDs.
-2. \`search_compounds\` with \`searchType: "target"\` for each target.
-3. \`get_bioactivity\` for detailed IC50/EC50/Ki.
-4. Optionally \`get_mechanism\` for mechanisms of action.
-5. Optionally \`get_drug_info\` for approved drugs against these targets.
+1. \`chembl({action:"targets"})\` with gene symbols → target ChEMBL IDs.
+2. \`chembl({action:"compounds", searchType:"target"})\` for each target.
+3. \`chembl({action:"bioactivity"})\` for detailed IC50/EC50/Ki.
+4. Optionally \`chembl({action:"mechanism"})\` for mechanisms of action.
+5. Optionally \`chembl({action:"drug"})\` for approved drugs against these targets.
 6. Save the retrieved data as CSV in the workspace for analysis.
 
 ### Mode C — PubChem Compound Resolution
 When compounds aren't in ChEMBL (non-drug-like, vendor compounds,
 metabolites) or you need to bridge identifiers:
 
-1. \`search_pubchem_compound\` (name, SMILES, InChI, InChIKey, CID) for
+1. \`pubchem({action:"compound"})\` (name, SMILES, InChI, InChIKey, CID) for
    identity and computed properties.
-2. \`get_pubchem_cross_refs\` (CID) for linked identifiers (ChEMBL,
+2. \`pubchem({action:"crossrefs"})\` (CID) for linked identifiers (ChEMBL,
    DrugBank, KEGG, PDB ligand codes).
 3. If a ChEMBL ID is found in cross-refs, fall back to ChEMBL tools
    for curated activity.
-4. \`get_pubchem_assays\` (CID) for HTS results — broader but noisier
+4. \`pubchem({action:"assays"})\` (CID) for HTS results — broader but noisier
    than ChEMBL bioactivity.
 5. Save retrieved data as CSV.
 

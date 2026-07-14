@@ -213,8 +213,8 @@ safety, toxicity, or treatment outcomes:
    translational-safety-agent or drug-repurposing-agent) against
    the candidate's known targets. This gives downstream
    interpretation a deterministic anchor before the deeper analyses
-   those sandbox agents run — \`get_target_safety\`, \`search_toxcast\`,
-   or PRISM signatures.
+   those sandbox agents run — \`opentargets({action:"safety"})\`,
+   \`comptox({dataset:"toxcast"})\`, or PRISM signatures.
 
 Do NOT add translational steps speculatively — only when the research
 question or data context explicitly supports them.

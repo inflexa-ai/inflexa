@@ -22,28 +22,19 @@ export type SandboxToolName =
     | "queryDocs"
     // Run inspection.
     | "inspectRun"
-    // Literature.
-    | "searchPubMed"
-    | "getArticleDetails"
-    | "getArticleFullText"
+    // Literature (search / details / fulltext behind one action).
+    | "pubmed"
     // Genomics / pathways / ontology.
     | "searchGene"
     | "searchPathway"
     | "lookupGoTerm"
     | "searchInteractions"
-    // ChEMBL.
-    | "searchCompounds"
-    | "getBioactivity"
-    | "searchTargets"
-    | "getMechanism"
-    | "getDrugInfo"
-    // PubChem.
-    | "searchPubchemCompound"
-    | "getPubchemCrossRefs"
-    | "getPubchemAssays"
+    // ChEMBL (compounds / drug / mechanism / bioactivity / targets behind one action).
+    | "chembl"
+    // PubChem (compound / crossrefs / assays behind one action).
+    | "pubchem"
     // Translational medicine.
-    | "searchOpenTargets"
-    | "getTargetSafety"
+    | "opentargets"
     | "searchPharmgkb"
     | "searchFaers"
     | "searchClinicalTrials"
@@ -56,12 +47,9 @@ export type SandboxToolName =
     // Preclinical.
     | "searchBgeeExpression"
     | "getImpcKoProfile"
-    // Off-target liability / EPA CompTox.
+    // Off-target liability / EPA CompTox (toxcast / hazard / chemical / exposure behind one dataset).
     | "checkSafetyPanel"
-    | "searchToxcast"
-    | "searchCtxHazard"
-    | "searchCtxChemical"
-    | "searchCtxExposure";
+    | "comptox";
 
 /** Planner-facing metadata + tool allowlist for one sandbox agent. */
 export interface AgentMeta {

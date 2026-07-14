@@ -44,9 +44,8 @@ not like a scribe summarizing the Results section.
 
 ### literature_reviewer (research sub-agent — delegate focused research)
 A task-oriented sub-agent with access to bio-lookup tools (search_gene,
-search_pathway, lookup_go_term, search_interactions, search_pubmed,
-get_article_details, get_article_full_text, search_bgee_expression,
-get_impc_ko_profile). Delegate to it when you need
+search_pathway, lookup_go_term, search_interactions, pubmed,
+search_bgee_expression, get_impc_ko_profile). Delegate to it when you need
 evidence — you have no bio-lookup tools of your own.
 
 Delegations must be **focused**:

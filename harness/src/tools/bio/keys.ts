@@ -1,15 +1,10 @@
 import type { Tool } from "../define-tool.js";
 
-import { createSearchPubMedTool } from "./search-pubmed.js";
-import { createGetArticleDetailsTool } from "./get-article-details.js";
-import { createGetArticleFullTextTool } from "./get-article-full-text.js";
+import { createPubMedTool } from "./pubmed.js";
 import { createSearchClinvarTool } from "./search-clinvar.js";
 import { createSearchDrugbankTool } from "./search-drugbank.js";
 import { createSearchDisgenetTool } from "./search-disgenet.js";
-import { createSearchToxcastTool } from "./search-toxcast.js";
-import { createSearchCtxHazardTool } from "./search-ctx-hazard.js";
-import { createSearchCtxChemicalTool } from "./search-ctx-chemical.js";
-import { createSearchCtxExposureTool } from "./search-ctx-exposure.js";
+import { createComptoxTool } from "./comptox.js";
 
 /**
  * API keys for the external bio/chem data sources. Threaded from the
@@ -26,36 +21,36 @@ export interface BioToolKeys {
     readonly github?: string;
 }
 
-/** The NCBI-backed literature tools, built from the shared key slice. */
+/**
+ * The NCBI-backed literature tools, built from the shared key slice.
+ *
+ * `pubmed` is the consolidated literature tool (search / details / fulltext
+ * behind one `action`); `searchClinvar` remains its own single-endpoint tool.
+ */
 export function createNcbiTools(keys: BioToolKeys): {
-    searchPubMed: Tool;
-    getArticleDetails: Tool;
-    getArticleFullText: Tool;
+    pubmed: Tool;
     searchClinvar: Tool;
 } {
     return {
-        searchPubMed: createSearchPubMedTool({ ncbiApiKey: keys.ncbi }),
-        getArticleDetails: createGetArticleDetailsTool({ ncbiApiKey: keys.ncbi }),
-        getArticleFullText: createGetArticleFullTextTool({ ncbiApiKey: keys.ncbi }),
+        pubmed: createPubMedTool({ ncbiApiKey: keys.ncbi }),
         searchClinvar: createSearchClinvarTool({ ncbiApiKey: keys.ncbi }),
     };
 }
 
-/** The DrugBank / DisGeNET / EPA CompTox tools, built from the key slice. */
+/**
+ * The DrugBank / DisGeNET / EPA CompTox tools, built from the key slice.
+ *
+ * `comptox` is the consolidated EPA CTX tool (toxcast / hazard / chemical /
+ * exposure behind one `dataset`), built over the shared EPA_CCTE key.
+ */
 export function createChemDbTools(keys: BioToolKeys): {
     searchDrugbank: Tool;
     searchDisgenet: Tool;
-    searchToxcast: Tool;
-    searchCtxHazard: Tool;
-    searchCtxChemical: Tool;
-    searchCtxExposure: Tool;
+    comptox: Tool;
 } {
     return {
         searchDrugbank: createSearchDrugbankTool({ apiKey: keys.drugbank }),
         searchDisgenet: createSearchDisgenetTool({ apiKey: keys.disgenet }),
-        searchToxcast: createSearchToxcastTool({ apiKey: keys.epaCcte }),
-        searchCtxHazard: createSearchCtxHazardTool({ apiKey: keys.epaCcte }),
-        searchCtxChemical: createSearchCtxChemicalTool({ apiKey: keys.epaCcte }),
-        searchCtxExposure: createSearchCtxExposureTool({ apiKey: keys.epaCcte }),
+        comptox: createComptoxTool({ apiKey: keys.epaCcte }),
     };
 }

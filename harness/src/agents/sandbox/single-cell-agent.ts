@@ -22,7 +22,7 @@ export const meta: AgentMeta = {
     ],
     suitableFor: ["scrna-seq", "snrna-seq", "cytof", "mass-cytometry"],
     skills: ["single-cell", "shared/omics-general"],
-    tools: [...BASE_SANDBOX_TOOLS, "searchPubMed", "getArticleDetails", "getArticleFullText", "searchGeoDatasets"],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGeoDatasets"],
 };
 
 export function createSingleCellAgent(deps: SandboxAgentDeps): AgentDefinition {

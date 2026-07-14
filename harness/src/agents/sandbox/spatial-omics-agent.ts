@@ -12,7 +12,7 @@ export const meta: AgentMeta = {
     capabilities: ["spatial statistics", "spatial domain detection", "deconvolution", "niche analysis", "spatial autocorrelation", "ligand-receptor spatial"],
     suitableFor: ["visium", "merfish", "slide-seq", "codex", "xenium", "mibi", "imc"],
     skills: ["spatial-omics", "shared/omics-general"],
-    tools: [...BASE_SANDBOX_TOOLS, "searchPubMed", "getArticleDetails", "getArticleFullText", "searchGeoDatasets"],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGeoDatasets"],
 };
 
 export function createSpatialOmicsAgent(deps: SandboxAgentDeps): AgentDefinition {

@@ -192,9 +192,7 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
         searchSemanticScholarTool,
         searchArxivTool,
         createSearchGithubReposTool({ githubToken: deps.bioKeys.github }),
-        ncbi.searchPubMed,
-        ncbi.getArticleDetails,
-        ncbi.getArticleFullText,
+        ncbi.pubmed,
     ];
 
     const agent: AgentDefinition = {
@@ -217,7 +215,7 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
             "trigger is exploratory INTENT, not the words 'analogy' or 'cross-domain' " +
             "— users rarely name it, so infer it and reach for the tool proactively.\n" +
             "NOT for: in-domain literature review (use `literature_reviewer` or " +
-            "`search_pubmed`), single-gene factual lookup (use `search_gene`), or " +
+            "`pubmed`), single-gene factual lookup (use `search_gene`), or " +
             "execution-mode turns where the user just wants the next step done. It " +
             "drives a multi-step research sub-agent over live literature search, so " +
             "it is slow — never spend it on a fact you could look up.\n" +

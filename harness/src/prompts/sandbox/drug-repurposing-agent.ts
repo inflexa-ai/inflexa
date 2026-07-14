@@ -23,8 +23,8 @@ its output. Work with the tools you have.
 
 - \`search_drugbank\` — requires DRUGBANK_API_KEY
 - \`search_disgenet\` — requires DISGENET_API_KEY
-- EPA CTX tools (\`search_toxcast\`, \`search_ctx_hazard\`,
-  \`search_ctx_chemical\`, \`search_ctx_exposure\`) — require EPA_CCTE_API_KEY
+- EPA CTX tool (\`comptox\`, datasets toxcast / hazard / chemical /
+  exposure) — requires EPA_CCTE_API_KEY
 
 ## Core Capabilities
 
@@ -34,8 +34,8 @@ its output. Work with the tools you have.
    signature are therapeutic candidates.
 
 2. **Target-based repurposing** — map disease-relevant targets to
-   existing drugs via ChEMBL (\`search_compounds\`, \`get_drug_info\`,
-   \`get_mechanism\`) and DrugBank (\`search_drugbank\`, conditional).
+   existing drugs via ChEMBL (\`chembl\`, actions compounds / drug /
+   mechanism) and DrugBank (\`search_drugbank\`, conditional).
    Prioritize approved and clinical-stage drugs.
 
 3. **Genetics-based repurposing** — use genetic evidence (GWAS,
@@ -49,7 +49,7 @@ its output. Work with the tools you have.
 
 5. **Clinical evidence mining** — use \`search_clinical_trials\` to
    check if candidates are already in trials for the target
-   indication. Use \`search_pubmed\` for published evidence.
+   indication. Use \`pubmed\` for published evidence.
 
 6. **Safety assessment** — use \`search_faers\` to assess real-world
    safety for the proposed patient population. Flag drugs with
@@ -73,10 +73,10 @@ its output. Work with the tools you have.
 ## Tool Usage for Candidate Discovery
 
 ### From Targets (ChEMBL workflow)
-1. \`search_targets\` — resolve gene symbols to target ChEMBL IDs.
-2. \`search_compounds(searchType: "target")\` — find active compounds.
-3. \`get_drug_info\` — check approval status and existing indications.
-4. \`get_mechanism\` — verify mechanism relevance.
+1. \`chembl({action:"targets"})\` — resolve gene symbols to target ChEMBL IDs.
+2. \`chembl({action:"compounds", searchType:"target"})\` — find active compounds.
+3. \`chembl({action:"drug"})\` — check approval status and existing indications.
+4. \`chembl({action:"mechanism"})\` — verify mechanism relevance.
 
 ### From Targets (DrugBank workflow, conditional)
 1. \`search_drugbank(searchType: "target")\` — find drugs for a gene.
@@ -85,12 +85,12 @@ its output. Work with the tools you have.
 ### From Genetic Evidence
 1. \`search_gwas_catalog\` — find GWAS associations for the disease.
 2. \`search_disgenet\` (conditional) — get gene-disease scores.
-3. \`search_opentargets\` — check target tractability and drug scores.
+3. \`opentargets({action:"target"})\` — check target tractability and drug scores.
 
 ### Validation Layer
 1. \`search_clinical_trials\` — existing trials for drug + indication.
 2. \`search_faers\` — adverse event profile.
-3. \`search_pubmed\` — published evidence.
+3. \`pubmed\` — published evidence.
 
 ### Preclinical Target Intelligence
 1. \`search_bgee_expression\` (geneSymbol) — cross-species baseline
