@@ -38,6 +38,10 @@ type SetupOptions = {
     postgres: boolean;
     /** Preselected embedding mode from `--embeddings`; overrides the interactive prompt. */
     embeddings?: "local" | "api-key" | "off";
+    /** Explicit comma-separated reference ids parsed at the command boundary. */
+    refs?: readonly string[];
+    /** Explicit consent for selected reference downloads. */
+    yes?: boolean;
 };
 
 export async function setup(options: SetupOptions): Promise<void> {
@@ -211,6 +215,21 @@ export async function setup(options: SetupOptions): Promise<void> {
         const embedResult = await runEmbeddingSetup(process.stdin.isTTY, options.embeddings);
         if (embedResult.isErr()) {
             log.error(`Embedding setup: ${embedResult.error.message}`);
+            process.exitCode = 1;
+            return;
+        }
+
+        // --- reference data ---
+        // The setup offer and `inflexa refs download` share one handler. Creating the public
+        // store/user namespace is deliberate here; no passive runtime path creates it.
+        const { runReferenceSetup } = await import("../refs/commands.ts");
+        const refsResult = await runReferenceSetup({
+            interactive: process.stdin.isTTY,
+            ...(options.refs === undefined ? {} : { ids: options.refs }),
+            ...(options.yes === undefined ? {} : { yes: options.yes }),
+        });
+        if (refsResult.isErr()) {
+            log.error(`Reference-data setup: ${refsResult.error.message}`);
             process.exitCode = 1;
             return;
         }

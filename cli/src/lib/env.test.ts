@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 
 import { devCommandsActive, env, envDoc, isDevelopmentBuild, isUnsandboxedTestRun } from "./env.ts";
 
@@ -99,5 +100,15 @@ describe("INFLEXA_MODEL_API_KEY", () => {
         expect(entry.kind).toBe("var");
         if (entry.kind !== "var") throw new Error("expected a var entry");
         expect(entry.name).toBe("INFLEXA_MODEL_API_KEY");
+    });
+});
+
+describe("reference-data paths", () => {
+    test("refsDir resolves below the platform data home and is documented", () => {
+        const dataHome = process.platform === "win32" ? Bun.env.LOCALAPPDATA : Bun.env.XDG_DATA_HOME;
+        if (dataHome === undefined) throw new Error("test preload must provide the platform data home");
+        expect(env.refsDir).toBe(join(dataHome, "inflexa", "refs"));
+        expect(envDoc.refsDir).toMatchObject({ kind: "path", label: "references" });
+        expect(envDoc.referenceDataBaseUrl).toMatchObject({ kind: "var", name: "INFLEXA_REFERENCE_DATA_BASE_URL" });
     });
 });

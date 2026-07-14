@@ -43,6 +43,7 @@ const configVar = process.platform === "win32" ? "APPDATA" : "XDG_CONFIG_HOME";
 const logLevelVar = "INFLEXA_LOG_LEVEL";
 const otelEndpointVar = "OTEL_EXPORTER_OTLP_ENDPOINT";
 const modelApiKeyVar = "INFLEXA_MODEL_API_KEY";
+const referenceDataBaseUrlVar = "INFLEXA_REFERENCE_DATA_BASE_URL";
 
 function dataDir(): string {
     const base = process.env[dataVar];
@@ -144,6 +145,11 @@ export const env = Object.freeze({
     dbPath: join(dataDir(), "inflexa", "agent.db"),
     logDir: join(dataDir(), "inflexa", "logs"),
     /**
+     * Public reference-data store. Deliberate setup/download actions create this path; passive
+     * runtime composition only checks whether it exists before offering it to the harness.
+     */
+    refsDir: join(dataDir(), "inflexa", "refs"),
+    /**
      * Advisory instance locks: `<dataDir>/inflexa/locks/<key>.lock`, keyed by an analysis id (one
      * inflexa process may have an analysis open at a time) or a fixed sentinel for the embedded harness
      * runtime (one DBOS engine per machine). The lock files coordinate that across instances.
@@ -192,6 +198,11 @@ export const env = Object.freeze({
      */
     modelApiKey: process.env[modelApiKeyVar],
     /**
+     * Optional public distribution root for opaque catalog artifact keys. Release packaging may
+     * configure it without putting deployment URLs in the host-neutral harness catalog.
+     */
+    referenceDataBaseUrl: process.env[referenceDataBaseUrlVar],
+    /**
      * CLIProxyAPI networking — internal constants, deliberately excluded from
      * envDoc/--help (see the Exclude on envDoc below).
      */
@@ -239,6 +250,12 @@ export const envDoc: Readonly<
 > = Object.freeze({
     dbPath: { kind: "path", label: "database", description: "saved sessions (SQLite)", baseVar: dataVar },
     logDir: { kind: "path", label: "logs", description: "log files, rotated daily, 7-day retention", baseVar: dataVar },
+    refsDir: {
+        kind: "path",
+        label: "references",
+        description: "reference data mounted read-only in sandboxes at /mnt/refs",
+        baseVar: dataVar,
+    },
     locksDir: { kind: "path", label: "locks", description: "advisory per-analysis instance locks", baseVar: dataVar },
     modelDir: { kind: "path", label: "models", description: "local embedding GGUF models, downloaded by `inflexa setup --embeddings`", baseVar: dataVar },
     embeddingModelPath: {
@@ -270,6 +287,11 @@ export const envDoc: Readonly<
         kind: "var",
         name: modelApiKeyVar,
         description: 'API key for a direct model connection (config `models.connection.mode: "direct"`); unused with the default managed proxy',
+    },
+    referenceDataBaseUrl: {
+        kind: "var",
+        name: referenceDataBaseUrlVar,
+        description: "public distribution base for catalog reference-data artifacts",
     },
 });
 
