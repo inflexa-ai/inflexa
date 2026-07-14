@@ -46,13 +46,14 @@ keywords:
     - AI agent
     - command-line tool
 
-# --- Add AFTER your first Zenodo release mints a DOI (use the CONCEPT DOI, which
-#     always resolves to the latest version). Uncomment and fill in. ---
-# doi: "10.5281/zenodo.XXXXXXX"
-# identifiers:
-#   - type: doi
-#     value: "10.5281/zenodo.XXXXXXX"
-#     description: "Concept DOI — always resolves to the latest Inflexa release."
+doi: "10.5281/zenodo.21361439"
+identifiers:
+    - type: doi
+      value: "10.5281/zenodo.21361439"
+      description: "Concept DOI — always resolves to the latest Inflexa release."
+    - type: doi
+      value: "10.5281/zenodo.21361440"
+      description: "Version DOI — Inflexa v0.1.0 specifically."
 
 # --- Add LATER, once a preprint or JOSS paper exists, so citations point to the
 #     paper instead of (or in addition to) the software. Uncomment and fill in. ---

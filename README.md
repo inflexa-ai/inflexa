@@ -7,7 +7,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/inflexa-ai/inflexa/actions/workflows/test.yml"><img alt="Test" src="https://github.com/inflexa-ai/inflexa/actions/workflows/test.yml/badge.svg?branch=main" /></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/inflexa-ai/inflexa"><img alt="OpenSSF Scorecard" src="https://api.scorecard.dev/projects/github.com/inflexa-ai/inflexa/badge" /></a>
   <a href="./LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" /></a>
+  <a href="https://doi.org/10.5281/zenodo.21361439"><img alt="DOI" src="https://zenodo.org/badge/1266094931.svg" /></a>
   <a href="https://app.inflexa.ai"><img src="https://img.shields.io/badge/Try-Web%20UI-orange" alt="Web UI" /></a>
   <a href="https://www.linkedin.com/company/inflexa-ai"><img src="https://img.shields.io/badge/Follow-LinkedIn-0077B5" alt="Follow on LinkedIn" /></a>
 </p>
