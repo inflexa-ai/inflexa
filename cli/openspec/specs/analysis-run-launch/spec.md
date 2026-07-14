@@ -59,8 +59,10 @@ using the harness's exported state functions and run launcher: dedup pre-check f
 an active run of the same plan → reserve the run row before authorizing (the
 partial-unique index is the race backstop; a dedup collision resolves to the
 winner's run) → authorize through the local run authorizer → build the workflow
-input from the plan (per-step rendered prompts, agent/resource/timeout maps, plan
-summary from title or narrative) → launch with the workflow id equal to the run id.
+input from the plan (per-step plan-step data — the harness composes each step's seed
+at dispatch, so the cli passes the step data, never a rendered prompt —
+agent/resource/timeout maps, plan summary from title or narrative) → launch with the
+workflow id equal to the run id.
 On authorization or launch failure the reserved row SHALL be marked failed (and the
 authorization revoked where one was issued) so a retry can re-run.
 

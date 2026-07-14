@@ -54,24 +54,41 @@ and drug-repurposing. Each `AgentDefinition` SHALL carry the four fields
 
 `createSandboxAgent` SHALL hand each agent exactly its `meta.tools` allowlist —
 resolved against the central registry in `resolveSandboxTools` — plus the
-always-on workspace substrate: the mutate surface (`execute_command`,
-`write_file`, `edit_file`), the read surface (`read_file`, `list_files`,
-`file_stat`, `grep`, and `workspace_search` when an embedding provider is wired),
-the skill tools declared by `meta.skills`, and `report_blocker` when a blocker
-cell is supplied. An unknown `SandboxToolName` SHALL throw at composition time,
-not at the first LLM call. Tools that need dependencies (`SandboxClient`,
-`WorkspaceFilesystem`, `ChatProvider`, `Pool`) SHALL receive them through their
-factory closures at the root — never via `ToolContext` or ambient state.
-`BASE_SANDBOX_TOOLS` (`listAvailablePackages`, `listAvailableRefs`,
-`resolveLibraryId`, `queryDocs`, `inspectRun`) SHALL be spread into each agent's
-`meta.tools` so planner metadata and the resolved tool record stay in sync.
+always-on substrate, which is NOT declared in any meta: the mutate surface
+(`execute_command`, `write_file`, `edit_file`), the read surface (`read_file`,
+`list_files`, `file_stat`, `grep`, and `workspace_search` when an embedding
+provider is wired), `inspect_data_profile`, the skill tools declared by
+`meta.skills`, and `report_blocker` when a blocker cell is supplied.
+
+`inspect_data_profile` is always-on because the persisted profile is the only
+record of what the analysis's input dataset IS — no file on disk carries it (the
+profiler's scratch tree is deleted on completion) — so an agent that cannot pull
+it has no fallback but to re-derive organism, dimensions, and format from the raw
+bytes. Under `readOnly` the `write_file`/`edit_file` pair SHALL be omitted while
+`execute_command`, the read tools, and `inspect_data_profile` SHALL remain —
+reading the profile is not a mutation.
+
+An unknown `SandboxToolName` SHALL throw at composition time, not at the first LLM
+call. Tools that need dependencies (`SandboxClient`, `WorkspaceFilesystem`,
+`ChatProvider`, `Pool`) SHALL receive them through their factory closures at the
+root — never via `ToolContext` or ambient state. `BASE_SANDBOX_TOOLS`
+(`listAvailablePackages`, `listAvailableRefs`, `resolveLibraryId`, `queryDocs`,
+`inspectRun`) SHALL be spread into each agent's `meta.tools` so planner metadata
+and the resolved tool record stay in sync.
 
 #### Scenario: Compute-pipeline agent receives only its allowlisted tools
 
 - **GIVEN** an agent whose meta declares `tools: [...BASE_SANDBOX_TOOLS, "searchPubMed", "getArticleDetails", "searchGeoDatasets"]`
 - **WHEN** the resolved tool list is inspected
-- **THEN** it SHALL contain exactly those tools plus the always-on workspace substrate
+- **THEN** it SHALL contain exactly those tools plus the always-on substrate
 - **AND** it SHALL NOT contain `searchCompounds`, `searchFaers`, `searchToxcast`, or any tool outside the allowlist
+
+#### Scenario: inspect_data_profile is wired without any meta declaring it
+
+- **GIVEN** a sandbox agent whose `meta.tools` never names a data-profile tool
+- **WHEN** its resolved tool list is inspected
+- **THEN** it SHALL contain `inspect_data_profile`
+- **AND** it SHALL still contain it when the agent is built `readOnly`
 
 #### Scenario: Unknown tool name fails at composition time
 
@@ -106,16 +123,24 @@ SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS` (50).
 - **THEN** `maxIterations` SHALL be `35`
 - **AND** an agent with no `defaultMaxSteps` SHALL use `SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS` (50)
 
-### Requirement: Sandbox agent system prompt is static composition
+### Requirement: Sandbox agent system prompt is a pure function of the agent type
 
 Each sandbox `AgentDefinition.systemPrompt` SHALL be assembled at construction
 time by `composeSystemPrompt` (with the conversational style disabled) over the
 deterministic concatenation of the per-agent prompt body
 (`harness/src/prompts/sandbox/<agent>.ts`), `sandboxOrientCorePrompt`, and
-`sandboxAnalysisStepStandardsPrompt`. The `{{WORKING_DIR}}` and
-`{{ANALYSIS_ROOT}}` placeholders SHALL be substituted with the concrete
-in-sandbox paths the agent sees this step (frame-aware path resolution). The
-prompt SHALL be a frozen string by the time `runAgent` sees it — there is no
+`sandboxAnalysisStepStandardsPrompt` (the last omitted under
+`appendAnalysisStepStandards: false`). Nothing from `SandboxStepCoords` SHALL
+reach it: no path, no `analysisId`/`runId`/`stepId`, and no placeholder for one.
+The composed string SHALL therefore depend on the agent type alone, so two steps
+of one run — and two runs of one analysis — send a byte-identical prefix.
+
+This is a **prompt-cache** invariant, not a style rule. The cache keys on an exact
+prefix; a single interpolated id or path makes every step's system string unique,
+so each step pays a full cache write and reads nothing back. The per-step values
+belong in the step's seed (`harness/src/prompts/briefing.ts`), which names the
+working directory, the analysis root, the dataset, and each dependency's output.
+The prompt SHALL be a frozen string by the time `runAgent` sees it — there is no
 request-time processor pipeline.
 
 #### Scenario: System prompt is a single composed string
@@ -123,7 +148,13 @@ request-time processor pipeline.
 - **GIVEN** any sandbox `AgentDefinition`
 - **WHEN** `definition.systemPrompt` is read
 - **THEN** it SHALL be a `string` containing the agent prompt body, `sandboxOrientCorePrompt`, and `sandboxAnalysisStepStandardsPrompt`
-- **AND** the `{{WORKING_DIR}}`/`{{ANALYSIS_ROOT}}` placeholders SHALL be replaced with concrete paths
+
+#### Scenario: The prompt is byte-identical across steps and leaks no per-step value
+
+- **GIVEN** the same sandbox agent built twice with different `SandboxStepCoords` (different run, step, and write prefix)
+- **WHEN** the two `systemPrompt` strings are compared
+- **THEN** they SHALL be byte-identical
+- **AND** neither SHALL contain a step path, a `runId`/`stepId`/`analysisId`, or an unsubstituted `{{…}}` placeholder
 
 ### Requirement: Planner catalog derives from the sandbox-agent meta
 

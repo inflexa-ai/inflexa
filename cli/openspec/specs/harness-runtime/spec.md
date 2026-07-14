@@ -176,7 +176,7 @@ filesystem factory, the exec-callback envelope helpers (`workflowIdFromExec`,
 envelope/done-marker types), the run-engine surface: sandbox-step and
 execute-analysis registration (with dep/input/result and agent-build context types),
 the sandbox agent catalog factory, plan schema and validation (`AnalysisPlanSchema`,
-`validatePlan`, `renderStepPrompt`), plan persistence (`upsertPlan`, `loadPlan`), run
+`validatePlan`), plan persistence (`upsertPlan`, `loadPlan`), run
 state (insert/query/update run rows, step-execution queries, the dedup-collision
 error), the run launcher, and the scheduled-workflow registration functions; the
 provider error surface (`ProviderError`, `toProviderError`); and the conversation

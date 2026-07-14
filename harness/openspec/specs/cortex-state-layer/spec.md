@@ -26,22 +26,36 @@ and `file_id` from upload sync).
 The `cortex_analysis_state` table SHALL store per-analysis singleton state with
 the columns: `analysis_id` (TEXT, PRIMARY KEY), `status` (TEXT, NOT NULL),
 `context` (TEXT, nullable), `billing_context` (JSONB, nullable),
-`data_profile_status` (TEXT, NOT NULL, default `'pending'`), `data_profile_error`
-(TEXT, nullable), `data_profile_started_at` (TEXT, nullable),
-`data_profile_completed_at` (TEXT, nullable), `data_profile_result` (JSONB,
-nullable), `seed_input_file_ids` (JSONB, nullable), `created_at` (TEXT, NOT
-NULL), `updated_at` (TEXT, NOT NULL).
+`data_profile_status` (TEXT, **nullable**, default `'pending'`),
+`data_profile_error` (TEXT, nullable), `data_profile_started_at` (TEXT,
+nullable), `data_profile_completed_at` (TEXT, nullable), `data_profile_result`
+(JSONB, nullable), `seed_input_file_ids` (JSONB, nullable), `created_at` (TEXT,
+NOT NULL), `updated_at` (TEXT, NOT NULL).
 
 `billing_context` SHALL hold the billing-attribution headers (`Record<string,
 string>`) as JSONB and is nullable — the OSS no-op billing path leaves it null.
 The `data_profile_status` column SHALL accept `'pending'`, `'running'`,
 `'completed'`, and `'failed'`; `'running'` covers both initial profiling and
 re-profiling, the distinction being made at the API layer by the presence of
-`data_profile_result`. The `data_profile_result` JSONB SHALL conform to `{
-summary: string; files: Array<{ path: string; description: string }>;
-inputFileIds: string[]; profiledAt: string }`. The table SHALL NOT have a
-`user_id` column — user identity is derived from the ambient credential's JWT
-`sub` claim at request time (the legacy `user_id` column is dropped on startup).
+`data_profile_result`. It SHALL also accept NULL, which means "no profile" —
+`clearDataProfile` writes it when an analysis's input set empties (see the
+data-profile-rerun spec), and startup SHALL drop the legacy NOT NULL constraint
+from databases created before the column became nullable.
+
+The `data_profile_result` JSONB SHALL hold the profiler's full output, not a
+summary of it: the dataset-level classification (`summary`, `domain`, `subtype`,
+`organism` with its taxon id and confidence, `tissue`, `cellType`, `condition`,
+`accessions`, `experimentalDesign`, `qualityAssessment`) and the per-file records
+(`path`, `description`, `dataType`, `format`, `rows`, `cols`, `tags`, `warnings`,
+`metrics`), alongside `inputFileIds`, `inputFiles`, and `profiledAt`. This row is
+the profile's only durable home — no profile file exists on disk — so the
+projection into it is total (see the data-profile-init spec). Every field past
+`summary`/`files`/`inputFileIds`/`profiledAt` SHALL be optional on read, so a
+snapshot written before the record was widened still renders.
+
+The table SHALL NOT have a `user_id` column — user identity is derived from the
+ambient credential's JWT `sub` claim at request time (the legacy `user_id` column
+is dropped on startup).
 
 #### Scenario: Analysis upserted without user_id column
 
@@ -62,8 +76,9 @@ inputFileIds: string[]; profiledAt: string }`. The table SHALL NOT have a
 
 - **WHEN** `completeDataProfile` runs after the data-profile task succeeds
 - **THEN** `data_profile_status` SHALL become `'completed'` and
-  `data_profile_result` SHALL be set with `summary`, `files`, `inputFileIds`, and
-  `profiledAt`
+  `data_profile_result` SHALL be set with the profiler's full output — the
+  dataset classification and the per-file records — alongside `inputFileIds`,
+  `inputFiles`, and `profiledAt`
 
 #### Scenario: Re-run preserves the prior profile result
 

@@ -22,12 +22,77 @@ storage and replay.
 (`maxOutputTokens(model)`). The loop never picks a cap; it recovers from any
 residual truncation (see the harness-agent-loop spec).
 
+**Prompt caching is a harness concept the seam translates.** `PromptCachePolicy` is
+vendor-neutral; `providers/prompt-cache.ts` is the single site that turns it into
+vendor wire options, so nothing upstream of the seam learns which vendor it is
+talking to. What a call cost — cache reads and cache writes included — comes back
+on `ChatResponse.usage`.
+
 Both `chat` and `embed` return a `ResultAsync` over the `ProviderError` union —
 a provider failure is a value in the error channel, never a thrown exception.
 The sole thrown control-flow exception is a client abort, re-raised verbatim
 outside the Result channel.
 
 ## Requirements
+
+### Requirement: Prompt caching is a vendor-neutral policy translated at one site
+
+The harness SHALL express prompt caching as `PromptCachePolicy` —
+`{ ttl: "5m" | "1h" }` to cache the request prefix (tools + system + message
+history) for that lifetime, or `"off"` to send no cache directive at all.
+`promptCacheProviderOptions(policy)` (`harness/src/providers/prompt-cache.ts`) SHALL
+be the ONLY place in the harness that names a vendor for caching: it SHALL return
+`undefined` for `"off"`, so the caller leaves `ChatRequest.providerOptions` unset
+rather than sending an empty bag, and otherwise SHALL emit a single request-level
+`cacheControl` directive in the provider's own namespace, letting the server place
+the breakpoint on the last cacheable block instead of the harness hand-placing
+per-block markers.
+
+The emitted options SHALL be safe on every provider: AI SDK `providerOptions` is a
+namespaced bag each provider reads only its own key from, so a directive for one
+vendor is inert — not an error — on another. A vendor that caches automatically
+(the OpenAI-compatible family does server-side prefix caching, unprompted) needs no
+directive, so the policy is a no-op for it.
+
+#### Scenario: An off policy sends no directive
+
+- **WHEN** `promptCacheProviderOptions("off")` is called
+- **THEN** it SHALL return `undefined`, and the request SHALL carry no `providerOptions`
+
+#### Scenario: A ttl policy emits one namespaced cache directive
+
+- **WHEN** `promptCacheProviderOptions({ ttl: "1h" })` is called
+- **THEN** it SHALL return a single provider-namespaced `cacheControl` directive carrying that ttl
+
+#### Scenario: The directive is inert on a provider that did not ask for it
+
+- **GIVEN** a request carrying a cache directive in one provider's namespace
+- **WHEN** it is sent to an OpenAI-compatible model
+- **THEN** the model SHALL ignore the foreign namespace and the call SHALL succeed
+
+### Requirement: Chat usage reports the cache breakdown
+
+`ChatResponse` SHALL carry an optional `usage: ChatUsage` with `inputTokens`,
+`outputTokens`, `cacheCreationInputTokens`, and `cacheReadInputTokens`, in
+harness-neutral names. `inputTokens` SHALL be the *total* billed prefix — cached and
+uncached alike — so a cache hit rate is `cacheReadInputTokens / inputTokens`, not a
+ratio against a separate uncached figure.
+
+Every field SHALL be optional, and absent SHALL mean "not reported", never "zero": a
+provider that reports no usage at all, or reports totals without a cache breakdown,
+is legitimate and SHALL NOT be normalized into zeros.
+
+#### Scenario: A cache hit is reported against the total prefix
+
+- **GIVEN** a provider reply whose prefix was served from the cache
+- **WHEN** its usage is read
+- **THEN** `cacheReadInputTokens` SHALL be a subset of `inputTokens`, not a figure beside it
+
+#### Scenario: A provider reporting no usage contributes nothing
+
+- **GIVEN** a provider that reports no token usage
+- **WHEN** the response is consumed
+- **THEN** `usage` (or its individual fields) SHALL be absent rather than zero
 
 ### Requirement: The provider owns the per-model output-token cap
 

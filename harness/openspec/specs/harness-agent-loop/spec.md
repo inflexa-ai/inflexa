@@ -49,6 +49,13 @@ salvage continuation whose only tools are the terminal tools, opened by a
 corrective nudge and namespaced (`salvage:…`) so a durable caller's cache keys
 do not collide with the first run's.
 
+**Prompt caching is a property of the run, not of the provider.** A loop re-sends
+its whole prefix — tools, system, and the transcript so far — on every iteration,
+so it breaks even on a cache by the second one. The policy therefore rides on
+`RunAgentOptions` (see the harness-providers spec for the policy type itself),
+which is exactly what keeps it off the one-shot LLM calls made elsewhere — those
+would pay the cache-write premium for a cache nothing ever reads back.
+
 ## Requirements
 
 ### Requirement: The loop preserves the four message-shape invariants
@@ -188,3 +195,35 @@ A sub-agent tool SHALL invoke `runAgent` with a child `Session` derived via `for
 - **GIVEN** the conversation loop dispatches the `literatureReviewer` tool
 - **WHEN** the tool invokes `runAgent`
 - **THEN** the child `Session` has `callPath` extended with `"literature-reviewer"`, the parent `Session` is unchanged, and the child transcript is not written to any message store
+
+### Requirement: The loop caches its prompt prefix by default
+
+`RunAgentOptions` SHALL accept an optional `promptCache: PromptCachePolicy`, defaulting to `DEFAULT_PROMPT_CACHE` (`{ ttl: "5m" }`) when the caller supplies none; a host whose endpoint ignores or charges badly for cache directives SHALL be able to pass `"off"`. The policy SHALL be translated to provider options ONCE per run, not per iteration, and the same options object SHALL be sent on every call — an identical request head is itself part of the cache contract, since the prefix must be byte-identical to be read back.
+
+#### Scenario: A run with no policy still caches
+
+- **WHEN** `runAgent` is invoked with no `promptCache`
+- **THEN** every LLM call it makes SHALL carry the 5-minute cache directive
+
+#### Scenario: A host opts out
+
+- **WHEN** `runAgent` is invoked with `promptCache: "off"`
+- **THEN** no LLM call it makes SHALL carry a cache directive
+
+### Requirement: Cache token usage is recorded per run
+
+`runAgent` SHALL accumulate the `ChatUsage` a provider reports across every LLM call the run makes — the forced wrap-up included — and record it on completion, keyed by `agent_id`, as counters for input tokens, output tokens, cache-read tokens, and cache-write tokens (alongside the iteration histogram and the cap-hit counter). Only what a provider actually reports SHALL be recorded: a provider that reports no usage SHALL contribute nothing rather than zero.
+
+These two cache counters are what make prompt caching observable at all. The hit rate for an agent type is `cache_read_tokens / input_tokens` (the harness's `inputTokens` being the total billed prefix, cache reads included), and a flat-zero read counter against a non-zero write counter is the runtime symptom of a defeated cache — either a shifting prefix or an endpoint that ignores cache directives outright.
+
+#### Scenario: A cached run records reads and writes separately
+
+- **GIVEN** a multi-iteration run whose provider reports cache creation on the first call and cache reads on the rest
+- **WHEN** the run completes
+- **THEN** both the cache-read and cache-write counters SHALL be recorded for that `agent_id`
+
+#### Scenario: A provider reporting no usage records no tokens
+
+- **GIVEN** a provider that reports no `usage`
+- **WHEN** the run completes
+- **THEN** no token counter SHALL be incremented for it — not even with zero
