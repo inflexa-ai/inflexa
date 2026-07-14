@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { rmSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { REFERENCE_DATA_CATALOG_VERSION, UnknownReferenceDatasetError, type ReferenceDataCatalog } from "@inflexa-ai/harness";
 import { err, ok } from "neverthrow";
@@ -7,33 +9,69 @@ import { err, ok } from "neverthrow";
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { downloadReferences, formatReferenceBytes, parseReferenceIds, runReferenceSetup } from "./commands.ts";
-import type { ReferenceCatalogSource } from "./store.ts";
+import { referenceStorePaths, type ReferenceCatalogSource } from "./store.ts";
 
-const fixture: ReferenceDataCatalog = {
-    version: REFERENCE_DATA_CATALOG_VERSION,
-    datasets: [
-        {
-            id: "demo",
-            version: "1",
-            title: "Demo",
-            description: "Fixture",
-            sourceUrl: "https://example.test/source",
-            license: { identifier: "CC0-1.0" },
-            recommendation: { group: "testing", recommended: true },
-            artifacts: [{ key: "demo/file", path: "file", bytes: 5, sha256: "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8" }],
+function sha(bytes: string): string {
+    return createHash("sha256").update(bytes).digest("hex");
+}
+
+/**
+ * Catalog fixtures. Every test here stops before the transfer (no ids, no consent, declined, or an
+ * unknown id), so no `fetch` seam is needed — nothing in this file may ever reach an upstream.
+ */
+function catalog(artifacts: ReferenceDataCatalog["datasets"][number]["artifacts"]): ReferenceDataCatalog {
+    return {
+        version: REFERENCE_DATA_CATALOG_VERSION,
+        datasets: [
+            {
+                id: "demo",
+                version: "1",
+                title: "Demo",
+                description: "Fixture",
+                sourceUrl: "https://example.test/source",
+                license: { identifier: "CC0-1.0" },
+                recommendation: { group: "testing", recommended: true },
+                artifacts,
+            },
+        ],
+    };
+}
+
+const PINNED_ARTIFACT = { integrity: "pinned", path: "file", url: "https://upstream.test/file", bytes: 5, sha256: sha("alpha") } as const;
+const UNPINNED_ARTIFACT = { integrity: "unpinned", path: "mutable", url: "https://upstream.test/mutable" } as const;
+
+function source(value: ReferenceDataCatalog): ReferenceCatalogSource {
+    return {
+        catalog: value,
+        resolveInstallPlan: (ids) => {
+            const unknown = ids.find((id) => id !== "demo");
+            if (unknown !== undefined) return err(new UnknownReferenceDatasetError(unknown, ["demo"]));
+            const dataset = value.datasets[0];
+            return ok({ catalogVersion: value.version, datasets: ids.length === 0 || dataset === undefined ? [] : [{ ...dataset, installPath: "demo/1" }] });
         },
-    ],
-};
+    };
+}
 
-const fixtureSource: ReferenceCatalogSource = {
-    catalog: fixture,
-    resolveInstallPlan: (ids) => {
-        const unknown = ids.find((id) => id !== "demo");
-        if (unknown !== undefined) return err(new UnknownReferenceDatasetError(unknown, ["demo"]));
-        const dataset = fixture.datasets[0];
-        return ok({ catalogVersion: fixture.version, datasets: ids.length === 0 || dataset === undefined ? [] : [{ ...dataset, installPath: "demo/1" }] });
-    },
-};
+const pinnedSource = source(catalog([PINNED_ARTIFACT]));
+
+/** Activate the pinned fixture on disk exactly as a completed install would leave it. */
+function seedIntactInstall(): void {
+    assertTestSandbox(env.refsDir);
+    const paths = referenceStorePaths(env.refsDir);
+    mkdirSync(join(paths.managed, "demo", "1"), { recursive: true });
+    mkdirSync(paths.receipts, { recursive: true });
+    writeFileSync(join(paths.managed, "demo", "1", "file"), "alpha");
+    writeFileSync(
+        join(paths.receipts, "demo.json"),
+        JSON.stringify({
+            version: 1,
+            datasetId: "demo",
+            datasetVersion: "1",
+            activatedAt: "2026-07-14T12:00:00.000Z",
+            artifacts: [{ path: "file", bytes: 5, sha256: sha("alpha"), integrity: "pinned" }],
+        }),
+    );
+}
 
 afterEach(() => {
     assertTestSandbox(env.refsDir);
@@ -48,21 +86,43 @@ describe("reference command policy", () => {
 
     test("headless downloads require ids and explicit consent before mutation", async () => {
         assertTestSandbox(env.refsDir);
-        const noIds = await downloadReferences({ ids: [], interactive: false, source: fixtureSource });
+        const noIds = await downloadReferences({ ids: [], interactive: false, source: pinnedSource });
         expect(noIds.isErr()).toBe(true);
-        const noConsent = await downloadReferences({ ids: ["demo"], interactive: false, source: fixtureSource });
-        expect(noConsent._unsafeUnwrapErr().message).toContain("--yes");
+        const noConsent = await downloadReferences({ ids: ["demo"], interactive: false, source: pinnedSource });
+        expect(noConsent._unsafeUnwrapErr().message).toBe("Downloading 5 B requires explicit consent; re-run with --yes.");
         expect(await Bun.file(env.refsDir).exists()).toBe(false);
     });
 
+    test("an unpinned artifact is quoted as upstream-determined rather than given an invented size", async () => {
+        const unsized = await downloadReferences({ ids: ["demo"], interactive: false, source: source(catalog([UNPINNED_ARTIFACT])) });
+        expect(unsized._unsafeUnwrapErr().message).toBe("Downloading 1 file of upstream-determined size requires explicit consent; re-run with --yes.");
+
+        const mixed = await downloadReferences({ ids: ["demo"], interactive: false, source: source(catalog([PINNED_ARTIFACT, UNPINNED_ARTIFACT])) });
+        expect(mixed._unsafeUnwrapErr().message).toBe("Downloading 5 B + 1 file of upstream-determined size requires explicit consent; re-run with --yes.");
+    });
+
+    test("--force turns an intact install back into bytes to fetch; without it there is nothing to do", async () => {
+        seedIntactInstall();
+        const intact = await downloadReferences({ ids: ["demo"], interactive: false, source: pinnedSource });
+        expect(intact._unsafeUnwrapErr().message).toBe("Downloading 0 B requires explicit consent; re-run with --yes.");
+
+        const forced = await downloadReferences({ ids: ["demo"], interactive: false, force: true, source: pinnedSource });
+        expect(forced._unsafeUnwrapErr().message).toBe("Downloading 5 B requires explicit consent; re-run with --yes.");
+    });
+
     test("a declined interactive download activates nothing", async () => {
+        const questions: string[] = [];
         const result = await downloadReferences({
             ids: ["demo"],
             interactive: true,
-            source: fixtureSource,
-            confirmDownload: async () => false,
+            source: pinnedSource,
+            confirmDownload: async (question) => {
+                questions.push(question);
+                return false;
+            },
         });
         expect(result._unsafeUnwrap()).toMatchObject({ declined: true, installed: [] });
+        expect(questions).toEqual([`Download 5 B of reference data into ${env.refsDir}?`]);
         expect(await Bun.file(env.refsDir).exists()).toBe(false);
     });
 

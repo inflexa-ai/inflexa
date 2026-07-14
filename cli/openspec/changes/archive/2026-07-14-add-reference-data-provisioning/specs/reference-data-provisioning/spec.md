@@ -25,12 +25,19 @@ The CLI installer SHALL write catalog-managed datasets only beneath `managed/<da
 
 ### Requirement: Reference options come from the harness catalog
 
-The CLI SHALL consume the harness-exported reference catalog and install-plan interface rather than defining a second list. `inflexa refs list` SHALL show each catalog dataset's id, version, description, total bytes, source and licensing links, recommendation/group metadata, and local state. The CLI's artifact adapter SHALL map plan artifact keys to the public distribution endpoint without changing their content identity or destination paths.
+The CLI SHALL consume the harness-exported reference catalog and install-plan interface rather than defining a second list. `inflexa refs list` SHALL show each catalog dataset's id, version, description, size, integrity class, source and licensing links, recommendation/group metadata, and local state. The CLI SHALL fetch every artifact from the upstream URL the catalog names and SHALL NOT provide any means — environment variable, flag, or config — of redirecting a fetch to a different origin.
+
+Because an `unpinned` artifact's size is known only to its mutable upstream, a displayed size SHALL distinguish bytes the catalog knows from files whose size the upstream determines, and SHALL NOT invent a total.
 
 #### Scenario: Catalog option is visible with links
 
 - **WHEN** `inflexa refs list` runs
-- **THEN** every downloadable option from the installed harness version is shown with its upstream source/licensing links and local installation state
+- **THEN** every downloadable option from the installed harness version is shown with its upstream source/licensing links, its integrity class, and its local installation state
+
+#### Scenario: The download source cannot be redirected
+
+- **WHEN** a user or operator wishes to install catalog data from somewhere other than its publisher
+- **THEN** the CLI offers no such configuration, and the only supported way to add other reference data is to place files under the store's `user/` namespace
 
 #### Scenario: Unknown id is rejected before download
 
@@ -39,26 +46,35 @@ The CLI SHALL consume the harness-exported reference catalog and install-plan in
 
 ### Requirement: Downloads are verified and dataset activation is atomic
 
-For each selected dataset, the CLI SHALL compute a missing-byte plan, download artifacts to installer-owned `.part` paths, verify each artifact's expected byte size and SHA-256 digest, stage every final file beneath one attempt directory, and activate the complete version directory only after all artifacts verify. It SHALL then atomically write a harness-compatible active receipt. A failed or interrupted attempt SHALL leave any previously active receipt/version unchanged and SHALL never expose a partially staged dataset as active managed content.
+For each selected dataset, the CLI SHALL download artifacts to installer-owned `.part` paths, verify every `pinned` artifact against the catalog's byte size and SHA-256 digest, stage every final file beneath one attempt directory, and activate the complete version directory only after all artifacts are accounted for. It SHALL then atomically write a harness-compatible active receipt recording the size and digest **observed** for each artifact. A failed or interrupted attempt SHALL leave any previously active receipt/version unchanged and SHALL never expose a partially staged dataset as active managed content, and SHALL NOT leave orphaned staging directories behind.
+
+Resuming a partial transfer SHALL be attempted only for a `pinned` artifact. An `unpinned` artifact SHALL be re-fetched whole, because its upstream may have replaced the file since the partial was written and appending to it would splice two different files into one that verifies against nothing.
 
 #### Scenario: Complete dataset activates
 
-- **WHEN** every artifact downloads and matches its catalog size and digest
-- **THEN** the complete immutable version appears under `managed/<id>/<version>` and its receipt records exactly those verified files
+- **WHEN** every artifact downloads, and every `pinned` artifact matches its catalog size and digest
+- **THEN** the complete version appears under `managed/<id>/<version>` and its receipt records the observed size, digest, and integrity class of each file
 
 #### Scenario: Digest mismatch preserves prior version
 
-- **WHEN** any downloaded artifact fails size or SHA-256 verification
+- **WHEN** any `pinned` artifact fails size or SHA-256 verification
 - **THEN** the command fails, the staged version is not activated, and the prior active receipt and version remain unchanged
 
-#### Scenario: Interrupted download is resumable but not visible
+#### Scenario: Interrupted pinned download is resumable but not visible
 
-- **WHEN** a transfer stops after writing part of an artifact
-- **THEN** resumable installer-owned partial state may remain, but no partial dataset appears as active managed reference data
+- **WHEN** a transfer stops after writing part of a `pinned` artifact
+- **THEN** resumable installer-owned partial state may remain and is resumed by range request, but no partial dataset appears as active managed reference data
+
+#### Scenario: A mutable upstream is never resumed into
+
+- **WHEN** a partial `.part` exists for an `unpinned` artifact
+- **THEN** the CLI discards it and fetches the whole file again rather than appending to bytes the upstream may have since replaced
 
 ### Requirement: Reference commands expose install, verification, and path operations
 
-The CLI SHALL provide `inflexa refs list`, `inflexa refs download [ids...]`, `inflexa refs verify [ids...]`, and `inflexa refs path`. Interactive download with no ids SHALL offer a multi-select. Before transfer, download SHALL show total missing bytes and require confirmation unless explicit non-interactive consent is present. Verify SHALL hash active managed files against the catalog and receipt and SHALL report missing, modified, and valid states without modifying them.
+The CLI SHALL provide `inflexa refs list`, `inflexa refs download [ids...]`, `inflexa refs verify [ids...]`, and `inflexa refs path`. Interactive download with no ids SHALL offer a multi-select. Before transfer, download SHALL show the missing size and require confirmation unless explicit non-interactive consent is present. Verify SHALL hash active managed files against their receipt and SHALL report missing, modified, and valid states without modifying them, naming for each file which guarantee was checked — the catalog's checksum for a `pinned` file, the checksum recorded at install for an `unpinned` one.
+
+`inflexa refs download --force` SHALL re-fetch and re-activate a dataset even when its active install is intact. This is the supported way to refresh an `unpinned` dataset, whose upstream may have moved on in a way no local inspection can detect.
 
 #### Scenario: Interactive selection shows cost before consent
 
@@ -68,7 +84,12 @@ The CLI SHALL provide `inflexa refs list`, `inflexa refs download [ids...]`, `in
 #### Scenario: Verification detects manual damage
 
 - **WHEN** an active managed file has been edited or removed
-- **THEN** `inflexa refs verify` reports the affected dataset and file as invalid and changes no bytes
+- **THEN** `inflexa refs verify` reports the affected dataset and file as invalid, names the repair command, exits non-zero, and changes no bytes
+
+#### Scenario: A mutable upstream is refreshed on request
+
+- **WHEN** an `unpinned` dataset is installed and intact, and the user runs `refs download <id> --force`
+- **THEN** the CLI re-fetches from the upstream and re-activates, replacing the receipt with the newly observed digests
 
 ### Requirement: Setup reuses the reference download handler
 
@@ -95,7 +116,14 @@ Headless setup SHALL download no reference bytes unless dataset ids and non-inte
 
 Cheap status inspection SHALL derive managed state from the catalog, receipts, and filesystem and SHALL report at least missing, installed, update available, partial, and invalid-receipt states. Absence or inconsistency SHALL NOT crash the CLI. Re-running download for a selected dataset SHALL repair installer-owned content through normal staged verification and activation.
 
+Deciding whether an install may be skipped as already-complete SHALL compare digests, not sizes. A size-only check cannot see a same-size corruption — a flipped byte, a bad sector, a hand-edit — and would skip the repair while reporting the dataset as installed, which is a false claim of success. Cheap listing MAY remain size-only, but an install SHALL NOT be skipped on that basis.
+
 #### Scenario: Receipt references a deleted file
 
 - **WHEN** a receipt names a managed file that is absent
 - **THEN** list reports a partial or damaged state and download can repair it without database surgery or changes to user content
+
+#### Scenario: Same-size corruption is repaired, not skipped
+
+- **WHEN** an installed artifact is corrupted in place without changing its byte length, and download is re-run for that dataset
+- **THEN** the CLI detects the digest mismatch, re-downloads and re-activates the dataset, and never reports it as already installed with nothing transferred
