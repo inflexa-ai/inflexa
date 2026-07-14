@@ -3,10 +3,11 @@ import type { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
 import { classifyProviderError } from "../providers/errors.js";
+import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../providers/prompt-cache.js";
 import { resultStep } from "./run-step.js";
-import type { AgentChat, ChatRequest } from "../providers/types.js";
+import type { AgentChat, ChatRequest, PromptCachePolicy } from "../providers/types.js";
 import { isToolError, type Tool, type ToolContext } from "../tools/define-tool.js";
-import { recordAgentRun } from "./metrics.js";
+import { addChatUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
 import type { AgentDefinition, EmitFn, EventSource, LoopMessage, RunStep } from "./types.js";
 
 export interface AgentFinish {
@@ -42,6 +43,18 @@ export interface RunAgentOptions {
     readonly runStep: RunStep;
     readonly formatStepName?: StepNameFormatter;
     readonly isFatalLoopError?: (err: unknown) => boolean;
+    /**
+     * Prompt-cache policy for every LLM call this run makes. Defaults to
+     * `DEFAULT_PROMPT_CACHE` (5m) — an agent loop always re-sends its prefix, so
+     * it breaks even by the second iteration. A host whose endpoint ignores or
+     * charges badly for cache directives passes `"off"`.
+     *
+     * The policy lives here, on the run, rather than on the provider, precisely
+     * so it applies to loops and *not* to the one-shot LLM calls made elsewhere
+     * (report generation, target-assessment steps): those would pay the
+     * cache-write premium for a cache nothing ever reads back.
+     */
+    readonly promptCache?: PromptCachePolicy;
 }
 
 export async function runAgent(agent: AgentDefinition, initial: readonly LoopMessage[], session: AgentSession, opts: RunAgentOptions): Promise<RunAgentResult> {
@@ -78,14 +91,22 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     let iterations = 0;
     let truncationRecoveries = 0;
 
+    // Resolved once, not per iteration: an identical options object across every
+    // call is itself part of the cache contract — the request prefix has to be
+    // byte-identical to be read back.
+    const providerOptions = promptCacheProviderOptions(opts.promptCache ?? DEFAULT_PROMPT_CACHE);
+    const usage: AgentRunUsage = {};
+
     for (let i = 0; i < agent.maxIterations; i++) {
         iterations = i + 1;
         const request: ChatRequest = {
             system: agent.systemPrompt,
             messages,
             tools: toolDefs,
+            providerOptions,
         };
         const reply = await resultStep(runStep)(formatStepName.llm(i), () => provider.chat(request, session, signal));
+        addChatUsage(usage, reply.usage);
         messages.push(reply.message);
 
         const toolCalls = toolCallParts(reply.message);
@@ -119,7 +140,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
 
         if (reply.finishReason !== "tool-calls") {
             await emit({ type: "iteration", source, index: i, final: true });
-            recordAgentRun({ agentId: agent.id, iterations, cappedOut: false });
+            recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
             return { messages, finish: { reason: reply.finishReason, cappedOut: false, truncationRecoveries } };
         }
 
@@ -141,12 +162,19 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         messages.push({ role: "tool", content: results });
     }
 
+    // Cache defeater (known; not fixed here). Emptying the tool set changes the
+    // very front of the request prefix — tool definitions are cached ahead of
+    // system and history — so this call reads *nothing* back from the cache and
+    // rewrites the whole prefix from scratch. It still carries the cache options
+    // because it is the one call whose write is pure waste, and the
+    // cache_write_tokens counter is what makes that waste visible.
     const wrapUp = await resultStep(runStep)(formatStepName.llm(agent.maxIterations), () =>
-        provider.chat({ system: agent.systemPrompt, messages, tools: {}, toolChoice: "none" }, session, signal),
+        provider.chat({ system: agent.systemPrompt, messages, tools: {}, toolChoice: "none", providerOptions }, session, signal),
     );
+    addChatUsage(usage, wrapUp.usage);
     messages.push(wrapUp.message);
     await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
-    recordAgentRun({ agentId: agent.id, iterations, cappedOut: true });
+    recordAgentRun({ agentId: agent.id, iterations, cappedOut: true, usage });
     return { messages, finish: { reason: "max_iterations", cappedOut: true, truncationRecoveries } };
 }
 

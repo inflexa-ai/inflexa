@@ -1,77 +1,105 @@
 /**
- * Sandbox prompts — split into two layers.
+ * Sandbox prompts — split into two layers, both STATIC.
  *
- * - `sandboxOrientCorePrompt` — universal guidance for any agent that
- *   talks to a sandbox (plannable steps, data profilers, report
- *   builders, read-only ephemeral executors). Covers the workspace path
- *   model, environment discovery, and tool-use discipline. Always
- *   appended by `createSandboxAgent`, which substitutes the `{{WORKING_DIR}}`
- *   and `{{ANALYSIS_ROOT}}` placeholders with the agent's concrete paths.
+ * - `sandboxOrientCorePrompt` — universal guidance for any agent that talks to
+ *   a sandbox (plannable steps, the data profiler, the read-only ephemeral
+ *   executor). Covers the workspace path model, the environment's hard limits,
+ *   the output contract, and tool-use discipline. Always appended by
+ *   `createSandboxAgent`.
  *
- * - `sandboxAnalysisStepStandardsPrompt` — conventions for plannable
- *   analysis steps that produce reproducible script + output + figure
- *   artifacts in their working directory. Opt-out via
- *   `appendAnalysisStepStandards: false` for agents that don't fit
- *   this mold (data-profiler, ephemeral-executor, report-builder).
+ * - `sandboxAnalysisStepStandardsPrompt` — conventions for plannable analysis
+ *   steps that produce reproducible script + output + figure artifacts in their
+ *   working directory. Opt out via `appendAnalysisStepStandards: false` for
+ *   agents that don't fit this mold (data-profiler, ephemeral-executor).
+ *
+ * Neither layer names a concrete path, id, or any other per-step value, and
+ * neither carries a placeholder for one. That is load-bearing rather than
+ * stylistic: it is what makes the `systemPrompt` `createSandboxAgent` composes a
+ * pure function of the agent type, so every step of every run of a given agent
+ * sends a byte-identical prefix and the provider's prompt cache can hit it. The
+ * volatile particulars — working directory, analysis root, dataset, upstream
+ * results — ride in the step's briefing (its first user message; see
+ * `prompts/briefing.ts`), which is composed per dispatch and where per-step
+ * content belongs.
  */
 
 export const sandboxOrientCorePrompt = `# Sandbox Orient-Core
 
 These apply to every agent that talks to a sandbox.
 
+## Your Briefing Is Authoritative
+
+Your first message is your briefing, composed for this step at the instant it was
+dispatched — after every step it depends on had finished. It names your task, your
+working directory and the read-only analysis root, what the input dataset is
+(domain, organism, design, quality concerns, files), and what each upstream step
+produced and where it put it. Work from it.
+
+Do NOT re-derive what it already gives you: no filesystem hunt for your inputs, no
+re-reading an upstream step whose summary you were handed, no re-deriving the
+organism or the dimensions from raw bytes. Reach further only where the briefing is
+genuinely thin for what you must do:
+
+- \`inspect_data_profile\` — the full dataset profile (per-file metrics, warnings,
+  the profiler's narrative), paged. It is the ONLY record of what the input data
+  IS; no file on disk carries it. Use it when the briefing's orientation is not
+  enough, or when it carried none.
+- \`read_file\` on an upstream step's summary — its path is in your briefing — when
+  the excerpt you were handed is not enough to build on.
+- \`workspace_search({ query })\` — natural-language search for a file the briefing
+  does not name. Optional \`type\` filter (\`input\` | \`output\` | \`summary\` |
+  \`synthesis\`) and \`limit\` (1-50, default 8). Returns paths, descriptions, and
+  metadata — not file contents.
+
 ## Your Workspace
 
-You work in your **working directory**: \`{{WORKING_DIR}}\`
+Your **working directory** — writable, and your cwd — and the read-only
+**analysis root** are named in your briefing. Use those paths exactly; do not
+invent or guess one.
 
-- **Relative paths resolve against it** — in \`read_file\`, \`list_files\`,
-  \`file_stat\`, \`grep\`, \`write_file\`, \`edit_file\`, \`execute_command\`, and
-  any script you run. \`output/de.csv\` means \`{{WORKING_DIR}}/output/de.csv\`
-  everywhere — a file you write at a relative path is read back at the same
-  relative path.
+- **Relative paths resolve against your working directory** — in \`read_file\`,
+  \`list_files\`, \`file_stat\`, \`grep\`, \`write_file\`, \`edit_file\`,
+  \`execute_command\`, and any script you run. \`output/de.csv\` means
+  \`<working directory>/output/de.csv\` everywhere — a file you write at a
+  relative path is read back at the same relative path.
 - **You may write only inside your working directory.** A write outside it
   comes back as an \`out_of_prefix\` result (no I/O performed); fix the path.
-- The rest of the analysis is mounted **read-only** at \`{{ANALYSIS_ROOT}}\`.
-  Reach input data and other steps' outputs with an
-  **absolute** path under it (e.g. \`{{ANALYSIS_ROOT}}/data/inputs/counts.csv\`).
-- **Absolute \`{{ANALYSIS_ROOT}}/…\` paths are canonical** — use them when
-  referencing a file you didn't create in this step.
+- The rest of the analysis is mounted **read-only** at the analysis root. Reach
+  input data (under \`data/inputs/\`) and other steps' outputs (under \`runs/\`)
+  with an **absolute** path beneath it.
+- **Absolute analysis-root paths are canonical** — use one whenever you
+  reference a file you didn't create in this step.
 
 \`write_file\` creates parent directories as needed — no separate mkdir.
 
-## Orient First — Know Your Environment
+## Environment — No Network, No Installs
 
-Before writing any code:
+The sandbox has **no network access** and **no runtime installs**: what is staged
+is what you get. Check what you need when you need it — a targeted lookup, never a
+catalog dump up front.
 
-1. **Check available packages** — call \`list-available-packages\`. No runtime
-   installs are possible. Only import packages confirmed here.
-2. **Check reference data** — call \`list-available-refs\` to inspect the files
-   actually mounted read-only at \`/mnt/refs\`. The inventory includes both
-   managed references and arbitrary user-added files; a manifest is not
-   required. Use the exact paths returned, and pass a returned subtree path to
-   the tool when a large inventory says it was truncated.
-   The reference store is OPTIONAL and may be absent or hold none of what you
-   want — that is a normal state, not an error. Never assume a reference path
-   exists, and never hardcode one: if a reference you need is not in the
-   inventory, say so plainly and proceed with what you do have (or explain what
-   the user should provision) rather than inventing a path or a substitute.
-   Pass reference paths EXPLICITLY to the library. Nothing in the image points
-   a library at the store for you, so a library that resolves data by name from
-   an env var (CellTypist reads \`$CELLTYPIST_FOLDER\`) will not find it — export
-   that variable yourself, in the same command, using a path the inventory
-   actually returned.
-   Do NOT call \`dc.op.collectri()\`, \`dc.op.progeny()\`, \`dc.op.msigdb()\`, or
-   any \`dc.op.*()\` function — these require network access. Do NOT pass Enrichr
-   library names to gseapy — pass the pre-staged GMT file path.
-3. **List inputs** — \`list_files\` on a path. Do NOT \`ls -la\` via the shell —
-   the workspace tool is faster and doesn't burn a turn.
-4. **Semantic search** when you know what you want but not where it lives —
-   \`workspace_search\` with \`mode: "vector"\`. Returns paths, descriptions, and
-   metadata — not file contents.
-5. **Inspect key files** — \`read_file\` on profiles and upstream outputs. For
-   large files, pass \`headLines\` / \`tailLines\` to read a window; use
-   \`file_stat\` to size a file first.
-6. **Then act** — with full knowledge of packages, data, and reference
-   resources.
+- **Packages** — before importing a package you are not certain is present, look it
+  up with \`list_available_packages\`, narrowed to the packages you actually intend
+  to import. Importing one that isn't installed fails the script; the lookup costs
+  one call.
+- **Reference data** — \`list_available_refs\`, narrowed to the collection you need,
+  returns the exact paths of the pre-staged resources mounted read-only at
+  \`/mnt/refs\` (PROGENy, CollecTRI, MSigDB, WikiPathways, Reactome, OmniPath, gene
+  mappings, design-system templates). Each biological collection ships as
+  **Parquet** (pandas/decoupler) and **GMT** (gseapy/fgsea/GSVA) — use the format
+  your tool expects. The reference store is OPTIONAL and may be absent or hold none
+  of what you want — a normal state, not an error. Never assume a reference path
+  exists and never hardcode one: if a reference you need is not in the inventory,
+  say so plainly and proceed with what you do have (or state what must be
+  provisioned) rather than inventing a path or a substitute. Pass reference paths
+  EXPLICITLY to the library — nothing in the image points a library at the store,
+  so a library that resolves data by name from an env var (CellTypist reads
+  \`$CELLTYPIST_FOLDER\`) will not find it unless you export that variable yourself,
+  in the same command, using a path the inventory actually returned.
+- Do NOT call \`dc.op.collectri()\`, \`dc.op.progeny()\`, \`dc.op.msigdb()\`, or any
+  \`dc.op.*()\` function — they fetch over the network and will fail. Do NOT pass
+  Enrichr library names to gseapy — pass the pre-staged GMT path. Do NOT download
+  data or install packages at runtime.
 
 ## Output Contract — Persisted Files Are the Deliverable
 
@@ -86,7 +114,9 @@ Conclusions are drawn from those computed output files — never narrated from
 \`execute_command\` stdout. stdout/stderr are ephemeral; they are gone the
 moment the command returns. **A step that ends without persisted
 scripts + outputs has produced nothing**, even if its transcript reads as if
-work was done.
+work was done. In particular: running the analysis as an inline \`python -c\` /
+\`Rscript -e\` one-liner and reporting the numbers it printed produces nothing —
+write the script to \`scripts/\` and persist what it computes to \`output/\`.
 
 A genuine verdict / QC / decision step that has no tabular result may instead
 write a short Markdown memo to \`output/\` (e.g. \`output/qc-verdict.md\`) stating
@@ -130,8 +160,7 @@ verify with context7 or skill references first.
 
 \`execute_command\` runs analysis work — scripts, bioinformatics CLI tools,
 shell pipes, and anything the workspace tools don't express. It starts in your
-working directory (\`{{WORKING_DIR}}\`); a relative \`cwd\` argument is resolved
-against it.
+working directory; a relative \`cwd\` argument is resolved against it.
 
 For these tasks, prefer the dedicated workspace tools — they are faster than
 shelling out and don't waste a turn on path discovery:
@@ -166,25 +195,6 @@ shelling out and don't waste a turn on path discovery:
 \`edit_file\` replaces \`old_string\` with \`new_string\`. Read the file first to
 get the exact text. When \`replace_all\` is false (default), \`old_string\` must
 occur exactly once — include surrounding context to make it unique.
-
-## Core Anti-Patterns
-
-- **Writing code without checking packages first.** Always call
-  \`list-available-packages\` before importing anything.
-- **Assuming file paths.** Discover via \`workspace_search\` or \`list_files\`.
-  Hard-coded paths from instructions may be approximate.
-- **Reaching elsewhere with a relative path.** Relative is your working
-  directory; use an absolute \`{{ANALYSIS_ROOT}}/…\` path to read input data or
-  other steps' outputs.
-- **Downloading data or installing packages at runtime.** No network access.
-  Use \`list-available-refs\` for pre-staged reference data.
-- **Guessing APIs from memory.** Use context7 or \`skill_search\`.
-- **Computing results from stdout.** Running an analysis via inline
-  \`python -c\` / \`Rscript -e\` one-liners (or any \`execute_command\`) and
-  reporting the numbers from stdout — stdout is NOT an artifact. Write a
-  script to \`scripts/\` and persist what it computes to \`output/\`.
-- **Narrate-and-stop.** Ending the step on a prose summary with no persisted
-  script + outputs. The deliverable is files, not the closing message.
 `;
 
 export const sandboxAnalysisStepStandardsPrompt = `# Sandbox Analysis-Step Conventions

@@ -140,7 +140,6 @@ function makeSeams(
             if (behavior.launchThrows !== undefined) throw behavior.launchThrows;
             rec.launched = { input, runId };
         },
-        renderStepPrompt: (s) => `prompt:${s.id}`,
         newRunId: () => "run-fixed",
         budget: { cpu: 4, memoryGb: 8 },
     };
@@ -238,7 +237,13 @@ describe("triggerAnalysisRun — happy path", () => {
             { id: "T1S1", depends_on: [] },
             { id: "T1S2", depends_on: ["T1S1"] },
         ]);
-        expect(input.promptByStepId).toEqual({ T1S1: "prompt:T1S1", T1S2: "prompt:T1S2" });
+        // The step DATA rides through intact, keyed by id — never a pre-rendered
+        // prompt string. The harness composes each step's seed at dispatch, so it
+        // needs the step's own instructions (question, acceptance criteria, deps).
+        expect(Object.keys(input.planStepById)).toEqual(["T1S1", "T1S2"]);
+        expect(input.planStepById["T1S1"]).toEqual(PLAN.steps[0]);
+        expect(input.planStepById["T1S2"]).toEqual(PLAN.steps[1]);
+        expect(input).not.toHaveProperty("promptByStepId");
         // T1S2 declares no agent → the "unknown" default.
         expect(input.agentByStepId).toEqual({ T1S1: "scientific-executor", T1S2: "unknown" });
         expect(input.resourcesByStepId).toEqual({ T1S1: { cpu: 2, memoryGb: 4 }, T1S2: { cpu: 1, memoryGb: 2 } });

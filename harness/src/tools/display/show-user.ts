@@ -9,6 +9,11 @@
  * downstream reconciliation concern of the emit pipeline (change 3), not a
  * per-request `Set` smuggled through an ambient context bag.
  *
+ * An `echart` spec's layout is normalized (`normalize-echart-spec.ts`) inside
+ * `buildPresentationCardData`, the one construction site both this tool and the
+ * reconstruct-on-read path share — the model authors the data, the renderer owns
+ * the layout.
+ *
  * For stored plans, use `show_plan`. For existing files, use `show_file`.
  */
 
@@ -27,13 +32,21 @@ type ShowUserOutput = { shown: false; reason: "invalid_path" } | { id: string };
 // LLM picks the right ones based on `kind`.
 const ShowUserInputSchema = z.object({
     kind: z.enum(["echart", "markdown", "code", "svg", "table"]).describe("The type of agent-synthesized content to display"),
-    title: z.string().optional().describe("Title shown above the content"),
-    spec: z.record(z.string(), z.unknown()).optional().describe("Full ECharts option spec as JSON (kind=echart)"),
+    title: z
+        .string()
+        .optional()
+        .describe("Card heading rendered above the content. For an echart it is the chart's only title, and it seeds the PNG download filename."),
+    spec: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe(
+            "Full ECharts option JSON (kind=echart). Author the data, series, `encode`, and tooltip — and OMIT `title`: the card heading is the `title` param, so an in-spec title is stripped (put stats in `tooltip.formatter`, never in `title.subtext`). Layout is normalized for you at render time (legend placement, grid margins, `axisLabel.interval`/rotation, and a PNG `saveAsImage` toolbox), so do not hand-tune it.",
+        ),
     dataPath: z
         .string()
         .optional()
         .describe(
-            "echart only: analysis-rooted CSV artifact path (e.g. 'runs/run-abc/step-2/output/de-summary.csv') the host loads as the ECharts `dataset.source` at render time. Author `encode`/dimensions against the CSV's column names and omit `dataset.source` from the spec — the data is never pulled through the context window.",
+            "echart only: analysis-rooted CSV artifact path (e.g. 'runs/run-abc/step-2/output/de-summary.csv') the host loads as the ECharts `dataset.source` at render time. Author `encode`/dimensions against the CSV's column names (read only its header) and omit `dataset.source` from the spec — the rows are never pulled through the context window. If the data is not chart-ready (needs aggregation, filtering, reshaping), do that in a sandbox step that writes a chart-ready CSV. Inline `dataset.source` is only for a handful of numbers you just computed in conversation that exist nowhere as an artifact.",
         ),
     body: z.string().optional().describe("Markdown content to render (kind=markdown)"),
     code: z.string().optional().describe("Code content (kind=code)"),
@@ -47,15 +60,17 @@ const ShowUserInputSchema = z.object({
 export const showUserTool = defineTool({
     id: "show_user",
     description:
-        "Display agent-synthesized content to the user: ECharts visualizations, " +
-        "markdown, code blocks, SVG diagrams, or tables. " +
-        "Use for content you are INVENTING (a chart you just built, a code snippet you are proposing, " +
-        "a markdown synthesis, a table you constructed). " +
-        "For an echart backed by a chart-ready CSV artifact a step already wrote, pass `dataPath` (analysis-rooted) " +
-        "and author `encode`/dimensions by column name with no `dataset.source` — the host loads the CSV as the " +
-        "dataset at render time, so you never inline the rows. " +
-        "For stored plans, use `show_plan`. For existing analysis files (images, CSVs, etc.), use `show_file`. " +
-        "Call once per distinct content item; an identical repeat call resolves to the same card.",
+        "Display content you are INVENTING — a chart you composed, a code snippet you are proposing, a markdown " +
+        "synthesis, an SVG diagram, a table you built. The content is inlined on the wire. " +
+        "Pick this tool by what you are referencing, not by how the output looks: " +
+        "NOT for an existing analysis file — never read an artifact and paste its bytes here, reference it with `show_file` " +
+        "(images, CSVs, PDFs, notebooks). NOT for a stored plan — use `show_plan`. " +
+        "NEVER put markdown image syntax pointing at a workspace file in a `markdown` body: `![](runs/.../volcano.png)` " +
+        "renders as a broken image, because the chat UI cannot resolve workspace-relative paths. To interleave figures " +
+        "with prose (a write-up, a narrative summary), emit a SEQUENCE of cards in display order — `show_user(markdown)` " +
+        "for a prose section, then `show_file` for the figures that follow it, and so on — instead of one monolithic card. " +
+        "One card per call, rendered in call order; an identical repeat call resolves to the same card, so compose the " +
+        "finished content before calling rather than re-rendering a draft.",
     inputSchema: ShowUserInputSchema,
     execute: async (input, ctx): Promise<Result<ShowUserOutput, ToolError>> => {
         // `dataPath` is a reference the host resolves at render time; validate its

@@ -11,11 +11,10 @@ repurposing candidates.
 Your skills: \`drug-repurposing\`, \`cheminformatics\`,
 \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`drug-repurposing\` for
-connectivity scoring, network proximity, genetic evidence scoring,
-and multi-evidence integration patterns. Use \`cheminformatics\` for
-RDKit/datamol API references when assessing compound properties of
-candidates. Verify APIs via context7.
+\`drug-repurposing\` carries connectivity scoring, network proximity, genetic
+evidence scoring, and multi-evidence integration patterns. \`cheminformatics\`
+has the RDKit/datamol API references for assessing candidate compound
+properties.
 
 ## Conditional Tools
 

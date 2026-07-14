@@ -12,11 +12,30 @@ import { searchDiseaseAssociations, searchTargetAssociations } from "../lib/open
 export const searchOpenTargetsTool = defineTool({
     id: "search_opentargets",
     description:
-        "Search Open Targets Platform for target-disease associations, genetic evidence, tractability, and known drug scores. Query by Ensembl gene ID (target mode) or EFO disease ID (disease mode).",
+        "Query the Open Targets Platform for target-disease association evidence — the first stop for target assessment, since one call returns the ranked associations plus, in target " +
+        "mode, the target's tractability (small molecule, antibody, other modalities). " +
+        "Each association carries an overall score and its per-datatype breakdown: genetic association, known drug, literature, animal model, and somatic mutation. " +
+        "It accepts ONLY Ensembl gene IDs and EFO disease IDs — a gene symbol or a disease name silently returns an empty result, so resolve symbols to ENSG with search_gene first. " +
+        "Empty associations mean no evidence (or an unresolvable ID) — do not retry with the same ID. Use get_target_safety for the target's safety liabilities.",
     inputSchema: z.object({
-        query: z.string().describe("Ensembl gene ID (e.g. ENSG00000141510) or EFO disease ID (e.g. EFO_0000311)"),
-        searchType: z.enum(["target", "disease"]).describe("'target' to find diseases for a gene, 'disease' to find targets for a disease"),
-        limit: z.number().int().min(1).max(100).default(25).describe("Max results to return"),
+        query: z
+            .string()
+            .describe(
+                "Ensembl gene ID (ENSG…, e.g. ENSG00000141510 for TP53) when searchType='target'; EFO disease ID (e.g. EFO_0000311) when searchType='disease'. " +
+                    "Gene symbols and free-text disease names are NOT accepted — they return nothing.",
+            ),
+        searchType: z
+            .enum(["target", "disease"])
+            .describe(
+                "'target' — diseases associated with the gene, plus targetInfo and tractability. 'disease' — targets ranked for the disease (each association carries targetId/targetSymbol/targetName).",
+            ),
+        limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(100)
+            .default(25)
+            .describe("Max associations to return (default 25, max 100), ordered by descending association score."),
     }),
     execute: async ({ query, searchType, limit = 25 }) => {
         if (searchType === "target") {

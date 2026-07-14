@@ -106,23 +106,34 @@ export function createSearchCtxHazardTool(deps: { apiKey: string }) {
     return defineTool({
         id: "search_ctx_hazard",
         description:
-            "Search EPA CTX Hazard APIs (ToxValDB, ToxRefDB) for toxicological hazard data on a chemical. " +
-            "Returns in-vivo toxicity values (NOAELs, LOAELs, LD50s, BMDs), " +
-            "genetox summaries, and cancer classifications. " +
-            "Use to assess toxicological hazard profile for safety evaluation. " +
-            "Requires EPA_CCTE_API_KEY environment variable.",
+            "Search EPA CTX Hazard APIs (ToxValDB, ToxRefDB) for a chemical's in-vivo toxicological hazard data — the points of departure a safety evaluation rests on. " +
+            "Returns, per requested dataType: ToxValDB dose-response rows (toxvalType such as NOAEL/LOAEL/LD50/BMD, with value, units, study type and duration, species, exposure route, " +
+            "and effect), genotoxicity assay summaries, and cancer classifications. " +
+            "This is in-vivo hazard — for in-vitro assay bioactivity use search_toxcast, for exposure and toxicokinetics use search_ctx_exposure. " +
+            "Requires EPA_CCTE_API_KEY — a missing key fails the call terminally: do NOT retry, report the missing key and continue without EPA data. " +
+            "found: false, or a present-but-empty category, is valid no-data — do not retry.",
         inputSchema: z.object({
-            query: z.string().describe("Chemical identifier: DTXSID (e.g. DTXSID7020182), CASRN (e.g. 80-05-7), " + "or chemical name (e.g. bisphenol A)"),
+            query: z
+                .string()
+                .describe(
+                    "Chemical identifier. A DTXSID (e.g. 'DTXSID7020182') is used directly; a CASRN (e.g. '80-05-7') or chemical name (e.g. 'bisphenol A') is resolved by EXACT match.",
+                ),
             dataType: z
                 .enum(["toxval", "genetox", "cancer", "all"])
                 .default("all")
                 .describe(
-                    "'toxval' for ToxValDB dose-response data (NOAELs, LOAELs, LD50s), " +
-                        "'genetox' for genotoxicity summaries, " +
-                        "'cancer' for cancer classifications, " +
-                        "'all' for combined results",
+                    "'toxval' — ToxValDB dose-response values (NOAELs, LOAELs, LD50s, BMDs). " +
+                        "'genetox' — genotoxicity assay summaries. " +
+                        "'cancer' — cancer classifications (IARC/EPA/NTP and similar). " +
+                        "'all' (default) — fetches all three concurrently.",
                 ),
-            limit: z.number().int().min(1).max(100).default(30).describe("Max results per category"),
+            limit: z
+                .number()
+                .int()
+                .min(1)
+                .max(100)
+                .default(30)
+                .describe("Max rows per category (default 30, max 100). Applies to toxval and genetox only — cancer always returns every row."),
         }),
         execute: async ({ query, dataType = "all", limit = 30 }): Promise<Result<CtxHazardResult, ToolError>> => {
             const headers = getEpaCcteHeaders(deps.apiKey);

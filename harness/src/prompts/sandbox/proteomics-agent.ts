@@ -11,11 +11,8 @@ experimental design.
 
 Your skills: \`proteomics\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`proteomics\` for decision
-trees and API references (DEP, MSstats, MSstatsTMT, limma, Olink/NPX,
-SomaScan). Verify platform-specific APIs via context7 before writing
-code — platform quirks (Olink NPX pre-normalization, TMT plex effects)
-matter.
+API references in \`proteomics\`: DEP, MSstats, MSstatsTMT, limma, Olink/NPX,
+SomaScan.
 
 ## Method Selection (Summary)
 
@@ -79,10 +76,6 @@ matter.
 - Skipping batch assessment in multi-plate/multi-plex studies.
 
 ## Required Output Files
-
-Write your scripts to \`scripts/\` and persist what they compute — these files
-are the deliverable, not the closing message. Build the pipeline incrementally
-across several scripts/steps; do not emit one giant script in a single write.
 
 - Processed protein matrix: AnnData \`.h5ad\` (and CSV with UniProt +
   gene symbol row identifiers).

@@ -26,13 +26,19 @@ export function createShowPlanTool(pool: Pool) {
     return defineTool({
         id: "show_plan",
         description:
-            "Display a previously generated plan in chat by its planId. " +
-            "Use when the user asks to see a plan again, or to reference a historical plan. " +
-            "Get planIds from `inspect-run` (each run carries its planId) or `generatePlan` (newly created). " +
-            "The plan content is embedded in the chat part so the UI renders it directly.",
+            "Display a STORED plan in chat by its planId. The plan is loaded from storage and embedded in the card, " +
+            "so the UI renders it directly. Use it to present the plan `generate_plan` just produced, and when the user " +
+            "asks to see an earlier plan again. " +
+            "Pick this tool by what you are referencing, not by how the output looks: " +
+            "NOT for a plan you are drafting in conversation (that is `generate_plan`), NOT for other synthesized content " +
+            "(`show_user`), NOT for analysis files (`show_file`). Never re-type a plan's steps into a `show_user` markdown " +
+            "card — that renders a second, divergent copy of the same plan.",
         inputSchema: z.object({
-            planId: z.string().regex(PLAN_ID_REGEX, "planId must match pln-<8hex>").describe("Plan ID from generatePlan or inspect-run"),
-            title: z.string().optional().describe("Optional display heading"),
+            planId: z
+                .string()
+                .regex(PLAN_ID_REGEX, "planId must match pln-<8hex>")
+                .describe("Plan ID (`pln-<8hex>`) from `generate_plan` (newly created) or `inspect_run` (each run carries the planId it ran)"),
+            title: z.string().optional().describe("Optional card heading; defaults to the plan's own title"),
         }),
         execute: async ({ planId, title }, ctx): Promise<Result<ShowPlanOutput, ToolError>> => {
             const resourceId = scopeResource(ctx.session.scope).resourceId;

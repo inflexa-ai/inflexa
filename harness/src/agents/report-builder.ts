@@ -20,6 +20,7 @@
 import type { AgentDefinition } from "../loop/types.js";
 import type { Tool } from "../tools/define-tool.js";
 import { reportBuilderPrompt } from "../prompts/report-builder.js";
+import { composeSystemPrompt } from "./system-prompt.js";
 
 export const REPORT_BUILDER_AGENT_ID = "report-builder";
 
@@ -40,7 +41,7 @@ export interface CreateReportBuilderAgentDeps {
 export function createReportBuilderAgent(deps: CreateReportBuilderAgentDeps): AgentDefinition {
     return {
         id: REPORT_BUILDER_AGENT_ID,
-        systemPrompt: reportBuilderPrompt,
+        systemPrompt: composeSystemPrompt(reportBuilderPrompt),
         model: deps.model,
         tools: deps.tools,
         maxIterations: REPORT_BUILDER_MAX_ITERATIONS,

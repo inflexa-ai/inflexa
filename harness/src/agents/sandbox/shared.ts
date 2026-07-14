@@ -8,8 +8,8 @@
  * the workspace mutate trio (`execute_command`, `write_file`, `edit_file`)
  * bound to the shared `SandboxClient` and the step's `allowedWritePrefix`,
  * the workspace read tools (`read_file`, `grep`) over the shared
- * `WorkspaceFilesystem`, and the bio/literature/context7/run-inspection
- * tools its `meta.tools` allowlist names.
+ * `WorkspaceFilesystem`, `inspect_data_profile` over the shared `Pool`, and the
+ * bio/literature/context7/run-inspection tools its `meta.tools` allowlist names.
  *
  * Tool resolution is a single registry lookup — every name in `meta.tools`
  * must map to a concrete `Tool`; unknown names throw at composition time
@@ -37,6 +37,9 @@ import { queryDocsTool, resolveLibraryIdTool } from "../../tools/research/contex
 
 // Run-inspection (dependency-bearing).
 import { createInspectRunTool } from "../../tools/research/inspect-run.js";
+
+// Data-profile retrieval (dependency-bearing) — always-on, see `createSandboxAgent`.
+import { createInspectDataProfileTool } from "../../tools/research/inspect-data-profile.js";
 
 // Bio leaf tools.
 import {
@@ -153,9 +156,9 @@ export interface SandboxAgentPromptOptions {
 }
 
 /**
- * Resolve `meta.tools` into the bio/research tools record. Workspace
- * read/mutate tools are added by `createSandboxAgent` regardless of meta
- * — they are the always-on substrate, not in the allowlist.
+ * Resolve `meta.tools` into the bio/research tools record. The workspace
+ * read/mutate tools and `inspect_data_profile` are added by `createSandboxAgent`
+ * regardless of meta — they are the always-on substrate, not in the allowlist.
  */
 function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxToolName[]): Tool[] {
     const ncbi = createNcbiTools(deps.bioKeys);
@@ -291,29 +294,38 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] 
 
 /**
  * Build one sandbox `AgentDefinition`. The system prompt is composed once
- * (SOUL kernel + agent body + sandbox standards) — no processors, no
- * conversational layer (sandbox agents are not user-facing). Tools are
- * resolved against the closed allowlist; the workspace surface is always
- * wired regardless of meta.
+ * (SOUL execution core + agent body + sandbox standards) — no processors, and
+ * neither human-facing SOUL layer: a sandbox agent is headless, so the identity
+ * and conversational layers are dead weight in its context while every hard
+ * guardrail it does need rides in the execution core. Tools are resolved
+ * against the closed allowlist; the workspace surface is always wired
+ * regardless of meta.
+ *
+ * The composed `systemPrompt` is a **pure function of the agent type** — nothing
+ * from `deps.step` reaches it, so two steps of one run, and two runs of one
+ * analysis, send a byte-identical ~20k-char prefix that the provider's prompt
+ * cache can actually reuse. Keep it that way: a single interpolated id or path
+ * makes every step's prefix unique again, and each step pays a full cache write
+ * and reads nothing back. Per-step values belong in the step's briefing (its
+ * first user message — see `prompts/briefing.ts`), which names the working
+ * directory, the analysis root, the dataset, and what each dependency produced.
  */
 export function createSandboxAgent(deps: SandboxAgentDeps, meta: AgentMeta, body: string, opts: SandboxAgentPromptOptions = {}): AgentDefinition {
     const appendStandards = opts.appendAnalysisStepStandards ?? true;
     const sandboxLayer = appendStandards ? [sandboxOrientCorePrompt, sandboxAnalysisStepStandardsPrompt] : [sandboxOrientCorePrompt];
     const agentBody = [body, ...sandboxLayer].map((s) => s.trim()).join("\n\n");
 
-    // Substitute the concrete in-sandbox paths the agent sees so the orient-core
-    // path model is accurate per step (see the harness-workspace-tools spec), not boilerplate prose.
-    const analysisRoot = `/${deps.step.analysisId}`;
-    const workingDir = toSandboxPath(deps.step.workspaceRoot, deps.step.analysisId, deps.step.allowedWritePrefix);
-    const resolvedBody = agentBody.split("{{WORKING_DIR}}").join(workingDir).split("{{ANALYSIS_ROOT}}").join(analysisRoot);
-
-    const systemPrompt = composeSystemPrompt(resolvedBody, {
-        includeConversationalStyle: false,
-    });
+    const systemPrompt = composeSystemPrompt(agentBody);
 
     const skillTools = deps.skillsDir ? Object.values(createSkillTools({ skillsDir: deps.skillsDir, skills: meta.skills })) : [];
     const tools: Tool[] = [
         ...buildWorkspaceTools(deps, opts.readOnly ?? false),
+        // Always-on, not in the `meta.tools` allowlist: the data profile is the only
+        // record of what the analysis's input dataset IS, and no file carries it (the
+        // profiler's scratch tree is deleted on completion). An agent that cannot pull
+        // it has no fallback but to re-derive organism, dimensions, and format from the
+        // raw bytes — so every sandbox agent gets it, whatever its meta declares.
+        createInspectDataProfileTool(deps.pool),
         ...skillTools,
         ...resolveSandboxTools(deps, meta.tools),
         ...(deps.blockerHolder ? [createReportBlockerTool(deps.blockerHolder)] : []),

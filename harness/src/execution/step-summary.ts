@@ -32,6 +32,7 @@ import { passthroughStep } from "../loop/run-step.js";
 import type { AgentDefinition, LoopMessage } from "../loop/types.js";
 import type { AgentChat } from "../providers/types.js";
 import { stepSummaryPrompt } from "../prompts/execute-analysis/step-summary.js";
+import { composeSystemPrompt } from "../agents/system-prompt.js";
 import { createReadFileTool } from "../tools/workspace/read-file.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { StepSummarySchema, type StepSummary } from "../schemas/step-summary.js";
@@ -102,7 +103,7 @@ export async function generateStepSummary(opts: GenerateStepSummaryOptions): Pro
 
     const writer: AgentDefinition = {
         id: SUMMARY_AGENT_ID,
-        systemPrompt: SYSTEM_PROMPT,
+        systemPrompt: composeSystemPrompt(SYSTEM_PROMPT),
         model: opts.modelId,
         tools: [createReadFileTool(opts.workspaceFs, opts.workingDir)],
         maxIterations: opts.maxIterations ?? DEFAULT_MAX_ITERATIONS,

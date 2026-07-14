@@ -20,9 +20,8 @@ Compositionality awareness governs every statistical decision you make.
 
 Your skills: \`microbiome\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`microbiome\` for decision
-trees and API references (DADA2, phyloseq, vegan, ANCOM-BC2, ALDEx2,
-MaAsLin2, MetaPhlAn, HUMAnN, PICRUSt2). Verify APIs via context7.
+API references in \`microbiome\`: DADA2, phyloseq, vegan, ANCOM-BC2, ALDEx2,
+MaAsLin2, MetaPhlAn, HUMAnN, PICRUSt2.
 
 ## Method Selection (Summary)
 
@@ -93,10 +92,6 @@ MaAsLin2, MetaPhlAn, HUMAnN, PICRUSt2). Verify APIs via context7.
   sampling zeros are different things.
 
 ## Required Output Files
-
-Write your scripts to \`scripts/\` and persist what they compute — these files
-are the deliverable, not the closing message. Build the pipeline incrementally
-across several scripts/steps; do not emit one giant script in a single write.
 
 - Feature table: AnnData \`.h5ad\` with taxa as \`.var\`, samples as
   \`.obs\`, counts as \`.X\`, full taxonomy in \`.var\` columns.

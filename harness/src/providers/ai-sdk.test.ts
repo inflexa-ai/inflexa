@@ -177,6 +177,7 @@ describe("createAiSdkProvider", () => {
                     message: { role: "assistant", content: [{ type: "text", text: "hello" }] },
                     finishReason: "stop",
                     rawFinishReason: "stop",
+                    usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
                 },
             },
         ]);
@@ -244,6 +245,107 @@ describe("empty text block sanitization", () => {
         const json = JSON.stringify(calls[0]!.prompt);
         expect(json).toContain("tc-1");
         expect(json).not.toContain('"text":""');
+    });
+});
+
+describe("usage reporting", () => {
+    // The cache breakdown rides on the SDK's vendor-neutral `inputTokenDetails`
+    // (`@ai-sdk/anthropic` normalizes `cache_read_input_tokens` /
+    // `cache_creation_input_tokens` into it) — not on `providerMetadata`, which
+    // carries only the raw snake_case vendor payload.
+    const cachedUsage: LanguageModelV4Usage = {
+        inputTokens: { total: 2000, noCache: 100, cacheRead: 1700, cacheWrite: 200 },
+        outputTokens: { total: 42, text: 42, reasoning: 0 },
+    };
+
+    it("surfaces input/output and cache tokens on the generate path", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => ({
+                content: [{ type: "text", text: "done" }],
+                finishReason: { unified: "stop", raw: "stop" },
+                usage: cachedUsage,
+                warnings: [],
+            })),
+            resolveBilling: async () => ({}),
+        });
+
+        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
+
+        expect(reply.usage).toEqual({
+            inputTokens: 2000,
+            outputTokens: 42,
+            cacheCreationInputTokens: 200,
+            cacheReadInputTokens: 1700,
+        });
+    });
+
+    it("surfaces the same usage on the stream path's terminal event", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(
+                async () => okResult(),
+                async () => ({
+                    stream: new ReadableStream({
+                        start(controller) {
+                            controller.enqueue({ type: "stream-start", warnings: [] });
+                            controller.enqueue({ type: "text-start", id: "txt-1" });
+                            controller.enqueue({ type: "text-delta", id: "txt-1", delta: "done" });
+                            controller.enqueue({ type: "text-end", id: "txt-1" });
+                            controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: cachedUsage });
+                            controller.close();
+                        },
+                    }),
+                }),
+            ),
+            resolveBilling: async () => ({}),
+        });
+
+        const events = [];
+        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
+
+        const done = events.at(-1);
+        if (done?.type !== "done") throw new Error(`expected a terminal done event, got ${done?.type}`);
+        expect(done.response.usage).toEqual({
+            inputTokens: 2000,
+            outputTokens: 42,
+            cacheCreationInputTokens: 200,
+            cacheReadInputTokens: 1700,
+        });
+    });
+
+    it("leaves cache fields undefined when a provider reports no cache breakdown", async () => {
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => ({
+                content: [{ type: "text", text: "done" }],
+                finishReason: { unified: "stop", raw: "stop" },
+                usage: {
+                    inputTokens: { total: 50, noCache: 50, cacheRead: undefined, cacheWrite: undefined },
+                    outputTokens: { total: 5, text: 5, reasoning: undefined },
+                },
+                warnings: [],
+            })),
+            resolveBilling: async () => ({}),
+        });
+
+        const reply = (await provider.chat(request, makeSession()))._unsafeUnwrap();
+
+        expect(reply.usage?.inputTokens).toBe(50);
+        expect(reply.usage?.cacheReadInputTokens).toBeUndefined();
+        expect(reply.usage?.cacheCreationInputTokens).toBeUndefined();
+    });
+
+    it("forwards the request's providerOptions verbatim to the model", async () => {
+        const calls: LanguageModelV4CallOptions[] = [];
+        const provider = createAiSdkProvider({
+            model: fakeModel(async (options) => {
+                calls.push(options);
+                return okResult();
+            }),
+            resolveBilling: async () => ({}),
+        });
+
+        await provider.chat({ ...request, providerOptions: { anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } } }, makeSession());
+
+        expect(calls[0]!.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral", ttl: "5m" } } });
     });
 });
 

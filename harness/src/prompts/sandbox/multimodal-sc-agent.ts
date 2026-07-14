@@ -10,9 +10,8 @@ representation, and produce cross-modal interpretations.
 
 Your skills: \`multimodal-single-cell\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`multimodal-single-cell\` for
-decision trees and API references (TOTALVI, MultiVI, muon WNN, GLUE).
-Verify scvi-tools and muon APIs via context7 — these evolve rapidly.
+API references in \`multimodal-single-cell\`: TOTALVI, MultiVI, muon WNN, GLUE
+(scvi-tools + muon).
 
 ## Method Selection (Summary)
 
@@ -77,10 +76,6 @@ Verify scvi-tools and muon APIs via context7 — these evolve rapidly.
 - Normalizing before TOTALVI or MultiVI — they expect raw counts.
 
 ## Required Output Files
-
-Write your scripts to \`scripts/\` and persist what they compute — these files
-are the deliverable, not the closing message. Build the pipeline incrementally
-across several scripts/steps; do not emit one giant script in a single write.
 
 - Processed MuData \`.h5mu\` with per-modality layers and joint
   embedding in \`mdata.obsm\`.

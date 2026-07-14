@@ -19,7 +19,7 @@ export const ProfilerFileSchema = z.object({
             "Semantic data type: count-matrix, normalized-expression, variants, alignments, " +
                 "clinical-metadata, clinical-sdtm, clinical-adam, clinical-response, " +
                 "pharmacokinetic-data, adverse-events, safety-labs, " +
-                "molecular-structures, annotations",
+                "molecular-structures, annotations, document (paper PDF, README, methods doc)",
         ),
     format: z.string().describe("File format (e.g. CSV, TSV, h5ad, MTX, VCF, BAM, SDF, FASTQ)"),
     rows: z.number().nullish(),
@@ -52,7 +52,7 @@ export const OrganismSchema = z.object({
     confidence: z
         .enum(["high", "medium", "low"])
         .describe(
-            "high: explicit organism column or paper/README statement. " +
+            "high: explicit user-context statement, an organism column, or a paper/README statement. " +
                 "medium: filename convention or accession lookup. " +
                 "low: inferred from gene IDs or other indirect signals, OR sources disagree (in which case also record the conflict in qualityAssessment.concerns).",
         ),
@@ -63,7 +63,9 @@ export type Organism = z.infer<typeof OrganismSchema>;
 export const ProfilerOutputSchema = z.object({
     files: z.array(ProfilerFileSchema),
     analysisSummary: z.string().describe("Narrative overview of the dataset — structure, content, analytical potential, and limitations"),
-    domain: z.string().describe("Scientific domain (e.g. transcriptomics, proteomics, genomics, chemistry, clinical, imaging, metabolomics, multi-omics)"),
+    domain: z
+        .string()
+        .describe("Scientific domain (e.g. transcriptomics, proteomics, genomics, cheminformatics, clinical, imaging, metabolomics, multi-omics)"),
     subtype: z.string().optional().describe("Specific subtype within domain (e.g. bulk-rna-seq, single-cell, LC-MS/MS, whole-genome-sequencing)"),
     organism: OrganismSchema.nullable().describe(
         "Subject organism, identified from any input (metadata files, paper PDFs, READMEs, filenames, accession patterns). " +

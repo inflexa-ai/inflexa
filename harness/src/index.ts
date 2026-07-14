@@ -88,7 +88,25 @@ export { createConfiguredAiSdkProvider } from "./providers/ai-sdk.js";
 export type { AiSdkProviderConfig, ConfiguredAiSdkProviderDeps } from "./providers/ai-sdk.js";
 export { createEmbeddingProvider } from "./providers/embedding.js";
 export type { EmbeddingProviderDeps } from "./providers/embedding.js";
-export type { AgentChat, ChatProvider, EmbeddingProvider, ChatRequest, ChatResponse, ChatStreamEvent, ModelMessage } from "./providers/types.js";
+export type {
+    AgentChat,
+    ChatProvider,
+    EmbeddingProvider,
+    ChatRequest,
+    ChatResponse,
+    ChatStreamEvent,
+    ChatUsage,
+    ModelMessage,
+    PromptCachePolicy,
+} from "./providers/types.js";
+// Prompt caching. `PromptCachePolicy` is the harness's vendor-neutral cache
+// directive; a composition root sets it per run via `RunAgentOptions.promptCache`
+// (defaulting to `DEFAULT_PROMPT_CACHE` — 5m — when omitted, since an agent loop
+// re-sends its prefix every iteration and breaks even immediately). Hosts whose
+// endpoint ignores cache directives — notably the Claude Max OAuth path — pass
+// `"off"`; the `cortex.harness.agent.cache_*_tokens` metrics show which case a
+// deployment is actually in.
+export { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "./providers/prompt-cache.js";
 // Provider error channel. `ProviderError` is the value `chat`/`embed` fail
 // with; `toProviderError` is its sole constructor. Exposed so an embedder
 // realizing its own `ChatProvider`/`EmbeddingProvider` fails with the exact
@@ -261,18 +279,19 @@ export type { SandboxStepDeps, SandboxStepInput, SandboxStepResult, SandboxAgent
 export { createSandboxAgents, SANDBOX_AGENT_META } from "./agents/sandbox/index.js";
 export type { SandboxAgentDeps, SandboxStepCoords, AgentMeta } from "./agents/sandbox/index.js";
 
-// Plan schema, structural validation, and per-step prompt rendering — the gates
-// a plan passes before it can trigger a run, plus the prompt each step's agent
-// receives. `PlanStep` is the minimal `{ id, depends_on }` element type that
+// Plan schema and structural validation — the gates a plan passes before it can
+// trigger a run. `PlanStep` is the minimal `{ id, depends_on }` element type that
 // `ExecuteAnalysisInput.steps` is typed against; a parsed `AnalysisPlan`'s
-// richer `AnalysisStep[]` is assignable to it.
+// richer `AnalysisStep[]` is assignable to it, and is also what
+// `ExecuteAnalysisInput.planStepById` carries. There is no prompt renderer here:
+// an embedder supplies the plan's step DATA and the harness composes each step's
+// seed at dispatch, when the step's dependencies have actually produced something.
 export { AnalysisPlanSchema } from "./schemas/workflow-state.js";
 export type { AnalysisPlan, AnalysisStep } from "./schemas/workflow-state.js";
 export type { PlanStep } from "./workflows/execute-analysis-scheduler.js";
 export { validatePlan } from "./schemas/validate-plan.js";
 export type { ValidatePlanOptions } from "./schemas/validate-plan.js";
 export type { ValidationResult } from "./schemas/validate-plan.js";
-export { renderStepPrompt } from "./schemas/render-step-prompt.js";
 
 // Plan + run + step ledgers around a trigger. `upsertPlan` takes a
 // caller-derived id and inserts-if-absent (the deterministic-id intake path);

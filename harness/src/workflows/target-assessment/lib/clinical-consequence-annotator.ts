@@ -22,6 +22,7 @@ import { withHost } from "../../../lib/host-concurrency.js";
 import { tryQuery, tryMutation } from "../../../lib/db-result.js";
 import type { Pool } from "pg";
 import { offTargetAnnotatorPrompt } from "../../../prompts/target-assessment/off-target-annotator.js";
+import { composeSystemPrompt } from "../../../agents/system-prompt.js";
 import type { AgentSession } from "../../../auth/types.js";
 import { forSubAgent } from "../../../auth/types.js";
 import { finalText, runAgent } from "../../../loop/run-agent.js";
@@ -140,7 +141,7 @@ const ANNOTATOR_AGENT_ID = "off-target-annotator";
 function buildAnnotatorAgent(model: string): AgentDefinition {
     return {
         id: ANNOTATOR_AGENT_ID,
-        systemPrompt: offTargetAnnotatorPrompt,
+        systemPrompt: composeSystemPrompt(offTargetAnnotatorPrompt),
         model,
         tools: [],
         maxIterations: 2,

@@ -28,6 +28,7 @@ import { writeFileWithinRoot } from "../lib/fs-helpers.js";
 
 import { RunSynthesisSchema, type RunSynthesis } from "../schemas/run-synthesis.js";
 import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
+import { composeSystemPrompt } from "../agents/system-prompt.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import { runDir } from "../workspace/paths.js";
 
@@ -37,6 +38,7 @@ import type { AgentDefinition, ChatDataPart, EmitFn } from "../loop/types.js";
 import type { ChatProvider } from "../providers/types.js";
 import type { RunSession } from "../auth/types.js";
 import { defineTool, type Tool, type ToolError } from "../tools/define-tool.js";
+import { createReportBlockerToolFor } from "../tools/sandbox/report-blocker.js";
 import { createLiteratureReviewerTool } from "../tools/research/literature-reviewer.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
 
@@ -175,13 +177,14 @@ function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext): Tool {
     return defineTool({
         id: "submit_synthesis",
         description:
-            "Submit the final synthesis. Re-validates payload against the schema " +
-            "and semantic checks (stepId refs, theme→finding refs, keyReferences " +
-            "PMIDs cited, numeric PMIDs). On success returns {accepted: true} — " +
-            "STOP after this. On rejection returns {accepted: false, issues} — " +
-            "fix the specific fields at each issue path and call again, or switch " +
-            "to report_blocker if the synthesis cannot be made valid.",
-        inputSchema: z.object({ synthesis: z.unknown() }),
+            "Submit the final synthesis. Re-validates the payload against the " +
+            "semantic checks the arg schema cannot express (stepId refs, " +
+            "theme→finding refs, keyReferences PMIDs cited, numeric PMIDs). On " +
+            "success returns {accepted: true} — STOP after this. On rejection " +
+            "returns {accepted: false, issues} — fix the specific fields at each " +
+            "issue path and call again, or switch to report_blocker if the " +
+            "synthesis cannot be made valid.",
+        inputSchema: z.object({ synthesis: RunSynthesisSchema }),
         execute: async (input): Promise<Result<SubmitSynthesisOutput, ToolError>> => {
             if (holder.outcome !== null) {
                 return ok({
@@ -206,19 +209,16 @@ function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext): Tool {
 }
 
 function buildBlockerTool(holder: OutcomeHolder): Tool {
-    return defineTool({
-        id: "report_blocker",
-        description:
-            "Terminal. Use when the run produced no synthesizable content (all " +
-            "summaries empty, contradictory to the point of incoherence, or no " +
-            "findings worth surfacing). Pass a short reason. Stop after calling.",
-        inputSchema: z.object({ reason: z.string().min(1) }),
-        execute: async (input) => {
-            if (holder.outcome === null) {
-                holder.outcome = { kind: "blocker", reason: input.reason };
-            }
-            return ok({ recorded: true as const });
+    return createReportBlockerToolFor({
+        record: (outcome) => {
+            if (holder.outcome === null) holder.outcome = outcome;
         },
+        blockedWhen:
+            "Ends run synthesis with no synthesis written. Use it when the run " +
+            "produced no synthesizable content (all step summaries empty, " +
+            "contradictory to the point of incoherence, or no findings worth " +
+            "surfacing) — not as an escape from a synthesis you could fix and " +
+            "submit.",
     });
 }
 
@@ -290,7 +290,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
 
     const agent: AgentDefinition = {
         id: AGENT_ID,
-        systemPrompt: synthesisAgentPrompt,
+        systemPrompt: composeSystemPrompt(synthesisAgentPrompt),
         model: input.model,
         tools,
         maxIterations: SYNTHESIZER_MAX_ITERATIONS,

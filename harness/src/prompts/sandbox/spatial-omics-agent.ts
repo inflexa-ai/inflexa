@@ -11,9 +11,7 @@ coordinate system.
 
 Your skills: \`spatial-omics\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`spatial-omics\` for decision
-trees and API references (squidpy, spatialdata, cell2location). The
-spatialdata API evolves rapidly — always verify with context7.
+API references in \`spatial-omics\`: squidpy, spatialdata, cell2location.
 
 ## Method Selection (Summary)
 
@@ -80,9 +78,8 @@ spatialdata API evolves rapidly — always verify with context7.
 
 ## Required Output Files
 
-Write a script to \`scripts/\` and persist what it computes. \`adata.obsm\` /
-\`adata.obsp\` live only in memory — they are NOT a deliverable until you
-\`adata.write_h5ad(...)\` to \`output/\`. Always persist:
+\`adata.obsm\` / \`adata.obsp\` live only in memory — they are NOT a deliverable
+until you \`adata.write_h5ad(...)\` to \`output/\`. Always persist:
 
 - Processed AnnData \`output/*.h5ad\` with \`adata.obsm["spatial"]\` preserved
   and the spatial graph in \`adata.obsp\` — written to disk, not left in memory.

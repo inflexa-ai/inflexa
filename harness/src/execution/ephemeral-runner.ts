@@ -107,6 +107,29 @@ export function registerEphemeralWorkflow(deps: EphemeralDeps): (input: Ephemera
 }
 
 /**
+ * The executor's seed: its workspace frame, then the caller's ask.
+ *
+ * An ephemeral run is not scheduled by `executeAnalysis`, so no step briefing is
+ * composed for it — and the sandbox system prompt names no paths (it is static
+ * per agent type, so the provider's prompt cache can reuse it). The analysis
+ * root would otherwise reach the agent nowhere: `run_ephemeral`'s `prompt` is
+ * free text authored by the conversation agent.
+ *
+ * The frame differs from a step's, so this does not reuse `renderWorkspace`:
+ * there is no writable directory to name. The read-only tree IS the cwd.
+ */
+export function ephemeralSeed(analysisId: string, prompt: string): string {
+    const root = `/${analysisId}`;
+    return [
+        "## Workspace",
+        `- Analysis root (read-only): \`${root}\` — inputs at \`${root}/data/inputs/\`, prior runs at \`${root}/runs/\`.`,
+        `- The analysis root is also your cwd, and what relative paths resolve against. The sandbox is read-only: there is nowhere to write, so return every result inline.`,
+        "",
+        prompt,
+    ].join("\n");
+}
+
+/**
  * Run the ephemeral-executor agent against a fresh read-only sandbox.
  * Throws on sandbox start failure; otherwise returns the agent's final
  * text plus timing. Sandbox teardown fires on every terminal path —
@@ -180,7 +203,7 @@ export async function runEphemeralBody(input: EphemeralWorkflowInput, deps: Ephe
         const agent = input.maxIterations !== undefined ? { ...agentDef, maxIterations: input.maxIterations } : agentDef;
 
         const signal = new AbortController().signal;
-        const { messages: finalMessages } = await runAgent(agent, [{ role: "user", content: input.prompt }], childSession, {
+        const { messages: finalMessages } = await runAgent(agent, [{ role: "user", content: ephemeralSeed(analysisId, input.prompt) }], childSession, {
             provider: deps.provider,
             signal,
             emit: () => {},

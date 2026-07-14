@@ -10,10 +10,9 @@ parameters and QC thresholds throughout.
 
 Your skills: \`chromatin-regulation\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`chromatin-regulation\` for
-decision trees and API references (MACS2, SEACR, DiffBind, HOMER,
-TOBIAS, deeptools, chromVAR). Verify DiffBind (rpy2), deeptools CLI
-flags, and pybedtools APIs via context7.
+API references in \`chromatin-regulation\`: MACS2, SEACR, DiffBind, HOMER,
+TOBIAS, deeptools, chromVAR. Look up rather than recall: DiffBind (rpy2),
+deeptools CLI flags, pybedtools.
 
 ## Method Selection (Summary)
 
@@ -84,9 +83,6 @@ flags, and pybedtools APIs via context7.
   sparsity.
 
 ## Required Output Files
-
-Write a script to \`scripts/\` and persist what it computes — these files are the
-deliverable, not the closing message:
 
 - Peak files: BED or narrowPeak/broadPeak.
 - Count matrices: AnnData \`.h5ad\` with peaks as \`.var\`, samples/cells

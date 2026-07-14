@@ -33,9 +33,10 @@ import { durableStep } from "../loop/run-step.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { defineTool } from "../tools/define-tool.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
+import { renderWorkspace } from "../prompts/briefing.js";
 import type { SandboxClient } from "../sandbox/client.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
-import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 
 import { estimateDataProfileResources } from "../sandbox/estimate-data-profile-resources.js";
 import { generateExecutionId } from "../sandbox/execution-id.js";
@@ -51,6 +52,7 @@ import {
     tryStartDataProfile,
     upsertArtifacts,
     type DataProfileInputFile,
+    type DataProfileResult,
 } from "../state/index.js";
 import { ensureSearchIndex, searchIndexName } from "../workspace/search-config.js";
 
@@ -149,6 +151,51 @@ export function buildDriftSignature(stagedInputs: readonly StagedInput[]): DataP
 }
 
 /**
+ * Project the profiler's structured output plus the staged manifest into the record
+ * persisted on `cortex_analysis_state`.
+ *
+ * That row is the profile's ONLY durable home — the profiler's `runs/data-profile/`
+ * scratch tree is deleted on completion, so nothing here is recoverable from a file
+ * later. The projection is therefore total: every field the profiler reported is
+ * carried through verbatim. A field this drops is not "summarized away", it is
+ * destroyed, and the next agent that needs it can only get it back by re-reading the
+ * raw inputs.
+ *
+ * `undefined` members are dropped by `JSON.stringify` on the way into the jsonb
+ * column, so an optional the profiler left unset simply does not appear in the row —
+ * indistinguishable from a legacy snapshot that predates the field, which is exactly
+ * the reading a consumer must already tolerate.
+ */
+export function buildDataProfileResult(profile: ProfilerOutput, stagedInputs: readonly StagedInput[], profiledAt: string): DataProfileResult {
+    return {
+        summary: profile.analysisSummary,
+        files: profile.files.map((f) => ({
+            path: f.path,
+            description: f.description,
+            dataType: f.dataType,
+            format: f.format,
+            rows: f.rows,
+            cols: f.cols,
+            tags: f.tags,
+            warnings: f.warnings,
+            metrics: f.metrics,
+        })),
+        inputFileIds: stagedInputs.map((f) => f.fileId),
+        inputFiles: buildDriftSignature(stagedInputs),
+        profiledAt,
+        domain: profile.domain,
+        subtype: profile.subtype,
+        organism: profile.organism,
+        tissue: profile.tissue,
+        cellType: profile.cellType,
+        condition: profile.condition,
+        accessions: profile.accessions,
+        experimentalDesign: profile.experimentalDesign,
+        qualityAssessment: profile.qualityAssessment,
+    };
+}
+
+/**
  * Register the data-profile workflow with DBOS. Returns the registered
  * callable so `triggerDataProfile` can dispatch via `DBOS.startWorkflow`.
  */
@@ -193,25 +240,6 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         );
 
         // 3. Run data-profiler sandbox agent
-        const fileList = stagedInputs.map((f) => inputArtifactPath(f));
-        const prompt = [
-            `Profile all input data files for this analysis.`,
-            ``,
-            `IMPORTANT: You MUST use execute_command to profile files before submitting results. Do NOT submit empty files or placeholder text.`,
-            ``,
-            `CRITICAL: File and directory paths may contain spaces. You MUST always double-quote paths in shell commands (e.g. head "data/inputs/My Folder/file.csv"). Unquoted paths with spaces will silently break commands.`,
-            ``,
-            `The following input files are available (paths relative to analysis root):`,
-            ...fileList.map((f) => `- ${f}`),
-            ``,
-            `Steps:`,
-            `1. For each file, use head and wc to inspect structure (ALWAYS double-quote file paths)`,
-            `2. Write a Python script for detailed profiling — use pathlib or os.path for path handling (handles spaces natively)`,
-            `3. Call the \`submit_profile\` tool with structured metadata for EVERY file listed above`,
-            ``,
-            `The analysis root is mounted at /${analysisId}/. All file paths in your response must be relative to the analysis root and must EXACTLY match the paths listed above.`,
-        ].join("\n");
-
         const executionId = generateExecutionId(DATA_PROFILE_AGENT_ID);
         const workflowId = DBOS.workflowID ?? `${DATA_PROFILE_RUN_LITERAL}:${executionId}`;
         const childSession = forSubAgent(runSession, DATA_PROFILE_AGENT_ID);
@@ -219,6 +247,36 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         // contract) — profiling an analysis whose root cannot be resolved is
         // meaningless, so no softer handling is warranted.
         const workspaceRoot = deps.resolveWorkspaceRoot(analysisId);
+        const profileWritePrefix = `${workspaceRoot}/runs/${DATA_PROFILE_RUN_LITERAL}/${DATA_PROFILE_STEP_LITERAL}`;
+
+        const fileList = stagedInputs.map((f) => inputArtifactPath(f));
+        // The profiler runs outside `executeAnalysis`, so no scheduler composes a
+        // briefing for it — this prompt IS its briefing, and the sandbox system
+        // prompt names no paths (it is static per agent type, for the prompt cache).
+        // Its workspace frame therefore has to be stated here, in the same words the
+        // step briefing uses.
+        const prompt = [
+            `Profile all input data files for this analysis.`,
+            ``,
+            renderWorkspace({
+                analysisRoot: `/${analysisId}`,
+                workingDir: toSandboxPath(workspaceRoot, analysisId, profileWritePrefix),
+            }),
+            ``,
+            `IMPORTANT: You MUST use execute_command to profile files before submitting results. Do NOT submit empty files or placeholder text.`,
+            ``,
+            `CRITICAL: File and directory paths may contain spaces. You MUST always double-quote paths in shell commands (e.g. head "/${analysisId}/data/inputs/My Folder/file.csv"). Unquoted paths with spaces will silently break commands.`,
+            ``,
+            `The following input files are available (paths relative to the analysis root):`,
+            ...fileList.map((f) => `- ${f}`),
+            ``,
+            `Steps:`,
+            `1. For each file, use head and wc to inspect structure (ALWAYS double-quote file paths)`,
+            `2. Write a Python script for detailed profiling — use pathlib or os.path for path handling (handles spaces natively)`,
+            `3. Call the \`submit_profile\` tool with structured metadata for EVERY file listed above`,
+            ``,
+            `All file paths in your response must be relative to the analysis root and must EXACTLY match the paths listed above.`,
+        ].join("\n");
 
         console.log(`[data-profile] execution=${executionId} analysis=${analysisId} starting sandbox`);
 
@@ -261,7 +319,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                     // The profiler writes Python scripts and intermediate artifacts under
                     // the synthetic step path; the post-agent `rm -rf runs/data-profile/`
                     // cleanup wipes them.
-                    allowedWritePrefix: `${workspaceRoot}/runs/${DATA_PROFILE_RUN_LITERAL}/${DATA_PROFILE_STEP_LITERAL}`,
+                    allowedWritePrefix: profileWritePrefix,
                     nextFunctionId,
                     deadlineMs: () => deadlineAbs,
                 },
@@ -369,20 +427,10 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             }
             console.log(`[data-profile] Indexed ${indexed} file(s) for ${analysisId}`);
 
-            // 5. Complete — store result with input snapshot for staleness detection.
+            // 5. Complete — store the FULL profiler finding plus the input snapshot for
+            // staleness detection. The scratch tree is gone; this row is all that survives.
             if (
-                !unwrapOrThrow(
-                    await completeDataProfile(deps.pool, analysisId, {
-                        summary: profilerData.analysisSummary,
-                        files: profilerData.files.map((f) => ({
-                            path: f.path,
-                            description: f.description,
-                        })),
-                        inputFileIds: stagedInputs.map((f) => f.fileId),
-                        inputFiles: buildDriftSignature(stagedInputs),
-                        profiledAt: new Date().toISOString(),
-                    }),
-                )
+                !unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, buildDataProfileResult(profilerData, stagedInputs, new Date().toISOString())))
             ) {
                 logTerminalNoop(analysisId, "completion");
             }

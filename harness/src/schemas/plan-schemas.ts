@@ -23,7 +23,7 @@ export const PlanStepSchema = AnalysisStepSchema.omit({
 })
     .required({ agent: true, resources: true })
     .extend({
-        agent: z.enum(plannableAgentIds).describe("Sandbox agent ID from the available agents list"),
+        agent: z.enum(plannableAgentIds).describe("Sandbox agent ID, routed by the step's primary data object. Must be one of the available agents."),
     });
 
 export type PlanStep = z.infer<typeof PlanStepSchema>;
@@ -31,8 +31,16 @@ export type PlanStep = z.infer<typeof PlanStepSchema>;
 /** Plan schema for planner output — uses PlanStepSchema for steps and requires
  *  a concise title (optional on the persistence schema for historical plans). */
 export const PlannerPlanSchema = AnalysisPlanSchema.extend({
-    title: z.string().min(1).max(80).describe("Concise human-readable plan name (3–8 words)"),
-    steps: z.array(PlanStepSchema),
+    title: z
+        .string()
+        .min(1)
+        .max(80)
+        .describe(
+            'Concise plan name (3–8 words) naming the analysis by what it does — e.g. "AD lesional vs control DE + pathways", ' +
+                '"scRNA immune deconvolution". Ground it in the actual research question and conditions; it is shown as the run\'s heading in chat. ' +
+                'Not a generic name like "Transcriptomics analysis".',
+        ),
+    steps: z.array(PlanStepSchema).describe("The steps of the plan, as a DAG wired by depends_on."),
 });
 
 export type PlannerPlan = z.infer<typeof PlannerPlanSchema>;

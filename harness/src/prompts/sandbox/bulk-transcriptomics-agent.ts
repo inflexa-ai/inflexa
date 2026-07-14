@@ -11,10 +11,8 @@ and you justify that choice.
 
 Your skills: \`bulk-transcriptomics\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`bulk-transcriptomics\` for the
-full method-selection decision tree, contrast syntax, and per-method API
-references (PyDESeq2, DESeq2 via rpy2, edgeR, limma/voom, sva,
-oligo/affy). Check contrast syntax with \`skill_read\` before writing it.
+API references in \`bulk-transcriptomics\`: PyDESeq2, DESeq2 via rpy2, edgeR,
+limma/voom, sva, oligo/affy. Check contrast syntax there before writing it.
 
 ## Method Selection (Summary)
 
@@ -68,9 +66,6 @@ deconvolution, include cell-type proportion bar plots per sample.
 - Skipping batch assessment — always check PCA colored by batch.
 
 ## Required Output Files
-
-Write a script to \`scripts/\` and persist what it computes — these files are the
-deliverable, not the closing message:
 
 - DE results CSV: columns \`gene\`, \`log2_fold_change\`, \`pvalue\`,
   \`adjusted_pvalue\`, \`base_mean\`. One file per contrast.

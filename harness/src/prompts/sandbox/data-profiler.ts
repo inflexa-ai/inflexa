@@ -18,10 +18,12 @@ Small metadata or config files are fine to \`read_file\` directly. Paper
 PDFs, READMEs, and Word documents (see "Document inputs" below) need a
 parser — \`pypdf\` and \`python-docx\` are available.
 
-Follow the orient-first discipline from the shared sandbox orient-core
-(list packages, list refs, list input data, semantic search, read key
-files). When listing inputs, use \`list_files\` with
-\`path: "data/inputs"\` and \`maxDepth: 3\`.
+Your briefing lists this analysis's input files. Unlike every other sandbox
+agent, it carries no data orientation — you are the agent that produces one, so
+deriving the dataset's facts from the files themselves is your job here, not a
+re-derivation of work already done. To see the tree beyond the briefing's list,
+call \`list_files\` with \`path: "data/inputs"\` — \`path\` is its only parameter.
+To go deeper, call it again on a subdirectory it returned.
 
 ## Stage 1: Orient — Subject, Source, Design
 
@@ -63,7 +65,7 @@ Where to look (in this order):
 - **Filenames and folder structure** — accession prefixes
   (\`GSE...\`, \`SRR...\`, \`PRJNA...\`), organism shorthand
   (\`human_\`, \`hg38\`, \`mm10\`, \`macaque_\`, \`cyno_\`).
-- **Reference store** — \`list-available-refs\` lists per-organism
+- **Reference store** — \`list_available_refs\` lists per-organism
   reference files (e.g. \`entrez_to_symbol_9541.parquet\` for Macaca
   fascicularis). Use it to validate a candidate taxon ID — if a
   per-organism file exists, the taxon ID is well-known.
@@ -164,9 +166,12 @@ Activity data detection:
   \`% inhibition\`, \`standard_value\`, \`standard_type\`
 - Report activity type(s) and value range (min, max, median in nM)
 
-Chemical profiling metrics to report:
-- \`molecule_count\`, \`valid_smiles_pct\`, \`mw_median\`, \`mw_range\`
-- \`has_activity_data\`, \`activity_type\`, \`activity_range_nM\`
+Chemical profiling metrics to report in the file's \`metrics\` map. Every
+value there must be a flat scalar (string, number, or boolean) — the schema
+rejects arrays and nested objects, so record a range as two scalar keys, not
+as a pair:
+- \`molecule_count\`, \`valid_smiles_pct\`, \`mw_median\`, \`mw_min\`, \`mw_max\`
+- \`has_activity_data\`, \`activity_type\`, \`activity_min_nM\`, \`activity_max_nM\`
 - \`scaffold_count\` (Murcko generic scaffolds via RDKit)
 - \`pains_hit_pct\` (PAINS filter hit rate via RDKit FilterCatalog)
 

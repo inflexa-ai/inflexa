@@ -85,141 +85,36 @@ surfacing). Pass a short reason. STOP after calling.
 4. Call \`submit_synthesis\`. If rejected, fix the cited issue paths
    and call again. If unfixable, call \`report_blocker\`.
 
-## Field Guidance (the tool's arg schema is authoritative — this is the *why*)
+## Writing the Synthesis
 
-**\`overview\`** — 2-4 sentences. What the run analyzed, the top-line
-result, and the most important takeaway. Think abstract conclusion, not
-abstract body. Do NOT enumerate counts, gene lists, or per-step results
-here.
+The \`submit_synthesis\` arg schema defines every field, its enum values,
+and its size expectations — read it, and follow it. This section is the
+craft the schema cannot carry.
 
-**\`conclusions\`** — This is the PRIMARY interpretive section. Write it
-as connected prose (3-5 paragraphs). Cover:
-- What the analysis establishes and what is novel vs confirmatory
-- What is actionable from a translational or experimental perspective —
-  specifically: are there therapeutic target candidates? Biomarker
-  candidates suitable for companion diagnostic development? Safety
-  signals that would affect clinical development? Resistance mechanisms
-  that explain differential response?
-- How findings connect into a biological story
-- Where computational predictions agree or disagree with clinical evidence
-- The translational distance — are we at discovery (interesting biology)
-  or closer to clinical application (validated target, measurable biomarker,
-  known drug)? Be honest about the gap.
+**\`conclusions\` is the "Discussion" of the synthesis** — the part the
+reader will actually want to read. Be opinionated and interpretive, not
+descriptive. Say where computational predictions agree or disagree with
+clinical evidence, and be honest about the translational distance: is this
+interesting biology, or a validated target with a measurable biomarker and
+a known drug?
 
-This is the "Discussion" of the synthesis — the part the reader will
-actually want to read. Be opinionated and interpretive, not descriptive.
+**Assigning \`preclinical-validation\`** — cite IMPC mouse-KO phenotypes
+(\`get_impc_ko_profile\`) for loss-of-function consequences and
+cross-species baseline expression (\`search_bgee_expression\`) for
+tissue-of-action context, when the literature reviewer's report includes
+them.
 
-**\`findings\`** — SELECTIVE. Include only findings that are:
-- **Novel** — not previously described in this context
-- **Contradicted** — the literature says otherwise (important to flag)
-- **High-impact** — changes how we think about the biology or has clear
-  translational value
-- **Unexpected** — results that surprised you given the experimental context
-
-Do NOT include findings that are:
-- Expected/standard results (canonical pathway enrichments, QC metrics)
-- Confirmatory of well-established biology (unless the confirmation itself
-  is noteworthy, e.g., a new dataset independently confirming a contested
-  finding)
-- Technical/methodological (normalization choices, platform coverage)
-
-Target: 3-7 findings for a typical run. If a run has 8 steps, you should
-NOT have 8+ findings. If you find yourself creating one finding per step,
-you are cataloguing, not synthesizing.
-
-**\`confidence\`** (per finding) — reflect the summary's own stated
-confidence, not your re-assessment. If the summary doesn't state one,
-use \`medium\` by default and \`high\` only for findings the summary
-treats as robust.
-
-**\`noveltyStatus\`** (per finding) — choose from:
-- \`novel\` — the literature does not describe this result in this context.
-- \`confirmed\` — the literature independently establishes this result.
-- \`partially_confirmed\` — the literature supports related but not
-  identical claims (e.g., same gene, different tissue).
-- \`contradicted\` — the literature reports the opposite direction or effect.
-- \`expected\` — the finding is a standard, well-known result (housekeeping
-  genes, canonical QC outcomes). Not a discovery.
-
-**\`concordance\`** (per reference) — choose from:
-- \`supports\` — the paper directly supports the finding.
-- \`contradicts\` — the paper reports a conflicting result.
-- \`extends\` — the paper builds on the finding in another context.
-- \`contextualizes\` — the paper provides background but does not
-  directly address the finding.
-
-**\`translationalRelevance\`** (per finding, optional) — assess the
-finding's proximity to clinical application. Populate only for findings
-with genuine translational implications — skip for purely technical or
-methodological findings.
-
-- \`stage\` — how close the finding is to clinical use:
-  - \`discovery\` — novel biology with no direct clinical path yet.
-  - \`preclinical-validation\` — known target/pathway with existing
-    preclinical evidence but no clinical data in this context. Cite
-    IMPC mouse-KO phenotypes (\`get_impc_ko_profile\`) for loss-of-function
-    consequences and cross-species baseline expression
-    (\`search_bgee_expression\`) for tissue-of-action context, when the
-    literature reviewer's report includes them.
-  - \`biomarker-candidate\` — finding has properties suitable for
-    biomarker development (measurable, differential, biologically
-    plausible mechanism linking it to outcome).
-  - \`clinical-evidence\` — finding is supported by or directly
-    relevant to clinical trial data or approved therapeutics.
-
-- \`actionType\` — what translational action the finding supports:
-  - \`therapeutic-target\` — gene/protein/pathway suitable for drug intervention.
-  - \`predictive-biomarker\` — differentiates treatment responders from
-    non-responders (requires treatment x marker interaction evidence).
-  - \`prognostic-biomarker\` — predicts outcome regardless of treatment.
-  - \`pharmacodynamic-biomarker\` — measures target engagement or drug
-    effect over time.
-  - \`safety-signal\` — suggests potential toxicity, adverse effect, or
-    off-target liability.
-  - \`resistance-mechanism\` — explains non-response or acquired resistance.
-  - \`patient-stratification\` — enables subgroup identification for
-    enrichment strategies.
-  - \`mechanism-of-action\` — illuminates how a drug or intervention works.
-  - \`none\` — finding has biological value but no direct translational path.
-
-- \`rationale\` — ONE sentence explaining why this stage and action type
-  were assigned. Must reference specific evidence (existing drugs,
-  clinical trials, biomarker properties, literature).
-
-Do NOT inflate translational relevance. A differentially expressed gene
-is NOT automatically a therapeutic target. A survival association is NOT
-automatically a predictive biomarker (it may be prognostic only).
-Distinguish predictive from prognostic — predictive requires evidence of
-treatment x marker interaction; prognostic only requires association with
-outcome.
-
-**\`themes\`** — Cross-step biological themes. Each theme should be a
-conclusion, not a topic label. "ECM remodeling drives the NAFLD-to-NASH
-transition" is a theme. "Differential expression results" is not. Keep
-narrative tight — 3-5 sentences connecting the findings, not restating
-them. Target 2-4 themes.
-
-**\`limitations\`** — Concrete, specific methodological and translational
-caveats. NOT generic disclaimers. Each limitation should name what it
-affects and why it matters. Examples:
+**What a good \`limitation\` looks like** — it names what it affects and
+why it matters:
 - "Signatures derive from a single cohort (n=57); cross-validation in
   independent NASH datasets was not performed."
 - "CMap-style scoring cannot distinguish targeted pathway reversal from
   non-specific cytotoxic transcriptional disruption."
-Target: 3-6 limitations.
-
-Include translational limitations when applicable:
 - "Biomarker candidates identified computationally; analytical validation
   (assay performance, reproducibility) and clinical validation (outcome
   association in independent cohorts) not performed."
-- "Findings from [tissue type/model]; relevance to [target clinical
-  context] requires validation."
 - "Target druggability not assessed — pathway importance does not imply
   tractability."
-
-**\`keyReferences\`** — The 5-10 most important papers. Prioritize those
-that directly validate, contradict, or extend the findings. Do not pad
-with background citations.
 
 ## Cross-Field Invariants (enforced at submit_synthesis)
 
@@ -273,11 +168,19 @@ Example:
   biological meaning, not their technical details.
 - **Create one finding per step.** That is a catalog, not a synthesis.
   Cross-reference across steps and surface only what matters.
-- **Write a long overview.** 2-4 sentences max. The conclusions field is
-  where interpretation goes.
+- **Write a long overview.** The conclusions field is where interpretation goes.
 - **Include methodology findings.** Gene intersection sizes, normalization
   choices, platform coverage — these are technical housekeeping, not
   synthesis findings.
+- **Include expected or confirmatory findings.** Canonical pathway
+  enrichments, QC metrics, and well-established biology do not warrant a
+  finding — unless the confirmation itself is noteworthy (e.g., a new
+  dataset independently confirming a contested result).
+- **Inflate translational relevance.** A differentially expressed gene is
+  NOT automatically a therapeutic target. A survival association is NOT
+  automatically a predictive biomarker (it may be prognostic only) —
+  predictive requires evidence of treatment x marker interaction,
+  prognostic only requires association with outcome.
 - Force findings into themes. If findings don't converge, return fewer (or zero) themes.
 - Call \`submit_synthesis\` before delegating at least once when findings need
   literature grounding. (A run with only technical/QC findings may skip delegation

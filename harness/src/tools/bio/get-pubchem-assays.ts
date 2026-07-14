@@ -102,14 +102,14 @@ function parseAssaySummary(data: PugAssaySummary): Assay[] {
 export const getPubchemAssaysTool = defineTool({
     id: "get_pubchem_assays",
     description:
-        "Get bioassay screening summaries for a PubChem CID. " +
-        "Returns per-assay activity outcomes (Active/Inactive/Inconclusive), target names, " +
-        "and activity values. Covers HTS screening data beyond ChEMBL's curated bioactivity. " +
-        "Use activeOnly=true to filter for active results only.",
+        "Get PubChem bioassay screening summaries for a CID — use it to answer 'has this compound ever been screened, and against what?'. " +
+        "Returns per assay: aid, assayName, targetName, activityOutcome (Active / Inactive / Inconclusive / Unspecified) and activityValue. " +
+        "This is broad HTS screening coverage, not curated potency: for numbers you intend to quote (IC50/Ki), prefer ChEMBL's get_bioactivity. " +
+        "An empty assays array is valid no-data (the compound was never screened) — do not retry.",
     inputSchema: z.object({
-        cid: z.number().int().positive().describe("PubChem Compound ID (CID)"),
-        activeOnly: z.boolean().default(false).describe("If true, return only assays where the compound was active"),
-        limit: z.number().int().min(1).max(500).default(50).describe("Maximum number of assay records to return"),
+        cid: z.number().int().positive().describe("PubChem Compound ID as an integer (e.g. 2244 for aspirin), from a prior search_pubchem_compound call."),
+        activeOnly: z.boolean().default(false).describe("Default false (all outcomes). Set true to keep only rows whose activityOutcome is 'Active'."),
+        limit: z.number().int().min(1).max(500).default(50).describe("Max assay records to return (default 50). Applied after the activeOnly filter."),
     }),
     execute: async ({ cid, activeOnly = false, limit = 50 }) => {
         const url = `${PUBCHEM_BASE}/compound/cid/${cid}/assaysummary/JSON`;

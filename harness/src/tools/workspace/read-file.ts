@@ -39,8 +39,7 @@ const ReadFileInputSchema = z.object({
         .describe(
             "Workspace path. Relative paths resolve against your working directory; " +
                 "an absolute '/<analysisId>/...' path is resolved against the analysis " +
-                "root (use absolute to read input data, the data profile, or other " +
-                "steps' outputs).",
+                "root (use absolute to read input data or other steps' outputs).",
         ),
     headLines: z
         .number()
@@ -50,7 +49,7 @@ const ReadFileInputSchema = z.object({
         .optional()
         .describe(
             "Read only the first N lines (head). Use for inspecting CSV/TSV " +
-                "headers, profile summaries, or the top of any large file. Mutually " +
+                "headers, step summaries, or the top of any large file. Mutually " +
                 "exclusive with tailLines.",
         ),
     tailLines: z
@@ -69,8 +68,8 @@ export function createReadFileTool(fs: WorkspaceFilesystem, workingDir?: string)
         id: "read_file",
         description:
             "Read a workspace file: input data, prior-run outputs, current-run " +
-            "outputs, step summaries, run syntheses, or the data profile. Returns " +
-            "the file content as UTF-8 text. Output is capped at " +
+            "outputs, step summaries, or run syntheses. Returns the file content " +
+            "as UTF-8 text. Output is capped at " +
             `${DEFAULT_MAX_BYTES} bytes; pass headLines or tailLines to read a ` +
             "specific window of a large file (typical for bio CSV/TSV/log files). " +
             "Oversize reads come back truncated with a marker. Missing paths and " +

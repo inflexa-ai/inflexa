@@ -70,7 +70,13 @@ import {
 import { createNcbiTools, createChemDbTools, type BioToolKeys } from "../tools/bio/keys.js";
 
 // Dependency-bearing tool factories.
-import { createGeneratePlanTool, createLiteratureReviewerTool, createInspectRunTool, createGenerateAnalogyReportTool } from "../tools/research/index.js";
+import {
+    createGeneratePlanTool,
+    createLiteratureReviewerTool,
+    createInspectRunTool,
+    createInspectDataProfileTool,
+    createGenerateAnalogyReportTool,
+} from "../tools/research/index.js";
 import {
     createFileStatTool,
     createGrepTool,
@@ -218,6 +224,8 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         chemDb.searchCtxExposure,
         // Execution.
         createInspectRunTool(pool),
+        // The dataset's own record. No file backs it — the DB row is the only copy.
+        createInspectDataProfileTool(pool),
         createGeneratePlanTool({ provider, pool, model, resourcePolicy }),
         createExecutePlanTool({
             pool,
@@ -256,12 +264,12 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createFileStatTool(workspaceFs),
         createGrepTool(workspaceFs),
         // Working memory.
-        createUpdateWorkingMemoryTool(workingMemory),
+        createUpdateWorkingMemoryTool(workingMemory, pool),
     ];
 
     return {
         id: CONVERSATION_AGENT_ID,
-        systemPrompt: composeSystemPrompt(conversationPrompt),
+        systemPrompt: composeSystemPrompt(conversationPrompt, { identity: true, conversational: true }),
         model,
         tools,
         maxIterations: CONVERSATION_MAX_ITERATIONS,

@@ -111,6 +111,29 @@ describe("showUser", () => {
         if (!("id" in result)) expect(result.reason).toBe("invalid_path");
         expect(emitted).toHaveLength(0);
     });
+
+    it("emits an echart whose spec is layout-normalized (the renderer owns the layout, not the model)", async () => {
+        const { ctx, emitted } = makeToolContext();
+        await showUserTool.execute(
+            {
+                kind: "echart",
+                title: "Top Variable Genes",
+                spec: {
+                    title: { text: "Top Variable Genes" },
+                    xAxis: { type: "category", data: Array.from({ length: 24 }, (_, i) => `gene-${i}`) },
+                    yAxis: { type: "value" },
+                    series: [{ type: "bar", name: "vst" }],
+                },
+            },
+            ctx,
+        );
+
+        const spec = (emitted[0] as { data: { content: { spec: Record<string, unknown> } } }).data.content.spec;
+        expect("title" in spec).toBe(false);
+        expect((spec.xAxis as Record<string, Record<string, unknown>>).axisLabel).toEqual({ interval: 0, rotate: 90 });
+        expect((spec.grid as Record<string, unknown>).bottom).toBe("25%");
+        expect(spec.toolbox).toEqual({ right: 0, top: 0, feature: { saveAsImage: { type: "png", name: "top-variable-genes" } } });
+    });
 });
 
 describe("showFile", () => {

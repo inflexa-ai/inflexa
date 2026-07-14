@@ -122,6 +122,15 @@ describe("createAnthropicProvider", () => {
                     finishReason: "stop",
                     rawFinishReason: "end_turn",
                     message: { role: "assistant", content: [{ type: "text", text: "Hello, world" }] },
+                    // Mapped off the canned wire body above: Anthropic's snake_case
+                    // `input_tokens` / `cache_*_input_tokens` normalize onto the
+                    // harness's neutral `ChatUsage`.
+                    usage: {
+                        inputTokens: 12,
+                        outputTokens: 3,
+                        cacheCreationInputTokens: 0,
+                        cacheReadInputTokens: 0,
+                    },
                 },
             },
         ]);

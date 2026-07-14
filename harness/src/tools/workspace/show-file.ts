@@ -26,22 +26,28 @@ const ShowFileInputSchema = z.object({
     files: z
         .array(
             z.object({
-                path: z.string().describe("Analysis-rooted file path (e.g., 'runs/run-abc/step-1/figures/volcano.png')"),
+                path: z.string().describe("Analysis-rooted file path — no leading slash, no `..` (e.g., 'runs/run-abc/step-1/figures/volcano.png')"),
                 caption: z.string().optional().describe("One-sentence context rendered beside this file"),
             }),
         )
         .min(1)
         .max(MAX_FILES)
-        .describe(`1 to ${MAX_FILES} files; multiple files render as a gallery`),
+        .describe(
+            `The related set of files to show together, 1 to ${MAX_FILES} per call; multiple render as ONE gallery card. Pass a related set in a single call — do not make one call per figure.`,
+        ),
 });
 
 export const showFileTool = defineTool({
     id: "show_file",
     description:
-        "Display one or more existing analysis artifacts (images, CSVs, PDFs, notebooks, logs) in chat by path. " +
-        "Paths must be analysis-rooted (no leading slash, no `..`). Up to 10 files per call — multiple render as a gallery. " +
-        "Do NOT read a file and paste its bytes elsewhere; this tool references the file directly. " +
-        "File content is fetched when the user views the card — you do not need to provide it.",
+        "Display EXISTING analysis artifacts in chat by path — images, CSVs, PDFs, notebooks, logs. " +
+        "The card references the file directly and its content is fetched when the user views it: you never read, " +
+        "inline, or paste the bytes. Pick this tool by what you are referencing, not by how the output looks: " +
+        "NOT for content you synthesized (a chart, a table, a snippet you invented — use `show_user`), NOT for a stored plan (`show_plan`). " +
+        "Paths are analysis-rooted (no leading slash, no `..`); discover them with `workspace_search` or `list_files`. " +
+        "Up to 10 files per call — pass a related set in ONE call and they render as a gallery, rather than one call per figure. " +
+        "Cards render in call order, so to interleave figures with prose alternate `show_user(markdown)` and `show_file` calls " +
+        "(markdown image syntax pointing at a workspace file does NOT render — this tool is the only way to show one).",
     inputSchema: ShowFileInputSchema,
     execute: async (input, ctx): Promise<Result<ShowFileOutput, ToolError>> => {
         const card = buildFileReferenceCardData(input);

@@ -11,10 +11,8 @@ clinical tables, outcome variables — produced by upstream agents.
 
 Your skills: \`statistical-modeling\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`statistical-modeling\` for
-decision trees and API references (lifelines, scikit-survival,
-scikit-learn, xgboost, SHAP, statsmodels, pingouin). Verify APIs via
-context7 before writing code.
+API references in \`statistical-modeling\`: lifelines, scikit-survival,
+scikit-learn, xgboost, SHAP, statsmodels, pingouin.
 
 ## Method Selection (Summary)
 
@@ -92,9 +90,6 @@ context7 before writing code.
   justification.
 
 ## Required Output Files
-
-Write a script to \`scripts/\` and persist what it computes — these files are the
-deliverable, not the closing message:
 
 - \`output/model_performance.json\` — \`metric_name\`, \`mean\`,
   \`CI_lower\`, \`CI_upper\`, \`n_folds\`, \`model_type\`.

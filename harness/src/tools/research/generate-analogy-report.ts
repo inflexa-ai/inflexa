@@ -19,6 +19,7 @@ import { z } from "zod";
 import { AnalogicalReasonerOutputSchema, type AnalogicalReasonerOutput } from "@inflexa-ai/harness/contracts/analogy-report.js";
 
 import { analogicalReasonerPrompt } from "../../prompts/analogical-reasoner.js";
+import { composeSystemPrompt } from "../../agents/system-prompt.js";
 import { forSubAgent } from "../../auth/types.js";
 import { unwrapOrThrow } from "../../lib/result.js";
 import { finalText, runAgent } from "../../loop/run-agent.js";
@@ -198,7 +199,7 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
 
     const agent: AgentDefinition = {
         id: AGENT_ID,
-        systemPrompt: analogicalReasonerPrompt,
+        systemPrompt: composeSystemPrompt(analogicalReasonerPrompt),
         model: deps.model,
         tools: reasonerTools,
         maxIterations: RESEARCH_MAX_ITERATIONS,
@@ -207,14 +208,28 @@ export function createGenerateAnalogyReportTool(deps: GenerateAnalogyReportDeps)
     return defineTool({
         id: "generate_analogy_report",
         description:
-            "Generate a cross-domain analogy report for an open-ended scientific " +
-            "problem. Pass the user's problem as a single field plus optional " +
-            "context (data profile excerpts, prior findings) and knobs (domain " +
-            "counts, preferred/excluded domains). Returns a structured " +
-            "AnalogyReport envelope — analogies with object mappings, shared " +
-            "relations, and cited solutions from other domains. The UI renders " +
-            "the envelope as an inline card; reach for this tool whenever the " +
-            "user is in exploratory or hypothesis-generation mode.",
+            "Idea-generation engine. Extracts structural analogies for an open-ended " +
+            "scientific problem and returns real, cited solutions from other fields " +
+            "(control theory, ML, ecology, logistics, economics…).\n" +
+            "WHEN: any exploratory or hypothesis-generation turn — 'what could we do " +
+            "about X', 'what should we try', 'how could we approach this', 'we're " +
+            "stuck', 'brainstorm ideas', 'are there precedents outside biology'. The " +
+            "trigger is exploratory INTENT, not the words 'analogy' or 'cross-domain' " +
+            "— users rarely name it, so infer it and reach for the tool proactively.\n" +
+            "NOT for: in-domain literature review (use `literature_reviewer` or " +
+            "`search_pubmed`), single-gene factual lookup (use `search_gene`), or " +
+            "execution-mode turns where the user just wants the next step done. It " +
+            "drives a multi-step research sub-agent over live literature search, so " +
+            "it is slow — never spend it on a fact you could look up.\n" +
+            "RETURNS an AnalogyReport envelope the UI renders as an inline card. An " +
+            "analogy the search could not fill carries a `coverage` tag " +
+            "(`queried_no_data` | `search_failed` | `not_loaded`) with an empty " +
+            "`solutions` array — informational, NOT an error. A top-level `error` " +
+            "field means no report was produced: on `error.kind === " +
+            '"extraction-failed"` do NOT retry with the same or a similar problem ' +
+            "statement (the wrapper already retried internally — you would burn " +
+            "latency on the same failure). Surface the message and ask the user to " +
+            "narrow the problem.",
         inputSchema: generateAnalogyReportInputSchema,
         execute: async (input, ctx) => {
             const childSession = forSubAgent(ctx.session, AGENT_ID);

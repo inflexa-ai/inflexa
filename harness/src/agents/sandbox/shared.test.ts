@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { SOULKernelPrompt, SOULConversationalPrompt } from "../../prompts/SOUL.js";
+import { SOULExecutionCore, SOULIdentity, SOULConversationalPrompt } from "../../prompts/SOUL.js";
+import { sandboxOrientCorePrompt, sandboxAnalysisStepStandardsPrompt } from "../../prompts/sandbox-standards.js";
 import type { SandboxClient } from "../../sandbox/client.js";
 import type { SubmitExecBody } from "../../sandbox/types.js";
 import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
@@ -20,10 +21,6 @@ const meta: AgentMeta = {
 
 const body = "# Test Agent\n\nDo testy things.";
 
-// Stable, placeholder-free header lines from each sandbox layer. The full
-// prompts carry `{{WORKING_DIR}}` / `{{ANALYSIS_ROOT}}` placeholders that are
-// substituted into the composed prompt, so the raw prompt text is not a
-// substring — assert on the header marker instead.
 const ORIENT_CORE_MARKER = "# Sandbox Orient-Core";
 const ANALYSIS_STEP_MARKER = "# Sandbox Analysis-Step Conventions";
 
@@ -35,12 +32,66 @@ describe("createSandboxAgent", () => {
         expect(def.model).toBe("claude-opus-4-7");
         expect(def.maxIterations).toBe(SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS);
 
-        // System prompt = SOUL kernel + agent body + sandbox layer (no conversational).
-        expect(def.systemPrompt).toContain(SOULKernelPrompt.trim());
+        // System prompt = SOUL execution core + agent body + sandbox layer. A
+        // sandbox agent is headless: it carries every hard guardrail, and
+        // neither human-facing layer.
+        expect(def.systemPrompt).toContain(SOULExecutionCore.trim());
+        expect(def.systemPrompt).not.toContain(SOULIdentity.trim());
         expect(def.systemPrompt).not.toContain(SOULConversationalPrompt.trim());
         expect(def.systemPrompt).toContain(body.trim());
-        expect(def.systemPrompt).toContain(ORIENT_CORE_MARKER);
-        expect(def.systemPrompt).toContain(ANALYSIS_STEP_MARKER);
+        // The sandbox layers are static, so they appear verbatim — nothing is
+        // substituted into them on the way in.
+        expect(def.systemPrompt).toContain(sandboxOrientCorePrompt.trim());
+        expect(def.systemPrompt).toContain(sandboxAnalysisStepStandardsPrompt.trim());
+    });
+
+    it("composes a systemPrompt that is a pure function of the agent type — byte-identical across steps", () => {
+        // The cacheable prefix. Two different steps, of two different runs, of two
+        // different analyses, on the same agent: if any per-step value leaked into
+        // the system prompt, every step would pay a full cache write and read
+        // nothing back. Byte equality is the whole invariant.
+        const stepOne = createSandboxAgent(
+            makeFakeSandboxAgentDeps({
+                analysisId: "analysis-001",
+                runId: "run-001",
+                stepId: "step-001",
+                allowedWritePrefix: "/tmp/sessions/analysis-001/runs/run-001/step-001",
+            }),
+            meta,
+            body,
+        );
+        const stepTwo = createSandboxAgent(
+            makeFakeSandboxAgentDeps({
+                analysisId: "analysis-999",
+                runId: "run-777",
+                stepId: "qc-and-normalize",
+                workflowId: "wf-777",
+                allowedWritePrefix: "/tmp/sessions/analysis-001/runs/run-777/qc-and-normalize",
+            }),
+            meta,
+            body,
+        );
+
+        expect(stepTwo.systemPrompt).toBe(stepOne.systemPrompt);
+    });
+
+    it("leaks no per-step value and no unsubstituted placeholder into the systemPrompt", () => {
+        const def = createSandboxAgent(
+            makeFakeSandboxAgentDeps({
+                analysisId: "analysis-001",
+                runId: "run-001",
+                stepId: "step-001",
+            }),
+            meta,
+            body,
+        );
+
+        // No placeholder survives (there are none left to substitute) …
+        expect(def.systemPrompt).not.toContain("{{");
+        // … and no concrete coordinate is interpolated in its place.
+        for (const leak of ["analysis-001", "run-001", "step-001", "/tmp/sessions"]) {
+            expect(def.systemPrompt).not.toContain(leak);
+        }
     });
 
     it("resolves meta.tools to exactly the declared bio/research tools + workspace surface", () => {
@@ -98,6 +149,22 @@ describe("createSandboxAgent", () => {
         expect(submits).toHaveLength(1);
         expect(submits[0]!.execId).toBe("wf-001:step-001:fn-1");
         expect(submits[0]!.command.slice(0, 2)).toEqual(["python3", "-c"]);
+    });
+
+    it("wires inspect_data_profile as always-on substrate — no meta declares it", () => {
+        // The profile is the only record of what the input dataset IS, and no file
+        // carries it, so it is not in the `SandboxToolName` allowlist at all: every
+        // sandbox agent gets it regardless of what its meta names.
+        const bare = { ...meta, tools: [] as const };
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), bare, body);
+
+        expect(def.tools.map((t) => t.id)).toContain("inspect_data_profile");
+    });
+
+    it("readOnly keeps inspect_data_profile — reading the profile is not a mutation", () => {
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), meta, body, { readOnly: true });
+
+        expect(def.tools.map((t) => t.id)).toContain("inspect_data_profile");
     });
 
     it("readOnly drops write_file/edit_file but keeps execute_command + read tools", () => {

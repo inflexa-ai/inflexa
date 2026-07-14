@@ -1,4 +1,4 @@
-import type { ChatResponse, ChatProvider, ChatRequest, ChatStreamEvent } from "../../providers/types.js";
+import type { ChatResponse, ChatProvider, ChatRequest, ChatStreamEvent, ChatUsage } from "../../providers/types.js";
 import { type ResultAsync, okAsync } from "neverthrow";
 import type { ProviderError } from "../../providers/errors.js";
 import type { AgentSession as Session } from "../../auth/types.js";
@@ -26,10 +26,12 @@ function mapFinishReason(finishReason: ChatResponse["finishReason"] | "tool_use"
 export function makeMessage(
     content: ContentBlock[],
     finishReason: ChatResponse["finishReason"] | "tool_use" | "end_turn" | "max_tokens" | "refusal",
+    usage?: ChatUsage,
 ): ChatResponse {
     return {
         message: { role: "assistant", content },
         finishReason: mapFinishReason(finishReason),
+        usage,
     };
 }
 

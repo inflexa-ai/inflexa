@@ -41,13 +41,19 @@ export function createWorkspaceSearchTool(pool: Pool, embedding: EmbeddingProvid
     return defineTool({
         id: "workspace_search",
         description:
-            "Semantic search over the analysis workspace — input data, analysis " +
-            "outputs, step summaries, run syntheses, and the data profile. Returns " +
-            "ranked file paths with descriptions and metadata; read a file " +
-            "separately to see its contents. Optionally filter by entry type.",
+            "Semantic search over the analysis workspace. Returns ranked file paths " +
+            "with descriptions and metadata; read a file separately to see its " +
+            "contents. Indexed entries are exactly four types, and `type` restricts " +
+            'results to one of them: "input" (staged input data files — their ' +
+            'descriptions come from the data profiler), "output" (files a step ' +
+            'produced), "summary" (a step\'s summary), "synthesis" (a run\'s ' +
+            "literature-grounded synthesis).",
         inputSchema: z.object({
             query: z.string().min(1).describe("What to search for, in natural language"),
-            type: z.enum(["input", "output", "summary", "synthesis"]).optional().describe("Restrict results to one workspace entry type"),
+            type: z
+                .enum(["input", "output", "summary", "synthesis"])
+                .optional()
+                .describe('Restrict results to one entry type: "input", "output", "summary", or "synthesis"'),
             limit: z.number().int().min(1).max(50).default(8).describe("Maximum number of results to return"),
         }),
         execute: async ({ query, type, limit }, ctx) => {

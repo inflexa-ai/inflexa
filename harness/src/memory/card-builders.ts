@@ -27,10 +27,15 @@ import { tryQuery, type DbError } from "../lib/db-result.js";
 import { tryFs, type FsError } from "../lib/fs-result.js";
 import { AnalysisPlanSchema } from "../schemas/workflow-state.js";
 import { loadPlan } from "../state/index.js";
+import { normalizeEchartSpec } from "../tools/display/normalize-echart-spec.js";
 import { validatePath } from "../tools/lib/path-validation.js";
 import { latestPreviewVersion, previewDir, PREVIEWS_ROOT } from "../workspace/paths.js";
 
 const PREVIEW_META_FILE = "preview-meta.json";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 export interface PlanCardData {
     id: string;
@@ -141,14 +146,28 @@ export function buildRunCardData(pool: Pool, opts: { planId: string; analysisId:
 }
 
 /** Build the `data-presentation` payload from the `show_user` tool input.
- *  Self-contained — the card lives entirely in the input. */
+ *  Self-contained — the card lives entirely in the input.
+ *
+ *  An `echart` spec passes through `normalizeEchartSpec` HERE rather than in the tool body, because
+ *  this builder is the single construction site of a `PresentationContent`: normalizing in
+ *  `show_user.execute` alone would leave the reconstruct-on-read path (which sees only the persisted
+ *  raw `tool_use` input) rendering the un-normalized chart, breaking the byte-identical live/replay
+ *  card this module exists to guarantee. The `id` stays keyed to the raw input, which both paths
+ *  hold identically, so normalization cannot move a card's identity. */
 export function buildPresentationCardData(input: Record<string, unknown>): PresentationCardData | null {
     const { kind, title, ...rest } = input;
     if (typeof kind !== "string") return null;
+    const cardTitle = typeof title === "string" ? title : undefined;
+    const content =
+        kind === "echart" && isRecord(rest.spec)
+            ? { kind, ...rest, spec: normalizeEchartSpec(rest.spec, { title: cardTitle }) }
+            : // Every other kind (and an echart the model called without a `spec`) is carried through
+              // untouched — there is no layout to normalize, and no spec to invent.
+              { kind, ...rest };
     return {
         id: presentationId(input),
-        ...(typeof title === "string" ? { title } : {}),
-        content: { kind, ...rest },
+        ...(cardTitle !== undefined ? { title: cardTitle } : {}),
+        content,
     };
 }
 

@@ -34,6 +34,7 @@ import { runExecuteAnalysisBody } from "./execute-analysis.js";
 import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunProvenanceEvent } from "./execute-analysis.js";
 import type { SandboxStepInput, SandboxStepResult } from "./sandbox-step.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
+import type { AnalysisStep } from "../schemas/workflow-state.js";
 
 // ── Fake DBOS surface ────────────────────────────────────────────────
 
@@ -58,6 +59,8 @@ interface FakeDbosState {
     pendingHandles: Map<string, FakeWorkflowHandle>;
     /** Per-step child results the `DBOS.startWorkflow` mock hands back. */
     childResults: Map<string, SandboxStepResult | Error>;
+    /** Every child input the parent dispatched — the seed the child actually received. */
+    childInputs: SandboxStepInput[];
     /** Parts captured from `DBOS.writeStream("events", …)`. */
     emittedParts: Array<Record<string, unknown>>;
     /** Step-name → message: makes the matching `DBOS.runStep` throw. */
@@ -103,6 +106,7 @@ async function mockDbos(): Promise<void> {
     // `DBOS.startWorkflow(callable, { workflowID })(input)` — return a fake
     // handle resolving to the configured child result for the step.
     (dbos.DBOS.startWorkflow as unknown) = mock((_callable: unknown, opts: { workflowID: string }) => async (input: SandboxStepInput) => {
+        dbosState.childInputs.push(input);
         const result = dbosState.childResults.get(input.stepId);
         if (!result) {
             throw new Error(`no fake result for step ${input.stepId}`);
@@ -164,6 +168,7 @@ beforeEach(async () => {
         cancelled: new Set(),
         pendingHandles: new Map(),
         childResults: new Map(),
+        childInputs: [],
         emittedParts: [],
         throwOnStep: new Map(),
         nowMs: FAKE_CLOCK_BASE_MS,
@@ -280,6 +285,23 @@ function makeDeps(opts: {
 
 // ── Test inputs ──────────────────────────────────────────────────────
 
+/** The plan data one step carries into the workflow input — the seed is composed FROM this. */
+function planStep(id: string, dependsOn: readonly string[]): AnalysisStep {
+    return {
+        id,
+        name: `step ${id}`,
+        track: "T1",
+        step_type: "analysis",
+        question: `question ${id}`,
+        acceptance_criteria: [`criterion ${id}`],
+        depends_on: [...dependsOn],
+        status: "pending",
+        resources: { cpu: 2, memoryGb: 4 },
+        agent: "agent-x",
+        maxSteps: 10,
+    };
+}
+
 function input(steps: Array<{ id: string; depends_on?: readonly string[] }>, budget?: { cpu: number; memoryGb: number }): ExecuteAnalysisInput {
     const ids = steps.map((s) => s.id);
     return {
@@ -288,7 +310,7 @@ function input(steps: Array<{ id: string; depends_on?: readonly string[] }>, bud
         planSummary: "test plan",
         threadId: null,
         steps: steps.map((s) => ({ id: s.id, depends_on: s.depends_on ?? [] })),
-        promptByStepId: Object.fromEntries(ids.map((id) => [id, `prompt ${id}`])),
+        planStepById: Object.fromEntries(steps.map((s) => [s.id, planStep(s.id, s.depends_on ?? [])])),
         agentByStepId: Object.fromEntries(ids.map((id) => [id, "agent-x"])),
         resourcesByStepId: Object.fromEntries(ids.map((id) => [id, { cpu: 2, memoryGb: 4 }])),
         ...(budget && { budget }),
@@ -955,5 +977,49 @@ describe("executeAnalysis body", () => {
 
         const result = await runExecuteAnalysisBody(input([{ id: "A" }]), deps);
         expect(result.status).toBe("completed");
+    });
+});
+
+// ── Dispatch-time seed composition ───────────────────────────────────
+
+describe("executeAnalysis child seed", () => {
+    it("dispatches each child with a seed composed from its plan step, not a prompt frozen in the workflow input", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const { deps } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+            ]),
+        });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
+        expect(result.status).toBe("completed");
+
+        const seedB = dbosState.childInputs.find((i) => i.stepId === "B")!.prompt;
+        // The task fields the plan step carries.
+        expect(seedB).toContain("question B");
+        expect(seedB).toContain("criterion B");
+        // The step's in-sandbox workspace frame, resolved from the run coordinates.
+        expect(seedB).toContain("/a1/runs/run-test/B");
+        expect(seedB).toContain("/a1");
+        // No upstream block: A completed but wrote no summary to the (absent) tree,
+        // so there is nothing to hand off and the section collapses out.
+        expect(seedB).not.toContain("Upstream results");
+    });
+
+    it("fails the step dispatch when the plan data for a step is missing from the workflow input", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const { deps } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }]]),
+        });
+
+        const bad: ExecuteAnalysisInput = { ...input([{ id: "A" }]), planStepById: {} };
+        await expect(runExecuteAnalysisBody(bad, deps)).rejects.toThrow(/missing from planStepById/);
     });
 });

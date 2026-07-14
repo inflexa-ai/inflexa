@@ -50,12 +50,12 @@ function mapCrossRef(raw: PugXrefRecord): CrossRefEntry {
 export const getPubchemCrossRefsTool = defineTool({
     id: "get_pubchem_cross_refs",
     description:
-        "Get external database cross-references for a PubChem CID. " +
-        "Returns linked identifiers from ChEMBL, DrugBank, KEGG, PDB, and other registries. " +
-        "Use this to bridge PubChem compounds to other databases (e.g., get ChEMBL ID to then " +
-        "query bioactivity via ChEMBL tools).",
+        "Get external registry cross-references for a PubChem CID. " +
+        "Returns a flat crossRefs array of { source, id } pairs — ChEMBL, DrugBank, KEGG, PDB and many other registries; filter by `source` for the one you want. " +
+        "This is the bridge out of PubChem: resolve a compound with search_pubchem_compound, take its ChEMBL ID from here, then get curated data via get_mechanism / get_bioactivity. " +
+        "An empty crossRefs array is valid no-data (the CID is in no external registry) — do not retry.",
     inputSchema: z.object({
-        cid: z.number().int().positive().describe("PubChem Compound ID (CID)"),
+        cid: z.number().int().positive().describe("PubChem Compound ID as an integer (e.g. 2244 for aspirin), from a prior search_pubchem_compound call."),
     }),
     execute: async ({ cid }) => {
         const url = `${PUBCHEM_BASE}/compound/cid/${cid}/xrefs/RegistryID,SourceName/JSON`;

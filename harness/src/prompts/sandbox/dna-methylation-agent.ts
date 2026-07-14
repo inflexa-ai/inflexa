@@ -10,9 +10,8 @@ between beta-values (for reporting) and M-values (for statistics).
 
 Your skills: \`dna-methylation\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`dna-methylation\` for decision
-trees and API references (minfi, ChAMP, DMRcate, dmrseq, methylclock,
-SVA, EpiDISH). Verify APIs via context7.
+API references in \`dna-methylation\`: minfi, ChAMP, DMRcate, dmrseq,
+methylclock, SVA, EpiDISH.
 
 ## Method Selection (Summary)
 
@@ -79,10 +78,6 @@ SVA, EpiDISH). Verify APIs via context7.
 - Including CpGs with <5× coverage in bisulfite-seq statistics.
 
 ## Required Output Files
-
-Write your scripts to \`scripts/\` and persist what they compute — these files
-are the deliverable, not the closing message. Build the pipeline incrementally
-across several scripts/steps; do not emit one giant script in a single write.
 
 - Methylation matrix: AnnData \`.h5ad\` with CpGs as \`.var\`, samples as
   \`.obs\`, beta-values as \`.X\`, M-values as a layer.
