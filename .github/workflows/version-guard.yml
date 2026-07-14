@@ -30,9 +30,17 @@ jobs:
         # the script so untrusted event data can never become shell syntax.
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          # author_association is computed server-side in the event payload, so
-          # membership needs no extra token scopes. OWNER covers user-owned
-          # repos; org members (the maintainers team) surface as MEMBER.
+          # The primary authorization signal: a head branch inside this repo
+          # can only be created by someone with write access, which this repo
+          # grants solely to the maintainers team — and a fork cannot spoof
+          # the full_name (nobody else can own inflexa-ai/inflexa). This also
+          # covers automation (release-prep pushes its bump branch here).
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          # Fallback for a maintainer releasing from a personal fork.
+          # author_association is computed server-side (no extra token
+          # scopes), but it surfaces MEMBER only when the author's org
+          # membership is PUBLIC — a concealed membership reads as
+          # CONTRIBUTOR, which is why it cannot be the primary signal.
           AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
           AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
         run: |
@@ -45,16 +53,17 @@ jobs:
             exit 0
           fi
 
-          # github-actions[bot] is allowed for automation-authored bump PRs
-          # (an App-token variant of release-prep would author as the bot).
-          # Only workflows in this repo can act as the bot — fork PRs get a
-          # read-only token — so this does not widen access beyond write.
-          case "$AUTHOR_ASSOCIATION/$AUTHOR_LOGIN" in
-            OWNER/* | MEMBER/* | */github-actions\[bot\])
-              echo "version bump $base_version -> $head_version by $AUTHOR_LOGIN ($AUTHOR_ASSOCIATION) — authorized"
+          if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
+            echo "version bump $base_version -> $head_version from an in-repo branch by $AUTHOR_LOGIN (write access) — authorized"
+            exit 0
+          fi
+
+          case "$AUTHOR_ASSOCIATION" in
+            OWNER | MEMBER)
+              echo "version bump $base_version -> $head_version by $AUTHOR_LOGIN ($AUTHOR_ASSOCIATION, fork PR) — authorized"
               ;;
             *)
-              echo "::error::cli/package.json version changed ($base_version -> $head_version), but PR author $AUTHOR_LOGIN ($AUTHOR_ASSOCIATION) is not a maintainer. Version bumps mint production releases and must come from maintainer-authored PRs — split the bump out of this PR."
+              echo "::error::cli/package.json version changed ($base_version -> $head_version), but PR author $AUTHOR_LOGIN ($AUTHOR_ASSOCIATION, fork PR) is not verifiably a maintainer. Version bumps mint production releases and must come from maintainer-authored PRs — split the bump out of this PR, or open it from an in-repo branch."
               exit 1
               ;;
           esac
