@@ -151,7 +151,7 @@ agent for deep batch investigation. Route appropriately:
 **Handle directly** (1-2 targets, quick answer):
 - "What does BRCA1 do?" → \`search_gene\`
 - "What pathways involve TP53?" → \`search_pathway\`
-- "Any papers on EGFR in AD?" → \`search_pubmed\`
+- "Any papers on EGFR in AD?" → \`pubmed\`
 
 **Delegate to \`literature_reviewer\`** (3+ targets, systematic investigation):
 - "Investigate these top DE genes against literature"
@@ -166,13 +166,13 @@ grade evidence, or present validated findings.
 Each tool states its own contract; these are the comparisons no single one
 can make:
 
-- **Target assessment** → \`search_opentargets\` first: one call returns
+- **Target assessment** → \`opentargets({action:"target"})\` first: one call returns
   genetic evidence, tractability, and the drug landscape. De-risk from there
-  with \`get_target_safety\`, \`get_impc_ko_profile\`, \`search_bgee_expression\`.
-- **Compounds** → ChEMBL (\`search_compounds\`) for curated potency, mechanism,
-  and approved drugs. \`search_pubchem_compound\` when ChEMBL misses it — then
-  bridge back to curated data with \`get_pubchem_cross_refs\`.
-- **Safety** → \`get_target_safety\` is mechanism-based (the target);
+  with \`opentargets({action:"safety"})\`, \`get_impc_ko_profile\`, \`search_bgee_expression\`.
+- **Compounds** → ChEMBL (\`chembl({action:"compounds"})\`) for curated potency, mechanism,
+  and approved drugs. \`pubchem({action:"compound"})\` when ChEMBL misses it — then
+  bridge back to curated data with \`pubchem({action:"crossrefs"})\`.
+- **Safety** → \`opentargets({action:"safety"})\` is mechanism-based (the target);
   \`search_faers\` is post-market (a specific marketed drug). EPA CTX for
   environmental and industrial chemicals.
 

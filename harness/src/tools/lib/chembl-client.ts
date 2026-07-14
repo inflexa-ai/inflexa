@@ -9,6 +9,18 @@ import { z } from "zod";
 import { apiFetchValidated, describeApiError } from "./api-utils.js";
 import { CHEMBL_BASE, CHEMBL_HEADERS as HEADERS } from "./chembl-config.js";
 
+export interface ChemblCompound {
+    chemblId: string;
+    preferredCompoundName: string | null;
+    canonicalSmiles: string | null;
+    molecularWeight: number | null;
+    alogp: number | null;
+    molecularFormula: string | null;
+}
+
+/** How `searchCompounds` interprets its query string. */
+export type CompoundSearchType = "target" | "compound" | "smiles";
+
 export interface ChemblTarget {
     targetChemblId: string;
     preferredName: string | null;
@@ -140,6 +152,50 @@ const TargetComponentsResponseSchema = z.object({
     target_components: z.array(z.object({ accession: z.string().optional(), component_type: z.string().optional() })).optional(),
 });
 
+// A single schema that both validates and normalizes one ChEMBL molecule
+// record for the compound search: the `.object(...)` half is the snake_case wire
+// shape (every field optional — ChEMBL omits absent values), the
+// `.transform(...)` half maps it to the camelCase `ChemblCompound` we return.
+// Parsing IS the validation, so there is no separate raw interface or mapper.
+const CompoundRecordSchema = z
+    .object({
+        molecule_chembl_id: z.string().optional(),
+        // ChEMBL sends explicit `null` (not omission) for an unnamed compound, and
+        // `null` for the whole structures/properties blocks on biologics/antibodies
+        // — `.nullable()` so those rows parse instead of failing the `molecules` array.
+        pref_name: z.string().nullable().optional(),
+        molecule_structures: z
+            .object({
+                canonical_smiles: z.string().nullable().optional(),
+            })
+            .nullable()
+            .optional(),
+        molecule_properties: z
+            .object({
+                full_mwt: z.string().nullable().optional(),
+                alogp: z.string().nullable().optional(),
+                molecular_formula: z.string().nullable().optional(),
+            })
+            .nullable()
+            .optional(),
+    })
+    .transform((raw): ChemblCompound => ({
+        chemblId: raw.molecule_chembl_id ?? "",
+        preferredCompoundName: raw.pref_name ?? null,
+        canonicalSmiles: raw.molecule_structures?.canonical_smiles ?? null,
+        molecularWeight: raw.molecule_properties?.full_mwt ? parseFloat(raw.molecule_properties.full_mwt) : null,
+        alogp: raw.molecule_properties?.alogp ? parseFloat(raw.molecule_properties.alogp) : null,
+        molecularFormula: raw.molecule_properties?.molecular_formula ?? null,
+    }));
+
+const CompoundsResponseSchema = z.object({ molecules: z.array(CompoundRecordSchema).optional() });
+
+// The two hops of the target-mode compound search read one id each, so they
+// project the response down to that id rather than reusing the richer
+// target/activity schemas above.
+const CompoundTargetIdResponseSchema = z.object({ targets: z.array(z.object({ target_chembl_id: z.string().optional() })).optional() });
+const CompoundActivityIdResponseSchema = z.object({ activities: z.array(z.object({ molecule_chembl_id: z.string().optional() })).optional() });
+
 function extractGeneNames(components?: TargetComponent[]): string[] {
     if (!components?.length) return [];
     const genes = new Set<string>();
@@ -172,6 +228,99 @@ function parseNumeric(val: string | number | undefined | null): number | null {
     if (val == null) return null;
     const n = typeof val === "number" ? val : parseFloat(val);
     return Number.isNaN(n) ? null : n;
+}
+
+/**
+ * Compounds assayed against a target: resolve the query to a target ChEMBL ID,
+ * read that target's activity rows, then fetch the unique molecules behind them.
+ * `limit` caps the activity rows scanned, so the compound count is usually lower.
+ */
+async function searchCompoundsByTarget(query: string, limit: number): Promise<ChemblCompound[]> {
+    const targetRes = await apiFetchValidated(`${CHEMBL_BASE}/target/search.json?q=${encodeURIComponent(query)}&limit=1`, CompoundTargetIdResponseSchema, {
+        headers: HEADERS,
+    });
+    if (targetRes.isErr()) {
+        if (targetRes.error.type === "http_status" && targetRes.error.status === 404) return [];
+        throw new Error(describeApiError(targetRes.error));
+    }
+    if (!targetRes.value.targets?.length) return [];
+
+    const targetChemblId = targetRes.value.targets[0].target_chembl_id;
+    if (!targetChemblId) return [];
+
+    const activityRes = await apiFetchValidated(
+        `${CHEMBL_BASE}/activity.json?target_chembl_id=${targetChemblId}&limit=${limit}`,
+        CompoundActivityIdResponseSchema,
+        {
+            headers: HEADERS,
+        },
+    );
+    if (activityRes.isErr()) {
+        if (activityRes.error.type === "http_status" && activityRes.error.status === 404) return [];
+        throw new Error(describeApiError(activityRes.error));
+    }
+    if (!activityRes.value.activities?.length) return [];
+
+    const uniqueIds = new Set<string>();
+    for (const act of activityRes.value.activities) {
+        if (act.molecule_chembl_id) uniqueIds.add(act.molecule_chembl_id);
+    }
+
+    const compounds: ChemblCompound[] = [];
+    const idArray = [...uniqueIds];
+    // Fetch in batches of 50 to avoid overly long URLs.
+    const batchSize = 50;
+    for (let i = 0; i < idArray.length; i += batchSize) {
+        const batch = idArray.slice(i, i + batchSize);
+        const idsParam = batch.join(";");
+        const molRes = await apiFetchValidated(`${CHEMBL_BASE}/molecule/set/${idsParam}.json`, CompoundsResponseSchema, { headers: HEADERS });
+        if (molRes.isErr()) {
+            if (!(molRes.error.type === "http_status" && molRes.error.status === 404)) {
+                throw new Error(describeApiError(molRes.error));
+            }
+            continue;
+        }
+        if (molRes.value.molecules) {
+            for (const mol of molRes.value.molecules) {
+                compounds.push(mol);
+            }
+        }
+    }
+
+    return compounds;
+}
+
+/** Free-text search over molecule names. */
+async function searchCompoundsByName(query: string, limit: number): Promise<ChemblCompound[]> {
+    const res = await apiFetchValidated(`${CHEMBL_BASE}/molecule/search.json?q=${encodeURIComponent(query)}&limit=${limit}`, CompoundsResponseSchema, {
+        headers: HEADERS,
+    });
+    if (res.isErr()) {
+        if (res.error.type === "http_status" && res.error.status === 404) return [];
+        throw new Error(describeApiError(res.error));
+    }
+    return res.value.molecules ?? [];
+}
+
+/** Flexible (flexmatch) structure search on canonical SMILES. */
+async function searchCompoundsBySmiles(smiles: string, limit: number): Promise<ChemblCompound[]> {
+    const res = await apiFetchValidated(
+        `${CHEMBL_BASE}/molecule.json?molecule_structures__canonical_smiles__flexmatch=${encodeURIComponent(smiles)}&limit=${limit}`,
+        CompoundsResponseSchema,
+        { headers: HEADERS },
+    );
+    if (res.isErr()) {
+        if (res.error.type === "http_status" && res.error.status === 404) return [];
+        throw new Error(describeApiError(res.error));
+    }
+    return res.value.molecules ?? [];
+}
+
+/** Search ChEMBL for compounds by target, compound name, or SMILES. */
+export async function searchCompounds(query: string, searchType: CompoundSearchType, limit = 500): Promise<ChemblCompound[]> {
+    if (searchType === "target") return searchCompoundsByTarget(query, limit);
+    if (searchType === "smiles") return searchCompoundsBySmiles(query, limit);
+    return searchCompoundsByName(query, limit);
 }
 
 export async function searchTargets(query: string, limit = 25): Promise<ChemblTarget[]> {

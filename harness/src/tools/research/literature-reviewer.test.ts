@@ -43,8 +43,8 @@ describe("literatureReviewer sub-agent tool", () => {
         expect(parentSession.provenance.agentId).toBe("conversation-agent");
         expect(parentSession.provenance.callPath).toEqual(["conversation-agent"]);
 
-        // The child ran the literature-reviewer agent (its prompt + 10 tools).
-        expect(Object.keys(provider.calls[0]!.tools)).toHaveLength(10);
+        // The child ran the literature-reviewer agent (its prompt + 8 tools).
+        expect(Object.keys(provider.calls[0]!.tools)).toHaveLength(8);
 
         // The child transcript is not exposed — only the report leaves the tool.
         expect(Object.keys(result)).toEqual(["report"]);

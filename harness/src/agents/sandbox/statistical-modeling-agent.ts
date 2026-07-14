@@ -34,7 +34,7 @@ export const meta: AgentMeta = {
         "patient-stratification",
     ],
     skills: ["statistical-modeling", "shared/omics-general"],
-    tools: [...BASE_SANDBOX_TOOLS, "searchPubMed", "getArticleDetails", "getArticleFullText"],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed"],
 };
 
 export function createStatisticalModelingAgent(deps: SandboxAgentDeps): AgentDefinition {

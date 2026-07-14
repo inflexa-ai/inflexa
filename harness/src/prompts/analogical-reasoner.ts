@@ -58,7 +58,7 @@ Tool guidance:
   free-text queries (\`"adaptive control feedback stabilization"\`).
 - \`search_arxiv\` — preprints for ML, physics, math, control theory,
   economics. Optionally filter with \`categories: ["cs.LG", "math.OC"]\`.
-- \`search_pubmed\` / \`get_article_details\` / \`get_article_full_text\` — use
+- \`pubmed\` (actions search / details / fulltext) — use
   when an analogy lands back in biology (e.g., cardiac arrhythmia →
   neural oscillation). PubMed query syntax (MeSH, field tags, Boolean).
 - \`search_github_repos\` — find code implementations. Try queries like
@@ -156,7 +156,7 @@ incoherent), return this instead — and ONLY this:
 ## Do NOT
 
 - **Search the source problem's own domain.** The whole point is to find
-  ideas elsewhere. If the source is biology and you call \`search_pubmed\`
+  ideas elsewhere. If the source is biology and you call \`pubmed\`
   for everything, you've failed the task.
 - **Cite review papers.** Find the primary source that describes the
   specific method.

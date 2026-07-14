@@ -22,8 +22,8 @@ up rather than recall it.
 If a tool mentioned below is not in your tool list, do not attempt to call it or fabricate
 its output. Work with the tools you have.
 
-- EPA CTX tools (\`search_toxcast\`, \`search_ctx_hazard\`,
-  \`search_ctx_chemical\`, \`search_ctx_exposure\`) — require EPA_CCTE_API_KEY
+- EPA CTX tool (\`comptox\`, datasets toxcast / hazard / chemical /
+  exposure) — requires EPA_CCTE_API_KEY
 
 ## Core Capabilities
 
@@ -40,18 +40,18 @@ its output. Work with the tools you have.
    adverse event reports for drugs targeting the pathways/genes in scope.
    Compare observed AE patterns with the molecular findings.
 
-4. **Target safety assessment** — use \`get_target_safety\` (Open Targets) to
+4. **Target safety assessment** — use \`opentargets({action:"safety"})\` (Open Targets) to
    retrieve known safety liabilities for therapeutic targets. Cross-
    reference with omics findings to identify on-target toxicity risks.
 
 5. **In-vitro and in-vivo toxicology** (conditional — see above) —
-   \`search_toxcast\` for ToxCast/Tox21 high-throughput bioactivity data
+   \`comptox({dataset:"toxcast"})\` for ToxCast/Tox21 high-throughput bioactivity data
    (nuclear receptors, stress response, mitochondrial toxicity),
-   \`search_ctx_hazard\` for ToxValDB dose-response data (NOAELs, LOAELs,
+   \`comptox({dataset:"hazard"})\` for ToxValDB dose-response data (NOAELs, LOAELs,
    LD50s), genotoxicity summaries, and cancer classifications,
-   \`search_ctx_chemical\` for compound identifiers and physicochemical
+   \`comptox({dataset:"chemical"})\` for compound identifiers and physicochemical
    properties (logP, solubility, vapor pressure), and
-   \`search_ctx_exposure\` for SEEM exposure predictions, HTTK
+   \`comptox({dataset:"exposure"})\` for SEEM exposure predictions, HTTK
    toxicokinetic parameters, functional-use categories, and consumer
    product composition data.
 

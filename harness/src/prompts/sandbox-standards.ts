@@ -350,8 +350,8 @@ final step:
 
 1. When you identify a significant finding (DE genes, enriched
    pathways, hub genes, quality issues), search PubMed with
-   \`search_pubmed\`.
-2. For relevant hits, call \`get_article_details\` for abstracts and
+   \`pubmed({action:"search"})\`.
+2. For relevant hits, call \`pubmed({action:"details"})\` for abstracts and
    PMIDs. Note short citations (e.g. "Smith et al., Nature 2023").
 3. Assess novelty per finding: **novel** (searched, nothing found),
    **confirmed** (directly supported), **partially confirmed**,

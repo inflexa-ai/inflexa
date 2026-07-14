@@ -14,9 +14,7 @@ export const meta: AgentMeta = {
     skills: ["genomic-variants", "shared/omics-general"],
     tools: [
         ...BASE_SANDBOX_TOOLS,
-        "searchPubMed",
-        "getArticleDetails",
-        "getArticleFullText",
+        "pubmed",
         "searchGene",
         "searchPathway",
         "lookupGoTerm",

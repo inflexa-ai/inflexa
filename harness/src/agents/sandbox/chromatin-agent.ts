@@ -12,16 +12,7 @@ export const meta: AgentMeta = {
     capabilities: ["peak calling", "differential binding", "differential accessibility", "motif analysis", "footprinting", "signal visualization"],
     suitableFor: ["atac-seq", "chip-seq", "cut-and-tag", "cut-and-run", "scatac-seq"],
     skills: ["chromatin-regulation", "shared/omics-general"],
-    tools: [
-        ...BASE_SANDBOX_TOOLS,
-        "searchPubMed",
-        "getArticleDetails",
-        "getArticleFullText",
-        "searchGene",
-        "searchPathway",
-        "lookupGoTerm",
-        "searchInteractions",
-    ],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene", "searchPathway", "lookupGoTerm", "searchInteractions"],
 };
 
 export function createChromatinAgent(deps: SandboxAgentDeps): AgentDefinition {

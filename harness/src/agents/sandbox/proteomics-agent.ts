@@ -12,7 +12,7 @@ export const meta: AgentMeta = {
     capabilities: ["protein quantification", "differential abundance", "imputation", "normalization", "PTM analysis", "phosphoproteomics"],
     suitableFor: ["dda-proteomics", "dia-proteomics", "tmt-proteomics", "olink", "somascan"],
     skills: ["proteomics", "shared/omics-general"],
-    tools: [...BASE_SANDBOX_TOOLS, "searchPubMed", "getArticleDetails", "getArticleFullText"],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed"],
 };
 
 export function createProteomicsAgent(deps: SandboxAgentDeps): AgentDefinition {

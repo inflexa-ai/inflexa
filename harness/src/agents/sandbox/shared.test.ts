@@ -16,7 +16,7 @@ const meta: AgentMeta = {
     capabilities: ["test-cap"],
     suitableFor: ["test-suit"],
     skills: [],
-    tools: [...BASE_SANDBOX_TOOLS, "searchPubMed", "searchGene"],
+    tools: [...BASE_SANDBOX_TOOLS, "pubmed", "searchGene"],
 };
 
 const body = "# Test Agent\n\nDo testy things.";
@@ -112,12 +112,12 @@ describe("createSandboxAgent", () => {
         expect(toolIds).toContain("query_docs");
         expect(toolIds).toContain("inspect_run");
         // Plus the two declared bio tools.
-        expect(toolIds).toContain("search_pubmed");
+        expect(toolIds).toContain("pubmed");
         expect(toolIds).toContain("search_gene");
         // Nothing else from bio.
-        expect(toolIds).not.toContain("search_compounds");
+        expect(toolIds).not.toContain("chembl");
         expect(toolIds).not.toContain("search_faers");
-        expect(toolIds).not.toContain("search_toxcast");
+        expect(toolIds).not.toContain("comptox");
     });
 
     it("wires list_available_refs as a workflow tool through step-bound replay-safe exec coordinates", async () => {
@@ -217,8 +217,8 @@ describe("createSandboxAgent", () => {
     });
 
     it("declaring the same tool twice does not duplicate it in the resolved list", () => {
-        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), { ...meta, tools: [...BASE_SANDBOX_TOOLS, "searchPubMed", "searchPubMed"] }, body);
-        const matches = def.tools.filter((t) => t.id === "search_pubmed");
+        const def = createSandboxAgent(makeFakeSandboxAgentDeps(), { ...meta, tools: [...BASE_SANDBOX_TOOLS, "pubmed", "pubmed"] }, body);
+        const matches = def.tools.filter((t) => t.id === "pubmed");
         expect(matches).toHaveLength(1);
     });
 });

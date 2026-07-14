@@ -14,25 +14,16 @@ export * from "./lookup-go-term.js";
 export * from "./search-interactions.js";
 
 // Literature
-export * from "./search-pubmed.js";
-export * from "./get-article-details.js";
-export * from "./get-article-full-text.js";
+export * from "./pubmed.js";
 
 // ChEMBL
-export * from "./search-compounds.js";
-export * from "./get-bioactivity.js";
-export * from "./search-targets.js";
-export * from "./get-mechanism.js";
-export * from "./get-drug-info.js";
+export * from "./chembl.js";
 
 // PubChem
-export * from "./search-pubchem-compound.js";
-export * from "./get-pubchem-cross-refs.js";
-export * from "./get-pubchem-assays.js";
+export * from "./pubchem.js";
 
 // Translational medicine
-export * from "./search-opentargets.js";
-export * from "./get-target-safety.js";
+export * from "./opentargets.js";
 export * from "./search-pharmgkb.js";
 export * from "./search-faers.js";
 export * from "./search-clinical-trials.js";
@@ -49,7 +40,4 @@ export * from "./get-impc-ko-profile.js";
 
 // Off-target liability / EPA CompTox
 export * from "./check-safety-panel.js";
-export * from "./search-toxcast.js";
-export * from "./search-ctx-hazard.js";
-export * from "./search-ctx-chemical.js";
-export * from "./search-ctx-exposure.js";
+export * from "./comptox.js";
