@@ -37,6 +37,12 @@ Install with [Homebrew](https://brew.sh) (macOS, or Linux on x86_64):
 brew install inflexa-ai/tap/inflexa
 ```
 
+Or with the install script (same platforms, no Homebrew needed) — it downloads the latest release, verifies its checksum, and installs to `~/.local/bin`:
+
+```bash
+curl -fsSL https://inflexa.ai/install.sh | bash
+```
+
 On other platforms, download a binary from the [latest release](https://github.com/inflexa-ai/inflexa/releases/latest), or [run from source](#running-from-source).
 
 All you need is [Docker](https://www.docker.com/), running locally — analyses execute in the sandbox image. The `inflexa` CLI itself is self-contained.
