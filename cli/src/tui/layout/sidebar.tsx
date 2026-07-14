@@ -7,7 +7,10 @@ import { theme } from "../theme.ts";
 import { GLYPHS, size, space } from "../../lib/design_system.ts";
 import type { ThemeColors } from "../../lib/design_system.ts";
 import { Bold, Fg } from "../components/emphasis.tsx";
-import { profileSnapshot, runsSnapshot, absTime, relAge, runMark, shortRunName } from "../hooks/sidebar_live.ts";
+import { RunBlock } from "../components/run_block.tsx";
+import { ScrollPane } from "../components/scroll_pane.tsx";
+import { activeRunProgress, profileSnapshot, runsSnapshot, absTime, relAge, runMark, shortRunName } from "../hooks/sidebar_live.ts";
+import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import { agentModels, bootState } from "../hooks/boot.ts";
 import type { AgentName, ModelConnectionIdentity } from "../../modules/harness/config.ts";
 import { getSession, getAnchor, listAnalysisInputs } from "../../db/primary_query.ts";
@@ -291,8 +294,9 @@ export function Sidebar(props: SidebarProps) {
     const profileLine = createMemo(() => profileLineOf(profileSnapshot()));
     const recentRuns = createMemo((): CortexRunRow[] => {
         const s = runsSnapshot();
-        // ≤4 rows — the rail carries the summary; the details dialog carries the depth.
-        return s.kind === "loaded" ? s.runs.slice(0, 4) : [];
+        // ≤3 rows — the rail carries the summary (plus the newest run's progress embed below its
+        // row); the runs picker → detail dialogs carry the depth.
+        return s.kind === "loaded" ? s.runs.slice(0, 3) : [];
     });
 
     // The agent models are present exactly once the runtime installs the live switch at boot (both agents
@@ -314,80 +318,109 @@ export function Sidebar(props: SidebarProps) {
             borderColor={theme().border}
             backgroundColor={theme().bgRaised}
         >
-            <Section label="SESSION" value={shortId(ws.sessionId)}>
-                <Show when={session()} keyed>
-                    {(s: Session) => (
-                        <text fg={theme().fgMuted}>
-                            {Date.relativeAge(s.createdAt)} {GLYPHS.middot} {props.messageCount()} msgs
-                        </text>
-                    )}
-                </Show>
-            </Section>
+            {/* The section stack scrolls when it outgrows the rail (the RUNS progress embed makes
+                its height variable) instead of clipping or squeezing sections. Never focused —
+                mouse-wheel only, so the pane's key layer stays disengaged and the rail steals no
+                keys from the chat. Nothing sits below the pane, so the scrollbox 1-cell bleed
+                (see cli/CLAUDE.md Layout) has no chrome row to bleed into. */}
+            <ScrollPane focusOnMount={false} flexGrow={1} minHeight={0} width="100%">
+                <Section label="SESSION" value={shortId(ws.sessionId)}>
+                    <Show when={session()} keyed>
+                        {(s: Session) => (
+                            <text fg={theme().fgMuted}>
+                                {Date.relativeAge(s.createdAt)} {GLYPHS.middot} {props.messageCount()} msgs
+                            </text>
+                        )}
+                    </Show>
+                </Section>
 
-            <Section label="ANALYSIS" value={ws.analysis?.name}>
-                {/* The name rides the label row (or stacks under it, both via Section); only the
+                <Section label="ANALYSIS" value={ws.analysis?.name}>
+                    {/* The name rides the label row (or stacks under it, both via Section); only the
                     no-analysis fallback needs its own line here, since Section renders nothing when
                     the value is undefined. */}
-                <Show when={!ws.analysis}>
-                    <text fg={theme().fgMuted}>no analysis</text>
-                </Show>
-                {/* Below the breakpoint the marker badge sits on its own line beside the resolved path. */}
-                <Show when={!isWide() && anchor()} keyed>
-                    {(a: Anchor) => (
-                        <text fg={theme().fgMuted}>
-                            {a.markerWritten ? GLYPHS.check : GLYPHS.warning} {a.cachedPath}
-                        </text>
-                    )}
-                </Show>
-                {/* At/above the breakpoint the path line is dropped and the badge joins this meta line
+                    <Show when={!ws.analysis}>
+                        <text fg={theme().fgMuted}>no analysis</text>
+                    </Show>
+                    {/* Below the breakpoint the marker badge sits on its own line beside the resolved path. */}
+                    <Show when={!isWide() && anchor()} keyed>
+                        {(a: Anchor) => (
+                            <text fg={theme().fgMuted}>
+                                {a.markerWritten ? GLYPHS.check : GLYPHS.warning} {a.cachedPath}
+                            </text>
+                        )}
+                    </Show>
+                    {/* At/above the breakpoint the path line is dropped and the badge joins this meta line
                     (badge first, then the inputs/project text). */}
-                <text fg={theme().fgMuted}>
-                    {isWide() && markerBadge() ? `${markerBadge()} ` : ""}
-                    {inputCount()} input{inputCount() === 1 ? "" : "s"}
-                    {ws.project ? ` ${GLYPHS.middot} proj: ${ws.project.name}` : ""}
-                </text>
-            </Section>
+                    <text fg={theme().fgMuted}>
+                        {isWide() && markerBadge() ? `${markerBadge()} ` : ""}
+                        {inputCount()} input{inputCount() === 1 ? "" : "s"}
+                        {ws.project ? ` ${GLYPHS.middot} proj: ${ws.project.name}` : ""}
+                    </text>
+                </Section>
 
-            <Section label="DATA PROFILE" onActivate={props.onOpenProfile}>
-                <text>
-                    {profileLine().glyph !== null ? <Fg role={profileLine().role}>{`${profileLine().glyph} `}</Fg> : null}
-                    <Fg role="fgMuted">{profileLine().text}</Fg>
-                </text>
-            </Section>
+                <Section label="DATA PROFILE" onActivate={props.onOpenProfile}>
+                    <text>
+                        {profileLine().glyph !== null ? <Fg role={profileLine().role}>{`${profileLine().glyph} `}</Fg> : null}
+                        <Fg role="fgMuted">{profileLine().text}</Fg>
+                    </text>
+                </Section>
 
-            <Section label="RUNS" onActivate={props.onOpenRuns}>
-                <Switch>
-                    <Match when={runsSnapshot().kind === "not_ready"}>
-                        <text fg={theme().fgMuted}>runtime not ready</text>
-                    </Match>
-                    <Match when={runsSnapshot().kind === "unavailable"}>
-                        <text fg={theme().fgMuted}>unavailable</text>
-                    </Match>
-                    <Match when={runsSnapshot().kind === "loaded"}>
-                        <Show when={recentRuns().length > 0} fallback={<text fg={theme().fgMuted}>no runs</text>}>
-                            <For each={recentRuns()}>
-                                {(run) => {
-                                    const m = runMark(run.status);
-                                    return (
-                                        <text>
-                                            <Fg role={m.role}>{`${m.glyph} `}</Fg>
-                                            <Fg role="fgMuted">{`${shortRunName(run)} ${GLYPHS.middot} ${relAge(run.startedAt)}`}</Fg>
-                                        </text>
-                                    );
-                                }}
-                            </For>
-                        </Show>
-                    </Match>
-                </Switch>
-            </Section>
+                <Section label="RUNS" onActivate={props.onOpenRuns}>
+                    <Switch>
+                        <Match when={runsSnapshot().kind === "not_ready"}>
+                            <text fg={theme().fgMuted}>runtime not ready</text>
+                        </Match>
+                        <Match when={runsSnapshot().kind === "unavailable"}>
+                            <text fg={theme().fgMuted}>unavailable</text>
+                        </Match>
+                        <Match when={runsSnapshot().kind === "loaded"}>
+                            <Show when={recentRuns().length > 0} fallback={<text fg={theme().fgMuted}>no runs</text>}>
+                                <For each={recentRuns()}>
+                                    {(run, index) => {
+                                        const m = runMark(run.status);
+                                        return (
+                                            <>
+                                                <text>
+                                                    <Fg role={m.role}>{`${m.glyph} `}</Fg>
+                                                    <Fg role="fgMuted">{`${shortRunName(run)} ${GLYPHS.middot} ${relAge(run.startedAt)}`}</Fg>
+                                                </text>
+                                                {/* The newest run's live progress, directly under its row. The refresh
+                                                loop clears the snapshot whenever the newest run is terminal, so this
+                                                can never show one run's progress under another's row. NON-keyed Show:
+                                                each ~5s poll mints a fresh snapshot object, and keyed would tear down
+                                                and remount the RunBlock every tick — non-keyed updates props in place.
+                                                heading off: the run row above IS the heading. */}
+                                                <Show when={index() === 0 ? activeRunProgress() : null}>
+                                                    {(progress: Accessor<ActiveRunProgress>) => (
+                                                        <RunBlock
+                                                            name={progress().name}
+                                                            tag={progress().tag}
+                                                            done={progress().done}
+                                                            total={progress().total}
+                                                            steps={progress().steps}
+                                                            maxSteps={6}
+                                                            hint={false}
+                                                            heading={false}
+                                                        />
+                                                    )}
+                                                </Show>
+                                            </>
+                                        );
+                                    }}
+                                </For>
+                            </Show>
+                        </Match>
+                    </Switch>
+                </Section>
 
-            <Section label="MODELS">
-                <Show when={modelsReady()} fallback={<text fg={theme().fgMuted}>runtime not ready</text>}>
-                    <ConnectionLine />
-                    <AgentModelLine label="chat" agent="conversation" />
-                    <AgentModelLine label="sandbox" agent="sandbox" />
-                </Show>
-            </Section>
+                <Section label="MODELS">
+                    <Show when={modelsReady()} fallback={<text fg={theme().fgMuted}>runtime not ready</text>}>
+                        <ConnectionLine />
+                        <AgentModelLine label="chat" agent="conversation" />
+                        <AgentModelLine label="sandbox" agent="sandbox" />
+                    </Show>
+                </Section>
+            </ScrollPane>
         </box>
     );
 }

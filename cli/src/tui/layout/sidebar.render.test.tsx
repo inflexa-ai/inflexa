@@ -16,7 +16,7 @@ import { __resetSidebarLiveForTest, absTime, refreshSidebarData, relAge, type Re
 import { __setAgentModelsForTest, __setBootStateForTest } from "../hooks/boot.ts";
 import { Sidebar } from "./sidebar.tsx";
 import type { Analysis } from "../../types/analysis.ts";
-import type { CortexRunRow, DataProfileStatus } from "@inflexa-ai/harness";
+import type { CortexRunRow, DataProfileStatus, StepExecutionRow } from "@inflexa-ai/harness";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 
 // The sidebar's input count is a plain DB read with no reactive dependency — it refreshes only
@@ -122,8 +122,31 @@ describe("Sidebar input count follows the bus", () => {
 // live sections vary between cases.
 const fakeRuntime = { pool: {} } as unknown as HarnessRuntime;
 
-function seams(profile: DataProfileStatus | null, runs: CortexRunRow[]): RefreshSeams {
-    return { runtime: () => fakeRuntime, loadProfile: () => okAsync(profile), loadRuns: () => okAsync(runs), loadSteps: () => okAsync([]) };
+function seams(profile: DataProfileStatus | null, runs: CortexRunRow[], steps: StepExecutionRow[] = []): RefreshSeams {
+    return { runtime: () => fakeRuntime, loadProfile: () => okAsync(profile), loadRuns: () => okAsync(runs), loadSteps: () => okAsync(steps) };
+}
+
+function stepRow(stepId: string, status: StepExecutionRow["status"]): StepExecutionRow {
+    return {
+        runId: "run-1",
+        stepId,
+        analysisId: "a1",
+        wave: 0,
+        agentId: "agent-x",
+        status,
+        startedAt: status === "pending" ? null : "2026-07-08T00:00:01.000Z",
+        completedAt: status === "completed" ? "2026-07-08T00:00:02.000Z" : null,
+        durationMs: null,
+        error: null,
+        attempts: 1,
+        lastErrorClass: null,
+        finishReason: null,
+        hitMaxSteps: false,
+        blockedReason: null,
+        sandboxRef: null,
+        execId: null,
+        childWorkflowId: null,
+    };
 }
 
 function completedProfile(fileCount: number): DataProfileStatus {
@@ -212,6 +235,54 @@ describe("Sidebar DATA PROFILE / RUNS live sections", () => {
         // local timestamp leaks onto a run row.
         expect(frame).toContain(relAge("2026-07-08T00:00:00.000Z"));
         expect(frame).not.toContain(new Date("2026-07-08T00:00:00.000Z").toLocaleString());
+    });
+});
+
+describe("Sidebar RUNS progress embed", () => {
+    test("an active newest run renders its bar and step window under the run row, without repeating the name", async () => {
+        const steps = [stepRow("s1_cohort_summary", "completed"), stepRow("s2_mutation_assoc", "running"), stepRow("s3_clinical_assoc", "pending")];
+        await refreshSidebarData("A", seams(null, [runRow({ status: "running" })], steps));
+        const frame = await renderFrame(liveNode(), { width: 44, height: 30 });
+
+        expect(frame).toContain("1/3");
+        expect(frame).toContain("s1_cohort_summary");
+        expect(frame).toContain("s2_mutation_assoc");
+        expect(frame).toContain("s3_clinical_assoc");
+        // The seeded `pending` row renders through the queued (hollow) glyph on the same line.
+        expect(lineContaining(frame, "s3_clinical_assoc")).toContain(GLYPHS.circleHollow);
+        expect(lineContaining(frame, "s1_cohort_summary")).toContain(GLYPHS.check);
+        // heading={false}: the run row above is the only place the name appears.
+        expect(frame.split("executeAnalysis").length - 1).toBe(1);
+    });
+
+    test("a terminal newest run renders plain rows — no bar, no step window", async () => {
+        await refreshSidebarData("A", seams(null, [runRow({ status: "completed", completedAt: "2026-07-08T00:01:00.000Z" })]));
+        const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
+        expect(frame).toContain("executeAnalysis");
+        expect(frame).not.toContain("/"); // no done/total meter line
+    });
+
+    test("the rail lists at most the newest 3 runs", async () => {
+        const runs = ["wf-one", "wf-two", "wf-three", "wf-four"].map((name, i) =>
+            runRow({ runId: `run-${i}`, workflowName: name, status: "completed", completedAt: "2026-07-08T00:01:00.000Z" }),
+        );
+        await refreshSidebarData("A", seams(null, runs));
+        const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
+        expect(frame).toContain("wf-one");
+        expect(frame).toContain("wf-two");
+        expect(frame).toContain("wf-three");
+        expect(frame).not.toContain("wf-four");
+    });
+
+    test("short terminals keep the top of the rail intact (the pane scrolls; sections are not squeezed away)", async () => {
+        const steps = [stepRow("s1_cohort_summary", "completed"), stepRow("s2_mutation_assoc", "running"), stepRow("s3_clinical_assoc", "pending")];
+        await refreshSidebarData("A", seams(completedProfile(2), [runRow({ status: "running" })], steps));
+        // Size-dependent layout bugs hide at any single size — sweep several short heights.
+        for (const height of [10, 14, 18]) {
+            const frame = await renderFrame(liveNode(), { width: 44, height });
+            expect(frame).toContain("SESSION");
+            expect(frame).toContain("ANALYSIS");
+        }
     });
 });
 

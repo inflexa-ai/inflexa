@@ -9,19 +9,21 @@ import { PromptDialog } from "./components/dialog/prompt_dialog.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
 import { SelectDialog } from "./components/dialog/select_dialog.tsx";
 import { PlanStepDetailDialog } from "./components/dialog/plan_step_detail_dialog.tsx";
+import { RunDetailDialog } from "./components/dialog/run_detail_dialog.tsx";
 import { FilePicker } from "./components/dialog/file_picker.tsx";
 import { ConfigApp } from "./app_config.tsx";
 import { DesignGallery } from "./layout/design_gallery.tsx";
 import { setTheme, theme } from "./theme.ts";
 import { notify } from "./hooks/notice.ts";
-import { queryRunsByAnalysis } from "@inflexa-ai/harness";
+import { queryRunsByAnalysis, queryStepsByRun } from "@inflexa-ai/harness";
+import type { CortexRunRow } from "@inflexa-ai/harness";
 
 import { bootState, harnessRuntime } from "./hooks/boot.ts";
 import { latestPlanCard, sessionOpenables, type SessionOpenable } from "./hooks/conversation.ts";
 import { openArtifact } from "./hooks/artifacts.ts";
 import { resolveEntryPath } from "../modules/harness/artifact_open.ts";
 import { driveForceReprofile, profileWorkInFlight } from "./hooks/profile_parity.ts";
-import { RUN_STATUS_TERMINAL } from "./hooks/sidebar_live.ts";
+import { RUN_STATUS_TERMINAL, absTime, idTail, shortRunName } from "./hooks/sidebar_live.ts";
 import { chatStatus } from "./hooks/status.ts";
 import { keybindLabel } from "./keymap.ts";
 import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
@@ -835,6 +837,64 @@ async function exportProvenanceToFile(ws: Workspace, format: BuiltinProvFormat):
     notify({ kind: "info", text: `Wrote ${format} provenance to ${dest}` });
 }
 
+/**
+ * How many runs the picker's fresh fetch pulls. A deliberate cap, not pagination — the picker's
+ * fuzzy filter narrows within it, no analysis is expected to approach it, and when a fetch comes
+ * back exactly at the cap the picker's title says "newest 100" so the truncation is never silent.
+ */
+const RUNS_PICKER_LIMIT = 100;
+
+/**
+ * Open the searchable runs picker → run-detail flow. The SINGLE open path behind all three entry
+ * points (the `runs.show` palette command, the sidebar RUNS section click, and its leader chord —
+ * the app routes the latter two through the command), so every door shows the identical picker.
+ *
+ * Fetches fresh at open (newest-first, {@link RUNS_PICKER_LIMIT}) rather than reading the sidebar
+ * store's snapshot: the rail's snapshot is capped small for the poll loop, and investigation needs
+ * history. Pre-ready (or on a read failure) it degrades to the muted placeholder dialog without
+ * querying — the same not-ready vocabulary the rail uses. Selecting a run STACKS the detail dialog
+ * over the picker (no close-then-open, diverging from `plan.explore-steps`' one-shot lookup):
+ * dismissing the detail lands back in the still-mounted picker, the right shape for inspecting
+ * several runs in a row.
+ */
+async function openRunsPicker(ctx: Workspace): Promise<void> {
+    const runtime = harnessRuntime();
+    const analysis = ctx.analysis;
+    const title = analysis ? `Runs ${GLYPHS.emDash} ${analysis.name}` : "Runs";
+    if (bootState().phase !== "ready" || !runtime || !analysis) {
+        ctx.openDialog(() => <ResultsDialog title={title} lines={["runtime not ready"]} emptyText="runtime not ready" onClose={() => ctx.closeDialog()} />);
+        return;
+    }
+    const rows = (await queryRunsByAnalysis(runtime.pool, analysis.id, { limit: RUNS_PICKER_LIMIT })).match(
+        (rs): CortexRunRow[] | null => rs,
+        () => null,
+    );
+    if (rows === null) {
+        ctx.openDialog(() => <ResultsDialog title={title} lines={["runs unavailable"]} emptyText="runs unavailable" onClose={() => ctx.closeDialog()} />);
+        return;
+    }
+    const atCap = rows.length === RUNS_PICKER_LIMIT;
+    ctx.openDialog(() => (
+        <SelectDialog
+            title={atCap ? `${title} (newest ${RUNS_PICKER_LIMIT})` : title}
+            placeholder={`Search runs${GLYPHS.ellipsis}`}
+            items={rows.map((run) => ({
+                value: run,
+                title: `${shortRunName(run)} ${idTail(run.runId)}`,
+                // Durable-record rule: the picker lists referenced records, so absolute started times.
+                description: `${run.status} ${GLYPHS.middot} ${absTime(run.startedAt)}`,
+            }))}
+            emptyText="no runs"
+            onCancel={() => ctx.closeDialog()}
+            onSelect={(run: CortexRunRow) => {
+                ctx.openDialog(() => (
+                    <RunDetailDialog run={run} loadSteps={(runId) => queryStepsByRun(runtime.pool, runId)} onClose={() => ctx.closeDialog()} />
+                ));
+            }}
+        />
+    ));
+}
+
 export const commands: Command[] = [
     {
         id: "analysis.switch",
@@ -1217,6 +1277,16 @@ export const commands: Command[] = [
                 />
             ));
         },
+    },
+    {
+        id: "runs.show",
+        title: "Show runs",
+        description: "Pick a run to inspect its status, timing, and steps",
+        category: "View",
+        // Gated on the booted runtime: the picker's fresh fetch needs the live pool. The open path
+        // itself still degrades pre-ready (the sidebar entry points bypass this predicate).
+        enabled: (ws) => bootState().phase === "ready" && harnessRuntime() !== null && ws.analysis !== null,
+        run: (ctx) => void openRunsPicker(ctx),
     },
     // The model-switch commands form their own `Provider` group — declared here, after `View`, so
     // the palette (which orders groups by a category's first appearance in this array) renders it as

@@ -34,8 +34,8 @@ import { ScrollPane } from "../components/scroll_pane.tsx";
 import { FixedList } from "../components/fixed_list.tsx";
 import { SelectDialog } from "../components/dialog/select_dialog.tsx";
 import { FilePicker } from "../components/dialog/file_picker.tsx";
-import { RunsDialog } from "../components/dialog/runs_dialog.tsx";
-import { profileDetailLines } from "../hooks/sidebar_live.ts";
+import { RunDetailDialog } from "../components/dialog/run_detail_dialog.tsx";
+import { absTime, idTail, profileDetailLines, shortRunName } from "../hooks/sidebar_live.ts";
 import {
     mockUserText,
     mockAssistantText,
@@ -366,23 +366,32 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             onClose={noop}
                         />
                     </DialogShowcase>
-                    <text fg={theme().fgMuted}>RunsDialog — recent runs + the latest run's steps (done / running / failed / queued):</text>
+                    <text fg={theme().fgMuted}>runs picker — the searchable SelectDialog all three RUNS entry points open:</text>
                     <DialogShowcase>
-                        <RunsDialog
+                        <SelectDialog
                             title={`Runs ${GLYPHS.emDash} rna-seq-2026`}
-                            runs={{ kind: "loaded", runs: mockCortexRuns }}
-                            loadSteps={() => okAsync<StepExecutionRow[], DbError>(mockRunSteps)}
-                            onClose={noop}
+                            placeholder={`Search runs${GLYPHS.ellipsis}`}
+                            items={mockCortexRuns.map((run) => ({
+                                value: run,
+                                title: `${shortRunName(run)} ${idTail(run.runId)}`,
+                                description: `${run.status} ${GLYPHS.middot} ${absTime(run.startedAt)}`,
+                            }))}
+                            emptyText="no runs"
+                            onCancel={noop}
                         />
                     </DialogShowcase>
+                    <text fg={theme().fgMuted}>RunDetailDialog — one picked run's metadata + full step list (done / running / failed / queued):</text>
+                    <DialogShowcase>
+                        <RunDetailDialog run={mockCortexRuns[0]!} loadSteps={() => okAsync<StepExecutionRow[], DbError>(mockRunSteps)} onClose={noop} />
+                    </DialogShowcase>
                 </State>
-                <State n="18" label="chat sticky run-progress row — bounded step window">
-                    {/* The chat column's sticky row (RunProgressRow) pins the newest non-terminal run
-                        between the stream and the input. A long run shows a WINDOW of steps centered on
-                        the frontier (maxSteps=6, hint=false — the same props the row passes), while the
-                        bar and done/total reflect the full run. Driven from the long-run fixture. */}
+                <State n="18" label="sidebar RUNS progress embed — bounded step window, no heading">
+                    {/* The sidebar RUNS section renders the newest non-terminal run's progress under
+                        that run's own row: heading suppressed (the row above names the run), the same
+                        frontier-centered step window (maxSteps=6, hint=false) the section passes, while
+                        the bar and done/total reflect the full run. Driven from the long-run fixture. */}
                     <text fg={theme().fgMuted}>
-                        pinned below the chat stream while the newest run is non-terminal; long runs window their steps (maxSteps=6):
+                        under the newest run row in the sidebar while it is non-terminal; long runs window their steps (maxSteps=6, heading off):
                     </text>
                     <RunBlock
                         name={mockLongRun.name}
@@ -392,6 +401,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         steps={longRunSteps}
                         maxSteps={6}
                         hint={false}
+                        heading={false}
                     />
                 </State>
                 <State n="19" label="inline presentation — text-shaped show_user (markdown / code / table)">
