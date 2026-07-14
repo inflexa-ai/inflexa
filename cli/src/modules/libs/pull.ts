@@ -20,7 +20,7 @@ import { err, ok, type Result } from "neverthrow";
 import { confirm } from "../../lib/cli.ts";
 import { activeRuntime, readConfig, writeConfig } from "../../lib/config.ts";
 import { capture, ensureReady, inherit } from "../../lib/container.ts";
-import { DEFAULT_SANDBOX_IMAGE, SANDBOX_VARIANTS, VARIANT_DESCRIPTIONS, variantImage, variantOfImage, type SandboxVariant } from "./images.ts";
+import { DEFAULT_SANDBOX_IMAGE, SANDBOX_VARIANTS, VARIANT_DESCRIPTIONS, VARIANT_LABELS, variantImage, variantOfImage, type SandboxVariant } from "./images.ts";
 
 /** Flags accepted by `inflexa sandbox pull` (and reused by setup). */
 export type PullOptions = {
@@ -112,7 +112,7 @@ export async function sandboxPull(opts: PullOptions = {}): Promise<Result<PullOu
         }
         const chosen = await clackSelect({
             message: "Which sandbox image?",
-            options: SANDBOX_VARIANTS.map((v) => ({ value: v, label: v, hint: VARIANT_DESCRIPTIONS[v] })),
+            options: SANDBOX_VARIANTS.map((v) => ({ value: v, label: VARIANT_LABELS[v], hint: VARIANT_DESCRIPTIONS[v] })),
         });
         if (isCancel(chosen)) return ok({ type: "declined" });
         variant = chosen;

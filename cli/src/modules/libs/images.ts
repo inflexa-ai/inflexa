@@ -20,7 +20,13 @@ export const SANDBOX_VARIANTS = ["python", "python-r"] as const;
 /** A published sandbox image variant. */
 export type SandboxVariant = (typeof SANDBOX_VARIANTS)[number];
 
-/** One-line descriptions for the interactive variant chooser. */
+/** Human-readable labels for the interactive variant chooser (the option title). */
+export const VARIANT_LABELS: Record<SandboxVariant, string> = {
+    python: "Python",
+    "python-r": "Python + R",
+};
+
+/** One-line descriptions for the interactive variant chooser (the option hint). */
 export const VARIANT_DESCRIPTIONS: Record<SandboxVariant, string> = {
     python: "Python libraries + bioconda CLI tools + Node packages",
     "python-r": "everything in python, plus the R libraries",
