@@ -72,8 +72,11 @@ export interface ThreadHistory {
      */
     appendTurn(threadId: string, messages: readonly ModelMessage[]): ResultAsync<void, DbError>;
     /**
-     * Return the most recent messages whose cumulative `tokens` fit
-     * `tokenBudget`, oldest-first, snapped to a valid AI SDK model-message sequence.
+     * Return a recent-turns window that fits `tokenBudget`, oldest-first,
+     * snapped to a valid AI SDK model-message sequence. The window START advances
+     * in whole `EVICTION_BLOCK_TURNS` blocks (see the constant) so the prompt-cache
+     * prefix stays byte-stable across appends; the window may therefore carry a
+     * little less than the budget would strictly allow, but never more.
      */
     loadRecent(threadId: string, tokenBudget: number): ResultAsync<ModelMessage[], DbError>;
     /**
@@ -146,6 +149,29 @@ export function __resetThreadHistoryMetricsForTest(): void {
 }
 
 /**
+ * Chunked-eviction block size, in whole turns — the granularity at which
+ * `loadRecent`'s retained window may advance its START turn.
+ *
+ * `loadRecent` snaps its eviction count UP to a multiple of this block, so the
+ * window's first turn — hence `messages[0]` and the whole tools+system+history
+ * prompt-cache prefix — stays byte-identical across a run of appends and shifts
+ * only once per block instead of once per turn. That single shift is the only
+ * message-cache miss the block costs.
+ *
+ * The block is at once (a) the cache-miss cadence — one prefix shift per
+ * `EVICTION_BLOCK_TURNS` appends once a thread is over budget — and (b) the most
+ * extra context ever sacrificed: snapping up drops up to `EVICTION_BLOCK_TURNS -
+ * 1` oldest turns the budget alone would have kept, trading a little history for
+ * a still prefix. 4 holds the prefix for ~4 turns at a cost of at most 3 turns of
+ * headroom — negligible against a ~120k-token budget that spans far more turns,
+ * while cutting cache misses on a long thread roughly fourfold. A turn-count
+ * block (not a token block) is deliberate: a cache miss is triggered by the START
+ * turn moving, a per-turn event, so counting in turns makes the miss cadence
+ * exact and independent of how large any individual turn is.
+ */
+export const EVICTION_BLOCK_TURNS = 4;
+
+/**
  * Create a `ThreadHistory` bound to a Postgres pool — a factory closure
  * capturing `pool` (dependency injection per the harness-durable-runtime spec). The `messages` table is
  * provisioned by the project's state-init DDL.
@@ -213,18 +239,22 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
             const turnTokens = turns.map((turn) => turn.reduce((sum, row) => sum + row.tokens, 0));
             const threadTotal = turnTokens.reduce((sum, n) => sum + n, 0);
 
-            // Cache defeater (known; not fixed here). This window is newest-first, so
-            // once a thread outgrows `tokenBudget` it evicts the *oldest* turns — and
-            // the oldest turns are exactly the stable head of the prompt-cache prefix.
-            // Every subsequent turn therefore ships a shifted prefix and invalidates
-            // tools + system + history wholesale, turning each cached read into a
-            // fresh write. Watch `cortex.harness.agent.cache_read_tokens` collapse to
-            // zero on long threads. A prefix-stable window (evict from the middle, or
-            // summarize-and-pin the head) is a separate change.
+            // Chunked eviction holds the prompt-cache prefix still. The budget alone
+            // evicts the OLDEST turns newest-first, so the window START — the stable
+            // head of the tools+system+history cache prefix — advances by ~one turn
+            // per appended turn; every turn then ships a shifted `messages[0]` and
+            // rewrites the whole message cache instead of reading it back (watch
+            // `cortex.harness.agent.cache_read_tokens` collapse on long threads).
+            // Instead, take the budget-minimal eviction and snap it UP to a whole
+            // `EVICTION_BLOCK_TURNS` block: `evicted` stays constant while the minimum
+            // sits inside a block and jumps by a block when it crosses, so
+            // `messages[0]` is byte-identical for a block of appends (the cache reads
+            // survive) and shifts only once per block. Snapping UP retains a subset of
+            // the budget-minimal window, so the kept tokens never exceed `tokenBudget`.
             //
-            // Walk turns newest-first, accumulating token cost. The most recent turn
-            // is always included — even if it alone exceeds the budget, a valid
-            // sequence beats an under-budget one. Older turns join while they fit.
+            // Budget-minimal fill: walk newest-first, always keeping the most recent
+            // turn (a valid over-budget single turn beats an under-budget cut), then
+            // add older turns while they fit.
             let included = 0;
             let cumulative = 0;
             for (let t = turns.length - 1; t >= 0; t--) {
@@ -232,7 +262,15 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
                 cumulative += turnTokens[t]!;
                 included++;
             }
-            const turnsEvicted = turns.length - included;
+            const minimalEvicted = turns.length - included;
+            // Snap the eviction count up to a block boundary, clamped below the last
+            // turn so the most recent turn always ships. Both terms of the min are
+            // >= `minimalEvicted`, so `turnsEvicted >= minimalEvicted`: the retained
+            // suffix is a subset of the budget-minimal one and stays within budget.
+            const turnsEvicted =
+                turns.length === 0
+                    ? 0
+                    : Math.min(Math.ceil(minimalEvicted / EVICTION_BLOCK_TURNS) * EVICTION_BLOCK_TURNS, turns.length - 1);
 
             const { totalTokens, turnsEvicted: turnsEvictedHist } = getInstruments();
             const attributes = { eviction: turnsEvicted > 0 };
@@ -240,7 +278,7 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
             turnsEvictedHist.record(turnsEvicted, attributes);
 
             return turns
-                .slice(turns.length - included)
+                .slice(turnsEvicted)
                 .flat()
                 .map((row) => row.message);
         });
