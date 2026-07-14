@@ -267,10 +267,7 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
             // turn so the most recent turn always ships. Both terms of the min are
             // >= `minimalEvicted`, so `turnsEvicted >= minimalEvicted`: the retained
             // suffix is a subset of the budget-minimal one and stays within budget.
-            const turnsEvicted =
-                turns.length === 0
-                    ? 0
-                    : Math.min(Math.ceil(minimalEvicted / EVICTION_BLOCK_TURNS) * EVICTION_BLOCK_TURNS, turns.length - 1);
+            const turnsEvicted = turns.length === 0 ? 0 : Math.min(Math.ceil(minimalEvicted / EVICTION_BLOCK_TURNS) * EVICTION_BLOCK_TURNS, turns.length - 1);
 
             const { totalTokens, turnsEvicted: turnsEvictedHist } = getInstruments();
             const attributes = { eviction: turnsEvicted > 0 };

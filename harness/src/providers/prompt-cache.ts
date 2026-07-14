@@ -25,15 +25,17 @@
  * ## Cache defeaters — what silently kills the hit rate
  *
  * The cache keys on an *exact prefix*. Anything that perturbs the head of the
- * request invalidates everything after it. Two known defeaters live in this
- * codebase; each is flagged at its own site and each is a separate change:
+ * request invalidates everything after it. One known defeater remains in this
+ * codebase, flagged at its own site as a separate change:
  *
  *  1. `runAgent`'s forced wrap-up swaps the tool set to `{}` — tools sit at the
  *     very front of the prefix, so that one call reads nothing back and rewrites
  *     the cache from scratch (`loop/run-agent.ts`).
- *  2. `loadRecent` evicts the *oldest* turns once a thread outgrows its token
- *     budget, shifting the message prefix on every subsequent turn
- *     (`memory/thread-history.ts`).
+ *
+ * `loadRecent`'s history eviction used to be a second defeater — it advanced the
+ * window one turn per turn, shifting the message prefix every request. It now
+ * evicts in whole blocks so the prefix holds still between block boundaries
+ * (`memory/thread-history.ts`).
  *
  * A sandbox agent's system prompt is NOT one of them: it is a pure function of
  * its agent type, byte-identical across every step of every run, and the per-step
