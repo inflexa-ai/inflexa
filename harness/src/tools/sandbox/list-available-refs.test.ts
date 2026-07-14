@@ -130,11 +130,13 @@ describe("list_available_refs", () => {
 
     it("merges valid receipt and legacy enrichment while retaining user files", async () => {
         const managedPath = "/mnt/refs/managed/alpha/2026.07/reference.parquet";
+        const catalogPath = "/mnt/refs/managed/ncbi-gene-human/current/Homo_sapiens.gene_info.gz";
         const legacyPath = "/mnt/refs/legacy/pathways.gmt";
         const client = makeClient({
             state: "populated",
             entries: [
                 { path: managedPath, kind: "file", bytes: 12 },
+                { path: catalogPath, kind: "file", bytes: 15 },
                 { path: legacyPath, kind: "file", bytes: 13 },
                 { path: "/mnt/refs/user/custom.csv", kind: "file", bytes: 14 },
             ],
@@ -146,7 +148,14 @@ describe("list_available_refs", () => {
                     datasetId: "alpha",
                     datasetVersion: "2026.07",
                     activatedAt: "2026-07-14T10:30:00.000Z",
-                    artifacts: [{ path: "reference.parquet", bytes: 999, sha256: HASH }],
+                    artifacts: [{ path: "reference.parquet", bytes: 999, sha256: HASH, integrity: "pinned" }],
+                },
+                {
+                    version: 1,
+                    datasetId: "ncbi-gene-human",
+                    datasetVersion: "current",
+                    activatedAt: "2026-07-14T10:30:00.000Z",
+                    artifacts: [{ path: "Homo_sapiens.gene_info.gz", bytes: 1_024, sha256: HASH, integrity: "unpinned" }],
                 },
             ],
             legacyEntries: [{ local_path: "legacy/pathways.gmt", category: "pathways", dataset: "legacy-pathways", rows: 200 }],
@@ -154,16 +163,50 @@ describe("list_available_refs", () => {
 
         const result = (await createTool(client).execute({}, makeToolContext().ctx))._unsafeUnwrap();
 
-        expect(result.entries).toHaveLength(3);
+        expect(result.entries).toHaveLength(4);
+        // Receipt for a dataset the catalog does not know: identity only, no provenance labels.
         expect(result.entries.find((entry) => entry.path === managedPath)).toMatchObject({
             bytes: 12,
             metadata: { datasetId: "alpha", version: "2026.07" },
+        });
+        // Receipt for a catalog dataset: provenance is joined in from the catalog entry.
+        expect(result.entries.find((entry) => entry.path === catalogPath)).toMatchObject({
+            bytes: 15,
+            metadata: {
+                datasetId: "ncbi-gene-human",
+                version: "current",
+                title: "NCBI human gene identifiers",
+                sourceUrl: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/",
+                license: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+            },
         });
         expect(result.entries.find((entry) => entry.path === legacyPath)).toMatchObject({
             bytes: 13,
             metadata: { datasetId: "legacy-pathways", category: "pathways", rows: 200 },
         });
         expect(result.entries.find((entry) => entry.path.includes("/user/"))?.metadata).toBeUndefined();
+    });
+
+    it("ignores a receipt artifact that records no observed integrity", async () => {
+        const managedPath = "/mnt/refs/managed/alpha/2026.07/reference.parquet";
+        const client = makeClient({
+            state: "populated",
+            entries: [{ path: managedPath, kind: "file", bytes: 12 }],
+            scannedEntries: 1,
+            truncated: false,
+            receipts: [
+                {
+                    version: 1,
+                    datasetId: "alpha",
+                    datasetVersion: "2026.07",
+                    activatedAt: "2026-07-14T10:30:00.000Z",
+                    artifacts: [{ path: "reference.parquet", bytes: 999, sha256: HASH }],
+                },
+            ],
+        });
+
+        const result = (await createTool(client).execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        expect(result.entries).toEqual([{ path: managedPath, kind: "file", bytes: 12 }]);
     });
 
     it("ignores invalid and stale metadata without hiding observed files", async () => {
