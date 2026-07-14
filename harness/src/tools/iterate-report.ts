@@ -87,7 +87,7 @@ const SourceSchema = z.object({
 const StatItemSchema = z.object({
     label: z.string(),
     value: z.union([z.string(), z.number()]),
-    unit: z.string().optional(),
+    unit: z.string().optional().describe("Unit rendered next to the value (e.g. '%', 'genes', 'kb')."),
 });
 
 const SortSpecSchema = z.object({
@@ -98,100 +98,191 @@ const SortSpecSchema = z.object({
 const ChartTypeSchema = z.enum(["bar", "line", "scatter", "histogram", "box", "heatmap", "pie"]);
 
 const ChartEncodingSchema = z.object({
-    x: z.string().optional(),
-    y: z.union([z.string(), z.array(z.string()).min(1)]).optional(),
-    group: z.string().optional(),
-    value: z.string().optional(),
+    x: z.string().optional().describe("Column on the x / category axis."),
+    y: z
+        .union([z.string(), z.array(z.string()).min(1)])
+        .optional()
+        .describe("Column on the y axis; an array plots one series per column."),
+    group: z.string().optional().describe("Column to split series (and colour) by."),
+    value: z.string().optional().describe("Value column for pie / heatmap-shaped charts."),
 });
 
 const INLINE_CHART_ROW_CAP = 500;
 
 const ChartInlineDataSchema = z.object({
-    columns: z.array(z.string()).min(1),
+    columns: z.array(z.string()).min(1).describe("Column names of the inline rows, in render order."),
     rows: z
         .array(z.record(z.string(), z.union([z.string(), z.number(), z.null()])))
         .min(1)
-        .max(INLINE_CHART_ROW_CAP),
+        .max(INLINE_CHART_ROW_CAP)
+        .describe("The pre-computed rows. Every value must come from a file you actually read — never fabricate, never estimate."),
     source: z
         .string()
         .min(1)
         .describe(
-            "Short free-text describing where the values came from (e.g. " +
-                "'aggregated significant-gene counts from runs/r1/.../sig.csv, " +
-                "runs/r2/.../sig.csv, runs/r3/.../sig.csv'). The builder renders " +
-                "this as a footnote under the chart.",
+            "Where the values came from — cite the real files (e.g. 'aggregated " +
+                "significant-gene counts from runs/r1/.../sig.csv, runs/r2/.../sig.csv'). " +
+                "The builder renders this verbatim as a footnote under the chart.",
         ),
 });
 
+/**
+ * The editorial-emphasis channel every section carries. A fresh instance per
+ * section type — Zod inlines reused schemas rather than sharing a `$defs` ref.
+ */
+const intentField = () =>
+    z
+        .string()
+        .describe(
+            "Why this section exists and what to emphasize (e.g. 'hero — headline " +
+                "finding', 'downplay if space is tight'). Emphasis, not layout — the " +
+                "builder picks the components, sizing and alternation.",
+        );
+
+/** Free-text row transform — the reason to never pre-slice a CSV with `run_ephemeral`. */
+const transformField = () =>
+    z
+        .string()
+        .optional()
+        .describe(
+            "Free-text row transform the builder applies client-side to the loaded " +
+                "asset — filter, derive, aggregate, sort (e.g. 'filter padj < 0.05 and " +
+                "abs(log2FoldChange) > 1', 'compute -log10(padj) as neg_log_padj', 'group " +
+                "by sample and sum count', 'sort by mean_count desc, take top 50'). Use " +
+                "this instead of running `run_ephemeral` to pre-slice the file. The text " +
+                "is rendered verbatim as a provenance footnote, so the data reads as " +
+                "processed, not fabricated.",
+        );
+
 const SectionSchema = z.discriminatedUnion("type", [
-    z.object({
-        type: z.literal("narrative"),
-        title: z.string(),
-        intent: z.string(),
-        content: z.object({ prose: z.string().min(1) }),
-    }),
-    z.object({
-        type: z.literal("metrics"),
-        title: z.string(),
-        intent: z.string(),
-        content: z.object({ stats: z.array(StatItemSchema).min(1) }),
-    }),
-    z.object({
-        type: z.literal("figure"),
-        title: z.string(),
-        intent: z.string(),
-        content: z.object({
-            imageAsset: z.string().min(1),
-            caption: z.string().optional(),
-        }),
-    }),
-    z.object({
-        type: z.literal("table"),
-        title: z.string(),
-        intent: z.string(),
-        content: z.object({
-            dataAsset: z.string().min(1),
-            columns: z.array(z.string()).optional(),
-            topN: z.number().int().positive().optional(),
-            sortBy: SortSpecSchema.optional(),
-            transform: z.string().optional(),
-            caption: z.string().optional(),
-        }),
-    }),
-    z.object({
-        type: z.literal("chart"),
-        title: z.string(),
-        intent: z.string(),
-        content: z
-            .object({
-                dataAsset: z.string().min(1).optional(),
-                data: ChartInlineDataSchema.optional(),
-                chartType: ChartTypeSchema,
-                encoding: ChartEncodingSchema,
-                topN: z.number().int().positive().optional(),
-                sortBy: SortSpecSchema.optional(),
-                transform: z.string().optional(),
-                caption: z.string().optional(),
-            })
-            .refine((v) => (v.dataAsset !== undefined) !== (v.data !== undefined), { message: "Chart content needs exactly one of `dataAsset` or `data`." })
-            .refine((v) => !(v.data !== undefined && v.transform !== undefined), {
-                message: "`transform` is for dataAsset only — inline `data` is already pre-computed.",
+    z
+        .object({
+            type: z.literal("narrative"),
+            title: z.string(),
+            intent: intentField(),
+            content: z.object({
+                prose: z.string().min(1).describe("Markdown prose you wrote. The builder never opens your data files to write it."),
             }),
-    }),
-    z.object({
-        type: z.literal("methods"),
-        title: z.string(),
-        intent: z.string(),
-        content: z.object({ prose: z.string().min(1) }),
-    }),
+        })
+        .describe("Prose you wrote — context, story, interpretation of the results."),
+    z
+        .object({
+            type: z.literal("metrics"),
+            title: z.string(),
+            intent: intentField(),
+            content: z.object({
+                stats: z.array(StatItemSchema).min(1).describe("Headline numbers you already derived — the builder does not compute them."),
+            }),
+        })
+        .describe("Labeled numbers you extracted — headline stats, at-a-glance summary."),
+    z
+        .object({
+            type: z.literal("figure"),
+            title: z.string(),
+            intent: intentField(),
+            content: z.object({
+                imageAsset: z.string().min(1).describe("Staged asset name, not a path — a `sources[].as`, or the basename of a `sources[].path`."),
+                caption: z.string().optional(),
+            }),
+        })
+        .describe(
+            "A static image the analysis already produced (PNG/SVG). Prefer `chart` " +
+                "whenever the underlying data file exists — a chart is interactive, themed " +
+                "and re-encodable on iteration. Reach for `figure` only when the user asks " +
+                "for the existing image, the visual is genuinely image-only (e.g. a heatmap " +
+                "baked by an R script with no exportable data), or the image carries " +
+                "annotations the data does not.",
+        ),
+    z
+        .object({
+            type: z.literal("table"),
+            title: z.string(),
+            intent: intentField(),
+            content: z.object({
+                dataAsset: z.string().min(1).describe("Staged asset name, not a path — `.csv`, `.tsv`, or `.json` (array of row objects)."),
+                columns: z.array(z.string()).optional().describe("Column subset to render, in order. Omit to render every column."),
+                topN: z.number().int().positive().optional().describe("Keep only the first N rows, applied after `sortBy` and `transform`."),
+                sortBy: SortSpecSchema.optional().describe("Sort applied before `topN`."),
+                transform: transformField(),
+                caption: z.string().optional(),
+            }),
+        })
+        .describe("A tabular asset rendered as a table. Pick a column subset and `topN` that fit the audience."),
+    z
+        .object({
+            type: z.literal("chart"),
+            title: z.string(),
+            intent: intentField(),
+            content: z
+                .object({
+                    dataAsset: z
+                        .string()
+                        .min(1)
+                        .optional()
+                        .describe(
+                            "Staged asset name, not a path — `.csv`, `.tsv`, or `.json` (an array " +
+                                "of row objects, or a pre-built ECharts option object the builder " +
+                                "hands straight to `setOption`).",
+                        ),
+                    data: ChartInlineDataSchema.optional().describe(
+                        "Escape hatch: inline rows for a cross-file aggregate you computed " +
+                            "yourself from analysis files you ACTUALLY read (e.g. significant-gene " +
+                            "counts pulled from several runs). Prefer `dataAsset`. More than one " +
+                            "inline-data chart per report is a smell — the aggregate belongs in a " +
+                            "persisted derived CSV.",
+                    ),
+                    chartType: ChartTypeSchema.describe(
+                        "Editorial choice — bar vs scatter changes the story. Always required, " + "including for a pre-built ECharts option asset.",
+                    ),
+                    encoding: ChartEncodingSchema.describe(
+                        "Which column feeds which channel, resolved AFTER `transform` — it may " +
+                            "name a column the transform derives. Always required: pass `{}` when " +
+                            "`dataAsset` is a pre-built ECharts option object.",
+                    ),
+                    topN: z.number().int().positive().optional().describe("Keep only the first N rows, applied after `sortBy` and `transform`."),
+                    sortBy: SortSpecSchema.optional().describe("Sort applied before `topN`."),
+                    transform: transformField(),
+                    caption: z.string().optional(),
+                })
+                .refine((v) => (v.dataAsset !== undefined) !== (v.data !== undefined), { message: "Chart content needs exactly one of `dataAsset` or `data`." })
+                .refine((v) => !(v.data !== undefined && v.transform !== undefined), {
+                    message: "`transform` is for dataAsset only — inline `data` is already pre-computed.",
+                }),
+        })
+        .describe(
+            "A tabular asset (or inline rows) rendered as an interactive ECharts plot. " +
+                "Default to this over `figure` whenever the data file exists. To show the " +
+                "same data as both a chart and a table, write two sections against the same " +
+                "`dataAsset` — the file is staged once.",
+        ),
+    z
+        .object({
+            type: z.literal("methods"),
+            title: z.string(),
+            intent: intentField(),
+            content: z.object({
+                prose: z.string().min(1).describe("Markdown prose you wrote. The builder never opens your data files to write it."),
+            }),
+        })
+        .describe("Prose you wrote — what was done, how, and with which parameters."),
 ]);
 
 const ReportSchema = z.object({
-    title: z.string(),
-    audience: z.string(),
-    styleGuidance: z.string().optional(),
-    sources: z.array(SourceSchema).default([]),
-    sections: z.array(SectionSchema).min(1),
+    title: z.string().describe("Report title. Persisted with the preview and reused as the card title on every later version."),
+    audience: z
+        .string()
+        .describe("Who reads this (e.g. 'wet-lab collaborators', 'a computational-biology PI'). The builder tunes tone, density and jargon to it."),
+    styleGuidance: z.string().optional().describe("Optional art direction for the builder (e.g. 'dense and print-ready', 'no hero imagery')."),
+    sources: z
+        .array(SourceSchema)
+        .default([])
+        .describe(
+            "Every file the report renders — CSV/TSV, PNG/SVG, JSON. A section's " +
+                "`imageAsset` / `dataAsset` must name one of these staged assets or the " +
+                "call fails. Do NOT list markdown or synthesis.json: those are inputs to " +
+                "the prose you write, not to the renderer.",
+        ),
+    sections: z.array(SectionSchema).min(1).describe("The report's sections, in the order they are rendered."),
 });
 
 /** Exported for schema-validation tests — the underlying Zod schema. */
@@ -203,13 +294,25 @@ export const iterateReportInputSchema = z
             .max(64)
             .optional()
             .describe("Preview group ID. Omit for new reports (auto-generated). " + "Required for iterations — must match the existing preview."),
-        baseVersion: z.number().int().min(1).optional().describe("Version to iterate from (1-based). Defaults to latest."),
+        baseVersion: z
+            .number()
+            .int()
+            .min(1)
+            .optional()
+            .describe("Version to branch from (1-based) — use when the user prefers an earlier version. Defaults to the latest."),
         format: z.enum(["html", "pdf"]).default("html").describe("Output format. Defaults to 'html' — only set explicitly for PDF."),
-        report: ReportSchema.optional().describe("CREATION ONLY (v1). Mutually exclusive with modifications."),
+        report: ReportSchema.optional().describe(
+            "CREATION ONLY (v1). Mutually exclusive with `modifications` — passing it " +
+                "on an existing preview builds a fresh report and discards prior work.",
+        ),
         modifications: z
             .string()
             .optional()
-            .describe("ITERATION ONLY (v2+). Natural-language modification instructions. " + "The report-builder agent receives only this text — be specific."),
+            .describe(
+                "ITERATION ONLY (v2+). Natural-language change instructions. The " +
+                    "report-builder sees ONLY this text plus the previous version's template " +
+                    "— name what changes and leave everything else alone.",
+            ),
         sources: z
             .array(SourceSchema)
             .optional()
@@ -268,13 +371,32 @@ export function createIterateReportTool(deps: IterateReportDeps): Tool {
     return defineTool({
         id: "iterate_report",
         description:
-            "Create or iterate on an HTML/PDF report. Two modes — use exactly one:\n" +
-            "• CREATION (v1): pass `report` with title/audience/sources/sections, " +
-            "omit `previewId`. Pre-flight stages every source and hands the " +
-            "report-builder agent a complete brief.\n" +
-            "• ITERATION (v2+): pass `modifications` (natural language) with the " +
-            "existing `previewId`. Optional top-level `sources` adds new assets.\n" +
-            "Returns the preview ID and version. Emits a preview chat data part.",
+            "Create or iterate on an HTML/PDF report. The report-builder agent NEVER " +
+            "sees the analysis tree — it receives only the brief you pass here, so the " +
+            "brief must be complete. You compose the prose, the numbers and the chart " +
+            "encodings; the builder only does layout and visual treatment.\n" +
+            "CREATE (v1): pass `report`, omit `previewId`. Every CSV / image / JSON the " +
+            "report renders goes in `report.sources` — pre-flight stages each one into " +
+            "the preview's assets/ dir and parses its columns, first 5 rows and row " +
+            "count into the brief for you.\n" +
+            "ITERATE (v2+): pass `modifications` plus the existing `previewId`, and " +
+            "NEVER `report` — passing `report` builds a fresh report and discards all " +
+            "prior work. New data files go in the top-level `sources`; `baseVersion` " +
+            "branches from an earlier version instead of the latest.\n" +
+            "Do NOT reach for `run_ephemeral` first — not to peek at a CSV (pre-flight " +
+            "already parsed it), and not to filter, slice, rank or derive columns from a " +
+            "single CSV that is about to be rendered (`chart.content.transform` and " +
+            "`table.content.transform` do exactly that, and the transform text is " +
+            "rendered as a provenance footnote). `run_ephemeral` is only for computation " +
+            "no single section's transform covers: cross-file aggregation, statistics " +
+            "needing a real numerical library, or a derived CSV the report then lists as " +
+            "a fresh source.\n" +
+            "Markdown is not a source — keep summary.md / synthesis.json out of " +
+            "`sources`; their content reaches the report as prose you write into " +
+            "`narrative` / `methods` sections.\n" +
+            "Returns the preview id + version and emits a preview chat data part. " +
+            "Pre-flight and builder failures come back as an `error` string on the " +
+            "result, not as a thrown error.",
         inputSchema: iterateReportInputSchema,
         execute: async (input, ctx): Promise<Result<IterateReportOutput, ToolError>> => {
             const { resourceId } = scopeResource(ctx.session.scope);

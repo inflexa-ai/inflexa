@@ -93,13 +93,20 @@ function buildNamespace(searchBy: string, query: string): string {
 export const searchPubchemCompoundTool = defineTool({
     id: "search_pubchem_compound",
     description:
-        "Search PubChem for a compound by name, SMILES, InChI, InChIKey, or CID. " +
-        "Returns compound identity (CID, SMILES, InChI, IUPAC name) and computed properties " +
-        "(molecular weight, XLogP, TPSA, HBD, HBA, rotatable bonds, complexity). " +
-        "PubChem covers 110M+ compounds — use when ChEMBL doesn't find the compound.",
+        "Resolve a compound in PubChem (110M+ compounds) by name, SMILES, InChI, InChIKey, or CID. " +
+        "Returns identity (cid, canonicalSmiles, inchi, inchiKey, iupacName, molecularFormula) and computed properties " +
+        "(molecularWeight, xlogp, tpsa, hbondDonorCount, hbondAcceptorCount, rotatableBondCount, complexity). " +
+        "Reach for this when ChEMBL misses the compound — PubChem covers metabolites, vendor chemicals, food additives and environmental compounds that ChEMBL does not. " +
+        "It carries no curated mechanism or potency data: once resolved, bridge to ChEMBL with get_pubchem_cross_refs and query get_mechanism / get_bioactivity there. " +
+        "An empty results array is a valid 'no match' — do not retry.",
     inputSchema: z.object({
-        query: z.string().min(1).describe("Search term: compound name, SMILES, InChI, InChIKey, or CID"),
-        searchBy: z.enum(["name", "smiles", "inchi", "inchikey", "cid"]).describe("Identifier type for the query"),
+        query: z
+            .string()
+            .min(1)
+            .describe("The identifier itself; its form must match `searchBy` (a name, a SMILES string, an InChI, an InChIKey, or a numeric CID)."),
+        searchBy: z
+            .enum(["name", "smiles", "inchi", "inchikey", "cid"])
+            .describe("Which PubChem namespace `query` is expressed in. All are exact-match lookups except 'name', which tolerates synonyms and trade names."),
     }),
     execute: async ({ query, searchBy }) => {
         const namespace = buildNamespace(searchBy, query);

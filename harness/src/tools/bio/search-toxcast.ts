@@ -76,15 +76,32 @@ export function createSearchToxcastTool(deps: { apiKey: string }) {
     return defineTool({
         id: "search_toxcast",
         description:
-            "Search EPA ToxCast/Tox21 high-throughput screening data for a chemical via the CTX Bioactivity API. " +
-            "Returns in-vitro bioactivity results across hundreds of assay endpoints " +
-            "(nuclear receptors, stress response, mitochondrial toxicity, etc.). " +
-            "Use to assess toxicological liability of compounds or drug targets. " +
-            "Requires EPA_CCTE_API_KEY environment variable.",
+            "Search EPA ToxCast/Tox21 in-vitro high-throughput screening data for a chemical — use it to profile toxicological liability across hundreds of assay endpoints " +
+            "(nuclear receptors, stress response, mitochondrial toxicity), e.g. 'is this compound an endocrine disruptor?'. " +
+            "Returns the resolved chemical plus its assay results — each with an endpoint name, AC50 and hit call, sorted by AC50 ascending — alongside totalAssays, activeAssays and " +
+            "activeHitRate, which always describe the full tested panel rather than the returned slice. " +
+            "Requires EPA_CCTE_API_KEY — a missing key fails the call terminally: do NOT retry, report the missing key and continue without EPA data. " +
+            "found: false means the query did not resolve to a chemical — valid no-data, do not retry the same string.",
         inputSchema: z.object({
-            query: z.string().describe("Chemical identifier: DTXSID (e.g. DTXSID7020182), CASRN (e.g. 80-05-7), " + "or chemical name (e.g. bisphenol A)"),
-            activeOnly: z.boolean().default(true).describe("Return only active (hit) assays. Set false for all tested assays."),
-            limit: z.number().int().min(1).max(200).default(50).describe("Max assay results to return (sorted by AC50 ascending for actives)"),
+            query: z
+                .string()
+                .describe(
+                    "Chemical identifier. A DTXSID (e.g. 'DTXSID7020182') is used directly with no lookup; a CASRN (e.g. '80-05-7') or chemical name (e.g. 'bisphenol A') " +
+                        "is resolved by EXACT match, so a non-canonical or misspelled name yields found: false.",
+                ),
+            activeOnly: z
+                .boolean()
+                .default(true)
+                .describe(
+                    "Default true — return only hit (active) assays. Set false for the whole tested panel including inactives, needed to judge selectivity or a low hit rate.",
+                ),
+            limit: z
+                .number()
+                .int()
+                .min(1)
+                .max(200)
+                .default(50)
+                .describe("Max assay rows to return (default 50, max 200), applied after the activeOnly filter."),
         }),
         execute: async ({ query, activeOnly = true, limit = 50 }): Promise<Result<ToxcastOutput, ToolError>> => {
             const headers = getEpaCcteHeaders(deps.apiKey);

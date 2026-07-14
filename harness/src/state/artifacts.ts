@@ -162,6 +162,40 @@ export async function queryUnsyncedStepArtifacts(pool: Querier, resourceId: stri
     return result.rows.map(mapArtifactRow);
 }
 
+/** One registered step output, as a downstream consumer needs to name it. */
+export interface StepArtifactRef {
+    /** Workspace-root-relative path (`runs/{runId}/{stepId}/output/de.csv`). */
+    path: string;
+    fileType: string | null;
+}
+
+/**
+ * The artifacts a completed step registered, most consequential first. Ordered
+ * by artifact kind (outputs, then figures, notebooks, scripts, logs) and then by
+ * path, so a `limit` truncates the tail of the list rather than an arbitrary
+ * slice of it — and so the same call replays to the same rows.
+ */
+export async function queryStepArtifactPaths(pool: Querier, resourceId: string, runId: string, stepId: string, limit: number): Promise<StepArtifactRef[]> {
+    if (limit <= 0) return [];
+    const result = await pool.query<{ path: string; file_type: string | null }>({
+        text: `SELECT path, file_type
+          FROM cortex_artifacts
+          WHERE analysis_id = $1 AND source_run = $2 AND source_step = $3
+            AND role = 'step_output'
+          ORDER BY CASE file_type
+                     WHEN 'output' THEN 0
+                     WHEN 'figure' THEN 1
+                     WHEN 'notebook' THEN 2
+                     WHEN 'script' THEN 3
+                     ELSE 4
+                   END,
+                   path
+          LIMIT $4`,
+        values: [resourceId, runId, stepId, limit],
+    });
+    return result.rows.map((r) => ({ path: r.path, fileType: r.file_type ?? null }));
+}
+
 /** Count step-output artifacts produced by a run — for the run-completed card. */
 export async function countArtifactsForRun(pool: Querier, analysisId: string, runId: string): Promise<number> {
     const result = await pool.query<{ n: string }>({

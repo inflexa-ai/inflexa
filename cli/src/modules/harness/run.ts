@@ -27,14 +27,12 @@ import {
     queryRun,
     queryRunsByAnalysis,
     queryStepsByRun,
-    renderStepPrompt,
     RunDedupCollisionError,
     StatusString,
     updateRunStatus,
     upsertAnalysis,
     upsertPlan,
     type AnalysisPlan,
-    type AnalysisStep,
     type AuthContext,
     type CortexRunRow,
     type DbError,
@@ -84,8 +82,6 @@ export type RunTriggerSeams = {
     readonly runAuthorizer: RunAuthorizer;
     /** Launch `executeAnalysis` under `workflowId = runId` — fire-and-forget. */
     readonly launch: (input: ExecuteAnalysisInput, runId: string) => Promise<void>;
-    /** Render a plan step's prompt body for the child workflow. */
-    readonly renderStepPrompt: (step: AnalysisStep) => string;
     /** Mint the run id — the bare UUID that IS the DBOS workflowId (see below). Injected so tests pin it. */
     readonly newRunId: () => string;
     /** The harness machine budget to supply on `ExecuteAnalysisInput.budget`. */
@@ -107,7 +103,6 @@ export function defaultRunTriggerSeams(deps: RunTriggerDeps): RunTriggerSeams {
         updateRunStatus: (runId, status, error) => updateRunStatus(deps.pool, runId, status, error),
         runAuthorizer: deps.runAuthorizer,
         launch: (input, runId) => deps.runLauncher.launch(deps.executeAnalysis, { workflowId: runId }, input),
-        renderStepPrompt,
         newRunId: () => randomUUIDv7(),
         budget: deps.budget,
     };
@@ -155,10 +150,16 @@ function isDedupCollision(cause: unknown): boolean {
 }
 
 /**
- * Build the workflow input from the plan exactly as `execute-plan.ts` does: a
- * rendered prompt / agent / resources map per step, timeouts only for steps that
+ * Build the workflow input from the plan exactly as `execute-plan.ts` does: the
+ * step DATA / agent / resources map per step, timeouts only for steps that
  * declare one, and `steps` reduced to the scheduler's `{ id, depends_on }` shape.
  * The `runSession` + `ownsMandate` come from the authorization.
+ *
+ * `planStepById` carries each step's instruction data, NOT a prompt string: the
+ * harness composes a step's seed at dispatch, when its dependencies have actually
+ * produced something to tell it about. Prompt composition is the harness's — an
+ * embedder supplies values (the plan, the budget, the seams), it does not render
+ * the core's prompts.
  */
 function buildExecuteAnalysisInput(params: TriggerAnalysisRunParams, seams: RunTriggerSeams, authorization: RunAuthorization): ExecuteAnalysisInput {
     const { analysisId, planId, planSummary, plan } = params;
@@ -168,7 +169,7 @@ function buildExecuteAnalysisInput(params: TriggerAnalysisRunParams, seams: RunT
         planSummary,
         threadId: null,
         steps: plan.steps.map((s) => ({ id: s.id, depends_on: s.depends_on ?? [] })),
-        promptByStepId: Object.fromEntries(plan.steps.map((s) => [s.id, seams.renderStepPrompt(s)])),
+        planStepById: Object.fromEntries(plan.steps.map((s) => [s.id, s])),
         agentByStepId: Object.fromEntries(plan.steps.map((s) => [s.id, s.agent ?? "unknown"])),
         resourcesByStepId: Object.fromEntries(
             plan.steps.map((s) => {

@@ -9,17 +9,27 @@ import { z } from "zod";
 
 // ── Plan structures ─────────────────────────────────────────────────
 
+/**
+ * A step of an analysis plan. `PlanStepSchema` (schemas/plan-schemas.ts) narrows
+ * this into the planner's output contract and emits it as the `validate_plan` /
+ * `submit_plan` arg schema — so each field's meaning belongs in `.describe()`,
+ * not in a comment the model never sees.
+ */
 export const AnalysisStepSchema = z.object({
-    id: z.string().describe("Step ID in format T{track}S{step}"),
-    name: z.string(),
-    track: z.string(),
-    step_type: z.string(),
-    question: z.string(),
-    context: z.string().optional(),
-    constraints: z.array(z.string()).optional(),
-    acceptance_criteria: z.array(z.string()),
-    caveats: z.array(z.string()).optional(),
-    depends_on: z.array(z.string()),
+    id: z.string().describe("Step ID in format T{track}S{step} (e.g. T1S1, T1S2, T2S1). Unique within the plan and usable as a directory-name segment."),
+    name: z.string().describe("Short human-readable step name."),
+    track: z.string().describe("The track this step belongs to. Steps in the same track share a logical theme; steps in different tracks are independent."),
+    step_type: z.string().describe('Short label for the kind of work the step does (e.g. "analysis").'),
+    question: z
+        .string()
+        .describe("The specific question this step answers, framed with the actual condition names and comparisons from the experimental design."),
+    context: z.string().optional().describe("Background the sandbox agent needs to do the work."),
+    constraints: z.array(z.string()).optional().describe("Requirements the sandbox agent must follow exactly — not suggestions."),
+    acceptance_criteria: z.array(z.string()).describe("What the result must satisfy for the step to count as successful."),
+    caveats: z.array(z.string()).optional().describe("Pitfalls the sandbox agent should watch for."),
+    depends_on: z
+        .array(z.string())
+        .describe("IDs of steps in this plan that must complete before this one runs. Empty when the step has no prerequisites. The graph must be acyclic."),
     status: z.enum(["pending", "running", "completed", "failed", "skipped"]).default("pending"),
     // Optional on the persistence schema so historical plans (pre-resources)
     // still parse on the read side. `PlanStepSchema` re-requires it for planner
@@ -27,17 +37,18 @@ export const AnalysisStepSchema = z.object({
     // resources (no silent default) and clamps to cluster limits before use.
     resources: z
         .object({
-            cpu: z.number(),
-            memoryGb: z.number(),
-            gpu: z.object({ count: z.number() }).optional(),
+            cpu: z.number().describe("CPU cores the step needs."),
+            memoryGb: z.number().describe("Memory in GB the step needs."),
+            gpu: z.object({ count: z.number() }).optional().describe("GPUs the step needs. Omit unless the step genuinely requires one."),
         })
-        .optional(),
+        .optional()
+        .describe("Resources the step needs. Ground the estimate in the actual data size — see the resource-estimation rules."),
 
     // Execution fields
     agent: z.string().optional().describe("Assigned sandbox agent name from registry"),
     timeout: z.number().optional().describe("Execution timeout in seconds (falls back to image default)"),
     maxSteps: z.number().describe("Max LLM agentic steps for sandbox agent"),
-    description: z.string().optional().describe("Human-readable description of what the step does"),
+    description: z.string().optional().describe("Human-readable description of what the step produces."),
 
     // Step result fields (populated during execution)
     summary: z.string().optional().describe("Execution result summary"),
@@ -49,11 +60,16 @@ export const AnalysisPlanSchema = z.object({
     // Optional on the persistence schema so historical plans (pre-title) still
     // parse on the read side. `PlannerPlanSchema` re-requires it for new plans.
     title: z.string().optional().describe("Concise human-readable plan name"),
-    analytical_narrative: z.string(),
+    analytical_narrative: z
+        .string()
+        .describe(
+            "Brief narrative of the logical flow: why these steps, in this order, address the research question. " +
+                "Reference the data characteristics that informed the choices.",
+        ),
     steps: z.array(AnalysisStepSchema),
-    created_at: z.string(),
-    omicsType: z.string().optional().describe("Detected omics data type (e.g., transcriptomics, proteomics)"),
-    omicsSubtype: z.string().optional().describe("Detected subtype (e.g., bulk-rna-seq, single-cell)"),
+    created_at: z.string().describe("ISO-8601 timestamp for when the plan was created."),
+    omicsType: z.string().optional().describe("Omics data type detected from the data context (e.g. transcriptomics, proteomics, metabolomics)."),
+    omicsSubtype: z.string().optional().describe("Subtype detected from the data context (e.g. bulk-rna-seq, single-cell, microarray)."),
 });
 
 // ── Suspension Payload ──────────────────────────────────────────────

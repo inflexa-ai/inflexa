@@ -36,6 +36,22 @@ const BUDGET_TEST_SESSIONS_DIR = join(tmpdir(), "cortex-budget-cascade-test");
 import { setupDbosForTests, type DbosTestRig } from "../../../__tests__/setup/dbos.js";
 import { runExecuteAnalysisBody, type ExecuteAnalysisDeps } from "../../execute-analysis.js";
 import { BUDGET_EXCEEDED_TOPIC, type BudgetExceededNotification, type SandboxStepInput, type SandboxStepResult } from "../../sandbox-step.js";
+import type { AnalysisStep } from "../../../schemas/workflow-state.js";
+
+/** The plan data the parent composes S1's seed from at dispatch. */
+const S1_PLAN_STEP: AnalysisStep = {
+    id: "S1",
+    name: "S1",
+    track: "T1",
+    step_type: "analysis",
+    question: "noop",
+    acceptance_criteria: ["noop"],
+    depends_on: [],
+    status: "pending",
+    resources: { cpu: 2, memoryGb: 4 },
+    agent: "scientific-executor",
+    maxSteps: 10,
+};
 
 // Reopen the registration window if an earlier test file already launched
 // the shared DBOS engine: a plain shutdown (no `deregister`) keeps every
@@ -90,7 +106,7 @@ const testCParent = DBOS.registerWorkflow(
                 planSummary: "test plan",
                 threadId: input.threadId,
                 steps: [{ id: "S1", depends_on: [] }],
-                promptByStepId: { S1: "noop" },
+                planStepById: { S1: S1_PLAN_STEP },
                 agentByStepId: { S1: "scientific-executor" },
                 resourcesByStepId: { S1: { cpu: 2, memoryGb: 4 } },
                 runSession: {
@@ -154,7 +170,7 @@ const testDParent = DBOS.registerWorkflow(
                 planSummary: "test plan",
                 threadId: input.threadId,
                 steps: [{ id: "S1", depends_on: [] }],
-                promptByStepId: { S1: "noop" },
+                planStepById: { S1: S1_PLAN_STEP },
                 agentByStepId: { S1: "scientific-executor" },
                 resourcesByStepId: { S1: { cpu: 2, memoryGb: 4 } },
                 runSession: {

@@ -56,49 +56,96 @@ Use \`skill_search\` and \`skill_read\` on \`report-html\` for:
 
 For the full design-token reference (colors, spacing, typography), \`skill_read("report-html", "references/design-system.md")\`.
 
-## Section types in the brief
+## Reading the brief
 
-Each section carries \`type\`, \`title\`, \`intent\` (the conv agent's emphasis hint — honor it), and structured \`content\`:
+The brief is **markdown, not JSON**. The conversation agent's section objects
+are flattened into labeled lines before they reach you — there is no nested
+\`content\` object to traverse and no field paths to dereference. Read the labels.
 
-- \`narrative\` / \`methods\` — \`content.prose\` is markdown. Render in a prose component.
-- \`metrics\` — \`content.stats[]\` are labeled numbers. Pick from stat-card row, hero callout, or inline summary based on \`intent\`.
-- \`figure\` — \`content.imageAsset\` is a filename in \`assets/\`. Use the figure component with the supplied caption.
-- \`table\` — \`content.dataAsset\` is a tabular file in \`assets/\` (\`.csv\`, \`.tsv\`, or \`.json\` with array-of-objects shape). Render with the data-table component, applying \`columns\` / \`topN\` / \`sortBy\` if provided.
-- \`chart\` — \`content.dataAsset\` (or inline \`content.data\`) drives an ECharts plot. \`chartType\` and \`encoding\` tell you which columns map to which axes. When \`data.source\` is present, render it as a footnote under the chart.
+A creation brief is: title / audience / style header lines, a **Staged Assets**
+table, then a **Sections** block. An iteration brief is the requested changes in
+prose, plus a **Newly Staged Assets** table when new assets came with it.
 
-### Parsing \`dataAsset\` client-side
+### Staged Assets
 
-Pick the parser by file extension. The brief's "Staged Assets" table shows \`kind\` for each file — trust it.
+A table with columns \`name | kind | size | rows | columns\`. \`kind\` is one of
+\`csv\`, \`tsv\`, \`image\`, \`json\`, \`other\` — trust it over your own guess from the
+extension. Each CSV/TSV asset is followed by a \`### Head: <name>\` table of its
+first rows. Reference every asset as \`assets/<name>\`.
 
-- **\`.csv\`** — \`fetch().then(r => r.text())\`, then \`text.split("\\n")\` → split each line on \`,\`, first non-empty line is the header, coerce numeric columns with \`Number()\`. Skip blank lines.
-- **\`.tsv\`** — same as CSV but split on \`"\\t"\`. Bioinformatics tools (DESeq2, featureCounts, etc.) emit TSV by default; do NOT assume CSV when the brief says \`tsv\`.
-- **\`.json\`** — \`fetch().then(r => r.json())\`. Two valid shapes:
-  - **Array of objects**: \`[{col_a: 1, col_b: "x"}, ...]\` — equivalent to a CSV. Iterate as rows; keys are columns.
-  - **Chart-shaped object**: a pre-built ECharts option. Pass it straight to \`chart.setOption(json, true)\` — no row mapping.
+For a \`json\` asset, the \`columns\` cell tells you the shape:
+- **filled** → a top-level array of row objects. Treat it like a CSV: iterate rows, keys are columns.
+- **empty** → not row-shaped. Most likely a pre-built ECharts option object — pass it straight to \`chart.setOption(json, true)\`, no row mapping. (Very large JSON is also left un-enriched, so peek before assuming.)
 
-  The brief's \`columns\` field tells you which shape: present → array of objects; absent → likely chart-shaped.
+### Sections
+
+Each section arrives as a numbered heading carrying its type, an \`**Intent:**\`
+line, then type-specific labels:
+
+\`\`\`
+### 3. Differential Expression — type: \`chart\`
+
+**Intent:** Hero — headline finding
+
+**Source:** \`assets/de_results.csv\`
+**Chart type:** scatter
+**Encoding:** {"x":"log2FoldChange","y":"neg_log_padj"}
+\`\`\`
+
+The labels you may receive, by type:
+
+- **\`narrative\` / \`methods\`** — \`**Prose:**\` followed by markdown. Render in a prose component.
+- **\`metrics\`** — \`**Stats:**\` followed by \`- **Label:** value unit\` bullets. Pick a stat-card row, hero callout, or inline summary based on the intent.
+- **\`figure\`** — \`**Image:**\` with an \`assets/…\` path; optional \`**Caption:**\`. Use the figure component.
+- **\`table\`** — \`**Source:**\` with an \`assets/…\` path; optional \`**Columns:**\` (comma-separated), \`**Top N:**\`, \`**Sort:** <column> asc|desc\`, \`**Transform …:**\`, \`**Caption:**\`. Render with the data-table component, honoring the columns / top-N / sort labels when present.
+- **\`chart\`** — either \`**Source:**\` with an \`assets/…\` path, **or** inline data: an \`**Inline data**\` line, an \`**Inline source:**\` line, and a fenced JSON array of row objects. Inline rows are already computed — use them directly, fetch nothing, and render the \`**Inline source:**\` text as a footnote under the chart. Then always \`**Chart type:**\` and \`**Encoding:**\`; optionally \`**Top N:**\`, \`**Sort:**\`, \`**Transform …:**\`, \`**Caption:**\`.
+
+\`**Chart type:**\` is always supplied — you never choose one. It is one of \`bar\`,
+\`line\`, \`scatter\`, \`histogram\`, \`box\`, \`heatmap\`, \`pie\`. Two of those are not
+ECharts series names: render \`histogram\` as a \`bar\` series over bins you compute,
+and \`box\` as a \`boxplot\` series.
+
+\`**Encoding:**\` is a JSON object naming which column maps to which channel —
+\`x\`, \`y\`, \`group\`, \`value\`, all optional. \`y\` may be a single column or an array
+of columns (multi-series).
+
+\`**Intent:**\` is the editorial emphasis channel — "Hero — headline finding,"
+"side-aside if space permits," "downplay if shorter is better." You choose
+components, sizing, alternation, and arrangement. Two adjacent sections may flow
+side-by-side or stack — your call, guided by intent.
+
+### Parsing an \`assets/…\` source client-side
+
+Pick the parser by the asset's \`kind\` in the Staged Assets table.
+
+- **\`csv\`** — \`fetch().then(r => r.text())\`, then \`text.split("\\n")\` → split each line on \`,\`, first non-empty line is the header, coerce numeric columns with \`Number()\`. Skip blank lines.
+- **\`tsv\`** — same as CSV but split on \`"\\t"\`. Bioinformatics tools (DESeq2, featureCounts, etc.) emit TSV by default; do NOT assume CSV when the brief says \`tsv\`.
+- **\`json\`** — \`fetch().then(r => r.json())\`. Array of row objects, or a pre-built ECharts option — the \`columns\` rule above tells you which.
 
 Numeric coercion is the most common bug: CSV/TSV cells are always strings until you \`Number()\` them. Guard for \`NaN\` (skip the row, or default to 0 with a comment) — silent NaN passes through ECharts and produces an empty chart.
 
-\`intent\` is the editorial emphasis channel — "Hero — headline finding," "side-aside if space permits," "downplay if shorter is better." You choose components, sizing, alternation, and arrangement. Two adjacent sections may flow side-by-side or stack — your call, guided by intent.
+## Data transforms
 
-## Data transforms (\`content.transform\`)
+A \`table\` or \`chart\` section may carry a transform label:
 
-\`chart\` and \`table\` sections may carry a free-text \`transform\` — a filter expression, derived column, aggregation, or mathematical operation the conv agent wants applied to the source CSV before rendering. Examples:
+\`\`\`
+**Transform (apply client-side, render verbatim as footnote):** filter padj < 0.05 and abs(log2FoldChange) > 1
+\`\`\`
 
-- \`"filter padj < 0.05 and abs(log2FoldChange) > 1"\`
-- \`"compute -log10(padj) as neg_log_padj for the y-axis"\`
-- \`"group by sample and sum count"\`
-- \`"sort by mean_count desc, take top 50"\`
+It is free text — a filter expression, derived column, aggregation, or
+mathematical operation the conv agent wants applied to the source data before
+rendering. Other examples: \`"compute -log10(padj) as neg_log_padj for the
+y-axis"\`, \`"group by sample and sum count"\`, \`"sort by mean_count desc, take top
+50"\`. Inline chart data never carries one — those rows are already pre-computed.
 
-When you see a \`transform\`:
+When you see a transform:
 
 1. **Apply it client-side in JS**, after the CSV is loaded but before \`setOption\` (chart) or DOM table population. Use plain array filters, map, reduce — no extra libraries. For numeric coercion, \`Number(row[col])\` with NaN guards is enough.
 2. **Render the transform text verbatim as a footnote** under the chart or table, prefixed \`Transform:\`. Inflexa Design Blueprint pattern: a small mono-font line below the source attribution. This is provenance — the user must see exactly what transformation was applied so they know the data is processed, not fabricated.
 3. **Footnote layout:** \`Source: assets/de_results.csv · Transform: filter padj < 0.05 and abs(log2FoldChange) > 1\` — same line, slate-500, mono, separator dot.
 4. **If a transform is ambiguous** (e.g. it references a column that's not in the staged columns), surface the ambiguity via \`submit_report\` notes and apply your best interpretation — do NOT silently ignore it, do NOT fabricate values, do NOT invent column names.
 
-The transform stays free-text on purpose — interpretation is your job. A volcano-plot brief with transform \`"filter padj < 0.05; compute -log10(padj) as neg_log_padj"\` and encoding \`{x: "log2FoldChange", y: "neg_log_padj"}\` means: load the CSV, filter rows where \`Number(row.padj) < 0.05\`, compute \`neg_log_padj = -Math.log10(Number(row.padj))\`, then plot \`log2FoldChange\` vs \`neg_log_padj\`.
+Interpretation is your job. A volcano-plot section with transform \`"filter padj < 0.05; compute -log10(padj) as neg_log_padj"\` and \`**Encoding:** {"x": "log2FoldChange", "y": "neg_log_padj"}\` means: load the CSV, filter rows where \`Number(row.padj) < 0.05\`, compute \`neg_log_padj = -Math.log10(Number(row.padj))\`, then plot \`log2FoldChange\` vs \`neg_log_padj\`.
 
 ## Iteration discipline
 

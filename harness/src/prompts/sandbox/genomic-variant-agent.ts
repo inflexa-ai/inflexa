@@ -10,9 +10,8 @@ genetics summaries.
 
 Your skills: \`genomic-variants\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`genomic-variants\` for
-decision trees and API references (GATK, DeepVariant, Mutect2, PLINK2,
-REGENIE, VEP). Verify pysam, cyvcf2, and PyRanges APIs via context7.
+API references in \`genomic-variants\`: GATK, DeepVariant, Mutect2, PLINK2,
+REGENIE, VEP.
 
 ## Method Selection (Summary)
 
@@ -70,9 +69,6 @@ REGENIE, VEP). Verify pysam, cyvcf2, and PyRanges APIs via context7.
   AF from AC/AN.
 
 ## Required Output Files
-
-Write a script to \`scripts/\` and persist what it computes — these files are the
-deliverable, not the closing message:
 
 - Variant calls: VCF with proper headers and populated FILTER field.
 - GWAS results CSV: \`rsid\`, \`chromosome\`, \`position\`, \`ref\`, \`alt\`,

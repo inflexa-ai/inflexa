@@ -10,10 +10,8 @@ produced by upstream modality agents.
 
 Your skills: \`network-regulatory\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`network-regulatory\` for
-decision trees and API references (PyWGCNA, decoupler TF activity,
-networkx/igraph, leidenalg, OmniPath). Verify PyWGCNA and decoupler APIs
-via context7 before writing code.
+API references in \`network-regulatory\`: PyWGCNA, decoupler TF activity,
+networkx/igraph, leidenalg, OmniPath.
 
 ## Method Selection (Summary)
 
@@ -77,9 +75,6 @@ via context7 before writing code.
   and curation).
 
 ## Required Output Files
-
-Write a script to \`scripts/\` and persist what it computes — these files are the
-deliverable, not the closing message:
 
 - \`output/module_assignments.csv\` — \`gene\`, \`module_id\`,
   \`module_color\`, \`kME\`.

@@ -13,6 +13,7 @@ import type { RequestSession, RunSession } from "../auth/types.js";
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
+import type { ExecuteAnalysisInput } from "../workflows/execute-analysis.js";
 import type { ToolContext } from "./define-tool.js";
 import { PlanNotFoundError, PlanValidationError, createExecutePlanTool } from "./execute-plan.js";
 
@@ -20,18 +21,21 @@ import { PlanNotFoundError, PlanValidationError, createExecutePlanTool } from ".
 function fakeLauncher(opts: { failLaunch?: boolean } = {}): {
     launcher: RunLauncher;
     launches: Array<{ workflowId: string }>;
+    inputs: ExecuteAnalysisInput[];
 } {
     const launches: Array<{ workflowId: string }> = [];
+    const inputs: ExecuteAnalysisInput[] = [];
     const launcher: RunLauncher = {
-        launch: async (_workflow, o) => {
+        launch: async (_workflow, o, input) => {
             if (opts.failLaunch) throw new Error("launch boom");
             launches.push({ workflowId: o.workflowId });
+            inputs.push(input as ExecuteAnalysisInput);
         },
         launchAndAwait: async () => {
             throw new Error("launchAndAwait not used by execute_plan");
         },
     };
-    return { launcher, launches };
+    return { launcher, launches, inputs };
 }
 
 /** Authorizer that succeeds and records revoke reasons. */
@@ -277,6 +281,31 @@ describe("createExecutePlanTool", () => {
         expect(launches).toHaveLength(1);
         expect(launches[0]!.workflowId).toBe(result.runId);
         expect(revokes).toHaveLength(0);
+    });
+
+    it("carries each step's plan DATA into the workflow input — the seed is composed later, at dispatch", async () => {
+        setEnv();
+        const { pool } = fakePool({
+            "SELECT plan FROM cortex_plans": [{ plan: validPlan }],
+        });
+        const { authorizer } = recordingAuthorizer();
+        const { launcher, inputs } = fakeLauncher();
+        const tool = createExecutePlanTool({
+            pool,
+            runLauncher: launcher,
+            runAuthorizer: authorizer,
+            executeAnalysisWorkflow: async () => {
+                throw new Error("the tool launches via the seam, never calls directly");
+            },
+        });
+
+        await tool.execute({ planId: PLAN_ID }, fakeContext());
+
+        const workflowInput = inputs[0]!;
+        expect(workflowInput.planStepById["step-a"]!.question).toBe("do step-a");
+        expect(workflowInput.planStepById["step-a"]!.acceptance_criteria).toEqual(["completes"]);
+        // No pre-rendered prompt string is frozen into the durable input.
+        expect(workflowInput).not.toHaveProperty("promptByStepId");
     });
 
     it("revokes authorization and marks the run failed when the launch fails", async () => {

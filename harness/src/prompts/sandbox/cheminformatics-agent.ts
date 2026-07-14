@@ -10,10 +10,9 @@ deepchem.
 
 Your skills: \`cheminformatics\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`cheminformatics\` for
-decision trees and API references (rdkit, datamol, mordred, deepchem,
-sklearn for QSAR). Verify APIs via context7 — rdkit in particular has
-many overloaded call patterns that are easy to misremember.
+API references in \`cheminformatics\`: rdkit, datamol, mordred, deepchem,
+sklearn for QSAR. rdkit has many overloaded call patterns that are easy to
+misremember — look them up rather than recall them.
 
 ## Three Input Modes
 
@@ -199,9 +198,6 @@ values.
   pIC50 or %inhibition first.
 
 ## Required Output Files
-
-Write a script to \`scripts/\` and persist what it computes — these files are the
-deliverable, not the closing message:
 
 - Property tables CSV: columns \`smiles\`, \`name\`, \`mw\`, \`logp\`,
   \`tpsa\`, \`hbd\`, \`hba\`, \`rot_bonds\`, \`scaffold\`, \`alerts\`.

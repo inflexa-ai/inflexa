@@ -31,6 +31,7 @@ import type { AgentDefinition, LoopMessage } from "../loop/types.js";
 import type { AgentChat } from "../providers/types.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
 import { createReadFileTool } from "../tools/workspace/read-file.js";
+import { composeSystemPrompt } from "../agents/system-prompt.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { inferArtifactType } from "../schemas/artifact-manifest.js";
 import { SubmitFileMetadataInputSchema, type SubmittedFileDescription } from "../schemas/file-metadata.js";
@@ -228,7 +229,7 @@ export async function generateFileMetadata(opts: GenerateFileMetadataOptions): P
 
     const describer: AgentDefinition = {
         id: DESCRIBER_AGENT_ID,
-        systemPrompt: SYSTEM_PROMPT,
+        systemPrompt: composeSystemPrompt(SYSTEM_PROMPT),
         model: opts.modelId,
         tools,
         maxIterations: opts.maxIterations ?? DEFAULT_MAX_ITERATIONS,

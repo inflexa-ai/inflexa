@@ -39,7 +39,6 @@ import type { ExecuteAnalysisInput, ExecuteAnalysisResult } from "../workflows/e
 import { unwrapOrThrow } from "../lib/result.js";
 import { validatePlan } from "../schemas/validate-plan.js";
 import { AnalysisPlanSchema, type AnalysisPlan } from "../schemas/workflow-state.js";
-import { renderStepPrompt } from "../schemas/render-step-prompt.js";
 import { RunDedupCollisionError, insertRun, loadPlan, queryActiveRun, updateRunStatus } from "../state/index.js";
 import { defineTool } from "./define-tool.js";
 
@@ -220,7 +219,11 @@ export function createExecutePlanTool(deps: ExecutePlanToolDeps) {
                     id: s.id,
                     depends_on: s.depends_on ?? [],
                 })),
-                promptByStepId: Object.fromEntries(plan.steps.map((s) => [s.id, renderStepPrompt(s)])),
+                // The step DATA, not a rendered prompt: each step's seed is composed
+                // by the scheduler at dispatch, when its dependencies' results exist.
+                // A prompt frozen here — before the first step has run — could never
+                // mention them.
+                planStepById: Object.fromEntries(plan.steps.map((s) => [s.id, s])),
                 agentByStepId: Object.fromEntries(plan.steps.map((s) => [s.id, s.agent ?? "unknown"])),
                 resourcesByStepId: Object.fromEntries(
                     plan.steps.map((s) => {

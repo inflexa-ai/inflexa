@@ -1,4 +1,4 @@
-import { generateText, streamText, type FinishReason, type LanguageModel, type ModelMessage } from "ai";
+import { generateText, streamText, type FinishReason, type LanguageModel, type LanguageModelUsage, type ModelMessage } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
@@ -6,7 +6,7 @@ import { ResultAsync, err, ok, type Result } from "neverthrow";
 import { scopeWorkloadId, type AgentSession } from "../auth/types.js";
 import type { ResolveBilling } from "../billing/resolver.js";
 import { type ProviderError, toProviderError } from "./errors.js";
-import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, FetchLike, ProviderCapabilities } from "./types.js";
+import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage, FetchLike, ProviderCapabilities } from "./types.js";
 
 const DEFAULT_MAX_RETRIES = 2;
 
@@ -60,20 +60,53 @@ function isAbortError(value: unknown): boolean {
     return false;
 }
 
-function responseFromMessages(messages: readonly ModelMessage[], fallbackText: string, finishReason: FinishReason, rawFinishReason?: string): ChatResponse {
+/**
+ * Map AI SDK token accounting onto the harness's neutral `ChatUsage`.
+ *
+ * The cache breakdown rides on the SDK's *vendor-neutral* `inputTokenDetails`,
+ * not in `providerMetadata` — both installed providers normalize into it:
+ * `@ai-sdk/anthropic` maps `cache_read_input_tokens` → `cacheReadTokens` and
+ * `cache_creation_input_tokens` → `cacheWriteTokens`, and
+ * `@ai-sdk/openai-compatible` maps `prompt_tokens_details.cached_tokens` →
+ * `cacheReadTokens` (it never reports a write — that family caches
+ * server-side, with no billed write step). Reading the neutral field is
+ * therefore both correct and vendor-agnostic; the raw vendor payload remains
+ * available under `providerMetadata.anthropic.usage` for debugging, in the
+ * vendor's own snake_case.
+ *
+ * `inputTokens` is the total billed prefix, cache reads included.
+ */
+function toChatUsage(usage: LanguageModelUsage | undefined): ChatUsage | undefined {
+    if (usage === undefined) return undefined;
+    return {
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        cacheCreationInputTokens: usage.inputTokenDetails?.cacheWriteTokens,
+        cacheReadInputTokens: usage.inputTokenDetails?.cacheReadTokens,
+    };
+}
+
+function responseFromMessages(
+    messages: readonly ModelMessage[],
+    fallbackText: string,
+    finishReason: FinishReason,
+    rawFinishReason?: string,
+    usage?: LanguageModelUsage,
+): ChatResponse {
     const message = [...messages].reverse().find((m): m is Extract<ModelMessage, { role: "assistant" }> => m.role === "assistant");
     if (message === undefined) {
         return {
             message: { role: "assistant", content: fallbackText },
             finishReason,
             rawFinishReason,
+            usage: toChatUsage(usage),
         };
     }
-    return { message, finishReason, rawFinishReason };
+    return { message, finishReason, rawFinishReason, usage: toChatUsage(usage) };
 }
 
 function responseFromGenerate(result: Awaited<ReturnType<typeof generateText>>): ChatResponse {
-    return responseFromMessages(result.responseMessages, result.text, result.finishReason, result.rawFinishReason);
+    return responseFromMessages(result.responseMessages, result.text, result.finishReason, result.rawFinishReason, result.usage);
 }
 
 /**
@@ -150,7 +183,13 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 text += delta;
                 yield { type: "text-delta", text: delta };
             }
-            const response = responseFromMessages(await result.responseMessages, text, await result.finishReason, await result.rawFinishReason);
+            const response = responseFromMessages(
+                await result.responseMessages,
+                text,
+                await result.finishReason,
+                await result.rawFinishReason,
+                await result.usage,
+            );
             yield { type: "done", response };
         } catch (e) {
             if (isAbortError(e) || signal?.aborted) throw e;

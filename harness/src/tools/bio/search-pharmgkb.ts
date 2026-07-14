@@ -26,11 +26,19 @@ const PharmgkbResponseSchema = z.object({
 export const searchPharmgkbTool = defineTool({
     id: "search_pharmgkb",
     description:
-        "Search PharmGKB for pharmacogenomic clinical annotations — gene-drug interactions, dosing guidelines (CPIC/DPWG), and variant-level clinical significance. Use to determine if a gene variant affects drug metabolism, efficacy, or toxicity.",
+        "Search PharmGKB clinical annotations for a gene-drug pharmacogenomic link — use it to judge whether a gene affects a drug's metabolism, efficacy, or toxicity. " +
+        "Returns annotations[]: { gene, drug, levelOfEvidence (PharmGKB 1A…4, where 1A is guideline-backed) }. The phenotype, guidelineSource and summary fields are always null " +
+        "in this tool's output — treat levelOfEvidence as the only strength signal and do not attribute CPIC/DPWG guideline text to it. " +
+        "Matching is an exact field filter, not a search: 'CYP2D6' resolves, 'cytochrome P450 2D6' does not. " +
+        "An empty annotations array is valid no-data (no curated PGx link) — do not retry.",
     inputSchema: z.object({
-        query: z.string().describe("Gene symbol (e.g. CYP2D6) or drug name (e.g. tamoxifen)"),
-        searchType: z.enum(["gene", "drug"]).describe("Search by gene or drug"),
-        limit: z.number().int().min(1).max(50).default(20).describe("Max results"),
+        query: z
+            .string()
+            .describe(
+                "Exact gene symbol (e.g. 'CYP2D6') when searchType='gene', or exact drug name (e.g. 'tamoxifen') when searchType='drug'. No fuzzy matching.",
+            ),
+        searchType: z.enum(["gene", "drug"]).describe("'gene' filters PharmGKB on location.genes.symbol; 'drug' filters on relatedChemicals.name."),
+        limit: z.number().int().min(1).max(50).default(20).describe("Max annotations to return (default 20, max 50); applied client-side after the fetch."),
     }),
     execute: async ({ query, searchType, limit = 20 }) => {
         const filter = searchType === "gene" ? `location.genes.symbol=${encodeURIComponent(query)}` : `relatedChemicals.name=${encodeURIComponent(query)}`;

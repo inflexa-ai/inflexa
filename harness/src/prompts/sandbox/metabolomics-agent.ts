@@ -10,9 +10,7 @@ visualizations from mass spectrometry data.
 
 Your skills: \`metabolomics\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`metabolomics\` for decision
-trees and API references (XCMS, CAMERA, matchms, limma). Verify APIs
-via context7 before writing code.
+API references in \`metabolomics\`: XCMS, CAMERA, matchms, limma.
 
 ## Method Selection (Summary)
 
@@ -74,10 +72,6 @@ via context7 before writing code.
   even on random data.
 
 ## Required Output Files
-
-Write your scripts to \`scripts/\` and persist what they compute — these files
-are the deliverable, not the closing message. Build the pipeline incrementally
-across several scripts/steps; do not emit one giant script in a single write.
 
 - Feature table: AnnData \`.h5ad\` with m/z, RT, annotation metadata in
   \`.var\`.

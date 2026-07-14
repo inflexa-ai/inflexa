@@ -106,26 +106,37 @@ export function createSearchCtxExposureTool(deps: { apiKey: string }) {
     return defineTool({
         id: "search_ctx_exposure",
         description:
-            "Look up chemical exposure data from EPA's CTX Exposure APIs. Returns: " +
-            "SEEM general exposure predictions (estimated daily intake, exposure pathway probabilities), " +
-            "HTTK toxicokinetic parameters (Css, clearance, volume of distribution, protein binding), " +
-            "functional use categories, and product composition data. " +
-            "Use for exposure-based safety margin calculations (comparing ToxCast bioactivity AC50 " +
-            "against predicted human exposure), IVIVE context, and exposure pathway characterization. " +
-            "Requires EPA_CCTE_API_KEY environment variable.",
+            "Look up a chemical's human-exposure data in EPA's CTX Exposure APIs — the exposure half of a risk assessment, e.g. pairing a ToxCast AC50 against predicted exposure for a " +
+            "bioactivity-exposure ratio, or characterizing where a chemical is actually used. " +
+            "Returns, per requested dataType: SEEM predictions (production volume and per-pathway exposure probabilities — dietary, residential, pesticide, industrial; NOT a daily-intake " +
+            "dose), HTTK toxicokinetic parameters, reported functional-use categories, and consumer-product composition. " +
+            "Requires EPA_CCTE_API_KEY — a missing key fails the call terminally: do NOT retry, report the missing key and continue without EPA data. " +
+            "found: false, or a requested section coming back absent/empty, is valid no-data — do not retry.",
         inputSchema: z.object({
-            query: z.string().describe("Chemical identifier: DTXSID (e.g. DTXSID7020182), CASRN (e.g. 80-05-7), " + "or chemical name (e.g. bisphenol A)"),
+            query: z
+                .string()
+                .describe(
+                    "Chemical identifier. A DTXSID (e.g. 'DTXSID7020182') is used directly; a CASRN (e.g. '80-05-7') or chemical name (e.g. 'bisphenol A') is resolved by EXACT match.",
+                ),
             dataType: z
                 .enum(["seem", "httk", "functional-use", "product-data", "all"])
                 .default("all")
                 .describe(
-                    "'seem' for SEEM exposure predictions, " +
-                        "'httk' for toxicokinetic parameters, " +
-                        "'functional-use' for chemical use categories, " +
-                        "'product-data' for consumer product composition, " +
-                        "'all' for combined results",
+                    "'seem' — SEEM exposure-pathway predictions and production volume. " +
+                        "'httk' — high-throughput toxicokinetic parameters (clearance, Css, protein binding, …). " +
+                        "'functional-use' — reported chemical use categories. " +
+                        "'product-data' — consumer-product composition. " +
+                        "'all' (default) — fetches every section concurrently.",
                 ),
-            limit: z.number().int().min(1).max(100).default(25).describe("Max results per category (for functional-use and product-data)"),
+            limit: z
+                .number()
+                .int()
+                .min(1)
+                .max(100)
+                .default(25)
+                .describe(
+                    "Max rows per category (default 25, max 100). Applies to functional-use and product-data only — seem and httk are always returned whole.",
+                ),
         }),
         execute: async ({ query, dataType = "all", limit = 25 }): Promise<Result<ExposureResult, ToolError>> => {
             const headers = getEpaCcteHeaders(deps.apiKey);

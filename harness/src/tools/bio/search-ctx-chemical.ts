@@ -93,17 +93,25 @@ export function createSearchCtxChemicalTool(deps: { apiKey: string }) {
     return defineTool({
         id: "search_ctx_chemical",
         description:
-            "Look up chemical details and physicochemical properties from EPA's CompTox Chemicals Dashboard (CTX API). " +
-            "Returns chemical identifiers (DTXSID, CASRN, SMILES, InChIKey), molecular formula, mass, " +
-            "and a summary of predicted and experimental properties (logP, water solubility, vapor pressure, " +
-            "melting/boiling point, bioconcentration factor, Henry's law constant). " +
-            "Use for ADMET property assessment, compound characterization, and safety-relevant physicochemical profiling. " +
-            "Requires EPA_CCTE_API_KEY environment variable.",
+            "Look up a chemical's identity and physicochemical property profile in EPA's CompTox Chemicals Dashboard — use it for safety-relevant physchem/ADMET characterization of " +
+            "environmental and industrial chemicals, and to obtain the DTXSID the other CTX tools key off. " +
+            "Returns chemical identifiers (DTXSID, CASRN, SMILES, InChIKey, formula, mass) plus, when includeProperties, experimental and predicted property summaries — logP, water " +
+            "solubility, vapor pressure, melting/boiling point, bioconcentration factor, Henry's law constant. " +
+            "For drug-like compounds prefer search_pubchem_compound or search_compounds; the returned `detail.pubchemCid` bridges back to the PubChem tools. " +
+            "Requires EPA_CCTE_API_KEY — a missing key fails the call terminally: do NOT retry, report the missing key and continue without EPA data. " +
+            "found: false means the identifier did not resolve — valid no-data, do not retry.",
         inputSchema: z.object({
             query: z
                 .string()
-                .describe("Chemical identifier: DTXSID (e.g. DTXSID7020182), CASRN (e.g. 80-05-7), " + "chemical name (e.g. bisphenol A), or InChIKey"),
-            includeProperties: z.boolean().default(true).describe("Include predicted/experimental property summaries (logP, solubility, etc.)"),
+                .describe(
+                    "Chemical identifier. A DTXSID (e.g. 'DTXSID7020182') is used directly; a CASRN (e.g. '80-05-7'), chemical name (e.g. 'bisphenol A'), or InChIKey is resolved by EXACT match.",
+                ),
+            includeProperties: z
+                .boolean()
+                .default(true)
+                .describe(
+                    "Default true — also fetch the experimental/predicted property summaries. Set false to skip that second call when only identity and mass are needed.",
+                ),
         }),
         execute: async ({ query, includeProperties = true }): Promise<Result<CtxChemicalOutput, ToolError>> => {
             const headers = getEpaCcteHeaders(deps.apiKey);

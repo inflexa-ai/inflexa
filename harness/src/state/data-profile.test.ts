@@ -11,6 +11,7 @@ import {
     tryRetryDataProfile,
     tryStartDataProfile,
     expireStaleDataProfile,
+    type DataProfileResult,
 } from "./data-profile.js";
 
 /**
@@ -458,5 +459,165 @@ describe("terminal writes CAS on running — a cleared row is never resurrected"
         const status = (await loadDataProfileStatus(pool, "a-fail-running"))._unsafeUnwrap();
         expect(status?.status).toBe("failed");
         expect(status?.error).toBe("boom");
+    });
+});
+
+/**
+ * The persisted profile is the ONLY durable copy — the profiler's scratch tree is deleted
+ * on completion — so the row carries the profiler's whole finding, and a row written before
+ * it was widened must still read. Both directions are asserted on real DB state: a legacy
+ * snapshot written straight into the jsonb column, and a rich one written through
+ * `completeDataProfile`.
+ */
+describe("the persisted profile record", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_result_shape");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    /** Write a snapshot straight into the column, bypassing the writer — the only way to forge a legacy row. */
+    async function writeRawResult(analysisId: string, raw: unknown): Promise<void> {
+        await seedAnalysis(pool, analysisId, "completed");
+        await pool.query({
+            text: `UPDATE cortex_analysis_state SET data_profile_result = $1::jsonb WHERE analysis_id = $2`,
+            values: [JSON.stringify(raw), analysisId],
+        });
+    }
+
+    const RICH_RESULT: DataProfileResult = {
+        summary: "Bulk RNA-seq of rectal mucosal biopsies, 24 samples, UC vs healthy controls.",
+        files: [
+            {
+                path: "data/inputs/f1/counts.csv",
+                description: "Raw gene-level count matrix",
+                dataType: "count-matrix",
+                format: "CSV",
+                rows: 20531,
+                cols: 24,
+                tags: ["counts", "gene-level"],
+                warnings: ["3 samples below 5M reads"],
+                metrics: { sparsity: 0.41, medianLibrarySize: 18_400_000, hasEnsemblIds: true, quantifier: "salmon" },
+            },
+            {
+                path: "data/inputs/f2/metadata.csv",
+                description: "Sample metadata: group, sex, age, batch",
+                dataType: "clinical-metadata",
+                format: "CSV",
+                rows: 24,
+                cols: 6,
+                tags: ["metadata"],
+                warnings: [],
+                metrics: { missingRate: 0 },
+            },
+        ],
+        inputFileIds: ["file-aaa", "file-bbb"],
+        inputFiles: [
+            { fileId: "file-aaa", size: 1024, mtimeMs: 1_780_000_000_000 },
+            { fileId: "file-bbb", size: 2048, mtimeMs: 1_780_000_001_000 },
+        ],
+        profiledAt: "2026-06-09T10:00:00.000Z",
+        domain: "transcriptomics",
+        subtype: "bulk-rna-seq",
+        organism: {
+            scientificName: "Homo sapiens",
+            taxonId: "9606",
+            source: "metadata",
+            confidence: "high",
+            notes: "organism column in the sample sheet",
+        },
+        tissue: "rectal mucosal biopsy",
+        cellType: "bulk tissue",
+        condition: "Ulcerative Colitis vs healthy controls",
+        accessions: ["GSE123456", "PRJNA987654"],
+        experimentalDesign: "Two groups (12 UC, 12 control), paired by sequencing batch, no technical replicates.",
+        qualityAssessment: {
+            concerns: ["batch confounded with group in batch 2", "3 low-depth samples"],
+            strengths: ["balanced group sizes", "deep coverage in 21/24 samples"],
+        },
+    };
+
+    it("a rich profile round-trips every field through the jsonb column", async () => {
+        await seedAnalysis(pool, "a-rich", "pending");
+        (await tryStartDataProfile(pool, "a-rich"))._unsafeUnwrap();
+        expect((await completeDataProfile(pool, "a-rich", RICH_RESULT))._unsafeUnwrap()).toBe(true);
+
+        const status = (await loadDataProfileStatus(pool, "a-rich"))._unsafeUnwrap();
+        expect(status?.status).toBe("completed");
+        // Nothing is dropped on the way in or out: the whole record, verbatim.
+        expect(status?.result).toEqual(RICH_RESULT);
+    });
+
+    it("a legacy collapsed row still reads — the widened fields simply come back undefined", async () => {
+        // The exact shape written before the record was widened: four fields, and per-file
+        // entries with nothing but a path and a description.
+        await writeRawResult("a-legacy", {
+            summary: "3 RNA-seq count matrices",
+            files: [
+                { path: "data/inputs/f1/counts.csv", description: "Raw count matrix" },
+                { path: "data/inputs/f2/metadata.csv", description: "Sample metadata" },
+            ],
+            inputFileIds: ["file-aaa", "file-bbb"],
+            profiledAt: "2026-01-02T03:04:05.000Z",
+        });
+
+        const status = (await loadDataProfileStatus(pool, "a-legacy"))._unsafeUnwrap();
+        const result = status?.result;
+
+        // It parses — no throw, no null. The original four fields are intact.
+        expect(status?.status).toBe("completed");
+        expect(result?.summary).toBe("3 RNA-seq count matrices");
+        expect(result?.inputFileIds).toEqual(["file-aaa", "file-bbb"]);
+        expect(result?.profiledAt).toBe("2026-01-02T03:04:05.000Z");
+        expect(result?.files).toHaveLength(2);
+        expect(result?.files[0]?.path).toBe("data/inputs/f1/counts.csv");
+        expect(result?.files[0]?.description).toBe("Raw count matrix");
+
+        // And every field added by the widening is absent, not a lie.
+        expect(result?.inputFiles).toBeUndefined();
+        expect(result?.domain).toBeUndefined();
+        expect(result?.subtype).toBeUndefined();
+        expect(result?.organism).toBeUndefined();
+        expect(result?.tissue).toBeUndefined();
+        expect(result?.cellType).toBeUndefined();
+        expect(result?.condition).toBeUndefined();
+        expect(result?.accessions).toBeUndefined();
+        expect(result?.experimentalDesign).toBeUndefined();
+        expect(result?.qualityAssessment).toBeUndefined();
+        expect(result?.files[0]?.dataType).toBeUndefined();
+        expect(result?.files[0]?.rows).toBeUndefined();
+        expect(result?.files[0]?.metrics).toBeUndefined();
+    });
+
+    it("an explicit null organism survives as null — distinct from a legacy row's absent one", async () => {
+        // The profiler looked and no input identified an organism. That is a finding, and it
+        // must not read back the same as "this snapshot predates the field".
+        const noOrganism: DataProfileResult = {
+            summary: "Unlabelled count matrix.",
+            files: [{ path: "data/inputs/f1/counts.csv", description: "Counts", dataType: "count-matrix", format: "CSV", rows: 100, cols: 4 }],
+            inputFileIds: ["file-aaa"],
+            profiledAt: "2026-06-09T10:00:00.000Z",
+            domain: "transcriptomics",
+            organism: null,
+            tissue: null,
+        };
+
+        await seedAnalysis(pool, "a-null-organism", "pending");
+        (await tryStartDataProfile(pool, "a-null-organism"))._unsafeUnwrap();
+        (await completeDataProfile(pool, "a-null-organism", noOrganism))._unsafeUnwrap();
+
+        const result = (await loadDataProfileStatus(pool, "a-null-organism"))._unsafeUnwrap()?.result;
+        expect(result?.organism).toBeNull();
+        expect(result?.tissue).toBeNull();
+        // An unset optional is dropped by JSON.stringify rather than stored as null.
+        expect(result?.subtype).toBeUndefined();
+        expect(result).toEqual(noOrganism);
     });
 });

@@ -27,10 +27,43 @@ export interface ChatRequest {
     readonly providerOptions?: ProviderOptions;
 }
 
+/**
+ * Vendor-neutral prompt-cache policy — a harness concept, not a vendor one.
+ *
+ * `{ ttl }` asks the provider to cache the request prefix (system + tools +
+ * message history) for that lifetime; `"off"` sends no cache directive at all.
+ * Vendors that cache automatically (the OpenAI-compatible family does prefix
+ * caching server-side, unprompted) need no directive, so the policy is a no-op
+ * for them rather than an error — see `./prompt-cache.ts`, the single place the
+ * harness translates this into vendor wire options.
+ */
+export type PromptCachePolicy = { readonly ttl: "5m" | "1h" } | "off";
+
+/**
+ * Token accounting for one chat call, in harness-neutral names.
+ *
+ * `inputTokens` is the *total* billed prefix — cached and uncached alike — so a
+ * cache hit rate is `cacheReadInputTokens / inputTokens`, not a ratio against
+ * some separate uncached figure. `cacheCreationInputTokens` is the write that
+ * seeds the cache (billed at a premium; it only pays for itself once a later
+ * call reads it back).
+ *
+ * Every field is optional: a provider that reports no usage at all, or reports
+ * totals without a cache breakdown, is legitimate. Absent means "not reported",
+ * never "zero".
+ */
+export interface ChatUsage {
+    readonly inputTokens?: number;
+    readonly outputTokens?: number;
+    readonly cacheCreationInputTokens?: number;
+    readonly cacheReadInputTokens?: number;
+}
+
 export interface ChatResponse {
     readonly message: Extract<ModelMessage, { role: "assistant" }>;
     readonly finishReason: FinishReason;
     readonly rawFinishReason?: string;
+    readonly usage?: ChatUsage;
 }
 
 export type ChatStreamEvent = { readonly type: "text-delta"; readonly text: string } | { readonly type: "done"; readonly response: ChatResponse };

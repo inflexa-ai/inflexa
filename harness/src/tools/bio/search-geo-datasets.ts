@@ -47,12 +47,25 @@ const GeoEsummaryResponseSchema = z.object({
 export const searchGeoDatasetsTool = defineTool({
     id: "search_geo_datasets",
     description:
-        "Search NCBI GEO for public gene expression datasets by disease, tissue, or experimental condition. Returns dataset accessions and metadata for identifying external validation cohorts. Note: sandbox containers cannot download GEO data directly — use this tool to identify relevant datasets, then reference accessions in analysis plans.",
+        "Search NCBI GEO for public gene-expression datasets by disease, tissue, or experimental condition — use it to find external validation cohorts or to cite published data. " +
+        "Returns totalFound plus datasets[]: { accession (GSE…/GDS…), title, summary (truncated to 500 chars), platform, sampleCount, organism, pubmedIds }. " +
+        "HARD CAVEAT: sandbox containers cannot download GEO data. This tool identifies and cites accessions only — never plan an analysis step that fetches a GEO dataset. " +
+        "An empty datasets array is a valid 'nothing matched' — do not retry the identical query.",
     inputSchema: z.object({
-        query: z.string().describe("Search terms (e.g. 'breast cancer RNA-seq responder', 'NSCLC pembrolizumab')"),
-        organism: z.string().optional().describe("Filter by organism (e.g. 'Homo sapiens')"),
-        datasetType: z.enum(["gds", "gse"]).default("gse").describe("GDS (curated datasets) or GSE (series, more numerous)"),
-        limit: z.number().int().min(1).max(50).default(15).describe("Max results"),
+        query: z
+            .string()
+            .describe("NCBI Entrez free-text query (e.g. 'breast cancer RNA-seq responder', 'NSCLC pembrolizumab'). Entrez field tags are allowed."),
+        organism: z
+            .string()
+            .optional()
+            .describe("Optional organism filter, appended as an [Organism] term. Use the scientific name, e.g. 'Homo sapiens', 'Mus musculus'."),
+        datasetType: z
+            .enum(["gds", "gse"])
+            .default("gse")
+            .describe(
+                "'gse' (default) — GEO Series: raw submitter-deposited studies, far more numerous. 'gds' — curated DataSets: fewer, but normalized and value-added.",
+            ),
+        limit: z.number().int().min(1).max(50).default(15).describe("Max datasets to return (default 15, max 50)."),
     }),
     execute: async ({ query, organism, datasetType = "gse", limit = 15 }) => {
         let searchQuery = query;

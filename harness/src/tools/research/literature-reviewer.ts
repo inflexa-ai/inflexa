@@ -22,6 +22,7 @@ import { finalText, runAgent } from "../../loop/run-agent.js";
 import { passthroughStep } from "../../loop/run-step.js";
 import type { AgentDefinition } from "../../loop/types.js";
 import { literatureReviewerPrompt } from "../../prompts/literature-reviewer.js";
+import { composeSystemPrompt } from "../../agents/system-prompt.js";
 import { forSubAgent } from "../../auth/types.js";
 import { type ChatProvider } from "../../providers/types.js";
 import { defineTool, type Tool } from "../define-tool.js";
@@ -67,7 +68,7 @@ export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool
 
     const agent: AgentDefinition = {
         id: AGENT_ID,
-        systemPrompt: literatureReviewerPrompt,
+        systemPrompt: composeSystemPrompt(literatureReviewerPrompt),
         model: deps.model,
         tools: reviewerTools,
         maxIterations: REVIEWER_MAX_ITERATIONS,

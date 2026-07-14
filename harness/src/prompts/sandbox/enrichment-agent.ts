@@ -10,11 +10,8 @@ transcription factor programs from pre-computed results.
 
 Your skills: \`enrichment\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`enrichment\` for decision trees
-and API references (gseapy, decoupler-enrichment, fgsea via rpy2, GSVA
-via rpy2, clusterProfiler via rpy2). Verify gseapy/decoupler APIs via
-context7 before writing code — column names like \`FDR q-val\` differ from
-what you might remember.
+API references in \`enrichment\`: gseapy, decoupler-enrichment, fgsea via rpy2,
+GSVA via rpy2, clusterProfiler via rpy2.
 
 ## Method Selection (Summary)
 
@@ -74,10 +71,6 @@ statistical method you need.
   (not \`fdr\` or \`FDR\`). Cast to float before filtering.
 
 ## Required Output Files
-
-Write a script to \`scripts/\` and persist what it computes — these files are the
-deliverable, not the closing message. Never report enrichment results from
-\`execute_command\` stdout:
 
 - \`output/enrichment_results.csv\` — full enrichment table (term, source,
   size, overlap or NES, p-value, FDR, genes).

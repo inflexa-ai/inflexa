@@ -146,16 +146,37 @@ async function searchBySmiles(smiles: string, limit: number): Promise<Compound[]
 export const searchCompoundsTool = defineTool({
     id: "search_compounds",
     description:
-        "Search ChEMBL for compounds by target name/ChEMBL ID, compound name, or SMILES. " +
-        "Returns compound metadata including ChEMBL IDs, SMILES, molecular weight, and LogP. " +
-        "Use searchType='target' to find compounds active against a target, " +
-        "'compound' for name search, 'smiles' for structure matching.",
+        "Search ChEMBL (~2.4M curated drug-like bioactives) for compounds by target, compound name, or SMILES. " +
+        "Use it to resolve a named compound to its ChEMBL ID and structure, or to list the compounds with recorded activity against a target. " +
+        "Returns per compound: chemblId, preferredCompoundName, canonicalSmiles, molecularWeight, alogp, molecularFormula. " +
+        "ChEMBL is curated and preferred for anything downstream of a compound (get_mechanism, get_bioactivity, get_drug_info); if ChEMBL does not find the compound, " +
+        "resolve it in PubChem with search_pubchem_compound and bridge back to a ChEMBL ID via get_pubchem_cross_refs. " +
+        "An empty compounds array is a valid 'no match' — do not retry the same query.",
     inputSchema: z.object({
-        query: z.string().min(1).describe("Search term: target name/ID, compound name, or SMILES string"),
+        query: z
+            .string()
+            .min(1)
+            .describe(
+                "Must match searchType: a target name/gene symbol or target ChEMBL ID (searchType='target'), " +
+                    "a compound name (searchType='compound'), or a SMILES string (searchType='smiles').",
+            ),
         searchType: z
             .enum(["target", "compound", "smiles"])
-            .describe("What to search by: 'target' (find active compounds), 'compound' (name search), 'smiles' (structure match)"),
-        limit: z.number().int().min(1).max(500).default(500).describe("Maximum number of results to return"),
+            .describe(
+                "'target' — resolve the query to a ChEMBL target, then return the compounds assayed against it. " +
+                    "'compound' — free-text search over molecule names. " +
+                    "'smiles' — flexible (flexmatch) structure search on canonical SMILES.",
+            ),
+        limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(500)
+            .default(500)
+            .describe(
+                "Max compounds to return (default 500). For searchType='target' this caps the activity rows scanned, " +
+                    "so the number of unique compounds returned is usually lower.",
+            ),
     }),
     execute: async ({ query, searchType, limit = 500 }) => {
         let compounds: Compound[];

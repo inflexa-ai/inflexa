@@ -11,11 +11,8 @@ abundance, and differential state analysis.
 
 Your skills: \`single-cell\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`single-cell\` for the full
-decision trees and API references (scanpy, scvi-tools, harmonypy,
-celltypist, liana, palantir, scvelo, pertpy for scRNA; catalyst,
-diffcyt for CyTOF). Verify rapidly-evolving APIs (scvi-tools, liana,
-palantir) via context7 before writing code.
+API references in \`single-cell\`: scanpy, scvi-tools, harmonypy, celltypist,
+liana, palantir, scvelo, pertpy for scRNA; catalyst, diffcyt for CyTOF.
 
 ## Method Selection (Summary)
 
@@ -107,10 +104,6 @@ plots, MDS plot.
 - **CyTOF** — wrong arcsinh cofactor (CyTOF=5, flow=150, IMC=1).
 
 ## Required Output Files
-
-Write your scripts to \`scripts/\` and persist what they compute — these files
-are the deliverable, not the closing message. Build the pipeline incrementally
-across several scripts/steps; do not emit one giant script in a single write.
 
 ### scRNA / snRNA
 

@@ -11,10 +11,8 @@ no single modality reveals alone.
 
 Your skills: \`multi-omics-integration\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`multi-omics-integration\` for
-decision trees and API references (muon, MOFA+ via mofapy2, DIABLO via
-mixOmics/rpy2, SNF via snfpy, OmniPath). Verify muon, mofapy2, and
-mixOmics APIs via context7.
+API references in \`multi-omics-integration\`: muon, MOFA+ via mofapy2, DIABLO
+via mixOmics/rpy2, SNF via snfpy, OmniPath.
 
 ## Method Selection (Summary)
 
@@ -104,10 +102,6 @@ empty/null shapes as valid "no data" — do NOT retry on empty output.
 - Assuming modalities have been processed upstream without verifying.
 
 ## Required Output Files
-
-Write your scripts to \`scripts/\` and persist what they compute — these files
-are the deliverable, not the closing message. Build the pipeline incrementally
-across several scripts/steps; do not emit one giant script in a single write.
 
 - \`output/factor_scores.csv\` — \`sample\`, \`factor_1\`, …, \`factor_k\`.
 - \`output/feature_loadings.csv\` — \`feature\`, \`modality\`, \`factor\`,

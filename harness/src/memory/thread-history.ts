@@ -213,6 +213,15 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
             const turnTokens = turns.map((turn) => turn.reduce((sum, row) => sum + row.tokens, 0));
             const threadTotal = turnTokens.reduce((sum, n) => sum + n, 0);
 
+            // Cache defeater (known; not fixed here). This window is newest-first, so
+            // once a thread outgrows `tokenBudget` it evicts the *oldest* turns — and
+            // the oldest turns are exactly the stable head of the prompt-cache prefix.
+            // Every subsequent turn therefore ships a shifted prefix and invalidates
+            // tools + system + history wholesale, turning each cached read into a
+            // fresh write. Watch `cortex.harness.agent.cache_read_tokens` collapse to
+            // zero on long threads. A prefix-stable window (evict from the middle, or
+            // summarize-and-pin the head) is a separate change.
+            //
             // Walk turns newest-first, accumulating token cost. The most recent turn
             // is always included — even if it alone exceeds the budget, a valid
             // sequence beats an under-budget one. Older turns join while they fit.

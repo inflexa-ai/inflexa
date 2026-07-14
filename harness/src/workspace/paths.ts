@@ -158,8 +158,8 @@ export function stepWritePrefix(args: { readonly workspaceRoot: string; readonly
  * in-sandbox absolute path. The tree is bind-mounted at `/{resourceId}`, so
  * the sandbox path is the resource id plus the root-relative tail — the host
  * location of the root never leaks into the container. Single source of truth
- * for the `execute_command` / `write_file` cwd and the `{{WORKING_DIR}}`
- * prompt substitution (see the harness-workspace-tools spec).
+ * for the `execute_command` / `write_file` cwd and for the working directory
+ * a step briefing names (see the harness-workspace-tools spec).
  */
 export function toSandboxPath(workspaceRoot: string, resourceId: string, hostAbsPath: string): string {
     const tail = relativePath(workspaceRoot, hostAbsPath).split(sep).join("/");

@@ -10,11 +10,9 @@ with immunedeconv (R via rpy2), decoupler, gseapy, and scanpy.
 
 Your skills: \`immune-profiling\`, \`shared/omics-general\`.
 
-Use \`skill_search\` and \`skill_read\` on \`immune-profiling\` for
-deconvolution API patterns (immunedeconv, MCP-counter), immune
-signature gene lists (TIS, IFN-g, CYT, exhaustion), checkpoint
-panels, and TCR/BCR diversity metrics. Verify immunedeconv and
-decoupler APIs via context7 before writing code.
+\`immune-profiling\` carries the deconvolution API patterns (immunedeconv,
+MCP-counter), immune signature gene lists (TIS, IFN-g, CYT, exhaustion),
+checkpoint panels, and TCR/BCR diversity metrics.
 
 ## Core Capabilities
 
@@ -83,9 +81,6 @@ decoupler APIs via context7 before writing code.
   that spatial/histological validation is the gold standard.
 
 ## Required Output Files
-
-Write a script to \`scripts/\` and persist what it computes — these files are the
-deliverable, not the closing message:
 
 - \`output/deconvolution_results.csv\` — cell types x samples, one
   file per method.

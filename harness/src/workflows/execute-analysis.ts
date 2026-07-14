@@ -20,6 +20,10 @@
  *     - dispatch every `scheduleReady(plan, completedSet, startedSet)` via
  *       `DBOS.startWorkflow` with deterministic child id
  *       `"${parent.workflowID}-${N}"` (N is the step's stable index)
+ *     - compose each child's seed prompt HERE, at dispatch (`composeStepSeed`,
+ *       inside a durable step): the moment a step is dispatched is the first
+ *       moment its dependencies' results exist, so this is the only place the
+ *       seed can name them
  *     - each child input is `forStep(input.runSession, stepId)` for the
  *       session field
  *     - emit `data-dag-state` (reconciling by id) on every dispatch +
@@ -63,18 +67,23 @@ import { unwrapOrThrow } from "../lib/result.js";
 import {
     RunDedupCollisionError,
     countArtifactsForRun,
+    loadDataProfileStatus,
     queryActiveRun,
+    queryStepArtifactPaths,
     seedStepExecutions,
     suspendAnalysis as suspendAnalysisQuery,
     sweepPendingStepExecutions,
     updateRunStatus,
 } from "../state/index.js";
 import { isBudgetExceeded } from "../loop/budget-exceeded.js";
+import { loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
+import { MAX_UPSTREAM_ARTIFACTS, composeStepBriefing, type UpstreamHandoff } from "../prompts/briefing.js";
+import type { AnalysisStep } from "../schemas/workflow-state.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
 import type { EmitFn } from "../loop/types.js";
 import type { RunCharge } from "../billing/run-charge.js";
-import { runDir, type ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { runDir, runStepDir, stepSubdir, stepWritePrefix, toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { isChatDataPart } from "../sandbox/sandbox-step-translate.js";
 import { synthesizeRun } from "../app/synthesize-run.js";
 import { type PlanStep, computeTopologicalLevels, scheduleReady, validatePlanDag } from "./execute-analysis-scheduler.js";
@@ -102,8 +111,15 @@ export interface ExecuteAnalysisInput {
     readonly steps: readonly PlanStep[];
     /** Optional thread id for cortex_runs.thread_id (UI breadcrumb only). */
     readonly threadId?: string | null;
-    /** Per-step prompt body the child workflow forwards to its agent. */
-    readonly promptByStepId: Readonly<Record<string, string>>;
+    /**
+     * The plan's steps, keyed by id — the instruction DATA each step's seed is
+     * composed FROM, not a pre-rendered prompt string. The seed itself is
+     * composed per step at dispatch (`composeStepSeed`), because that is the
+     * first moment a step's dependencies have produced anything to tell it
+     * about. Snapshotted here at the async edge so the body never re-reads the
+     * plan row (a mid-run plan edit cannot change a running run's instructions).
+     */
+    readonly planStepById: Readonly<Record<string, AnalysisStep>>;
     /** Per-step agent id (sandbox catalog entry). */
     readonly agentByStepId: Readonly<Record<string, string>>;
     /** Per-step planner-estimated sandbox resource request. */
@@ -283,8 +299,9 @@ function emitProvenanceGuarded(deps: ExecuteAnalysisDeps, event: RunProvenanceEv
 
 /**
  * Project the sandbox-step input handed to each child. The parent owns the
- * level computation; the rest comes from `ExecuteAnalysisInput`. The body
- * fills in `runSession` via `forStep` after this returns. Exported for the
+ * level computation and the seed (`prompt`, composed by `composeStepSeed` at
+ * dispatch); the rest comes from `ExecuteAnalysisInput`. The body fills in
+ * `runSession` via `forStep` after this returns. Exported for the
  * projection/timeout-propagation tests.
  */
 export function buildChildInput(args: {
@@ -293,8 +310,9 @@ export function buildChildInput(args: {
     level: number;
     runId: string;
     workflowId: string;
+    prompt: string;
 }): Omit<SandboxStepInput, "runSession"> {
-    const { input, stepId, level, runId, workflowId } = args;
+    const { input, stepId, level, runId, workflowId, prompt } = args;
     const resources = input.resourcesByStepId[stepId];
     if (!resources) {
         throw new Error(`executeAnalysis: step "${stepId}" missing from resourcesByStepId — every step must declare resources`);
@@ -305,11 +323,115 @@ export function buildChildInput(args: {
         stepId,
         agentId: input.agentByStepId[stepId] ?? "scientific-executor",
         level,
-        prompt: input.promptByStepId[stepId] ?? "",
+        prompt,
         parentWorkflowId: workflowId,
         resources,
         timeoutSeconds: input.timeoutByStepId?.[stepId],
     };
+}
+
+// ── Seed composition (at dispatch, not at plan submission) ────────────
+
+/**
+ * Compose one step's seed — the user-content message its agent opens on.
+ *
+ * The composition point is the design: the scheduler calls this at the instant
+ * it dispatches a step, which is the first instant at which every one of that
+ * step's dependencies has *finished* and written its results down. A seed
+ * rendered any earlier (at plan submission, say) cannot mention them, and the
+ * agent is left to rediscover its own upstream.
+ *
+ * Everything read here is durable state written by an already-settled child
+ * (`output/summary.md`, `cortex_artifacts`) or by the profiler
+ * (`cortex_analysis_state`) — never live in-flight state, which would not
+ * reproduce.
+ *
+ * REPLAY: the caller wraps this in a `DBOS.runStep`, so the composed string is
+ * checkpointed and a replay returns it verbatim — the DB and disk are not read
+ * again and cannot drift the seed under a recovered run. Never call it
+ * unwrapped from the workflow body.
+ */
+export async function composeStepSeed(args: { input: ExecuteAnalysisInput; stepId: string; runId: string; deps: ExecuteAnalysisDeps }): Promise<string> {
+    const { input, stepId, runId, deps } = args;
+
+    const step = input.planStepById[stepId];
+    if (!step) {
+        throw new Error(`executeAnalysis: step "${stepId}" missing from planStepById — every step must carry its plan data`);
+    }
+
+    const analysisId = input.analysisId;
+    const workspaceRoot = deps.resolveWorkspaceRoot(analysisId);
+    // The paths the agent actually sees: the tree is bind-mounted at
+    // `/{analysisId}`, and the step's writable directory is its cwd. Derived
+    // through the same helpers the sandbox mount and the mutate tools use, so
+    // the seed cannot disagree with the container about where anything is.
+    const workspace = {
+        analysisRoot: `/${analysisId}`,
+        workingDir: toSandboxPath(workspaceRoot, analysisId, stepWritePrefix({ workspaceRoot, runId, stepId })),
+    };
+
+    // A DB failure here throws (house rules): a swallowed error would be frozen
+    // into the checkpointed seed and served to every replay of this step.
+    const profile = unwrapOrThrow(await loadDataProfileStatus(deps.pool, analysisId));
+
+    const upstream = await collectUpstreamHandoffs({
+        analysisId,
+        runId,
+        workspaceRoot,
+        dependsOn: step.depends_on,
+        agentByStepId: input.agentByStepId,
+        pool: deps.pool,
+    });
+
+    return composeStepBriefing({
+        step,
+        workspace,
+        profile: profile?.result ?? null,
+        upstream,
+    });
+}
+
+/**
+ * Gather what each completed dependency produced. Dependency order is the
+ * plan's declared `depends_on` order — deterministic, so the seed is stable.
+ *
+ * A dependency that wrote no summary is omitted rather than blocking the
+ * dispatch (`loadStepSummariesFromDisk` skips a missing file): a step that
+ * completed without a summary has nothing to hand off, and waiting for one that
+ * will never arrive would deadlock the run.
+ */
+async function collectUpstreamHandoffs(args: {
+    analysisId: string;
+    runId: string;
+    workspaceRoot: string;
+    dependsOn: readonly string[];
+    agentByStepId: Readonly<Record<string, string>>;
+    pool: Pool;
+}): Promise<UpstreamHandoff[]> {
+    const { analysisId, runId, workspaceRoot, dependsOn, agentByStepId, pool } = args;
+    if (dependsOn.length === 0) return [];
+
+    const summaries = await loadStepSummariesFromDisk({
+        workspaceRoot,
+        runId,
+        completedSteps: dependsOn,
+        agentByStepId,
+    });
+
+    const handoffs: UpstreamHandoff[] = [];
+    for (const summary of summaries) {
+        const outputDir = stepSubdir(runStepDir(runId, summary.stepId), "output");
+        const artifacts = await queryStepArtifactPaths(pool, analysisId, runId, summary.stepId, MAX_UPSTREAM_ARTIFACTS);
+        handoffs.push({
+            stepId: summary.stepId,
+            agentId: summary.agentId,
+            summaryMarkdown: summary.markdown,
+            summaryPath: `/${analysisId}/${outputDir}/summary.md`,
+            outputDir: `/${analysisId}/${outputDir}`,
+            artifacts: artifacts.map((a) => `/${analysisId}/${a.path}`),
+        });
+    }
+    return handoffs;
 }
 
 /**
@@ -700,12 +822,18 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         for (const stepId of admit) {
             const idx = stepIndexById.get(stepId)!;
             const childWorkflowId = `${workflowId}-${idx}`;
+            // Compose the seed HERE — the dependencies of `stepId` are all in
+            // `completed`, so this is the first (and only) moment their results
+            // can be named. Checkpointed so a replay re-dispatches the child
+            // with a byte-identical prompt instead of re-reading the DB/disk.
+            const prompt = await DBOS.runStep(() => composeStepSeed({ input, stepId, runId, deps }), { name: `compose-step-seed:${stepId}` });
             const baseChildInput = buildChildInput({
                 input,
                 stepId,
                 level: levels.get(stepId) ?? 0,
                 runId,
                 workflowId,
+                prompt,
             });
             const childInput: SandboxStepInput = {
                 ...baseChildInput,

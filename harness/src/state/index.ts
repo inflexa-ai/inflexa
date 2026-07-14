@@ -17,12 +17,13 @@ export {
     upsertArtifact,
     upsertArtifacts,
     queryInputArtifacts,
+    queryStepArtifactPaths,
     queryUnsyncedStepArtifacts,
     updateArtifactId,
     updateFileIds,
     countArtifactsForRun,
 } from "./artifacts.js";
-export type { RegisterArtifactInput, InputArtifactMeta } from "./artifacts.js";
+export type { RegisterArtifactInput, InputArtifactMeta, StepArtifactRef } from "./artifacts.js";
 
 export {
     insertRun,
@@ -58,7 +59,7 @@ export {
     loadDataProfileStatus,
     loadSeedInputFileIds,
 } from "./data-profile.js";
-export type { DataProfileStatus, DataProfileResult, DataProfileInputFile } from "./data-profile.js";
+export type { DataProfileStatus, DataProfileResult, DataProfileInputFile, DataProfileFile, DataProfileQualityAssessment } from "./data-profile.js";
 
 export { queryRunCountsByAnalyses, queryThreadCountsByAnalyses, queryDataProfileStatusByAnalyses } from "./analyses-metrics.js";
 
