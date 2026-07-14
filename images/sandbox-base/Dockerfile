@@ -154,12 +154,14 @@ RUN ln -s /usr/bin/python3 /usr/local/bin/python
 # PYTHONPATH (which would leak into conda's Python 3.11 and break ABI).
 RUN echo "/mnt/libs/current/python/site-packages" > /usr/lib/python3/dist-packages/inflexa-libs.pth
 
-# CellTypist resolves models at $CELLTYPIST_FOLDER/data/models/<file>.pkl
-# (see Teichlab/celltypist:celltypist/models.py). The ref-store builder
-# mirrors that layout, so by-name model loading works without a network call.
-# Azimuth (satijalab) does not have an analogous env var — agents must pass
-# an explicit path to Azimuth::LoadReference(); see list-available-refs.
-ENV CELLTYPIST_FOLDER=/mnt/refs/celltypist_models
+# No library-specific reference paths are baked in. The reference store is
+# optional, its layout is owned by the catalog (and versioned per dataset), and
+# a path compiled into the image would either point at nothing or pin the image
+# to one catalog version. Agents call `list-available-refs`, get absolute paths
+# back, and pass them explicitly — the same contract Azimuth already required
+# via Azimuth::LoadReference(). A library that insists on an env var (CellTypist
+# reads $CELLTYPIST_FOLDER) can have one exported per-command, by the agent that
+# just learned the real path.
 
 RUN useradd -m -u 1000 -s /bin/bash sandbox \
     && mkdir -p /workspace && chown -R sandbox:sandbox /workspace
