@@ -12,13 +12,19 @@ and `sandboxAnalysisStepStandardsPrompt`, appended only to plannable
 analysis-step agents (opt-out via `appendAnalysisStepStandards: false`) and the
 home of the language/data/figure conventions and the five-subdirectory layout.
 
-The per-step prompt builder, `renderStepPrompt(step)`
-(`harness/src/schemas/render-step-prompt.ts`), folds the plan step's
-instruction-bearing fields into the agent's initial message and carries **no**
-path teaching — there is no Paths block and no literal `resourceId`/`runId`/`stepId`.
-Path orientation is supplied once, by `sandboxOrientCorePrompt`, through the
-`{{WORKING_DIR}}` and `{{ANALYSIS_ROOT}}` placeholders that `createSandboxAgent`
-substitutes with the agent's concrete paths.
+Neither prompt layer names a concrete path, id, or any other per-step value, and
+neither carries a placeholder for one. The system prompt `createSandboxAgent`
+composes is a **pure function of the agent type**: two steps of one run, and two
+runs of one analysis, send a byte-identical prefix. That is a caching property,
+not a style rule — a per-step-unique system string cannot be reused by the
+provider's prompt cache, so every step would pay a full cache write and read
+nothing back.
+
+The concrete paths therefore ride in the step's **seed** — its first user message,
+composed per dispatch by `composeStepBriefing` (`harness/src/prompts/briefing.ts`),
+whose `renderWorkspace` section names the in-sandbox working directory and the
+read-only analysis root. The prompt layers teach the path *model*; the seed
+supplies the *paths*.
 
 ## Requirements
 
@@ -101,21 +107,24 @@ so metadata travels with the data through the pipeline.
 - **THEN** cluster assignments are stored in `.obs` and UMAP coordinates in `.obsm['X_umap']`
 - **AND** they are NOT written as separate CSV files for the result itself (a summary CSV for human readability is allowed)
 
-### Requirement: The orient prompt teaches the path model via placeholders
+### Requirement: The orient prompt teaches the path model without naming a path
 
-`sandboxOrientCorePrompt` SHALL teach the sandbox filesystem layout, and
-`createSandboxAgent` SHALL substitute its `{{WORKING_DIR}}` and `{{ANALYSIS_ROOT}}`
-placeholders with the agent's concrete paths. The prompt SHALL state that the
-working directory is the writable root, that relative paths resolve against it,
-that a write outside it returns an `out_of_prefix` result, that the rest of the
-analysis is mounted read-only at the analysis root and reached by absolute path,
-and that shell `cd` does not persist across `execute_command` calls.
+`sandboxOrientCorePrompt` SHALL teach the sandbox filesystem layout in terms of
+the *roles* — "your working directory", "the analysis root" — and SHALL NOT name
+a concrete path, id, or placeholder for one. It SHALL state that the working
+directory is writable and is the agent's cwd, that relative paths resolve against
+it in every workspace tool and every script, that a write outside it returns an
+`out_of_prefix` result, that the rest of the analysis is mounted read-only at the
+analysis root and reached by absolute path, that absolute analysis-root paths are
+canonical for any file the step did not create, and that shell `cd` does not
+persist across `execute_command` calls. It SHALL direct the agent to the paths its
+briefing names rather than to invent or guess one.
 
-#### Scenario: Working directory and read-only root are taught
+#### Scenario: The path model is taught by role, not by value
 
 - **WHEN** a sandbox agent's system prompt is assembled
-- **THEN** the orient prompt names the working directory (`{{WORKING_DIR}}` substituted) as the writable root
-- **AND** states the analysis root (`{{ANALYSIS_ROOT}}` substituted) is read-only and reached by absolute path
+- **THEN** the orient prompt names the working directory as the writable cwd and the analysis root as the read-only mount reached by absolute path
+- **AND** it contains no concrete path, no `resourceId`/`runId`/`stepId`, and no unsubstituted placeholder
 
 #### Scenario: cd non-persistence is taught
 
@@ -133,19 +142,30 @@ artifact subdirectories — `scripts/`, `output/`, `figures/`, `logs/`,
 - **WHEN** a plannable analysis-step agent's prompt is assembled
 - **THEN** it names `scripts/`, `output/`, `figures/`, `logs/`, and `notebooks/` as the writable subdirectories
 
-### Requirement: renderStepPrompt carries instructions only, no path block
+### Requirement: The step seed carries the concrete paths, not the system prompt
 
-`renderStepPrompt(step)` SHALL compose the agent's initial prompt from the plan
-step's instruction-bearing fields (`name`, `question`, `description`, `context`,
-`constraints`, `acceptance_criteria`, `caveats`), skipping empty fields. It SHALL
-NOT emit a Paths block and SHALL NOT include literal `resourceId`/`runId`/`stepId`
-values — path orientation is owned solely by `sandboxOrientCorePrompt`.
+The step's seed — its sole initial user message — SHALL be composed by
+`composeStepBriefing` (`harness/src/prompts/briefing.ts`) from the plan step's
+instruction-bearing fields (`name`, `question`, `description`, `context`,
+`constraints`, `acceptance_criteria`, `caveats`, skipping empty ones) plus a
+Workspace section rendered by `renderWorkspace({ analysisRoot, workingDir })` that
+names both in-sandbox paths verbatim. Every per-step value the agent needs — the
+paths, the dataset orientation, and what each completed dependency produced —
+SHALL ride here and NOWHERE in the system prompt, so the composed `systemPrompt`
+stays a pure function of the agent type and the provider's prompt cache can reuse
+its prefix across every step of every run.
 
-#### Scenario: Rendered step prompt has no path block
+#### Scenario: The seed names both paths
 
-- **WHEN** `renderStepPrompt(step)` is invoked
-- **THEN** the output contains the step's task and populated instruction sections
-- **AND** contains no Paths block and no literal `resourceId`/`runId`/`stepId`
+- **WHEN** `composeStepBriefing` is invoked for a dispatched step
+- **THEN** its Workspace section names the writable working directory (the agent's cwd) and the read-only analysis root
+- **AND** the task sections carry only the step's populated instruction fields
+
+#### Scenario: The system prompt is byte-identical across steps
+
+- **GIVEN** two different steps of the same run built with the same sandbox agent type
+- **WHEN** their `AgentDefinition.systemPrompt` strings are compared
+- **THEN** they SHALL be byte-identical, carrying no path, id, or unsubstituted placeholder
 
 ### Requirement: Command-execution discipline keeps execute_command primary
 
@@ -176,13 +196,14 @@ and is the sole steering mechanism — there is no tool-description override lay
 
 ### Requirement: Data-profiler orients via workspace tools, not cd and ls
 
-The `data-profiler` agent prompt SHALL orient via the workspace tools under the
-shared orient-first discipline rather than shelling out with `cd`/`ls`
-(`harness/src/prompts/sandbox/data-profiler.ts`). It directs the agent to
-`list_files` with `path: "data/inputs"` and `maxDepth: 3` for the orientation
-pass.
+The `data-profiler` agent prompt SHALL orient via the workspace tools rather than
+shelling out with `cd`/`ls` (`harness/src/prompts/sandbox/data-profiler.ts`). It
+directs the agent to `list_files` with `path: "data/inputs"` for the orientation
+pass, and to recurse by calling it again on a subdirectory it returned — `path` is
+`list_files`' only parameter, so there is no depth argument to pass.
 
 #### Scenario: Data-profiler orientation uses list_files
 
 - **WHEN** the data-profiler prompt is read
-- **THEN** it directs the agent to `list_files` with `path: "data/inputs"` and `maxDepth: 3` for the orientation pass
+- **THEN** it directs the agent to `list_files` with `path: "data/inputs"` for the orientation pass
+- **AND** it names no second `list_files` parameter, because the tool declares none

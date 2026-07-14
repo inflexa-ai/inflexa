@@ -132,4 +132,4 @@ sources.
 #### Scenario: Shared sandbox standards point at the ref store
 
 - **GIVEN** the shared sandbox-agent standards prompt
-- **THEN** it directs the agent to use `list-available-refs` for pre-staged reference data and states there is no network access for runtime downloads
+- **THEN** it directs the agent to use `list_available_refs`, narrowed to the collection it needs, for pre-staged reference data, and states there is no network access for runtime downloads

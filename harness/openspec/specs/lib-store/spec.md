@@ -92,9 +92,12 @@ these vars SHALL be emitted.
 The base image SHALL NOT bake in analysis packages, and sandbox steps SHALL NOT
 install packages at runtime — only what the store surfaces is available. Sandbox
 agent instructions SHALL direct agents to call `list_available_packages` before
-importing and SHALL state that runtime installs are not possible.
+importing a package they are not certain is staged, narrowed to the packages they
+actually intend to import, and SHALL state that runtime installs are not possible.
+The lookup is targeted and conditional — a catalog dump up front is exactly what
+it is not.
 
 #### Scenario: Sandbox standards forbid runtime installs
 
 - **GIVEN** the shared sandbox-agent standards prompt
-- **THEN** it directs the agent to check `list-available-packages` before importing and states that no runtime installs are possible
+- **THEN** it directs the agent to look a package up with `list_available_packages` before importing one it is not certain is present, and states that no runtime installs are possible

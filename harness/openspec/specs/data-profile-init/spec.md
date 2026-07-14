@@ -137,19 +137,95 @@ scientific domain appropriate to the data it profiled (e.g. `"transcriptomics"`,
 
 On success the body SHALL register each staged file as a `role: "input"` artifact
 at `data/{relativePath}`, index a per-file description into the analysis vector
-store under `type: "input"`, and store a result snapshot — `summary`, file
-descriptions, `inputFileIds`, `inputFiles` (the per-file drift signatures), and
-`profiledAt` — in the `data_profile_status` ledger via `completeDataProfile`. The
-profiler's scratch scripts SHALL be confined to `runs/data-profile/profile`. The
-run authorization SHALL be revoked on every terminal path (success, no-op, and
-failure).
+store under `type: "input"`, and store a result snapshot in the
+`data_profile_status` ledger via `completeDataProfile`. The profiler's scratch
+scripts SHALL be confined to `runs/data-profile/profile`. The run authorization
+SHALL be revoked on every terminal path (success, no-op, and failure).
 
 #### Scenario: Successful profile snapshots its inputs
 
 - **WHEN** the body completes a profile over three staged files
-- **THEN** three `role: "input"` artifacts exist, three descriptions are indexed under `type: "input"`, and `data_profile_result` holds the summary plus the three `inputFileIds` and a `profiledAt` timestamp
+- **THEN** three `role: "input"` artifacts exist, three descriptions are indexed under `type: "input"`, and `data_profile_result` holds the profiler's classification plus the three `inputFileIds` and a `profiledAt` timestamp
 
 #### Scenario: Authorization revoked on failure
 
 - **WHEN** the body throws after the run is authorized
 - **THEN** it marks the profile failed and revokes the run authorization
+
+### Requirement: The snapshot is the profiler's full output, not a summary of it
+
+`buildDataProfileResult` SHALL project the profiler's structured output into the
+persisted `DataProfileResult` **totally** — every field the profiler reported is
+carried through verbatim, not condensed. Concretely the snapshot SHALL carry the
+dataset-level classification (`summary` from the profiler's `analysisSummary`,
+`domain`, `subtype`, `organism` — scientific name, `taxonId`, source, and
+confidence — `tissue`, `cellType`, `condition`, `accessions`,
+`experimentalDesign`, and `qualityAssessment`'s concerns and strengths) and, per
+file, `path`, `description`, `dataType`, `format`, `rows`, `cols`, `tags`,
+`warnings`, and `metrics` — alongside `inputFileIds`, `inputFiles`, and
+`profiledAt`.
+
+The projection is total because this row is the profile's **only durable home**:
+the profiler's `runs/data-profile/` scratch tree is deleted on completion, so a
+field dropped here is not "summarized away", it is destroyed, and the next agent
+that needs it can only recover it by re-reading the raw input bytes.
+
+Every field past `summary` / `files` / `inputFileIds` / `profiledAt` SHALL be
+optional on read: a snapshot written before the record was widened carries only
+those four, and a reader SHALL render it rather than reject it. There is no parse
+at the read boundary, so optionality *is* the compatibility mechanism.
+
+#### Scenario: The persisted record carries the profiler's classification
+
+- **WHEN** the profiler submits a profile identifying `Homo sapiens` (taxon `9606`, high confidence), a bulk RNA-seq design, and one count matrix with 20,000 rows and 12 columns
+- **THEN** `data_profile_result` SHALL carry the organism with its taxon id and confidence, the `experimentalDesign`, and the file's `dataType`, `format`, `rows`, and `cols`
+
+#### Scenario: A legacy snapshot still reads
+
+- **WHEN** a consumer reads a `data_profile_result` written before the record was widened, carrying only `summary`, `files` (path + description), `inputFileIds`, and `profiledAt`
+- **THEN** it SHALL render the record, treating the absent fields as not reported
+
+### Requirement: The profile is readable only through inspect_data_profile
+
+There SHALL be no data-profile file anywhere in the workspace — the profiler's
+scratch tree is deleted on completion, so the `cortex_analysis_state` row is the
+profile's sole durable home. The harness SHALL therefore expose an
+`inspect_data_profile` tool that reads that row, wired to the conversation agent
+and to **every** sandbox agent as always-on substrate (see the
+harness-sandbox-agents spec), and its description SHALL tell the agent that no
+profile file exists, so it neither hunts for one nor re-derives the facts from the
+raw inputs.
+
+The tool SHALL be bounded by construction: `scope: "overview"` (the default)
+returns the dataset-level facts plus the profiled-file count, and `scope: "files"`
+pages the per-file records (`page`, `pageSize`, default 20, max 100) and SHALL
+always report the true `total` and `hasMore`, so an elided tail is a fact the
+model can see and act on rather than a silent truncation.
+
+Every lifecycle state SHALL be a data variant in the ok channel, never an error:
+`ready`; `stale` (a profile is still returned, with a `staleReason` naming why it
+may not describe the current inputs — the input set changed, or a re-profile is
+running or has failed over it); `pending`; `failed`; and `absent` (never profiled,
+or the analysis has no input files).
+
+#### Scenario: A completed profile is served in full
+
+- **WHEN** an agent calls `inspect_data_profile` on an analysis with a completed profile
+- **THEN** it receives `state: "ready"` with the dataset-level classification and the profiled-file count
+
+#### Scenario: A stale profile is served, and says so
+
+- **GIVEN** input files added since the profile was taken
+- **WHEN** an agent calls `inspect_data_profile`
+- **THEN** it receives `state: "stale"` carrying the previous profile AND a `staleReason` naming the changed input set
+
+#### Scenario: A paged file scope never truncates silently
+
+- **GIVEN** a profile covering 50 files
+- **WHEN** an agent calls `inspect_data_profile` with `scope: "files"` and the default page size
+- **THEN** it receives 20 records with `total: 50` and `hasMore: true`
+
+#### Scenario: A never-profiled analysis is absent, not an error
+
+- **WHEN** an agent calls `inspect_data_profile` on an analysis with no profile
+- **THEN** it receives `state: "absent"` in the ok channel

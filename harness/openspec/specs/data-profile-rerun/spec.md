@@ -108,8 +108,9 @@ error, both stay in the ok channel.
 
 ### Requirement: Result snapshot carries the profiled input set
 
-The `data_profile_result` JSONB stored by `completeDataProfile` SHALL carry, in addition to `summary`
-and `files`:
+The `data_profile_result` JSONB stored by `completeDataProfile` SHALL carry, in addition to the
+profiler's full output (the dataset classification and the per-file records — see the
+data-profile-init spec):
 
 - `inputFileIds: string[]` — the staged-input `fileId` of every input file that was profiled. This is
   the audit record of *which* files a profile covered.
