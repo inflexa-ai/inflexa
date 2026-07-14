@@ -74,6 +74,17 @@ function catalog(files: readonly Fixture[] = PINNED): ReferenceDataCatalog {
     };
 }
 
+/** An upstream that answers from a different, downgraded location — what a redirect hop looks like. */
+function serveRedirectedTo(finalUrl: string, files: readonly Fixture[]): (input: string | URL | Request) => Promise<Response> {
+    const bodies = new Map(files.map((file) => [url(file.path), file.body]));
+    return async (input) => {
+        const response = new Response(bodies.get(String(input)) ?? "");
+        // fetch reports the post-redirect location here; Response leaves it "" unless it redirected.
+        Object.defineProperty(response, "url", { value: finalUrl });
+        return response;
+    };
+}
+
 function source(value: ReferenceDataCatalog): ReferenceCatalogSource {
     return {
         catalog: value,
@@ -496,5 +507,56 @@ describe("installer-owned path safety", () => {
         const conflict = await installReferenceDatasets(["demo"], { root: path, source: source(catalog()), fetch: serve(PINNED) });
         expect(conflict._unsafeUnwrapErr().type).toBe("managed_path_conflict");
         expect(statSync(join(active, "surprise")).isDirectory()).toBe(true);
+    });
+
+    // The catalog can only promise https for the URL we ask for. An unpinned artifact has no digest
+    // to catch a hostile substitution, so a downgraded redirect would be trusted on first use.
+    test("refuses bytes served from a non-https location after a redirect", async () => {
+        for (const integrity of ["pinned", "unpinned"] as const) {
+            const path = root();
+            const fixture = catalog([{ path: "a.txt", body: "alpha", integrity }]);
+            const redirected = await installReferenceDatasets(["demo"], {
+                root: path,
+                source: source(fixture),
+                fetch: serveRedirectedTo("http://downgraded.test/a.txt", [{ path: "a.txt", body: "alpha", integrity }]),
+            });
+
+            expect(redirected._unsafeUnwrapErr().type).toBe("download_failed");
+            expect(redirected._unsafeUnwrapErr().message).toContain("non-https");
+            expect(existsSync(join(referenceStorePaths(path).managed, "demo"))).toBe(false);
+            expect(existsSync(join(referenceStorePaths(path).receipts, "demo.json"))).toBe(false);
+        }
+    });
+
+    // A receipt is a plain file on disk that anyone can edit, so it is untrusted input. A traversal
+    // segment must never let verification reach out of the dataset into `user/` or a sibling.
+    test("a receipt whose artifact path escapes the dataset is rejected, and reads no file outside it", async () => {
+        const path = root();
+        const paths = referenceStorePaths(path);
+        const fixture = catalog();
+        const installed = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(PINNED) });
+        expect(installed.isOk()).toBe(true);
+
+        const secret = join(paths.user, "private.txt");
+        mkdirSync(paths.user, { recursive: true });
+        writeFileSync(secret, "user content the installer must never adopt");
+
+        writeFileSync(
+            join(paths.receipts, "demo.json"),
+            JSON.stringify({
+                version: 1,
+                datasetId: "demo",
+                datasetVersion: "2026.07",
+                activatedAt: "2026-07-14T10:30:00.000Z",
+                artifacts: [{ path: "../../../user/private.txt", bytes: 42, sha256: sha("alpha"), integrity: "pinned" }],
+            }),
+        );
+
+        const verified = await verifyReferenceDatasets(path, ["demo"], source(fixture));
+        expect(verified._unsafeUnwrap()[0]).toMatchObject({ datasetId: "demo", state: "invalid_receipt", files: [] });
+
+        const inspected = await inspectReferenceStore(path, fixture);
+        expect(inspected._unsafeUnwrap().datasets[0]).toMatchObject({ state: "invalid_receipt" });
+        expect(readFileSync(secret, "utf8")).toBe("user content the installer must never adopt");
     });
 });

@@ -263,7 +263,11 @@ async function readReceipt(path: string, storeRoot: string): Promise<{ readonly 
 async function receiptFilesPresent(paths: ReferenceStorePaths, root: string, receipt: ReferenceInstallReceipt): Promise<boolean> {
     for (const artifact of receipt.artifacts) {
         const path = join(root, artifact.path);
-        const owned = await assertOwnedPath(paths.root, path);
+        // Contained against the dataset's own root, not the store's: `managed/` and `user/` are
+        // siblings, so a store-scoped check would let a receipt path reach into user content or a
+        // neighbouring dataset. The receipt schema already refuses traversal segments — this is the
+        // second lock on the same door, because the receipt is a file on disk that anyone can edit.
+        const owned = await assertOwnedPath(root, path);
         if (owned.isErr()) return false;
         const fileResult = await pathLstat(path);
         // Cheap state deliberately treats unreadable content as damaged/partial: it must never claim
@@ -286,7 +290,7 @@ async function receiptFilesPresent(paths: ReferenceStorePaths, root: string, rec
 async function receiptFilesIntact(paths: ReferenceStorePaths, root: string, receipt: ReferenceInstallReceipt): Promise<boolean> {
     for (const artifact of receipt.artifacts) {
         const path = join(root, artifact.path);
-        const owned = await assertOwnedPath(paths.root, path);
+        const owned = await assertOwnedPath(root, path);
         if (owned.isErr()) return false;
         const fileResult = await pathLstat(path);
         if (fileResult.isErr()) return false;
@@ -425,7 +429,7 @@ export async function verifyReferenceDatasets(
             const files: ReferenceFileVerification[] = [];
             for (const artifact of receipt.artifacts) {
                 const path = join(activeRoot, artifact.path);
-                const owned = await assertOwnedPath(paths.root, path);
+                const owned = await assertOwnedPath(activeRoot, path);
                 const infoResult = owned.isOk() ? await pathLstat(path) : ok(undefined);
                 const info = infoResult.isOk() ? infoResult.value : undefined;
                 if (info === undefined || info.isSymbolicLink() || !info.isFile()) {
@@ -540,6 +544,15 @@ async function downloadArtifact(
             return err({
                 type: "download_failed",
                 message: `Download failed for ${artifact.path}: HTTP ${response.status} ${response.statusText} (${artifact.url})`,
+            });
+        }
+        // The catalog guarantees an https URL, but fetch follows redirects, so the guarantee has to
+        // hold for whatever actually served the bytes. A `pinned` artifact would still be caught by
+        // its digest; an `unpinned` one has none, and would trust a downgraded hop on first use.
+        if (response.url !== "" && !response.url.startsWith("https://")) {
+            return err({
+                type: "download_failed",
+                message: `Refusing ${artifact.path}: ${artifact.url} redirected to a non-https location (${response.url}).`,
             });
         }
         const appending = resumeAt > 0 && response.status === 206;

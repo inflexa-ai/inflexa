@@ -144,11 +144,14 @@ export async function downloadReferences(
     let ids = options.ids;
     if (ids.length === 0) {
         if (!interactive) {
+            // Not `unknown_dataset`: nothing was requested, so there is no unknown id to name. That
+            // variant carries the id that missed, and an empty string there is a lie a caller could
+            // pattern-match on.
             return err({
-                type: "unknown_dataset",
-                unknownId: "",
-                availableIds: catalog.datasets.map((dataset) => dataset.id),
-                message: "No reference ids supplied. Pass catalog ids explicitly on a non-interactive terminal.",
+                type: "download_failed",
+                message: `No reference ids supplied. Pass catalog ids explicitly on a non-interactive terminal. Available ids: ${catalog.datasets
+                    .map((dataset) => dataset.id)
+                    .join(", ")}`,
             });
         }
         let chosen: readonly string[] | undefined;
@@ -275,9 +278,7 @@ export async function runRefsVerify(ids: readonly string[]): Promise<void> {
             }
             const damaged = verified.filter((dataset) => dataset.state !== "valid");
             if (damaged.length > 0) {
-                console.error(
-                    `\nRe-download to repair: inflexa refs download ${damaged.map((dataset) => dataset.datasetId).join(" ")} --force --yes`,
-                );
+                console.error(`\nRe-download to repair: inflexa refs download ${damaged.map((dataset) => dataset.datasetId).join(" ")} --force --yes`);
                 process.exitCode = 1;
             }
         },
