@@ -1,10 +1,10 @@
 /**
- * Internal helper used by the three mutate tools to drive one sandbox exec
+ * Internal helper used by dependency-bearing tools to drive one sandbox exec
  * through the `SandboxClient`. Centralises the submit/await pair, exec-id
  * derivation, and intermediate-event forwarding so all three tools share
- * one chokepoint — the contract `execute_command` makes structural is that
- * `write_file` / `edit_file` are layered on top of it, not parallel side
- * paths into sandbox-server.
+ * one chokepoint. `write_file` / `edit_file` are layered on the workspace
+ * mutator and environment introspection tools such as `list_available_refs`
+ * use this same replay-safe submit/await path rather than a parallel protocol.
  *
  * Not a registered tool — `defineTool` is called by the user-facing tools
  * (`execute-command.ts`, `write-file.ts`, `edit-file.ts`) which wrap this.

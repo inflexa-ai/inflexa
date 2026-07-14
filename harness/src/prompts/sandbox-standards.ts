@@ -44,11 +44,11 @@ Before writing any code:
 
 1. **Check available packages** — call \`list-available-packages\`. No runtime
    installs are possible. Only import packages confirmed here.
-2. **Check reference data** — call \`list-available-refs\` for pre-staged
-   resources (PROGENy, CollecTRI, MSigDB, WikiPathways, Reactome, OmniPath,
-   gene mappings, design-system templates). Use the exact paths returned. Each
-   biological collection is available as **Parquet** (pandas/decoupler) and
-   **GMT** (gseapy/fgsea/GSVA) — use the format your tool expects.
+2. **Check reference data** — call \`list-available-refs\` to inspect the files
+   actually mounted read-only at \`/mnt/refs\`. The inventory includes both
+   managed references and arbitrary user-added files; a manifest is not
+   required. Use the exact paths returned, and pass a returned subtree path to
+   the tool when a large inventory says it was truncated.
    Do NOT call \`dc.op.collectri()\`, \`dc.op.progeny()\`, \`dc.op.msigdb()\`, or
    any \`dc.op.*()\` function — these require network access. Do NOT pass Enrichr
    library names to gseapy — pass the pre-staged GMT file path.

@@ -287,6 +287,21 @@ export type { CortexRunRow, StepExecutionRow, RunStatus } from "./state/schema.j
 // surface a trigger or ledger failure need it by name to map the `cause`;
 // without it they must re-derive it from a function signature.
 export type { DbError } from "./lib/db-result.js";
+
+// Host-neutral reference-data catalog and shared installation receipts.
+// Embedders resolve artifact keys and own all transfer/storage behavior.
+export {
+    REFERENCE_DATA_CATALOG,
+    REFERENCE_DATA_CATALOG_VERSION,
+    ReferenceArtifactSchema,
+    ReferenceDataCatalogSchema,
+    ReferenceDatasetSchema,
+    UnknownReferenceDatasetError,
+    resolveReferenceInstallPlan,
+} from "./reference-data/catalog.js";
+export type { ReferenceArtifact, ReferenceDataCatalog, ReferenceDataset, ReferenceInstallPlan, ReferenceInstallPlanDataset } from "./reference-data/catalog.js";
+export { REFERENCE_INSTALL_RECEIPT_VERSION, ReferenceInstallReceiptSchema, parseReferenceInstallReceipt } from "./reference-data/receipt.js";
+export type { ReferenceInstallReceipt } from "./reference-data/receipt.js";
 // Backs `WatchdogDeps.queryActiveSandboxes` when the embedder wires the watchdog.
 export { queryActiveSandboxes } from "./state/active-sandboxes.js";
 

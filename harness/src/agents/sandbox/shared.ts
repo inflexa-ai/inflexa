@@ -30,7 +30,7 @@ import { sandboxOrientCorePrompt, sandboxAnalysisStepStandardsPrompt } from "../
 import { composeSystemPrompt } from "../system-prompt.js";
 
 // Sandbox-environment introspection.
-import { listAvailablePackagesTool, listAvailableRefsTool } from "../../tools/sandbox/index.js";
+import { createListAvailableRefsTool, listAvailablePackagesTool } from "../../tools/sandbox/index.js";
 
 // Context7 docs (pure leaves).
 import { queryDocsTool, resolveLibraryIdTool } from "../../tools/research/context7-docs.js";
@@ -162,7 +162,15 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
     const chemDb = createChemDbTools(deps.bioKeys);
     const registry: Record<SandboxToolName, Tool> = {
         listAvailablePackages: listAvailablePackagesTool,
-        listAvailableRefs: listAvailableRefsTool,
+        listAvailableRefs: createListAvailableRefsTool({
+            sandboxClient: deps.sandboxClient,
+            sandbox: deps.step.sandbox,
+            workflowId: deps.step.workflowId,
+            stepId: deps.step.stepId,
+            nextFunctionId: deps.step.nextFunctionId,
+            deadlineMs: deps.step.deadlineMs,
+            markExecActive: createMarkExecActive(deps),
+        }),
         resolveLibraryId: resolveLibraryIdTool,
         queryDocs: queryDocsTool,
         inspectRun: createInspectRunTool(deps.pool),
@@ -215,6 +223,14 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
     return resolved;
 }
 
+function createMarkExecActive(deps: SandboxAgentDeps): (execId: string) => Promise<void> {
+    return (execId: string): Promise<void> =>
+        setActiveExecId(deps.pool, deps.step.runId, deps.step.stepId, execId).match(
+            () => {},
+            () => {},
+        );
+}
+
 /** Build the workspace mutate + read tools every sandbox agent receives. In
  *  `readOnly` mode the write_file/edit_file pair is omitted; execute_command
  *  and the read tools stay. */
@@ -223,11 +239,7 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] 
     // Registry tagging is a best-effort watchdog backstop (`run-exec.ts` already
     // swallows a throw here); fold a `DbError` into a no-op so a registry write
     // failure neither fails the exec nor surfaces as an unhandled rejection.
-    const markExecActive = (execId: string): Promise<void> =>
-        setActiveExecId(pool, step.runId, step.stepId, execId).match(
-            () => {},
-            () => {},
-        );
+    const markExecActive = createMarkExecActive(deps);
 
     // The agent's writable working directory: relative paths resolve here, and
     // writes are confined here. `allowedWritePrefix` is its host path; the
