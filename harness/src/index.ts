@@ -288,20 +288,31 @@ export type { CortexRunRow, StepExecutionRow, RunStatus } from "./state/schema.j
 // without it they must re-derive it from a function signature.
 export type { DbError } from "./lib/db-result.js";
 
-// Host-neutral reference-data catalog and shared installation receipts.
-// Embedders resolve artifact keys and own all transfer/storage behavior.
+// Host-neutral reference-data catalog and shared installation receipts. Each
+// artifact names the third-party upstream it is fetched from; embedders own all
+// transfer/storage behavior but never choose a different source.
 export {
     REFERENCE_DATA_CATALOG,
     REFERENCE_DATA_CATALOG_VERSION,
+    ReferenceArtifactPathSchema,
     ReferenceArtifactSchema,
     ReferenceDataCatalogSchema,
     ReferenceDatasetSchema,
+    ReferenceSha256Schema,
     UnknownReferenceDatasetError,
+    referenceArtifactKey,
     resolveReferenceInstallPlan,
 } from "./reference-data/catalog.js";
-export type { ReferenceArtifact, ReferenceDataCatalog, ReferenceDataset, ReferenceInstallPlan, ReferenceInstallPlanDataset } from "./reference-data/catalog.js";
+export type {
+    ReferenceArtifact,
+    ReferenceDataCatalog,
+    ReferenceDataset,
+    ReferenceInstallPlan,
+    ReferenceInstallPlanDataset,
+    ReferenceIntegrity,
+} from "./reference-data/catalog.js";
 export { REFERENCE_INSTALL_RECEIPT_VERSION, ReferenceInstallReceiptSchema, parseReferenceInstallReceipt } from "./reference-data/receipt.js";
-export type { ReferenceInstallReceipt } from "./reference-data/receipt.js";
+export type { ReferenceInstallReceipt, ReferenceReceiptArtifact } from "./reference-data/receipt.js";
 // Backs `WatchdogDeps.queryActiveSandboxes` when the embedder wires the watchdog.
 export { queryActiveSandboxes } from "./state/active-sandboxes.js";
 

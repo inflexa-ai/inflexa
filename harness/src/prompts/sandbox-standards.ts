@@ -49,6 +49,16 @@ Before writing any code:
    managed references and arbitrary user-added files; a manifest is not
    required. Use the exact paths returned, and pass a returned subtree path to
    the tool when a large inventory says it was truncated.
+   The reference store is OPTIONAL and may be absent or hold none of what you
+   want — that is a normal state, not an error. Never assume a reference path
+   exists, and never hardcode one: if a reference you need is not in the
+   inventory, say so plainly and proceed with what you do have (or explain what
+   the user should provision) rather than inventing a path or a substitute.
+   Pass reference paths EXPLICITLY to the library. Nothing in the image points
+   a library at the store for you, so a library that resolves data by name from
+   an env var (CellTypist reads \`$CELLTYPIST_FOLDER\`) will not find it — export
+   that variable yourself, in the same command, using a path the inventory
+   actually returned.
    Do NOT call \`dc.op.collectri()\`, \`dc.op.progeny()\`, \`dc.op.msigdb()\`, or
    any \`dc.op.*()\` function — these require network access. Do NOT pass Enrichr
    library names to gseapy — pass the pre-staged GMT file path.

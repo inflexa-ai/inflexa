@@ -16,13 +16,52 @@ function isSafeRelativePath(value: string): boolean {
     return segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..") && posixPath.normalize(value) === value;
 }
 
-/** One immutable final file distributed for a reference dataset. */
-export const ReferenceArtifactSchema = z.object({
-    key: z.string().min(1),
+/** Dataset-relative destination of one artifact below its install path. */
+export const ReferenceArtifactPathSchema = z.string().refine(isSafeRelativePath, "Expected a safe dataset-relative path");
+
+/** Lowercase SHA-256 digest of one artifact's bytes. */
+export const ReferenceSha256Schema = z.string().regex(SHA256, "Expected a lowercase SHA-256 digest");
+
+/**
+ * Artifacts are fetched from the upstream that publishes them — this project
+ * redistributes nothing — so the URL must be a real third-party https endpoint.
+ */
+const ReferenceArtifactUrlSchema = z.url().refine((value) => value.startsWith("https://"), "Reference artifacts must be fetched over https");
+
+/**
+ * An artifact whose upstream publishes immutable, versioned bytes. The catalog
+ * carries the size and digest, so a download is verified against *this file*
+ * before it is ever activated: a mismatch means the bytes are not what we
+ * reviewed, and the install fails.
+ */
+const PinnedReferenceArtifactSchema = z.strictObject({
+    integrity: z.literal("pinned"),
+    path: ReferenceArtifactPathSchema,
+    url: ReferenceArtifactUrlSchema,
     bytes: z.number().int().positive(),
-    sha256: z.string().regex(SHA256, "Expected a lowercase SHA-256 digest"),
-    path: z.string().refine(isSafeRelativePath, "Expected a safe dataset-relative path"),
+    sha256: ReferenceSha256Schema,
 });
+
+/**
+ * An artifact whose upstream regenerates the same URL in place — NCBI rebuilds
+ * `gene_info` continuously and Reactome's `current` release is overwritten and
+ * its predecessors deleted. No checked-in digest can survive that, and pinning
+ * one would only guarantee a broken download. Integrity is therefore
+ * trust-on-first-use: the installer records the bytes it actually received in
+ * the receipt, and `verify` proves the files have not changed *since install*.
+ * This is a weaker guarantee than `pinned` and is surfaced as such to the user.
+ */
+const UnpinnedReferenceArtifactSchema = z.strictObject({
+    integrity: z.literal("unpinned"),
+    path: ReferenceArtifactPathSchema,
+    url: ReferenceArtifactUrlSchema,
+});
+
+/** One immutable final file distributed for a reference dataset. */
+export const ReferenceArtifactSchema = z.discriminatedUnion("integrity", [PinnedReferenceArtifactSchema, UnpinnedReferenceArtifactSchema]);
+
+/** Which integrity guarantee an artifact can actually offer. */
+export type ReferenceIntegrity = z.infer<typeof ReferenceArtifactSchema>["integrity"];
 
 /** Provenance and licensing information for one supported reference dataset. */
 export const ReferenceDatasetSchema = z.object({
@@ -82,6 +121,15 @@ export type ReferenceArtifact = DeepReadonly<z.infer<typeof ReferenceArtifactSch
 export type ReferenceDataset = DeepReadonly<z.infer<typeof ReferenceDatasetSchema>>;
 export type ReferenceDataCatalog = DeepReadonly<z.infer<typeof ReferenceDataCatalogSchema>>;
 
+/**
+ * Stable identity of one artifact within the catalog, independent of its URL.
+ * Embedders key resumable partials off this, so a moved upstream URL does not
+ * orphan a half-finished transfer.
+ */
+export function referenceArtifactKey(dataset: { readonly id: string; readonly version: string }, artifact: { readonly path: string }): string {
+    return `${dataset.id}/${dataset.version}/${artifact.path}`;
+}
+
 function deepFreeze<T>(value: T): DeepReadonly<T> {
     if (value && typeof value === "object" && !Object.isFrozen(value)) {
         for (const nested of Object.values(value)) deepFreeze(nested);
@@ -91,9 +139,16 @@ function deepFreeze<T>(value: T): DeepReadonly<T> {
 }
 
 /**
- * Canonical release catalog. Release-data publication is deliberately separate
- * from this contract; entries are added only with real immutable files, sizes,
- * digests, provenance, and licensing data.
+ * Canonical release catalog. Every artifact is fetched directly from the third
+ * party that publishes it; this project hosts, mirrors, and redistributes
+ * nothing. Entries are added only with real upstream URLs, provenance, and
+ * licensing data — plus a size and digest whenever the upstream publishes
+ * immutable bytes we can pin to.
+ *
+ * `version` is the dataset's upstream release identifier. Datasets built on an
+ * upstream that has no immutable release — NCBI regenerates `gene_info` daily,
+ * Reactome overwrites `current` and deletes prior releases — are versioned
+ * `current` and carry `unpinned` artifacts.
  */
 export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
     ReferenceDataCatalogSchema.parse({
@@ -101,10 +156,11 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
         datasets: [
             {
                 id: "ncbi-gene-human",
-                version: "2026.07.13",
+                version: "current",
                 title: "NCBI human gene identifiers",
-                description: "Entrez Gene identifiers and approved symbols for Homo sapiens (NCBI taxonomy 9606).",
-                sourceUrl: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/",
+                description:
+                    "Entrez Gene records for Homo sapiens (NCBI taxonomy 9606): identifiers, approved symbols, synonyms, and cross-references (Ensembl, HGNC) in the dbXrefs column. Tab-separated, gzipped. NCBI rebuilds this file in place, so it is verified against what you downloaded rather than a checked-in digest.",
+                sourceUrl: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/",
                 license: {
                     identifier: "NCBI-Molecular-Data-Usage-Policy",
                     url: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
@@ -112,43 +168,19 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 recommendation: { group: "gene-identifiers", recommended: true },
                 artifacts: [
                     {
-                        key: "ncbi-gene-human/2026.07.13/entrez_to_symbol_9606.parquet",
-                        path: "entrez_to_symbol_9606.parquet",
-                        bytes: 2_211_032,
-                        sha256: "98069fffcf0207437541dae8b67d515d460122785731322b817d2b6e2bd4c111",
-                    },
-                    {
-                        key: "ncbi-gene-human/2026.07.13/ensembl_to_symbol_9606.parquet",
-                        path: "ensembl_to_symbol_9606.parquet",
-                        bytes: 888_646,
-                        sha256: "70f713757a2f53c4b487c3f9b9328263f4d3a28b4e7bbce599ac585df0e336fe",
-                    },
-                    {
-                        key: "ncbi-gene-human/2026.07.13/refseq_rna_to_symbol_9606.parquet",
-                        path: "refseq_rna_to_symbol_9606.parquet",
-                        bytes: 4_366_526,
-                        sha256: "5d379282d370ab3e182c634a0aa6c2c4eea5a107a5570e5945f766872ae4b402",
-                    },
-                    {
-                        key: "ncbi-gene-human/2026.07.13/refseq_protein_to_symbol_9606.parquet",
-                        path: "refseq_protein_to_symbol_9606.parquet",
-                        bytes: 3_014_150,
-                        sha256: "c66b67e9791a39dc0e724447d26754115a2ea0497ff33a7e4a9522eab448449b",
-                    },
-                    {
-                        key: "ncbi-gene-human/2026.07.13/refseq_genomic_to_symbol_9606.parquet",
-                        path: "refseq_genomic_to_symbol_9606.parquet",
-                        bytes: 7_682_265,
-                        sha256: "16627f33ec4895192ce72a73ade8c9c6f3f73ffb5a3fff30b8b528ca013e2d49",
+                        integrity: "unpinned",
+                        path: "Homo_sapiens.gene_info.gz",
+                        url: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/Homo_sapiens.gene_info.gz",
                     },
                 ],
             },
             {
                 id: "ncbi-gene-mouse",
-                version: "2026.07.13",
+                version: "current",
                 title: "NCBI mouse gene identifiers",
-                description: "Entrez Gene identifiers and approved symbols for Mus musculus (NCBI taxonomy 10090).",
-                sourceUrl: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/",
+                description:
+                    "Entrez Gene records for Mus musculus (NCBI taxonomy 10090): identifiers, approved symbols, synonyms, and cross-references (Ensembl, MGI) in the dbXrefs column. Tab-separated, gzipped. NCBI rebuilds this file in place, so it is verified against what you downloaded rather than a checked-in digest.",
+                sourceUrl: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/",
                 license: {
                     identifier: "NCBI-Molecular-Data-Usage-Policy",
                     url: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
@@ -156,43 +188,19 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 recommendation: { group: "gene-identifiers", recommended: true },
                 artifacts: [
                     {
-                        key: "ncbi-gene-mouse/2026.07.13/entrez_to_symbol_10090.parquet",
-                        path: "entrez_to_symbol_10090.parquet",
-                        bytes: 1_441_782,
-                        sha256: "ff38eb371626380fc2953d2b605ba14b4c2de32ca1a615add353d3ff2dd53c4b",
-                    },
-                    {
-                        key: "ncbi-gene-mouse/2026.07.13/ensembl_to_symbol_10090.parquet",
-                        path: "ensembl_to_symbol_10090.parquet",
-                        bytes: 795_156,
-                        sha256: "1e4f63138d7deefa81e9158085254b6208ef74822400aead0b10e7f4a8416826",
-                    },
-                    {
-                        key: "ncbi-gene-mouse/2026.07.13/refseq_rna_to_symbol_10090.parquet",
-                        path: "refseq_rna_to_symbol_10090.parquet",
-                        bytes: 2_595_845,
-                        sha256: "d1536e7c76063ab5875d35059d7c1509d6fdf71fcd16d9bcd5b3bef80625755a",
-                    },
-                    {
-                        key: "ncbi-gene-mouse/2026.07.13/refseq_protein_to_symbol_10090.parquet",
-                        path: "refseq_protein_to_symbol_10090.parquet",
-                        bytes: 1_822_348,
-                        sha256: "ec7105e2a56ba459f3de8f3818bfb330deabc0347852b1fe51e870a95f4461ff",
-                    },
-                    {
-                        key: "ncbi-gene-mouse/2026.07.13/refseq_genomic_to_symbol_10090.parquet",
-                        path: "refseq_genomic_to_symbol_10090.parquet",
-                        bytes: 2_414_497,
-                        sha256: "c9285ab759a14cd5c4ac9c08e7b8f63b0ce08c7045f1232a05a3f387c4c91290",
+                        integrity: "unpinned",
+                        path: "Mus_musculus.gene_info.gz",
+                        url: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/Mus_musculus.gene_info.gz",
                     },
                 ],
             },
             {
                 id: "ncbi-gene-rat",
-                version: "2026.07.13",
+                version: "current",
                 title: "NCBI rat gene identifiers",
-                description: "Entrez Gene identifiers and approved symbols for Rattus norvegicus (NCBI taxonomy 10116).",
-                sourceUrl: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/",
+                description:
+                    "Entrez Gene records for Rattus norvegicus (NCBI taxonomy 10116): identifiers, approved symbols, synonyms, and cross-references (Ensembl, RGD) in the dbXrefs column. Tab-separated, gzipped. NCBI rebuilds this file in place, so it is verified against what you downloaded rather than a checked-in digest.",
+                sourceUrl: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/",
                 license: {
                     identifier: "NCBI-Molecular-Data-Usage-Policy",
                     url: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
@@ -200,81 +208,54 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 recommendation: { group: "gene-identifiers", recommended: true },
                 artifacts: [
                     {
-                        key: "ncbi-gene-rat/2026.07.13/entrez_to_symbol_10116.parquet",
-                        path: "entrez_to_symbol_10116.parquet",
-                        bytes: 690_739,
-                        sha256: "1fd12f59344c270788ce8fc4cf9ec45d7f0d4f4b4d8063c19d5c1bff606b6bb7",
-                    },
-                    {
-                        key: "ncbi-gene-rat/2026.07.13/ensembl_to_symbol_10116.parquet",
-                        path: "ensembl_to_symbol_10116.parquet",
-                        bytes: 569_330,
-                        sha256: "3a42f41e2558470fc5a8b07c34d34f4762dc97626067f6a0cbdcccf9239186b2",
-                    },
-                    {
-                        key: "ncbi-gene-rat/2026.07.13/refseq_rna_to_symbol_10116.parquet",
-                        path: "refseq_rna_to_symbol_10116.parquet",
-                        bytes: 2_315_288,
-                        sha256: "6dafb16d2385e575b7710c320da92f552467a0f7f2bf268b2513e2945323b544",
-                    },
-                    {
-                        key: "ncbi-gene-rat/2026.07.13/refseq_protein_to_symbol_10116.parquet",
-                        path: "refseq_protein_to_symbol_10116.parquet",
-                        bytes: 1_741_627,
-                        sha256: "843fe6a6721189b5ec77bdcfc4deccea0dad6f74df46a43898fcc7a78dbb9392",
-                    },
-                    {
-                        key: "ncbi-gene-rat/2026.07.13/refseq_genomic_to_symbol_10116.parquet",
-                        path: "refseq_genomic_to_symbol_10116.parquet",
-                        bytes: 744_008,
-                        sha256: "755264d887c4dbf0ef6719cae9a210e99e9b173285fee17b4cce301a6934424a",
+                        integrity: "unpinned",
+                        path: "Rattus_norvegicus.gene_info.gz",
+                        url: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/Rattus_norvegicus.gene_info.gz",
                     },
                 ],
             },
             {
                 id: "reactome-pathways",
-                version: "97",
+                version: "current",
                 title: "Reactome pathways",
-                description: "Reactome pathway gene sets for pathway enrichment and annotation workflows.",
+                description:
+                    "Reactome pathway gene sets (GMT) and the pathway index — the enrichment workhorse, ~2 MB. Reactome overwrites its `current` release each quarter and removes the prior one, so this is verified against what you downloaded rather than a checked-in digest. For identifier-to-pathway mapping tables, add `reactome-mappings`.",
                 sourceUrl: "https://reactome.org/download-data",
                 license: { identifier: "CC0-1.0", url: "https://reactome.org/license" },
                 recommendation: { group: "pathways", recommended: true },
                 artifacts: [
+                    { integrity: "unpinned", path: "ReactomePathways.gmt", url: "https://reactome.org/download/current/ReactomePathways.gmt" },
+                    { integrity: "unpinned", path: "ReactomePathways.txt", url: "https://reactome.org/download/current/ReactomePathways.txt" },
+                ],
+            },
+            {
+                // Split out of `reactome-pathways` and NOT recommended by default: upstream serves these
+                // as uncompressed TSV and they total roughly 700 MB, two orders of magnitude more than the
+                // GMT most workflows actually want. Anyone who needs Entrez/Ensembl/UniProt -> pathway
+                // joins opts in deliberately, rather than every `setup` paying for them by accident.
+                id: "reactome-mappings",
+                version: "current",
+                title: "Reactome identifier mappings (large)",
+                description:
+                    "Entrez/Ensembl/UniProt-to-Reactome mapping tables at all pathway levels. Large: roughly 700 MB of uncompressed TSV, because Reactome publishes no compressed form. Only needed to join external identifiers onto Reactome pathways; the gene sets themselves live in `reactome-pathways`.",
+                sourceUrl: "https://reactome.org/download-data",
+                license: { identifier: "CC0-1.0", url: "https://reactome.org/license" },
+                recommendation: { group: "pathways", recommended: false },
+                artifacts: [
                     {
-                        key: "reactome-pathways/97/ReactomePathways.gmt",
-                        path: "ReactomePathways.gmt",
-                        bytes: 1_032_186,
-                        sha256: "89983d5c1f0af11c52edfeee7323eb425580ac6281d387a528562ab1787ce56b",
+                        integrity: "unpinned",
+                        path: "NCBI2Reactome_All_Levels.txt",
+                        url: "https://reactome.org/download/current/NCBI2Reactome_All_Levels.txt",
                     },
                     {
-                        key: "reactome-pathways/97/ReactomePathways.parquet",
-                        path: "ReactomePathways.parquet",
-                        bytes: 277_654,
-                        sha256: "776899a3705cc62a990e9679215c0b4e9a2dafeb0e14cdb21d4673e089a2e295",
+                        integrity: "unpinned",
+                        path: "Ensembl2Reactome_All_Levels.txt",
+                        url: "https://reactome.org/download/current/Ensembl2Reactome_All_Levels.txt",
                     },
                     {
-                        key: "reactome-pathways/97/Ensembl2Reactome_All_Levels.parquet",
-                        path: "Ensembl2Reactome_All_Levels.parquet",
-                        bytes: 22_872_142,
-                        sha256: "a41c547c9ade3798383b8e85e6c1e77e7c196e0887977b92295d236c408ca16d",
-                    },
-                    {
-                        key: "reactome-pathways/97/NCBI2Reactome_All_Levels.parquet",
-                        path: "NCBI2Reactome_All_Levels.parquet",
-                        bytes: 7_008_817,
-                        sha256: "e882959816d92e9e762490bfa6e6617f7fe62ddd5a90b879b93c1aac8cc86291",
-                    },
-                    {
-                        key: "reactome-pathways/97/UniProt2Reactome_All_Levels.parquet",
-                        path: "UniProt2Reactome_All_Levels.parquet",
-                        bytes: 8_612_412,
-                        sha256: "0f80922ce23c24af3718cf706149432d9a4ed3c099ebaf4d758941e884384efd",
-                    },
-                    {
-                        key: "reactome-pathways/97/reactome_homo_sapiens_interactions.parquet",
-                        path: "reactome_homo_sapiens_interactions.parquet",
-                        bytes: 2_136_397,
-                        sha256: "a19cdb33cd304fe1e090219850db8f7fe59e12754e930ad4568edfb887110517",
+                        integrity: "unpinned",
+                        path: "UniProt2Reactome_All_Levels.txt",
+                        url: "https://reactome.org/download/current/UniProt2Reactome_All_Levels.txt",
                     },
                 ],
             },
@@ -282,22 +263,17 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 id: "wikipathways-human",
                 version: "2026.07.10",
                 title: "WikiPathways human pathways",
-                description: "Community-curated Homo sapiens pathway gene sets and a tabular membership index.",
-                sourceUrl: "https://data.wikipathways.org/20260710/gmt/wikipathways-20260710-gmt-Homo_sapiens.gmt",
+                description: "Community-curated Homo sapiens pathway gene sets (GMT) from the immutable 2026-07-10 WikiPathways snapshot.",
+                sourceUrl: "https://data.wikipathways.org/20260710/gmt/",
                 license: { identifier: "CC0-1.0", url: "https://www.wikipathways.org/about/terms.html" },
                 recommendation: { group: "pathways", recommended: true },
                 artifacts: [
                     {
-                        key: "wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.gmt",
+                        integrity: "pinned",
                         path: "wikipathways_Homo_sapiens.gmt",
+                        url: "https://data.wikipathways.org/20260710/gmt/wikipathways-20260710-gmt-Homo_sapiens.gmt",
                         bytes: 341_474,
                         sha256: "79615a079246bb0b07cc3505265b1f75ea6cffec88001ce27f644dd86a39c97d",
-                    },
-                    {
-                        key: "wikipathways-human/2026.07.10/wikipathways_Homo_sapiens.parquet",
-                        path: "wikipathways_Homo_sapiens.parquet",
-                        bytes: 165_089,
-                        sha256: "8fafff05009b10c8bdf6ce4601542e87c772a07950c183a96e658efe6229a8d8",
                     },
                 ],
             },
@@ -305,16 +281,17 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 id: "collectri-human",
                 version: "2.0",
                 title: "CollecTRI human regulatory network",
-                description: "A literature-curated human transcription-factor target interaction network.",
-                sourceUrl: "https://zenodo.org/records/8192729/files/CollecTRI_regulons.csv",
+                description: "A literature-curated human transcription-factor target interaction network (CSV) from the immutable Zenodo record 8192729.",
+                sourceUrl: "https://zenodo.org/records/8192729",
                 license: { identifier: "CC-BY-4.0", url: "https://zenodo.org/records/8192729" },
                 recommendation: { group: "regulatory-networks", recommended: true },
                 artifacts: [
                     {
-                        key: "collectri-human/2.0/collectri_human.parquet",
-                        path: "collectri_human.parquet",
-                        bytes: 709_038,
-                        sha256: "fefa0f04541982b9240317d8e7a0d6f090bd5510dab589b5436d1f9f52cb0c6d",
+                        integrity: "pinned",
+                        path: "CollecTRI_regulons.csv",
+                        url: "https://zenodo.org/records/8192729/files/CollecTRI_regulons.csv",
+                        bytes: 4_345_649,
+                        sha256: "4473c9189dd53dacc80297709ad1452dda1086a1cc2185f9a56146c261668701",
                     },
                 ],
             },
@@ -322,22 +299,25 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 id: "gtex-v8",
                 version: "8",
                 title: "GTEx v8 normal tissue expression",
-                description: "GTEx v8 median gene expression by tissue with sample metadata for normal-reference workflows.",
+                description:
+                    "GTEx v8 median gene TPM by tissue (GCT) with the sample attributes table, for normal-reference workflows. Immutable v8 release files.",
                 sourceUrl: "https://gtexportal.org/home/downloads/adult-gtex/bulk_tissue_expression",
                 license: { identifier: "GTEx-Portal-Data-License", url: "https://gtexportal.org/home/license" },
                 recommendation: { group: "normal-expression", recommended: true },
                 artifacts: [
                     {
-                        key: "gtex-v8/8/median_tpm.parquet",
-                        path: "median_tpm.parquet",
-                        bytes: 16_950_024,
-                        sha256: "93d387307b70aa2cd3f8081fd32a7ac4a307b24c50ba619725d6b06933685ef4",
+                        integrity: "pinned",
+                        path: "GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz",
+                        url: "https://storage.googleapis.com/adult-gtex/bulk-gex/v8/rna-seq/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz",
+                        bytes: 6_952_331,
+                        sha256: "ee7201ff2f280b0de5657d4b08e9a240362d9757efed7f7bd5dba35a5f8617b8",
                     },
                     {
-                        key: "gtex-v8/8/metadata.parquet",
-                        path: "metadata.parquet",
-                        bytes: 5_176_784,
-                        sha256: "cc01f5a5bf16ba486b0d88a931e71d197cebbbd10a47f3f5aad5c6536540d756",
+                        integrity: "pinned",
+                        path: "GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt",
+                        url: "https://storage.googleapis.com/adult-gtex/annotations/v8/metadata-files/GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt",
+                        bytes: 11_512_258,
+                        sha256: "74f6ab4c34ed2648d708a0ae6e6dff324f6c86ea723ae7d1c37d76f5221148f0",
                     },
                 ],
             },
@@ -345,20 +325,23 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 id: "celltypist-immune",
                 version: "2",
                 title: "CellTypist immune cell models",
-                description: "CellTypist Immune All low- and high-resolution models for immune cell-type annotation.",
+                description:
+                    "CellTypist Immune All low- and high-resolution models for immune cell-type annotation. Load by absolute path — CellTypist's by-name lookup expects its own cache layout, which the reference store deliberately does not impersonate.",
                 sourceUrl: "https://www.celltypist.org/models",
                 license: { identifier: "NOASSERTION" },
                 recommendation: { group: "cell-typing", recommended: true },
                 artifacts: [
                     {
-                        key: "celltypist-immune/2/Immune_All_Low.pkl",
+                        integrity: "pinned",
                         path: "Immune_All_Low.pkl",
+                        url: "https://celltypist.cog.sanger.ac.uk/models/Pan_Immune_CellTypist/v2/Immune_All_Low.pkl",
                         bytes: 2_824_990,
                         sha256: "290874d35dac039d4c9218c343fde4aac1077709b72a331ce7266f6828c36502",
                     },
                     {
-                        key: "celltypist-immune/2/Immune_All_High.pkl",
+                        integrity: "pinned",
                         path: "Immune_All_High.pkl",
+                        url: "https://celltypist.cog.sanger.ac.uk/models/Pan_Immune_CellTypist/v2/Immune_All_High.pkl",
                         bytes: 1_070_426,
                         sha256: "a715fec36c2c421f7c4e31cf4cb4bea883eedab7fd7b20a4b76f091c22660448",
                     },
@@ -371,7 +354,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
 /** One selected dataset and its host-neutral installation location. */
 export type ReferenceInstallPlanDataset = ReferenceDataset & { readonly installPath: string };
 
-/** Deterministic content-addressed plan; embedders resolve artifact keys. */
+/** Deterministic plan; every artifact carries the upstream URL it is fetched from. */
 export interface ReferenceInstallPlan {
     readonly catalogVersion: typeof REFERENCE_DATA_CATALOG_VERSION;
     readonly datasets: readonly ReferenceInstallPlanDataset[];
