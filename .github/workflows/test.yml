@@ -21,12 +21,6 @@ jobs:
   cli:
     name: test (cli)
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      # Needed to install the private @inflexa-ai/tsprov package from GitHub
-      # Packages. The repo's GITHUB_TOKEN can read it ONLY if the tsprov package
-      # grants this repo access (Package settings -> Manage Actions access).
-      packages: read
     defaults:
       run:
         working-directory: cli
@@ -34,12 +28,6 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
-
-      - name: Authenticate to GitHub Packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # cli/.npmrc already points @inflexa-ai at npm.pkg.github.com; add the token.
-        run: echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> .npmrc
 
       # cli depends on @inflexa-ai/harness via file:../harness, whose exports
       # resolve to harness/dist/ — not checked in, and bun blocks the package's
