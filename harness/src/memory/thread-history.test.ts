@@ -6,7 +6,7 @@ import type { Pool } from "pg";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { countTokens } from "./count-tokens.js";
-import { __resetThreadHistoryMetricsForTest, createThreadHistory, type ThreadHistory } from "./thread-history.js";
+import { __resetThreadHistoryMetricsForTest, createThreadHistory, EVICTION_BLOCK_TURNS, type ThreadHistory } from "./thread-history.js";
 
 const THREAD = "analysis-thread-1";
 
@@ -51,6 +51,20 @@ function assertValidSequence(messages: readonly ModelMessage[]): void {
             }
         }
     }
+}
+
+/** Total token cost of a flat window — the sum `loadRecent` budgets against. */
+function windowCost(messages: readonly ModelMessage[]): number {
+    return messages.reduce((sum, m) => sum + countTokens(m.content), 0);
+}
+
+/**
+ * A fixed-cost two-message turn tagged by a single-token `label`, so every turn
+ * costs the same while its opening `user` message stays unique — letting a test
+ * detect exactly when the window START (`messages[0]`) shifts.
+ */
+function labeledTurn(label: string): ModelMessage[] {
+    return [userText(`question ${label} about the staged dataset here`), assistantText(`answer ${label} about the staged dataset here`)];
 }
 
 // --- metric harness ---------------------------------------------------------
@@ -134,20 +148,28 @@ describe("appendTurn / loadRecent round-trip", () => {
 // --- token windowing --------------------------------------------------------
 
 describe("loadRecent token windowing", () => {
-    it("returns only the most recent turns whose cumulative tokens fit", async () => {
-        const turn1 = [userText("first question about the dataset"), assistantText("first detailed answer about the dataset")];
-        const turn2 = [userText("second question about the genes"), assistantText("second detailed answer about the genes")];
-        const turn3 = [userText("third question about the pathways"), assistantText("third detailed answer about the pathways")];
-        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
-        (await history.appendTurn(THREAD, turn3))._unsafeUnwrap();
+    it("evicts the oldest turns, keeping a within-budget window that ends at the most recent turn", async () => {
+        const K = EVICTION_BLOCK_TURNS;
+        const turns = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            .slice(0, 3 * K)
+            .split("")
+            .map(labeledTurn);
+        for (const turn of turns) {
+            (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+        }
 
-        // Budget fits turn3 + turn2 exactly, but not turn1.
-        const budget = turnCost(turn2) + turnCost(turn3);
+        // Budget fits only K of the 3K equal-cost turns, so the thread is well
+        // over budget and the oldest turns must be evicted.
+        const budget = K * turnCost(turns[0]!);
         const loaded = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
 
-        expect(loaded).toEqual([...turn2, ...turn3]);
         assertValidSequence(loaded);
+        // The retained window never exceeds the budget...
+        expect(windowCost(loaded)).toBeLessThanOrEqual(budget);
+        // ...always ends at the most recent turn...
+        expect(loaded.slice(-2)).toEqual(turns.at(-1)!);
+        // ...and is a genuine window, not the whole thread.
+        expect(loaded.length).toBeLessThan(turns.flat().length);
     });
 
     it("returns an oversized single turn in full", async () => {
@@ -166,6 +188,67 @@ describe("loadRecent token windowing", () => {
 
         expect(loaded).toEqual(oversized);
         assertValidSequence(loaded);
+    });
+});
+
+// --- prefix stability (prompt-cache regression guard) -----------------------
+
+describe("loadRecent prefix stability", () => {
+    it("holds messages[0] byte-identical across a block of appends, shifting only on block boundaries", async () => {
+        const K = EVICTION_BLOCK_TURNS;
+        const turns = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            .slice(0, 3 * K + 2)
+            .split("")
+            .map(labeledTurn);
+
+        // Equal per-turn cost is the precondition the block math relies on — a
+        // single-token label keeps every turn the same size.
+        const costs = turns.map(turnCost);
+        expect(new Set(costs).size).toBe(1);
+        const perTurn = costs[0]!;
+
+        // Budget fits exactly K+1 newest turns; the (K+2)th present turn is the
+        // first that must be evicted.
+        const fitTurns = K + 1;
+        const budget = fitTurns * perTurn;
+
+        // Seed right up to the budget: whole thread returned, window opens on the
+        // very first turn.
+        for (let i = 0; i < fitTurns; i++) {
+            (await history.appendTurn(THREAD, turns[i]!))._unsafeUnwrap();
+        }
+        const seeded = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
+        expect(seeded).toEqual(turns.slice(0, fitTurns).flat());
+
+        // Now append past the budget, capturing the window's first message after
+        // each append. Two full blocks show the pattern: stable, jump, stable.
+        const appendsToObserve = 2 * K + 1;
+        const firstMessages: string[] = [];
+        for (let i = fitTurns; i < fitTurns + appendsToObserve; i++) {
+            (await history.appendTurn(THREAD, turns[i]!))._unsafeUnwrap();
+            const loaded = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
+            assertValidSequence(loaded);
+            expect(windowCost(loaded)).toBeLessThanOrEqual(budget);
+            // The most recent turn is always present, whatever the window start.
+            expect(loaded.slice(-2)).toEqual(turns[i]!);
+            firstMessages.push(JSON.stringify(loaded[0]));
+        }
+
+        // The regression guard: messages[0] must NOT advance every append. Within
+        // each block of K appends it is byte-identical; it changes exactly once,
+        // at the block boundary.
+        for (let j = 1; j < K; j++) {
+            expect(firstMessages[j]).toBe(firstMessages[0]!);
+        }
+        expect(firstMessages[K]).not.toBe(firstMessages[K - 1]!);
+        for (let j = K + 1; j < 2 * K; j++) {
+            expect(firstMessages[j]).toBe(firstMessages[K]!);
+        }
+
+        // Over 2K+1 appends a naive per-turn window would show 2K+1 distinct
+        // starts; the chunked window shows just three (two full blocks + the
+        // start of a third).
+        expect(new Set(firstMessages).size).toBe(3);
     });
 });
 
