@@ -28,17 +28,17 @@ It is built for scientists, bioinformaticians, and engineers who need analysis t
 
 ## Quick start
 
-All you need is [Docker](https://www.docker.com/), running locally — analyses execute in the sandbox image. The `inflexa` binary itself is self-contained.
-
-Download the latest `inflexa` binary for your platform from [GitHub Releases](https://github.com/inflexa-ai/inf-cli/releases), put it on your `PATH`, then:
+All you need is [Docker](https://www.docker.com/), running locally — analyses execute in the sandbox image. The `inflexa` CLI itself is self-contained.
 
 ```bash
-inflexa setup           # one-time: connect a model provider, pull the sandbox image, start local services
-cd path/to/your/data    # go where your data lives
-inflexa                 # launch the TUI
+npm install -g inflexa   # or: bun install -g inflexa
+
+inflexa setup            # one-time: connect a model provider, pull the sandbox image, start local services
+cd path/to/your/data     # go where your data lives
+inflexa                  # launch the TUI
 ```
 
-Prefer to run from source, or no binary for your platform yet? See [Running from source](#running-from-source).
+Prefer to run from source? See [Running from source](#running-from-source).
 
 ## Configuration
 
