@@ -19,9 +19,9 @@ The system SHALL house the chat TUI's app-shell composition kit under `src/tui/l
 
 ### Requirement: Direction-B chat shell composition
 
-`app.tsx` SHALL compose the chat screen as: a persistent `StatusBar` across the full width at the top; below it a main row split into a chat column (the message stream, the error banner, the transient notice, the sticky run-progress row, and the `ChatBar`, stacked) and, beside it, an optional full-height `Sidebar`. The `Sidebar` SHALL span the full height of that row — alongside BOTH the stream and the input — so when it is shown the chat column (stream and input together) shrinks horizontally to make room (the opencode layout). When the sidebar is hidden the chat column spans the full width. The message stream SHALL render inside a `ScrollPane` (see the `scroll-pane` capability) with `stickyScroll`/`stickyStart="bottom"`; the chat SHALL declare no scroll bindings of its own. The existing overlay dialog host, keyboard gating, streaming-delta flush, and abort behavior SHALL be preserved; dialog-close focus restore follows the "Chat focus is always on a widget" requirement.
+`app.tsx` SHALL compose the chat screen as: a persistent `StatusBar` across the full width at the top; below it a main row split into a chat column (the message stream, the error banner, the transient notice, and the `ChatBar`, stacked) and, beside it, an optional full-height `Sidebar`. The `Sidebar` SHALL span the full height of that row — alongside BOTH the stream and the input — so when it is shown the chat column (stream and input together) shrinks horizontally to make room (the opencode layout). When the sidebar is hidden the chat column spans the full width. The message stream SHALL render inside a `ScrollPane` (see the `scroll-pane` capability) with `stickyScroll`/`stickyStart="bottom"`; the chat SHALL declare no scroll bindings of its own. The existing overlay dialog host, keyboard gating, streaming-delta flush, and abort behavior SHALL be preserved; dialog-close focus restore follows the "Chat focus is always on a widget" requirement.
 
-The sticky run-progress row is a shell part (`src/tui/layout/run_progress_row.tsx`) mounted between the stream and the input area. It SHALL render iff the sidebar-live active-run progress snapshot is non-null (the newest run is non-terminal), composing the design system's run block (progress bar, done/total, a bounded step window) from that snapshot, and SHALL disappear when the run reaches a terminal status. As fixed chrome directly below a `flexGrow` scrollbox it MUST follow the scrollbox-bleed recipe: a full-width box painted with the app background and `flexShrink={0}`, so the stream — not the chrome — absorbs any vertical squeeze. The row SHALL be gallery-showcased.
+There SHALL be NO sticky run-progress row in the chat column: live run progress renders inside the sidebar RUNS section (per `sidebar-live`), and a hidden sidebar deliberately shows no live progress surface — the run-started card in the stream announces the launch, and the sidebar (open by default, `ctrl+b`) carries the live view.
 
 #### Scenario: Sidebar is full height and shrinks the chat column
 
@@ -38,20 +38,10 @@ The sticky run-progress row is a shell part (`src/tui/layout/run_progress_row.ts
 - **WHEN** the chat column renders the message stream
 - **THEN** the stream is a `ScrollPane` (sticky-bottom), and no scroll chord is declared in `app.tsx` or `chat.tsx`
 
-#### Scenario: Active run pins a progress row above the input
+#### Scenario: No progress chrome between stream and input
 
 - **WHEN** the newest run is non-terminal
-- **THEN** the chat column shows the run-progress row (bar, done/total, step window) pinned between the stream and the input, updating as the sidebar refresh loop publishes new snapshots
-
-#### Scenario: Progress row leaves when the run ends
-
-- **WHEN** the run reaches a terminal status
-- **THEN** the progress row unmounts and the stream reclaims its rows
-
-#### Scenario: Progress row survives the squeeze
-
-- **WHEN** the terminal is short enough that the chat column must shrink
-- **THEN** the progress row keeps its rows (painted, `flexShrink={0}`) and the stream yields, with no scrollbox content bleeding through the row
+- **THEN** the chat column shows only the stream, banner/notice, and input — the run's live progress renders in the sidebar RUNS section instead
 
 ### Requirement: Chat focus is always on a widget
 
@@ -147,9 +137,14 @@ session age as a relative duration (e.g. `6m12s`, the two-unit `Date.relativeAge
 the message count from live data. ANALYSIS SHALL show the analysis name, the anchor path with a ✓/⚠ badge
 derived from the anchor's `markerWritten`, the input count, and the project name when the analysis
 has one. DATA PROFILE and RUNS SHALL render live ledger data per the `sidebar-live` capability
-(states, refresh, details views) — the sidebar MUST NOT display mock fixtures or values fabricated
-inline at the render site. The sidebar's data SHALL update when the open analysis or session
-changes (an in-place `openSession` swap).
+(states, refresh, details views, the active-run progress embed) — the sidebar MUST NOT display mock
+fixtures or values fabricated inline at the render site. The sidebar's data SHALL update when the
+open analysis or session changes (an in-place `openSession` swap).
+
+The rail's section stack SHALL be vertically scrollable: when the sections outgrow the rail's
+height (the RUNS section's progress embed makes its height variable), the rail scrolls rather than
+clipping or squeezing sections. The scroll container SHALL NOT take focus on mount (the rail is not
+a focus target; mouse-wheel scrolling suffices) and SHALL introduce no scroll keybindings.
 
 The ANALYSIS anchor-path line SHALL render only when the terminal is below the design-system
 breakpoint (`size.breakpointWide`); at or above it the path moves to the status bar (see the status
@@ -190,6 +185,11 @@ and border.
 
 - **WHEN** `openSession` swaps the analysis or session
 - **THEN** every section re-renders from the new scope's data
+
+#### Scenario: Overflowing rail scrolls instead of clipping
+
+- **WHEN** the sections (e.g. RUNS carrying the active-run progress embed) outgrow the rail's height
+- **THEN** the rail scrolls vertically — no section is clipped or squeezed away — and the scroll container has not stolen focus from the chat
 
 #### Scenario: Short value shares the label row
 
@@ -271,4 +271,3 @@ The system SHALL define the gutter marker set as a shared constant (`MARKERS`) i
 
 - **WHEN** a thinking / tool / run / file-edit / error block widget renders
 - **THEN** its marker glyph and role come from the shared set, imported from the tui root (no components→layout import)
-

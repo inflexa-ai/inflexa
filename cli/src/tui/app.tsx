@@ -1,9 +1,6 @@
 import { createSignal, Show } from "solid-js";
 import type { CliRenderer, Renderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
-import { errAsync } from "neverthrow";
-import { queryStepsByRun, type StepExecutionRow, type DbError } from "@inflexa-ai/harness";
-
 import { causeDetailLines } from "../lib/cause.ts";
 import { GLYPHS, size, zIndex } from "../lib/design_system.ts";
 import { contractHome } from "../lib/paths.ts";
@@ -15,18 +12,16 @@ import { bootState, harnessRuntime, watchAgentModels } from "./hooks/boot.ts";
 import * as conversation from "./hooks/conversation.ts";
 import { currentNotice, notify } from "./hooks/notice.ts";
 import { openArtifact } from "./hooks/artifacts.ts";
-import { profileSnapshot, runsSnapshot, watchSidebarData, profileDetailLines } from "./hooks/sidebar_live.ts";
+import { profileSnapshot, watchSidebarData, profileDetailLines } from "./hooks/sidebar_live.ts";
 import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
-import { RunsDialog } from "./components/dialog/runs_dialog.tsx";
 import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./components/dialog/dialog_host.tsx";
 import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, leaderSeq, KEYS, type LayerConfig } from "./keymap.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { Chat } from "./components/chat.tsx";
 import { BootIndicator } from "./components/boot_indicator.tsx";
 import { ChatBar } from "./layout/chat_bar.tsx";
-import { RunProgressRow } from "./layout/run_progress_row.tsx";
 import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
 import { WorkspaceContext, createWorkspace } from "./contexts/workspace.ts";
@@ -160,28 +155,11 @@ export function App(props: AppProps) {
         ));
     }
 
-    // Open the RUNS details view. Snapshots the runs as of open; `loadSteps` fetches
-    // the latest run's steps once, over the booted pool.
+    // Open the RUNS flow — the runs picker → run-detail pair. Routed through the `runs.show`
+    // command so the sidebar click, the leader chord, and the palette all share ONE open path
+    // (the command's helper owns the fresh fetch and its pre-ready degrade).
     function openRuns(): void {
-        const snap = runsSnapshot();
-        const name = workspace.analysis?.name;
-        const title = name ? `Runs ${GLYPHS.emDash} ${name}` : "Runs";
-        dialogPush(() => (
-            <RunsDialog
-                title={title}
-                runs={snap}
-                loadSteps={(runId) => {
-                    const rt = harnessRuntime();
-                    // A `loaded` runs snapshot implies boot completed (the store only loads post-boot),
-                    // so `rt` is non-null wherever the dialog reaches its step fetch; the err branch is
-                    // defensive-only and surfaces as the dialog's muted "steps unavailable" line.
-                    return rt
-                        ? queryStepsByRun(rt.pool, runId)
-                        : errAsync<StepExecutionRow[], DbError>({ type: "query_failed", op: "runs-dialog.loadSteps", cause: new Error("runtime not ready") });
-                }}
-                onClose={() => dialogClose()}
-            />
-        ));
+        runCommandById("runs.show");
     }
 
     // Open the TURN ERROR details view: the full cause of the last failed turn (stack, nested
@@ -455,13 +433,10 @@ export function App(props: AppProps) {
                 shrinks the chat column (stream + input together) — the opencode layout. */}
                 <box flexDirection="row" flexGrow={1} minHeight={0} width="100%">
                     <box flexDirection="column" flexGrow={1} minHeight={0}>
-                        {/* The live conversation: stream + error banner, all state in hooks/conversation.ts */}
+                        {/* The live conversation: stream + error banner, all state in hooks/conversation.ts.
+                        Live run progress renders in the sidebar RUNS section (not chat chrome) — a hidden
+                        sidebar deliberately shows no live progress. */}
                         <Chat onScrollPaneRef={(r: ScrollBoxRenderable) => (scrollPaneRef = r)} />
-
-                        {/* Sticky run-progress row: pinned below the stream while the newest run is
-                        non-terminal (renders null otherwise). Its own opaque, full-width flexShrink={0}
-                        box reclaims the scrollbox's 1-cell bleed — same recipe as the boot indicator. */}
-                        <RunProgressRow />
 
                         {/* Boot animation / failed-boot message, shown until the runtime is ready. A
                         full-width box painted with the app background and flexShrink={0}: it sits

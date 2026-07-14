@@ -49,7 +49,7 @@ export type RunsSnapshot = { kind: "not_ready" } | { kind: "unavailable" } | { k
 
 /**
  * Live progress of the analysis's NEWEST run, published ONLY while that run is non-terminal — the
- * feed for the chat column's sticky progress row (the run-block vocabulary: the segmented bar,
+ * feed for the sidebar RUNS section's progress embed (the run-block vocabulary: the segmented bar,
  * `done/total`, and the ordered steps). `null` means nothing is pinned: the analysis has no runs, its
  * newest run already reached a terminal state, or the runtime is not booted. Refreshed on the same
  * cadence as the sidebar sections (the same non-terminal newest run also arms {@link hasActiveWork}),
@@ -210,7 +210,7 @@ export function shortRunName(run: CortexRunRow): string {
     return id.replace(/-/g, "").slice(-6);
 }
 
-/** A short, human-scannable tail of a uuid (dashes stripped) — the run tag the runs dialog + sticky row show. */
+/** A short, human-scannable tail of a uuid (dashes stripped) — the run tag the run-detail dialog + sidebar progress embed show. */
 export function idTail(id: string): string {
     return id.replace(/-/g, "").slice(-6);
 }
@@ -336,9 +336,9 @@ const realRefreshSeams: RefreshSeams = {
 let refreshGeneration = 0;
 
 /**
- * Reset BOTH snapshots to `not_ready` together (the torn-pair guarantee), clear the sticky run-progress
- * row, and invalidate any in-flight refresh. Used at an analysis swap so the previous analysis's DATA
- * PROFILE / RUNS / progress row never render (nor get dialog-snapshotted) during the swap's
+ * Reset BOTH snapshots to `not_ready` together (the torn-pair guarantee), clear the active-run progress
+ * snapshot, and invalidate any in-flight refresh. Used at an analysis swap so the previous analysis's DATA
+ * PROFILE / RUNS / progress embed never render (nor get dialog-snapshotted) during the swap's
  * one-ledger-round-trip refresh window, and by the test reset hook.
  */
 function resetSnapshots(): void {
@@ -349,14 +349,14 @@ function resetSnapshots(): void {
 }
 
 /**
- * Repopulate both snapshots (and the sticky run-progress row) for `analysisId` from the booted
- * runtime's pool. No-ops to `not_ready` (both snapshots) and clears the progress row when the runtime
+ * Repopulate both snapshots (and the active-run progress snapshot) for `analysisId` from the booted
+ * runtime's pool. No-ops to `not_ready` (both snapshots) and clears the progress snapshot when the runtime
  * is not booted — the sidebar renders a muted placeholder and no query runs (the no-op guard).
  * Otherwise the two ledger reads are awaited in turn and each `.match`es INDEPENDENTLY into its
  * snapshot: a `DbError` becomes `unavailable` (never a crash), a null profile row becomes `absent`,
  * and every write is a fresh object so Solid always reconciles.
  *
- * The sticky row is derived from the runs read: when the NEWEST run is non-terminal a third read
+ * The progress snapshot is derived from the runs read: when the NEWEST run is non-terminal a third read
  * fetches its steps and publishes {@link activeRunProgress}; a terminal (or absent) newest run clears
  * it and fires NO step query — so an idle analysis stays at zero step reads. A failed step read keeps
  * the previous row only when it is THIS run's (avoiding a blink of a genuinely running run); if the
@@ -393,7 +393,7 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
         () => setProfile({ kind: "unavailable" }),
     );
 
-    // The sticky chat progress row pins the NEWEST run while it is non-terminal, fed by this same
+    // The RUNS section's progress embed pins the NEWEST run while it is non-terminal, fed by this same
     // refresh. A terminal newest run (or no runs) clears it; only a non-terminal newest run fires the
     // extra step read, so an idle analysis issues zero step queries.
     await runsRes.match(
@@ -423,7 +423,7 @@ export async function refreshSidebarData(analysisId: string, seams: RefreshSeams
             );
         },
         // A runs `DbError` is a transient degrade that itself re-arms the poll (`hasActiveWork`). Keep
-        // any existing progress row so a blip does not flash the sticky row away and back on recovery.
+        // any existing progress row so a blip does not flash the progress embed away and back on recovery.
         async () => setRuns({ kind: "unavailable" }),
     );
 }
@@ -534,7 +534,7 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
 }
 
 /**
- * Test hook: reset both snapshots to `not_ready`, clear the sticky run-progress row, and invalidate any
+ * Test hook: reset both snapshots to `not_ready`, clear the active-run progress snapshot, and invalidate any
  * in-flight refresh. Test-only — mirrors `__resetBootForTest`.
  */
 export function __resetSidebarLiveForTest(): void {

@@ -32,6 +32,12 @@ export type RunBlockProps = {
      */
     hint?: boolean;
     /**
+     * Whether to show the `● name tag` heading line. Defaults to `true`. Set `false` where the block
+     * sits directly under a row that already names the run — the sidebar RUNS section renders the
+     * progress embed beneath the run's own row, and repeating the name would read as a second run.
+     */
+    heading?: boolean;
+    /**
      * Cap on how many step rows to render at once. When the run has MORE steps than this, the list
      * shows a WINDOW of `maxSteps` rows centered on the frontier of work (the first step that is not
      * yet done), clamped to the list ends. The progress bar and `done/total` always reflect the FULL
@@ -97,10 +103,12 @@ export function RunBlock(props: RunBlockProps) {
     };
     return (
         <box flexDirection="column" paddingBottom={space.sm}>
-            <text>
-                <Fg role={MARKERS.run.role}>{`${MARKERS.run.glyph} `}</Fg>
-                <Fg role="fg">{props.name}</Fg> <Fg role="fgMuted">{props.tag}</Fg>
-            </text>
+            {(props.heading ?? true) ? (
+                <text>
+                    <Fg role={MARKERS.run.role}>{`${MARKERS.run.glyph} `}</Fg>
+                    <Fg role="fg">{props.name}</Fg> <Fg role="fgMuted">{props.tag}</Fg>
+                </text>
+            ) : null}
             <text paddingLeft={space.md}>
                 <Fg role="success">{filled()}</Fg>
                 <Fg role="fgSubtle">{empty()}</Fg> <Fg role="fgMuted">{`${props.done}/${props.total}`}</Fg>
