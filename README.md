@@ -49,6 +49,12 @@ On Windows (PowerShell):
 irm https://inflexa.ai/install.ps1 | iex
 ```
 
+Or from npm (any platform above, Node.js 18+) — also runnable without installing via `npx @inflexa-ai/inflexa`:
+
+```bash
+npm install -g @inflexa-ai/inflexa
+```
+
 On other platforms, download a binary from the [latest release](https://github.com/inflexa-ai/inflexa/releases/latest), or [run from source](#running-from-source).
 
 All you need is [Docker](https://www.docker.com/), running locally — analyses execute in the sandbox image. The `inflexa` CLI itself is self-contained.

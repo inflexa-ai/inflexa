@@ -1,0 +1,98 @@
+name: Release npm
+
+# Publishes the @inflexa-ai/inflexa wrapper and its four platform binary
+# packages for a released version. release.yml dispatches this after creating
+# the GitHub release (same reasoning as homebrew.yml: events created with a
+# workflow's own GITHUB_TOKEN can't trigger a release: workflow, and a
+# separate dispatchable workflow stays independently re-runnable per version).
+# The packages are assembled from the release's own downloaded assets, never
+# rebuilt, so npm ships bit-for-bit what the release workflow attested.
+#
+# Auth is npm trusted publishing (OIDC), like release-harness.yml: npmjs.com
+# must trust this repo + THIS workflow filename for EVERY package (the
+# wrapper and all four platform packages); renaming this file breaks that
+# binding. The very first publish of each package cannot use trusted
+# publishing — the package must exist before a trusted publisher can be
+# configured — so bootstrap by publishing the assembled dirs locally once.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Released version to publish (bare semver, e.g. 0.1.0); defaults to the latest GitHub release"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  # The OIDC token npm exchanges for its short-lived publish credential.
+  id-token: write
+
+concurrency:
+  group: release-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # workflow_dispatch would otherwise run from any branch; npm must only
+    # ever ship what main's automation assembled.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve and validate the version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          version="${INPUT_VERSION#v}"
+          if [ -z "$version" ]; then
+            version=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName | ltrimstr("v")')
+          fi
+          # npm must only ever point at published, downloadable assets — fail
+          # here if the version has no release.
+          gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download the release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'inflexa-*' --pattern SHA256SUMS --pattern THIRD-PARTY-NOTICES.txt \
+            --dir assets
+
+      - uses: oven-sh/setup-bun@v2
+
+      # Trusted publishing needs npm >= 11.5.1; Node 24's bundled npm
+      # satisfies that. Deliberately NO registry-url: that writes an .npmrc
+      # reading ${NODE_AUTH_TOKEN} and npm hard-fails on the unset var —
+      # trusted publishing is tokenless and resolves the registry from each
+      # package's publishConfig.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Assemble the packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: bun .github/npm/assemble.ts --version "$VERSION" --assets assets --out npm-dist
+
+      # Platform packages first, wrapper last: the wrapper pins exact
+      # versions, so it must never appear on the registry before the binaries
+      # it resolves. The npm-view gate makes re-runs cheap and lets a run
+      # that died mid-sequence resume where it stopped.
+      - name: Publish to npm
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for name in inflexa-darwin-arm64 inflexa-darwin-x64 inflexa-linux-x64 inflexa-win32-x64 inflexa; do
+            if npm view "@inflexa-ai/${name}@${VERSION}" version >/dev/null 2>&1; then
+              echo "@inflexa-ai/${name}@${VERSION} is already on npm — skipping"
+              continue
+            fi
+            echo "publishing @inflexa-ai/${name}@${VERSION}"
+            (cd "npm-dist/${name}" && npm publish)
+          done

@@ -165,12 +165,15 @@ jobs:
             --generate-notes \
             dist/inflexa-* dist/SHA256SUMS dist/THIRD-PARTY-NOTICES.txt
 
-      # The tap update is its own dispatched workflow (homebrew.yml explains
-      # why a `release:` trigger cannot work) so a tap failure never taints
-      # this run and stays re-runnable after the gate starts no-op'ing.
-      - name: Dispatch the Homebrew tap update
+      # Downstream distribution runs as separate dispatched workflows
+      # (homebrew.yml explains why a `release:` trigger cannot work) so a
+      # channel failure never taints this run and each stays re-runnable
+      # after the gate starts no-op'ing.
+      - name: Dispatch the distribution channels
         if: steps.gate.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.gate.outputs.version }}
-        run: gh workflow run homebrew.yml --field version="$VERSION"
+        run: |
+          gh workflow run homebrew.yml --field version="$VERSION"
+          gh workflow run release-npm.yml --field version="$VERSION"
