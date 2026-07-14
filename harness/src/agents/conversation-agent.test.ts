@@ -43,7 +43,7 @@ describe("createConversationAgent", () => {
         expect(agent.id).toBe(CONVERSATION_AGENT_ID);
         expect(agent.model).toBe("anthropic/claude-opus-4-7");
         expect(agent.maxIterations).toBe(50);
-        expect(agent.tools.length).toBe(34);
+        expect(agent.tools.length).toBe(35);
     });
 
     test("the system prompt is static SOUL composition", () => {
@@ -83,7 +83,8 @@ describe("createConversationAgent", () => {
             "inspect_data_profile",
             "execute_plan",
             "run_ephemeral",
-            "iterate_report",
+            "plan_report",
+            "submit_report",
             "show_user",
             "show_plan",
             "show_file",

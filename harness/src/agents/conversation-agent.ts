@@ -17,13 +17,14 @@
  * `inspectRun` on a later turn). `run_ephemeral`
  * is wired here too — it mints a run authorization, starts the turn-scoped DBOS
  * `ephemeral` workflow, and awaits the result inline; chat disconnect cancels
- * the workflow and it is never recovered. `iterateReport` is wired here too — in-process Nunjucks
- * rendering driven by the in-process `report-builder` agent (no sandbox);
- * the 4 custom report tools (`build_report`, `submit_report`,
- * `preview_snapshot`, `mint_preview_url`) plus the version-fs write tools
- * (`write_file`, `edit_file`, `read_file`, `mkdir` from `createVersionFsTools`)
- * are constructed inside the runner so they share closure-captured outcome
- * state + preview-dir paths.
+ * the workflow and it is never recovered. Report authoring is wired here as the
+ * pair `plan_report` (returns the report-brief schema + authoring rules
+ * just-in-time as its result) + `submit_report` (validates the composed brief
+ * and drives in-process Nunjucks rendering via the `report-builder` agent, no
+ * sandbox). The 4 custom tools the builder itself drives (`build_report`, its
+ * own terminal `submit_report`, `preview_snapshot`, `mint_preview_url`) are
+ * constructed inside the runner so they share closure-captured outcome state +
+ * preview-dir paths.
  * The workspace read surface (`read_file`, `grep`, `workspace_search`) is
  * wired here over the `WorkspaceFilesystem` seam.
  */
@@ -85,7 +86,7 @@ import { createExecutePlanTool } from "../tools/execute-plan.js";
 import { createRunEphemeralTool } from "../tools/run-ephemeral.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
-import { createIterateReportTool, type IterateReportDeps } from "../tools/iterate-report.js";
+import { planReportTool, createReportSubmitTool, type SubmitReportDeps } from "../tools/iterate-report.js";
 import type { EphemeralWorkflowInput, EphemeralResult } from "../execution/ephemeral-runner.js";
 
 /** Canonical agent id — the single source of truth. */
@@ -132,14 +133,14 @@ export interface ConversationAgentDeps {
      */
     readonly runLauncher: RunLauncher;
     /**
-     * Preview-publishing seam factory for `iterate_report` — injected, not
+     * Preview-publishing seam factory for `submit_report` — injected, not
      * constructed here. The managed root closes its platform deps over this; the
      * OSS root returns the "unavailable" publisher.
      */
-    readonly createPreviewPublisher: IterateReportDeps["createPreviewPublisher"];
+    readonly createPreviewPublisher: SubmitReportDeps["createPreviewPublisher"];
     /** API keys for the external bio/chem data sources. */
     readonly bioKeys: BioToolKeys;
-    /** Root templates dir for in-process report rendering (`iterateReport`). */
+    /** Root templates dir for in-process report rendering (`submit_report`). */
     readonly templatesDir: string;
     /** Skills root; the in-process report-builder gets `report-html` skill tools. */
     readonly skillsDir: string;
@@ -221,7 +222,12 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
             runAuthorizer,
             runLauncher,
         }),
-        createIterateReportTool({
+        // Report authoring: the always-on `plan_report` trigger delivers the
+        // heavy brief schema + rules just-in-time as its result; `submit_report`
+        // takes the composed brief as `unknown` and validates it in-execute, so
+        // the ~12k schema never rides the always-on tool surface.
+        planReportTool,
+        createReportSubmitTool({
             provider,
             pool,
             resolveWorkspaceRoot,
