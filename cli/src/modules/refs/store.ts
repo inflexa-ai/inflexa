@@ -10,12 +10,16 @@ import {
     REFERENCE_DATA_CATALOG,
     REFERENCE_INSTALL_RECEIPT_VERSION,
     parseReferenceInstallReceipt,
+    referenceArtifactKey,
     resolveReferenceInstallPlan,
+    type ReferenceArtifact,
     type ReferenceDataCatalog,
     type ReferenceDataset,
     type ReferenceInstallPlan,
     type ReferenceInstallPlanDataset,
     type ReferenceInstallReceipt,
+    type ReferenceIntegrity,
+    type ReferenceReceiptArtifact,
     type UnknownReferenceDatasetError,
 } from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
@@ -69,6 +73,8 @@ export type ReferenceFileVerification = {
     readonly path: string;
     /** Verification outcome. */
     readonly state: "valid" | "missing" | "modified";
+    /** Which guarantee this file's digest was checked against. */
+    readonly integrity: ReferenceIntegrity;
 };
 
 /** Explicit verification result for an active catalog dataset. */
@@ -92,17 +98,6 @@ type UnknownDatasetError = {
     readonly unknownId: string;
     /** Catalog ids available to select. */
     readonly availableIds: readonly string[];
-};
-
-type ArtifactUrlError = {
-    /** Stable discriminator. */
-    readonly type: "artifact_url_unconfigured";
-    /** User-facing explanation. */
-    readonly message: string;
-    /** Opaque artifact key that could not be resolved. */
-    readonly key: string;
-    /** Underlying URL parse failure, when present. */
-    readonly cause?: unknown;
 };
 
 type ProvisionOperationError = {
@@ -137,14 +132,12 @@ type ManagedPathConflictError = {
 };
 
 /** Typed failures from local inspection, verification, transfer, or activation. */
-export type ReferenceProvisionError = UnknownDatasetError | ArtifactUrlError | ProvisionOperationError | ContentMismatchError | ManagedPathConflictError;
+export type ReferenceProvisionError = UnknownDatasetError | ProvisionOperationError | ContentMismatchError | ManagedPathConflictError;
 
-/** Network and release-location dependencies supplied by the CLI composition edge. */
+/** Network dependencies supplied by the CLI composition edge. */
 export type ReferenceInstallDeps = {
     /** Public store root. */
     readonly root: string;
-    /** Convert an opaque harness artifact key to a concrete public URL. */
-    readonly resolveArtifactUrl: (key: string) => Result<URL, ReferenceProvisionError>;
     /** Catalog/plan seam used by tests; production always defaults to the immutable harness source. */
     readonly source?: ReferenceCatalogSource;
     /** Fetch implementation; defaults to the runtime fetch. */
@@ -153,6 +146,17 @@ export type ReferenceInstallDeps = {
     readonly now?: () => Date;
     /** Stable attempt id used for staging. */
     readonly attemptId?: () => string;
+};
+
+/** Caller-chosen installation behavior. */
+export type ReferenceInstallOptions = {
+    /**
+     * Re-fetch and re-activate even when the active install is intact. This is the
+     * only way to pull a fresh copy of an `unpinned` dataset whose mutable upstream
+     * has moved on — an intact install of the bytes we previously received is
+     * indistinguishable from an up-to-date one without going to the network.
+     */
+    readonly force?: boolean;
 };
 
 /** Read-only catalog plus the matching pure selection operation. */
@@ -184,6 +188,14 @@ export type ReferenceInstallOutcome = {
     readonly installed: readonly InstalledReferenceDataset[];
 };
 
+/** Bytes still to transfer, plus what cannot be known before contacting the upstream. */
+export type ReferenceDownloadEstimate = {
+    /** Bytes missing across `pinned` artifacts, whose sizes the catalog knows. */
+    readonly bytes: number;
+    /** Count of `unpinned` artifacts whose size only the mutable upstream can report. */
+    readonly unsizedArtifacts: number;
+};
+
 /** Resolve all owned paths without creating anything. */
 export function referenceStorePaths(root: string): ReferenceStorePaths {
     const metadata = join(root, ".inflexa");
@@ -208,31 +220,6 @@ export async function ensureReferenceStore(root: string): Promise<Result<Referen
         return ok(paths);
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not create reference store at ${root}.`, cause });
-    }
-}
-
-/** Resolve an artifact key below an explicitly configured public distribution base. */
-export function resolvePublicArtifactUrl(key: string, baseUrl: string | undefined): Result<URL, ReferenceProvisionError> {
-    if (baseUrl === undefined || baseUrl.trim() === "") {
-        return err({
-            type: "artifact_url_unconfigured",
-            key,
-            message: `No public reference-data artifact endpoint is configured for ${key}.`,
-        });
-    }
-    try {
-        const base = new URL(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
-        const segments = key.split("/");
-        if (key.startsWith("/") || key.includes("\\") || segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
-            return err({ type: "artifact_url_unconfigured", key, message: `Unsafe reference-data artifact key: ${key}` });
-        }
-        const url = new URL(segments.map(encodeURIComponent).join("/"), base);
-        if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname)) {
-            return err({ type: "artifact_url_unconfigured", key, message: `Artifact key escapes the configured reference-data endpoint: ${key}` });
-        }
-        return ok(url);
-    } catch (cause) {
-        return err({ type: "artifact_url_unconfigured", key, message: `The configured reference-data endpoint is invalid: ${baseUrl}`, cause });
     }
 }
 
@@ -289,14 +276,43 @@ async function receiptFilesPresent(paths: ReferenceStorePaths, root: string, rec
     return true;
 }
 
+/**
+ * Whether every activated file still hashes to what the receipt recorded. This is the
+ * authoritative completeness check — `receiptFilesPresent` compares sizes only, so a
+ * same-size corruption (bit rot, a hand-edit) reads as "installed" to it. Install and
+ * download-planning both gate on *this*, so a damaged dataset re-downloads and heals
+ * instead of being silently skipped.
+ */
+async function receiptFilesIntact(paths: ReferenceStorePaths, root: string, receipt: ReferenceInstallReceipt): Promise<boolean> {
+    for (const artifact of receipt.artifacts) {
+        const path = join(root, artifact.path);
+        const owned = await assertOwnedPath(paths.root, path);
+        if (owned.isErr()) return false;
+        const fileResult = await pathLstat(path);
+        if (fileResult.isErr()) return false;
+        const file = fileResult.value;
+        if (file === undefined || file.isSymbolicLink() || !file.isFile() || file.size !== artifact.bytes) return false;
+        const digest = await sha256File(path);
+        if (digest.isErr() || digest.value !== artifact.sha256) return false;
+    }
+    return true;
+}
+
+/**
+ * Whether the receipt still describes what the catalog now says. A `pinned` artifact
+ * must match the catalog's size and digest; an `unpinned` one has no catalog digest to
+ * match, so only its presence and class are compared.
+ */
 function receiptMatchesCurrentCatalog(dataset: ReferenceDataset, receipt: ReferenceInstallReceipt): boolean {
     if (receipt.datasetVersion !== dataset.version || receipt.artifacts.length !== dataset.artifacts.length) return false;
-    const expected = new Map(dataset.artifacts.map((artifact) => [artifact.path, `${artifact.bytes}:${artifact.sha256}`]));
+    const expected = new Map(dataset.artifacts.map((artifact) => [artifact.path, artifact]));
     const actualPaths = new Set(receipt.artifacts.map((artifact) => artifact.path));
-    return (
-        actualPaths.size === receipt.artifacts.length &&
-        receipt.artifacts.every((artifact) => expected.get(artifact.path) === `${artifact.bytes}:${artifact.sha256}`)
-    );
+    if (actualPaths.size !== receipt.artifacts.length) return false;
+    return receipt.artifacts.every((recorded) => {
+        const artifact = expected.get(recorded.path);
+        if (artifact === undefined || artifact.integrity !== recorded.integrity) return false;
+        return artifact.integrity === "pinned" ? artifact.bytes === recorded.bytes && artifact.sha256 === recorded.sha256 : true;
+    });
 }
 
 function activeManagedRoot(paths: ReferenceStorePaths, dataset: ReferenceDataset, receipt: ReferenceInstallReceipt): string | undefined {
@@ -367,7 +383,12 @@ export async function inspectReferenceStore(
     }
 }
 
-/** Hash active managed files against the receipt and current catalog without mutating disk. */
+/**
+ * Hash active managed files against the receipt without mutating disk. The receipt is
+ * the reference in both integrity classes: for `pinned` artifacts it equals the catalog
+ * digest (activation would have failed otherwise), and for `unpinned` ones it is the
+ * only honest record — what the mutable upstream actually served at install time.
+ */
 export async function verifyReferenceDatasets(
     root: string,
     datasetIds: readonly string[],
@@ -408,15 +429,19 @@ export async function verifyReferenceDatasets(
                 const infoResult = owned.isOk() ? await pathLstat(path) : ok(undefined);
                 const info = infoResult.isOk() ? infoResult.value : undefined;
                 if (info === undefined || info.isSymbolicLink() || !info.isFile()) {
-                    files.push({ path: artifact.path, state: "missing" });
+                    files.push({ path: artifact.path, state: "missing", integrity: artifact.integrity });
                     continue;
                 }
                 if (info.size !== artifact.bytes) {
-                    files.push({ path: artifact.path, state: "modified" });
+                    files.push({ path: artifact.path, state: "modified", integrity: artifact.integrity });
                     continue;
                 }
                 const digestResult = await sha256File(path);
-                files.push({ path: artifact.path, state: digestResult.isOk() && digestResult.value === artifact.sha256 ? "valid" : "modified" });
+                files.push({
+                    path: artifact.path,
+                    state: digestResult.isOk() && digestResult.value === artifact.sha256 ? "valid" : "modified",
+                    integrity: artifact.integrity,
+                });
             }
             const state = files.every((file) => file.state === "valid") ? "valid" : files.some((file) => file.state === "modified") ? "modified" : "missing";
             results.push({ datasetId: dataset.id, version: receipt.datasetVersion, files, state });
@@ -463,38 +488,65 @@ async function assertOwnedPath(root: string, candidate: string): Promise<Result<
     }
 }
 
+/** What one transfer actually produced, whether or not the catalog could predict it. */
+type DownloadedArtifact = {
+    readonly partPath: string;
+    readonly bytesDownloaded: number;
+    readonly observed: ReferenceReceiptArtifact;
+};
+
 async function downloadArtifact(
-    artifact: ReferenceInstallPlanDataset["artifacts"][number],
+    dataset: ReferenceInstallPlanDataset,
+    artifact: ReferenceArtifact,
     paths: ReferenceStorePaths,
     deps: ReferenceInstallDeps,
-): Promise<Result<{ readonly partPath: string; readonly bytesDownloaded: number }, ReferenceProvisionError>> {
-    const url = deps.resolveArtifactUrl(artifact.key);
-    if (url.isErr()) return err(url.error);
-    const partPath = join(paths.downloads, `${downloadName(artifact.key)}.part`);
+): Promise<Result<DownloadedArtifact, ReferenceProvisionError>> {
+    const key = referenceArtifactKey(dataset, artifact);
+    const partPath = join(paths.downloads, `${downloadName(key)}.part`);
     try {
         const owned = await assertOwnedPath(paths.root, partPath);
         if (owned.isErr()) return err(owned.error);
         await mkdir(paths.downloads, { recursive: true });
-        const priorResult = await pathStat(partPath);
-        if (priorResult.isErr()) return err(priorResult.error);
-        const prior = priorResult.value;
-        const offset = prior?.isFile() ? prior.size : 0;
-        if (offset > artifact.bytes) await rm(partPath, { force: true });
-        let resumeAt = offset <= artifact.bytes ? offset : 0;
-        if (resumeAt === artifact.bytes) {
-            const existingDigest = await sha256File(partPath);
-            if (existingDigest.isOk() && existingDigest.value === artifact.sha256) return ok({ partPath, bytesDownloaded: 0 });
+
+        // Resume is only sound when the catalog knows the final size and digest: without
+        // them a partial file cannot be told apart from a complete one, and appending to
+        // bytes an upstream has since changed would splice two different files together.
+        let resumeAt = 0;
+        if (artifact.integrity === "pinned") {
+            const priorResult = await pathStat(partPath);
+            if (priorResult.isErr()) return err(priorResult.error);
+            const prior = priorResult.value;
+            const offset = prior?.isFile() ? prior.size : 0;
+            if (offset > artifact.bytes) await rm(partPath, { force: true });
+            resumeAt = offset <= artifact.bytes ? offset : 0;
+            if (resumeAt === artifact.bytes) {
+                const existingDigest = await sha256File(partPath);
+                if (existingDigest.isOk() && existingDigest.value === artifact.sha256) {
+                    return ok({
+                        partPath,
+                        bytesDownloaded: 0,
+                        observed: { path: artifact.path, bytes: artifact.bytes, sha256: artifact.sha256, integrity: "pinned" },
+                    });
+                }
+                await rm(partPath, { force: true });
+                resumeAt = 0;
+            }
+        } else {
             await rm(partPath, { force: true });
-            resumeAt = 0;
         }
-        const response = await (deps.fetch ?? fetch)(url.value, { headers: resumeAt > 0 ? { Range: `bytes=${resumeAt}-` } : undefined });
+
+        const response = await (deps.fetch ?? fetch)(artifact.url, { headers: resumeAt > 0 ? { Range: `bytes=${resumeAt}-` } : undefined });
         if (!response.ok || response.body === null) {
-            return err({ type: "download_failed", message: `Download failed for ${artifact.key}: HTTP ${response.status} ${response.statusText}` });
+            return err({
+                type: "download_failed",
+                message: `Download failed for ${artifact.path}: HTTP ${response.status} ${response.statusText} (${artifact.url})`,
+            });
         }
         const appending = resumeAt > 0 && response.status === 206;
         await pipeline(Readable.fromWeb(response.body), createWriteStream(partPath, { flags: appending ? "a" : "w" }));
         const written = (await stat(partPath)).size;
-        if (written !== artifact.bytes) {
+
+        if (artifact.integrity === "pinned" && written !== artifact.bytes) {
             return err({
                 type: "size_mismatch",
                 path: artifact.path,
@@ -505,18 +557,22 @@ async function downloadArtifact(
         }
         const digest = await sha256File(partPath);
         if (digest.isErr()) return err({ type: "io_failed", message: `Could not hash ${artifact.path}.`, cause: digest.error.cause });
-        if (digest.value !== artifact.sha256) {
+        if (artifact.integrity === "pinned" && digest.value !== artifact.sha256) {
             return err({
                 type: "digest_mismatch",
                 path: artifact.path,
                 expected: artifact.sha256,
                 actual: digest.value,
-                message: `SHA-256 mismatch for ${artifact.path}.`,
+                message: `SHA-256 mismatch for ${artifact.path}. The upstream bytes are not the reviewed bytes; nothing was activated.`,
             });
         }
-        return ok({ partPath, bytesDownloaded: appending ? written - resumeAt : written });
+        return ok({
+            partPath,
+            bytesDownloaded: appending ? written - resumeAt : written,
+            observed: { path: artifact.path, bytes: written, sha256: digest.value, integrity: artifact.integrity },
+        });
     } catch (cause) {
-        return err({ type: "download_failed", message: `Download failed for ${artifact.key}.`, cause });
+        return err({ type: "download_failed", message: `Download failed for ${artifact.path} (${artifact.url}).`, cause });
     }
 }
 
@@ -583,9 +639,11 @@ async function installDataset(
     dataset: ReferenceInstallPlanDataset,
     paths: ReferenceStorePaths,
     deps: ReferenceInstallDeps,
-): Promise<Result<{ readonly id: string; readonly version: string; readonly bytesDownloaded: number }, ReferenceProvisionError>> {
+    options: ReferenceInstallOptions,
+): Promise<Result<InstalledReferenceDataset, ReferenceProvisionError>> {
     const attempt = deps.attemptId?.() ?? `${Date.now()}-${createHash("sha256").update(dataset.id).digest("hex").slice(0, 8)}`;
-    const stageRoot = join(paths.staging, attempt, dataset.installPath);
+    const attemptRoot = join(paths.staging, attempt);
+    const stageRoot = join(attemptRoot, dataset.installPath);
     const finalRoot = join(paths.managed, dataset.installPath);
     if (!containedPath(paths.staging, stageRoot) || !containedPath(paths.managed, finalRoot)) {
         return err({ type: "managed_path_conflict", path: finalRoot, message: `Unsafe managed destination for ${dataset.id}.` });
@@ -598,20 +656,22 @@ async function installDataset(
     if (replaceable.isErr()) return err(replaceable.error);
     const receiptRead = await readReceipt(join(paths.receipts, `${dataset.id}.json`), paths.root);
     const activeReceipt = receiptRead.receipt;
-    if (activeReceipt !== undefined) {
+    if (!options.force && activeReceipt !== undefined) {
         const activeRoot = activeManagedRoot(paths, dataset, activeReceipt);
-        if (activeRoot !== undefined && receiptMatchesCurrentCatalog(dataset, activeReceipt) && (await receiptFilesPresent(paths, activeRoot, activeReceipt))) {
+        if (activeRoot !== undefined && receiptMatchesCurrentCatalog(dataset, activeReceipt) && (await receiptFilesIntact(paths, activeRoot, activeReceipt))) {
             return ok({ id: dataset.id, version: dataset.version, bytesDownloaded: 0 });
         }
     }
     let bytesDownloaded = 0;
     try {
-        await rm(join(paths.staging, attempt), { recursive: true, force: true });
+        await rm(attemptRoot, { recursive: true, force: true });
         await mkdir(stageRoot, { recursive: true });
+        const observed: ReferenceReceiptArtifact[] = [];
         for (const artifact of dataset.artifacts) {
-            const downloaded = await downloadArtifact(artifact, paths, deps);
+            const downloaded = await downloadArtifact(dataset, artifact, paths, deps);
             if (downloaded.isErr()) return err(downloaded.error);
             bytesDownloaded += downloaded.value.bytesDownloaded;
+            observed.push(downloaded.value.observed);
             const destination = join(stageRoot, artifact.path);
             if (!containedPath(stageRoot, destination)) {
                 return err({ type: "managed_path_conflict", path: destination, message: `Unsafe artifact destination ${artifact.path}.` });
@@ -641,7 +701,7 @@ async function installDataset(
             datasetId: dataset.id,
             datasetVersion: dataset.version,
             activatedAt: (deps.now?.() ?? new Date()).toISOString(),
-            artifacts: dataset.artifacts.map(({ path, bytes, sha256 }) => ({ path, bytes, sha256 })),
+            artifacts: observed,
         };
         const receiptWrite = await writeReceiptAtomic(receiptPath, receipt);
         if (receiptWrite.isErr()) {
@@ -651,11 +711,15 @@ async function installDataset(
         }
         if (hadFinal) await rm(backup, { recursive: true, force: true }).catch(() => undefined);
         for (const artifact of dataset.artifacts) {
-            await rm(join(paths.downloads, `${downloadName(artifact.key)}.part`), { force: true }).catch(() => undefined);
+            await rm(join(paths.downloads, `${downloadName(referenceArtifactKey(dataset, artifact))}.part`), { force: true }).catch(() => undefined);
         }
         return ok({ id: dataset.id, version: dataset.version, bytesDownloaded });
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not stage ${dataset.id}@${dataset.version}.`, cause });
+    } finally {
+        // The activation `rename` moves the staged version dir out, leaving its parents
+        // behind; every attempt gets a fresh id, so without this they accumulate forever.
+        await rm(attemptRoot, { recursive: true, force: true }).catch(() => undefined);
     }
 }
 
@@ -663,6 +727,7 @@ async function installDataset(
 export async function installReferenceDatasets(
     datasetIds: readonly string[],
     deps: ReferenceInstallDeps,
+    options: ReferenceInstallOptions = {},
 ): Promise<Result<ReferenceInstallOutcome, ReferenceProvisionError>> {
     const plan = (deps.source ?? CANONICAL_REFERENCE_SOURCE).resolveInstallPlan(datasetIds);
     if (plan.isErr()) {
@@ -675,21 +740,22 @@ export async function installReferenceDatasets(
     }
     const ensured = await ensureReferenceStore(deps.root);
     if (ensured.isErr()) return err(ensured.error);
-    const installed: { readonly id: string; readonly version: string; readonly bytesDownloaded: number }[] = [];
+    const installed: InstalledReferenceDataset[] = [];
     for (const dataset of plan.value.datasets) {
-        const result = await installDataset(dataset, ensured.value, deps);
+        const result = await installDataset(dataset, ensured.value, deps, options);
         if (result.isErr()) return err(result.error);
         installed.push(result.value);
     }
     return ok({ installed });
 }
 
-/** Compute bytes still needed from resumable partials without creating state. */
+/** Estimate the transfer without creating state or contacting any upstream. */
 export async function referenceDownloadBytes(
     datasetIds: readonly string[],
     root: string,
     source: ReferenceCatalogSource = CANONICAL_REFERENCE_SOURCE,
-): Promise<Result<number, ReferenceProvisionError>> {
+    options: ReferenceInstallOptions = {},
+): Promise<Result<ReferenceDownloadEstimate, ReferenceProvisionError>> {
     const plan = source.resolveInstallPlan(datasetIds);
     if (plan.isErr()) {
         return err({ type: "unknown_dataset", message: plan.error.message, unknownId: plan.error.unknownId, availableIds: plan.error.availableIds });
@@ -697,21 +763,28 @@ export async function referenceDownloadBytes(
     const paths = referenceStorePaths(root);
     try {
         let bytes = 0;
+        let unsizedArtifacts = 0;
         for (const dataset of plan.value.datasets) {
             const receiptRead = await readReceipt(join(paths.receipts, `${dataset.id}.json`), paths.root);
             const activeReceipt = receiptRead.receipt;
-            if (activeReceipt !== undefined) {
+            if (!options.force && activeReceipt !== undefined) {
                 const activeRoot = activeManagedRoot(paths, dataset, activeReceipt);
                 if (
                     activeRoot !== undefined &&
                     receiptMatchesCurrentCatalog(dataset, activeReceipt) &&
-                    (await receiptFilesPresent(paths, activeRoot, activeReceipt))
+                    (await receiptFilesIntact(paths, activeRoot, activeReceipt))
                 ) {
                     continue;
                 }
             }
             for (const artifact of dataset.artifacts) {
-                const partPath = join(paths.downloads, `${downloadName(artifact.key)}.part`);
+                // Only a mutable upstream can say how big its current file is, and asking
+                // would mean a network round-trip inside what is a purely local estimate.
+                if (artifact.integrity === "unpinned") {
+                    unsizedArtifacts += 1;
+                    continue;
+                }
+                const partPath = join(paths.downloads, `${downloadName(referenceArtifactKey(dataset, artifact))}.part`);
                 const owned = await assertOwnedPath(paths.root, partPath);
                 if (owned.isErr()) return err(owned.error);
                 const partialResult = await pathLstat(partPath);
@@ -727,7 +800,7 @@ export async function referenceDownloadBytes(
                 }
             }
         }
-        return ok(bytes);
+        return ok({ bytes, unsizedArtifacts });
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not inspect resumable downloads at ${root}.`, cause });
     }

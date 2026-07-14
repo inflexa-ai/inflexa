@@ -43,7 +43,6 @@ const configVar = process.platform === "win32" ? "APPDATA" : "XDG_CONFIG_HOME";
 const logLevelVar = "INFLEXA_LOG_LEVEL";
 const otelEndpointVar = "OTEL_EXPORTER_OTLP_ENDPOINT";
 const modelApiKeyVar = "INFLEXA_MODEL_API_KEY";
-const referenceDataBaseUrlVar = "INFLEXA_REFERENCE_DATA_BASE_URL";
 
 function dataDir(): string {
     const base = process.env[dataVar];
@@ -198,11 +197,6 @@ export const env = Object.freeze({
      */
     modelApiKey: process.env[modelApiKeyVar],
     /**
-     * Optional public distribution root for opaque catalog artifact keys. Release packaging may
-     * configure it without putting deployment URLs in the host-neutral harness catalog.
-     */
-    referenceDataBaseUrl: process.env[referenceDataBaseUrlVar],
-    /**
      * CLIProxyAPI networking — internal constants, deliberately excluded from
      * envDoc/--help (see the Exclude on envDoc below).
      */
@@ -287,11 +281,6 @@ export const envDoc: Readonly<
         kind: "var",
         name: modelApiKeyVar,
         description: 'API key for a direct model connection (config `models.connection.mode: "direct"`); unused with the default managed proxy',
-    },
-    referenceDataBaseUrl: {
-        kind: "var",
-        name: referenceDataBaseUrlVar,
-        description: "public distribution base for catalog reference-data artifacts",
     },
 });
 

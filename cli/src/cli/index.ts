@@ -362,9 +362,10 @@ refs.command("list")
     });
 
 refs.command("download [ids...]")
-    .description("Download and verify selected catalog datasets")
+    .description("Download selected catalog datasets from their upstream publishers and verify them")
     .option("--yes", "Skip the download confirmation")
-    .action(async (ids: string[], options: { yes?: boolean }) => {
+    .option("--force", "Re-fetch even when already installed — repairs damage and refreshes mutable upstreams")
+    .action(async (ids: string[], options: { yes?: boolean; force?: boolean }) => {
         const { runRefsDownload } = await import("../modules/refs/commands.ts");
         await runRefsDownload(ids, options);
     });

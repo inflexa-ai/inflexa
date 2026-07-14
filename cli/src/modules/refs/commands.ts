@@ -9,8 +9,8 @@ import {
     inspectReferenceStore,
     installReferenceDatasets,
     referenceDownloadBytes,
-    resolvePublicArtifactUrl,
     verifyReferenceDatasets,
+    type ReferenceDownloadEstimate,
     type ReferenceInstallOutcome,
     type ReferenceCatalogSource,
     type ReferenceProvisionError,
@@ -22,6 +22,8 @@ export type ReferenceDownloadOptions = {
     readonly ids: readonly string[];
     /** Explicit non-interactive consent and interactive confirmation bypass. */
     readonly yes?: boolean;
+    /** Re-fetch even when the active install is intact; the only way to refresh a mutable upstream. */
+    readonly force?: boolean;
     /** Whether terminal prompts may be used. */
     readonly interactive?: boolean;
     /** Matching catalog/plan seam for offline tests. */
@@ -69,12 +71,54 @@ export function formatReferenceBytes(bytes: number): string {
     return `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
 }
 
-function totalBytes(dataset: ReferenceDataCatalog["datasets"][number]): number {
-    return dataset.artifacts.reduce((sum, artifact) => sum + artifact.bytes, 0);
+type ReferenceDatasetSize = {
+    /** Bytes across artifacts the catalog can size. */
+    readonly bytes: number;
+    /** Artifacts whose size only the mutable upstream knows. */
+    readonly unsized: number;
+};
+
+function datasetSize(dataset: ReferenceDataCatalog["datasets"][number]): ReferenceDatasetSize {
+    let bytes = 0;
+    let unsized = 0;
+    for (const artifact of dataset.artifacts) {
+        if (artifact.integrity === "pinned") bytes += artifact.bytes;
+        else unsized += 1;
+    }
+    return { bytes, unsized };
+}
+
+/** Render a size the catalog may only partly know, without ever inventing a number. */
+function formatReferenceSize(size: ReferenceDatasetSize): string {
+    if (size.unsized === 0) return formatReferenceBytes(size.bytes);
+    const unsized = `${size.unsized} file${size.unsized === 1 ? "" : "s"} of upstream-determined size`;
+    return size.bytes === 0 ? unsized : `${formatReferenceBytes(size.bytes)} + ${unsized}`;
+}
+
+/** The strongest integrity guarantee that holds for every artifact in the dataset. */
+function datasetIntegrity(dataset: ReferenceDataCatalog["datasets"][number]): "pinned" | "unpinned" | "mixed" {
+    const pinned = dataset.artifacts.some((artifact) => artifact.integrity === "pinned");
+    const unpinned = dataset.artifacts.some((artifact) => artifact.integrity === "unpinned");
+    return pinned && unpinned ? "mixed" : unpinned ? "unpinned" : "pinned";
+}
+
+function renderIntegrity(dataset: ReferenceDataCatalog["datasets"][number]): string {
+    switch (datasetIntegrity(dataset)) {
+        case "pinned":
+            return "pinned — verified against the checksums in the catalog";
+        case "unpinned":
+            return "unpinned — upstream is rebuilt in place; verified against what you downloaded";
+        case "mixed":
+            return "mixed — some files are checksum-pinned, others are verified against what you downloaded";
+    }
 }
 
 function renderError(error: ReferenceProvisionError): string {
     return error.message;
+}
+
+function renderEstimate(estimate: ReferenceDownloadEstimate): string {
+    return formatReferenceSize({ bytes: estimate.bytes, unsized: estimate.unsizedArtifacts });
 }
 
 async function chooseIds(catalog: ReferenceDataCatalog): Promise<readonly string[] | undefined> {
@@ -84,7 +128,7 @@ async function chooseIds(catalog: ReferenceDataCatalog): Promise<readonly string
         required: false,
         options: catalog.datasets.map((dataset) => ({
             value: dataset.id,
-            label: `${dataset.title} (${formatReferenceBytes(totalBytes(dataset))})`,
+            label: `${dataset.title} (${formatReferenceSize(datasetSize(dataset))})`,
             hint: `${dataset.recommendation.group}${dataset.recommendation.recommended ? ", recommended" : ""}`,
         })),
     });
@@ -117,20 +161,21 @@ export async function downloadReferences(
         ids = chosen;
     }
 
-    const bytes =
-        options.source === undefined ? await referenceDownloadBytes(ids, env.refsDir) : await referenceDownloadBytes(ids, env.refsDir, options.source);
-    if (bytes.isErr()) return err(bytes.error);
-    console.log(`Reference download plan: ${formatReferenceBytes(bytes.value)} missing.`);
+    const install = { force: options.force ?? false };
+    const estimate = await referenceDownloadBytes(ids, env.refsDir, options.source ?? undefined, install);
+    if (estimate.isErr()) return err(estimate.error);
+    const size = renderEstimate(estimate.value);
+    console.log(`Reference download plan: ${size} to fetch from the upstream publishers.`);
     if (!options.yes) {
         if (!interactive) {
             return err({
                 type: "download_failed",
-                message: `Downloading ${formatReferenceBytes(bytes.value)} requires explicit consent; re-run with --yes.`,
+                message: `Downloading ${size} requires explicit consent; re-run with --yes.`,
             });
         }
         let confirmed: boolean;
         try {
-            confirmed = await (options.confirmDownload ?? confirm)(`Download ${formatReferenceBytes(bytes.value)} of reference data into ${env.refsDir}?`);
+            confirmed = await (options.confirmDownload ?? confirm)(`Download ${size} of reference data into ${env.refsDir}?`);
         } catch (cause) {
             return err({ type: "download_failed", message: "Reference download confirmation failed.", cause });
         }
@@ -138,11 +183,14 @@ export async function downloadReferences(
             return ok({ installed: [], declined: true });
         }
     }
-    return installReferenceDatasets(ids, {
-        root: env.refsDir,
-        ...(options.source === undefined ? {} : { source: options.source }),
-        resolveArtifactUrl: (key) => resolvePublicArtifactUrl(key, env.referenceDataBaseUrl),
-    });
+    return installReferenceDatasets(
+        ids,
+        {
+            root: env.refsDir,
+            ...(options.source === undefined ? {} : { source: options.source }),
+        },
+        install,
+    );
 }
 
 /** `inflexa refs path` — print the public path without creating it. */
@@ -160,7 +208,8 @@ export async function runRefsList(): Promise<void> {
                 const dataset = item.dataset;
                 console.log(`\n${dataset.id}  ${dataset.version}  ${item.state}`);
                 console.log(`  ${dataset.title} — ${dataset.description}`);
-                console.log(`  Size: ${formatReferenceBytes(totalBytes(dataset))}`);
+                console.log(`  Size: ${formatReferenceSize(datasetSize(dataset))}`);
+                console.log(`  Integrity: ${renderIntegrity(dataset)}`);
                 console.log(`  Group: ${dataset.recommendation.group}${dataset.recommendation.recommended ? " (recommended)" : ""}`);
                 console.log(`  Source: ${dataset.sourceUrl}`);
                 console.log(`  License: ${dataset.license.identifier}${dataset.license.url ? ` — ${dataset.license.url}` : ""}`);
@@ -168,8 +217,9 @@ export async function runRefsList(): Promise<void> {
             if (inspection.userContent.length > 0) {
                 console.log(`\nUser/unmanaged top-level content: ${inspection.userContent.join(", ")} (left untouched)`);
             }
-            console.log(`\nAdd arbitrary references under ${env.refsDir}/user; sandboxes discover them dynamically.`);
-            console.log("Missing a reusable option? Open a PR adding immutable metadata to the harness reference-data catalog.");
+            console.log("\nEvery dataset is downloaded straight from the third party that publishes it; nothing is mirrored or re-hosted here.");
+            console.log(`Add arbitrary references under ${env.refsDir}/user; sandboxes discover them dynamically.`);
+            console.log("Missing a reusable option? Open a PR adding its upstream URL, provenance, and licensing to the harness reference-data catalog.");
         },
         (error) => {
             console.error(`Reference-data inspection failed: ${renderError(error)}`);
@@ -179,15 +229,19 @@ export async function runRefsList(): Promise<void> {
 }
 
 /** `inflexa refs download` command action. */
-export async function runRefsDownload(ids: readonly string[], options: { readonly yes?: boolean }): Promise<void> {
-    const result = await downloadReferences({ ids, yes: options.yes });
+export async function runRefsDownload(ids: readonly string[], options: { readonly yes?: boolean; readonly force?: boolean }): Promise<void> {
+    const result = await downloadReferences({ ids, yes: options.yes, force: options.force });
     result.match(
         (outcome) => {
             if ("declined" in outcome) console.log("Cancelled — no reference data activated.");
             else if (outcome.installed.length === 0) console.log("No reference datasets selected.");
             else
                 for (const installed of outcome.installed)
-                    console.log(`Installed ${installed.id}@${installed.version} (${formatReferenceBytes(installed.bytesDownloaded)} downloaded).`);
+                    console.log(
+                        installed.bytesDownloaded === 0
+                            ? `Already installed and intact: ${installed.id}@${installed.version} (nothing downloaded).`
+                            : `Installed ${installed.id}@${installed.version} (${formatReferenceBytes(installed.bytesDownloaded)} downloaded).`,
+                    );
         },
         (error) => {
             console.error(`Reference-data download failed: ${renderError(error)}`);
@@ -214,9 +268,18 @@ export async function runRefsVerify(ids: readonly string[]): Promise<void> {
             if (verified.length === 0) console.log("No installed catalog reference datasets to verify.");
             for (const dataset of verified) {
                 console.log(`${dataset.datasetId}${dataset.version ? `@${dataset.version}` : ""}: ${dataset.state}`);
-                for (const file of dataset.files) console.log(`  ${file.state.padEnd(8)} ${file.path}`);
+                for (const file of dataset.files) {
+                    const against = file.integrity === "pinned" ? "catalog checksum" : "checksum recorded at install";
+                    console.log(`  ${file.state.padEnd(8)} ${file.path}  (vs ${against})`);
+                }
             }
-            if (verified.some((dataset) => dataset.state !== "valid")) process.exitCode = 1;
+            const damaged = verified.filter((dataset) => dataset.state !== "valid");
+            if (damaged.length > 0) {
+                console.error(
+                    `\nRe-download to repair: inflexa refs download ${damaged.map((dataset) => dataset.datasetId).join(" ")} --force --yes`,
+                );
+                process.exitCode = 1;
+            }
         },
         (error) => {
             console.error(`Reference-data verification failed: ${renderError(error)}`);

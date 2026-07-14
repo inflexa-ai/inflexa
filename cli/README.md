@@ -72,9 +72,18 @@ Analyses run inside a **sandbox image** that bakes the R / Python / conda / Node
 
 | Command | Does |
 |-|-|
-| `inflexa refs list` | List the harness catalog with versions, sizes, source/license links, and local state |
-| `inflexa refs download [ids...]` | Download, checksum, and atomically activate selected catalog datasets |
+| `inflexa refs list` | List the harness catalog with versions, sizes, integrity class, source/license links, and local state |
+| `inflexa refs download [ids...]` | Download from the upstream publishers, verify, and atomically activate selected datasets |
 | `inflexa refs verify [ids...]` | Hash active managed files and report missing or modified content |
 | `inflexa refs path` | Print the host path without creating it |
 
-The CLI owns `managed/` and `.inflexa/` below the store. Put arbitrary reference files under `user/`; the installer never adopts, verifies, overwrites, or deletes that content, and sandbox discovery sees it dynamically. Catalog artifacts resolve through the configured `INFLEXA_REFERENCE_DATA_BASE_URL`; source and license links stay in the harness-owned catalog. If a useful dataset is missing, custom files work immediately, and a PR adding immutable file sizes/checksums and provenance to the harness catalog makes it an opt-in setup choice for everyone.
+**Every dataset is fetched straight from the third party that publishes it — NCBI, Reactome, WikiPathways, Zenodo, GTEx, CellTypist. This project mirrors, re-hosts, and redistributes nothing**, so there is no endpoint to configure and the licence you accept is the upstream's.
+
+That upstream decides what integrity we can honestly promise, and `refs list` tells you which you get:
+
+- **pinned** — the upstream publishes immutable, versioned bytes, so the catalog carries their size and SHA-256. A download is verified against the catalog *before* it is activated; a mismatch fails the install and changes nothing on disk.
+- **unpinned** — the upstream rebuilds the same URL in place (NCBI regenerates `gene_info` daily; Reactome overwrites `current` and deletes the prior release), so no checked-in digest could survive. Integrity is trust-on-first-use: the installer records the bytes it actually received, and `refs verify` proves they have not changed *since you installed them*. This is a weaker guarantee, and it is labelled as one.
+
+`refs download --force` re-fetches even when a dataset is already installed: it repairs a damaged install and is how you refresh an `unpinned` dataset once its upstream has moved on.
+
+The CLI owns `managed/` and `.inflexa/` below the store. Put arbitrary reference files under `user/`; the installer never adopts, verifies, overwrites, or deletes that content, and sandbox discovery sees it dynamically. Nothing in the sandbox image points a library at the store — agents call `list-available-refs` and pass the returned absolute paths explicitly. If a useful dataset is missing, custom files work immediately, and a PR adding its upstream URL, provenance, and licensing to the harness catalog makes it an opt-in setup choice for everyone.

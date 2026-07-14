@@ -109,6 +109,8 @@ describe("reference-data paths", () => {
         if (dataHome === undefined) throw new Error("test preload must provide the platform data home");
         expect(env.refsDir).toBe(join(dataHome, "inflexa", "refs"));
         expect(envDoc.refsDir).toMatchObject({ kind: "path", label: "references" });
-        expect(envDoc.referenceDataBaseUrl).toMatchObject({ kind: "var", name: "INFLEXA_REFERENCE_DATA_BASE_URL" });
+        // Reference artifacts are fetched from the upstream that publishes them, so there is
+        // no distribution endpoint to configure and no env var that could point one elsewhere.
+        expect(Object.keys(envDoc)).not.toContain("referenceDataBaseUrl");
     });
 });

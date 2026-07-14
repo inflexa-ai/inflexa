@@ -1,26 +1,27 @@
 ## Context
 
-The harness Docker backend already accepts `refStorePath` and mounts it read-only at `/mnt/refs`, but the CLI composition root never supplies one. The CLI has no reference-store path, commands, receipts, or setup flow. At the same time, the harness companion change introduces a canonical catalog shared with managed deployment and makes sandbox discovery filesystem-driven.
+The harness Docker backend already accepts `refStorePath` and mounts it read-only at `/mnt/refs`, but the CLI composition root never supplies one. The CLI has no reference-store path, commands, receipts, or setup flow. At the same time, the harness companion change introduces a canonical catalog shared with managed deployment — one whose artifacts name their upstream publisher and declare what integrity that upstream can actually guarantee — and makes sandbox discovery filesystem-driven.
 
-The CLI owns host-local policy: platform paths, terminal interaction, public artifact resolution, downloads, activation, and what setup offers. It must preserve the repository's no-litter rule, never let Docker create a missing bind source, and never treat user-added reference data as installer-owned state.
+The CLI owns host-local policy: platform paths, terminal interaction, transfer, activation, and what setup offers. It must preserve the repository's no-litter rule, never let Docker create a missing bind source, and never treat user-added reference data as installer-owned state.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
 - Give users a stable, documented host directory whose content appears read-only at `/mnt/refs`.
-- Install selected catalog datasets safely and reproducibly without a second catalog definition.
+- Install selected catalog datasets from their publishers, safely and repeatably, without a second catalog definition.
+- Deliver the strongest integrity check each artifact's upstream permits — and say plainly which one was checked.
 - Make setup and explicit commands share one dogfooded handler.
 - Keep user-added data discoverable and outside installer cleanup/update ownership.
 - Make scripted setup deterministic and prevent silent multi-GB downloads.
 
 **Non-Goals:**
 
+- Mirroring, re-hosting, or proxying reference bytes, or offering any way to point the installer elsewhere.
 - Provisioning the managed deployment's PVC or object store.
 - Downloading from within a sandbox.
 - Importing arbitrary user files into the managed namespace or validating their scientific meaning.
 - Maintaining reference installation state in SQLite.
-- Supporting executable installer recipes or archive transformations in the first catalog format.
 
 ## Decisions
 
@@ -32,7 +33,7 @@ The layout is:
 
 ```text
 refs/
-  managed/<dataset-id>/<version>/...  # immutable activated catalog content
+  managed/<dataset-id>/<version>/...  # activated catalog content
   user/                                # recommended user-owned namespace
   .inflexa/
     receipts/<dataset-id>.json
@@ -40,36 +41,44 @@ refs/
     downloads/<artifact>.part
 ```
 
-The `managed` and `.inflexa` namespaces are installer-owned. The CLI never deletes, rewrites, or adopts content under `user/` or unknown top-level paths.
+The `managed` and `.inflexa` namespaces are installer-owned. The CLI never deletes, rewrites, or adopts content under `user/` or unknown top-level paths, and it refuses to follow a symlink or overwrite unexpected content on an installer-owned path.
 
-### The CLI consumes install plans and resolves public artifact URLs
+### The CLI fetches from the catalog's upstream; there is nothing to configure
 
-The CLI imports the harness catalog interface from the package barrel. Its adapter maps each plan artifact key to the configured public distribution base. Dataset source and licensing links remain catalog facts; the artifact base remains distribution configuration. The CLI does not copy or reinterpret catalog entries.
+Each catalog artifact carries the `https` URL of the third party that publishes it, and the installer fetches exactly that. There is no artifact-key adapter, no distribution base, and no `INFLEXA_REFERENCE_DATA_BASE_URL`.
 
-An alternative was a CLI catalog overlay. That would let supported options drift from managed deployment and undermine checksum identity.
+**Rejected: a configurable distribution base** (the earlier design's opaque keys plus a CLI-resolved public endpoint, with managed free to point at an internal mirror). A configurable source is a source that can be *substituted* — and once it can be, the catalog's provenance and licensing statements ("this is NCBI's `gene_info`; you accept NCBI's terms") stop describing the bytes the user actually receives. It would also quietly make us a redistributor of data we reviewed only for use. The only supported way to bring in other reference data is the `user/` namespace, which the installer never touches.
+
+**Rejected, likewise: a CLI catalog overlay.** It would let the local option set drift from managed deployment and undermine content identity.
+
+### Verification is as strong as the upstream allows, and never stronger than it claims
+
+- A **`pinned`** artifact is verified against the catalog's byte size and SHA-256 before anything is activated. A mismatch means the bytes are not the reviewed bytes: the install fails and the prior activation stands.
+- An **`unpinned`** artifact has no catalog digest — its upstream rebuilds the same URL in place — so there is nothing to check the download against. The installer records the size and digest it *observed* in the receipt, and `verify` proves the files are unchanged since install. `refs verify` names, per file, which guarantee it checked, so a weaker guarantee is never silently presented as a checksum match against a reviewed digest.
+
+The receipt is therefore written from observation, never copied from the catalog — for `pinned` artifacts the two necessarily agree, and for `unpinned` ones the observation is the only honest record.
+
+### Resume applies to pinned artifacts only
+
+A partial `.part` is resumed with an HTTP Range request only when the artifact is `pinned`, because only then do we know the final size and digest — the two facts that make "this prefix belongs to that file" checkable. For an `unpinned` artifact the partial is discarded and the file re-fetched whole: the upstream may have replaced the file since the partial was written, and appending to it would splice two different files into one that verifies against nothing and looks complete.
+
+### `--force` is the refresh path, not just a repair path
+
+`refs download --force` re-fetches and re-activates even when the active install is intact. It repairs damage, and — for an `unpinned` dataset — it is the *only* way to pull a fresh copy: an intact local install of the bytes we previously received is indistinguishable from an up-to-date one without going to the network, so the user must be able to ask.
+
+### The skip gate compares digests, not sizes
+
+Deciding "already installed, nothing to transfer" hashes the active files against the receipt (`receiptFilesIntact`). A size-only check cannot see a same-size corruption — a flipped byte, bad sector, hand-edit — and would skip the repair *while printing "Installed"*: a false claim of success on exactly the input a user re-runs `download` to fix. Cheap `refs list` state stays size-only (it is a status glance, and hashing every dataset on every list would be slow), but an install and a download estimate both gate on the digest.
+
+### Sizes are reported honestly, including when they are unknown
+
+Only the upstream knows how big an `unpinned` file currently is, and a local estimate must not make a network round-trip. So the pre-transfer estimate returns both the bytes the catalog knows and the count of artifacts whose size only the upstream can report; the CLI shows both and never invents a total.
 
 ### Installation stages a complete dataset before activation
 
-The downloader computes the missing-byte plan before consent, downloads final-file artifacts to `.part` files, verifies byte size and SHA-256, and places them in a per-attempt staging directory using their validated relative destinations. Only after every artifact verifies does it atomically rename the staged dataset directory to `managed/<id>/<version>` and atomically write the active receipt.
+Artifacts download to installer-owned `.part` files, are placed into a per-attempt staging directory at their validated relative destinations, and the staged version directory is atomically renamed into `managed/<id>/<version>` only when every artifact is accounted for. The receipt is then written atomically. Any failure restores the prior version directory, and the per-attempt staging root is always removed — the activation `rename` moves the staged version out but leaves its parents behind, and every attempt has a fresh id, so without cleanup they would accumulate forever.
 
-Version directories are immutable. An update activates the new version in its receipt only after success; older managed versions are retained initially rather than being deleted under a running sandbox. `refs verify` hashes the receipt's active files on explicit request. Ordinary `refs list` performs a cheap receipt/path/size check and labels a dataset `missing`, `partial`, `installed`, `update available`, or `invalid receipt`.
-
-The initial catalog contains final files rather than archives, so installation needs no extraction dependency and has no archive traversal surface.
-
-### Commands form the reusable provisioning interface
-
-- `inflexa refs list` renders every catalog option with version, description, download size, source/license links, and local state; it also notes unregistered top-level/user content without claiming ownership.
-- `inflexa refs download [ids...]` accepts explicit ids or uses an interactive multi-select, shows total missing bytes, asks for confirmation unless `--yes`, and installs through the one handler.
-- `inflexa refs verify [ids...]` verifies active managed files against catalog hashes; with no ids it verifies all installed catalog datasets.
-- `inflexa refs path` prints `env.refsDir` without creating it.
-
-The module's headless install operation takes selected ids and resolved policy and returns a typed outcome. Command rendering and setup consume that interface; they do not duplicate transfer logic.
-
-### Setup offers references but never guesses in headless mode
-
-Interactive `inflexa setup` creates the public store and `user/` namespace, inspects catalog state, and offers a size-labelled multi-select of missing or updateable datasets. A decline or empty selection continues. A selected download failure fails setup visibly so scripted/user-requested provisioning is not reported as complete.
-
-Headless setup downloads nothing unless an explicit `--refs <id,...>` selection is supplied; explicit selection implies consent only when paired with the existing/non-interactive confirmation policy (`--yes` or the setup's explicit provisioning flag). Otherwise setup prints `inflexa refs download ...` guidance.
+An update activates the new version only after success; older managed versions are retained rather than deleted under a running sandbox.
 
 ### Runtime wiring is existence-gated
 
@@ -77,9 +86,10 @@ The composition root passes `refStorePath: env.refsDir` only when the directory 
 
 ## Risks / Trade-offs
 
-- **Reference files can be very large** → Calculate missing bytes before consent, stream to resumable `.part` files, verify before activation, and never auto-download headlessly.
+- **Reference files can be large** → Estimate the missing bytes before consent, stream to resumable `.part` files, verify before activation, and never auto-download headlessly.
+- **An `unpinned` dataset silently ages** → Accepted and surfaced: the class is shown in `refs list`, `verify` says which guarantee it checked, and `--force` refreshes on demand. The alternative (pinning a digest to a mutable URL) would guarantee a broken download instead.
+- **An upstream can be slow, rate-limited, or down** → Accepted as the price of not redistributing. A failed attempt never changes an existing activation.
 - **Update leaves old versions on disk** → Accept bounded disk growth initially; add explicit managed-version reclamation later rather than deleting bytes used by a running sandbox.
-- **Public distribution endpoint is unavailable** → Preserve prior active receipts and version directories; a failed staging attempt never changes activation.
 - **User places files in a reserved namespace** → Document ownership clearly and refuse to adopt or overwrite unexpected managed paths.
 - **Receipt and disk disagree after manual edits** → Report normal recoverable states and let `download` repair managed content; never touch user content.
 
@@ -91,7 +101,3 @@ The composition root passes `refStorePath: env.refsDir` only when the directory 
 4. Existing users have no migration: an absent store remains unmounted until setup, download, or manual directory creation.
 
 Rollback removes the command and mount wiring without deleting the reference directory, receipts, managed versions, or user content.
-
-## Open Questions
-
-- The concrete public artifact base and initial catalog selections are release configuration/data, not architectural blockers for the provisioning interface.
