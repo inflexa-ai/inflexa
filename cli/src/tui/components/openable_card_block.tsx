@@ -1,6 +1,5 @@
 import { For, Show } from "solid-js";
 
-import { theme } from "../theme.ts";
 import { GLYPHS, space } from "../../lib/design_system.ts";
 import { Bold, Fg, Underline } from "./emphasis.tsx";
 import type { OpenableIcon } from "../../types/session.ts";
@@ -68,7 +67,10 @@ export function OpenableCardBlock(props: OpenableCardBlockProps) {
                     <Bold>{props.title}</Bold>
                 </text>
             </Show>
-            <box paddingLeft={space.md} flexDirection="column" border={["left"]} borderColor={theme().border}>
+            {/* Rows pad by space.md, landing in the same column as assistant body text. Deliberately NO
+                left border rule — that's the quoted-content idiom reserved for user-authored turns, and
+                these cards are agent-emitted content. */}
+            <box paddingLeft={space.md} flexDirection="column">
                 <For each={props.rows}>
                     {(row, index) => (
                         <box flexDirection="column" onMouseDown={() => props.onOpen(index())}>

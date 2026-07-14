@@ -35,7 +35,8 @@ echart spec and `dataPath`, the deterministic `pres-` id) and SHALL NOT store
 a resolved location. Resolution to an openable location happens when the user
 opens: `data-file-reference` paths and `data-report-preview` previews resolve
 against `resolveWorkspaceRoot(analysisId)`; `echart`/`svg` presentations
-resolve to their materialized cache file. A reference that fails to resolve
+resolve to their materialized file under the workspace's `presentations/`
+directory. A reference that fails to resolve
 (missing file, workspace desync) SHALL render that entry in a degraded state
 with its path visible, and open attempts on it SHALL produce a notice — never
 an error.
@@ -51,35 +52,41 @@ an error.
 - **WHEN** a `data-file-reference` entry's resolved path does not exist
 - **THEN** the card renders that entry as missing with its path shown, and opening it produces a notice instead of an error
 
-### Requirement: Presentations materialize into an id-keyed cache
+### Requirement: Presentations materialize into the workspace presentations directory
 
-`echart` and `svg` presentations SHALL materialize on demand into a CLI-owned
-cache directory (app data, outside any analysis workspace), keyed by the
-card's deterministic `pres-` id so re-emission and re-open are idempotent.
-`svg` content materializes as an `.svg` file. `echart` content materializes as
-a self-contained HTML shell embedding the spec and loading ECharts from a
-pinned-major CDN URL, with a visible fallback notice when the script cannot
-load (offline). For an artifact-sourced chart (`dataPath`), materialization
-SHALL read the workspace CSV per the harness display-cards contract (RFC-4180,
-header row, numeric column inference) and inject the rows as
-`dataset.source`; a missing or unparseable CSV degrades the card, never
-crashes. The cache is disposable: content is regenerable from the transcript.
+`echart` and `svg` presentations SHALL materialize on demand into the analysis
+workspace's reserved `presentations/` directory
+(`{workspaceRoot}/presentations/`, a root-level sibling of `data/`, `runs/`,
+`reports/`, and `previews/`), keyed by the card's deterministic `pres-` id so
+re-emission and re-open are idempotent. `svg` content materializes as an
+`.svg` file. `echart` content materializes as a self-contained HTML shell
+embedding the spec and loading ECharts from a pinned-major CDN URL, with a
+visible fallback notice when the script cannot load (offline). For an
+artifact-sourced chart (`dataPath`), the shell SHALL NOT embed the data: it
+references the artifact by a URL relative to where the shell sits
+(`../{dataPath}`) and fetches it at render time, parsing it in-page with a
+pinned-major CDN CSV parser (PapaParse: delimiter auto-detection, numeric
+cell typing, header row first) into `dataset.source`, so an open always
+reflects the current artifact bytes. A failed fetch or parse degrades to a
+visible in-page note, never a crash; an invalid `dataPath` shape is refused
+before a URL is derived and pre-degrades the shell. Materialized files are
+disposable: content is regenerable from the transcript.
 
 #### Scenario: Chart opens interactively
 
 - **WHEN** the user opens an `echart` presentation card
-- **THEN** the CLI writes (or reuses) `<cache>/<pres-id>.html` and opens it in the browser, where the chart renders interactively
+- **THEN** the CLI writes (or reuses) `{workspaceRoot}/presentations/<pres-id>.html` and opens it in the browser, where the chart renders interactively
 
-#### Scenario: Artifact-sourced chart carries its data
+#### Scenario: Artifact-sourced chart imports its data
 
 - **GIVEN** an echart card with `dataPath: "runs/run-abc/step-2/output/de-summary.csv"`
 - **WHEN** the user opens it
-- **THEN** the materialized HTML contains the CSV rows as `dataset.source` with the header row as dimension names
+- **THEN** the materialized HTML references `../runs/run-abc/step-2/output/de-summary.csv` and loads it as `dataset.source` at render time — the CSV rows are never written into the shell
 
 #### Scenario: Same card, same file
 
 - **WHEN** the agent re-emits an identical presentation and the user opens it again
-- **THEN** the same cache file is reused (no duplicate materializations)
+- **THEN** the same presentations file is reused (no duplicate materializations)
 
 ### Requirement: Open UX — click, latest, and picker
 

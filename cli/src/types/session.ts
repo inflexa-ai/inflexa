@@ -145,8 +145,9 @@ export type OpenableIcon = "chart" | "image" | "document" | "report";
 /**
  * How an openable card entry resolves to something to open — the SEMANTIC reference, never a resolved
  * location (the artifact-open spec's open-time-resolution rule). Resolution happens when the user opens:
- * `workspace-file` joins the analysis workspace root; `echart`/`svg` materialize a cache file from the
- * embedded spec/markup; `unavailable` is a card with nothing to open (a failed report preview).
+ * `workspace-file` joins the analysis workspace root; `echart`/`svg` materialize a file under the
+ * workspace's `presentations/` directory from the embedded spec/markup; `unavailable` is a card with
+ * nothing to open (a failed report preview).
  */
 export type OpenTarget =
     | { kind: "workspace-file"; path: string }
@@ -175,7 +176,7 @@ export type OpenableEntry = {
 export type OpenableCardPart = {
     id: string;
     type: "openable-card";
-    /** The analysis whose workspace root + render cache resolve this card's entries at open time. */
+    /** The analysis whose workspace root resolves this card's entries at open time. */
     analysisId: string;
     /** Optional card heading. */
     title?: string;

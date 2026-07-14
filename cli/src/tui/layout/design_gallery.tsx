@@ -419,7 +419,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         onOpen is inert here — the gallery renders the pure block with resolved fixtures. */}
                     <OpenableCardBlock
                         title="Volcano plot"
-                        rows={[{ icon: "chart", name: "Volcano plot", path: "~/.local/share/inflexa/cache/presentations/pres-9f21a3.html", degraded: false }]}
+                        rows={[{ icon: "chart", name: "Volcano plot", path: "~/proj/.inflexa/analyses/rna/presentations/pres-9f21a3.html", degraded: false }]}
                         onOpen={noop}
                     />
                     <OpenableCardBlock

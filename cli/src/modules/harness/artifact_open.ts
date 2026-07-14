@@ -1,20 +1,19 @@
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, posix } from "node:path";
 import { validatePath } from "@inflexa-ai/harness/tools/lib/path-validation";
 import { err, ok, type Result } from "neverthrow";
 
-import { env } from "../../lib/env.ts";
-import { mkdirResult, readFileResult, writeFileResult } from "../../lib/fs.ts";
+import { mkdirResult, writeFileResult } from "../../lib/fs.ts";
 import { openExternal } from "../../lib/open_external.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import type { OpenableEntry, OpenableIcon, OpenTarget, PresentationBody } from "../../types/session.ts";
 
 // The `artifact-open` capability: the shared readers that turn a harness display-card `data` payload
 // into a normalized card model, plus open-time RESOLUTION (reference → path) and MATERIALIZATION
-// (echart/svg spec → a self-contained cache file). Consumed by BOTH the TUI store adapter
-// (`hooks/conversation.ts` wraps the readouts into `Part`s) and the REPL printer (`chat_printer.ts`
-// renders them as OSC 8 links), so the coercion + resolution logic lives in one place.
+// (echart/svg spec → a self-contained file under the analysis workspace's `presentations/` directory).
+// Consumed by BOTH the TUI store adapter (`hooks/conversation.ts` wraps the readouts into `Part`s) and
+// the REPL printer (`chat_printer.ts` renders them as OSC 8 links), so the coercion + resolution logic
+// lives in one place.
 //
 // COPY-ON-RECEIVE: the readers run inside the in-process emit path, whose `data` shares mutable
 // references with the agent loop. Every reader extracts primitives and DEEP-COPIES the echart spec at
@@ -198,10 +197,26 @@ export type OpenArtifactError =
     | { type: "unavailable"; reason: string };
 
 /**
+ * The workspace-reserved directory `echart`/`svg` presentations materialize into, a sibling of the
+ * harness-owned `data/`/`runs/`/`reports/`/`previews/` roots. Living inside the analysis tree keeps a
+ * presentation next to the artifacts it renders, so a `dataPath` chart can reference its CSV by a
+ * relative URL.
+ */
+const PRESENTATIONS_DIR = "presentations";
+
+/** `{workspaceRoot}/presentations/<filename>`, or `null` when the root is unresolvable (moved/deleted anchor). */
+function presentationFilePath(analysisId: string, filename: string): string | null {
+    return workspaceRootForAnalysisId(analysisId).match(
+        (root): string | null => join(root, PRESENTATIONS_DIR, filename),
+        () => null,
+    );
+}
+
+/**
  * The path an entry WOULD resolve to, for display beside the card — never materializes and never opens.
  * `workspace-file` joins the analysis workspace root (`null` when the root is unresolvable — a moved or
- * deleted anchor); `echart`/`svg` name their deterministic cache file (which may not exist until opened);
- * `unavailable` has no path.
+ * deleted anchor); `echart`/`svg` name their deterministic presentations file (which may not exist until
+ * opened); `unavailable` has no path.
  */
 export function resolveEntryPath(analysisId: string, target: OpenTarget): string | null {
     switch (target.kind) {
@@ -211,9 +226,9 @@ export function resolveEntryPath(analysisId: string, target: OpenTarget): string
                 () => null,
             );
         case "echart":
-            return echartCachePath(analysisId, target);
+            return presentationFilePath(analysisId, `${target.presId}.html`);
         case "svg":
-            return join(env.presentationCacheDir, `${target.presId}.svg`);
+            return presentationFilePath(analysisId, `${target.presId}.svg`);
         case "unavailable":
             return null;
         default: {
@@ -226,7 +241,7 @@ export function resolveEntryPath(analysisId: string, target: OpenTarget): string
 /**
  * True when an entry should render in the degraded state: a `workspace-file` whose resolved path is
  * missing (workspace desync) or `unavailable` (a failed preview). `echart`/`svg` are never degraded —
- * they materialize on demand, so their cache file's absence is expected, not a fault.
+ * they materialize on demand, so their presentations file's absence is expected, not a fault.
  */
 export function entryDegraded(analysisId: string, target: OpenTarget): boolean {
     switch (target.kind) {
@@ -255,8 +270,8 @@ function spawnOpen(path: string): Result<string, OpenArtifactError> {
 
 /**
  * Resolve an entry to a concrete, ready-to-open location WITHOUT opening it: `workspace-file` returns
- * the resolved workspace path (missing → `missing`); `echart`/`svg` materialize their cache file and
- * return it; `unavailable` never resolves. This is the seam the REPL printer links to (an OSC 8
+ * the resolved workspace path (missing → `missing`); `echart`/`svg` materialize their presentations
+ * file and return it; `unavailable` never resolves. This is the seam the REPL printer links to (an OSC 8
  * `file://` path) and the shared step {@link openEntry} builds on. Never throws.
  */
 export function materializeTarget(analysisId: string, target: OpenTarget): Result<string, OpenArtifactError> {
@@ -270,7 +285,7 @@ export function materializeTarget(analysisId: string, target: OpenTarget): Resul
         case "echart":
             return materializeEchart(analysisId, target);
         case "svg":
-            return materializeSvg(target);
+            return materializeSvg(analysisId, target);
         case "unavailable":
             return err({ type: "unavailable", reason: target.reason });
         default: {
@@ -301,141 +316,58 @@ export function openFolder(analysisId: string, folder: string): Result<string, O
     return spawnOpen(dir);
 }
 
-/** Write `content` to the render cache at `dest` (creating the cache dir), mapping fs faults onto the error channel. */
-function writeCache(dest: string, content: string): Result<string, OpenArtifactError> {
-    return mkdirResult(env.presentationCacheDir, "materialize:mkdir")
+/** Write `content` to the presentations file at `dest` (creating its directory), mapping fs faults onto the error channel. */
+function writePresentationFile(dest: string, content: string): Result<string, OpenArtifactError> {
+    return mkdirResult(dirname(dest), "materialize:mkdir")
         .andThen(() => writeFileResult(dest, content, "materialize:write"))
         .map(() => dest)
         .mapErr((e): OpenArtifactError => ({ type: "materialize_failed", cause: e.cause }));
 }
 
-/** Materialize a `svg` presentation as `<pres-id>.svg`, reusing the file when it already exists (idempotent). */
-function materializeSvg(target: Extract<OpenTarget, { kind: "svg" }>): Result<string, OpenArtifactError> {
-    const dest = join(env.presentationCacheDir, `${target.presId}.svg`);
+/** Materialize a `svg` presentation as `presentations/<pres-id>.svg`, reusing the file when it already exists (idempotent). */
+function materializeSvg(analysisId: string, target: Extract<OpenTarget, { kind: "svg" }>): Result<string, OpenArtifactError> {
+    const dest = presentationFilePath(analysisId, `${target.presId}.svg`);
+    if (dest === null) return err({ type: "unresolved" });
     if (existsSync(dest)) return ok(dest);
-    return writeCache(dest, target.markup);
+    return writePresentationFile(dest, target.markup);
 }
 
 /**
- * The render-cache file for an echart target. An INLINE chart's `pres-` id is a genuine content hash of
- * the whole tool input, so its file is byte-identical for an identical card and needs no further scope.
- * A `dataPath` chart's rendered content ALSO depends on which analysis it belongs to (the workspace root)
- * and the CSV bytes on disk — neither captured by the input-hashed id — so its filename is scoped by
- * analysis, keeping two analyses whose identical input hashes to the same `pres-` id from aliasing onto
- * one file.
+ * The relative URL a `dataPath` shell fetches its CSV through at render time, derived from where the
+ * shell sits (`{root}/presentations/`) against the analysis-rooted `dataPath` — so the shell and the
+ * artifact travel together with the analysis tree (copy or move the tree and the chart still finds its
+ * data). Segments are percent-encoded so a space/`#` in an artifact name survives URL parsing.
  */
-function echartCachePath(analysisId: string, target: Extract<OpenTarget, { kind: "echart" }>): string {
-    if (target.dataPath === undefined) return join(env.presentationCacheDir, `${target.presId}.html`);
-    const scope = createHash("sha256").update(analysisId).digest("hex").slice(0, 12);
-    return join(env.presentationCacheDir, `${target.presId}.${scope}.html`);
+function dataUrlFor(dataPath: string): string {
+    const rel = posix.relative(`/${PRESENTATIONS_DIR}`, posix.join("/", dataPath));
+    return rel
+        .split("/")
+        .map((segment) => encodeURIComponent(segment))
+        .join("/");
 }
 
 /**
- * Materialize an `echart` presentation as a self-contained HTML shell. For an INLINE chart the `pres-`
- * id is a genuine content hash of the whole tool input, so the file is reused when it already exists
- * (idempotent). For an artifact-sourced chart (`dataPath`) the rendered content also depends on the
- * workspace root and the CSV bytes — neither captured by the id — so the file is analysis-scoped and
- * ALWAYS rewritten on open: the CSV is reread and injected as `dataset.source`, which heals a
- * previously-degraded shell once the file appears and reflects a rewritten CSV. A missing/unparseable
- * CSV degrades to a chart shown without its data (a visible notice), never a crash, and that degraded
- * variant is never persisted for reuse — a later successful read overwrites it for free.
+ * Materialize an `echart` presentation as `presentations/<pres-id>.html`. The `pres-` id is a genuine
+ * content hash of the whole tool input (spec + `dataPath`), and the shell embeds nothing beyond that
+ * input — an artifact-sourced chart carries only a RELATIVE URL to its CSV, fetched and parsed inside
+ * the shell at render time — so the file is a pure function of the id and is reused when it already
+ * exists (idempotent), for both variants. A rewritten CSV needs no rematerialization: the next open
+ * fetches the current bytes. A `dataPath` whose SHAPE is invalid (untrusted — it survives a reload from
+ * a persisted tool_use, bypassing the live tool's validation) degrades to a shell with a visible
+ * no-data note, never a crash.
  */
 function materializeEchart(analysisId: string, target: Extract<OpenTarget, { kind: "echart" }>): Result<string, OpenArtifactError> {
-    const dest = echartCachePath(analysisId, target);
-    if (target.dataPath === undefined) {
-        if (existsSync(dest)) return ok(dest);
-        return writeCache(dest, echartHtml(target.spec, null));
+    const dest = presentationFilePath(analysisId, `${target.presId}.html`);
+    if (dest === null) return err({ type: "unresolved" });
+    if (existsSync(dest)) return ok(dest);
+    if (target.dataPath === undefined) return writePresentationFile(dest, echartHtml(target.spec, null, null));
+    if (validatePath(target.dataPath) !== null) {
+        return writePresentationFile(
+            dest,
+            echartHtml(target.spec, null, `Data file "${target.dataPath}" could not be loaded — the chart is shown without its data.`),
+        );
     }
-    const source = readCsvSource(analysisId, target.dataPath);
-    const spec = source !== null ? { ...target.spec, dataset: { source } } : target.spec;
-    const dataNote = source !== null ? null : `Data file "${target.dataPath}" could not be loaded — the chart is shown without its data.`;
-    return writeCache(dest, echartHtml(spec, dataNote));
-}
-
-/**
- * Read + parse the workspace CSV at the analysis-rooted `dataPath` into an ECharts `dataset.source`, or
- * `null` on any failure or a path that escapes the workspace root. `dataPath` is UNTRUSTED — it survives
- * a reload from a persisted tool_use, bypassing the live tool's validation.
- */
-function readCsvSource(analysisId: string, dataPath: string): unknown[][] | null {
-    // Two-stage guard: reject a malformed/traversal SHAPE, then confirm the resolved absolute path stays
-    // under the resolved workspace root. `join("/ws/root", "../../etc/passwd")` would otherwise escape the
-    // analysis tree and read an arbitrary file into the chart HTML.
-    if (validatePath(dataPath) !== null) return null;
-    const path = workspaceRootForAnalysisId(analysisId).match(
-        (root): string | null => {
-            const rootAbs = resolve(root);
-            const abs = resolve(rootAbs, dataPath);
-            return abs === rootAbs || abs.startsWith(rootAbs + sep) ? abs : null;
-        },
-        () => null,
-    );
-    if (path === null || !existsSync(path)) return null;
-    const text = readFileResult(path, "readCsvSource").match(
-        (t): string | null => t,
-        () => null,
-    );
-    return text === null ? null : parseCsvToSource(text);
-}
-
-// ── CSV → ECharts dataset.source (RFC-4180, header row, numeric inference) ────────────────────────────
-
-/** Parse RFC-4180 CSV text into rows of string cells (quoted fields, escaped `""`, embedded newlines). */
-function parseCsv(text: string): string[][] {
-    const rows: string[][] = [];
-    let row: string[] = [];
-    let field = "";
-    let inQuotes = false;
-    // Strip a leading UTF-8 BOM so the first header cell is not prefixed with U+FEFF.
-    const src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
-    for (let i = 0; i < src.length; i++) {
-        const c = src[i];
-        if (inQuotes) {
-            if (c === '"') {
-                if (src[i + 1] === '"') {
-                    field += '"';
-                    i++;
-                } else {
-                    inQuotes = false;
-                }
-            } else {
-                field += c;
-            }
-            continue;
-        }
-        if (c === '"') inQuotes = true;
-        else if (c === ",") {
-            row.push(field);
-            field = "";
-        } else if (c === "\n") {
-            row.push(field);
-            rows.push(row);
-            row = [];
-            field = "";
-        } else if (c !== "\r") field += c;
-    }
-    // Flush a final field/row that a missing trailing newline would otherwise strand.
-    if (field.length > 0 || row.length > 0) {
-        row.push(field);
-        rows.push(row);
-    }
-    return rows;
-}
-
-/**
- * Parse CSV text into an ECharts `dataset.source`: the header row first (dimension names), then data rows
- * whose fully-numeric columns are converted to numbers (per-column inference), so `encode`-by-name against
- * the header works. `null` when the CSV is empty. Exported for unit tests.
- */
-export function parseCsvToSource(text: string): unknown[][] | null {
-    const rows = parseCsv(text).filter((r) => !(r.length === 1 && r[0] === ""));
-    if (rows.length === 0) return null;
-    const header = rows[0]!;
-    const data = rows.slice(1);
-    // A column is numeric only when every data cell parses as a finite number (an empty column stays textual).
-    const numeric = header.map((_, ci) => data.length > 0 && data.every((r) => r[ci] !== undefined && r[ci]!.trim() !== "" && !Number.isNaN(Number(r[ci]))));
-    const body = data.map((r) => header.map((_, ci) => (numeric[ci] ? Number(r[ci] ?? "") : (r[ci] ?? ""))));
-    return [header, ...body];
+    return writePresentationFile(dest, echartHtml(target.spec, dataUrlFor(target.dataPath), null));
 }
 
 // ── the self-contained echart HTML shell ─────────────────────────────────────────────────────────────
@@ -448,13 +380,23 @@ function escapeHtml(s: string): string {
 /**
  * Build the self-contained echart HTML: the spec embedded inline, ECharts loaded from a pinned-major CDN
  * URL (`echarts@5`), and a VISIBLE fallback notice shown when the script cannot load (offline) so a blank
- * tab is never mysterious. `dataNote`, when present, warns that an artifact CSV could not be loaded.
- * Exported for unit tests. The spec's `<` are escaped so a string field can never break out of the script.
+ * tab is never mysterious. `dataUrl`, when present, is the RELATIVE URL of the chart's data artifact,
+ * fetched at render time and parsed into `dataset.source` in-page by PapaParse (pinned-major CDN, same
+ * pattern as ECharts; delimiter auto-detection, `dynamicTyping` for numeric cells, header row first as
+ * dimension names) — the data lives only in the artifact, never in this file — with a visible degradation
+ * note when the fetch or parse fails (a `file://`-opened page may be denied local data access by the
+ * browser). `dataNote`, when present, pre-degrades the shell (an invalid `dataPath` shape refused before
+ * a URL was derived). Exported for unit tests. Embedded JSON has `<` escaped so a string field can never
+ * break out of the script.
  */
-export function echartHtml(spec: Record<string, unknown>, dataNote: string | null): string {
+export function echartHtml(spec: Record<string, unknown>, dataUrl: string | null, dataNote: string | null): string {
     // Escape `<` in the embedded JSON so a spec string containing `</script>` cannot terminate the script tag.
     const specJson = JSON.stringify(spec).replace(/</g, "\\u003c");
-    const note = dataNote ? `<div id="datanote">${escapeHtml(dataNote)}</div>\n` : "";
+    // The URL rides the same escaped-JSON channel as the spec — an untrusted-shaped path cannot break out.
+    const dataUrlJson = JSON.stringify(dataUrl).replace(/</g, "\\u003c");
+    const noteAttr = dataNote ? "" : ' style="display:none"';
+    // The parser script tag is emitted only for data-carrying shells, so an inline chart stays one fetch.
+    const papaScript = dataUrl !== null ? '<script src="https://cdn.jsdelivr.net/npm/papaparse@5"></script>\n' : "";
     return `<!doctype html>
 <html lang="en">
 <head>
@@ -470,22 +412,53 @@ export function echartHtml(spec: Record<string, unknown>, dataNote: string | nul
 </style>
 </head>
 <body>
-${note}<div id="chart"></div>
+<div id="datanote"${noteAttr}>${escapeHtml(dataNote ?? "")}</div>
+<div id="chart"></div>
 <div id="offline">
   <p>The chart library could not load (are you offline?). The chart spec is shown below.</p>
   <pre id="spec"></pre>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5"></script>
-<script>
+${papaScript}<script>
   var spec = ${specJson};
-  if (window.echarts) {
+  var dataUrl = ${dataUrlJson};
+  function showNote(message) {
+    var note = document.getElementById("datanote");
+    note.textContent = message;
+    note.style.display = "block";
+  }
+  function render(option) {
     var chart = echarts.init(document.getElementById("chart"));
-    chart.setOption(spec);
+    chart.setOption(option);
     window.addEventListener("resize", function () { chart.resize(); });
-  } else {
+  }
+  if (!window.echarts) {
     document.getElementById("chart").style.display = "none";
     document.getElementById("offline").style.display = "block";
     document.getElementById("spec").textContent = JSON.stringify(spec, null, 2);
+  } else if (dataUrl === null) {
+    render(spec);
+  } else {
+    fetch(dataUrl)
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.text();
+      })
+      .then(function (text) {
+        if (!window.Papa) throw new Error("the data parser library could not load");
+        // Strip a UTF-8 BOM so the first header cell is not prefixed with U+FEFF.
+        var body = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+        // Array-of-arrays with the header as row 0 IS the ECharts dataset.source shape;
+        // dynamicTyping turns numeric cells into numbers so value axes and encode-by-name work.
+        var parsed = Papa.parse(body, { dynamicTyping: true, skipEmptyLines: "greedy" });
+        if (!parsed.data || parsed.data.length === 0) throw new Error("empty data file");
+        spec.dataset = { source: parsed.data };
+        render(spec);
+      })
+      .catch(function (e) {
+        showNote('Data file "' + dataUrl + '" could not be loaded (' + e.message + ') — the chart is shown without its data. If this page was opened from disk (file://), the browser may block local data access; serve the analysis folder over HTTP to load it.');
+        render(spec);
+      });
   }
 </script>
 </body>

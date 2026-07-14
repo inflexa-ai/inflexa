@@ -163,7 +163,7 @@ export async function runChat(flags: ContextFlags, threadRef: string | undefined
 async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: string): Promise<void> {
     const history = createThreadHistory(runtime.pool);
     const sink: ChatSink = { out: (str) => void process.stdout.write(str), errLine: (str) => console.error(str) };
-    // The analysis scopes openable references so `show_file`/`show_user` cards resolve to workspace/cache
+    // The analysis scopes openable references so `show_file`/`show_user` cards resolve to workspace
     // paths for their OSC 8 `file://` links.
     const printer = createChatPrinter(sink, { analysisId });
 
