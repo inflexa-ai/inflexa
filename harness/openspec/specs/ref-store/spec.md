@@ -11,19 +11,18 @@ runtime (sandboxes have no network). It lives in a shared **reference store**
 mounted **read-only** into every sandbox container at `/mnt/refs`.
 
 Agents discover what is staged through the `list_available_refs` tool
-(`src/tools/sandbox/list-available-refs.ts`), which reads
-`/mnt/refs/registry.json` — a machine-generated manifest of every reference
-file grouped by category — and renders it into agent-readable paths. Each file's
-absolute path is `/mnt/refs/<local_path>` from its registry entry. No
-environment variables are injected for the ref store; the tool is the sole
-discovery surface.
+(`src/tools/sandbox/list-available-refs.ts`), which inspects the filesystem
+actually mounted at `/mnt/refs`. Catalog receipts and a legacy `registry.json`
+may enrich that inventory, but neither metadata source defines what files are
+available. No environment variables are injected for the ref store; the tool
+is the sole discovery surface.
 
 The store is supplied by the embedder: the Docker backend bind-mounts a host
 directory (`refStorePath`), the Kubernetes backend mounts a read-only PVC
 (`refStorePvc`). How the reference data is *built, versioned, and published* is
 owned by a separate reference-store build pipeline in another repository and is
-out of scope here — this spec describes only the runtime mount contract, the
-`registry.json` shape the tool consumes, and the discovery surface.
+out of scope here — this spec describes only the runtime mount contract,
+filesystem-driven discovery, and optional metadata enrichment.
 
 ## Requirements
 
@@ -55,37 +54,62 @@ no `/mnt/refs` mount.
 
 ### Requirement: References are discoverable via the list_available_refs tool
 
-The harness SHALL expose a `list_available_refs` tool (built with `defineTool`)
-that reads `/mnt/refs/registry.json`, resolves each entry's path to
-`/mnt/refs/<local_path>`, and returns a rendered inventory grouped by category.
-A missing or unmounted store is an expected state: the tool SHALL NOT throw — it
-SHALL return an `available: false` data variant carrying a fallback note.
+The harness SHALL expose a dependency-bearing `list_available_refs` tool that
+inspects the reference filesystem visible inside the active sandbox at
+`/mnt/refs`. The tool SHALL accept an optional path constrained beneath that
+root: an omitted path SHALL return a bounded root summary and a supplied path
+SHALL drill into that subtree. Results SHALL use absolute `/mnt/refs/...` paths,
+SHALL NOT follow symlinks, SHALL exclude reserved installer metadata from the
+data inventory, and SHALL report truncation explicitly when traversal or output
+limits are reached.
 
-#### Scenario: References available
+The tool SHALL distinguish an unmounted store, a mounted but empty store, and a
+populated store without throwing for any of those expected states. It SHALL
+execute through the shared sandbox-exec runner with replay-stable identity and
+workflow execution mode so discovery observes the same mount as analysis
+commands.
 
-- **WHEN** `list_available_refs` is called and `/mnt/refs/registry.json` is readable
-- **THEN** it returns `{ available: true, content }` listing categories with absolute `/mnt/refs/<local_path>` paths
+#### Scenario: Arbitrary mounted files are available without a manifest
 
-#### Scenario: Store not mounted
+- **WHEN** `/mnt/refs/user/cohort/reference.h5ad` exists and no `registry.json` or receipt names it
+- **THEN** `list_available_refs` reports that path through the root summary or a bounded drill-down result
 
-- **WHEN** `list_available_refs` is called and the registry cannot be read
-- **THEN** it returns `{ available: false, content }` advising that the reference store may not be mounted at `/mnt/refs`, without throwing
+#### Scenario: Store is mounted but empty
 
-### Requirement: The registry.json manifest defines the discoverable inventory
+- **WHEN** `/mnt/refs` is mounted and contains no reference data
+- **THEN** the tool returns an available-but-empty result rather than a missing-store result
 
-`/mnt/refs/registry.json` SHALL carry `registry_version`, `build_id`,
-`generated_at`, a `files.by_category` map of category name to an array of file
-entries, and a `summary` with `total_output_files` and `categories`. Each file
-entry SHALL carry at least `local_path` (relative to `/mnt/refs`) and `sha256`,
-plus optional descriptive fields (`bytes`, `rows`, `category`, `subtype`,
-`organism`, `tax_id`, `dataset`, `endpoint`) the tool uses to group and label
-output.
+#### Scenario: Store is not mounted
 
-#### Scenario: Registry groups files by category
+- **WHEN** the active sandbox has no `/mnt/refs` mount
+- **THEN** the tool returns an unavailable data variant with an actionable note, without throwing
 
-- **GIVEN** a `registry.json` with `files.by_category` populated
-- **WHEN** `list_available_refs` renders it
-- **THEN** each category becomes a section listing its files by name and `/mnt/refs/<local_path>` path
+#### Scenario: Deep inventory is bounded
+
+- **WHEN** a requested subtree exceeds the traversal or output limit
+- **THEN** the tool returns the bounded entries plus an explicit truncation or drill-down hint
+
+#### Scenario: Traversal outside the store is rejected
+
+- **WHEN** the optional path is absolute outside `/mnt/refs` or contains traversal escaping the root
+- **THEN** the tool returns an out-of-scope data result and performs no scan outside the store
+
+### Requirement: Catalog and store metadata only enrich filesystem discovery
+
+When a valid harness receipt or legacy `registry.json` describes a path that exists on disk, `list_available_refs` SHALL use its dataset name, version,
+provenance, category, or descriptive fields to enrich the rendered inventory.
+Metadata SHALL NOT add nonexistent files, hide unregistered files, or override
+the observed path and size of a filesystem entry.
+
+#### Scenario: Managed and user content are merged
+
+- **WHEN** a store contains a receipted managed dataset and unregistered content under `user/`
+- **THEN** discovery reports both, enriching the managed entry and listing the user content from the filesystem
+
+#### Scenario: Stale metadata is ignored
+
+- **WHEN** metadata names a file that no longer exists
+- **THEN** discovery omits the nonexistent file and continues reporting the remaining filesystem content
 
 ### Requirement: No environment variables are injected for the reference store
 

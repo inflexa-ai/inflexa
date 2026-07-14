@@ -1,8 +1,11 @@
 import { describe, expect, it } from "bun:test";
 
 import { SOULKernelPrompt, SOULConversationalPrompt } from "../../prompts/SOUL.js";
+import type { SandboxClient } from "../../sandbox/client.js";
+import type { SubmitExecBody } from "../../sandbox/types.js";
+import { makeToolContext } from "../../tools/__fixtures__/tool-context.js";
 
-import { makeFakeSandboxAgentDeps } from "./__fixtures__/deps.js";
+import { makeFakeSandboxAgentDeps, makeFakeSandboxClient } from "./__fixtures__/deps.js";
 import { BASE_SANDBOX_TOOLS, createSandboxAgent } from "./shared.js";
 import type { AgentMeta } from "./types.js";
 import { SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS } from "./types.js";
@@ -64,6 +67,37 @@ describe("createSandboxAgent", () => {
         expect(toolIds).not.toContain("search_compounds");
         expect(toolIds).not.toContain("search_faers");
         expect(toolIds).not.toContain("search_toxcast");
+    });
+
+    it("wires list_available_refs as a workflow tool through step-bound replay-safe exec coordinates", async () => {
+        const submits: SubmitExecBody[] = [];
+        const fake = makeFakeSandboxClient();
+        const sandboxClient: SandboxClient = {
+            ...fake,
+            async submitExec(_sandbox, body) {
+                submits.push(body);
+            },
+            async awaitExec(_sandbox, execId) {
+                return {
+                    execId,
+                    exitCode: 0,
+                    stdout: JSON.stringify({ state: "empty", entries: [], scannedEntries: 0, truncated: false }),
+                    stderr: "",
+                    durationMs: 1,
+                    timedOut: false,
+                };
+            },
+        };
+        const base = makeFakeSandboxAgentDeps();
+        const def = createSandboxAgent({ ...base, sandboxClient }, meta, body);
+        const tool = def.tools.find((candidate) => candidate.id === "list_available_refs")!;
+
+        expect(tool.executionMode).toBe("workflow");
+        const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        expect(result).toMatchObject({ available: true, state: "empty" });
+        expect(submits).toHaveLength(1);
+        expect(submits[0]!.execId).toBe("wf-001:step-001:fn-1");
+        expect(submits[0]!.command.slice(0, 2)).toEqual(["python3", "-c"]);
     });
 
     it("readOnly drops write_file/edit_file but keeps execute_command + read tools", () => {
