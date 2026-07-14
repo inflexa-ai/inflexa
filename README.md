@@ -28,11 +28,11 @@ It is built for scientists, bioinformaticians, and engineers who need analysis t
 
 ## Quick start
 
+> **Note:** the global installer is coming soon. Until it lands, [run from source](#running-from-source).
+
 All you need is [Docker](https://www.docker.com/), running locally — analyses execute in the sandbox image. The `inflexa` CLI itself is self-contained.
 
 ```bash
-npm install -g inflexa   # or: bun install -g inflexa
-
 inflexa setup            # one-time: connect a model provider, pull the sandbox image, start local services
 cd path/to/your/data     # go where your data lives
 inflexa                  # launch the TUI
@@ -43,6 +43,14 @@ Prefer to run from source? See [Running from source](#running-from-source).
 ## Configuration
 
 `inflexa setup` walks you through the model connection: sign in to a provider through the local proxy, or point Inflexa at your own endpoint — including a local model, for a fully offline workflow. It prompts for what it needs and tells you how to supply your key.
+
+In one pass it provisions everything an analysis needs:
+
+- **Model connection** — sign in to Claude, OpenAI, Gemini, Qwen, or iFlow through the managed local proxy, or point at your own endpoint.
+- **Postgres + pgvector** — the database the harness runs on, provisioned as a local container via Docker Compose.
+- **Analysis resource allowance** — the share of your machine's CPU and memory that analyses may use in total.
+- **Embeddings** — an in-process local model, your own API key, or off.
+- **Sandbox image** — pulls the Docker image analyses execute in (Python, or Python + R).
 
 To change any of it later, run `inflexa config`.
 
