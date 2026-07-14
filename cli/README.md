@@ -15,30 +15,41 @@ For the product overview, see the [repository README](../README.md). For archite
 cd cli
 bun install
 
+bun run dev setup           # one-time: model connection, sandbox image, local services
 bun run dev                 # launch the TUI
-bun run dev doctor          # check Docker, architecture, disk, runtime
+bun run dev status          # what `inflexa` resolves to right now (loud context)
 ```
 
 Build a standalone `inflexa` binary:
 
 ```bash
 bun run build               # compiles dist/inflexa-<os>-<arch>
+bun run dev:install         # put the built binary on PATH as `inflexa`
 ```
+
+On macOS/Linux `dev:install` symlinks into `dist/`, so every `bun run build` is instantly live; on Windows it copies, so re-run it after each build.
 
 ## Scripts
 
 | Script | Does |
 |-|-|
 | `bun run dev` | Run the CLI from source (launches the TUI) |
-| `bun run build` | Compile the standalone binary |
+| `bun run build` | Compile the standalone binary for this platform |
+| `bun run build:all` | Compile for every target platform |
+| `bun run dev:install` | Put the built binary on `PATH` as `inflexa` |
 | `bun run typecheck` | `tsc --noEmit` |
 | `bun run lint` | ESLint |
 | `bun run format` | Prettier over `src/` |
 | `bun test` | Run tests |
+| `bun run wipe` | Wipe local state (database, config, workspaces) |
 
 ## Configuration
 
-Bring-your-own-key for supported LLM providers, plus local models end to end. Run `inflexa config` (or `bun run dev config`) to view and edit configuration. Auth0 settings are read from `.env` — copy `.env.example` to get started.
+Bring-your-own-key for supported LLM providers, plus local models end to end.
+
+`inflexa setup` walks the model connection: either **`cliproxy`** (the default — sign in to a provider through the local CLIProxyAPI container it provisions) or **`direct`** (your own Anthropic or OpenAI-compatible endpoint, with the key read from `INFLEXA_MODEL_API_KEY` in the environment — it is never written to config). It also provisions Postgres and pulls the sandbox image.
+
+Run `inflexa config` (or `bun run dev config`) to view and edit configuration afterwards. Auth0 settings are read from `.env` — copy `.env.example` to get started.
 
 ## Sandbox image
 
@@ -52,5 +63,5 @@ Analyses run inside a **sandbox image** that bakes the R / Python / conda / Node
 `inflexa sandbox pull` also runs during `inflexa setup`. Before a sandbox launches, a missing image is offered and pulled (`inflexa profile` needs it). The published images are multi-arch manifests, so `docker pull` resolves the host architecture automatically — you pick only the variant, never the architecture. Flags: `--yes` skips the download confirmation.
 
 - **No local store** — the packages ship inside the pulled image, so there is no `~/.local/share/inflexa/libs` tree, no `/mnt/libs` bind mount, and no architecture-forcing. `harness.sandboxImage` (in `config.json`) records the pulled image tag; set it to a custom `FROM`-extended image to run your own.
-- **Extend it** — `FROM ghcr.io/inflexa-ai/sandbox-python-r` then `RUN pip install …` / `install.packages(…)` lands in the store automatically (the image exports `PIP_TARGET`/`R_LIBS_USER`/`INFLEXA_LIB_ROOT`); run `inflexa-libs-refresh` afterward so the additions show up in `list_available_packages`. See `images/sandbox-python*/README.md`.
+- **Extend it** — `FROM ghcr.io/inflexa-ai/sandbox-python-r` then `RUN pip install …` / `install.packages(…)` lands in the store automatically (the image exports `PIP_TARGET`/`R_LIBS_USER`/`INFLEXA_LIB_ROOT`); run `inflexa-libs-refresh` afterward so the additions show up in `list_available_packages`. See [`images/README.md`](../images/README.md).
 - **Managed deployments** still mount per-track tarballs read-only (cold-start friendly); those tarballs are extracted from these same images by the build pipeline and are infra-managed, not a CLI concern.

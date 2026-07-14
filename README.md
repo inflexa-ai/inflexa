@@ -14,7 +14,7 @@
 
 ---
 
-Inflexa turns a plain-language analysis request into runnable code, executes it in an isolated Docker sandbox, and records exactly what happened so the result can be reproduced and audited. It runs entirely on your machine and works with the model provider of your choice, including local models for a fully offline workflow.
+Inflexa turns a plain-language analysis request into runnable code, executes it in an isolated sandbox, and records exactly what happened so the result can be reproduced and audited. It runs entirely on your machine and works with the model provider of your choice, including local models for a fully offline workflow.
 
 It is built for scientists, bioinformaticians, and engineers who need analysis they can trust and re-run, not just an answer in a chat window.
 
@@ -22,51 +22,44 @@ It is built for scientists, bioinformaticians, and engineers who need analysis t
 
 - **Local-first.** Your data, code, and results stay on your machine. No account required.
 - **Reproducible by construction.** Every run records its full provenance and lineage in a local SQLite database, with export and replay.
-- **Sandboxed execution.** Generated code runs inside a Docker sandbox as a non-root user with all Linux capabilities dropped, under CPU and memory limits, reading your analysis tree read-only and writing only to the current step's output directory. By default the sandbox initiates no network connections at all: its port is published to `127.0.0.1` only, an in-container firewall blocks all outbound traffic, and the host retrieves results by polling a signature-authenticated endpoint. See [`SECURITY.md`](./SECURITY.md).
+- **Sandboxed execution.** Generated code runs in an isolated, unprivileged, resource-limited sandbox with no network access by default. The full isolation model is described in [`SECURITY.md`](./SECURITY.md).
 - **Bring your own model.** Use any supported LLM provider via API key, or run local models end to end, offline.
 - **Open source, in full.** The CLI is a complete product under Apache-2.0, not a limited trial. See [Open source and commercial](#open-source-and-commercial).
 
-## How it works
-
-1. You describe the analysis you want in plain language.
-2. The agent plans the work and generates the code to carry it out.
-3. The code runs in the Docker sandbox, against the data in your working directory.
-4. Inputs, code, parameters, and outputs are recorded as a provenance graph in SQLite.
-5. You inspect the lineage, export it, and reproduce the run later.
-
-The execution model, provenance graph, and sandbox protocol are implemented in [`harness/`](./harness), the host-agnostic agent harness — see [`harness/CONTEXT.md`](./harness/CONTEXT.md) and the design decisions, which live as specs in [`harness/openspec/specs/`](./harness/openspec/specs/).
-
-## Requirements
-
-- [Bun](https://bun.sh/) — runtime and package manager
-- [Docker](https://www.docker.com/), running locally — analyses execute in the sandbox image
-
 ## Quick start
 
-The CLI lives in [`cli/`](./cli). Run from source:
+All you need is [Docker](https://www.docker.com/), running locally — analyses execute in the sandbox image. The `inflexa` binary itself is self-contained.
+
+Download the latest `inflexa` binary for your platform from [GitHub Releases](https://github.com/inflexa-ai/inf-cli/releases), put it on your `PATH`, then:
+
+```bash
+inflexa setup           # one-time: connect a model provider, pull the sandbox image, start local services
+cd path/to/your/data    # go where your data lives
+inflexa                 # launch the TUI
+```
+
+Prefer to run from source, or no binary for your platform yet? See [Running from source](#running-from-source).
+
+## Configuration
+
+`inflexa setup` walks you through the model connection: sign in to a provider through the local proxy, or point Inflexa at your own endpoint — including a local model, for a fully offline workflow. It prompts for what it needs and tells you how to supply your key.
+
+To change any of it later, run `inflexa config`.
+
+## Running from source
+
+Developing, or building the binary yourself, additionally requires [Bun](https://bun.sh/). The CLI lives in [`cli/`](./cli):
 
 ```bash
 git clone https://github.com/inflexa-ai/inf-cli.git
 cd inf-cli/cli
 bun install
 
-bun run dev                 # launch the TUI
-bun run dev setup           # install, authenticate, and start the model proxy
+bun run dev                 # launch the TUI from source
+bun run build               # compile a standalone dist/inflexa-<os>-<arch>
 ```
 
-Build a standalone `inflexa` binary:
-
-```bash
-bun run build               # compiles dist/inflexa-<os>-<arch>
-```
-
-See [`cli/README.md`](./cli/README.md) for the full CLI developer guide.
-
-## Configuration
-
-Inflexa supports bring-your-own-key for supported LLM providers, as well as local models. Run `inflexa config` (or `bun run dev config`) to view and edit your configuration.
-
-<!-- TODO: document supported providers and how to set API keys. -->
+See [`cli/README.md`](./cli/README.md) for the full CLI developer guide, and [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the development environment and contribution workflow.
 
 ## Repository layout
 
@@ -75,10 +68,11 @@ This repository is a monorepo of independent subsystems — work inside the one 
 | Directory | What it is |
 |-|-|
 | [`cli/`](./cli) | The local-first TUI/CLI — this product. SQLite storage, auth, the chat UI. Start here to run from source. |
-| [`harness/`](./harness) | `@inflexa-ai/harness`, the host-agnostic agent harness: agent loop, durable workflows, sandbox protocol, providers. |
+| [`harness/`](./harness) | `@inflexa-ai/harness`, the host-agnostic agent harness: agent loop, durable workflows, sandbox protocol, providers. The execution model and its design decisions live here — see [`harness/CONTEXT.md`](./harness/CONTEXT.md) and the specs in [`harness/openspec/specs/`](./harness/openspec/specs/). |
 | [`skills/`](./skills) | Shared bioinformatics skill packs the agent loads at runtime. |
 | [`templates/`](./templates) | Report-rendering templates. |
-| [`images/sandbox-base/`](./images/sandbox-base) | The sandbox Docker image and its Go execution server. |
+| [`images/`](./images) | The sandbox images: the base image with its Go execution server, and the published `python` / `python-r` variants with the analysis packages baked in. |
+| [`scripts/`](./scripts) | Build, validation, and publishing tooling for the sandbox library store. |
 
 ## Open source and commercial
 

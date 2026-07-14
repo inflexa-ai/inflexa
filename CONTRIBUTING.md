@@ -2,7 +2,7 @@
 
 Thanks for your interest in Inflexa. This is an open-source, local-first agentic AI orchestration CLI for reproducible biological data analysis, and it gets better the more scientists, engineers, and bioinformaticians shape it. This guide explains how to contribute and what to expect.
 
-Participation is governed by our [Code of Conduct](./CODE_OF_CONDUCT.md), and the project is run according to [`GOVERNANCE.md`](./GOVERNANCE.md). Please read both.
+Participation is governed by our [Code of Conduct](./CODE_OF_CONDUCT.md), and the project is run according to [Governance](./GOVERNANCE.md). Please read both.
 
 ## Ways to contribute (code is only one of them)
 
@@ -10,8 +10,8 @@ Inflexa is scientific software, so some of the most valuable contributions aren'
 
 - **Bug reports** - especially install and first-run failures, and anything platform-specific (macOS Intel/Apple Silicon, Linux, Windows/WSL).
 - **Example datasets and analysis problems** - realistic, public-data examples (see [Adding an example](#adding-an-example)).
-- **Analysis workflows** and pathway/reference integrations.
-- **Docker sandbox** image packages, tooling, and size/reliability improvements.
+- **Tools and adapters** - new agent tools, and adapters for the model providers and execution backends Inflexa runs against.
+- **Sandbox libraries and reference offerings** - the analysis packages baked into the sandbox image, and the reference data (pathways, annotations, signatures) served read-only from the reference store. Broadening what an analysis can reach for, without giving sandboxes network access, is high-value work.
 - **Documentation** - quickstarts, tutorials, clarifications, translations.
 - **Validation and reproducibility reports** - "I ran X on dataset Y and got Z; here's whether it reproduced."
 - **Benchmark cases.**
@@ -24,7 +24,7 @@ If you're not sure where to start, look for issues labeled `good first issue` or
 ## Before you start
 
 - **Search first.** Check existing [issues](../../issues) and [Discussions](../../discussions) before opening a new one.
-- **Discuss large changes early.** For anything beyond a small fix - new analytical capabilities, changes to the sandbox or provenance model, breaking changes, please open an issue or design proposal first so we can align before you invest time. See the decision process in [`GOVERNANCE.md`](./GOVERNANCE.md).
+- **Discuss large changes early.** For anything beyond a small fix - new analytical capabilities, changes to the sandbox or provenance model, breaking changes, please open an issue or design proposal first so we can align before you invest time. See the decision process in [Governance](./GOVERNANCE.md).
 
 ## Development setup
 
@@ -49,7 +49,7 @@ If `setup` fails on a clean setup, that's itself a high-value bug report. Please
 
 ## Making changes
 
-- Branch from `main`: `git checkout -b fix/short-description` or `feat/short-description`.
+- **Fork the repository and branch from `main` in your fork** - `git checkout -b fix/short-description` or `feat/short-description` - then open the pull request from there. Write access to this repository is held by maintainers ([Governance](./GOVERNANCE.md)); once you have it, you can push branches here directly instead of forking.
 - Use [Conventional Commits](https://www.conventionalcommits.org/) (e.g. `fix(sandbox): pin bioconductor version`) - release notes and versioning are generated from commit history.
 - Keep pull requests **focused**; one logical change per PR is far easier to review.
 - Before pushing, make sure these pass locally:
@@ -106,7 +106,7 @@ Your PR description should explain **what** changed and **why**, and link the is
 - [ ] Commits are **signed off** for the DCO (see below).
 - [ ] The PR is focused on a single logical change.
 
-Review follows the process in [`GOVERNANCE.md`](./GOVERNANCE.md): maintainers review for technical merit, scientific correctness, and maintainability, and merge by lazy consensus.
+Review follows the process in [Governance](./GOVERNANCE.md): maintainers review for technical merit, scientific correctness, and maintainability, and merge by lazy consensus.
 
 ## Contributor agreement - Developer Certificate of Origin (DCO)
 
@@ -126,7 +126,7 @@ By contributing, you agree that your contributions are licensed under the projec
 
 ## Recognition and growing into a maintainer
 
-Contributions of all kinds are recognized. Sustained, high-quality participation can lead to maintainership - see [`GOVERNANCE.md`](./GOVERNANCE.md) for how that works.
+Contributions of all kinds are recognized. Sustained, high-quality participation can lead to maintainership - see [Governance](./GOVERNANCE.md) for how that works.
 
 ## Trademarks
 
