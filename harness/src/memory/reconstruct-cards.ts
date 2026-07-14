@@ -33,9 +33,10 @@ export function createCardResolver(pool: Pool, analysisId: string, workspaceRoot
         if (block.type !== "tool_use") return null;
         const input = (block.input ?? {}) as Record<string, unknown>;
 
-        // The harness tool id is `iterate_report`; legacy transcripts carry
-        // `iterateReport` — accept both.
-        if (block.name === "iterate_report" || block.name === "iterateReport") {
+        // The report tool is `submit_report`; legacy transcripts carry the
+        // former ids `iterate_report` / `iterateReport` — accept all three. The
+        // brief-carrying field is still `report`, so the card reads identically.
+        if (block.name === "submit_report" || block.name === "iterate_report" || block.name === "iterateReport") {
             const report = (input.report ?? null) as { title?: unknown } | null;
             const card = await buildPreviewCardData(workspaceRoot, {
                 previewId: typeof input.previewId === "string" ? input.previewId : undefined,

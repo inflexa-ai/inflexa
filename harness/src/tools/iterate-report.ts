@@ -1,23 +1,43 @@
 /**
- * iterate_report — creates or iterates on a report.
+ * Report authoring tools for the conversation agent: `plan_report` + `submit_report`.
  *
- * Two modes:
- *  - Creation (v1): pass `report` with title/audience/sources/sections.
- *    Pre-flight stages every source into the preview's assets/ dir,
- *    enriches the brief with kind/size/columns/headRows/rowCount, and
- *    hands the report-builder agent a complete brief — no discovery, no
- *    staging in the LLM loop.
- *  - Iteration (v2+): pass `modifications` (natural language) with the
- *    existing `previewId`. Optional top-level `sources` adds new assets
- *    on top of the existing assets/ dir.
+ * WHY TWO TOOLS. The report brief (title/audience/sources plus the section
+ * union — narrative/metrics/figure/table/chart, each with its own
+ * encoding/transform/asset sub-fields) is a ~12k-char JSON schema. Every
+ * registered tool's schema ships on EVERY conversation turn, so parking that
+ * brief on an always-on tool would tax every turn for a tool used only when a
+ * report is actually built. We split the single former tool in two and deliver
+ * the heavy schema just-in-time:
  *
- * Emits a `data-report-preview` chat data part on success or `data-report-preview-failed`
- * on pre-flight or builder failure. The hosted preview surface is reached
- * through an injected `PreviewPublisher` seam (managed default mints a
- * short-lived run-authorization grant; local default returns "unavailable").
+ *  - `plan_report` — a tiny, always-on trigger (no-arg). Its `execute` RETURNS
+ *    the brief schema (`z.toJSONSchema(ReportBriefSchema)`) plus the authoring
+ *    rules as its tool RESULT, so the full contract enters context only on a
+ *    report-building turn — and thereafter rides in the cached history prefix,
+ *    not at full price on every request.
+ *  - `submit_report` — takes the composed brief and does the real work
+ *    (pre-flight staging, previewId/versioning, `runReportIteration`, preview
+ *    publishing). It accepts the brief as `unknown` so the 12k schema stays off
+ *    the always-on surface, then validates it against `ReportBriefSchema` INSIDE
+ *    `execute`, returning `{ ok: false, issues }` as DATA the model can fix (not
+ *    a thrown error). That is the same trade `validate_plan` makes: a runtime
+ *    contract in exchange for keeping the schema out of every request. The small
+ *    iterate-mode + common fields (modifications / previewId / baseVersion /
+ *    sources / format) stay fully typed — they cost little and guide iteration.
  *
- * The 4 custom report tools the builder drives are constructed inside
- * `runReportIteration` — see design.md Decision #9.
+ * On a valid brief, `submit_report`'s behaviour is identical to the former
+ * `iterate_report`: two modes (Create v1 via `report`; Iterate v2+ via
+ * `modifications` + `previewId`), pre-flight stages every source into the
+ * preview's assets/ dir, and it emits a `data-report-preview` chat data part on
+ * success or `data-report-preview-failed` on pre-flight/builder failure. The
+ * hosted preview surface is reached through an injected `PreviewPublisher` seam
+ * (managed default mints a short-lived run-authorization grant; local default
+ * returns "unavailable"). The 4 custom report tools the builder drives are
+ * constructed inside `runReportIteration` — see design.md Decision #9.
+ *
+ * Naming note: the report-builder SUB-agent has its OWN same-id `submit_report`
+ * terminal tool (`tools/report/submit-report.ts`). The two never share a tool
+ * roster — this one is the conversation agent's brief-submission entry point;
+ * that one is the builder's finalize gate.
  */
 
 import { ok, type Result } from "neverthrow";
@@ -267,7 +287,14 @@ const SectionSchema = z.discriminatedUnion("type", [
         .describe("Prose you wrote — what was done, how, and with which parameters."),
 ]);
 
-const ReportSchema = z.object({
+/**
+ * The report brief the conversation agent composes: title/audience + sources +
+ * the section union. This is the ~12k-char schema that `plan_report` hands back
+ * just-in-time and that `submit_report` validates its `report` field against
+ * inside `execute`. Exported for `plan_report`, `submit_report`, and the
+ * brief-shape tests.
+ */
+export const ReportBriefSchema = z.object({
     title: z.string().describe("Report title. Persisted with the preview and reused as the card title on every later version."),
     audience: z
         .string()
@@ -285,8 +312,15 @@ const ReportSchema = z.object({
     sections: z.array(SectionSchema).min(1).describe("The report's sections, in the order they are rendered."),
 });
 
-/** Exported for schema-validation tests — the underlying Zod schema. */
-export const iterateReportInputSchema = z
+/**
+ * `submit_report`'s always-on input surface. The heavy brief rides in `report`
+ * as `unknown` — typed that way ON PURPOSE so the ~12k `ReportBriefSchema` does
+ * NOT ship on every conversation turn; `execute` validates it against
+ * `ReportBriefSchema` and returns issues as data. The iterate-mode + common
+ * fields stay fully typed (they are small and guide iteration). Exported for
+ * the envelope-validation tests.
+ */
+export const submitReportInputSchema = z
     .object({
         previewId: z
             .string()
@@ -301,10 +335,15 @@ export const iterateReportInputSchema = z
             .optional()
             .describe("Version to branch from (1-based) — use when the user prefers an earlier version. Defaults to the latest."),
         format: z.enum(["html", "pdf"]).default("html").describe("Output format. Defaults to 'html' — only set explicitly for PDF."),
-        report: ReportSchema.optional().describe(
-            "CREATION ONLY (v1). Mutually exclusive with `modifications` — passing it " +
-                "on an existing preview builds a fresh report and discards prior work.",
-        ),
+        report: z
+            .unknown()
+            .optional()
+            .describe(
+                "CREATION ONLY (v1): the composed report brief. Get its schema + " +
+                    "authoring rules from `plan_report` first. Validated on submit — an " +
+                    "invalid brief comes back as `{ ok: false, issues }`, not a thrown error. " +
+                    "Mutually exclusive with `modifications`.",
+            ),
         modifications: z
             .string()
             .optional()
@@ -317,22 +356,120 @@ export const iterateReportInputSchema = z
             .array(SourceSchema)
             .optional()
             .describe(
-                "Iteration only — additional assets to stage on top of the existing " + "assets/ dir. For creation, put sources inside `report.sources`.",
+                "Iteration only — additional assets to stage on top of the existing " + "assets/ dir. For creation, put sources inside the brief's `sources`.",
             ),
     })
     .refine((data) => (data.report !== undefined) !== (data.modifications !== undefined), {
         message: "Exactly one of `report` or `modifications` must be provided.",
     })
-    .refine((data) => !(data.report && data.sources), {
-        message: "Top-level `sources` is for iteration mode. For creation, put sources inside `report.sources`.",
+    .refine((data) => !(data.report !== undefined && data.sources), {
+        message: "Top-level `sources` is for iteration mode. For creation, put sources inside the brief's `sources`.",
     });
 
-type ReportInput = z.input<typeof ReportSchema>;
+type ReportBrief = z.infer<typeof ReportBriefSchema>;
 type SectionInput = z.infer<typeof SectionSchema>;
 
-// ── Tool factory ───────────────────────────────────────────────────
+// ── plan_report: the just-in-time authoring contract ────────────────
 
-export interface IterateReportDeps {
+/**
+ * The authoring rules `plan_report` hands back alongside the brief schema.
+ * These are the cross-field, when-to-use rules the schema's per-field
+ * `.describe()` text cannot carry on its own — pulled from the former
+ * `iterate_report` description and `prompts/report-builder.ts`. Guidance for
+ * the conversation agent composing the brief, NOT for the builder.
+ */
+const REPORT_AUTHORING_RULES = `# Composing a report brief
+
+The report-builder agent NEVER sees the analysis tree — it receives only the
+brief you compose, so the brief must be complete. You write the prose, the
+numbers, and the chart encodings; the builder only does layout and visual
+treatment. Pass the composed brief as \`submit_report\`'s \`report\` field.
+
+## Create vs iterate
+- CREATE (v1): pass \`report\` (this brief), omit \`previewId\`. Every CSV / image /
+  JSON the report renders goes in \`report.sources\` — pre-flight stages each into
+  the preview's assets/ dir and parses its columns, first 5 rows, and row count
+  into the brief for you.
+- ITERATE (v2+): pass \`modifications\` (natural-language change instructions)
+  plus the existing \`previewId\`, and NEVER \`report\` — passing \`report\` builds a
+  fresh report and discards all prior work. New data files go in the top-level
+  \`sources\`. \`baseVersion\` branches from an earlier version instead of the latest.
+
+## Sources
+- Every file the report renders — CSV/TSV, PNG/SVG, JSON — must be listed in
+  \`sources\`. A section's \`imageAsset\` / \`dataAsset\` must name one of these staged
+  assets (its \`as\`, or the basename of its \`path\`) or the call fails.
+- Markdown is NOT a source. Keep summary.md / synthesis.json out of \`sources\`;
+  their content reaches the report as prose you write into \`narrative\` /
+  \`methods\` sections.
+
+## Do NOT reach for run_ephemeral first
+- Not to peek at a CSV — pre-flight already parsed its columns and head rows.
+- Not to filter, slice, rank, or derive columns from a single CSV about to be
+  rendered — \`chart.content.transform\` and \`table.content.transform\` do exactly
+  that client-side, and the transform text renders as a provenance footnote.
+- run_ephemeral is only for computation no single section transform covers:
+  cross-file aggregation, statistics needing a real numerical library, or a
+  derived CSV the report then lists as a fresh source.
+
+## Choosing a section type
+- narrative — prose you wrote: context, story, interpretation.
+- methods — prose you wrote: what was done, how, with which parameters.
+- metrics — labeled headline numbers you already derived (the builder does not
+  compute them).
+- table — a tabular asset rendered as a table; pick a column subset + topN that
+  fit the audience.
+- chart — a tabular asset (or inline rows) rendered as an interactive ECharts
+  plot. PREFER chart over figure whenever the data file exists — a chart is
+  interactive, themed, and re-encodable on iteration.
+- figure — a static image the analysis already produced (PNG/SVG). Reach for it
+  only when the user asks for the existing image, the visual is genuinely
+  image-only, or the image carries annotations the data does not.
+
+## Inline chart data
+\`chart.content.data\` is an escape hatch for a cross-file aggregate you computed
+yourself from files you ACTUALLY read. Prefer \`dataAsset\`. Never fabricate or
+estimate values — every inline value must come from a file you read, and cite
+the real files in \`data.source\`. More than one inline-data chart per report is a
+smell — persist the aggregate as a derived CSV instead.
+
+## Result
+\`submit_report\` returns the preview id + version and emits a preview card.
+Pre-flight and builder failures come back as an \`error\` string on the result,
+not as a thrown error. An invalid brief comes back as \`{ ok: false, issues }\` —
+fix the named fields and resubmit.`;
+
+/** Precomputed once at module load — the brief schema `plan_report` returns as data. */
+const REPORT_BRIEF_JSON_SCHEMA = z.toJSONSchema(ReportBriefSchema);
+
+/**
+ * `plan_report` — the tiny, always-on trigger (no args). Its result delivers
+ * the brief schema + authoring rules just-in-time, so the ~12k contract enters
+ * context only on a report-building turn (and thereafter rides in the cached
+ * history prefix). Compose the brief from what it returns, then call
+ * `submit_report`. Pure logic, no deps — hence a module-scope leaf tool.
+ */
+export const planReportTool: Tool = defineTool({
+    id: "plan_report",
+    description:
+        "Start building or iterating a report. Returns the report-brief schema " +
+        "and the authoring rules as its result — the full contract you compose " +
+        "against — so it is not carried on every turn. Call this first, compose " +
+        "the brief it describes, then call `submit_report` with it. (Iterating an " +
+        "existing preview with `modifications` needs no brief — you may go " +
+        "straight to `submit_report`.)",
+    inputSchema: z.object({}),
+    executionMode: "inline",
+    execute: async () =>
+        ok({
+            schema: REPORT_BRIEF_JSON_SCHEMA,
+            rules: REPORT_AUTHORING_RULES,
+        }),
+});
+
+// ── submit_report: the brief-submission tool ────────────────────────
+
+export interface SubmitReportDeps {
     readonly provider: ChatProvider;
     readonly pool: Pool;
     /** Embedder-supplied workspace-root resolution seam (see workspace/paths.ts). */
@@ -359,46 +496,63 @@ export interface IterateReportDeps {
     }) => Promise<PreviewPublisher>;
 }
 
-interface IterateReportOutput {
-    previewId: string;
-    version: number;
-    previewPath: string;
-    error?: string;
-    notes?: readonly string[];
-}
+/** The result the model reads back. Iteration outcome, or a brief that failed validation. */
+type SubmitReportOutput =
+    | {
+          previewId: string;
+          version: number;
+          previewPath: string;
+          error?: string;
+          notes?: readonly string[];
+      }
+    | {
+          ok: false;
+          issues: Array<{ path: string; message: string }>;
+          hint: string;
+      };
 
-export function createIterateReportTool(deps: IterateReportDeps): Tool {
+/**
+ * `submit_report` — takes the composed brief and drives the report iteration.
+ * On a valid brief its behaviour is byte-for-byte the former `iterate_report`:
+ * pre-flight staging, previewId/versioning, `runReportIteration`, preview
+ * publishing. The brief rides as `unknown` on the wire (keeping its ~12k schema
+ * off the always-on surface) and is validated against `ReportBriefSchema` here.
+ */
+export function createReportSubmitTool(deps: SubmitReportDeps): Tool {
     return defineTool({
-        id: "iterate_report",
+        id: "submit_report",
         description:
-            "Create or iterate on an HTML/PDF report. The report-builder agent NEVER " +
-            "sees the analysis tree — it receives only the brief you pass here, so the " +
-            "brief must be complete. You compose the prose, the numbers and the chart " +
-            "encodings; the builder only does layout and visual treatment.\n" +
-            "CREATE (v1): pass `report`, omit `previewId`. Every CSV / image / JSON the " +
-            "report renders goes in `report.sources` — pre-flight stages each one into " +
-            "the preview's assets/ dir and parses its columns, first 5 rows and row " +
-            "count into the brief for you.\n" +
-            "ITERATE (v2+): pass `modifications` plus the existing `previewId`, and " +
-            "NEVER `report` — passing `report` builds a fresh report and discards all " +
-            "prior work. New data files go in the top-level `sources`; `baseVersion` " +
-            "branches from an earlier version instead of the latest.\n" +
-            "Do NOT reach for `run_ephemeral` first — not to peek at a CSV (pre-flight " +
-            "already parsed it), and not to filter, slice, rank or derive columns from a " +
-            "single CSV that is about to be rendered (`chart.content.transform` and " +
-            "`table.content.transform` do exactly that, and the transform text is " +
-            "rendered as a provenance footnote). `run_ephemeral` is only for computation " +
-            "no single section's transform covers: cross-file aggregation, statistics " +
-            "needing a real numerical library, or a derived CSV the report then lists as " +
-            "a fresh source.\n" +
-            "Markdown is not a source — keep summary.md / synthesis.json out of " +
-            "`sources`; their content reaches the report as prose you write into " +
-            "`narrative` / `methods` sections.\n" +
-            "Returns the preview id + version and emits a preview chat data part. " +
-            "Pre-flight and builder failures come back as an `error` string on the " +
-            "result, not as a thrown error.",
-        inputSchema: iterateReportInputSchema,
-        execute: async (input, ctx): Promise<Result<IterateReportOutput, ToolError>> => {
+            "Submit a composed report brief to build or iterate an HTML/PDF report " +
+            "(the report-builder renders it; it never sees the analysis tree). Call " +
+            "`plan_report` FIRST to get the brief schema + authoring rules, compose " +
+            "the brief, then call this. CREATE: pass `report` (the composed brief), " +
+            "omit `previewId`. ITERATE: pass `modifications` + the existing " +
+            "`previewId`, and NEVER `report`. An invalid brief comes back as " +
+            "`{ ok: false, issues }` — fix the named fields and resubmit (see " +
+            "`plan_report` for the schema); pre-flight and builder failures come back " +
+            "as an `error` string. Returns the preview id + version and emits a " +
+            "preview card.",
+        inputSchema: submitReportInputSchema,
+        execute: async (input, ctx): Promise<Result<SubmitReportOutput, ToolError>> => {
+            // The brief rides as `unknown` so its ~12k schema stays off the
+            // always-on tool surface. Validate it here and return issues as DATA
+            // (the validate_plan trade) — never a thrown error.
+            let brief: ReportBrief | undefined;
+            if (input.report !== undefined) {
+                const parsed = ReportBriefSchema.safeParse(input.report);
+                if (!parsed.success) {
+                    return ok({
+                        ok: false as const,
+                        issues: parsed.error.issues.map((i) => ({
+                            path: i.path.join(".") || "(root)",
+                            message: i.message,
+                        })),
+                        hint: "The `report` brief did not match the schema. Call `plan_report` for the full schema, fix the fields named in `issues`, and resubmit.",
+                    });
+                }
+                brief = parsed.data;
+            }
+
             const { resourceId } = scopeResource(ctx.session.scope);
             const analysisRoot = deps.resolveWorkspaceRoot(resourceId);
 
@@ -413,7 +567,7 @@ export function createIterateReportTool(deps: IterateReportDeps): Tool {
 
             // Iteration mode: recover the title from the creation-time meta file
             // so the data-report-preview part keeps the original title across versions.
-            const existingMeta = input.report ? null : await readPreviewMeta(metaPathAbs);
+            const existingMeta = brief ? null : await readPreviewMeta(metaPathAbs);
 
             // Build the preview-publishing seam for this iteration. The managed
             // default mints a 1h scoped access grant so preview calls outlive the chat
@@ -438,7 +592,7 @@ export function createIterateReportTool(deps: IterateReportDeps): Tool {
             }
 
             // ── Pre-flight: stage declared sources into assets/. ────────
-            const sources = input.report?.sources ?? input.sources ?? [];
+            const sources = brief?.sources ?? input.sources ?? [];
             let staged: StagedAsset[] = [];
             if (sources.length > 0) {
                 const result = await stageReportAssets({
@@ -469,9 +623,9 @@ export function createIterateReportTool(deps: IterateReportDeps): Tool {
 
             // Cross-check creation-mode briefs — every section asset reference
             // must be present in staged[].
-            if (input.report) {
+            if (brief) {
                 const stagedNames = new Set(staged.map((s) => s.name));
-                const missing = collectMissingAssetRefs(input.report.sections, stagedNames);
+                const missing = collectMissingAssetRefs(brief.sections, stagedNames);
                 if (missing.length > 0) {
                     const reason = `section asset references not staged: ${missing.join(", ")} (pass them in report.sources)`;
                     await ctx.emit({
@@ -493,7 +647,7 @@ export function createIterateReportTool(deps: IterateReportDeps): Tool {
                 }
             }
 
-            const prompt = input.report ? buildCreationPrompt(input.report, format, staged) : buildModificationPrompt(input.modifications!, format, staged);
+            const prompt = brief ? buildCreationPrompt(brief, format, staged) : buildModificationPrompt(input.modifications!, format, staged);
 
             const result = await runReportIteration(
                 {
@@ -538,20 +692,20 @@ export function createIterateReportTool(deps: IterateReportDeps): Tool {
             }
 
             // Persist title on creation so iteration runs can recover it.
-            if (input.report) {
+            if (brief) {
                 try {
                     await mkdir(previewRootAbs, { recursive: true });
                     await writePreviewMeta(metaPathAbs, {
-                        title: input.report.title,
-                        audience: input.report.audience,
+                        title: brief.title,
+                        audience: brief.audience,
                         format,
                     });
                 } catch (err) {
-                    console.warn(`[iterate-report] failed to persist preview meta: ${err instanceof Error ? err.message : err}`);
+                    console.warn(`[submit-report] failed to persist preview meta: ${err instanceof Error ? err.message : err}`);
                 }
             }
 
-            const previewTitle = input.report?.title ?? existingMeta?.title ?? "Report";
+            const previewTitle = brief?.title ?? existingMeta?.title ?? "Report";
 
             await ctx.emit({
                 type: "data-report-preview",
@@ -591,7 +745,7 @@ function collectMissingAssetRefs(sections: SectionInput[], staged: Set<string>):
     return [...missing];
 }
 
-function buildCreationPrompt(report: ReportInput, format: "html" | "pdf", staged: StagedAsset[]): string {
+function buildCreationPrompt(report: ReportBrief, format: "html" | "pdf", staged: StagedAsset[]): string {
     const out: string[] = [];
     out.push(`Build a new ${format.toUpperCase()} report.`);
     out.push("");

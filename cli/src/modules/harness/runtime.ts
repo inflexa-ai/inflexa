@@ -390,7 +390,7 @@ async function bootHarnessRuntimeOnce(
         return err({ type: "skills_dir_missing", path: cfg.skillsDir });
     }
     // Templates are the conversation agent's second unconditional prerequisite:
-    // `iterate_report` joins `report-html` under this tree. Gated here, beside
+    // `submit_report` joins `report-html` under this tree. Gated here, beside
     // skills, so a missing tree fails free before any side effect (mirrors the
     // skills gate exactly — `cfg.templatesDir` is non-null past this point).
     if (cfg.templatesDir === null || !existsSync(cfg.templatesDir)) {
