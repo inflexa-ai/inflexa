@@ -117,7 +117,7 @@ fails compilation. New block visuals SHALL enter the design gallery.
 #### Scenario: A chart renders as an openable card
 
 - **WHEN** the agent calls `show_user(kind: "echart")`
-- **THEN** the stream shows an openable card with the title and resolved cache path, and the design gallery carries an exhibit of the card's states (openable, missing, degraded)
+- **THEN** the stream shows an openable card with the title and resolved presentations-file path, and the design gallery carries an exhibit of the card's states (openable, missing, degraded)
 
 ### Requirement: Reasoning is collapsed by default
 

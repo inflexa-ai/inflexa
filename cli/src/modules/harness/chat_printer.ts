@@ -180,11 +180,11 @@ function formatTable(headers: string[], rows: string[][]): string {
 
 /**
  * How the printer resolves an openable entry to the absolute path it links to (materializing `echart`/`svg`
- * into the shared cache). Injectable so the printer's openable rendering is unit-testable without a booted
- * workspace; production omits it and gets the real {@link materializeTarget}.
+ * into the workspace's `presentations/` directory). Injectable so the printer's openable rendering is
+ * unit-testable without a booted workspace; production omits it and gets the real {@link materializeTarget}.
  */
 export type PrinterOptions = {
-    /** The analysis whose workspace root + render cache resolve openable references. */
+    /** The analysis whose workspace root resolves openable references. */
     readonly analysisId?: string;
     /** Resolve an entry's target to an absolute path (materializing when needed), or `null` when unavailable. */
     readonly resolvePath?: (analysisId: string, target: OpenTarget) => string | null;
