@@ -111,6 +111,19 @@ export function absTime(iso: string | null): string {
 }
 
 /**
+ * Compact absolute local timestamp (`7/13/26, 10:52 AM`) — the fixed-width rail's absolute
+ * vocabulary. A finished run's rail row must carry a workflow name AND an absolute anchor inside
+ * ~37 usable cells; {@link absTime}'s seconds-bearing long form pushes that past the rail and
+ * soft-wraps mid-token on every row, so the rail trades the seconds for the fit. Detail dialogs
+ * (unconstrained width) keep the long form. Same em-dash guard shape as {@link absTime}.
+ */
+export function absTimeShort(iso: string | null): string {
+    if (iso === null) return GLYPHS.emDash;
+    const t = Date.parse(iso);
+    return Number.isNaN(t) ? GLYPHS.emDash : new Date(t).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+}
+
+/**
  * Compose the DATA PROFILE details view's lines from a {@link ProfileSnapshot}. Pure
  * (snapshot → string[]) so every kind is unit-testable: the degraded kinds each yield one placeholder
  * line, and `loaded` yields the ledger truth — a status line, the started/completed absolute local

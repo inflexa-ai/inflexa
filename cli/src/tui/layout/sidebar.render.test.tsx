@@ -12,7 +12,7 @@ import { GLYPHS } from "../../lib/design_system.ts";
 import { createAnalysis, addInputs } from "../../modules/analysis/analysis.ts";
 import { getAnchor } from "../../db/primary_query.ts";
 import { WorkspaceContext, type Workspace } from "../contexts/workspace.ts";
-import { __resetSidebarLiveForTest, absTime, refreshSidebarData, relAge, type RefreshSeams } from "../hooks/sidebar_live.ts";
+import { __resetSidebarLiveForTest, absTime, absTimeShort, idTail, refreshSidebarData, relAge, type RefreshSeams } from "../hooks/sidebar_live.ts";
 import { __setAgentModelsForTest, __setBootStateForTest } from "../hooks/boot.ts";
 import { Sidebar } from "./sidebar.tsx";
 import type { Analysis } from "../../types/analysis.ts";
@@ -225,23 +225,26 @@ describe("Sidebar DATA PROFILE / RUNS live sections", () => {
         expect(frame).toContain("profiling");
     });
 
-    test("runs render newest with the workflow name and a relative age; an unprofiled analysis reads 'not profiled'", async () => {
-        await refreshSidebarData("A", seams(null, [runRow({ status: "running" })]));
+    test("runs render newest by run-id tail (not the constant workflow name) with a relative age; an unprofiled analysis reads 'not profiled'", async () => {
+        await refreshSidebarData("A", seams(null, [runRow({ runId: "run-aabbccddeeff", status: "running" })]));
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
-        expect(frame).toContain("executeAnalysis");
+        // The row is keyed by the run's id tail — the per-run distinguisher — NOT "executeAnalysis",
+        // which is the identical workflow name on every run.
+        expect(frame).toContain(idTail("run-aabbccddeeff"));
+        expect(frame).not.toContain("executeAnalysis");
         expect(frame).toContain("not profiled");
-        // Only the profile line flipped to absolute — run (and session) ages stay in the compact
-        // relative-age vocabulary. Assert the same relative token the row computes, and that no full
-        // local timestamp leaks onto a run row.
+        // A LIVE run stays in the compact relative-age vocabulary (only finished runs pin an
+        // absolute time). Assert the same relative token the row computes, and that no full
+        // local timestamp leaks onto a still-running run's row.
         expect(frame).toContain(relAge("2026-07-08T00:00:00.000Z"));
         expect(frame).not.toContain(new Date("2026-07-08T00:00:00.000Z").toLocaleString());
     });
 });
 
 describe("Sidebar RUNS progress embed", () => {
-    test("an active newest run renders its bar and step window under the run row, without repeating the name", async () => {
+    test("an active newest run renders its bar and step window under the run row, without repeating the id", async () => {
         const steps = [stepRow("s1_cohort_summary", "completed"), stepRow("s2_mutation_assoc", "running"), stepRow("s3_clinical_assoc", "pending")];
-        await refreshSidebarData("A", seams(null, [runRow({ status: "running" })], steps));
+        await refreshSidebarData("A", seams(null, [runRow({ runId: "run-aabbccddeeff", status: "running" })], steps));
         const frame = await renderFrame(liveNode(), { width: 44, height: 30 });
 
         expect(frame).toContain("1/3");
@@ -251,27 +254,37 @@ describe("Sidebar RUNS progress embed", () => {
         // The seeded `pending` row renders through the queued (hollow) glyph on the same line.
         expect(lineContaining(frame, "s3_clinical_assoc")).toContain(GLYPHS.circleHollow);
         expect(lineContaining(frame, "s1_cohort_summary")).toContain(GLYPHS.check);
-        // heading={false}: the run row above is the only place the name appears.
-        expect(frame.split("executeAnalysis").length - 1).toBe(1);
+        // heading={false}: the run row above is the only place the id tail appears (the embed carries
+        // it as a `tag`, but the run row's copy is the sole textual occurrence at this width).
+        expect(frame.split(idTail("run-aabbccddeeff")).length - 1).toBe(1);
     });
 
     test("a terminal newest run renders plain rows — no bar, no step window", async () => {
-        await refreshSidebarData("A", seams(null, [runRow({ status: "completed", completedAt: "2026-07-08T00:01:00.000Z" })]));
+        await refreshSidebarData("A", seams(null, [runRow({ runId: "run-aabbccddeeff", status: "completed", completedAt: "2026-07-08T00:01:00.000Z" })]));
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
-        expect(frame).toContain("executeAnalysis");
-        expect(frame).not.toContain("/"); // no done/total meter line
+        expect(frame).toContain(idTail("run-aabbccddeeff"));
+        // A finished run pins its absolute completion time — a durable record read long after a
+        // relative age lost its anchor — in the rail's compact form, which shares one fixed-width
+        // row with the workflow name (the long absTime form would soft-wrap mid-token).
+        expect(frame).toContain(absTimeShort("2026-07-08T00:01:00.000Z"));
+        expect(frame).not.toContain(relAge("2026-07-08T00:00:00.000Z"));
+        // The meter's segmented bar is the embed's signature (a "/" would also match the absolute
+        // date's slashes, so the glyph is the honest absence check).
+        expect(frame).not.toContain(GLYPHS.bar);
     });
 
     test("the rail lists at most the newest 3 runs", async () => {
-        const runs = ["wf-one", "wf-two", "wf-three", "wf-four"].map((name, i) =>
-            runRow({ runId: `run-${i}`, workflowName: name, status: "completed", completedAt: "2026-07-08T00:01:00.000Z" }),
-        );
+        // Distinct run ids (the row's distinguisher now the workflow name is dropped) so the cap is
+        // asserted on what actually varies row to row. Assert through idTail — it strips dashes and
+        // takes the last 6, so a literal would drift from what the row prints.
+        const runIds = ["run-000001", "run-000002", "run-000003", "run-000004"];
+        const runs = runIds.map((runId) => runRow({ runId, status: "completed", completedAt: "2026-07-08T00:01:00.000Z" }));
         await refreshSidebarData("A", seams(null, runs));
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
-        expect(frame).toContain("wf-one");
-        expect(frame).toContain("wf-two");
-        expect(frame).toContain("wf-three");
-        expect(frame).not.toContain("wf-four");
+        expect(frame).toContain(idTail("run-000001"));
+        expect(frame).toContain(idTail("run-000002"));
+        expect(frame).toContain(idTail("run-000003"));
+        expect(frame).not.toContain(idTail("run-000004"));
     });
 
     test("short terminals keep the top of the rail intact (the pane scrolls; sections are not squeezed away)", async () => {

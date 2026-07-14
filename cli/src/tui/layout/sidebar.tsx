@@ -9,7 +9,17 @@ import type { ThemeColors } from "../../lib/design_system.ts";
 import { Bold, Fg } from "../components/emphasis.tsx";
 import { RunBlock } from "../components/run_block.tsx";
 import { ScrollPane } from "../components/scroll_pane.tsx";
-import { activeRunProgress, profileSnapshot, runsSnapshot, absTime, relAge, runMark, shortRunName } from "../hooks/sidebar_live.ts";
+import {
+    activeRunProgress,
+    profileSnapshot,
+    runsSnapshot,
+    absTime,
+    absTimeShort,
+    relAge,
+    runMark,
+    idTail,
+    RUN_STATUS_TERMINAL,
+} from "../hooks/sidebar_live.ts";
 import type { ActiveRunProgress } from "../hooks/sidebar_live.ts";
 import { agentModels, bootState } from "../hooks/boot.ts";
 import type { AgentName, ModelConnectionIdentity } from "../../modules/harness/config.ts";
@@ -378,11 +388,21 @@ export function Sidebar(props: SidebarProps) {
                                 <For each={recentRuns()}>
                                     {(run, index) => {
                                         const m = runMark(run.status);
+                                        // A finished run is a durable record, read long after "20h" meant anything —
+                                        // pin its absolute finish time (terminal paths always stamp completedAt), in
+                                        // the rail's compact form so name + anchor share the fixed-width row. Only a
+                                        // still-live run keeps the relative age.
+                                        const when = RUN_STATUS_TERMINAL[run.status] ? absTimeShort(run.completedAt) : relAge(run.startedAt);
                                         return (
                                             <>
                                                 <text>
                                                     <Fg role={m.role}>{`${m.glyph} `}</Fg>
-                                                    <Fg role="fgMuted">{`${shortRunName(run)} ${GLYPHS.middot} ${relAge(run.startedAt)}`}</Fg>
+                                                    {/* The run's id tail, NOT shortRunName — the latter resolves to the
+                                                    workflow name "executeAnalysis" for every run (identical on every row).
+                                                    The id tail is the per-run distinguisher and fits the fixed-width rail;
+                                                    the plan's human title (up to 80 chars) would overflow it, so the title
+                                                    lives in the runs picker instead. */}
+                                                    <Fg role="fgMuted">{`${idTail(run.runId)} ${GLYPHS.middot} ${when}`}</Fg>
                                                 </text>
                                                 {/* The newest run's live progress, directly under its row. The refresh
                                                 loop clears the snapshot whenever the newest run is terminal, so this
