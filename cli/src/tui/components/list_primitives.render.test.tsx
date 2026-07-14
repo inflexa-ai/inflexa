@@ -618,3 +618,37 @@ describe("items contracts", () => {
         }
     });
 });
+
+describe("two-line meta rows", () => {
+    test("meta renders left-aligned (under the title) on its own line beneath the title; an inline hint is suppressed when meta is present", async () => {
+        const items: SelectItem<string>[] = [
+            // A long title (wraps) plus a left-aligned meta line, and a hint that must NOT show —
+            // meta owns the second line, so an inline hint would double up and is dropped.
+            { value: "r1", title: "Clinical & mutation associations e4fc84", meta: "58a37a · completed · 7/13", hint: "SUPPRESSED" },
+        ];
+        const setup = await testRender(
+            () => (
+                <Harness>
+                    <FixedList items={items} emptyText="none" />
+                </Harness>
+            ),
+            { width: 40, height: 8 },
+        );
+        try {
+            const frame = await settle(setup);
+            const lines = frame.split("\n");
+            const titleLine = lines.find((l) => l.includes("Clinical")) ?? "";
+            const metaLine = lines.find((l) => l.includes("58a37a")) ?? "";
+            // Two-line layout: title and meta occupy DIFFERENT rows, never the same line.
+            expect(titleLine).not.toContain("58a37a");
+            expect(metaLine).not.toContain("Clinical");
+            // Left-aligned under the title: the meta begins near the left (a 2-col indent under the
+            // title text), NOT pushed to the right edge — assert only a small leading gap precedes it.
+            expect(metaLine).toMatch(/^\s{0,4}58a37a · completed · 7\/13/);
+            // The inline hint is suppressed while meta is present.
+            expect(frame).not.toContain("SUPPRESSED");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});

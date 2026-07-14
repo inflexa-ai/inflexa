@@ -34,8 +34,18 @@ export type SelectItem<T> = {
     readonly title: string;
     /** Optional detail shown for the cursor row in the list's bottom detail line. */
     readonly description?: string;
-    /** Optional right-aligned muted hint (e.g. a keybind). */
+    /** Optional right-aligned muted hint (e.g. a keybind), rendered inline on the SAME line as the
+     *  title. Mutually exclusive with {@link meta}: a row with `meta` ignores `hint`, since both
+     *  claim the right edge and `meta` owns a line of its own. */
     readonly hint?: string;
+    /**
+     * Optional muted meta line rendered LEFT-aligned (indented under the title text) on its OWN row
+     * BENEATH the title (e.g. a run's `id · status · date`). Use this instead of {@link hint} when the
+     * title can be long: the title then wraps across the full row width on line one, and the meta sits
+     * alone on line two, so the two never collide mid-wrap the way an inline hint does. A row is one
+     * line without it, two with it.
+     */
+    readonly meta?: string;
     /** Optional group label; rows sharing a category render under one header, surviving filtering. */
     readonly category?: string;
 };
@@ -262,6 +272,9 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
         // coincidentally sit in the selection (`..` shares the parent dir's path), and painting
         // ● on a row space refuses to clear would lie about what confirm hands back.
         const gutter = (): string => ((props.canToggle?.(item().value) ?? true) ? `${isSel() ? GLYPHS.circle : GLYPHS.circleHollow} ` : "  ");
+        // The cursor highlight lives on this inner column (NOT the outer box) so a group header
+        // above the row stays un-highlighted. With `meta`, the column holds two lines — the title
+        // row then a right-aligned meta row; without it, just the single title row.
         return (
             <box id={id()} width="100%" flexDirection="column">
                 <Show when={rowMeta()?.header}>
@@ -269,16 +282,27 @@ export function ListCore<T>(props: ListCoreProps<T>): JSX.Element {
                         <Bold>{rowMeta()?.header ?? ""}</Bold>
                     </text>
                 </Show>
-                <box width="100%" flexDirection="row" backgroundColor={isCursor() ? theme().bgActive : undefined}>
-                    <Show when={mode() === "multi"}>
-                        <text fg={isSel() ? theme().success : theme().fgSubtle}>{gutter()}</text>
-                    </Show>
-                    <text fg={isCursor() ? theme().secondary : theme().fg}>
-                        {mode() === "single" ? (isCursor() ? `${GLYPHS.chevronRight} ` : "  ") : ""}
-                        {item().title}
-                    </text>
-                    <Show when={item().hint}>
-                        <text fg={theme().fgMuted}> {item().hint}</text>
+                <box width="100%" flexDirection="column" backgroundColor={isCursor() ? theme().bgActive : undefined}>
+                    <box width="100%" flexDirection="row">
+                        <Show when={mode() === "multi"}>
+                            <text fg={isSel() ? theme().success : theme().fgSubtle}>{gutter()}</text>
+                        </Show>
+                        <text fg={isCursor() ? theme().secondary : theme().fg}>
+                            {mode() === "single" ? (isCursor() ? `${GLYPHS.chevronRight} ` : "  ") : ""}
+                            {item().title}
+                        </text>
+                        {/* An inline hint only when there's no meta line — meta owns the right edge on its
+                            own row, so a same-line hint would double up the trailing metadata. */}
+                        <Show when={!item().meta && item().hint}>
+                            <text fg={theme().fgMuted}> {item().hint}</text>
+                        </Show>
+                    </box>
+                    <Show when={item().meta}>
+                        {/* Left-aligned, indented 2 cols so it sits under the title TEXT (past the
+                            chevron/gutter prefix), not out at the row's hard left edge. */}
+                        <box width="100%" flexDirection="row" paddingLeft={2}>
+                            <text fg={theme().fgMuted}>{item().meta}</text>
+                        </box>
                     </Show>
                 </box>
             </box>

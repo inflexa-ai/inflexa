@@ -273,6 +273,28 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                             />
                         </box>
                     </DialogShowcase>
+                    <text fg={theme().fgMuted}>
+                        two-line rows (`meta`) — a long title wraps on line one, id/status/date left-aligned beneath (the runs picker):
+                    </text>
+                    <DialogShowcase>
+                        <box height={6} width="100%">
+                            <FixedList
+                                items={[
+                                    {
+                                        value: "r1",
+                                        title: "Clinical & mutation associations with anti-PD-1 response in GSE78220 (n=28)",
+                                        meta: `e4fc84 ${GLYPHS.middot} completed ${GLYPHS.middot} 7/13/26, 7:23 PM`,
+                                    },
+                                    {
+                                        value: "r2",
+                                        title: "GSE78220 follow-up: power, mutation-burden, consolidated summary",
+                                        meta: `58a37a ${GLYPHS.middot} running ${GLYPHS.middot} 7/14/26, 3:43 PM`,
+                                    },
+                                ]}
+                                emptyText="No runs"
+                            />
+                        </box>
+                    </DialogShowcase>
                     <text fg={theme().fgMuted}>empty state:</text>
                     <DialogShowcase>
                         <box height={3} width="100%">

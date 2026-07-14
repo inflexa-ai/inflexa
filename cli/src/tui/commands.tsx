@@ -15,7 +15,7 @@ import { ConfigApp } from "./app_config.tsx";
 import { DesignGallery } from "./layout/design_gallery.tsx";
 import { setTheme, theme } from "./theme.ts";
 import { notify } from "./hooks/notice.ts";
-import { queryRunsByAnalysis, queryStepsByRun } from "@inflexa-ai/harness";
+import { loadPlan, queryRunsByAnalysis, queryStepsByRun } from "@inflexa-ai/harness";
 import type { CortexRunRow } from "@inflexa-ai/harness";
 
 import { bootState, harnessRuntime } from "./hooks/boot.ts";
@@ -23,7 +23,7 @@ import { latestPlanCard, sessionOpenables, type SessionOpenable } from "./hooks/
 import { openArtifact } from "./hooks/artifacts.ts";
 import { resolveEntryPath } from "../modules/harness/artifact_open.ts";
 import { driveForceReprofile, profileWorkInFlight } from "./hooks/profile_parity.ts";
-import { RUN_STATUS_TERMINAL, absTime, idTail, shortRunName } from "./hooks/sidebar_live.ts";
+import { RUN_STATUS_TERMINAL, absTime, absTimeShort, idTail, shortRunName } from "./hooks/sidebar_live.ts";
 import { chatStatus } from "./hooks/status.ts";
 import { keybindLabel } from "./keymap.ts";
 import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
@@ -845,6 +845,20 @@ async function exportProvenanceToFile(ws: Workspace, format: BuiltinProvFormat):
 const RUNS_PICKER_LIMIT = 100;
 
 /**
+ * Extract a plan's human title from the persisted plan JSON. `loadPlan` returns the raw stored
+ * document as `unknown` (the harness parses it against its own schema at use sites, not here), so
+ * this narrows structurally and returns `null` when the title is absent or blank — historical
+ * pre-title plans — letting the caller fall back to the workflow-name label rather than a crash.
+ */
+function planTitleOf(plan: unknown): string | null {
+    if (typeof plan !== "object" || plan === null || !("title" in plan)) return null;
+    // `title` is `unknown` after the `in` narrowing; the persistence schema types it optional, so
+    // guard the runtime type before trusting it as a string.
+    const title = plan.title;
+    return typeof title === "string" && title.trim().length > 0 ? title.trim() : null;
+}
+
+/**
  * Open the searchable runs picker → run-detail flow. The SINGLE open path behind all three entry
  * points (the `runs.show` palette command, the sidebar RUNS section click, and its leader chord —
  * the app routes the latter two through the command), so every door shows the identical picker.
@@ -873,17 +887,49 @@ async function openRunsPicker(ctx: Workspace): Promise<void> {
         ctx.openDialog(() => <ResultsDialog title={title} lines={["runs unavailable"]} emptyText="runs unavailable" onClose={() => ctx.closeDialog()} />);
         return;
     }
+    // Resolve each run's human plan title. The run row itself only carries the workflow name
+    // ("executeAnalysis" — identical on every run) plus a `planId`; the readable 3–8-word name the
+    // planner set lives on the plan (cortex_plans). Fetch the DISTINCT plans (re-runs of one plan
+    // share a planId, so dedup) and label rows by title, falling back to the workflow name where a
+    // plan is gone or predates titles. CLI-side join by choice — the alternative is a title column
+    // on cortex_runs; kept here so the picker stays the only reader that pays for it.
+    const planIds = [...new Set(rows.map((r) => r.planId).filter((id): id is string => id !== null))];
+    const titleByPlanId = new Map<string, string>();
+    await Promise.all(
+        planIds.map((planId) =>
+            loadPlan(runtime.pool, planId, { analysisId: analysis.id }).match(
+                (plan) => {
+                    const t = planTitleOf(plan);
+                    if (t) titleByPlanId.set(planId, t);
+                },
+                // A plan read that fails just falls back to the workflow-name label — the picker
+                // must still open, and a missing title is a degraded row, not an error.
+                () => {},
+            ),
+        ),
+    );
     const atCap = rows.length === RUNS_PICKER_LIMIT;
     ctx.openDialog(() => (
         <SelectDialog
             title={atCap ? `${title} (newest ${RUNS_PICKER_LIMIT})` : title}
             placeholder={`Search runs${GLYPHS.ellipsis}`}
-            items={rows.map((run) => ({
-                value: run,
-                title: `${shortRunName(run)} ${idTail(run.runId)}`,
-                // Durable-record rule: the picker lists referenced records, so absolute started times.
-                description: `${run.status} ${GLYPHS.middot} ${absTime(run.startedAt)}`,
-            }))}
+            items={rows.map((run) => {
+                // Title first, id tail always appended: two runs of the SAME plan share a title, so
+                // the tail is what tells them apart.
+                const label = (run.planId ? titleByPlanId.get(run.planId) : undefined) ?? shortRunName(run);
+                return {
+                    value: run,
+                    // Title alone on its own (wrapping) line — plan titles run long (up to 80 chars).
+                    title: label,
+                    // Id tail + status + compact started date as a left-aligned second line (`meta`, not
+                    // an inline `hint`): the long title would otherwise collide with the metadata mid-wrap.
+                    // The id tail lives here (not the title) so two runs of one plan differ on this line.
+                    // Durable-record rule — the picker lists referenced records, so absolute times; the
+                    // detail line below expands the focused row to full seconds-bearing started/finished.
+                    meta: `${idTail(run.runId)} ${GLYPHS.middot} ${run.status} ${GLYPHS.middot} ${absTimeShort(run.startedAt)}`,
+                    description: `started ${absTime(run.startedAt)}${run.completedAt ? ` ${GLYPHS.middot} finished ${absTime(run.completedAt)}` : ""}`,
+                };
+            })}
             emptyText="no runs"
             onCancel={() => ctx.closeDialog()}
             onSelect={(run: CortexRunRow) => {
