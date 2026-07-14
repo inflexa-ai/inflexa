@@ -1,0 +1,72 @@
+name: Release Prep
+
+# The clickable release: Actions tab -> Run workflow -> pick a semver bump.
+# Opens the version-bump PR; merging that PR is what actually releases (the
+# bump lands on main and release.yml tags and ships it). Releasing therefore
+# never requires local git — and the bump still flows through main's full PR
+# gauntlet (review, dco, version-guard, tests) like any other change.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Semver component to bump
+        type: choice
+        required: true
+        options:
+          - patch
+          - minor
+          - major
+
+# The default GITHUB_TOKEN is deliberately unused for the push/PR: PRs created
+# with it never trigger `pull_request` workflows (GitHub's anti-recursion
+# rule), which would leave main's required checks eternally pending and the PR
+# unmergeable. RELEASE_PREP_TOKEN must be a fine-grained PAT (or GitHub App
+# token) with contents:write + pull-requests:write on this repo; the PAT's
+# owner becomes the PR author, so version-guard sees a maintainer.
+permissions: {}
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the release-prep token
+        env:
+          HAS_TOKEN: ${{ secrets.RELEASE_PREP_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" != "true" ]; then
+            echo "::error::RELEASE_PREP_TOKEN is not configured. Add a fine-grained PAT (contents:write, pull-requests:write) as a repository secret — the default GITHUB_TOKEN cannot be used because PRs it creates never trigger required checks."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.RELEASE_PREP_TOKEN }}
+
+      - name: Bump version and open the release PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PREP_TOKEN }}
+          BUMP: ${{ inputs.bump }}
+        run: |
+          # Commit as the Actions bot with -s so the Signed-off-by trailer
+          # matches the author — the DCO check then passes on its own merits,
+          # with no bot allowlist widening in dco.yml.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # npm version only rewrites package.json here (no lockfile in play —
+          # bun.lock does not track the package's own version) and preserves
+          # the file's indentation.
+          out=$(cd cli && npm version "$BUMP" --no-git-tag-version)
+          version=${out#v}
+          branch="release/v$version"
+
+          git checkout -b "$branch"
+          git add cli/package.json
+          git commit -s -m "release: v$version"
+          git push origin "$branch"
+
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "release: v$version" \
+            --body "Bumps cli/package.json to $version. Merging this PR releases v$version: release.yml tags main, builds the binaries, and publishes the GitHub release."

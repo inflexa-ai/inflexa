@@ -1,0 +1,60 @@
+name: Version Guard
+
+# The version field of cli/package.json is the release trigger: a bump landing
+# on main mints a tag, a GitHub release, and production binaries (see
+# release.yml). Branch rulesets can only gate whole file paths, not a field
+# inside a file — and gating all of cli/package.json would also block every
+# legitimate dependency edit — so this check enforces the field-level rule:
+# a PR may change the version only when its author is a maintainer.
+#
+# The job runs on EVERY pull request, with no paths filter, because it is a
+# required status check: a path-filtered workflow reports nothing on PRs that
+# don't touch the file, which blocks their merge forever. The unchanged-version
+# case is the cheap common path.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  version-guard:
+    name: version-guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Block version bumps from non-maintainers
+        # Context values are passed through env rather than interpolated into
+        # the script so untrusted event data can never become shell syntax.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # author_association is computed server-side in the event payload, so
+          # membership needs no extra token scopes. OWNER covers user-owned
+          # repos; org members (the maintainers team) surface as MEMBER.
+          AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
+        run: |
+          git fetch --depth=1 origin "$BASE_SHA"
+          base_version=$(git show "$BASE_SHA:cli/package.json" | jq -r .version)
+          head_version=$(jq -r .version cli/package.json)
+
+          if [ "$base_version" = "$head_version" ]; then
+            echo "version unchanged ($head_version) — pass"
+            exit 0
+          fi
+
+          # github-actions[bot] is allowed for automation-authored bump PRs
+          # (an App-token variant of release-prep would author as the bot).
+          # Only workflows in this repo can act as the bot — fork PRs get a
+          # read-only token — so this does not widen access beyond write.
+          case "$AUTHOR_ASSOCIATION/$AUTHOR_LOGIN" in
+            OWNER/* | MEMBER/* | */github-actions\[bot\])
+              echo "version bump $base_version -> $head_version by $AUTHOR_LOGIN ($AUTHOR_ASSOCIATION) — authorized"
+              ;;
+            *)
+              echo "::error::cli/package.json version changed ($base_version -> $head_version), but PR author $AUTHOR_LOGIN ($AUTHOR_ASSOCIATION) is not a maintainer. Version bumps mint production releases and must come from maintainer-authored PRs — split the bump out of this PR."
+              exit 1
+              ;;
+          esac

@@ -1,0 +1,164 @@
+name: Release
+
+# Ships the inflexa binaries. The trigger is a version bump landing on main
+# (guarded by version-guard.yml): every push checks whether cli/package.json's
+# version already has a v<version> tag — tag existence, not commit diffing, is
+# the source of truth, so the workflow is idempotent (a failed run can simply
+# be re-run via workflow_dispatch) and a non-bump push is a cheap no-op.
+#
+# v* tags are ruleset-protected as immutable: once created they cannot be
+# moved, force-pushed, or deleted, so a published release stays pinned to the
+# main state it shipped from. Creation stays open to write access — GitHub
+# Actions cannot be a ruleset bypass actor without a dedicated GitHub App, and
+# only maintainers hold write — so the binaries' signed attestation, not tag
+# authorship, is what proves a release came from this workflow.
+on:
+  push:
+    branches: [main]
+    # The gate re-checks tag existence regardless; this filter only skips
+    # no-op runs. workflow_dispatch below is the unfiltered retry path.
+    paths: [cli/package.json]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  # attest-build-provenance signs with the workflow's OIDC identity.
+  id-token: write
+  attestations: write
+
+# Never cancel a half-published release; later pushes queue behind it and
+# their gate then sees the new tag and no-ops.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Gate on an unreleased version
+        id: gate
+        run: |
+          version=$(jq -r .version cli/package.json)
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "::error::cli/package.json has no version field"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "v$version is already released — nothing to do"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$version is unreleased — proceeding"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait for CI to pass on this commit
+        if: steps.gate.outputs.release == 'true'
+        # This run starts in parallel with the Test/Lint runs for the same
+        # push, and an admin-bypass direct push never had pre-merge checks at
+        # all — so block until the commit's own check runs succeed rather than
+        # trusting that they did. dco is excluded: it only runs on PRs, so it
+        # never exists on a push's commit.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          required=("test (cli)" "test (harness)" "lint (cli)" "lint (harness)")
+          deadline=$(( $(date +%s) + 1800 ))
+          while :; do
+            # The check-runs API defaults to filter=latest: one run per check
+            # name, re-runs replace their predecessor. A single page holds all
+            # of this repo's checks; --paginate would emit one array PER page,
+            # which the per-name jq below would misread as multiple documents.
+            runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
+              --jq '[.check_runs[] | {name, status, conclusion}]')
+            passed=0
+            failed=""
+            for name in "${required[@]}"; do
+              state=$(jq -r --arg n "$name" \
+                '[.[] | select(.name == $n)] | first | if . == null then "absent" elif .status != "completed" then "pending" else .conclusion end' \
+                <<<"$runs")
+              case "$state" in
+                success) passed=$((passed + 1)) ;;
+                absent|pending) ;;
+                *) failed="$failed \"$name\"=$state" ;;
+              esac
+            done
+            if [ -n "$failed" ]; then
+              echo "::error::refusing to release — required checks did not pass:$failed"
+              exit 1
+            fi
+            if [ "$passed" -eq "${#required[@]}" ]; then
+              echo "all ${#required[@]} required checks passed"
+              break
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::timed out waiting for required checks on $GITHUB_SHA"
+              exit 1
+            fi
+            echo "waiting for checks ($passed/${#required[@]} passed)..."
+            sleep 30
+          done
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.gate.outputs.release == 'true'
+
+      # cli depends on @inflexa-ai/harness via file:../harness, whose exports
+      # resolve to harness/dist/ — not checked in, and bun blocks the package's
+      # own `prepare` (untrusted lifecycle scripts), so build it explicitly.
+      - name: Build harness (file:../harness dependency)
+        if: steps.gate.outputs.release == 'true'
+        working-directory: harness
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Install cli dependencies
+        if: steps.gate.outputs.release == 'true'
+        working-directory: cli
+        run: bun install --frozen-lockfile
+
+      - name: Build release binaries
+        if: steps.gate.outputs.release == 'true'
+        working-directory: cli
+        # The Auth0 values are repository *variables*, not secrets: they are
+        # baked into the shipped binary, so they are public by definition.
+        # scripts/build.ts refuses to build if any is missing or if the
+        # audience is not a usable API identifier, and smoke-tests the
+        # host-target (linux-x64) binary — those gates are the enforcement,
+        # this workflow just supplies the inputs.
+        env:
+          INFLEXA_BUILD_CHANNEL: production
+          INFLEXA_AUTH0_DOMAIN: ${{ vars.INFLEXA_AUTH0_DOMAIN }}
+          INFLEXA_AUTH0_CLIENT_ID: ${{ vars.INFLEXA_AUTH0_CLIENT_ID }}
+          INFLEXA_AUTH0_AUDIENCE: ${{ vars.INFLEXA_AUTH0_AUDIENCE }}
+        run: bun run build:all
+
+      - name: Generate checksums
+        if: steps.gate.outputs.release == 'true'
+        working-directory: cli/dist
+        run: sha256sum inflexa-* > SHA256SUMS
+
+      # Signed SLSA provenance: lets a user verify a downloaded binary was
+      # built by this workflow from this repo (`gh attestation verify`).
+      - uses: actions/attest-build-provenance@v4
+        if: steps.gate.outputs.release == 'true'
+        with:
+          subject-path: cli/dist/inflexa-*
+
+      - name: Create tag and GitHub release
+        if: steps.gate.outputs.release == 'true'
+        working-directory: cli
+        # gh creates the tag at --target through the API as the Actions
+        # integration, which is the v* tag ruleset's only bypass actor.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.gate.outputs.version }}
+        run: |
+          gh release create "v$VERSION" \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION" \
+            --generate-notes \
+            dist/inflexa-* dist/SHA256SUMS dist/THIRD-PARTY-NOTICES.txt
