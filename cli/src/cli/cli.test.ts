@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
+import { env } from "../lib/env.ts";
 import { runCli } from "../test_support/cli.ts";
+import { assertTestSandbox } from "../test_support/sandbox.ts";
 
 // e2e of the commander registry surface — help text and the error/exit-code contract. No DB needed:
 // --help exits before any action, and unknown option/command errors during parse.
@@ -11,6 +15,50 @@ describe("inflexa help & usage (e2e)", () => {
         expect(result.stdout).toContain("Usage: inflexa");
         expect(result.stdout).toContain("project");
         expect(result.stdout).toContain("sessions");
+        expect(result.stdout).toContain("refs");
+        expect(result.stdout).toContain("reference data mounted read-only in sandboxes at /mnt/refs");
+    });
+
+    test("refs path prints the exact public path without creating it", async () => {
+        const result = runCli(["refs", "path"]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.trim()).toContain("/inflexa/refs");
+        expect(await Bun.file(result.stdout.trim()).exists()).toBe(false);
+    });
+
+    test("unknown reference ids fail before filesystem or network work", () => {
+        const result = runCli(["refs", "download", "unknown", "--yes"]);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain("Unknown reference dataset");
+    });
+
+    test("refs list explains custom content and catalog contributions", () => {
+        const result = runCli(["refs", "list"]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("Add arbitrary references under");
+        expect(result.stdout).toContain("Open a PR");
+    });
+
+    test("refs list identifies user-owned content without adopting it", () => {
+        assertTestSandbox(env.refsDir);
+        const custom = join(env.refsDir, "user", "custom.fa");
+        mkdirSync(join(env.refsDir, "user"), { recursive: true });
+        writeFileSync(custom, "custom");
+        try {
+            const result = runCli(["refs", "list"]);
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout).toContain("user/custom.fa");
+            expect(result.stdout).toContain("left untouched");
+        } finally {
+            assertTestSandbox(env.refsDir);
+            rmSync(env.refsDir, { recursive: true, force: true });
+        }
+    });
+
+    test("refs verify with no active catalog receipts reports an empty verification set", () => {
+        const result = runCli(["refs", "verify"]);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("No installed catalog reference datasets to verify.");
     });
 
     test("an unknown option exits non-zero", () => {

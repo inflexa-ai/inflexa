@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import { ok, err, type Result } from "neverthrow";
 import {
     bootHarness,
@@ -65,6 +65,30 @@ import {
     type AgentBackend,
 } from "./run_deps.ts";
 import { clearAgentSwitch, createSwappableProvider, installAgentSwitch } from "./agent_switch.ts";
+
+/**
+ * Return the reference-store bind source only when it already exists. This existence gate is
+ * deliberately pure/injectable so runtime boot never asks Docker to create a missing host path.
+ */
+export function existingRefStorePath(path: string, isDirectory: (candidate: string) => boolean = existingDirectory): string | undefined {
+    return isDirectory(path) ? path : undefined;
+}
+
+/** Build the optional sandbox-client reference mount fragment, omitting a missing source entirely. */
+export function existingRefStoreConfig(path: string, isDirectory: (candidate: string) => boolean = existingDirectory): { readonly refStorePath?: string } {
+    const refStorePath = existingRefStorePath(path, isDirectory);
+    return refStorePath === undefined ? {} : { refStorePath };
+}
+
+function existingDirectory(path: string): boolean {
+    try {
+        // Reject symlinks as bind authorities: the configured path should itself be the deliberately
+        // created public store, not an indirection that may later move outside user expectations.
+        return lstatSync(path).isDirectory();
+    } catch {
+        return false;
+    }
+}
 
 // The embedded-harness composition root. Boots lazily on the first profile
 // trigger (never from a passive flow — no-litter policy) and holds a process
@@ -579,6 +603,7 @@ async function bootHarnessRuntimeOnce(
             // pull time). Managed still mounts the tarballs via its PVC — that
             // lives in infra/harness config, not here.
             image: cfg.sandboxImage,
+            ...existingRefStoreConfig(env.refsDir),
             resourceLimits: cfg.resourcePolicy.perStep,
             resolveWorkspaceRoot,
         });

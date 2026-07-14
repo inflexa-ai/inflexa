@@ -316,9 +316,22 @@ cli.command("setup")
     .option("--no-postgres", "Skip the Postgres provisioning step")
     .option("--force", "Re-pull images even if they are already cached")
     .option("--embeddings <mode>", "Configure embeddings non-interactively: local|api-key|off")
+    .option("--refs <ids>", "Download comma-separated reference dataset ids")
+    .option("--yes", "Confirm explicitly selected reference downloads")
     .action(
-        async (options: { connection?: string; provider?: string; auth: boolean; start: boolean; postgres: boolean; force?: boolean; embeddings?: string }) => {
+        async (options: {
+            connection?: string;
+            provider?: string;
+            auth: boolean;
+            start: boolean;
+            postgres: boolean;
+            force?: boolean;
+            embeddings?: string;
+            refs?: string;
+            yes?: boolean;
+        }) => {
             const { setup } = await import("../modules/infra/setup.ts");
+            const { parseReferenceIds } = await import("../modules/refs/commands.ts");
             const embeddings = parseEmbeddingMode(options.embeddings);
             if (embeddings === null) {
                 console.error("\n  `--embeddings` must be one of: local, api-key, off.\n");
@@ -333,9 +346,42 @@ cli.command("setup")
                 force: options.force ?? false,
                 postgres: options.postgres,
                 embeddings,
+                refs: parseReferenceIds(options.refs),
+                yes: options.yes,
             });
         },
     );
+
+const refs = cli.command("refs").description("Manage reference data mounted read-only in sandboxes at /mnt/refs");
+
+refs.command("list")
+    .description("List catalog options, links, sizes, and local state")
+    .action(async () => {
+        const { runRefsList } = await import("../modules/refs/commands.ts");
+        await runRefsList();
+    });
+
+refs.command("download [ids...]")
+    .description("Download and verify selected catalog datasets")
+    .option("--yes", "Skip the download confirmation")
+    .action(async (ids: string[], options: { yes?: boolean }) => {
+        const { runRefsDownload } = await import("../modules/refs/commands.ts");
+        await runRefsDownload(ids, options);
+    });
+
+refs.command("verify [ids...]")
+    .description("Verify active managed datasets without changing them")
+    .action(async (ids: string[]) => {
+        const { runRefsVerify } = await import("../modules/refs/commands.ts");
+        await runRefsVerify(ids);
+    });
+
+refs.command("path")
+    .description("Print the public host reference-store path")
+    .action(async () => {
+        const { runRefsPath } = await import("../modules/refs/commands.ts");
+        runRefsPath();
+    });
 
 // The sandbox image: pull a variant (python | python-r) and inspect it. The
 // pulled image bakes the R/Python/conda/node packages at `/mnt/libs/current`, so
