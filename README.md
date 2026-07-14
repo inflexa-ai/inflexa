@@ -51,8 +51,8 @@ To change any of it later, run `inflexa config`.
 Developing, or building the binary yourself, additionally requires [Bun](https://bun.sh/). The CLI lives in [`cli/`](./cli):
 
 ```bash
-git clone https://github.com/inflexa-ai/inf-cli.git
-cd inf-cli/cli
+git clone https://github.com/inflexa-ai/inflexa.git
+cd inflexa/cli
 bun install
 
 bun run dev                 # launch the TUI from source

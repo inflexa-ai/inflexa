@@ -378,16 +378,18 @@ function escapeHtml(s: string): string {
 }
 
 /**
- * Build the self-contained echart HTML: the spec embedded inline, ECharts loaded from a pinned-major CDN
- * URL (`echarts@5`), and a VISIBLE fallback notice shown when the script cannot load (offline) so a blank
- * tab is never mysterious. `dataUrl`, when present, is the RELATIVE URL of the chart's data artifact,
- * fetched at render time and parsed into `dataset.source` in-page by PapaParse (pinned-major CDN, same
- * pattern as ECharts; delimiter auto-detection, `dynamicTyping` for numeric cells, header row first as
- * dimension names) — the data lives only in the artifact, never in this file — with a visible degradation
- * note when the fetch or parse fails (a `file://`-opened page may be denied local data access by the
- * browser). `dataNote`, when present, pre-degrades the shell (an invalid `dataPath` shape refused before
- * a URL was derived). Exported for unit tests. Embedded JSON has `<` escaped so a string field can never
- * break out of the script.
+ * Build the self-contained echart HTML: the spec embedded inline, ECharts loaded from an exact-version CDN
+ * URL guarded by Subresource Integrity (`echarts@5.5.1`, the version the report templates pin) so a CDN or
+ * package compromise cannot swap arbitrary JS into a chart page the user opens, and a VISIBLE fallback
+ * notice shown when the script cannot load (offline, or refused by the browser on an integrity mismatch) so
+ * a blank tab is never mysterious. `dataUrl`, when present, is the RELATIVE URL of the chart's data
+ * artifact, fetched at render time and parsed into `dataset.source` in-page by PapaParse (same
+ * exact-version + SRI pinning as ECharts; delimiter auto-detection, `dynamicTyping` for numeric cells,
+ * header row first as dimension names) — the data lives only in the artifact, never in this file — with a
+ * visible degradation note when the fetch or parse fails (a `file://`-opened page may be denied local data
+ * access by the browser). `dataNote`, when present, pre-degrades the shell (an invalid `dataPath` shape
+ * refused before a URL was derived). Exported for unit tests. Embedded JSON has `<` escaped so a string
+ * field can never break out of the script.
  */
 export function echartHtml(spec: Record<string, unknown>, dataUrl: string | null, dataNote: string | null): string {
     // Escape `<` in the embedded JSON so a spec string containing `</script>` cannot terminate the script tag.
@@ -396,7 +398,10 @@ export function echartHtml(spec: Record<string, unknown>, dataUrl: string | null
     const dataUrlJson = JSON.stringify(dataUrl).replace(/</g, "\\u003c");
     const noteAttr = dataNote ? "" : ' style="display:none"';
     // The parser script tag is emitted only for data-carrying shells, so an inline chart stays one fetch.
-    const papaScript = dataUrl !== null ? '<script src="https://cdn.jsdelivr.net/npm/papaparse@5"></script>\n' : "";
+    const papaScript =
+        dataUrl !== null
+            ? '<script src="https://cdn.jsdelivr.net/npm/papaparse@5.5.4/papaparse.min.js" integrity="sha384-cLjG6lwXwNDhUhTjXK3ohZ0rY1kC099EjtQic90lF92kT8M0+eD45d1inP5youpY" crossorigin="anonymous"></script>\n'
+            : "";
     return `<!doctype html>
 <html lang="en">
 <head>
@@ -418,7 +423,7 @@ export function echartHtml(spec: Record<string, unknown>, dataUrl: string | null
   <p>The chart library could not load (are you offline?). The chart spec is shown below.</p>
   <pre id="spec"></pre>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" integrity="sha384-Mx5lkUEQPM1pOJCwFtUICyX45KNojXbkWdYhkKUKsbv391mavbfoAmONbzkgYPzR" crossorigin="anonymous"></script>
 ${papaScript}<script>
   var spec = ${specJson};
   var dataUrl = ${dataUrlJson};

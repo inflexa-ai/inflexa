@@ -58,7 +58,8 @@ export function generateComposeFile(conn: PostgresConnection, mode: ConnectionMo
     container_name: ${PROXY_CONTAINER_NAME}
     restart: unless-stopped
     ports:
-      - "${env.cliproxyPort}:${env.cliproxyPort}"
+      # Loopback-only: the proxy holds provider credentials, so publish it where only this host can reach it, never the LAN.
+      - "127.0.0.1:${env.cliproxyPort}:${env.cliproxyPort}"
     volumes:
       - "${env.cliproxyConfigPath}:${PROXY_CONFIG_PATH}"
       - "${env.cliproxyAuthDir}:${PROXY_AUTH_DIR}"
@@ -77,7 +78,8 @@ ${proxyService}  ${POSTGRES_CONTAINER_NAME}:
     container_name: ${POSTGRES_CONTAINER_NAME}
     restart: unless-stopped
     ports:
-      - "${conn.port}:${CONTAINER_PG_PORT}"
+      # Loopback-only: bind to this host alone so the DB (well-known constant creds) is never reachable from the LAN.
+      - "127.0.0.1:${conn.port}:${CONTAINER_PG_PORT}"
     environment:
       POSTGRES_DB: "${escapeYaml(conn.database)}"
       POSTGRES_USER: "${escapeYaml(conn.user)}"

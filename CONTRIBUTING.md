@@ -36,8 +36,8 @@ If you're not sure where to start, look for issues labeled `good first issue` or
 **Get the project running**
 
 ```bash
-git clone https://github.com/inflexa-ai/inf-cli.git
-cd inf-cli/cli
+git clone https://github.com/inflexa-ai/inflexa.git
+cd inflexa/cli
 bun install
 bun run build
 

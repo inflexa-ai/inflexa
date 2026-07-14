@@ -7,8 +7,8 @@ import { bakedEnv, env } from "../../lib/env.ts";
 
 /**
  * offline_access is required: inflexa's sliding session (log in once, renew on
- * use) depends on rotating refresh tokens. This deliberately diverges from
- * nxctl, which forbids the scope because it is a high-privilege admin tool.
+ * use) depends on rotating refresh tokens. This deliberately diverges from a
+ * sibling admin CLI that forbids the scope because it is a high-privilege tool.
  */
 const AUTH_SCOPE = "openid profile email offline_access";
 

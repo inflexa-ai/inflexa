@@ -7,7 +7,7 @@
 > decisions appear as options with trade-offs unless already settled by the user.
 >
 > Sources: `mastra-ai/mastra` @ `bd4d720` (main), `maximhq/bifrost` @ `59096c8` (main), OpenCode
-> checkout at `~/repos/inflexa/explore/inf/opencode`, inflexa branch `record-model-agent`
+> checkout (local), inflexa branch `record-model-agent`
 > (post-4aef978). Researched 2026-07-10.
 
 ## 1. The trigger: PR #70 and why it points at a deeper problem

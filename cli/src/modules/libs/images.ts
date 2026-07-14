@@ -11,7 +11,7 @@
  * directory, no `/mnt/libs` bind mount, and no arch-forcing.
  */
 
-/** GHCR namespace: the inflexa-ai org's GitHub Packages (linked to the inf-cli repo via the image's source label). */
+/** GHCR namespace: the inflexa-ai org's GitHub Packages (linked to the inflexa repo via the image's source label). */
 const GHCR_NAMESPACE = "ghcr.io/inflexa-ai";
 
 /** The image variants a user can pull, in menu order (lightest first). */

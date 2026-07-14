@@ -24,7 +24,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/inflexa-ai/inf-cli.git",
+    "url": "https://github.com/inflexa-ai/inflexa.git",
     "directory": "harness"
   },
   "scripts": {
@@ -54,7 +54,7 @@
     "ai": "^7.0.11",
     "cheerio": "^1.0.0",
     "dockerode": "^4.0.0",
-    "fast-xml-parser": "^4.5.0",
+    "fast-xml-parser": "^5.7.0",
     "hono": "^4.0.0",
     "js-tiktoken": "^1.0.0",
     "mime": "^4.0.0",

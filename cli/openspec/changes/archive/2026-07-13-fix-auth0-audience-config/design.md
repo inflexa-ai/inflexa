@@ -1,6 +1,6 @@
 ## Context
 
-`resolveAuth0Config` (`src/modules/auth/auth.ts`) accepts any non-empty string for `INFLEXA_AUTH0_AUDIENCE`, and `scripts/build.ts` bakes whatever value the build environment holds (its guard only rejects *unset* vars). Both permissiveness points were exercised by a real incident: the committed `.env.example` carried the application's client secret in the audience slot (a paste error — any non-empty string passed), and the working dev value pointed at the Auth0 Management API, whose `allow_offline_access` is immutably false, making the sliding-session design (`tokenWireToStoredAuth` requires a refresh token) impossible to satisfy. The correct target is a dedicated resource server, identifier `https://api.inflexa.ai` (created under inflexa-ai/nexus#143).
+`resolveAuth0Config` (`src/modules/auth/auth.ts`) accepts any non-empty string for `INFLEXA_AUTH0_AUDIENCE`, and `scripts/build.ts` bakes whatever value the build environment holds (its guard only rejects *unset* vars). Both permissiveness points were exercised by a real incident: the committed `.env.example` carried a credential-shaped value in the audience slot (a paste error — any non-empty string passed), and the working dev value pointed at the Auth0 Management API, whose `allow_offline_access` is immutably false, making the sliding-session design (`tokenWireToStoredAuth` requires a refresh token) impossible to satisfy. The correct target is a dedicated resource server, identifier `https://api.inflexa.ai`.
 
 Auth0's failure modes for a bad audience are opaque from the CLI's seat: an unregistered value fails at `/oauth/device/code` with `Service not found: <blob>`, and the Management API value fails only *after* browser approval, as a missing refresh token. Both should be caught before any network call, as a config error naming the variable.
 
@@ -17,7 +17,7 @@ Auth0's failure modes for a bad audience are opaque from the CLI's seat: an unre
 
 - Validating `INFLEXA_AUTH0_DOMAIN` / `INFLEXA_AUTH0_CLIENT_ID` shapes — the domain fails naturally when the URL is built, and client IDs carry no shape contract worth encoding. Only the audience has a demonstrated misconfiguration class.
 - Verifying the audience is *registered* in the tenant (requires a network call; Auth0's `Service not found` already covers it at first use).
-- Tenant-side work (resource-server creation, app grant/rotation settings) — tracked in inflexa-ai/nexus#143; this change only encodes the prerequisites in the spec.
+- Tenant-side work (resource-server creation, app grant/rotation settings) — handled out of band; this change only encodes the prerequisites in the spec.
 
 ## Decisions
 
@@ -37,14 +37,14 @@ Same operator-facing position and tone as the existing missing-var / channel / c
 
 - [A legitimate future identifier that is not a URI would be rejected] → Accepted deliberately: the spec (amended by this change) pins the identifier contract to a URI; loosening it is a spec change, which is the right friction.
 - [The Management-API rejection encodes tenant policy in code] → Scoped to the one value that is *provably* unusable for this flow (no refresh tokens, ever) and derived from the configured domain rather than a hardcoded tenant string, so it holds for any tenant the binary is built against.
-- [`.env.example` names an identifier that doesn't exist in the tenant yet] → Login fails with Auth0's `Service not found` until nexus#143 lands — identical to today's behavior, but now with a value that becomes correct the moment the tenant catches up.
+- [`.env.example` names an identifier that doesn't exist in the tenant yet] → Login fails with Auth0's `Service not found` until the tenant resource server lands — identical to today's behavior, but now with a value that becomes correct the moment the tenant catches up.
 
 ## Migration Plan
 
 1. Land the guard + spec + `.env.example` (this change; safe immediately — nothing depends on the tenant).
-2. After the resource server exists (nexus#143): devs update local `.env` audience; release builds set the new value in the build environment.
+2. After the resource server exists: devs update local `.env` audience; release builds set the new value in the build environment.
 3. No stored-state migration: `auth.json` is untouched; no currently-working sessions exist to preserve (login is broken today under both known values). First login against the new audience establishes a fresh grant.
 
 ## Open Questions
 
-- None blocking. The identifier string is agreed as `https://api.inflexa.ai`; if nexus#143 settles on a different final identifier, only `.env.example` and build env values change — the guard is value-agnostic by design.
+- None blocking. The identifier string is agreed as `https://api.inflexa.ai`; if the tenant settles on a different final identifier, only `.env.example` and build env values change — the guard is value-agnostic by design.

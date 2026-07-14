@@ -30,4 +30,4 @@ inf-cli has no authentication: it cannot identify the user or call the Nexus ser
 - New release build script `scripts/build.ts` (`bun run build`): compiles a single executable via `Bun.build` with the Auth0 values inlined as compile-time constants.
 - One new dependency, explicitly approved: `zod` (boundary validation). Everything else uses built-ins (`fetch`, `node:fs`, `Bun.spawn`); errors follow the existing neverthrow `Result` convention. No Auth0 SDK.
 - Requires Auth0 tenant config (outside this repo): Native app, Device Code + Refresh Token grants, API audience with Allow Offline Access, refresh-token rotation with ~30-day inactivity lifetime.
-- Deliberate divergence from nxctl (`~/repos/inferentia/nexus/cmd/nxctl`): nxctl forbids `offline_access` because it is a high-privilege admin tool; inf-cli is user-facing and requires it.
+- Deliberate divergence from a sibling admin CLI: it forbids `offline_access` because it is a high-privilege tool; inf-cli is user-facing and requires it.
