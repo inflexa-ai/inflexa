@@ -681,6 +681,67 @@ describe("executeAnalysis body", () => {
         expect(suspendWrites(pool)).toEqual([]);
     });
 
+    // ── Pending seed + terminal sweep ──────────────────────────────────
+
+    it("seeds every plan step as pending at run start", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const { deps } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+            ]),
+        });
+
+        await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
+
+        const seeds = pool.queries.filter((q) => /INSERT INTO cortex_step_executions/i.test(q.text) && q.text.includes("'pending'"));
+        expect(seeds.length).toBe(1);
+        // One 5-value tuple per step (runId, stepId, analysisId, wave, agentId);
+        // B's wave is 1 (depends on A) and both carry the shared agent fallback map.
+        expect(seeds[0]!.values).toEqual(["run-test", "A", "a1", 0, "agent-x", "run-test", "B", "a1", 1, "agent-x"]);
+        expect(seeds[0]!.text).toContain("ON CONFLICT (run_id, step_id) DO NOTHING");
+    });
+
+    it("fail-fast sweeps still-pending rows to skipped", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const { deps } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }]]),
+        });
+
+        // B depends on A and is never dispatched — exactly the row the sweep must reap.
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
+        expect(result.status).toBe("failed");
+
+        const sweeps = pool.queries.filter((q) => q.text.includes("SET status = 'skipped'"));
+        expect(sweeps.length).toBe(1);
+        expect(sweeps[0]!.values?.[0]).toBe("run-test");
+    });
+
+    it("the 402 pause preserves pending rows (no sweep)", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const { deps } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "canceled", durationMs: 1, finishReason: null, error: "budget_exceeded" }],
+            ]),
+        });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
+        expect(result.status).toBe("canceled");
+        expect(suspendWrites(pool).length).toBe(1);
+
+        const sweeps = pool.queries.filter((q) => q.text.includes("SET status = 'skipped'"));
+        expect(sweeps).toEqual([]);
+    });
+
     // ── 10.14 No conversation-thread write ─────────────────────────────
 
     it("10.14 collectAndComplete writes nothing to the conversation thread", async () => {

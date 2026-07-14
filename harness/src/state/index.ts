@@ -37,8 +37,8 @@ export {
 } from "./runs.js";
 export type { InsertRunInput } from "./runs.js";
 
-export { insertStepExecution, updateStepExecution, queryStepsByRun } from "./step-executions.js";
-export type { InsertStepExecutionInput, UpdateStepExecutionInput } from "./step-executions.js";
+export { insertStepExecution, seedStepExecutions, sweepPendingStepExecutions, updateStepExecution, queryStepsByRun } from "./step-executions.js";
+export type { InsertStepExecutionInput, SeedStepExecutionRow, UpdateStepExecutionInput } from "./step-executions.js";
 
 export { setSandboxRef, setActiveExecId, clearSandboxRef, queryActiveSandboxes, reconcileReapedSandbox } from "./active-sandboxes.js";
 export type { ActiveSandboxRow } from "./active-sandboxes.js";

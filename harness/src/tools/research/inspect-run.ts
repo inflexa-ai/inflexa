@@ -30,7 +30,8 @@ interface FormattedStep {
     agentId: string;
     wave: number;
     status: string;
-    summaryPath: string;
+    /** Absent for steps that never ran (`pending`/`skipped`) — no output tree exists to point at. */
+    summaryPath?: string;
     durationMs?: number | null;
     error?: string | null;
     attempts?: number | null;
@@ -95,7 +96,9 @@ export function createInspectRunTool(pool: Pool) {
                 agentId: s.agentId,
                 wave: s.wave,
                 status: s.status,
-                summaryPath: `runs/${input.runId}/${s.stepId}/output/summary.md`,
+                // Seeded rows exist before a step ever runs; a summary path for one
+                // would point the agent at a file that cannot exist yet (or ever).
+                ...(s.status === "pending" || s.status === "skipped" ? {} : { summaryPath: `runs/${input.runId}/${s.stepId}/output/summary.md` }),
                 ...(verbose
                     ? {
                           durationMs: s.durationMs,
