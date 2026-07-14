@@ -63,7 +63,7 @@ comment. Regulatory grounding is worth doing — but as a designed, speced featu
 not as resurrected scaffolding. If product wants it now, choose A and this change
 splits Decision 1 into its own spec-driven change.
 
-### RESOLVED — remove references to what does not exist; keep what does. The `search_regulatory_guidance` (no such tool) instructions were stripped from the four briefs and the false `state/init.ts` comment corrected. `find_approval_precedent` (the tool exists) is kept; wiring it into the single-shot synthesis path is a follow-up (see tasks.md §1).
+### RESOLVED — remove references to what does not exist; wire what does (option A). The `search_regulatory_guidance` (no such tool) instructions were stripped from the four briefs and the false `state/init.ts` comment corrected. `find_approval_precedent` is now WIRED via option A — a deterministic pre-synthesis `ta-approval-precedents` step queries openFDA once for the dossier's indication and injects a `## FDA approval precedents` block into all four synthesis prompts, keeping synthesis single-shot; the orphan `defineTool` wrapper was removed (its fetch became a plain function). Delivered in the follow-up change `ground-synthesis-with-approval-precedents`.
 
 ## Decision 2 — Boot lifecycle & observability ownership
 

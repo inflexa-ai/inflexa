@@ -139,6 +139,8 @@ export interface SynthesisAgentDeps {
     readonly model: string;
     /** Attempt counter — bumped on resume so a 402-cancelled call lands a fresh DBOS step slot. */
     readonly attempt: number;
+    /** Pre-fetched FDA approval-precedent markdown block, appended to every synthesis prompt. */
+    readonly approvalPrecedents: string;
 }
 
 // ── Instruction composer ─────────────────────────────────────────────
@@ -344,6 +346,8 @@ export async function liabilityBullets(phase4: Phase4Output, deps: SynthesisAgen
         "The full assembled dossier follows. Cite section paths and counts; do not fabricate.",
         "",
         JSON.stringify(phase4.dossier, null, 2),
+        "",
+        deps.approvalPrecedents,
     ].join("\n");
 
     const result = await runSynthesisWithProbe<LiabilityBulletsOutput>({
@@ -367,6 +371,8 @@ export async function safetyFlagsTrail(phase4: Phase4Output, deps: SynthesisAgen
         "The full assembled dossier follows. Cite source counts; do not fabricate.",
         "",
         JSON.stringify(phase4.dossier, null, 2),
+        "",
+        deps.approvalPrecedents,
     ].join("\n");
 
     const result = await runSynthesisWithProbe<SafetyFlagsTrailOutput>({
@@ -390,6 +396,8 @@ export async function translationalCommentary(phase4: Phase4Output, deps: Synthe
         "The full assembled dossier follows. Cite tissues and species literally; do not fabricate.",
         "",
         JSON.stringify(phase4.dossier, null, 2),
+        "",
+        deps.approvalPrecedents,
     ].join("\n");
 
     const result = await runSynthesisWithProbe<TranslationalCommentaryOutput>({
@@ -440,6 +448,8 @@ export async function dossierRecommendation(
         "Cite at least three section paths from the dossier, integrate the per-section bullets/flags/commentary, and disclose coverage gaps explicitly.",
         "",
         JSON.stringify({ dossier: input.phase4.dossier, per_section_synthesis: perSectionPrompt }, null, 2),
+        "",
+        deps.approvalPrecedents,
     ].join("\n");
 
     const result = await runSynthesisWithProbe<DossierRecommendationOutput>({

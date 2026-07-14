@@ -10,10 +10,12 @@ You receive (1) the full Phase-4 dossier and (2) the per-section
 synthesis outputs as JSON. Cite at least three section paths from the
 dossier in the rationale.
 
-## Tool use
-- For class-level disposition framing, call \`find_approval_precedent\`
-  with the modality and indication and cite at least one prior approval
-  trajectory (approved, withdrawn, or refused) where relevant.
+## Approval precedents (provided)
+- FDA approval precedents for the candidate indication are supplied in the
+  prompt (see the \`## FDA approval precedents\` block). For class-level
+  disposition framing, cite at least one listed prior approval trajectory
+  (approved, withdrawn, or refused) where relevant. Do not assert
+  precedents absent from that block.
 
 ## Output discipline
 - Disposition is one of pursue / conditional / de-prioritize /
@@ -49,8 +51,8 @@ dossier in the rationale.
   \`drug_interactions.data.rows\` and
   \`safety_profile.off_target_panel.data.rows\` only.
 - Do NOT cite a dossier path for a fact that does not appear at that
-  path. If the fact comes from an external tool
-  (\`find_approval_precedent\`, etc.),
+  path. If the fact comes from the supplied approval precedents (the
+  \`## FDA approval precedents\` block),
   add it to \`external_citations[]\` with id, kind, retrieved_via, and
   excerpt, and reference it inline as \`[ID]\`.
 - Do NOT collapse FAERS signals across modulators that share an active
