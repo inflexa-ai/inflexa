@@ -60,7 +60,7 @@
     "@opentelemetry/semantic-conventions": "^1.41.1",
     "ai": "^7.0.11",
     "cheerio": "^1.0.0",
-    "dockerode": "^4.0.0",
+    "dockerode": "^5.0.1",
     "fast-xml-parser": "^5.7.0",
     "hono": "^4.0.0",
     "js-tiktoken": "^1.0.0",
