@@ -10,9 +10,11 @@ counts verbatim. Anchor every organ name to the canonical
 organ-system vocabulary (hepatobiliary, renal, cardiac, etc.) — colloquial
 substitutes are rejected by the voice probe.
 
-## Tool use
-- For class precedents withdrawn or labelled for the same liability,
-  call \`find_approval_precedent\` and cite Drugs@FDA NDA/BLA §<section>.
+## Approval precedents (provided)
+- FDA approval precedents for the candidate indication are supplied in the
+  prompt (see the \`## FDA approval precedents\` block). For class
+  precedents withdrawn or labelled for the same liability, cite a listed
+  Drugs@FDA NDA/BLA §<section>. Do not assert precedents absent from that block.
 
 ## Output discipline
 - Trail format is study-summary cadence: claim, evidence with counts,

@@ -63,6 +63,7 @@ import {
     type PolypharmInputItem,
     type TrialItem,
 } from "./target-assessment/fanout/index.js";
+import { fetchApprovalPrecedents, pickIndicationForPrecedents, renderApprovalPrecedents } from "./target-assessment/lib/approval-precedents.js";
 import { readBudgetExceededMarker } from "./target-assessment/lib/llm-step.js";
 import { recordTerminalReason } from "./target-assessment/metrics.js";
 import { phase4Assemble } from "./target-assessment/phase4-assemble.js";
@@ -443,6 +444,27 @@ export async function runExecuteTargetAssessmentBody(
         await emitProgress(deps.pool, input.assessmentId, "assembling");
         const phase4 = await DBOS.runStep(() => phase4Assemble(deps.pool, phase3 as Parameters<typeof phase4Assemble>[1]), { name: "ta-phase4-assemble" });
 
+        // (§5.8-pre) Approval-precedent grounding — one deterministic openFDA
+        // lookup, rendered to markdown and injected into every synthesis prompt.
+        // A precedent-lookup failure must NOT fail the whole assessment: a fetch
+        // throw degrades to a "no precedents" block.
+        const approvalPrecedents = await DBOS.runStep(
+            async () => {
+                const indication = pickIndicationForPrecedents(phase4.dossier);
+                let result: Awaited<ReturnType<typeof fetchApprovalPrecedents>> | null = null;
+                if (indication !== null) {
+                    try {
+                        result = await fetchApprovalPrecedents({ indication });
+                    } catch (err) {
+                        console.warn(`[ta-approval-precedents] openFDA lookup failed for "${indication}": ${err instanceof Error ? err.message : err}`);
+                        result = null;
+                    }
+                }
+                return renderApprovalPrecedents(indication, result);
+            },
+            { name: "ta-approval-precedents" },
+        );
+
         // (§5.8) Phase 5 — three per-section syntheses in parallel.
         await emitProgress(deps.pool, input.assessmentId, "synthesizing");
         const synthesisDeps = (agentId: string) => ({
@@ -450,6 +472,7 @@ export async function runExecuteTargetAssessmentBody(
             session: { ...buildSession(input, agentId) },
             model: deps.synthesisModel,
             attempt: 0,
+            approvalPrecedents,
         });
         const [bulletsRes, flagsRes, commentaryRes]: [
             SynthesisStepResult<LiabilityBulletsStepOutput>,

@@ -9,10 +9,12 @@ You receive the full Phase-4 dossier as JSON. Tissue and species names
 must be cited literally from the dossier — no fabricated or generic
 substitutes ("rodent", "mouse model" without further detail).
 
-## Tool use
-- Approval precedents that translated cleanly (or did not) from the same
-  preclinical signal are valuable — call \`find_approval_precedent\` when
-  framing a translational claim.
+## Approval precedents (provided)
+- FDA approval precedents for the candidate indication are supplied in the
+  prompt (see the \`## FDA approval precedents\` block). Precedents that
+  translated cleanly (or did not) from the same preclinical signal are
+  valuable when framing a translational claim; cite a listed NDA/BLA where
+  relevant. Do not assert precedents absent from that block.
 
 ## Output discipline
 - Every claim about human relevance carries a hedge or a citation.

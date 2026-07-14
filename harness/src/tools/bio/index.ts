@@ -42,7 +42,6 @@ export * from "./search-clinvar.js";
 export * from "./search-disgenet.js";
 export * from "./search-drugbank.js";
 export * from "./search-gwas-catalog.js";
-export * from "./find-approval-precedent.js";
 
 // Preclinical
 export * from "./search-bgee-expression.js";

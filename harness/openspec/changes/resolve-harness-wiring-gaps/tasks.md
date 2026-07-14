@@ -22,13 +22,14 @@ per decision. `openspec validate resolve-harness-wiring-gaps --strict` passes.
   `prompts/target-assessment/briefs/*` files
 - [x] Correct the false `state/init.ts` comment (no such tool is wired; point at
   the real corpus files)
-- [ ] **Open — `find_approval_precedent` wiring** (the tool exists, unrostered).
-  The synthesis path (`structured-llm.ts`) is deliberately single-shot forced-
-  `submit` and cannot call any tool, so this is NOT a one-line roster add.
-  Options: (A) a deterministic pre-synthesis retrieval step that injects
-  precedent results into the brief prompt (keeps single-shot; ~medium), or (B)
-  reintroduce a tool-calling agent pass for the briefs (~larger). Until wired,
-  the `find_approval_precedent` instructions in the briefs are also unsatisfiable.
+- [x] **`find_approval_precedent` wired — option A.** A deterministic pre-synthesis
+  `ta-approval-precedents` `DBOS.runStep` queries openFDA once for the dossier's
+  candidate indication and injects a `## FDA approval precedents` block into all
+  four synthesis prompts (synthesis stays single-shot). The orphan `defineTool`
+  wrapper was removed — its openFDA fetch became a plain `fetchApprovalPrecedents`
+  co-located with the synthesis. The four briefs were rewritten from "call the
+  tool" to "use the supplied block". Delivered in the follow-up change
+  `ground-synthesis-with-approval-precedents`.
 
 ## 2. Decision 2 — Boot sequence
 
@@ -59,5 +60,6 @@ per decision. `openspec validate resolve-harness-wiring-gaps --strict` passes.
 ## 5. Close-out
 
 - [x] CLI boot adoption (Decision 2) landed
-- [ ] **Open** — decide `find_approval_precedent` wiring (Decision 1)
-- [ ] `openspec archive resolve-harness-wiring-gaps` once the remaining open item is closed
+- [x] `find_approval_precedent` wired via option A (Decision 1) — delivered in the follow-up change `ground-synthesis-with-approval-precedents`
+- [x] All four decisions resolved and implemented; the only follow-on work is the two placeholder changes (`resume-analysis-after-budget-pause`, `ground-synthesis-with-approval-precedents`)
+- [ ] `openspec archive resolve-harness-wiring-gaps` (the decision gate is complete)
