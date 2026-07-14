@@ -1,0 +1,189 @@
+name: Release Harness
+
+# Publishes @inflexa-ai/harness to the public npm registry. The trigger is a
+# version bump landing on main (guarded by version-guard.yml): every push
+# checks whether harness/package.json's version is already on npm — the
+# registry, not tags or commit diffing, is the source of truth, so the
+# workflow is idempotent (a failed run can simply be re-run via
+# workflow_dispatch) and a non-bump push is a cheap no-op. `npm view` also
+# fails on a never-published package, which reads as "unpublished" — exactly
+# right for the very first release.
+#
+# Auth is npm *trusted publishing* (OIDC): npmjs.com is configured to trust
+# this exact repo + workflow file and mints a short-lived credential per run —
+# there is no NPM_TOKEN secret to leak or rotate, and provenance attestations
+# are generated automatically. Renaming this file breaks that trust binding
+# until the publisher config on npmjs.com is updated to match.
+#
+# The harness-v* tag (ruleset-protected as immutable, like v*) exists for
+# humans — diffing between releases, browsing source at a published version.
+# npm provenance, not the tag, is what proves a version was built here. There
+# is deliberately no GitHub Release: the Releases page belongs to the CLI
+# product; the npm package page is the harness's own front door.
+on:
+  push:
+    branches: [main]
+    # The gate re-checks the registry regardless; this filter only skips
+    # no-op runs. workflow_dispatch below is the unfiltered retry path.
+    paths: [harness/package.json]
+  workflow_dispatch:
+
+permissions:
+  # Creating the harness-v* tag.
+  contents: write
+  # The OIDC token npm exchanges for its short-lived publish credential.
+  id-token: write
+
+# Never cancel a run that may sit between the npm publish and the tag; later
+# pushes queue behind it and their gates then no-op.
+concurrency:
+  group: release-harness
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # The push trigger is already main-only; this guard closes the
+    # workflow_dispatch hole, which would otherwise publish from any branch.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve package version
+        id: pkg
+        run: |
+          version=$(jq -r .version harness/package.json)
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "::error::harness/package.json has no version field"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # The publish gate. Independent from the tag gate below, so a run that
+      # died between publish and tag can simply be re-run: this step then says
+      # "published", the publish skips, and the tag step completes.
+      - name: Check whether this version is already on npm
+        id: npm-check
+        env:
+          VERSION: ${{ steps.pkg.outputs.version }}
+        run: |
+          if npm view "@inflexa-ai/harness@${VERSION}" version 2>/dev/null; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "@inflexa-ai/harness@${VERSION} is already on npm — skipping publish"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "@inflexa-ai/harness@${VERSION} is unpublished — proceeding"
+          fi
+
+      - name: Wait for CI to pass on this commit
+        if: steps.npm-check.outputs.published == 'false'
+        # This run starts in parallel with the Test/Lint runs for the same
+        # push, and an admin-bypass direct push never had pre-merge checks at
+        # all — so block until the commit's own check runs succeed rather than
+        # trusting that they did. Only the harness checks: the cli suite is
+        # irrelevant to what ships here.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          required=("test (harness)" "lint (harness)")
+          deadline=$(( $(date +%s) + 1800 ))
+          while :; do
+            # The check-runs API defaults to filter=latest: one run per check
+            # name, re-runs replace their predecessor. A single page holds all
+            # of this repo's checks; --paginate would emit one array PER page,
+            # which the per-name jq below would misread as multiple documents.
+            runs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" \
+              --jq '[.check_runs[] | {name, status, conclusion}]')
+            passed=0
+            failed=""
+            for name in "${required[@]}"; do
+              state=$(jq -r --arg n "$name" \
+                '[.[] | select(.name == $n)] | first | if . == null then "absent" elif .status != "completed" then "pending" else .conclusion end' \
+                <<<"$runs")
+              case "$state" in
+                success) passed=$((passed + 1)) ;;
+                absent|pending) ;;
+                *) failed="$failed \"$name\"=$state" ;;
+              esac
+            done
+            if [ -n "$failed" ]; then
+              echo "::error::refusing to publish — required checks did not pass:$failed"
+              exit 1
+            fi
+            if [ "$passed" -eq "${#required[@]}" ]; then
+              echo "all ${#required[@]} required checks passed"
+              break
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::timed out waiting for required checks on $GITHUB_SHA"
+              exit 1
+            fi
+            echo "waiting for checks ($passed/${#required[@]} passed)..."
+            sleep 30
+          done
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.npm-check.outputs.published == 'false'
+
+      # Trusted publishing needs npm >= 11.5.1; Node 24 is the LTS line whose
+      # bundled npm satisfies that floor. Deliberately NO `registry-url` here:
+      # that option writes an .npmrc that reads auth from ${NODE_AUTH_TOKEN},
+      # and npm hard-fails on an unset env var in .npmrc — trusted publishing
+      # is tokenless, npm resolves the registry from publishConfig and
+      # authenticates via OIDC on its own.
+      - uses: actions/setup-node@v7
+        if: steps.npm-check.outputs.published == 'false'
+        with:
+          node-version: "24"
+
+      - name: Install dependencies
+        if: steps.npm-check.outputs.published == 'false'
+        working-directory: harness
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        if: steps.npm-check.outputs.published == 'false'
+        working-directory: harness
+        run: bun run build
+
+      # Gate the publish on the artifact actually loading under Node — the
+      # stricter resolver, and the runtime consumers actually use. A
+      # type-correct build can still be runtime-broken.
+      - name: Smoke-test built artifacts
+        if: steps.npm-check.outputs.published == 'false'
+        working-directory: harness
+        run: bun run smoke
+
+      # Tokenless: OIDC supplies the credential, publishConfig supplies
+      # registry + public access, and provenance is attested automatically.
+      # prepublishOnly re-runs build + smoke — redundant with the steps above,
+      # but it is the last line of defense against a future edit publishing
+      # unbuilt output, and it keeps a manual local publish honest too.
+      - name: Publish to npm
+        if: steps.npm-check.outputs.published == 'false'
+        working-directory: harness
+        run: npm publish
+
+      - name: Check whether the harness-v tag already exists
+        id: tag-check
+        env:
+          VERSION: ${{ steps.pkg.outputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/harness-v${VERSION}" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "tag harness-v${VERSION} already exists — skipping"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Lightweight tag, created through the API as the Actions integration.
+      # The release-tags ruleset makes it immutable once it exists.
+      - name: Create the harness-v tag
+        if: steps.tag-check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.pkg.outputs.version }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/harness-v${VERSION}" \
+            -f sha="$GITHUB_SHA"

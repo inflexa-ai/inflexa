@@ -11,13 +11,18 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./*.js": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
+    },
     "./*": {
       "types": "./dist/*.d.ts",
       "import": "./dist/*.js"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "NOTICE"
   ],
   "engines": {
     "node": ">=24"
@@ -33,6 +38,8 @@
     "format:file": "prettier --write",
     "lint": "eslint .",
     "prepare": "tsc -p tsconfig.json",
+    "prepublishOnly": "bun run build && bun run smoke",
+    "smoke": "node scripts/smoke.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -85,7 +92,8 @@
     "typescript-eslint": "^8.61.0"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "patchedDependencies": {
     "eslint-plugin-neverthrow@1.1.4": "patches/eslint-plugin-neverthrow@1.1.4.patch"

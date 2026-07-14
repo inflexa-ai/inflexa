@@ -1,11 +1,13 @@
 name: Version Guard
 
-# The version field of cli/package.json is the release trigger: a bump landing
-# on main mints a tag, a GitHub release, and production binaries (see
-# release.yml). Branch rulesets can only gate whole file paths, not a field
-# inside a file — and gating all of cli/package.json would also block every
-# legitimate dependency edit — so this check enforces the field-level rule:
-# a PR may change the version only when its author is a maintainer.
+# The version fields of cli/package.json and harness/package.json are release
+# triggers: a cli bump landing on main mints a tag, a GitHub release, and
+# production binaries (release.yml); a harness bump publishes
+# @inflexa-ai/harness to npm (release-harness.yml). Branch rulesets can only
+# gate whole file paths, not a field inside a file — and gating the whole
+# manifests would also block every legitimate dependency edit — so this check
+# enforces the field-level rule: a PR may change a version only when its
+# author is a maintainer.
 #
 # The job runs on EVERY pull request, with no paths filter, because it is a
 # required status check: a path-filtered workflow reports nothing on PRs that
@@ -45,25 +47,32 @@ jobs:
           AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
         run: |
           git fetch --depth=1 origin "$BASE_SHA"
-          base_version=$(git show "$BASE_SHA:cli/package.json" | jq -r .version)
-          head_version=$(jq -r .version cli/package.json)
 
-          if [ "$base_version" = "$head_version" ]; then
-            echo "version unchanged ($head_version) — pass"
+          bumps=""
+          for pkg in cli/package.json harness/package.json; do
+            base_version=$(git show "$BASE_SHA:$pkg" | jq -r .version)
+            head_version=$(jq -r .version "$pkg")
+            if [ "$base_version" != "$head_version" ]; then
+              bumps="$bumps $pkg:$base_version->$head_version"
+            fi
+          done
+
+          if [ -z "$bumps" ]; then
+            echo "no release-trigger version changed — pass"
             exit 0
           fi
 
           if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
-            echo "version bump $base_version -> $head_version from an in-repo branch by $AUTHOR_LOGIN (write access) — authorized"
+            echo "version bump$bumps from an in-repo branch by $AUTHOR_LOGIN (write access) — authorized"
             exit 0
           fi
 
           case "$AUTHOR_ASSOCIATION" in
             OWNER | MEMBER)
-              echo "version bump $base_version -> $head_version by $AUTHOR_LOGIN ($AUTHOR_ASSOCIATION, fork PR) — authorized"
+              echo "version bump$bumps by $AUTHOR_LOGIN ($AUTHOR_ASSOCIATION, fork PR) — authorized"
               ;;
             *)
-              echo "::error::cli/package.json version changed ($base_version -> $head_version), but PR author $AUTHOR_LOGIN ($AUTHOR_ASSOCIATION, fork PR) is not verifiably a maintainer. Version bumps mint production releases and must come from maintainer-authored PRs — split the bump out of this PR, or open it from an in-repo branch."
+              echo "::error::a release-trigger version changed ($bumps), but PR author $AUTHOR_LOGIN ($AUTHOR_ASSOCIATION, fork PR) is not verifiably a maintainer. Version bumps mint production releases and must come from maintainer-authored PRs — split the bump out of this PR, or open it from an in-repo branch."
               exit 1
               ;;
           esac
