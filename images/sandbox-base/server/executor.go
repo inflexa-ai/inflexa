@@ -398,10 +398,16 @@ func (e *executor) emitTreeEvent(execID string, delta treeDiff) {
 // from the submit takes precedence; otherwise the configured server-wide root.
 //
 // The submit body is HMAC-authenticated (see handle -> inboundAuth.authentic)
-// before it reaches here, so cwd is trusted control-plane input. The returned
-// root is still walked recursively and its file metadata is streamed back to
-// the host, so each candidate is normalised and rejected if it carries `..`
-// traversal before it is used as a walk root.
+// before it reaches here, so cwd is trusted control-plane input from the same
+// harness that already dictates the command to run. cleanSnapshotRoot then
+// normalises it and rejects `..` traversal as defense-in-depth.
+//
+// The residual CodeQL go/path-injection finding is accepted by design:
+// filepath.Clean is not a containment sanitizer and there is no configured base
+// to contain against (SANDBOX_TREE_DIFF_ROOT is optional and unset in practice),
+// so an authenticated caller can still name any absolute directory. That caller
+// can already read any file via the command it runs, so snapshotting arbitrary
+// directory metadata is no escalation over the existing trust boundary.
 func treeDiffRootForExec(cwd string) string {
 	if root := cleanSnapshotRoot(cwd); root != "" {
 		return root
@@ -421,7 +427,7 @@ func cleanSnapshotRoot(path string) string {
 	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(os.PathSeparator)) {
 		return ""
 	}
-	if info, err := os.Stat(cleaned); err == nil && info.IsDir() {
+	if info, err := os.Stat(cleaned); err == nil && info.IsDir() { // codeql[go/path-injection]
 		return cleaned
 	}
 	return ""
