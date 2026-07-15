@@ -18,8 +18,8 @@ import { isCancel, log, select as clackSelect } from "@clack/prompts";
 import { err, ok, type Result } from "neverthrow";
 
 import { confirm } from "../../lib/cli.ts";
-import { activeRuntime, readConfig, writeConfig } from "../../lib/config.ts";
-import { capture, ensureReady, inherit } from "../../lib/container.ts";
+import { ensureRuntime, readConfig, selectedRuntime, writeConfig } from "../../lib/config.ts";
+import { capture, firstReadyRuntime, inherit, runtimeIds, runtimes, type ContainerRuntime } from "../../lib/container.ts";
 import { DEFAULT_SANDBOX_IMAGE, SANDBOX_VARIANTS, VARIANT_DESCRIPTIONS, VARIANT_LABELS, variantImage, variantOfImage, type SandboxVariant } from "./images.ts";
 
 /** Flags accepted by `inflexa sandbox pull` (and reused by setup). */
@@ -81,9 +81,9 @@ function configureSandboxImage(image: string): Result<void, PullError> {
     }));
 }
 
-/** Whether the runtime already has `image` locally (a present image is never re-pulled). */
-async function imagePresent(image: string): Promise<boolean> {
-    return (await capture(activeRuntime(), ["image", "inspect", image])).code === 0;
+/** Whether `rt` already has `image` locally (a present image is never re-pulled). */
+async function imagePresent(rt: ContainerRuntime, image: string): Promise<boolean> {
+    return (await capture(rt, ["image", "inspect", image])).code === 0;
 }
 
 /**
@@ -95,10 +95,10 @@ async function imagePresent(image: string): Promise<boolean> {
  */
 export async function sandboxPull(opts: PullOptions = {}): Promise<Result<PullOutcome, PullError>> {
     const interactive = !opts.quiet && process.stdin.isTTY;
-    const rt = activeRuntime();
 
-    const ready = await ensureReady(rt);
-    if (ready.isErr()) return err({ type: "runtime_unavailable", message: ready.error.message });
+    const rtResult = await ensureRuntime();
+    if (rtResult.isErr()) return err({ type: "runtime_unavailable", message: rtResult.error.message });
+    const rt = rtResult.value;
 
     // Resolve the variant: an explicit choice, else an interactive prompt. A
     // non-interactive run without a variant cannot proceed (no way to choose).
@@ -120,7 +120,7 @@ export async function sandboxPull(opts: PullOptions = {}): Promise<Result<PullOu
     const image = variantImage(variant);
 
     // Present locally → idempotent no-op (record the config, pull nothing).
-    if (await imagePresent(image)) {
+    if (await imagePresent(rt, image)) {
         const configured = configureSandboxImage(image);
         if (configured.isErr()) return err(configured.error);
         return ok({ type: "up_to_date", variant, image });
@@ -150,12 +150,25 @@ export async function sandboxPull(opts: PullOptions = {}): Promise<Result<PullOu
 
 /** `inflexa sandbox status` — configured variant, GHCR reference, local presence, digest. */
 export async function sandboxStatus(): Promise<void> {
-    const rt = activeRuntime();
     const image = configuredSandboxImage();
     const variant = variantOfImage(image);
 
     console.log(`  Image    ${image}`);
     console.log(`  Variant  ${variant ?? "(custom — not a published sandbox-python/-r image)"}`);
+
+    // Status is a read-only diagnostic: use the selected runtime, or detect a ready
+    // one WITHOUT pinning it — a passive inspection must not write config (that is
+    // ensureRuntime's job, reserved for commands that create runtime-bound state).
+    const rt =
+        selectedRuntime() ??
+        (await firstReadyRuntime(runtimeIds.map((id) => runtimes[id]))).match(
+            (detected) => detected,
+            () => null,
+        );
+    if (rt === null) {
+        console.log("  Present  unknown — no container runtime available (start Docker or Podman)");
+        return;
+    }
 
     // `--format {{.Id}}` prints the local image digest; a non-zero exit means absent.
     const inspect = await capture(rt, ["image", "inspect", "--format", "{{.Id}}", image]);

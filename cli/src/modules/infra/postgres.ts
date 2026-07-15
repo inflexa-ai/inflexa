@@ -1,6 +1,6 @@
 import { type Result, ok, err } from "neverthrow";
-import { activeRuntime, resolveConnectionMode, resolvePostgresConfig } from "../../lib/config.ts";
-import { capture, ensureReady, type ContainerRuntime, type CaptureResult } from "../../lib/container.ts";
+import { ensureRuntime, resolveConnectionMode, resolvePostgresConfig } from "../../lib/config.ts";
+import { capture, type ContainerRuntime, type CaptureResult } from "../../lib/container.ts";
 import { DEFAULT_IMAGE, type PostgresConnection, type PostgresError, type ProvisionOutcome, type SetupOptions } from "./postgres_types.ts";
 import { POSTGRES_CONTAINER_NAME, composeUp, ensureComposeFile } from "./compose.ts";
 
@@ -116,11 +116,11 @@ export async function provisionPostgres(options: SetupOptions): Promise<Result<P
 
     if (!options.postgres) return ok({ kind: "skipped_disabled", conn });
 
-    const rt = activeRuntime();
-    const readyResult = await ensureReady(rt);
-    if (readyResult.isErr()) {
-        return err({ type: "runtime_not_ready", message: readyResult.error.message });
+    const rtResult = await ensureRuntime();
+    if (rtResult.isErr()) {
+        return err({ type: "runtime_not_ready", message: rtResult.error.message });
     }
+    const rt = rtResult.value;
 
     if (!options.start) return ok({ kind: "skipped_no_start", conn });
 
@@ -145,11 +145,11 @@ export async function provisionPostgres(options: SetupOptions): Promise<Result<P
 export async function ensurePostgresReady(): Promise<Result<PostgresConnection, PostgresError>> {
     const conn = resolvePostgresConfig();
 
-    const rt = activeRuntime();
-    const readyResult = await ensureReady(rt);
-    if (readyResult.isErr()) {
-        return err({ type: "runtime_not_ready", message: readyResult.error.message });
+    const rtResult = await ensureRuntime();
+    if (rtResult.isErr()) {
+        return err({ type: "runtime_not_ready", message: rtResult.error.message });
     }
+    const rt = rtResult.value;
 
     // Compose up is idempotent — starts only containers that aren't running.
     // The caller (ensurePostgresReadyOrExit or the TUI launch path) generates

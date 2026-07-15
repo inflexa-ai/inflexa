@@ -15,9 +15,9 @@ import {
 } from "@inflexa-ai/harness";
 
 import { confirm, fail, dieOn } from "../../lib/cli.ts";
-import { activeRuntime, resolvePostgresConfig } from "../../lib/config.ts";
+import { ensureRuntime, resolvePostgresConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
-import { capture, ensureReady, inherit } from "../../lib/container.ts";
+import { capture, inherit } from "../../lib/container.ts";
 import { variantOfImage } from "../libs/images.ts";
 import { acquireInstanceLock } from "../../lib/lock.ts";
 import { getLogger } from "../../lib/log.ts";
@@ -154,9 +154,9 @@ export function describeBootError(e: HarnessBootError): string {
  * Exported so `inflexa run` reuses profile's identical image check.
  */
 export async function ensureSandboxImage(image: string): Promise<void> {
-    const rt = activeRuntime();
-    const ready = await ensureReady(rt);
-    if (ready.isErr()) fail(ready.error.message);
+    const rtResult = await ensureRuntime();
+    if (rtResult.isErr()) fail(rtResult.error.message);
+    const rt = rtResult.value;
     if ((await capture(rt, ["image", "inspect", image])).code === 0) return;
 
     const variant = variantOfImage(image);

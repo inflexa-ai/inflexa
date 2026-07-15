@@ -3,8 +3,8 @@ import { dirname } from "node:path";
 
 import { intro, outro, log, note, spinner as clackSpinner } from "@clack/prompts";
 import { type Result, ok, err } from "neverthrow";
-import { activeRuntime, readConfig, resolvePostgresConfig, writeConfig, type ConfigError } from "../../lib/config.ts";
-import { ensureReady, firstReadyRuntime, runtimeIds, runtimes, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
+import { ensureRuntime, readConfig, resolvePostgresConfig, selectedRuntime, writeConfig, type ConfigError } from "../../lib/config.ts";
+import { firstReadyRuntime, runtimeIds, runtimes, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { select, promptText } from "../../lib/cli.ts";
 import { detectedMachine, resolveHarnessConfig } from "../harness/config.ts";
@@ -65,14 +65,15 @@ export async function setup(options: SetupOptions): Promise<void> {
     );
     if (connectionFlag === null) return;
 
-    // Setup treats the configured runtime as a preference, not a gate: probe it
-    // first, then the other supported runtimes, and proceed with the first one
-    // that is actually ready ("Docker configured but stopped, Podman running"
-    // self-heals here instead of erroring). Launch-time gates keep trusting
-    // config, so a switch is persisted below to stay coherent with the stack
-    // this run provisions.
-    const configured = activeRuntime();
-    const candidates = [configured, ...runtimeIds.filter((id) => id !== configured.id).map((id) => runtimes[id])];
+    // Setup treats the runtime selection as a preference, not a gate: the selected
+    // runtime (when there is one) is probed first, then the other supported
+    // runtimes, and the first ready one wins ("Docker configured but stopped,
+    // Podman running" self-heals here instead of erroring). Outside setup an
+    // explicit selection is a hard gate (see ensureRuntime) — this deliberate
+    // re-provisioning entry point is the ONE place a dead selection may be
+    // switched away from.
+    const selected = selectedRuntime();
+    const candidates = selected ? [selected, ...runtimeIds.filter((id) => id !== selected.id).map((id) => runtimes[id])] : runtimeIds.map((id) => runtimes[id]);
     const readyResult = await firstReadyRuntime(candidates);
     if (readyResult.isErr()) {
         console.error(`\n  ${readyResult.error.message}\n`);
@@ -83,8 +84,12 @@ export async function setup(options: SetupOptions): Promise<void> {
 
     intro("inflexa setup");
 
-    if (rt.id !== configured.id) {
-        log.info(`${configured.label} isn't ready — continuing with ${rt.label} and saving it as the container runtime.`);
+    if (rt.id !== selected?.id) {
+        log.info(
+            selected
+                ? `${selected.label} isn't ready — continuing with ${rt.label} and saving it as the container runtime.`
+                : `Using ${rt.label} as the container runtime (saved to settings).`,
+        );
         const writeError = writeConfig({ ...readConfig(), runtime: rt.id }).match(
             () => null,
             (e) => e,
@@ -833,9 +838,9 @@ async function authenticate(rt: ContainerRuntime, preselected: Provider | undefi
  * actionable guidance when it can't proceed.
  */
 export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Result<void, ProxyError | ContainerRuntimeError>> {
-    const rt = activeRuntime();
-    const readyResult = await ensureReady(rt);
-    if (readyResult.isErr()) return readyResult;
+    const rtResult = await ensureRuntime();
+    if (rtResult.isErr()) return err(rtResult.error);
+    const rt = rtResult.value;
 
     // Proxy config + provider OAuth are only meaningful when chat targets the managed
     // proxy. A direct connection has neither, so both are skipped — the Postgres/compose

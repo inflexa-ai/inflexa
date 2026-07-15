@@ -137,7 +137,11 @@ export function ConfigApp(props: { onClose?: () => void }) {
                 break;
             }
             case "runtime": {
-                const id = runtimeIds[Math.min(runtimeIds.length - 1, Math.max(0, runtimeIds.indexOf(draft().runtime) + delta))]!;
+                const rt = draft().runtime;
+                // Unset renders both radios empty; index -1 clamps so the first arrow
+                // press lands on the registry's first entry instead of skipping it.
+                const current = rt === undefined ? -1 : runtimeIds.indexOf(rt);
+                const id = runtimeIds[Math.min(runtimeIds.length - 1, Math.max(0, current + delta))]!;
                 setDraft({ ...draft(), runtime: id });
                 break;
             }

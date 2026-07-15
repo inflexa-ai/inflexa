@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { readConfig, writeConfig, type Config } from "./config.ts";
+import { err, ok, type Result } from "neverthrow";
+
+import { ensureRuntime, readConfig, writeConfig, type Config } from "./config.ts";
+import { ContainerRuntimeError, runtimes, type ContainerRuntime } from "./container.ts";
 import { DEFAULT_THEME_ID } from "./design_system.ts";
 import { env } from "./env.ts";
 import { assertTestSandbox } from "../test_support/sandbox.ts";
@@ -37,9 +40,14 @@ describe("readConfig — self-healing fields", () => {
         expect(cfg.telemetry).toBe(true);
     });
 
-    test("coerces an invalid runtime to docker", () => {
+    test("treats an invalid runtime as unset, not as an implicit docker choice", () => {
         writeRawConfig(JSON.stringify({ telemetry: false, runtime: "kubernetes" }));
-        expect(readConfig().runtime).toBe("docker");
+        expect(readConfig().runtime).toBeUndefined();
+    });
+
+    test("an absent runtime key stays unset", () => {
+        writeRawConfig(JSON.stringify({ telemetry: false }));
+        expect(readConfig().runtime).toBeUndefined();
     });
 
     test("coerces a non-positive leaderTimeout to 2000", () => {
@@ -82,5 +90,48 @@ describe("writeConfig / readConfig round-trip", () => {
         const cfg: Config = { telemetry: true, theme: DEFAULT_THEME_ID, runtime: "podman", leaderTimeout: 500, embedding: { mode: "off" } };
         writeConfig(cfg)._unsafeUnwrap();
         expect(readConfig()).toEqual(cfg);
+    });
+});
+
+describe("ensureRuntime", () => {
+    function probeReady(readyIds: readonly string[], probed?: string[]) {
+        return (rt: ContainerRuntime): Promise<Result<void, ContainerRuntimeError>> => {
+            probed?.push(rt.id);
+            return Promise.resolve(readyIds.includes(rt.id) ? ok(undefined) : err(new ContainerRuntimeError(rt.notReadyHint)));
+        };
+    }
+
+    test("an explicit selection is a hard gate — not switched even when the other runtime is ready", async () => {
+        writeRawConfig(JSON.stringify({ telemetry: false, runtime: "docker" }));
+        const result = await ensureRuntime(probeReady(["podman"]));
+        const error = result.match(
+            () => null,
+            (e) => e,
+        );
+        expect(error?.message).toBe(runtimes.docker.notReadyHint);
+        expect(readConfig().runtime).toBe("docker");
+    });
+
+    test("unset: pins the first ready runtime to config", async () => {
+        writeRawConfig(JSON.stringify({ telemetry: false }));
+        const result = await ensureRuntime(probeReady(["podman"]));
+        expect(result._unsafeUnwrap().id).toBe("podman");
+        expect(readConfig().runtime).toBe("podman");
+    });
+
+    test("unset: probes in registry order, docker first", async () => {
+        writeRawConfig(JSON.stringify({ telemetry: false }));
+        const probed: string[] = [];
+        const result = await ensureRuntime(probeReady(["docker", "podman"], probed));
+        expect(result._unsafeUnwrap().id).toBe("docker");
+        expect(probed).toEqual(["docker"]);
+        expect(readConfig().runtime).toBe("docker");
+    });
+
+    test("unset: leaves config unpinned when nothing is ready", async () => {
+        writeRawConfig(JSON.stringify({ telemetry: false }));
+        const result = await ensureRuntime(probeReady([]));
+        expect(result.isErr()).toBe(true);
+        expect(readConfig().runtime).toBeUndefined();
     });
 });

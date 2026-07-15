@@ -2,8 +2,8 @@
 // a config key (lib/config.ts), but the runtime descriptors, the spawn core, and
 // the readiness probe live here. Kept config-free — mirroring lib/design_system.ts — so
 // lib/config.ts can import `runtimeIds` for its zod enum without a cycle. The
-// config-reading resolver (`activeRuntime`) therefore lives in lib/config.ts, not
-// here. The proxy module is today's only caller of the spawn core.
+// config-reading resolvers (`selectedRuntime` / `ensureRuntime`) therefore live in
+// lib/config.ts, not here. The proxy module is today's only caller of the spawn core.
 
 import { type Result, ok, err } from "neverthrow";
 
@@ -111,10 +111,10 @@ export async function ensureReady(rt: ContainerRuntime): Promise<Result<void, Co
  * Probing stops at the first success — a ready first choice never spawns the
  * others' binaries. When none is ready, the error aggregates every candidate's
  * specific guidance so the user sees each runtime's remediation, not just the
- * preferred one's. The setup flow uses this to treat the configured runtime as
- * a preference rather than a gate ("Docker configured but stopped, Podman
- * running" proceeds with Podman); launch-time gates keep probing only the
- * configured runtime via {@link ensureReady}.
+ * preferred one's. The setup flow uses this to fall back even from an explicit
+ * but dead selection ("Docker configured but stopped, Podman running" proceeds
+ * with Podman); `ensureRuntime` (lib/config.ts) uses it to detect a runtime when
+ * none is selected yet.
  *
  * `probe` is injectable for tests only — the real check spawns the runtime
  * binary, so unit tests substitute a fake to exercise the ordering and

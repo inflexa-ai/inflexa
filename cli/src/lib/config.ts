@@ -1,17 +1,21 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { Result } from "neverthrow";
+import { Result, ok, err } from "neverthrow";
 import { z } from "zod";
 
 import { DEFAULT_THEME_ID, themeIds } from "./design_system.ts";
-import { runtimeIds, runtimes, type ContainerRuntime } from "./container.ts";
+import { ContainerRuntimeError, ensureReady, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime } from "./container.ts";
 import { env } from "./env.ts";
 import { DEFAULT_DATABASE, DEFAULT_PASSWORD, DEFAULT_PORT, DEFAULT_USER, type PostgresConnection } from "../modules/infra/postgres_types.ts";
 
 const configSchema = z.object({
     telemetry: z.boolean(),
     theme: z.enum(themeIds).catch(DEFAULT_THEME_ID).default(DEFAULT_THEME_ID),
-    runtime: z.enum(runtimeIds).catch("docker").default("docker"),
+    // Absent = never chosen: the first command that needs containers detects a
+    // ready runtime (docker first) and pins it here (see ensureRuntime). A corrupt
+    // value is treated as unset — re-detected at next need — rather than silently
+    // coerced to docker, which would look like an explicit choice.
+    runtime: z.enum(runtimeIds).optional().catch(undefined),
     // Optional keybinding overrides: command id (e.g. "app.command-palette") → key string
     // (e.g. "ctrl+p"). Resolved over defaults by the TUI keymap engine; unknown ids and
     // unparseable values are ignored, so a stray entry never breaks config load.
@@ -134,16 +138,19 @@ export function readConfig(): Config {
     } catch {
         // Missing or unreadable config fails closed: consent not granted.
     }
-    return { telemetry: false, theme: DEFAULT_THEME_ID, runtime: "docker", leaderTimeout: 2000, embedding: { mode: "off" } };
+    return { telemetry: false, theme: DEFAULT_THEME_ID, leaderTimeout: 2000, embedding: { mode: "off" } };
 }
 
 /**
- * Resolve the configured container runtime to its descriptor. Lives here (not in
+ * Resolve the configured container runtime to its descriptor, or `null` when the
+ * user has never chosen one (commands that need a runtime go through
+ * {@link ensureRuntime}, which detects and pins one). Lives here (not in
  * lib/container.ts) so the descriptor registry stays config-free and importable
  * by this module's zod enum without an import cycle.
  */
-export function activeRuntime(): ContainerRuntime {
-    return runtimes[readConfig().runtime];
+export function selectedRuntime(): ContainerRuntime | null {
+    const id = readConfig().runtime;
+    return id === undefined ? null : runtimes[id];
 }
 
 export function writeConfig(config: Config): Result<void, ConfigError> {
@@ -154,6 +161,55 @@ export function writeConfig(config: Config): Result<void, ConfigError> {
         },
         (cause): ConfigError => ({ type: "config_write_failed", cause }),
     )();
+}
+
+/**
+ * The runtime gate for every command that needs containers: resolve the runtime
+ * AND verify it is usable, in one step.
+ *
+ * - An explicit selection is a hard gate: it is probed alone and never silently
+ *   switched — only `inflexa setup` (a deliberate re-provisioning act) may move
+ *   away from a dead selection.
+ * - No selection: probe the supported runtimes in registry order and PIN the
+ *   first ready one to config, telling the user. Pinning (rather than floating
+ *   per-invocation) makes the choice sticky exactly when the first runtime-bound
+ *   state gets created — if Docker reappeared later, a floating resolution would
+ *   abandon a Podman-provisioned stack and re-provision a colliding one under
+ *   Docker. A failed pin write aborts for the same reason: downstream steps
+ *   re-read config, so an unpersisted detection would split one run across two
+ *   runtimes.
+ *
+ * Read-only diagnostics that must not write config (e.g. `sandbox status`)
+ * compose {@link selectedRuntime} + `firstReadyRuntime` themselves instead.
+ *
+ * `probe` is injectable for tests only — the real check spawns runtime binaries.
+ */
+export async function ensureRuntime(
+    probe: (rt: ContainerRuntime) => Promise<Result<void, ContainerRuntimeError>> = ensureReady,
+): Promise<Result<ContainerRuntime, ContainerRuntimeError>> {
+    const selected = selectedRuntime();
+    if (selected) return (await probe(selected)).map(() => selected);
+
+    const detected = await firstReadyRuntime(
+        runtimeIds.map((id) => runtimes[id]),
+        probe,
+    );
+    if (detected.isErr()) return detected;
+    const rt = detected.value;
+
+    const write = writeConfig({ ...readConfig(), runtime: rt.id });
+    if (write.isErr()) {
+        return err(
+            new ContainerRuntimeError(
+                `Detected ${rt.label}, but saving it as the container runtime failed.\n  Check that ${env.configPath} is writable and re-run.`,
+            ),
+        );
+    }
+    // Every caller reaches this gate before taking the terminal (the TUI launch
+    // path runs it pre-render), so a plain line is safe — and the user must hear
+    // that a durable choice was just made on their behalf.
+    console.log(`  No container runtime selected — using ${rt.label} and saving it as the container runtime.`);
+    return ok(rt);
 }
 
 /**
