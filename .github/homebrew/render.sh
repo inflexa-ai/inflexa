@@ -43,6 +43,7 @@ rendered=$(
     -e "s/{{SHA_DARWIN_ARM64}}/$(sum_of inflexa-darwin-arm64)/g" \
     -e "s/{{SHA_DARWIN_X64}}/$(sum_of inflexa-darwin-x64)/g" \
     -e "s/{{SHA_LINUX_X64}}/$(sum_of inflexa-linux-x64)/g" \
+    -e "s/{{SHA_LINUX_ARM64}}/$(sum_of inflexa-linux-arm64)/g" \
     -e "s/{{SHA_NOTICES}}/$notices_sha/g" \
     "$tmpl"
 )

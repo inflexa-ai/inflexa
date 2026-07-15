@@ -101,6 +101,11 @@ export function describeBootError(e: HarnessBootError): string {
             return `Skills directory not found${e.path ? ` at ${e.path}` : ""}. Set \`harness.skillsDir\` in config.json (a checkout's \`skills/\` tree).`;
         case "templates_dir_missing":
             return `Templates directory not found${e.path ? ` at ${e.path}` : ""}. Set \`harness.templatesDir\` in config.json (a checkout's \`templates/\` tree).`;
+        case "content_materialize_failed":
+            return [
+                `Could not unpack the bundled skills/templates into ${env.contentDir} (${e.cause.type}).`,
+                "Ensure the data directory is writable, or point `harness.skillsDir`/`harness.templatesDir` at your own trees in config.json.",
+            ].join("\n");
         case "proxy_key_missing":
             return "Proxy client key not found — run `inflexa setup` to provision the proxy first.";
         case "model_api_key_missing":

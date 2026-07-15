@@ -47,9 +47,6 @@ main() {
   if [ "$os" = "darwin" ] && [ "$arch" = "x64" ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" = "1" ]; then
     arch="arm64"
   fi
-  if [ "$os" = "linux" ] && [ "$arch" = "arm64" ]; then
-    die "no linux-arm64 build is published — see https://github.com/$REPO/releases for available platforms"
-  fi
   asset="inflexa-$os-$arch"
 
   if [ -z "$version" ]; then
