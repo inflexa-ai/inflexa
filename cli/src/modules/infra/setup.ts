@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { intro, outro, log, note, spinner as clackSpinner } from "@clack/prompts";
 import { type Result, ok, err } from "neverthrow";
 import { activeRuntime, readConfig, resolvePostgresConfig, writeConfig, type ConfigError } from "../../lib/config.ts";
-import { ensureReady, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
+import { ensureReady, firstReadyRuntime, runtimeIds, runtimes, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { select, promptText } from "../../lib/cli.ts";
 import { detectedMachine, resolveHarnessConfig } from "../harness/config.ts";
@@ -65,16 +65,39 @@ export async function setup(options: SetupOptions): Promise<void> {
     );
     if (connectionFlag === null) return;
 
-    const rt = activeRuntime();
-
-    const readyResult = await ensureReady(rt);
+    // Setup treats the configured runtime as a preference, not a gate: probe it
+    // first, then the other supported runtimes, and proceed with the first one
+    // that is actually ready ("Docker configured but stopped, Podman running"
+    // self-heals here instead of erroring). Launch-time gates keep trusting
+    // config, so a switch is persisted below to stay coherent with the stack
+    // this run provisions.
+    const configured = activeRuntime();
+    const candidates = [configured, ...runtimeIds.filter((id) => id !== configured.id).map((id) => runtimes[id])];
+    const readyResult = await firstReadyRuntime(candidates);
     if (readyResult.isErr()) {
         console.error(`\n  ${readyResult.error.message}\n`);
         process.exitCode = 1;
         return;
     }
+    const rt = readyResult.value;
 
     intro("inflexa setup");
+
+    if (rt.id !== configured.id) {
+        log.info(`${configured.label} isn't ready — continuing with ${rt.label} and saving it as the container runtime.`);
+        const writeError = writeConfig({ ...readConfig(), runtime: rt.id }).match(
+            () => null,
+            (e) => e,
+        );
+        if (writeError) {
+            // Later steps (postgres provisioning, the sandbox pull) re-read config
+            // for the runtime, so an unpersisted switch would split this run across
+            // two runtimes — abort instead of provisioning an incoherent stack.
+            log.error(`Could not save the runtime selection: ${writeError.type}`);
+            process.exitCode = 1;
+            return;
+        }
+    }
 
     try {
         const mode = await chooseConnectionMode(connectionFlag);
