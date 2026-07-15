@@ -1,27 +1,27 @@
 # container-runtime Specification
 
 ## Purpose
-Let users choose the container backing system (Docker or Podman) that runs the CLIProxyAPI proxy, via a `runtime` config key defaulting to Docker. A single execution wrapper resolves the configured binary, surfaces runtime-aware readiness errors, and owns per-runtime command divergence (e.g. Podman's `:z` bind-mount relabel) so callers never hard-code a container binary. At setup time the configured runtime is a preference, not a gate: `inflexa setup` proceeds with any supported runtime that is ready and persists the one it detected.
+Let users choose the container backing system (Docker or Podman) that runs the CLIProxyAPI proxy, via an optional `runtime` config key. When no runtime has been chosen, the first command that needs containers detects a ready runtime (Docker preferred) and pins it to config; at setup time the selection is a preference, not a gate — `inflexa setup` proceeds with any supported runtime that is ready and persists the one it detected. A single execution wrapper resolves the active runtime's binary, surfaces runtime-aware readiness errors, and owns per-runtime command divergence (e.g. Podman's `:z` bind-mount relabel) so callers never hard-code a container binary.
 
 ## Requirements
 ### Requirement: Configurable container runtime
 
-The system SHALL expose a `runtime` configuration key whose value is one of a fixed set of supported container runtimes (`docker`, `podman`). The system SHALL default the runtime to `docker` when the key is absent, and SHALL fall back to `docker` when the persisted value is not a recognized runtime, so that existing installs and corrupt config never block startup.
+The system SHALL expose an optional `runtime` configuration key whose value is one of a fixed set of supported container runtimes (`docker`, `podman`). An absent key SHALL mean no runtime has been chosen yet — resolved at first need per the pinning requirement, never silently treated as a `docker` choice. An unrecognized persisted value SHALL be treated as unset (re-detected at next need) so corrupt config never blocks startup.
 
-#### Scenario: Default when unset
+#### Scenario: Unset means no selection
 
 - **WHEN** the config file has no `runtime` key
-- **THEN** the active runtime is `docker`
+- **THEN** no runtime is selected, and the choice is resolved and pinned by the first command that needs containers
 
 #### Scenario: Honors an explicit selection
 
 - **WHEN** the config file sets `runtime` to `podman`
 - **THEN** the active runtime is `podman`
 
-#### Scenario: Unrecognized value falls back
+#### Scenario: Unrecognized value is treated as unset
 
 - **WHEN** the config file sets `runtime` to an unsupported value (e.g. `containerd`)
-- **THEN** the active runtime is `docker` and startup is not blocked
+- **THEN** the value is treated as no selection and startup is not blocked
 
 ### Requirement: Single execution wrapper for container commands
 
@@ -51,19 +51,48 @@ The system SHALL verify the active runtime is installed and usable before issuin
 - **WHEN** the active runtime's binary exists but the runtime is not ready (e.g. Docker daemon down, or Podman machine not started)
 - **THEN** the system reports an actionable error with runtime-specific remediation, and does not proceed
 
+### Requirement: First need detects and pins the runtime
+
+When no runtime is selected, a command that requires a container runtime SHALL probe the supported runtimes in registry order (`docker` first), proceed with the first one that is installed and ready, persist it to the `runtime` config key, and inform the user of the choice. Pinning (rather than re-detecting on every invocation) keeps later runs on the runtime that owns the provisioned state — a floating resolution would abandon a Podman-provisioned stack the moment Docker reappears and re-provision a colliding one. If persisting fails, the command SHALL abort rather than continue unpinned, because later steps resolve the runtime from config and an unpersisted detection could split one run across two runtimes. When no supported runtime is ready, the command SHALL fail with an error aggregating each runtime's specific guidance (missing-binary vs installed-but-not-ready, per runtime). An explicit selection SHALL remain a hard gate outside `inflexa setup`: it is probed alone and never silently switched. Read-only diagnostics (e.g. `inflexa sandbox status`) SHALL resolve a ready runtime for inspection without persisting anything.
+
+#### Scenario: No selection, Docker stopped, Podman ready
+
+- **WHEN** no runtime is selected, the Docker daemon is not running, and Podman is installed and ready
+- **THEN** the command proceeds with Podman, informs the user, and persists `runtime: podman`
+
+#### Scenario: No selection, both runtimes ready
+
+- **WHEN** no runtime is selected and both Docker and Podman are ready
+- **THEN** the command proceeds with Docker (registry order) and persists `runtime: docker`
+
+#### Scenario: Explicit selection stays a hard gate
+
+- **WHEN** the config selects `docker`, the Docker daemon is not running, and Podman is ready
+- **THEN** a non-setup command fails with Docker's remediation guidance and the config is unchanged
+
+#### Scenario: Read-only status does not pin
+
+- **WHEN** `inflexa sandbox status` runs with no runtime selected
+- **THEN** presence is reported against a detected ready runtime (or as unknown when none is), and the `runtime` config key is not written
+
 ### Requirement: Setup falls back to any ready runtime
 
-`inflexa setup` SHALL NOT require the configured runtime specifically. It SHALL probe the configured runtime first, then the remaining supported runtimes in registry order, and proceed with the first runtime that is installed and ready; probing SHALL stop at the first ready runtime. When the chosen runtime differs from the configured one, setup SHALL inform the user of the switch and persist the choice to the `runtime` config key before any container work, so both the remainder of the setup run and later launches target the runtime that provisioned the stack; if persisting fails, setup SHALL abort rather than continue with a runtime later steps will not resolve. Only when no supported runtime is ready SHALL setup fail, and the error SHALL aggregate each runtime's specific guidance (missing-binary vs installed-but-not-ready, per runtime). Launch-time readiness gates SHALL continue to target only the configured runtime — the fallback is setup-only, because switching runtimes outside the deliberate setup action could silently split container state across two runtimes' stores.
+`inflexa setup` SHALL NOT require the selected runtime specifically. When a runtime is selected it SHALL be probed first, then the remaining supported runtimes in registry order (when none is selected, registry order alone applies); setup SHALL proceed with the first runtime that is installed and ready, and probing SHALL stop there. When the chosen runtime differs from the selection — or none was selected — setup SHALL inform the user and persist the choice to the `runtime` config key before any container work, so both the remainder of the setup run and later launches target the runtime that provisioned the stack; if persisting fails, setup SHALL abort rather than continue with a runtime later steps will not resolve. Only when no supported runtime is ready SHALL setup fail, and the error SHALL aggregate each runtime's specific guidance. Setup is the ONE entry point that may switch away from an explicit selection — everywhere else an explicit selection is a hard gate (see the pinning requirement).
 
-#### Scenario: Configured runtime down, another runtime ready
+#### Scenario: Selected runtime down, another runtime ready
 
-- **WHEN** the `runtime` config is `docker` (or absent), the Docker daemon is not running, and Podman is installed and ready
+- **WHEN** the `runtime` config is `docker`, the Docker daemon is not running, and Podman is installed and ready
 - **THEN** setup proceeds with Podman, informs the user of the switch, and persists `runtime: podman`
 
-#### Scenario: Configured runtime ready
+#### Scenario: Selected runtime ready
 
-- **WHEN** the configured runtime is installed and ready
+- **WHEN** the selected runtime is installed and ready
 - **THEN** setup uses it, the `runtime` config key is unchanged, and no other runtime is probed
+
+#### Scenario: No selection at setup
+
+- **WHEN** no runtime is selected and at least one supported runtime is ready
+- **THEN** setup proceeds with the first ready runtime in registry order, informs the user, and persists it
 
 #### Scenario: No runtime usable
 
@@ -97,4 +126,9 @@ The settings TUI SHALL present the container runtime as a selectable option (a r
 
 - **WHEN** the settings screen is shown
 - **THEN** the currently active runtime is visually indicated among the options
+
+#### Scenario: No selection shows no marked runtime
+
+- **WHEN** the settings screen is shown and no runtime has been chosen or pinned yet
+- **THEN** no runtime option is marked as active
 

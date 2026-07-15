@@ -1,7 +1,6 @@
 import { rmSync } from "node:fs";
 
-import { activeRuntime, resolveConnectionMode, resolvePostgresConfig } from "../../lib/config.ts";
-import { ensureReady } from "../../lib/container.ts";
+import { ensureRuntime, resolveConnectionMode, resolvePostgresConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { promptText } from "../../lib/cli.ts";
 import { composeUp, composeDown, composePullIfMissing, composeAvailable, ensureComposeFile } from "./compose.ts";
@@ -12,14 +11,13 @@ import { composeUp, composeDown, composePullIfMissing, composeAvailable, ensureC
 
 /** `inflexa up` — start the infra containers (idempotent). */
 export async function up(): Promise<void> {
-    const rt = activeRuntime();
-
-    const readyResult = await ensureReady(rt);
-    if (readyResult.isErr()) {
-        console.error(`\n  ${readyResult.error.message}\n`);
+    const rtResult = await ensureRuntime();
+    if (rtResult.isErr()) {
+        console.error(`\n  ${rtResult.error.message}\n`);
         process.exitCode = 1;
         return;
     }
+    const rt = rtResult.value;
 
     if (!(await composeAvailable(rt))) {
         console.error(`\n  ${rt.label} Compose is not available.\n  Install it (https://docs.docker.com/compose/install/) and re-run.\n`);
@@ -63,14 +61,13 @@ export async function up(): Promise<void> {
 
 /** `inflexa down` — stop the infra containers, optionally delete data. */
 export async function down(options: { deleteData: boolean }): Promise<void> {
-    const rt = activeRuntime();
-
-    const readyResult = await ensureReady(rt);
-    if (readyResult.isErr()) {
-        console.error(`\n  ${readyResult.error.message}\n`);
+    const rtResult = await ensureRuntime();
+    if (rtResult.isErr()) {
+        console.error(`\n  ${rtResult.error.message}\n`);
         process.exitCode = 1;
         return;
     }
+    const rt = rtResult.value;
 
     if (options.deleteData) {
         const confirmed = await confirmDeleteData();
