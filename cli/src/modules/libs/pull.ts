@@ -81,17 +81,35 @@ function configureSandboxImage(image: string): Result<void, PullError> {
     }));
 }
 
-/** Whether `rt` already has `image` locally (a present image is never re-pulled). */
+/** Whether `rt` already has `image` locally. */
 async function imagePresent(rt: ContainerRuntime, image: string): Promise<boolean> {
     return (await capture(rt, ["image", "inspect", image])).code === 0;
 }
 
 /**
+ * Whether `image` is a MOVING reference — a `:latest` tag or no tag at all (which
+ * the runtime treats as `:latest`). A moving ref must be re-pulled even when it is
+ * present locally, because a newer remote digest can hide behind the same tag; an
+ * immutable ref (a pinned `:<version>` tag or an `@sha256:` digest) that is present
+ * is already authoritative and needs no pull. The last path segment carries the
+ * tag, so a registry `host:port/` prefix never confuses the check.
+ */
+export function isMovingTag(image: string): boolean {
+    if (image.includes("@")) return false; // digest pin — immutable
+    const lastSegment = image.slice(image.lastIndexOf("/") + 1);
+    const colon = lastSegment.indexOf(":");
+    const tag = colon === -1 ? "latest" : lastSegment.slice(colon + 1);
+    return tag === "latest";
+}
+
+/**
  * Provision the sandbox image. Resolves a variant (prompting interactively when
- * none is given), and — unless the image is already present locally (idempotent
- * no-op) — confirms the download, `docker pull`s the multi-arch image from GHCR,
- * and records it as `harness.sandboxImage`. Re-pulling a present image reports
- * `up_to_date` with nothing on the wire.
+ * none is given), `docker pull`s the multi-arch image from GHCR, and records it as
+ * `harness.sandboxImage`. Because the variant resolves to a moving `:latest` ref,
+ * a pull always refreshes to the current remote digest — even when the image is
+ * present locally — so `sandbox pull` doubles as the image-upgrade path (a present
+ * image transfers only changed layers, so no size prompt). An immutable pinned ref
+ * that is already present short-circuits to `up_to_date` with nothing on the wire.
  */
 export async function sandboxPull(opts: PullOptions = {}): Promise<Result<PullOutcome, PullError>> {
     const interactive = !opts.quiet && process.stdin.isTTY;
@@ -118,21 +136,27 @@ export async function sandboxPull(opts: PullOptions = {}): Promise<Result<PullOu
         variant = chosen;
     }
     const image = variantImage(variant);
+    const present = await imagePresent(rt, image);
 
-    // Present locally → idempotent no-op (record the config, pull nothing).
-    if (await imagePresent(rt, image)) {
+    // An IMMUTABLE ref that is already present is authoritative — record the config
+    // and pull nothing. A MOVING `:latest` ref falls through to the pull below even
+    // when present, so `sandbox pull` refreshes to the current remote digest.
+    if (present && !isMovingTag(image)) {
         const configured = configureSandboxImage(image);
         if (configured.isErr()) return err(configured.error);
         return ok({ type: "up_to_date", variant, image });
     }
 
-    if (interactive && !opts.yes) {
+    // The size confirmation is only for the FIRST (absent) pull — a multi-GB
+    // download. Refreshing a present `:latest` transfers only changed layers (often
+    // nothing), so it runs without the prompt.
+    if (!present && interactive && !opts.yes) {
         const proceed = await confirm(`Pull the ${variant} sandbox image (${image})? This may be a multi-GB download.`);
         if (!proceed) return ok({ type: "declined" });
     }
 
     // Stream progress interactively; capture (buffered) when a caller owns the UI.
-    if (!opts.quiet) log.info(`Pulling ${image} …`);
+    if (!opts.quiet) log.info(`${present ? "Refreshing" : "Pulling"} ${image} …`);
     const code = opts.quiet ? (await capture(rt, ["pull", image])).code : await inherit(rt, ["pull", image]);
     if (code !== 0) {
         return err({
