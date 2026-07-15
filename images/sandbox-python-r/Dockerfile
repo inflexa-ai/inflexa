@@ -25,8 +25,10 @@
 # locally-built/loaded tag; the default is the GHCR-published image.
 ARG SANDBOX_PYTHON_IMAGE=ghcr.io/inflexa-ai/sandbox-python:latest
 # R builder base — MUST match sandbox-base's R runtime so the compiled R
-# packages' ABI matches (same R 4.6.0).
-ARG BASE_IMAGE=rocker/r-ver:4.6.0
+# packages' ABI matches (same R 4.6.0). Pinned by digest to match sandbox-base
+# and images/lib-store-manifest.yaml; CI overrides it with the manifest value
+# (also digest-pinned).
+ARG BASE_IMAGE=rocker/r-ver:4.6.0@sha256:6f05a1a8b8c52328f181593923909b01cbfd14c9caea93bf75ddc65e806d8eac
 ARG INFLEXA_LIB_ROOT=/mnt/libs/current
 
 # Cap on parallel R package compiles (install.packages/BiocManager Ncpus). Empty
