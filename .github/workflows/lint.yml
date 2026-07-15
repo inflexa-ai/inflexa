@@ -41,6 +41,13 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      # Same category as ESLint: a source-validity gate. Generation fails on a
+      # visible command/argument/option registered without a description, or a
+      # registry that stops being importable standalone — catching it here keeps
+      # the release workflow's docs packaging a pure re-run of what CI verified.
+      - name: Docs generation check
+        run: bun run docs:gen
+
   harness:
     name: lint (harness)
     runs-on: ubuntu-latest
