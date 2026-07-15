@@ -164,6 +164,33 @@ export function writeConfig(config: Config): Result<void, ConfigError> {
 }
 
 /**
+ * Peek the on-disk config for a `runtime` string that schema validation discarded.
+ * `runtime: z.enum(...).catch(undefined)` silently drops an unrecognized persisted
+ * value so corrupt config never blocks startup — but that hides a typo'd selection.
+ * Returns the raw string ONLY when the persisted value is a string the enum rejected
+ * (the exact case the pin notice must name); a valid id, a non-string, an absent key,
+ * or an unreadable/unparseable file all yield `null` — there is nothing to name.
+ *
+ * Deliberately re-reads the file rather than threading the discarded value through
+ * {@link readConfig}: this peek runs only in {@link ensureRuntime}'s pin path, so
+ * passive config reads never pay for the extra parse.
+ */
+function discardedRuntimeValue(): string | null {
+    try {
+        const parsed: unknown = JSON.parse(readFileSync(env.configPath, "utf8")); // unknown: on-disk contents, shape-narrowed below
+        if (typeof parsed !== "object" || parsed === null) return null;
+        const raw = (parsed as Record<string, unknown>).runtime;
+        // Only a STRING the enum rejected is a discarded selection worth naming: a
+        // valid id was never discarded, and a non-string was never a selection.
+        if (typeof raw !== "string") return null;
+        return (runtimeIds as readonly string[]).includes(raw) ? null : raw;
+    } catch {
+        // Unreadable / unparseable raw config: no value to name, stay silent.
+        return null;
+    }
+}
+
+/**
  * The runtime gate for every command that needs containers: resolve the runtime
  * AND verify it is usable, in one step.
  *
@@ -188,7 +215,15 @@ export async function ensureRuntime(
     probe: (rt: ContainerRuntime) => Promise<Result<void, ContainerRuntimeError>> = ensureReady,
 ): Promise<Result<ContainerRuntime, ContainerRuntimeError>> {
     const selected = selectedRuntime();
-    if (selected) return (await probe(selected)).map(() => selected);
+    if (selected) {
+        // Hard gate: an explicit selection is probed alone and never switched. Only
+        // `inflexa setup` may move off a dead selection, so the failure names it —
+        // appended HERE and not in `container.ts`'s hint (shared by setup's own
+        // fallback, which must not tell you to run setup) nor in setup itself.
+        return (await probe(selected))
+            .map(() => selected)
+            .mapErr((e) => new ContainerRuntimeError(`${e.message}\n  To switch container runtimes, run \`inflexa setup\`.`));
+    }
 
     const detected = await firstReadyRuntime(
         runtimeIds.map((id) => runtimes[id]),
@@ -196,6 +231,10 @@ export async function ensureRuntime(
     );
     if (detected.isErr()) return detected;
     const rt = detected.value;
+
+    // Capture any discarded selection BEFORE the write rewrites the file with a valid
+    // id — afterward the raw peek would find nothing to name.
+    const discarded = discardedRuntimeValue();
 
     const write = writeConfig({ ...readConfig(), runtime: rt.id });
     if (write.isErr()) {
@@ -207,8 +246,14 @@ export async function ensureRuntime(
     }
     // Every caller reaches this gate before taking the terminal (the TUI launch
     // path runs it pre-render), so a plain line is safe — and the user must hear
-    // that a durable choice was just made on their behalf.
-    console.log(`  No container runtime selected — using ${rt.label} and saving it as the container runtime.`);
+    // that a durable choice was just made on their behalf. When validation discarded
+    // a typo'd `runtime` value, name it so the pin does not masquerade as a fresh
+    // choice (the discarded selection would otherwise vanish silently).
+    console.log(
+        discarded !== null
+            ? `  Ignoring unrecognized runtime "${discarded}" in config.json — using ${rt.label} and saving it as the container runtime.`
+            : `  No container runtime selected — using ${rt.label} and saving it as the container runtime.`,
+    );
     return ok(rt);
 }
 

@@ -6,7 +6,7 @@
 // Solid JSX transform (@opentui/solid) is a bundler plugin, and plugins are
 // only available through the JS API.
 import { $ } from "bun";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 
 import { createSolidTransformPlugin, resetSolidTransformPluginState } from "@opentui/solid/bun-plugin";
@@ -261,6 +261,26 @@ async function ensureLlamaArchiveCached(targetKey: string): Promise<LlamaTargetK
     console.log(`cached ${pin.artifact} (${(bytes.length / 1024 / 1024).toFixed(1)} MB)`);
     return pin.target;
 }
+
+// Remove every cache file that matches no current LLAMA_PINS artifact BEFORE compiling. A pin bump renames
+// the artifacts (new tag → new filenames) but leaves the superseded archives on disk; if the embed-import
+// literals in llama_runtime.ts were not all updated in lockstep, a stale literal could still resolve
+// against one of those leftover files and embed the WRONG runtime silently. Deleting them turns that
+// mistake into a loud import-resolution build failure instead — the same failure a clean CI checkout would
+// produce. Only flat archive files live here, so directories (none expected) are left untouched.
+function sweepLlamaCache(): void {
+    if (!existsSync(LLAMA_CACHE_DIR)) return;
+    // Widen to Set<string>: LLAMA_PINS is `as const`, so the mapped artifact names infer a literal union
+    // that would reject a plain-string `.has(entry.name)` membership test.
+    const currentArtifacts = new Set<string>(Object.values(LLAMA_PINS).map((pin) => pin.artifact));
+    for (const entry of readdirSync(LLAMA_CACHE_DIR, { withFileTypes: true })) {
+        if (!entry.isFile() || currentArtifacts.has(entry.name)) continue;
+        rmSync(join(LLAMA_CACHE_DIR, entry.name), { force: true });
+        console.log(`swept stale llama-cache archive ${entry.name} (matches no current LLAMA_PINS artifact)`);
+    }
+}
+
+sweepLlamaCache();
 
 const plugin = createSolidTransformPlugin();
 for (const target of targets) {

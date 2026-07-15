@@ -37,6 +37,23 @@ process.on("exit", flushLogsSync);
 // the pid check on the next open.
 process.on("exit", releaseHeldInstanceLocks);
 
+// Run the same shutdown chain (telemetry/log flush, DB close, sidecar reap) on a killed or
+// hung-up CLI, then exit with the conventional 128+signal code — otherwise `kill <pid>` or a
+// closed terminal would orphan the sidecar and drop the final log/telemetry batch. shutdown()
+// guards its cleanup against re-entry but still calls process.exit on every invocation, so a
+// module-level latch ensures only the FIRST signal drives the chain and a second cannot cut an
+// in-flight shutdown short. SIGINT is deliberately untouched: it carries chat-turn semantics
+// (interrupt the turn, second press stops) wired per-turn in modules/harness/chat.ts.
+const SIGNAL_EXIT_CODES = { SIGTERM: 143, SIGHUP: 129 } as const;
+let terminationHandled = false;
+for (const signal of ["SIGTERM", "SIGHUP"] as const) {
+    process.on(signal, () => {
+        if (terminationHandled) return;
+        terminationHandled = true;
+        void shutdown(SIGNAL_EXIT_CODES[signal]);
+    });
+}
+
 getLogger("main").info({ argv: process.argv.slice(2) }, "cli start");
 
 try {

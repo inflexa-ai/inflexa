@@ -21,15 +21,25 @@ import { env } from "../../lib/env.ts";
 const CONTAINER_AUTH_DIR = "/root/.cli-proxy-api";
 
 /**
+ * What kind of entry occupies a path a file belongs at. Carried on {@link InfraStateError} so the
+ * diagnosis names the actual occupant instead of assuming a directory: a `non_empty_directory` is the
+ * engine-manufactured-then-populated case, a `symlink` is never followed or deleted, and `other` covers a
+ * socket/device/FIFO — anything neither our regular file nor a healable empty directory.
+ */
+export type OccupantKind = "non_empty_directory" | "symlink" | "other";
+
+/**
  * Diagnosable filesystem faults from provisioning a mount source, carried on the `Result` channel so raw
  * errno text (`EISDIR`, `EACCES`) never reaches the user from a known-cause state.
  *
- * - `path_occupied` — the inviolable case: an entry we did NOT just create (a non-empty directory, a
- *   symlink, or anything unclassifiable) sits where a file belongs. The CLI refuses to delete it.
+ * - `path_occupied` — the inviolable case: an entry we did NOT just create sits where a file belongs. It
+ *   carries {@link OccupantKind} so the rendered message describes what is actually there. The CLI refuses
+ *   to delete it.
  * - `io_failed` — an unexpected throw from the fs primitive; carries the underlying cause for the
  *   last-resort message.
  */
-export type InfraStateError = { type: "io_failed"; path: string; cause: unknown } | { type: "path_occupied"; path: string; expected: "file" | "directory" };
+export type InfraStateError =
+    { type: "io_failed"; path: string; cause: unknown } | { type: "path_occupied"; path: string; expected: "file" | "directory"; occupant: OccupantKind };
 
 /**
  * Outcome of {@link writeProxyConfig}: a fresh write yields the minted client key so the caller can show
@@ -51,14 +61,19 @@ async function tryFs<T>(path: string, op: () => Promise<T>): Promise<Result<T, I
     }
 }
 
-/** What currently occupies a path. Decided by {@link lstat} so a symlink is never mistaken for our file. */
-type PathOccupant = "absent" | "file" | "empty_dir" | "occupied";
+/**
+ * What currently occupies a path. Decided by {@link lstat} so a symlink is never mistaken for our file.
+ * `occupied` carries the {@link OccupantKind} so the caller can name what it found, not assume a
+ * directory; the other three states carry nothing.
+ */
+type PathOccupant = { kind: "absent" } | { kind: "file" } | { kind: "empty_dir" } | { kind: "occupied"; occupant: OccupantKind };
 
 /**
  * Classify what sits at `path`. `absent` (ENOENT) is the normal fresh-install case — in-band on the ok
  * channel, not a fault. Only a genuinely empty directory is `empty_dir`, the one healable
- * engine-manufactured artifact; a symlink/socket/device — anything neither our regular file nor a
- * healable directory — is `occupied` and inviolable.
+ * engine-manufactured artifact. Everything else is `occupied` and inviolable, tagged with what it is: a
+ * symlink (checked first, since {@link lstat} does not follow it — so we never touch its target), a
+ * non-empty directory, or any other node type (socket/device/FIFO).
  */
 async function classifyPath(path: string): Promise<Result<PathOccupant, InfraStateError>> {
     let stats: Stats;
@@ -69,15 +84,18 @@ async function classifyPath(path: string): Promise<Result<PathOccupant, InfraSta
         // other throw is a real IO fault. `cause` is unknown, so read the errno discriminant defensively:
         // a throw without a `.code` string simply isn't ENOENT and correctly falls through to io_failed.
         const code = (cause as { code?: unknown } | null)?.code;
-        if (code === "ENOENT") return ok("absent");
+        if (code === "ENOENT") return ok({ kind: "absent" });
         return err({ type: "io_failed", path, cause });
     }
-    if (stats.isFile()) return ok("file");
+    // Symlink first: lstat reports the link itself (isFile/isDirectory both false for it), so classifying
+    // it before those checks is what keeps the link unfollowed and names it as a symlink downstream.
+    if (stats.isSymbolicLink()) return ok({ kind: "occupied", occupant: "symlink" });
+    if (stats.isFile()) return ok({ kind: "file" });
     if (stats.isDirectory()) {
         const entries = await tryFs(path, () => readdir(path));
-        return entries.map((names) => (names.length === 0 ? "empty_dir" : "occupied"));
+        return entries.map((names) => (names.length === 0 ? { kind: "empty_dir" } : { kind: "occupied", occupant: "non_empty_directory" }));
     }
-    return ok("occupied");
+    return ok({ kind: "occupied", occupant: "other" });
 }
 
 /**
@@ -106,7 +124,7 @@ export async function writeProxyConfig(): Promise<Result<WriteProxyConfigOutcome
     const occupant = await classifyPath(configPath);
     if (occupant.isErr()) return err(occupant.error);
 
-    switch (occupant.value) {
+    switch (occupant.value.kind) {
         case "file":
             return ok({ created: false });
         case "absent":
@@ -117,7 +135,8 @@ export async function writeProxyConfig(): Promise<Result<WriteProxyConfigOutcome
             return writeFreshConfig(configPath);
         }
         case "occupied":
-            return err({ type: "path_occupied", path: configPath, expected: "file" });
+            // Carry what actually occupies the path so the diagnosis fits it — a symlink is not "not empty".
+            return err({ type: "path_occupied", path: configPath, expected: "file", occupant: occupant.value.occupant });
         default: {
             // Exhaustive: every PathOccupant is handled above; a new member breaks the build here rather
             // than silently falling through (the sanctioned exhaustive-switch bail-out).
@@ -142,12 +161,35 @@ async function writeFreshConfig(path: string): Promise<Result<WriteProxyConfigOu
 export function formatInfraStateError(e: InfraStateError): string {
     switch (e.type) {
         case "path_occupied":
-            return `${e.path} already exists but is not the ${e.expected} inflexa expects there — a container engine can manufacture a directory at a file's mount path.\n  It is not empty, so inflexa will not touch it. Move or remove it, then re-run.`;
+            return `${e.path} already exists but is not the ${e.expected} inflexa expects there. ${occupantSentence(e.occupant)} Move or remove it, then re-run.`;
         case "io_failed":
             return `Could not provision ${e.path}: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`;
         default: {
             const unreachable: never = e;
             throw new Error(`unhandled infra-state error: ${String(unreachable)}`);
+        }
+    }
+}
+
+/**
+ * The occupant-specific middle sentence of a {@link formatInfraStateError} `path_occupied` message. Kept
+ * separate so the "not empty" phrasing is reachable ONLY for a non-empty directory — a symlink or a
+ * socket/device must never be described with prose that only fits a directory. Every branch states that
+ * inflexa will not delete the occupant (it refuses to remove state it did not create).
+ */
+function occupantSentence(occupant: OccupantKind): string {
+    switch (occupant) {
+        case "non_empty_directory":
+            // A container engine manufactures a directory when left to create a missing file-typed mount
+            // source; a non-empty one already holds state inflexa did not create, so it is inviolable.
+            return "It is a directory and is not empty, so inflexa will not touch it.";
+        case "symlink":
+            return "It is a symlink, which inflexa will not follow or delete.";
+        case "other":
+            return "It is not a regular file (e.g. a socket or device), so inflexa will not touch it.";
+        default: {
+            const unreachable: never = occupant;
+            throw new Error(`unhandled occupant kind: ${String(unreachable)}`);
         }
     }
 }

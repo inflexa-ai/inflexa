@@ -1,7 +1,7 @@
 # infra-state-resilience Specification
 
 ## Purpose
-TBD - created by archiving change harden-infra-provisioning. Update Purpose after archive.
+Local infra/provisioned state — proxy config, compose file, mount sources, and the Postgres substrate — must survive commands running in any order on any on-disk state. Each command provisions its own preconditions, heals what is safely healable, never destroys non-empty user state, never lets a container engine manufacture host state, and translates expected failures into named remediation.
 ## Requirements
 ### Requirement: Commands are order-independent and self-provisioning
 

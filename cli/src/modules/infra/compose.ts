@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -45,12 +45,14 @@ export type ConnectionMode = "cliproxy" | "direct";
  * defines Postgres ONLY — a direct connection reaches the user's own endpoint with
  * `INFLEXA_MODEL_API_KEY`, so the managed proxy is never provisioned. Postgres is mode-independent.
  *
- * Invariant: `inflexa up`/`down` operate on WHICHEVER file already exists — they do not re-derive the
- * mode from a running file. The two authoritative regeneration points overwrite it with the current
- * mode on every run (`inflexa setup` and the TUI-launch gate `ensureProxyReady`, both via
- * {@link writeComposeFile}), so switching modes there rewrites the file coherently — proxy dropped for
- * direct, present again for cliproxy. `up` only generates when the file is missing
- * ({@link ensureComposeFile}), resolving the mode from config.
+ * Regeneration contract: every compose entry point (`inflexa setup`, the TUI-launch gate
+ * `ensureProxyReady`, `inflexa up`, and the Postgres readiness gate `ensurePostgresReady`) rewrites the
+ * file from the current configuration via {@link writeComposeFile} before invoking the engine — there is
+ * no write-if-missing path. So the file the engine executes and the mount-source manifest the guard
+ * provisions ({@link mountManifest}) always derive from the SAME mode in the SAME invocation: a compose
+ * file left on disk under an earlier mode can never out-drift the guard, and switching modes rewrites the
+ * file coherently — proxy service dropped for direct, present again for cliproxy. `inflexa down` only
+ * stops what is running and never rewrites the file.
  */
 export function generateComposeFile(conn: PostgresConnection, mode: ConnectionMode): string {
     const proxyService =
@@ -114,16 +116,6 @@ export function writeComposeFile(conn: PostgresConnection, mode: ConnectionMode)
             message: `Failed to write compose file: ${cause instanceof Error ? cause.message : String(cause)}`,
         }),
     )();
-}
-
-/**
- * Generate and write the compose file if it doesn't already exist, for the given connection mode.
- * Setup and the TUI-launch gate use {@link writeComposeFile} directly to always regenerate; this
- * write-if-missing variant backs `inflexa up`, which operates on the existing file when present.
- */
-export function ensureComposeFile(conn: PostgresConnection, mode: ConnectionMode): Result<void, PostgresError> {
-    if (existsSync(env.composeFilePath)) return ok(undefined);
-    return writeComposeFile(conn, mode);
 }
 
 function composeArgs(subcommand: string[]): string[] {

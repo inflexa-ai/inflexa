@@ -2,7 +2,7 @@ import { type Result, ok, err } from "neverthrow";
 import { ensureRuntime, resolveConnectionMode, resolvePostgresConfig } from "../../lib/config.ts";
 import { capture, type ContainerRuntime, type CaptureResult } from "../../lib/container.ts";
 import { DEFAULT_IMAGE, type PostgresConnection, type PostgresError, type ProvisionOutcome, type SetupOptions } from "./postgres_types.ts";
-import { POSTGRES_CONTAINER_NAME, composeUp, ensureComposeFile } from "./compose.ts";
+import { POSTGRES_CONTAINER_NAME, composeUp, writeComposeFile } from "./compose.ts";
 
 // `inflexa setup` provisions a Postgres + pgvector container alongside the existing
 // CLIProxyAPI proxy via Docker Compose. Both services share the `inflexa` network so
@@ -151,12 +151,12 @@ export async function ensurePostgresReady(): Promise<Result<PostgresConnection, 
     }
     const rt = rtResult.value;
 
-    // Compose up is idempotent — starts only containers that aren't running.
-    // The caller (ensurePostgresReadyOrExit or the TUI launch path) generates
-    // the compose file if missing before calling this function; when this gate
-    // is what generates it, shape it for the configured connection mode.
+    // Compose up is idempotent — starts only containers that aren't running. Regenerate the compose file
+    // from current config first: the file the engine executes and the mount-source guard composeUp runs
+    // then derive from the same connection mode in the same invocation, so a file left on disk under an
+    // earlier mode cannot out-drift the guard.
     const mode = resolveConnectionMode();
-    const composeWriteErr = ensureComposeFile(conn, mode).match(
+    const composeWriteErr = writeComposeFile(conn, mode).match(
         () => null,
         (e) => e,
     );

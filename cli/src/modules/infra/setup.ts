@@ -673,6 +673,22 @@ async function isAuthenticated(): Promise<boolean> {
  * records the provider fact only on a real success, never when the flow errored out.
  */
 async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promise<boolean> {
+    // The login container bind-mounts the proxy config file (file-typed) and the auth dir
+    // (directory-typed) via volumeArgs. Provision those sources through the shared seam BEFORE the engine
+    // runs, structurally here rather than trusting each caller to have done it: an absent config path
+    // would otherwise be manufactured by the engine as a directory, wedging every later write to it with
+    // EISDIR. writeProxyConfig heals an empty manufactured directory, writes the config when absent,
+    // ensures the auth dir (0700), and refuses a non-empty occupant — exactly the two mounts this
+    // container needs, and no more (it does not touch the Postgres data dir). Idempotent, so a caller that
+    // already provisioned pays only a re-stat.
+    const provisioned = await writeProxyConfig();
+    if (provisioned.isErr()) {
+        // Known filesystem-state fault (e.g. a directory manufactured at the config path): surface the
+        // diagnosis + remediation, not a raw errno. No spinner has started yet, so this is the only output.
+        log.error(formatInfraStateError(provisioned.error));
+        return false;
+    }
+
     const port = PROVIDER_CALLBACK_PORT[provider];
     // Loopback-only: publish the OAuth callback port where only this host can reach it, never the LAN. A remote/SSH
     // login still works — the SSH local-forward hinted below targets localhost on this host, which is the loopback bind.

@@ -1,6 +1,6 @@
 ## Purpose
 
-Local, in-process text embeddings for the cli: a `node-llama-cpp`-backed realization of the harness `EmbeddingProvider` seam (bge-small GGUF, no API key), the mode-based `embedding` config key that selects between it and a direct OpenAI-compatible endpoint, and the setup flow that downloads, verifies, and records the choice.
+Local text embeddings for the cli via a pinned `llama.cpp` `llama-server` sidecar — a bge-small GGUF served over loopback with a per-spawn API key — realizing the harness `EmbeddingProvider` seam; the mode-based `embedding` config key that selects between it, a direct OpenAI-compatible endpoint, and off; and the setup flow that materializes the runtime, downloads and verifies the model, and records the choice. The realization is identical in the compiled binary and from source.
 ## Requirements
 ### Requirement: Local embedding provider realizes the harness EmbeddingProvider seam
 

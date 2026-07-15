@@ -7,8 +7,8 @@ import { readConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 
-// generateApiKey + proxyConfig moved to proxy_config.ts alongside writeProxyConfig; their unit tests
-// live in proxy_config.test.ts beside them.
+// generateApiKey + proxyConfig live in proxy_config.ts alongside writeProxyConfig; their unit tests
+// live beside them in proxy_config.test.ts.
 
 describe("parseConnectionMode", () => {
     test("an absent flag resolves to undefined (mode chosen interactively / defaulted)", () => {

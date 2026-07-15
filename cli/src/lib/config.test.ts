@@ -108,8 +108,62 @@ describe("ensureRuntime", () => {
             () => null,
             (e) => e,
         );
-        expect(error?.message).toBe(runtimes.docker.notReadyHint);
+        expect(error?.message).toContain(runtimes.docker.notReadyHint);
         expect(readConfig().runtime).toBe("docker");
+    });
+
+    test("a dead explicit selection names `inflexa setup` as the way to switch runtimes", async () => {
+        writeRawConfig(JSON.stringify({ telemetry: false, runtime: "docker" }));
+        const result = await ensureRuntime(probeReady(["podman"]));
+        const error = result.match(
+            () => null,
+            (e) => e,
+        );
+        // The probe's own remediation is preserved AND the switch path is named — the
+        // hint must live in ensureRuntime's hard gate, not in setup's fallback.
+        expect(error?.message).toContain(runtimes.docker.notReadyHint);
+        expect(error?.message).toContain("inflexa setup");
+    });
+
+    test("pins the detected runtime and names a discarded unrecognized value", async () => {
+        writeRawConfig(JSON.stringify({ telemetry: false, runtime: "podmna" }));
+        const logs: string[] = [];
+        const originalLog = console.log;
+        console.log = (...args: unknown[]): void => {
+            logs.push(args.map((a) => String(a)).join(" "));
+        };
+        try {
+            const result = await ensureRuntime(probeReady(["podman"]));
+            expect(result._unsafeUnwrap().id).toBe("podman");
+        } finally {
+            console.log = originalLog;
+        }
+        expect(logs.join("\n")).toContain('Ignoring unrecognized runtime "podmna" in config.json');
+        expect(logs.join("\n")).toContain(runtimes.podman.label);
+        expect(readConfig().runtime).toBe("podman");
+    });
+
+    test("a failed pin write aborts — no unpinned proceed", async () => {
+        // Force the pin write to fail at the filesystem: a directory AT the config
+        // path makes writeConfig's writeFileSync throw EISDIR, so ensureRuntime must
+        // abort rather than continue with an unpersisted detection (later steps
+        // re-read config and would split one run across two runtimes).
+        assertTestSandbox(env.configPath);
+        rmSync(env.configPath, { force: true });
+        mkdirSync(env.configPath, { recursive: true });
+        try {
+            const result = await ensureRuntime(probeReady(["podman"]));
+            expect(result.isErr()).toBe(true);
+            const error = result.match(
+                () => null,
+                (e) => e,
+            );
+            expect(error?.message).toContain("saving it as the container runtime failed");
+        } finally {
+            // Restore fs state: drop the directory so afterEach's file rmSync is a clean no-op.
+            assertTestSandbox(env.configPath);
+            rmSync(env.configPath, { recursive: true, force: true });
+        }
     });
 
     test("unset: pins the first ready runtime to config", async () => {
