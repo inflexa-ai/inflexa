@@ -321,7 +321,6 @@ python:
       - cell2location
       - rpds-py
       - scglue
-      - "snapatac2>=2.7"
 
       # Spatial
       - spatialdata
@@ -398,8 +397,14 @@ python:
     # liana is arch-split: amd64 installs liana[extras] (the extras pull
     # pyscipopt/SCIP, which has no arm64 build); arm64 installs core liana.
     # The builder installs common + the target arch and strips nothing itself.
+    #
+    # snapatac2 is amd64-only: PyPI ships manylinux x86_64 wheels but no
+    # linux-aarch64 wheel for any version (only macOS arm64), so on the arm64
+    # build uv falls back to compiling its Rust extension from sdist, which
+    # fails under maturin. Same treatment as the arm64-unavailable bioconda tools.
     amd64:
       - "liana[extras]"
+      - "snapatac2>=2.7"
     arm64:
       - "liana"
 
