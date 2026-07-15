@@ -3,12 +3,13 @@
  * (`bun build --compile`, produced by `scripts/build.ts`) or a from-source /
  * dev / test run?
  *
- * The distinction is load-bearing for capabilities the packaged binary cannot
- * provide. The clearest case: `node-llama-cpp` (the local-embeddings native
- * runtime) is `external` in the compile step, so inside the binary its
- * `import("node-llama-cpp")` can never resolve — `/$bunfs` has no `node_modules`.
- * Code that offers or gates such a capability asks {@link isCompiledBinary} so it
- * can be honest about what will actually work here.
+ * The distinction routes ASSET SOURCE. The `llama-server` runtime archive that
+ * backs local embeddings is materialized from a build-time EMBEDDED asset inside
+ * the compiled binary — each target embeds exactly its own, selected by a
+ * per-target `--define` — but from a pinned release DOWNLOAD in a source checkout,
+ * where nothing was embedded. `llama_runtime.ts`'s `materialize` asks
+ * {@link isCompiledBinary} to pick the byte source; both converge on the identical
+ * verified artifact extracted to the same on-disk layout.
  *
  * This is the ONE place that knows how the compiled context is detected. The
  * `/$bunfs` marker path is a platform-shaped, stringly implementation detail

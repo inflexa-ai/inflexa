@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { formatInfraStateError, generateApiKey, proxyConfig, writeProxyConfig } from "./proxy_config.ts";
@@ -27,10 +27,29 @@ describe("proxyConfig", () => {
 });
 
 describe("formatInfraStateError", () => {
-    test("path_occupied names the offending path and refuses to touch it", () => {
-        const msg = formatInfraStateError({ type: "path_occupied", path: "/data/inflexa/cliproxy/config.yaml", expected: "file" });
-        expect(msg).toContain("/data/inflexa/cliproxy/config.yaml");
+    const path = "/data/inflexa/cliproxy/config.yaml";
+
+    test("a non-empty directory occupant names the path and says it is not empty", () => {
+        const msg = formatInfraStateError({ type: "path_occupied", path, expected: "file", occupant: "non_empty_directory" });
+        expect(msg).toContain(path);
+        expect(msg).toMatch(/not empty/i);
         expect(msg).toMatch(/will not touch it/i);
+    });
+
+    test("a symlink occupant names it as a symlink — never with directory-only prose", () => {
+        const msg = formatInfraStateError({ type: "path_occupied", path, expected: "file", occupant: "symlink" });
+        expect(msg).toContain(path);
+        expect(msg).toMatch(/symlink/i);
+        expect(msg).toMatch(/will not follow or delete/i);
+        // "not empty" only fits a directory; a symlink must never carry it.
+        expect(msg).not.toMatch(/not empty/i);
+    });
+
+    test("an other (socket/device) occupant is described as not a regular file, not a directory", () => {
+        const msg = formatInfraStateError({ type: "path_occupied", path, expected: "file", occupant: "other" });
+        expect(msg).toContain(path);
+        expect(msg).toMatch(/not a regular file/i);
+        expect(msg).not.toMatch(/not empty/i);
     });
 
     test("io_failed surfaces the underlying cause message and the path", () => {
@@ -90,6 +109,31 @@ describe("writeProxyConfig damaged-state matrix", () => {
         // Nothing deleted: the directory and its contents survive (rmdir cannot remove a non-empty dir).
         expect(statSync(configPath).isDirectory()).toBe(true);
         expect(readFileSync(join(configPath, "keep.txt"), "utf8")).toBe("precious");
+    });
+
+    test("a SYMLINK at the config path is refused untouched, never followed, and classified as a symlink", async () => {
+        // Point the link at a real file so "followed" would be observable — following it would read or
+        // clobber the target's bytes. writeProxyConfig must lstat, classify it occupied without following,
+        // and delete neither the link nor its target.
+        mkdirSync(cliproxyDir, { recursive: true });
+        const target = join(cliproxyDir, "elsewhere.txt");
+        writeFileSync(target, "target-bytes");
+        symlinkSync(target, configPath);
+
+        const error = (await writeProxyConfig())._unsafeUnwrapErr();
+        expect(error.type).toBe("path_occupied");
+        if (error.type === "path_occupied") {
+            expect(error.path).toBe(configPath);
+            expect(error.occupant).toBe("symlink");
+        }
+        // Not followed, not deleted: the symlink itself survives and its target's bytes are intact.
+        expect(lstatSync(configPath).isSymbolicLink()).toBe(true);
+        expect(readFileSync(target, "utf8")).toBe("target-bytes");
+        // The rendered message names the path and calls it a symlink, never a non-empty directory.
+        const msg = formatInfraStateError(error);
+        expect(msg).toContain(configPath);
+        expect(msg).toMatch(/symlink/i);
+        expect(msg).not.toMatch(/not empty/i);
     });
 
     test("is idempotent: a second run reports the existing config without rewriting it", async () => {

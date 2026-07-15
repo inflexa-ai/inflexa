@@ -3,7 +3,7 @@ import { rmSync } from "node:fs";
 import { ensureRuntime, resolveConnectionMode, resolvePostgresConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { promptText } from "../../lib/cli.ts";
-import { composeUp, composeDown, composePullIfMissing, composeAvailable, ensureComposeFile } from "./compose.ts";
+import { composeUp, composeDown, composePullIfMissing, composeAvailable, writeComposeFile } from "./compose.ts";
 
 // `inflexa up` / `inflexa down` — explicit lifecycle commands for the infra
 // stack. `up` is the same as the self-healing gate but user-initiated; `down`
@@ -26,10 +26,11 @@ export async function up(): Promise<void> {
     }
 
     const conn = resolvePostgresConfig();
-    // `up` operates on the existing compose file; when it is missing, generate one for the currently
-    // configured connection mode (postgres-only for a direct connection, proxy+postgres otherwise).
+    // Regenerate the compose file from current config before starting the engine, so the file the engine
+    // executes and the mount-source guard composeUp runs both derive from the same connection mode in the
+    // same invocation — a file left on disk under an earlier mode can never out-drift the guard.
     const mode = resolveConnectionMode();
-    const writeErr = ensureComposeFile(conn, mode).match(
+    const writeErr = writeComposeFile(conn, mode).match(
         () => null,
         (e) => e,
     );

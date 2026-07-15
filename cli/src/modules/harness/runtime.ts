@@ -607,6 +607,9 @@ async function bootHarnessRuntimeOnce(
         const sandboxBackend: AgentBackend = { provider: sandboxProvider, model: sandboxModel };
         const sandboxClient = createSandboxClient({
             pool,
+            // TODO(extend): sandbox steps always target docker — the harness sandbox backend is
+            // docker|k8s only, so even a pinned-podman machine still needs Docker here; podman
+            // sandbox support is a harness capability to add first, not a CLI flag.
             env: { backend: "docker", namespace: "" },
             transport: SANDBOX_TRANSPORT,
             // Empty in poll mode (the no-op ingress advertises no URL); the sandbox
