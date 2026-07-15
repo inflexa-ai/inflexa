@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { isCancel, multiselect } from "@clack/prompts";
 import { env, installedBinPath } from "../src/lib/env.ts";
 import { confirm } from "../src/lib/cli.ts";
+import { selectedRuntime } from "../src/lib/config.ts";
+import { capture, firstReadyRuntime, runtimeIds, runtimes } from "../src/lib/container.ts";
 
 // lstat (not existsSync) so a dangling symlink — e.g. the installed `inflexa` after
 // dist is wiped in the same run — still counts as present for the preview/count.
@@ -23,6 +25,33 @@ function exists(path: string): boolean {
     } catch {
         return false;
     }
+}
+
+// Stop the container stack before the `infra` target's files are deleted. Deleting env.composeFilePath
+// out from under a running stack orphans its containers (nothing left to reap them) AND removes the file
+// `inflexa down` needs to stop them — so a delete-first wipe strands live containers with no clean way to
+// recover them. Best-effort: resolve a runtime WITHOUT pinning (a dev wipe must never write a runtime
+// choice into config — the same no-pin composition `sandbox status` uses), and only run `compose down`
+// when both a runtime is ready and the compose file exists; otherwise there is no stack to stop.
+async function stopInfraStack(): Promise<void> {
+    if (!exists(env.composeFilePath)) {
+        console.log("  infra: no compose file — skipping stack stop.");
+        return;
+    }
+    const rt =
+        selectedRuntime() ??
+        (await firstReadyRuntime(runtimeIds.map((id) => runtimes[id]))).match(
+            (detected) => detected,
+            () => null,
+        );
+    if (rt === null) {
+        console.log("  infra: no container runtime available — skipping stack stop (any running containers are left in place).");
+        return;
+    }
+    console.log("  infra: stopping the container stack before deleting its files…");
+    // Best-effort: ignore the exit code. `compose down` on an already-stopped or absent stack is a no-op,
+    // and any failure here must not block the file deletion the user explicitly asked for.
+    await capture(rt, ["compose", "-f", env.composeFilePath, "down"]);
 }
 
 // Repo artifacts are just another target (`repo`), so `all` needs no special case.
@@ -117,6 +146,10 @@ if (!force && !(await confirm("Delete these paths?"))) {
     console.log("Aborted — nothing deleted.");
     process.exit(0);
 }
+
+// Stop the infra stack before its files are deleted (see stopInfraStack) — only when the user is
+// actually wiping infra, and only after the confirm, so an aborted wipe never touches containers.
+if (selected.includes("infra")) await stopInfraStack();
 
 let removed = 0;
 for (const path of paths) {

@@ -39,16 +39,20 @@ process.on("exit", releaseHeldInstanceLocks);
 
 // Run the same shutdown chain (telemetry/log flush, DB close, sidecar reap) on a killed or
 // hung-up CLI, then exit with the conventional 128+signal code — otherwise `kill <pid>` or a
-// closed terminal would orphan the sidecar and drop the final log/telemetry batch. shutdown()
-// guards its cleanup against re-entry but still calls process.exit on every invocation, so a
-// module-level latch ensures only the FIRST signal drives the chain and a second cannot cut an
-// in-flight shutdown short. SIGINT is deliberately untouched: it carries chat-turn semantics
-// (interrupt the turn, second press stops) wired per-turn in modules/harness/chat.ts.
+// closed terminal would orphan the sidecar and drop the final log/telemetry batch. The FIRST
+// signal drives shutdown() through the module-level latch (shutdown() guards its cleanup against
+// re-entry but still calls process.exit on every invocation, so the latch keeps a second signal
+// from re-running the chain). A SECOND signal while that shutdown is still in flight must NOT be a
+// no-op: a hung cleanup hook would otherwise trap the user's repeated `kill` with no exit short of
+// SIGKILL, so the repeat bypasses the chain and force-exits immediately with the conventional
+// 128+signal code — the standard escape hatch. SIGINT is deliberately untouched: it carries
+// chat-turn semantics (interrupt the turn, second press stops) wired per-turn in modules/harness/chat.ts.
 const SIGNAL_EXIT_CODES = { SIGTERM: 143, SIGHUP: 129 } as const;
 let terminationHandled = false;
 for (const signal of ["SIGTERM", "SIGHUP"] as const) {
     process.on(signal, () => {
-        if (terminationHandled) return;
+        // Second signal mid-shutdown: force exit now (128+signum) rather than wait on a possibly-hung hook.
+        if (terminationHandled) process.exit(SIGNAL_EXIT_CODES[signal]);
         terminationHandled = true;
         void shutdown(SIGNAL_EXIT_CODES[signal]);
     });

@@ -1,7 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { ok, err } from "neverthrow";
 
+import * as compose from "./compose.ts";
 import {
     POSTGRES_CONTAINER_NAME,
     PROXY_CONTAINER_NAME,
@@ -11,7 +13,11 @@ import {
     writeComposeFile,
     type ConnectionMode,
 } from "./compose.ts";
-import { resolvePostgresConfig } from "../../lib/config.ts";
+import { up } from "./lifecycle.ts";
+import { ensurePostgresReady } from "./postgres.ts";
+import * as config from "../../lib/config.ts";
+import { resolveConnectionMode, resolvePostgresConfig } from "../../lib/config.ts";
+import { runtimes } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 
@@ -153,5 +159,83 @@ describe("compose regeneration on mode drift", () => {
         const regenerated = readFileSync(composeFilePath, "utf8");
         expect(regenerated).toContain(`${PROXY_CONTAINER_NAME}:`);
         expect(regenerated).toContain(`${POSTGRES_CONTAINER_NAME}:`);
+    });
+});
+
+// The block above proves writeComposeFile's regenerate semantics in isolation; these prove the two
+// launch-time entry points actually WIRE that regeneration in — rewriting the compose file for the
+// current mode before they hand off to composeUp. The regression they guard is a "write-if-missing"
+// reintroduction, where a stale-mode file left on disk would survive and the engine would execute the
+// wrong service set. Driven with cross-module spies (Bun's spyOn on a module namespace intercepts an
+// importer's call) on the runtime gate and the engine steps, so no real container runtime is spawned;
+// writeComposeFile runs for real and the composeUp spy captures the on-disk file at the hand-off point.
+describe("entry-point compose regeneration wiring", () => {
+    const composeFilePath = env.composeFilePath;
+    const spies: { mockRestore: () => void }[] = [];
+
+    function reset(): void {
+        assertTestSandbox(composeFilePath);
+        rmSync(composeFilePath, { force: true });
+    }
+    beforeEach(reset);
+    afterEach(() => {
+        for (const s of spies) s.mockRestore();
+        spies.length = 0;
+        reset();
+    });
+
+    function hasProxyService(yaml: string): boolean {
+        return yaml.includes(`${PROXY_CONTAINER_NAME}:`);
+    }
+
+    // Seed the compose file for the OPPOSITE of the mode config resolves now, so the assertion is
+    // independent of what the test env resolves to: the proxy service is present iff mode is cliproxy.
+    function seedStaleComposeFile(): { currentMode: ConnectionMode; staleMode: ConnectionMode } {
+        const currentMode = resolveConnectionMode();
+        const staleMode: ConnectionMode = currentMode === "cliproxy" ? "direct" : "cliproxy";
+        writeComposeFile(resolvePostgresConfig(), staleMode)._unsafeUnwrap();
+        expect(hasProxyService(readFileSync(composeFilePath, "utf8"))).toBe(staleMode === "cliproxy");
+        return { currentMode, staleMode };
+    }
+
+    test("`up` regenerates the compose file for the current mode before composeUp", async () => {
+        const { currentMode } = seedStaleComposeFile();
+
+        // mockImplementation (not mockResolvedValue) so each `ok(...)`/`err(...)` is a RETURNED Result the
+        // neverthrow lint counts as handled, rather than an unconsumed Result passed as an argument.
+        spies.push(spyOn(config, "ensureRuntime").mockImplementation(async () => ok(runtimes.docker)));
+        spies.push(spyOn(compose, "composeAvailable").mockResolvedValue(true));
+        spies.push(spyOn(compose, "composePullIfMissing").mockImplementation(async () => ok(undefined)));
+        let composeAtHandoff = "";
+        spies.push(
+            spyOn(compose, "composeUp").mockImplementation(async () => {
+                composeAtHandoff = readFileSync(composeFilePath, "utf8");
+                return ok(undefined);
+            }),
+        );
+
+        await up();
+
+        // The stale opposite-mode file was overwritten for the current mode before the engine hand-off.
+        expect(hasProxyService(composeAtHandoff)).toBe(currentMode === "cliproxy");
+    });
+
+    test("`ensurePostgresReady` regenerates the compose file for the current mode before composeUp", async () => {
+        const { currentMode } = seedStaleComposeFile();
+
+        spies.push(spyOn(config, "ensureRuntime").mockImplementation(async () => ok(runtimes.docker)));
+        let composeAtHandoff = "";
+        spies.push(
+            spyOn(compose, "composeUp").mockImplementation(async () => {
+                composeAtHandoff = readFileSync(composeFilePath, "utf8");
+                // Error return short-circuits the gate before waitForReady/ensureVectorExtension (which
+                // would spawn real docker); ensurePostgresReady sets no process.exitCode of its own.
+                return err({ type: "container_start_failed", message: "stub: short-circuit after compose file capture" });
+            }),
+        );
+
+        (await ensurePostgresReady())._unsafeUnwrapErr();
+
+        expect(hasProxyService(composeAtHandoff)).toBe(currentMode === "cliproxy");
     });
 });
