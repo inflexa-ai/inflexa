@@ -157,12 +157,12 @@ await Bun.write("content.pack", packContent(contentEntries));
 define["process.env.INFLEXA_CONTENT_HASH"] = JSON.stringify(contentHash);
 console.log(`packed ${contentEntries.length} content files → content.pack (hash ${contentHash})`);
 
-// Stamp the artifact as the compiled single-file binary so runtime code can be honest about
-// capabilities the package cannot provide — chiefly local embeddings, whose native runtime
-// (node-llama-cpp) is `external` below and thus unreachable inside /$bunfs. A bare global identifier
-// define (parsed as the literal `true`), NOT a `process.env` access: lib/install_context.ts reads it
-// through a `typeof` guard, so a from-source/dev/test run — where this define never runs — sees it as
-// undeclared and resolves to not-compiled. Baked for every target (part of the shared `define`).
+// Stamp the artifact as the compiled single-file binary so runtime code can pick the right byte
+// source for materialized assets — chiefly the llama-server runtime archive, which a compiled build
+// extracts from its embedded asset while a source run downloads it (see embedding/llama_runtime.ts).
+// A bare global identifier define (parsed as the literal `true`), NOT a `process.env` access:
+// lib/install_context.ts reads it through a `typeof` guard, so a from-source/dev/test run — where this
+// define never runs — sees it as undeclared and resolves to not-compiled. Baked for every target.
 define["__INFLEXA_COMPILED__"] = "true";
 
 // Release target matrix, built by `bun run build:all` (passes --all). The
@@ -298,11 +298,6 @@ for (const target of targets) {
         plugins: [plugin],
         // Optional deps that must NOT be bundled — each is a runtime import/require never reached in a
         // normal inflexa run, but the bundler would otherwise try (and fail) to resolve it statically:
-        //   • node-llama-cpp (+ its per-platform packages) — the local-embeddings native addon, loaded
-        //     lazily via `import("node-llama-cpp")` only when `inflexa setup --embeddings local` is
-        //     chosen (modules/embedding). Its loader fans out to `import("@node-llama-cpp/<platform>")`
-        //     for ~16 platforms; only the host's package is installed, so bundling can't resolve the
-        //     rest. Absence is already handled gracefully (local-provider.ts → "run setup", not a crash).
         //   • winston, winston-transport, @opentelemetry/exporter-logs-otlp-proto — @dbos-inc/dbos-sdk
         //     `require()`s these ONLY on its OTLP-telemetry path, behind `if (!enableOTLP) return`.
         //     enableOTLP defaults to `process.env.DBOS__CLOUD === 'true'` (dbos utils.js) and the harness
@@ -315,7 +310,7 @@ for (const target of targets) {
         //     dockerode → docker-modem and is only exercised over an SSH docker transport, which the local
         //     backend never uses (unix socket / TCP). external stops the bundler descending into the package
         //     and resolving its .node file; the runtime require then throws and ssh2's catch swallows it.
-        external: ["node-llama-cpp", "@node-llama-cpp/*", "winston", "winston-transport", "@opentelemetry/exporter-logs-otlp-proto", "cpu-features"],
+        external: ["winston", "winston-transport", "@opentelemetry/exporter-logs-otlp-proto", "cpu-features"],
         compile: {
             target: `bun-${target.os}-${target.arch}`,
             // Bun appends .exe automatically for windows targets.

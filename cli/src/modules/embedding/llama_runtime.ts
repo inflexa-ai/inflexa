@@ -45,7 +45,7 @@ export type LlamaRuntimeError = {
 };
 
 /** The four release targets we pin (matches scripts/build.ts's compile matrix). */
-export type LlamaTargetKey = "darwin-arm64" | "darwin-x64" | "linux-x64" | "windows-x64";
+export type LlamaTargetKey = "darwin-arm64" | "darwin-x64" | "linux-x64" | "linux-arm64" | "windows-x64";
 
 /** A per-target pin entry: the release artifact filename and its vendored SHA-256. */
 export type LlamaPin = {
@@ -113,6 +113,11 @@ export const LLAMA_PINS = {
         artifact: "llama-b9310-bin-ubuntu-x64.tar.gz",
         sha256: "26af63e3578c394fa53dd9967098beddd4b9719b2ee33cf8eb72ed0d17e68ef9",
     },
+    "linux-arm64": {
+        target: "linux-arm64",
+        artifact: "llama-b9310-bin-ubuntu-arm64.tar.gz",
+        sha256: "9b4f1b74a229c31373b75b06bbeee77c8b77e351e5693499da6311e070f95abf",
+    },
     "windows-x64": {
         target: "windows-x64",
         artifact: "llama-b9310-bin-win-cpu-x64.zip",
@@ -176,6 +181,8 @@ function currentTargetKey(): LlamaTargetKey | null {
             return "darwin-x64";
         case "linux-x64":
             return "linux-x64";
+        case "linux-arm64":
+            return "linux-arm64";
         case "windows-x64":
             return "windows-x64";
         default:
@@ -214,6 +221,9 @@ async function embeddedArchivePath(): Promise<string | null> {
     }
     if (typeof __INFLEXA_LLAMA_TARGET__ !== "undefined" && __INFLEXA_LLAMA_TARGET__ === "linux-x64") {
         return (await import("../../../.llama-cache/llama-b9310-bin-ubuntu-x64.tar.gz", { with: { type: "file" } })).default;
+    }
+    if (typeof __INFLEXA_LLAMA_TARGET__ !== "undefined" && __INFLEXA_LLAMA_TARGET__ === "linux-arm64") {
+        return (await import("../../../.llama-cache/llama-b9310-bin-ubuntu-arm64.tar.gz", { with: { type: "file" } })).default;
     }
     if (typeof __INFLEXA_LLAMA_TARGET__ !== "undefined" && __INFLEXA_LLAMA_TARGET__ === "windows-x64") {
         return (await import("../../../.llama-cache/llama-b9310-bin-win-cpu-x64.zip", { with: { type: "file" } })).default;
