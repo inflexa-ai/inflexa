@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -395,16 +396,33 @@ func (e *executor) emitTreeEvent(execID string, delta treeDiff) {
 
 // treeDiffRootForExec returns the directory to snapshot for an exec. The cwd
 // from the submit takes precedence; otherwise the configured server-wide root.
+//
+// The submit body is HMAC-authenticated (see handle -> inboundAuth.authentic)
+// before it reaches here, so cwd is trusted control-plane input. The returned
+// root is still walked recursively and its file metadata is streamed back to
+// the host, so each candidate is normalised and rejected if it carries `..`
+// traversal before it is used as a walk root.
 func treeDiffRootForExec(cwd string) string {
-	if cwd != "" {
-		if info, err := os.Stat(cwd); err == nil && info.IsDir() {
-			return cwd
-		}
+	if root := cleanSnapshotRoot(cwd); root != "" {
+		return root
 	}
-	if root := os.Getenv(envTreeDiffRoot); root != "" {
-		if info, err := os.Stat(root); err == nil && info.IsDir() {
-			return root
-		}
+	return cleanSnapshotRoot(os.Getenv(envTreeDiffRoot))
+}
+
+// cleanSnapshotRoot normalises a candidate snapshot root and returns it only
+// when it is a traversal-free path resolving to an existing directory; it
+// returns "" otherwise. filepath.Clean collapses any interior `..`; the
+// residual check rejects a path that still climbs above the name it was given.
+func cleanSnapshotRoot(path string) string {
+	if path == "" {
+		return ""
+	}
+	cleaned := filepath.Clean(path)
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(os.PathSeparator)) {
+		return ""
+	}
+	if info, err := os.Stat(cleaned); err == nil && info.IsDir() {
+		return cleaned
 	}
 	return ""
 }
@@ -445,10 +463,19 @@ func sanitizedEnviron() []string {
 // behavior); multi-element commands invoke execve directly.
 func buildCommand(ctx context.Context, req execSubmitRequest) *exec.Cmd {
 	var cmd *exec.Cmd
+	// req.Command is trusted control-plane input: the submit body is
+	// HMAC-authenticated (see handle -> inboundAuth.authentic) before run/
+	// buildCommand ever sees it, so only a peer holding this sandbox's secret —
+	// the harness itself — can supply it. Executing that command is this
+	// server's sole purpose and the sandbox container is the isolation boundary,
+	// so there is no lower-trust principal whose data is interpolated here. The
+	// single-element form is a deliberate shell one-liner passed as one discrete
+	// `sh -c` argument (no interpolation into a larger string); the multi-element
+	// form is already the safe explicit-argv exec, with no shell involved.
 	if len(req.Command) == 1 {
-		cmd = exec.CommandContext(ctx, "sh", "-c", req.Command[0])
+		cmd = exec.CommandContext(ctx, "sh", "-c", req.Command[0]) // codeql[go/command-injection]
 	} else {
-		cmd = exec.CommandContext(ctx, req.Command[0], req.Command[1:]...)
+		cmd = exec.CommandContext(ctx, req.Command[0], req.Command[1:]...) // codeql[go/command-injection]
 	}
 	if req.Cwd != "" {
 		cmd.Dir = req.Cwd
