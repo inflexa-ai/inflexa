@@ -580,6 +580,52 @@ async function awaitSidecarReady(
 }
 
 /**
+ * The dynamic loader's signature of "this prebuilt binary needs a newer C/C++
+ * runtime than this host provides". The pinned llama.cpp Linux artifact is built on
+ * the Ubuntu 22.04 toolchain and resolves — from the SYSTEM, not the archive, which
+ * bundles only the ggml/llama `.so`s — glibc `libc.so.6`, libstdc++ `libstdc++.so.6`,
+ * and libgomp. Its floor (measured on the pinned b9310 ubuntu-x64 artifact) is
+ * glibc >= 2.34 and libstdc++/CXXABI from GCC 12 (max GLIBC_2.34, GLIBCXX_3.4.30,
+ * CXXABI_1.3.13), i.e. Ubuntu 22.04 / Debian 12 or newer. On an older release
+ * (Ubuntu 20.04 / Debian 11 → glibc 2.31, libstdc++ < 3.4.30) `ld.so` aborts
+ * llama-server at exec time — before it binds a port — with a line like
+ *   `.../libc.so.6: version `GLIBC_2.34' not found (required by .../libggml-base.so)`.
+ * The child then exits immediately, so {@link launchWithBinary}'s exit race would
+ * otherwise report a bare "exited before becoming ready" wrapping the raw loader
+ * dump. Matching the line lets us swap in an actionable message instead.
+ *
+ * Covers the glibc (`GLIBC_`), libstdc++ (`GLIBCXX_`), and C++ ABI (`CXXABI_`)
+ * version-symbol forms; the chars between the version and `not found` (a
+ * backtick+quote pair the loader prints, or a bare space on variants that omit the
+ * quotes) are matched loosely.
+ */
+const INCOMPATIBLE_LIBC = /(?:GLIBC(?:XX)?|CXXABI)_[0-9.]+.{0,3}not found/;
+
+/**
+ * The user-facing explanation for an {@link INCOMPATIBLE_LIBC} launch failure,
+ * carrying the exact loader line (the ground truth for which symbol is missing) so
+ * the prose never leans solely on a version floor that a pin bump could move.
+ */
+function incompatibleLibcMessage(stderrTail: string): string {
+    const loaderLine =
+        stderrTail
+            .split("\n")
+            .find((line) => INCOMPATIBLE_LIBC.test(line))
+            ?.trim() ?? "";
+    return [
+        "The local embedding runtime (llama-server) cannot run on this system: its prebuilt binary needs a",
+        "newer C/C++ runtime than your Linux distribution provides. The pinned llama.cpp build targets the",
+        "Ubuntu 22.04 toolchain — it needs glibc >= 2.34 and libstdc++ from GCC 12+ (Ubuntu 22.04 / Debian 12",
+        "or newer). Older releases such as Ubuntu 20.04 or Debian 11 ship an older glibc/libstdc++, so their",
+        "dynamic loader rejects the binary at startup. To fix: upgrade the OS (Ubuntu 22.04+), or use a hosted",
+        'embedder — set `embedding.mode = "api-key"` (or `"off"` to disable embeddings).',
+        loaderLine.length > 0 ? `  llama-server reported: ${loaderLine}` : "",
+    ]
+        .filter((line) => line.length > 0)
+        .join("\n");
+}
+
+/**
  * Bring up a healthy sidecar from an already-materialized `serverBin`: allocate a
  * port, mint a key, spawn, and race the readiness sequence ({@link awaitSidecarReady}
  * — public `/health` load-completion, then the authenticated `/props` identity gate)
@@ -648,6 +694,11 @@ export async function launchWithBinary(
         // its pipe still open, where awaiting settlement would be unbounded: read as-is.
         if (failure.fromExit) await handle.tailSettled;
         const tail = handle.tail().trim();
+        // A glibc/libstdc++ "version not found" tail means the host's C runtime is
+        // older than the prebuilt binary's build host (the reported Ubuntu < 24 case).
+        // No fresh-port retry can change that, so surface the actionable cause at once
+        // rather than a raw loader dump wrapped in "exited before becoming ready".
+        if (INCOMPATIBLE_LIBC.test(tail)) return err(providerFault(incompatibleLibcMessage(tail), false));
         lastError =
             tail.length > 0 ? providerFault(`${failure.error.message}\n  llama-server stderr (tail):\n${tail}`, failure.error.retryable) : failure.error;
         if (!failure.portRetryable) return err(lastError);

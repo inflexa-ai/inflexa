@@ -578,6 +578,59 @@ describe("launchWithBinary (readiness: exit race + authenticated /props gate)", 
         expect(terminations).toBeGreaterThanOrEqual(1);
     });
 
+    test("an old-glibc exec failure surfaces the actionable libc message, not a raw loader dump, and skips the port retry", async () => {
+        // Model the Ubuntu < 24 case: the prebuilt binary's dynamic loader aborts at
+        // exec because the host glibc is too old, so the child exits immediately with
+        // the loader's "version `GLIBC_x.y' not found" line on stderr.
+        const loaderLine =
+            "/data/inflexa/llama/b9310/llama-server: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.39' not found (required by /data/inflexa/llama/b9310/llama-server)";
+        let spawns = 0;
+        __setSpawnForTest(() => {
+            spawns++;
+            return ok({
+                exited: Promise.resolve(127),
+                tail: () => loaderLine,
+                tailSettled: Promise.resolve(),
+                terminate: () => Promise.resolve(),
+            });
+        });
+        const result = await launchWithBinary("/fake/llama-server", "/model.gguf", 400, 40);
+        expect(result.isErr()).toBe(true);
+        const error = result._unsafeUnwrapErr();
+        // The message explains the cause and the remedy instead of "before becoming ready".
+        expect(error.message).toContain("newer C/C++ runtime");
+        expect(error.message).toContain('embedding.mode = "api-key"');
+        expect(error.message).not.toContain("before becoming ready");
+        // The exact loader line is preserved as ground truth for which symbol is missing.
+        expect(error.message).toContain("GLIBC_2.39");
+        // An incompatible libc is not a port race — no fresh-port second attempt, not retryable.
+        expect(spawns).toBe(1);
+        expect(error.retryable).toBe(false);
+    });
+
+    test("a too-old libstdc++ (GLIBCXX) exec failure is recognized as the same libc-incompatibility, not a generic exit", async () => {
+        // libstdc++ is resolved from the system (not bundled), so on a distro whose
+        // glibc is new enough but libstdc++ is not (GCC < 12), the loader aborts on a
+        // GLIBCXX symbol instead of GLIBC — the classifier must catch that form too.
+        const loaderLine =
+            "/data/inflexa/llama/b9310/libggml-base.so: /usr/lib/x86_64-linux-gnu/libstdc++.so.6: version `GLIBCXX_3.4.30' not found (required by /data/inflexa/llama/b9310/libggml-base.so)";
+        __setSpawnForTest(() =>
+            ok({
+                exited: Promise.resolve(127),
+                tail: () => loaderLine,
+                tailSettled: Promise.resolve(),
+                terminate: () => Promise.resolve(),
+            }),
+        );
+        const result = await launchWithBinary("/fake/llama-server", "/model.gguf", 400, 40);
+        expect(result.isErr()).toBe(true);
+        const error = result._unsafeUnwrapErr();
+        expect(error.message).toContain("newer C/C++ runtime");
+        expect(error.message).toContain("GLIBCXX_3.4.30");
+        expect(error.message).not.toContain("before becoming ready");
+        expect(error.retryable).toBe(false);
+    });
+
     test("a shutdown mid-launch reaps the in-flight child through the spawn slot", async () => {
         // The child never becomes ready (no server answers) and never exits on its own,
         // so the launch stays in flight until we resolve the exit manually at the end.
