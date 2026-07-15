@@ -26,6 +26,8 @@ import type { AgentSession, EmbeddingProvider, ProviderError } from "@inflexa-ai
 // the same `ProviderError` no matter which realization runs.
 import { toProviderError } from "@inflexa-ai/harness";
 
+import { isCompiledBinary } from "../../lib/install_context.ts";
+
 export interface LocalEmbeddingProviderDeps {
     /** Absolute path to the GGUF model file (typically `env.embeddingModelPath`). */
     readonly modelPath: string;
@@ -38,6 +40,16 @@ export interface LocalEmbeddingProviderDeps {
  * (`setup.ts`) to detect a wrong-model GGUF.
  */
 export const LOCAL_EMBEDDING_DIMENSIONS = 384;
+
+/**
+ * Why local embeddings cannot run in the compiled single-file binary: the native
+ * inference runtime is `external` in the build (scripts/build.ts) and unreachable
+ * inside `/$bunfs`. The single source for that reason phrase; setup.ts composes
+ * context-specific remediation onto it, so the diagnosis stays consistent whether
+ * the user hit it at setup time or on the hot path.
+ */
+export const COMPILED_LOCAL_UNAVAILABLE_REASON =
+    "Local embeddings are unavailable in the packaged inflexa binary: it does not include the native inference runtime (node-llama-cpp).";
 
 /**
  * Lazily-initialized native runtime state. Created once on the first `embed()`
@@ -119,13 +131,20 @@ function loadRuntime(modelPath: string): Promise<Result<LoadedRuntime, ProviderE
                 getEmbeddingFor: (text: string) => context.getEmbeddingFor(text),
             });
         } catch (e) {
-            // `toProviderError` classifies the cause; the "run setup" guidance is
-            // appended because the most common cause is the optional dep not being
-            // trusted/fetched or the GGUF missing — both fixed by `inflexa setup`.
+            // `toProviderError` classifies the cause; the appended guidance is
+            // install-context-aware. From source the common cause is the optional
+            // dep not being trusted/fetched or the GGUF missing — both fixed by
+            // `inflexa setup`. In the compiled binary the import can NEVER resolve
+            // (the runtime is external, /$bunfs has no node_modules), so pointing
+            // at a setup command that cannot succeed would be a dead end; direct
+            // the user to a mode that works instead.
             const base = toProviderError(e, "local-embeddings");
+            const remediation = isCompiledBinary()
+                ? `${COMPILED_LOCAL_UNAVAILABLE_REASON} Switch \`embedding.mode\` to \`api-key\` or \`off\`.`
+                : "Run `inflexa setup --embeddings local` to install the local embedding model.";
             return err({
                 ...base,
-                message: `${base.message}\n  Run \`inflexa setup --embeddings local\` to install the local embedding model.`,
+                message: `${base.message}\n  ${remediation}`,
             } satisfies ProviderError);
         }
     })();
@@ -164,4 +183,16 @@ export function createLocalEmbeddingProvider(deps: LocalEmbeddingProviderDeps): 
     }
 
     return { embed, dimensions: LOCAL_EMBEDDING_DIMENSIONS };
+}
+
+/**
+ * TEST ONLY. Clear the module-level lazy-runtime cache so a subsequent `embed()`
+ * re-runs {@link loadRuntime}. The runtime is a process-wide singleton keyed to
+ * the first caller's model path; without this reset a test that induces a load
+ * failure would poison it for every later test in the same process. Production
+ * code never calls this — the singleton is loaded once and reused for the
+ * process lifetime by design.
+ */
+export function __resetLocalRuntimeForTest(): void {
+    runtime = null;
 }

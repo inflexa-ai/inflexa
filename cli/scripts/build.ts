@@ -156,6 +156,14 @@ await Bun.write("content.pack", packContent(contentEntries));
 define["process.env.INFLEXA_CONTENT_HASH"] = JSON.stringify(contentHash);
 console.log(`packed ${contentEntries.length} content files → content.pack (hash ${contentHash})`);
 
+// Stamp the artifact as the compiled single-file binary so runtime code can be honest about
+// capabilities the package cannot provide — chiefly local embeddings, whose native runtime
+// (node-llama-cpp) is `external` below and thus unreachable inside /$bunfs. A bare global identifier
+// define (parsed as the literal `true`), NOT a `process.env` access: lib/install_context.ts reads it
+// through a `typeof` guard, so a from-source/dev/test run — where this define never runs — sees it as
+// undeclared and resolves to not-compiled. Baked for every target (part of the shared `define`).
+define["__INFLEXA_COMPILED__"] = "true";
+
 // Release target matrix, built by `bun run build:all` (passes --all). The
 // default `bun run build` compiles only the host target for quick local
 // iteration. To ship a new platform, add it here — Bun cross-compiles by

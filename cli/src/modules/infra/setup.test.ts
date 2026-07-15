@@ -2,30 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { generateApiKey, parseConnectionMode, proxyConfig, recordCliproxyProvider, writeDirectConnection } from "./setup.ts";
+import { parseConnectionMode, recordCliproxyProvider, writeDirectConnection } from "./setup.ts";
 import { readConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 
-describe("generateApiKey", () => {
-    test("returns an sk- prefixed key of 45 alphanumeric characters", () => {
-        expect(generateApiKey()).toMatch(/^sk-[A-Za-z0-9]{45}$/);
-    });
-
-    test("returns a different key on each call", () => {
-        expect(generateApiKey()).not.toBe(generateApiKey());
-    });
-});
-
-describe("proxyConfig", () => {
-    test("embeds the api key, the proxy port, and the container auth dir as YAML", () => {
-        const yaml = proxyConfig("sk-test-key");
-        expect(yaml).toContain('api-keys:\n  - "sk-test-key"');
-        expect(yaml).toContain(`port: ${env.cliproxyPort}`);
-        expect(yaml).toContain('auth-dir: "/root/.cli-proxy-api"');
-        expect(yaml).toContain('host: ""');
-    });
-});
+// generateApiKey + proxyConfig moved to proxy_config.ts alongside writeProxyConfig; their unit tests
+// live in proxy_config.test.ts beside them.
 
 describe("parseConnectionMode", () => {
     test("an absent flag resolves to undefined (mode chosen interactively / defaulted)", () => {

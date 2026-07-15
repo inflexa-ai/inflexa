@@ -1,10 +1,12 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { Result, ok, err } from "neverthrow";
 import { capture, inherit, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { CONTAINER_DATA_PATH, CONTAINER_PG_PORT, DEFAULT_IMAGE, type PostgresConnection, type PostgresError } from "./postgres_types.ts";
+import { formatInfraStateError, writeProxyConfig, type InfraStateError } from "./proxy_config.ts";
 
 // Docker Compose orchestration for the inflexa infrastructure stack. Generates
 // a compose file that places both the CLIProxyAPI proxy and the Postgres
@@ -128,8 +130,72 @@ function composeArgs(subcommand: string[]): string[] {
     return ["compose", "-f", env.composeFilePath, ...subcommand];
 }
 
-/** Start all services in the compose file (idempotent — already-running services are untouched). */
-export async function composeUp(rt: ContainerRuntime): Promise<Result<void, PostgresError>> {
+// --- mount-source integrity ------------------------------------------------
+
+/**
+ * A host-side bind-mount source the compose stack requires, tagged with how to provision it. `file`
+ * sources carry a provisioner because their content matters (the proxy config must exist with its
+ * canonical bytes); `directory` sources are `mkdir -p`-ed, since an engine-manufactured directory there
+ * is indistinguishable from a correctly-provisioned one.
+ */
+type MountSource = { kind: "file"; path: string; provision: () => Promise<Result<void, InfraStateError>> } | { kind: "directory"; path: string };
+
+/**
+ * The bind-mount sources for `mode`, mirroring the volumes {@link generateComposeFile} emits from the
+ * SAME mode/connection facts — so the manifest and the compose template cannot drift (a mount added to
+ * one without the other is caught by the manifest-coverage test). cliproxy mode adds the proxy config
+ * file (provisioned by {@link writeProxyConfig}) and the credential dir; both modes mount the Postgres
+ * data dir. Direct mode has no proxy service, so it lists no proxy sources.
+ */
+export function mountManifest(mode: ConnectionMode): MountSource[] {
+    const sources: MountSource[] = [];
+    if (mode === "cliproxy") {
+        // The guard needs only writeProxyConfig's side-effect (heal/write); discard its created/apiKey
+        // outcome to a uniform void Result so every file source has one provisioner shape.
+        sources.push({ kind: "file", path: env.cliproxyConfigPath, provision: async () => (await writeProxyConfig()).map((): void => undefined) });
+        sources.push({ kind: "directory", path: env.cliproxyAuthDir });
+    }
+    sources.push({ kind: "directory", path: env.postgresDataDir });
+    return sources;
+}
+
+/**
+ * The mount-source integrity guard — the single seam every compose-up path funnels through (it runs at
+ * the top of {@link composeUp}, and `composeUp` requiring `mode` is what makes it impossible for any
+ * caller to reach the engine without it). Walks the manifest for `mode` BEFORE the engine is invoked:
+ * directory sources are `mkdir -p`-ed; file sources run their provisioner, which heals an empty
+ * engine-manufactured directory and refuses a non-empty occupant. This guarantees the engine is never
+ * the creator of a mount source — a role in which it would create a directory, wedging the file-typed
+ * proxy config with EISDIR on every later write.
+ */
+export async function ensureMountSources(mode: ConnectionMode): Promise<Result<void, InfraStateError>> {
+    for (const source of mountManifest(mode)) {
+        if (source.kind === "directory") {
+            try {
+                await mkdir(source.path, { recursive: true });
+            } catch (cause) {
+                // Bridge mkdir's throw into the Result channel (neverthrow-first boundary wrapper).
+                return err({ type: "io_failed", path: source.path, cause });
+            }
+        } else {
+            const provisioned = await source.provision();
+            if (provisioned.isErr()) return err(provisioned.error);
+        }
+    }
+    return ok(undefined);
+}
+
+/**
+ * Start all services in the compose file (idempotent — already-running services are untouched). Requires
+ * the connection `mode` so the mount-source integrity guard runs first: `compose up -d` is the ONE step
+ * that manufactures a missing bind-mount source, and the engine always creates it as a DIRECTORY —
+ * fatal for the file-typed proxy config. Threading `mode` through this seam (rather than a per-caller
+ * guard) is what makes the guard impossible to bypass.
+ */
+export async function composeUp(rt: ContainerRuntime, mode: ConnectionMode): Promise<Result<void, PostgresError>> {
+    const guard = await ensureMountSources(mode);
+    if (guard.isErr()) return err({ type: "mount_source_unavailable", message: formatInfraStateError(guard.error) });
+
     const { code, stderr } = await capture(rt, composeArgs(["up", "-d"]));
     if (code !== 0) {
         return err({

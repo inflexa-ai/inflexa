@@ -13,7 +13,7 @@
  */
 
 import { mkdir, rename, stat, unlink } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
 import { log, spinner as clackSpinner } from "@clack/prompts";
 import { err, ok, type Result } from "neverthrow";
@@ -21,13 +21,18 @@ import { err, ok, type Result } from "neverthrow";
 import { readConfig, writeConfig } from "../../lib/config.ts";
 import { select } from "../../lib/cli.ts";
 import { env } from "../../lib/env.ts";
-import { LOCAL_EMBEDDING_DIMENSIONS } from "./local-provider.ts";
+import { isCompiledBinary } from "../../lib/install_context.ts";
+import { COMPILED_LOCAL_UNAVAILABLE_REASON, LOCAL_EMBEDDING_DIMENSIONS } from "./local-provider.ts";
 
 export type EmbeddingSetupError =
     | { readonly type: "download_failed"; readonly message: string; readonly cause?: unknown }
     | { readonly type: "verify_failed"; readonly message: string; readonly cause?: unknown }
     | { readonly type: "dimension_mismatch"; readonly message: string; readonly expected: number; readonly actual: number }
-    | { readonly type: "not_configured"; readonly message: string };
+    | { readonly type: "not_configured"; readonly message: string }
+    // Local mode was requested (flag, config, or fall-through) in the compiled binary, where the
+    // native runtime is absent. Distinct from `not_configured` (a from-source "download it" state):
+    // the remediation is to switch modes, never a setup command that cannot succeed here.
+    | { readonly type: "local_unavailable"; readonly message: string };
 
 /**
  * Pinned to the repo revision current as of 2026-07 (last modified 2024-02-17),
@@ -157,10 +162,26 @@ export async function verifyModel(modelPath: string): Promise<Result<void, Embed
  * this is effectively a no-op, but it is the cross-platform-safe way to ensure
  * the native runtime is present. A failure here is non-fatal — the download +
  * verify steps will surface a clearer error if the runtime is genuinely missing.
+ *
+ * Only meaningful from source: it trusts a dependency in *this* CLI package's
+ * tree, so its cwd is pinned to the package root (derived from this module's own
+ * location) rather than the user's working directory — otherwise `bun` reports
+ * "No package.json was found for <cwd>" whenever setup runs from anywhere but the
+ * dev repo. In the compiled binary it is skipped entirely: there is no package
+ * tree to trust, and the product must not depend on a `bun` binary being on PATH.
  */
 async function trustNativeRuntime(): Promise<void> {
+    // Nothing to trust in the packaged binary — no package tree, and spawning `bun` would depend on it
+    // being on PATH, which the product must not require. This is the only place inflexa shells out to a
+    // `bun` binary, so the skip keeps the compiled product free of that dependency entirely.
+    if (isCompiledBinary()) return;
+
+    // cli/src/modules/embedding → up three levels is the CLI package root (where package.json lives).
+    // Safe to read import.meta.dir here: the guard above returns first in the compiled binary, so this
+    // path is always a real on-disk location.
+    const packageRoot = join(import.meta.dir, "../../..");
     try {
-        const proc = Bun.spawn(["bun", "pm", "trust", "node-llama-cpp"], { stdout: "ignore", stderr: "pipe" });
+        const proc = Bun.spawn(["bun", "pm", "trust", "node-llama-cpp"], { cwd: packageRoot, stdout: "ignore", stderr: "pipe" });
         const exitCode = await proc.exited;
         if (exitCode !== 0) {
             const stderr = await new Response(proc.stderr).text();
@@ -196,7 +217,16 @@ export async function runEmbeddingSetup(interactive: boolean, preselected?: "loc
             log.warn("API-key embedding mode is selected but not yet configured by setup. Set `embedding.apiKey` in config manually.");
             return ok(undefined);
         }
-        // preselected === "local": fall through to the local setup branch.
+        // preselected === "local"
+        if (isCompiledBinary()) {
+            // Fail immediately, before `runLocalSetup` can reach the 36 MB download: an explicit
+            // `--embeddings local` cannot work in the packaged binary. Name the flag alternative so the
+            // user has a next step, not just a rejection.
+            return err({
+                type: "local_unavailable",
+                message: `${COMPILED_LOCAL_UNAVAILABLE_REASON} Re-run with \`--embeddings api-key\` instead; nothing was downloaded.`,
+            });
+        }
         return runLocalSetup(config);
     }
 
@@ -249,6 +279,18 @@ function warnOnModeSwitch(current: "local" | "api-key" | "off", next: "local" | 
 
 /** The local-embeddings opt-in branch: trust runtime, download, verify, write config. */
 async function runLocalSetup(config: ReturnType<typeof readConfig>): Promise<Result<void, EmbeddingSetupError>> {
+    // The single choke point for the whole local flow (trust + 36 MB download + verify). Guarding here
+    // makes the download unreachable toward local mode in the packaged binary no matter how it was
+    // requested — the flag path fails earlier and the picker never offers local, but this holds the line
+    // for any future caller so verification can never be doomed-to-fail against a native runtime that
+    // isn't there.
+    if (isCompiledBinary()) {
+        return err({
+            type: "local_unavailable",
+            message: `${COMPILED_LOCAL_UNAVAILABLE_REASON} Use \`api-key\` or \`off\` instead.`,
+        });
+    }
+
     warnOnModeSwitch(config.embedding.mode, "local");
     log.message("Setting up local embeddings (bge-small-en-v1.5, in-process, no API key needed)");
 
@@ -277,6 +319,17 @@ async function runLocalSetup(config: ReturnType<typeof readConfig>): Promise<Res
  * chosen mode string; clack handles cancel (Ctrl-C / Esc) by aborting.
  */
 async function promptEmbeddingMode(): Promise<"local" | "api-key" | "off"> {
+    // In the packaged binary the native runtime isn't shipped, so "Local" cannot succeed — omit it from
+    // the picker and state why, leaving api-key/off selectable. Offering it and then failing verification
+    // (the old behavior) is the dishonest choice this replaces. From source, all three are offered.
+    if (isCompiledBinary()) {
+        log.info(`${COMPILED_LOCAL_UNAVAILABLE_REASON} Choose api-key or off.`);
+        const chosen = await select("Embedding mode", [
+            { value: "api-key", label: "API key (direct to an OpenAI-compatible endpoint)" },
+            { value: "off", label: "Off / skip" },
+        ]);
+        return chosen as "api-key" | "off";
+    }
     const chosen = await select("Embedding mode", [
         { value: "local", label: "Local (in-process, downloads a 36 MB model, no API key)" },
         { value: "api-key", label: "API key (direct to an OpenAI-compatible endpoint)" },
@@ -291,10 +344,23 @@ async function promptEmbeddingMode(): Promise<"local" | "api-key" | "off"> {
  * first `embed()` lazily loads it, and `verifyModel` ran at setup time). A
  * missing file directs the user to `inflexa setup`. For `off` / `api-key`,
  * readiness is not the embedding setup's concern — return `ok`.
+ *
+ * A `local` config can reach the packaged binary — a dev config, a hand edit, or
+ * a config written by a from-source run — where `inflexa setup --embeddings local`
+ * can never succeed. There the remediation is to switch modes, checked ahead of
+ * (and instead of) the file-exists probe, so the chat path degrades with usable
+ * instructions rather than pointing at a doomed command.
  */
 export async function ensureEmbedderReady(): Promise<Result<void, EmbeddingSetupError>> {
     const { mode } = readConfig().embedding;
     if (mode !== "local") return ok(undefined);
+
+    if (isCompiledBinary()) {
+        return err({
+            type: "local_unavailable",
+            message: `${COMPILED_LOCAL_UNAVAILABLE_REASON} Switch \`embedding.mode\` to \`api-key\` or \`off\`.`,
+        });
+    }
 
     if (!(await Bun.file(env.embeddingModelPath).exists())) {
         return err({
