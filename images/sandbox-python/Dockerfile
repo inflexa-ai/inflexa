@@ -22,8 +22,10 @@
 # locally-built/loaded tag; the default is the GHCR-published base.
 ARG SANDBOX_BASE_IMAGE=ghcr.io/inflexa-ai/sandbox-base:latest
 # Builder base — MUST match sandbox-base's own base so the compiled Python
-# extensions and their .so ABI match the runtime (system Python 3.12).
-ARG BASE_IMAGE=rocker/r-ver:4.6.0
+# extensions and their .so ABI match the runtime (system Python 3.12). Pinned
+# by digest to match sandbox-base and images/lib-store-manifest.yaml; CI
+# overrides it with the manifest value (also digest-pinned).
+ARG BASE_IMAGE=rocker/r-ver:4.6.0@sha256:6f05a1a8b8c52328f181593923909b01cbfd14c9caea93bf75ddc65e806d8eac
 
 # The store root every layer installs into and every resolver env derives from.
 ARG INFLEXA_LIB_ROOT=/mnt/libs/current
