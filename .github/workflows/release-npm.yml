@@ -89,7 +89,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          for name in inflexa-darwin-arm64 inflexa-darwin-x64 inflexa-linux-x64 inflexa-win32-x64 inflexa; do
+          for name in inflexa-darwin-arm64 inflexa-darwin-x64 inflexa-linux-x64 inflexa-linux-arm64 inflexa-win32-x64 inflexa; do
             if npm view "@inflexa-ai/${name}@${VERSION}" version >/dev/null 2>&1; then
               echo "@inflexa-ai/${name}@${VERSION} is already on npm — skipping"
               continue

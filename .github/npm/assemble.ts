@@ -39,6 +39,7 @@ const PLATFORMS: Platform[] = [
     { npmSuffix: "darwin-arm64", asset: "inflexa-darwin-arm64", bin: "inflexa", os: "darwin", cpu: "arm64" },
     { npmSuffix: "darwin-x64", asset: "inflexa-darwin-x64", bin: "inflexa", os: "darwin", cpu: "x64" },
     { npmSuffix: "linux-x64", asset: "inflexa-linux-x64", bin: "inflexa", os: "linux", cpu: "x64", libc: "glibc" },
+    { npmSuffix: "linux-arm64", asset: "inflexa-linux-arm64", bin: "inflexa", os: "linux", cpu: "arm64", libc: "glibc" },
     { npmSuffix: "win32-x64", asset: "inflexa-windows-x64.exe", bin: "inflexa.exe", os: "win32", cpu: "x64" },
 ];
 

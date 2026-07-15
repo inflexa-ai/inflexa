@@ -149,6 +149,15 @@ export const env = Object.freeze({
      */
     refsDir: join(dataDir(), "inflexa", "refs"),
     /**
+     * Materialized skills/templates content: `<dataDir>/inflexa/content/<contentHash>/{skills,templates}`.
+     * A peer of `refsDir`/`modelDir` — a runtime asset tree, not config — but sourced from the binary's
+     * OWN embedded archive rather than a network download (see modules/harness/content.ts). The
+     * `<contentHash>` segment (see {@link env.contentHash}) makes a new binary version extract a fresh
+     * tree on first run, so updates ride the install. Only ever written/read in a release build; a dev
+     * run points skills/templates at the repo checkout and never touches this path.
+     */
+    contentDir: join(dataDir(), "inflexa", "content"),
+    /**
      * Advisory instance locks: `<dataDir>/inflexa/locks/<key>.lock`, keyed by an analysis id (one
      * inflexa process may have an analysis open at a time) or a fixed sentinel for the embedded harness
      * runtime (one DBOS engine per machine). The lock files coordinate that across instances.
@@ -205,6 +214,16 @@ export const env = Object.freeze({
     cliproxyApiUrl: `http://localhost:${cliproxyPort}/v1`, // chat backend endpoint
     postgresPort,
     /**
+     * The build-baked identity of the embedded skills/templates archive — a short hash over the
+     * archived file set (see scripts/build.ts), naming the {@link env.contentDir} subdirectory the
+     * release binary extracts into. `--define`d at build time exactly like `INFLEXA_GIT_COMMIT` (an
+     * EXPLICIT define, deliberately NOT in the {@link bakedEnv} scanner block — that block's missing-var
+     * guard applies to every channel and would reject a development build, which legitimately has no
+     * archive). Hence `string | undefined`: a `bun run dev` process has no baked value, and the dev
+     * skills/templates resolution never reads this.
+     */
+    contentHash: process.env.INFLEXA_CONTENT_HASH,
+    /**
      * True unless the `production` channel was baked in — {@link isDevelopmentBuild} over
      * {@link bakedEnv.buildChannel}, never NODE_ENV (the buildChannel note above owns the
      * one-axis rationale). Governs dev-only runtime layout: the compose container/network prefix
@@ -240,7 +259,7 @@ export type EnvDocEntry = { kind: "path"; label: string; description: string; ba
 
 /** Rendered into the Paths/Environment sections of --help (src/cli/index.ts). */
 export const envDoc: Readonly<
-    Record<Exclude<keyof typeof env, "cliproxyPort" | "cliproxyBaseUrl" | "cliproxyApiUrl" | "postgresPort" | "isDevelopment">, EnvDocEntry>
+    Record<Exclude<keyof typeof env, "cliproxyPort" | "cliproxyBaseUrl" | "cliproxyApiUrl" | "postgresPort" | "isDevelopment" | "contentHash">, EnvDocEntry>
 > = Object.freeze({
     dbPath: { kind: "path", label: "database", description: "saved sessions (SQLite)", baseVar: dataVar },
     logDir: { kind: "path", label: "logs", description: "log files, rotated daily, 7-day retention", baseVar: dataVar },
@@ -248,6 +267,12 @@ export const envDoc: Readonly<
         kind: "path",
         label: "references",
         description: "reference data mounted read-only in sandboxes at /mnt/refs",
+        baseVar: dataVar,
+    },
+    contentDir: {
+        kind: "path",
+        label: "content",
+        description: "skills/templates extracted from the binary on first run, keyed by content hash",
         baseVar: dataVar,
     },
     locksDir: { kind: "path", label: "locks", description: "advisory per-analysis instance locks", baseVar: dataVar },

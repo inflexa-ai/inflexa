@@ -32,8 +32,10 @@ class Inflexa < Formula
   end
 
   on_linux do
-    # linux-arm64 is not in the release target matrix (cli/scripts/build.ts);
-    # Homebrew fails with a clear unsupported-platform error there.
+    on_arm do
+      url "https://github.com/inflexa-ai/inflexa/releases/download/v{{VERSION}}/inflexa-linux-arm64"
+      sha256 "{{SHA_LINUX_ARM64}}"
+    end
     on_intel do
       url "https://github.com/inflexa-ai/inflexa/releases/download/v{{VERSION}}/inflexa-linux-x64"
       sha256 "{{SHA_LINUX_X64}}"

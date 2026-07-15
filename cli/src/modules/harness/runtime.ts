@@ -54,6 +54,9 @@ import {
     type AgentName,
     type ModelConnectionIdentity,
 } from "./config.ts";
+// Type-only: erased at compile, so it does NOT pull content.ts (and its embedded pack) into the module
+// graph. The value import is the release-gated dynamic `import("./content.ts")` in the boot body below.
+import type { ContentError } from "./content.ts";
 import { noopExecIngress, startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
 import { createSwappableSandboxEmitters } from "./prov_bridge.ts";
 import {
@@ -179,6 +182,7 @@ export type HarnessBootError =
     | { type: "embedding_unresolved"; cause: EmbeddingResolveError }
     | { type: "embedding_probe_failed"; detail: string }
     | { type: "embedding_dimension_mismatch"; expected: number; actual: number }
+    | { type: "content_materialize_failed"; cause: ContentError }
     | { type: "skills_dir_missing"; path: string | null }
     | { type: "templates_dir_missing"; path: string | null }
     | { type: "proxy_key_missing"; cause: ChatSetupError }
@@ -380,6 +384,17 @@ async function bootHarnessRuntimeOnce(
     // Likewise a malformed `models.connection` block: report it rather than booting
     // against the silently-substituted default connection.
     if (connection.configError) return err({ type: "model_connection_invalid", issues: connection.configError.issues });
+
+    // A release binary ships skills/templates embedded, not on disk: materialize them (idempotent) to
+    // the hash-keyed content dir that cfg.skillsDir/templatesDir already resolve to in a release build,
+    // BEFORE the prerequisite gates below, so those gates find a populated tree. Gated to release — a dev
+    // run resolves both to the repo checkout and must not touch the embedded archive. The dynamic import
+    // keeps content.ts (and its embedded pack, absent from a dev checkout) out of a dev module graph.
+    if (!env.isDevelopment) {
+        const { ensureBundledContent } = await import("./content.ts");
+        const materialized = ensureBundledContent();
+        if (materialized.isErr()) return err({ type: "content_materialize_failed", cause: materialized.error });
+    }
 
     // Prerequisites that no amount of booting can heal — checked before any
     // side effect so a misconfigured run costs nothing. The embedder comes from

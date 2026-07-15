@@ -105,6 +105,19 @@ const devSkillsDir = join(import.meta.dir, "../../../../skills");
  */
 const devTemplatesDir = join(import.meta.dir, "../../../../templates");
 
+/**
+ * Release-build default for `skillsDir`/`templatesDir`: the hash-keyed directory the binary extracts its
+ * embedded content into (`modules/harness/content.ts` materializes it before the runtime's pre-flight
+ * gate). Pure path computation — no IO here. `env.contentHash` is baked into every release binary (so
+ * when `env.isDevelopment` is false it is present); the `null` fallback is a defensive backstop for a
+ * misbuild that omitted it, which `ensureBundledContent` catches first and reports as `no_content_hash`.
+ * A `null` here degrades to the existing `skills_dir_missing`/`templates_dir_missing` gate rather than a
+ * malformed `<contentDir>/undefined/...` path.
+ */
+function releaseContentDir(sub: "skills" | "templates"): string | null {
+    return env.contentHash ? join(env.contentDir, env.contentHash, sub) : null;
+}
+
 /** Detected host capacity: logical cores and total memory in whole GB. */
 export function detectedMachine(): MachineBudget {
     return {
@@ -170,8 +183,8 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
         sandboxImage: cfg?.sandboxImage ?? DEFAULT_SANDBOX_IMAGE,
         resourcePolicy,
         adminPort: cfg?.adminPort ?? DEFAULT_ADMIN_PORT,
-        skillsDir: cfg?.skillsDir ?? (env.isDevelopment ? devSkillsDir : null),
-        templatesDir: cfg?.templatesDir ?? (env.isDevelopment ? devTemplatesDir : null),
+        skillsDir: cfg?.skillsDir ?? (env.isDevelopment ? devSkillsDir : releaseContentDir("skills")),
+        templatesDir: cfg?.templatesDir ?? (env.isDevelopment ? devTemplatesDir : releaseContentDir("templates")),
         configError,
     };
 }

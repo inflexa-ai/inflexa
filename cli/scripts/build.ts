@@ -7,11 +7,12 @@
 // only available through the JS API.
 import { $ } from "bun";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 
 import { createSolidTransformPlugin, resetSolidTransformPluginState } from "@opentui/solid/bun-plugin";
 
 import { audienceInvalidReason } from "../src/modules/auth/auth.ts";
+import { contentHashOf, packContent, type PackEntry } from "../src/modules/harness/content-pack.ts";
 
 // This process autoloads the repo bunfig.toml, whose preload installs
 // opentui's runtime plugin support and sets a global resolvePath that
@@ -39,6 +40,34 @@ function bakedVarNames(source: string): string[] {
         process.exit(1);
     }
     return names;
+}
+
+// Walk the repo-root skills/ and templates/ trees (relative to the cli/ build cwd) into PackEntry[] with
+// forward-slash paths like `skills/foo/SKILL.md`. Entries are sorted and hashed downstream, so walk order
+// does not matter. Only plain files are packed; directories recurse, other node types are skipped.
+function collectContentEntries(): PackEntry[] {
+    const out: PackEntry[] = [];
+    for (const treeName of ["skills", "templates"] as const) {
+        const root = join("..", treeName);
+        if (!existsSync(root)) {
+            console.error(`error: expected content tree ${root} (relative to cli/) does not exist`);
+            process.exit(1);
+        }
+        walkContentTree(root, root, treeName, out);
+    }
+    return out;
+}
+
+function walkContentTree(dir: string, root: string, treeName: string, out: PackEntry[]): void {
+    for (const dirent of readdirSync(dir, { withFileTypes: true })) {
+        const abs = join(dir, dirent.name);
+        if (dirent.isDirectory()) {
+            walkContentTree(abs, root, treeName, out);
+        } else if (dirent.isFile()) {
+            const rel = relative(root, abs).split(sep).join("/");
+            out.push({ path: `${treeName}/${rel}`, bytes: readFileSync(abs) });
+        }
+    }
 }
 
 // Bake the exact source commit so a release binary can report what it was built from (the provenance
@@ -110,6 +139,23 @@ if (channel === "production" && !gitCommit) {
 // anyway, just less legibly.
 if (gitCommit) define["process.env.INFLEXA_GIT_COMMIT"] = JSON.stringify(gitCommit);
 
+// Bundled content: the shared repo-root skills/ + templates/ trees ride embedded in the binary and are
+// extracted on first run (src/modules/harness/content.ts). Pack them into cli/content.pack — the path
+// content.ts imports with `{ type: "file" }` — BEFORE the Bun.build loop, so the bundler embeds the
+// archive, and --define the content hash so env.contentHash names the extraction dir. The hash is over
+// content, so a skills/templates edit re-extracts on the next install; identical content reuses the dir.
+// Same explicit-define treatment as INFLEXA_GIT_COMMIT (not the bakedEnv scanner, whose missing-var guard
+// spans every channel). See content-pack.ts for the archive format.
+const contentEntries = collectContentEntries();
+if (contentEntries.length === 0) {
+    console.error("error: no skills/templates files found to bundle — expected ../skills and ../templates relative to cli/");
+    process.exit(1);
+}
+const contentHash = contentHashOf(contentEntries);
+await Bun.write("content.pack", packContent(contentEntries));
+define["process.env.INFLEXA_CONTENT_HASH"] = JSON.stringify(contentHash);
+console.log(`packed ${contentEntries.length} content files → content.pack (hash ${contentHash})`);
+
 // Release target matrix, built by `bun run build:all` (passes --all). The
 // default `bun run build` compiles only the host target for quick local
 // iteration. To ship a new platform, add it here — Bun cross-compiles by
@@ -118,6 +164,7 @@ const TARGETS = [
     { os: "darwin", arch: "arm64" },
     { os: "darwin", arch: "x64" },
     { os: "linux", arch: "x64" },
+    { os: "linux", arch: "arm64" },
     { os: "windows", arch: "x64" },
 ] as const;
 
