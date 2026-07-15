@@ -12,6 +12,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { createSolidTransformPlugin, resetSolidTransformPluginState } from "@opentui/solid/bun-plugin";
 
 import { audienceInvalidReason } from "../src/modules/auth/auth.ts";
+import { LLAMA_PINS, LLAMA_RUNTIME_TAG, llamaArtifactUrl, type LlamaPin, type LlamaTargetKey } from "../src/modules/embedding/llama_runtime.ts";
 import { contentHashOf, packContent, type PackEntry } from "../src/modules/harness/content-pack.ts";
 
 // This process autoloads the repo bunfig.toml, whose preload installs
@@ -216,9 +217,58 @@ const buildRoot = process.cwd();
 const workerEntry = Bun.resolveSync("@opentui/core/parser.worker", buildRoot);
 const workerRelToRoot = relative(buildRoot, workerEntry);
 
+// On-disk cache for the pinned llama-server release archives (local-embeddings sidecar runtime),
+// kept OUTSIDE git (see .gitignore) so a rebuild need not re-download ~10 MB per target. Each target's
+// archive MUST be present here before Bun.build so the define-gated `import(... with { type: "file" })`
+// in src/modules/embedding/llama_runtime.ts can embed it. A host-only `bun run build` caches only the
+// host target's archive: the other three targets' imports are DCE'd away (their `__INFLEXA_LLAMA_TARGET__`
+// comparisons fold to false) and never resolved, so their archives are neither needed nor fetched.
+const LLAMA_CACHE_DIR = join(process.cwd(), ".llama-cache");
+
+// Ensure `targetKey`'s pinned archive sits in the cache, hash-verified against the vendored SHA-256
+// (the SOLE integrity authority — upstream publishes no checksums). A cache hit re-verifies rather than
+// trusting the bytes on disk. Any fetch/hash failure fails the build LOUDLY (process.exit(1)) — a binary
+// that silently embedded the wrong or a corrupt runtime is worse than no binary. Returns the validated
+// LlamaTargetKey to bake into the per-target define. Shares ONE hash source with the runtime by importing
+// LLAMA_PINS, so the build-time and first-run verifications can never disagree.
+async function ensureLlamaArchiveCached(targetKey: string): Promise<LlamaTargetKey> {
+    const pin: LlamaPin | undefined = (LLAMA_PINS as Record<string, LlamaPin>)[targetKey];
+    if (!pin) {
+        console.error(`error: no vendored llama-server pin for build target ${targetKey} (add it to LLAMA_PINS in src/modules/embedding/llama_runtime.ts)`);
+        process.exit(1);
+    }
+    const cachedPath = join(LLAMA_CACHE_DIR, pin.artifact);
+    if (existsSync(cachedPath)) {
+        const cachedDigest = new Bun.CryptoHasher("sha256").update(await Bun.file(cachedPath).bytes()).digest("hex");
+        if (cachedDigest === pin.sha256) return pin.target;
+        console.error(`error: cached ${pin.artifact} sha256 ${cachedDigest} does not match the vendored pin ${pin.sha256} — delete ${LLAMA_CACHE_DIR} and rebuild`);
+        process.exit(1);
+    }
+    const url = llamaArtifactUrl(LLAMA_RUNTIME_TAG, pin);
+    console.log(`fetching llama-server runtime ${pin.artifact} (${pin.target}) …`);
+    const response = await fetch(url);
+    if (!response.ok) {
+        console.error(`error: could not download ${url} — HTTP ${response.status} ${response.statusText}`);
+        process.exit(1);
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+    if (digest !== pin.sha256) {
+        console.error(`error: downloaded ${pin.artifact} sha256 ${digest} does not match the vendored pin ${pin.sha256} — upstream may have re-cut the release; refusing to embed it`);
+        process.exit(1);
+    }
+    await Bun.write(cachedPath, bytes); // Bun.write creates LLAMA_CACHE_DIR if absent
+    console.log(`cached ${pin.artifact} (${(bytes.length / 1024 / 1024).toFixed(1)} MB)`);
+    return pin.target;
+}
+
 const plugin = createSolidTransformPlugin();
 for (const target of targets) {
     const name = `inflexa-${target.os}-${target.arch}`;
+
+    // Fetch + verify this target's llama-server archive before compiling, so the embedded-asset import
+    // resolves and each binary carries exactly its own runtime.
+    const llamaTarget = await ensureLlamaArchiveCached(`${target.os}-${target.arch}`);
 
     // resolveWorkerPath prefers the global OTUI_TREE_SITTER_WORKER_PATH over its default, so bake the
     // worker's embedded bunfs path in (the default `new URL("./parser.worker.js", …)` can't find it —
@@ -230,6 +280,12 @@ for (const target of targets) {
     const targetDefine: Record<string, string> = {
         ...define,
         OTUI_TREE_SITTER_WORKER_PATH: JSON.stringify(workerBunfsPath),
+        // Selects which embedded llama-server archive materializes at first use (llama_runtime.ts), and
+        // is the DCE key that drops the other three targets' `import(... with { type: "file" })` so this
+        // binary embeds EXACTLY its own ~10 MB runtime. A bare global identifier define (parsed as the
+        // string literal), matching the __INFLEXA_COMPILED__ precedent — llama_runtime.ts reads it under
+        // a `typeof` guard, so a from-source run (no define) sees it undeclared and falls to the download path.
+        __INFLEXA_LLAMA_TARGET__: JSON.stringify(llamaTarget),
         // opentui's native loader consults OPENTUI_LIBC on linux to pick the glibc vs musl lib; bake it
         // so the choice cannot be swayed at runtime (per opencode's build; we only ship glibc).
         ...(target.os === "linux" ? { "process.env.OPENTUI_LIBC": JSON.stringify("glibc") } : {}),
