@@ -25,7 +25,11 @@ PLATFORM_ARGS=()
 
 # The sandbox image runs as a non-root user (uid 1000). Extraction runs as root so
 # it can drop the root-owned dangling symlinks below and read every track file.
-DOCKER_RUN=(docker run --rm --user 0:0 "${PLATFORM_ARGS[@]}")
+# --entrypoint "" is essential: the image ENTRYPOINT is sandbox-entrypoint.sh,
+# which ends in `exec sandbox-server "$@"`, so a bare `docker run <image> test …`
+# would be handed to sandbox-server as args (it aborts on missing startup config)
+# instead of being executed — making every probe below spuriously "not present".
+DOCKER_RUN=(docker run --rm --user 0:0 --entrypoint "" "${PLATFORM_ARGS[@]}")
 
 ROOT="$LIB_STORE_ROOT"
 extracted=""
