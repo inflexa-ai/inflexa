@@ -105,3 +105,31 @@ export async function ensureReady(rt: ContainerRuntime): Promise<Result<void, Co
     if (code !== 0) return err(new ContainerRuntimeError(rt.notReadyHint));
     return ok(undefined);
 }
+
+/**
+ * Probe `candidates` in preference order and return the first usable runtime.
+ * Probing stops at the first success — a ready first choice never spawns the
+ * others' binaries. When none is ready, the error aggregates every candidate's
+ * specific guidance so the user sees each runtime's remediation, not just the
+ * preferred one's. The setup flow uses this to treat the configured runtime as
+ * a preference rather than a gate ("Docker configured but stopped, Podman
+ * running" proceeds with Podman); launch-time gates keep probing only the
+ * configured runtime via {@link ensureReady}.
+ *
+ * `probe` is injectable for tests only — the real check spawns the runtime
+ * binary, so unit tests substitute a fake to exercise the ordering and
+ * aggregation logic.
+ */
+export async function firstReadyRuntime(
+    candidates: readonly ContainerRuntime[],
+    probe: (rt: ContainerRuntime) => Promise<Result<void, ContainerRuntimeError>> = ensureReady,
+): Promise<Result<ContainerRuntime, ContainerRuntimeError>> {
+    const failures: string[] = [];
+    for (const rt of candidates) {
+        const ready = await probe(rt);
+        if (ready.isOk()) return ok(rt);
+        failures.push(ready.error.message);
+    }
+    const needs = candidates.map((rt) => rt.label).join(", ");
+    return err(new ContainerRuntimeError([`No usable container runtime found — inflexa needs one of ${needs}.`, ...failures].join("\n\n")));
+}
