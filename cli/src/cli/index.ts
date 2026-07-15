@@ -89,8 +89,10 @@ cli.command("config")
 
 // Analysis lifecycle: the primary entity. `new`/`resume` open a chat (TUI layer); `ls`/
 // `status`/`open` are read-only text commands (module layer).
-cli.command("new [name] [paths...]")
+cli.command("new")
     .description("Create an analysis anchored at the current directory and open its chat")
+    .argument("[name]", "Analysis name (prompted when omitted)")
+    .argument("[paths...]", "Input files or folders to attach to the analysis")
     .option("--project <name>", "Group the analysis under a project")
     .action(async (name: string | undefined, paths: string[] | undefined, options: { project?: string }) => {
         const { launchNew } = await import("../tui/app.launch.tsx");
@@ -105,15 +107,17 @@ cli.command("ls")
         runLs({ project: options.project });
     });
 
-cli.command("resume <idOrName>")
+cli.command("resume")
     .description("Reopen an analysis's chat by id or name")
+    .argument("<idOrName>", "Analysis to reopen, by id or name")
     .action(async (idOrName: string) => {
         const { launchResume } = await import("../tui/app.launch.tsx");
         await launchResume(idOrName);
     });
 
-cli.command("open <idOrName>")
+cli.command("open")
     .description("Open an analysis's workspace (inputs, run artifacts, reports, provenance) in the file browser")
+    .argument("<idOrName>", "Analysis whose workspace to open, by id or name")
     .action(async (idOrName: string) => {
         const { runOpen } = await import("../modules/analysis/open.ts");
         runOpen(idOrName);
@@ -150,8 +154,9 @@ if (devCommandsEnabled()) {
 
     // The other deliberate harness entry point: launches a full `executeAnalysis` run
     // from a validated plan file (boots the embedded runtime — no passive flow may).
-    cli.command("run [analysis]")
+    cli.command("run")
         .description("Launch an analysis run from a validated plan file in the harness sandbox")
+        .argument("[analysis]", "Analysis to operate on, by id or name (default: resolved from the current directory)")
         .option("--plan <file>", "Path to the JSON analysis plan to execute")
         .option("--status", "Show this analysis's run history instead of launching a run")
         .action(async (analysis: string | undefined, options: { plan?: string; status?: boolean }) => {
@@ -164,8 +169,9 @@ if (devCommandsEnabled()) {
     // The conversational harness entry point: boots the embedded runtime and drives
     // the conversation agent in a stdout REPL (a dev-channel surface — see chat.ts's
     // TODO(extend); no passive flow may boot the runtime).
-    cli.command("chat [analysis]")
+    cli.command("chat")
         .description("Chat with the analysis agent (plan, execute, and inspect runs conversationally)")
+        .argument("[analysis]", "Analysis to operate on, by id or name (default: resolved from the current directory)")
         .option("--thread <id>", "Resume an existing conversation thread")
         .action(async (analysis: string | undefined, options: { thread?: string }) => {
             const { runChat } = await import("../modules/harness/chat.ts");
@@ -176,8 +182,10 @@ if (devCommandsEnabled()) {
 const analysisCmd = cli.command("analysis").description("Manage analyses (grouping)");
 
 analysisCmd
-    .command("set-project <analysis> [project]")
+    .command("set-project")
     .description("Attach, move, or clear an analysis's project grouping (omit project to clear)")
+    .argument("<analysis>", "Analysis to move, by id or name")
+    .argument("[project]", "Target project, by id or name (omit to clear the grouping)")
     .action(async (analysisRef: string, projectRef: string | undefined) => {
         const { runSetProject } = await import("../modules/analysis/set_project.ts");
         runSetProject(analysisRef, projectRef ?? null);
@@ -189,8 +197,9 @@ analysisCmd
 const project = cli.command("project").description("Manage projects (optional grouping of analyses)");
 
 project
-    .command("new <name>")
+    .command("new")
     .description("Create a project")
+    .argument("<name>", "Name for the project")
     .option("--description <text>", "A short description")
     .option("--tags <tags>", "Comma-separated tags")
     .action(async (name: string, options: { description?: string; tags?: string }) => {
@@ -208,8 +217,9 @@ project
 
 const prov = cli.command("prov").description("Provenance — the recorded history of an analysis's inputs and actions");
 
-prov.command("export <analysis>")
+prov.command("export")
     .description("Export an analysis's provenance document as PROV (writes into its workspace folder by default)")
+    .argument("<analysis>", "Analysis whose provenance to export, by id or name")
     .option("--format <format>", "json (PROV-JSON) or provn (PROV-N)", "json")
     .option("--output <file>", "Write to this file instead of the analysis output folder")
     .action(async (analysisRef: string, options: { format?: string; output?: string }) => {
@@ -217,10 +227,12 @@ prov.command("export <analysis>")
         await runExportProvenance(analysisRef, { format: options.format, output: options.output });
     });
 
-prov.command("lineage <analysis> <ref>")
+prov.command("lineage")
     .description(
         "Trace lineage through the recorded provenance graph — <ref> is a file path, content hash, hash prefix, search string over paths/commands/tools, or record QName",
     )
+    .argument("<analysis>", "Analysis whose provenance graph to walk, by id or name")
+    .argument("<ref>", "What to trace: a file path, content hash, hash prefix, search string, or record QName")
     .option("--forward", "Walk forward: what was derived from this file")
     .option("--depth <n>", "Bound the walk to n generation hops (default: unbounded)")
     .option("--format <format>", "tree (human), json (flat graph), dot (Graphviz), or mermaid (flowchart source)", "tree")
@@ -229,15 +241,17 @@ prov.command("lineage <analysis> <ref>")
         runProvLineage(analysisRef, ref, options);
     });
 
-prov.command("verify <analysis>")
+prov.command("verify")
     .description("Verify the integrity of an analysis's provenance chain and signature")
+    .argument("<analysis>", "Analysis whose provenance chain to verify, by id or name")
     .action(async (analysisRef: string) => {
         const { runVerifyProvenance } = await import("../modules/prov/verify.ts");
         await runVerifyProvenance(analysisRef);
     });
 
-prov.command("verify-file <path>")
+prov.command("verify-file")
     .description("Verify an exported provenance file against its .sig.json sidecar (no database needed)")
+    .argument("<path>", "Exported provenance file to check against its .sig.json sidecar")
     .action(async (path: string) => {
         const { runVerifyFile } = await import("../modules/prov/verify.ts");
         await runVerifyFile(path);
@@ -245,15 +259,18 @@ prov.command("verify-file <path>")
 
 // Anchor move-backstop: the manual fallback for folder moves that the automatic
 // reconciliation in `resolveAnchor` cannot settle on its own. All addressed by path.
-cli.command("repair [path]")
+cli.command("repair")
     .description("Reconcile the anchor marker at <path> (default: current directory)")
+    .argument("[path]", "Folder whose anchor marker to reconcile (default: current directory)")
     .action(async (path: string | undefined) => {
         const { runRepair } = await import("../modules/anchor/backstop.ts");
         runRepair(path);
     });
 
-cli.command("relocate [fromPath] [toPath]")
+cli.command("relocate")
     .description("Re-point a moved anchor — one path pair, or all anchors under a prefix with --from/--to")
+    .argument("[fromPath]", "Path the anchor is currently tracked at")
+    .argument("[toPath]", "Path the folder lives at now")
     .option("--from <prefix>", "Path prefix to rewrite from (bulk mode)")
     .option("--to <prefix>", "Path prefix to rewrite to (bulk mode)")
     .action(async (fromPath: string | undefined, toPath: string | undefined, options: { from?: string; to?: string }) => {
@@ -361,8 +378,9 @@ refs.command("list")
         await runRefsList();
     });
 
-refs.command("download [ids...]")
+refs.command("download")
     .description("Download selected catalog datasets from their upstream publishers and verify them")
+    .argument("[ids...]", "Catalog dataset ids (interactive selection when omitted)")
     .option("--yes", "Skip the download confirmation")
     .option("--force", "Re-fetch even when already installed — repairs damage and refreshes mutable upstreams")
     .action(async (ids: string[], options: { yes?: boolean; force?: boolean }) => {
@@ -370,8 +388,9 @@ refs.command("download [ids...]")
         await runRefsDownload(ids, options);
     });
 
-refs.command("verify [ids...]")
+refs.command("verify")
     .description("Verify active managed datasets without changing them")
+    .argument("[ids...]", "Catalog dataset ids (all installed datasets when omitted)")
     .action(async (ids: string[]) => {
         const { runRefsVerify } = await import("../modules/refs/commands.ts");
         await runRefsVerify(ids);
@@ -391,8 +410,9 @@ refs.command("path")
 const sandbox = cli.command("sandbox").description("Manage the sandbox image (R/Python/conda/node packages baked in)");
 
 sandbox
-    .command("pull [variant]")
+    .command("pull")
     .description("Pull a sandbox image (python | python-r) from GitHub Packages and configure sandboxes to use it")
+    .argument("[variant]", "Image variant: python or python-r (prompted when omitted)")
     .option("--yes", "Skip the download confirmation")
     .action(async (variant: string | undefined, options: { yes?: boolean }) => {
         const { sandboxPull } = await import("../modules/libs/pull.ts");

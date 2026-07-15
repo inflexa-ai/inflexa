@@ -8,6 +8,7 @@
         "build:all": "bun scripts/build.ts --all",
         "dev": "bun run src/index.ts",
         "dev:install": "bun scripts/dev_install.ts",
+        "docs:gen": "bun scripts/gen_docs.ts",
         "format": "prettier --write src/",
         "format:file": "prettier --write",
         "harness:local": "cd ../harness && bun run build && bun link && cd ../cli && bun link @inflexa-ai/harness",

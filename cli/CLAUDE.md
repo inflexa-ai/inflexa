@@ -22,6 +22,7 @@ bun run dev          # Run the CLI (launches the TUI by default)
 bun run typecheck    # tsc --noEmit
 bun run lint         # Run ESLint
 bun run format       # Format all of src/
+bun run docs:gen     # Generate the CLI reference package (dist-docs/, untracked)
 ```
 
 ## Dependencies
@@ -297,6 +298,14 @@ The "Type & emphasis" scale (one typeface, one size; hierarchy by weight, dim, c
 **Composing:** nest to combine — `<Fg role="fgMuted"><Italic>{text}</Italic></Fg>`. For a single whole-line color, `<text fg={theme().role}>…</text>` is still fine (don't wrap one line in `<Fg>`); reach for the components when a line **mixes** colors/styles.
 
 **Never** nest a block `<text>` inside a `<text>` (rejected as a text-node child at runtime). The emphasis components avoid this by emitting spans — if you need new raw inline styling, add it to `emphasis.tsx` (with the `style={{…}}` channel documented there), never at the call site.
+
+## CLI reference docs
+
+`bun run docs:gen` (`scripts/gen_docs.ts`) walks the commander registry and emits the publishable CLI reference package to `dist-docs/` (untracked): SSG-neutral CommonMark pages + `manifest.json`. The contract lives in the `cli-reference-docs` spec; the release workflow regenerates the package at the tagged commit and attaches it to the GitHub release as `cli-docs.tar.gz` (consumed by the website). Invariants:
+
+- **Never run the generator under `bun test`** — the registry imports `lib/env.ts`, whose data-loss guard throws in a test process without the sandbox marker. Run it as a plain `bun scripts/gen_docs.ts`; CI invokes it as a subprocess.
+- **Dev-channel commands are excluded by design**: the generator bakes a production build channel before importing the registry, so the docs describe exactly the release binary's surface.
+- **Every visible command, argument, and option needs a description** — generation (and the lint CI job that runs it) fails otherwise. Declare positionals via `.argument(name, description)`, never inline in the command string.
 
 ## References
 

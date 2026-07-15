@@ -140,6 +140,18 @@ jobs:
         working-directory: cli/dist
         run: sha256sum inflexa-* > SHA256SUMS
 
+      # The SSG-neutral CLI reference package the website consumes (manifest.json +
+      # CommonMark pages — see the cli-reference-docs spec). The lint job already ran
+      # this same generator on this commit and generation is byte-deterministic, so
+      # this re-materializes exactly the content CI verified; it is documentation,
+      # not an executable, so it stays out of SHA256SUMS and the attestation.
+      - name: Package the CLI reference docs
+        if: steps.gate.outputs.release == 'true'
+        working-directory: cli
+        run: |
+          bun run docs:gen
+          tar -czf dist/cli-docs.tar.gz -C dist-docs .
+
       - name: Install cosign
         if: steps.gate.outputs.release == 'true'
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
@@ -172,7 +184,7 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "v$VERSION" \
             --generate-notes \
-            dist/inflexa-* dist/SHA256SUMS dist/SHA256SUMS.sig dist/SHA256SUMS.pem dist/THIRD-PARTY-NOTICES.txt
+            dist/inflexa-* dist/SHA256SUMS dist/SHA256SUMS.sig dist/SHA256SUMS.pem dist/THIRD-PARTY-NOTICES.txt dist/cli-docs.tar.gz
 
       # Downstream distribution runs as separate dispatched workflows
       # (homebrew.yml explains why a `release:` trigger cannot work) so a
