@@ -5,11 +5,11 @@
 // was always 0. These patterns match the format the agent actually writes.
 // The block content may include array index notation like `[0]`, so we
 // use a pattern that allows `[digits]` inside the outer brackets.
-const DOSSIER_CITE_BLOCK_RE = /\[dossier:\s*((?:[^[\]]*(?:\[\d+\])?)*)\]/gi;
+const DOSSIER_CITE_BLOCK_RE = /\[dossier:\s*((?:[^[\]]|\[\d+\])*)\]/gi;
 // External citation IDs are plain strings — no array-index notation like `[n]` — so the simple [^\]]+ class suffices here instead of the array-index-aware pattern used by DOSSIER_CITE_BLOCK_RE.
 const EXTERNAL_CITE_BLOCK_RE = /\[external citation:\s*([^\]]+)\]/gi;
 // Assumes at most one `external citation:` segment per dossier block (the recommendation prompt produces at most one); a hypothetical second segment in the same block would be parsed imperfectly.
-const EXTERNAL_SEGMENT_RE = /external citation:\s*((?:[^[\]]*(?:\[\d+\])?)*)/i;
+const EXTERNAL_SEGMENT_RE = /external citation:\s*((?:[^[\]]|\[\d+\])*)/i;
 const NCT_RE = /\bNCT\d{8}\b/g;
 const PMID_RE = /\bPMID[:\s]?(\d{6,9})\b/g;
 

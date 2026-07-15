@@ -37,7 +37,7 @@ export interface ObservedWrite {
 // ── Script path inference ───────────────────────────────────────────
 
 /** Known interpreter prefixes for script path extraction. */
-const SCRIPT_PATTERNS = [/^python3?\s+(.+)$/, /^Rscript\s+(.+)$/, /^bash\s+(.+)$/, /^sh\s+(.+)$/];
+const SCRIPT_PATTERNS = [/^python3?\s+(\S.*)$/, /^Rscript\s+(\S.*)$/, /^bash\s+(\S.*)$/, /^sh\s+(\S.*)$/];
 
 /**
  * Attempt to extract the script path from a command string.

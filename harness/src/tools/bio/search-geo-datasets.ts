@@ -69,7 +69,10 @@ export const searchGeoDatasetsTool = defineTool({
     }),
     execute: async ({ query, organism, datasetType = "gse", limit = 15 }) => {
         let searchQuery = query;
-        if (organism) searchQuery += ` AND "${organism.replace(/"/g, '\\"')}"[Organism]`;
+        // Escape backslashes first, then quotes, so a `\` in the organism value
+        // cannot smuggle an unescaped `"` past the escaping and break out of the
+        // quoted Entrez phrase.
+        if (organism) searchQuery += ` AND "${organism.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"[Organism]`;
 
         const db = "gds";
         const typeFilter = datasetType === "gse" ? " AND gse[Entry Type]" : " AND gds[Entry Type]";

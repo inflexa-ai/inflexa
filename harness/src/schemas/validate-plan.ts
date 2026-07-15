@@ -49,7 +49,7 @@ export function deriveOutputPrefix(stepId: string): string {
     return stepId
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "");
+        .replace(/^-|-$/g, "");
 }
 
 /**

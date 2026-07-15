@@ -840,7 +840,9 @@ export function stagedAssetsBlock(staged: StagedAsset[], opts: { newOnly?: boole
 }
 
 function escapePipe(s: string): string {
-    return s.replace(/\|/g, "\\|");
+    // Escape backslashes first so a literal `\` in the cell cannot combine with
+    // the escape we add and re-expose an unescaped `|` that breaks the table.
+    return s.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
 }
 
 function formatSectionContent(s: SectionInput): string {
