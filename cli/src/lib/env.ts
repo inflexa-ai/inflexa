@@ -173,6 +173,14 @@ export const env = Object.freeze({
     /** The local embedding GGUF path — `<modelDir>/bge-small-en-v1.5-q8_0.gguf`. */
     embeddingModelPath: join(dataDir(), "inflexa", "models", "bge-small-en-v1.5-q8_0.gguf"),
     /**
+     * Local embedding sidecar runtime: `<dataDir>/inflexa/llama-server/`. The pinned `llama.cpp`
+     * release (the `llama-server` binary + its shared libraries) is materialized into a tag-named
+     * subdirectory here on `inflexa setup --embeddings local` opt-in — extracted from a build-time
+     * embedded asset in the compiled binary, downloaded from source. See
+     * src/modules/embedding/llama_runtime.ts.
+     */
+    llamaServerDir: join(dataDir(), "inflexa", "llama-server"),
+    /**
      * CLIProxyAPI runs in a container (Docker or Podman, see
      * src/modules/infra/setup.ts). The config and the provider-credential dir are
      * state we own, so they live under our data dir and are bind-mounted into the
@@ -281,6 +289,12 @@ export const envDoc: Readonly<
         kind: "path",
         label: "embedding model",
         description: "the bge-small-en-v1.5 GGUF used by the local embedding provider",
+        baseVar: dataVar,
+    },
+    llamaServerDir: {
+        kind: "path",
+        label: "llama runtime",
+        description: "pinned llama-server runtime for local embeddings, materialized by `inflexa setup --embeddings local`",
         baseVar: dataVar,
     },
     cliproxyConfigPath: { kind: "path", label: "proxy config", description: "CLIProxyAPI config, mounted into the proxy container", baseVar: dataVar },

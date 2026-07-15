@@ -7,32 +7,37 @@
  *
  * The model is `bge-small-en-v1.5` (GGUF, q8_0, 384-dim, ~36 MB) from
  * `CompendiumLabs/bge-small-en-v1.5-gguf` on HuggingFace. Download is skipped if
- * the file already exists; verification (load + embed probe + dim check) always
- * runs so a truncated/corrupt file is caught now, not on the first hot-path
- * `embed()` call.
+ * the file already exists; verification (spawn the sidecar + embed probe + dim
+ * check) always runs so a truncated/corrupt file is caught now, not on the first
+ * hot-path `embed()` call. Verification goes through the SAME `llama-server`
+ * sidecar the hot path uses, so it is identical in the compiled binary and from
+ * source — no separate load path to diverge.
  */
 
 import { mkdir, rename, stat, unlink } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 
 import { log, spinner as clackSpinner } from "@clack/prompts";
 import { err, ok, type Result } from "neverthrow";
 
+import type { AgentSession } from "@inflexa-ai/harness";
+
 import { readConfig, writeConfig } from "../../lib/config.ts";
 import { select } from "../../lib/cli.ts";
 import { env } from "../../lib/env.ts";
-import { isCompiledBinary } from "../../lib/install_context.ts";
-import { COMPILED_LOCAL_UNAVAILABLE_REASON, LOCAL_EMBEDDING_DIMENSIONS } from "./local-provider.ts";
+import { ensureLlamaServer, materializedLlamaServer } from "./llama_runtime.ts";
+import { createLocalEmbeddingProvider, LOCAL_EMBEDDING_DIMENSIONS, stopLocalSidecar } from "./local-provider.ts";
 
 export type EmbeddingSetupError =
     | { readonly type: "download_failed"; readonly message: string; readonly cause?: unknown }
     | { readonly type: "verify_failed"; readonly message: string; readonly cause?: unknown }
     | { readonly type: "dimension_mismatch"; readonly message: string; readonly expected: number; readonly actual: number }
     | { readonly type: "not_configured"; readonly message: string }
-    // Local mode was requested (flag, config, or fall-through) in the compiled binary, where the
-    // native runtime is absent. Distinct from `not_configured` (a from-source "download it" state):
-    // the remediation is to switch modes, never a setup command that cannot succeed here.
-    | { readonly type: "local_unavailable"; readonly message: string };
+    // The GGUF is present but the pinned llama-server runtime could not be acquired. Distinct from
+    // `not_configured` (nothing was ever set up — remediation is the setup command): here the user DID
+    // set up, and the runtime bytes are what's missing — in practice the offline source-checkout case,
+    // since a compiled binary materializes from its embedded asset without touching the network.
+    | { readonly type: "runtime_unavailable"; readonly message: string; readonly cause?: unknown };
 
 /**
  * Pinned to the repo revision current as of 2026-07 (last modified 2024-02-17),
@@ -117,87 +122,58 @@ export async function downloadModel(): Promise<Result<void, EmbeddingSetupError>
 }
 
 /**
- * Verify the GGUF loads and produces 384-dim vectors by embedding a probe text.
- * Catches a truncated/corrupt file or a wrong-model download now, so the hot
- * path never hits a load failure. A load error is `verify_failed`; a wrong
- * dimension is `dimension_mismatch` (so the caller can distinguish "the file is
- * broken" from "the file is the wrong model").
+ * Verify the model end-to-end through the sidecar: spawn `llama-server` against
+ * the downloaded GGUF, embed a probe text, and assert the vector width is 384.
+ * This is the identical path the hot loop uses, so a "works in dev, dead in the
+ * binary" divergence cannot hide here — verification proves the real runtime, not
+ * a separate load path. Catches a truncated/corrupt file or a wrong-model
+ * download now, so the hot path never hits a startup failure. A start/probe error
+ * is `verify_failed`; a wrong dimension is `dimension_mismatch` (so the caller can
+ * distinguish "the file is broken" from "the file is the wrong model").
+ *
+ * The sidecar is torn down immediately after the probe rather than left running
+ * for the process lifetime — setup only needs the one probe.
  */
 export async function verifyModel(modelPath: string): Promise<Result<void, EmbeddingSetupError>> {
     const s = clackSpinner();
-    s.start("Verifying model (load + embed probe)");
-    try {
-        const { getLlama } = await import("node-llama-cpp");
-        const llama = await getLlama();
-        const model = await llama.loadModel({ modelPath });
-        const context = await model.createEmbeddingContext();
-        const probe = await context.getEmbeddingFor("inflexa embedding verification probe");
-        const dim = probe.vector.length;
-        await llama.dispose();
-        if (dim !== LOCAL_EMBEDDING_DIMENSIONS) {
-            s.error("Dimension mismatch");
-            return err({
-                type: "dimension_mismatch",
-                message: `Model produced ${dim}-dim vectors, expected ${LOCAL_EMBEDDING_DIMENSIONS}. The GGUF may be the wrong model.`,
-                expected: LOCAL_EMBEDDING_DIMENSIONS,
-                actual: dim,
-            });
-        }
-        s.stop(`Verified: ${LOCAL_EMBEDDING_DIMENSIONS}-dim vectors`);
-        return ok(undefined);
-    } catch (cause) {
+    s.start("Verifying model (spawn runtime + embed probe)");
+
+    const provider = createLocalEmbeddingProvider({ modelPath });
+    // The local provider does no billing and reads only `scope` (for a log label),
+    // so a structural stand-in satisfies the seam. The `as unknown as` is required
+    // because we do not build a full RunSession for a one-shot probe, and nothing
+    // downstream reads the omitted fields (the noop billing resolver ignores it).
+    const probeSession = { scope: { kind: "analysis", analysisId: "embedding-setup-verify" } } as unknown as AgentSession;
+    const outcome = await provider.embed(["inflexa embedding verification probe"], probeSession).match(
+        (vectors): { readonly ok: true; readonly dim: number } => ({ ok: true, dim: vectors[0]?.length ?? 0 }),
+        (e): { readonly ok: false; readonly message: string } => ({ ok: false, message: e.message }),
+    );
+    // Tear the probe server down at once; don't hold ~86 MB RSS for the rest of setup.
+    stopLocalSidecar();
+
+    if (!outcome.ok) {
         s.error("Verification failed");
+        return err({ type: "verify_failed", message: `Model verification failed: ${outcome.message}` });
+    }
+    if (outcome.dim !== LOCAL_EMBEDDING_DIMENSIONS) {
+        s.error("Dimension mismatch");
         return err({
-            type: "verify_failed",
-            message: `Model verification failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-            cause,
+            type: "dimension_mismatch",
+            message: `Model produced ${outcome.dim}-dim vectors, expected ${LOCAL_EMBEDDING_DIMENSIONS}. The GGUF may be the wrong model.`,
+            expected: LOCAL_EMBEDDING_DIMENSIONS,
+            actual: outcome.dim,
         });
     }
-}
-
-/**
- * Trigger `bun pm trust node-llama-cpp` to fetch the prebuilt native binaries
- * (bun blocks postinstall scripts by default; this is the sanctioned opt-in).
- * On platforms where the platform package already ships binaries in its tarball
- * this is effectively a no-op, but it is the cross-platform-safe way to ensure
- * the native runtime is present. A failure here is non-fatal — the download +
- * verify steps will surface a clearer error if the runtime is genuinely missing.
- *
- * Only meaningful from source: it trusts a dependency in *this* CLI package's
- * tree, so its cwd is pinned to the package root (derived from this module's own
- * location) rather than the user's working directory — otherwise `bun` reports
- * "No package.json was found for <cwd>" whenever setup runs from anywhere but the
- * dev repo. In the compiled binary it is skipped entirely: there is no package
- * tree to trust, and the product must not depend on a `bun` binary being on PATH.
- */
-async function trustNativeRuntime(): Promise<void> {
-    // Nothing to trust in the packaged binary — no package tree, and spawning `bun` would depend on it
-    // being on PATH, which the product must not require. This is the only place inflexa shells out to a
-    // `bun` binary, so the skip keeps the compiled product free of that dependency entirely.
-    if (isCompiledBinary()) return;
-
-    // cli/src/modules/embedding → up three levels is the CLI package root (where package.json lives).
-    // Safe to read import.meta.dir here: the guard above returns first in the compiled binary, so this
-    // path is always a real on-disk location.
-    const packageRoot = join(import.meta.dir, "../../..");
-    try {
-        const proc = Bun.spawn(["bun", "pm", "trust", "node-llama-cpp"], { cwd: packageRoot, stdout: "ignore", stderr: "pipe" });
-        const exitCode = await proc.exited;
-        if (exitCode !== 0) {
-            const stderr = await new Response(proc.stderr).text();
-            log.warn(`\`bun pm trust\` exited ${exitCode}${stderr ? `: ${stderr.trim()}` : ""}`);
-        }
-    } catch (cause) {
-        // Non-fatal: verifyModel will report a clearer error if the runtime is missing.
-        log.warn(`\`bun pm trust\` could not run: ${cause instanceof Error ? cause.message : String(cause)}`);
-    }
+    s.stop(`Verified: ${LOCAL_EMBEDDING_DIMENSIONS}-dim vectors`);
+    return ok(undefined);
 }
 
 /**
  * Interactive embedding setup, run as part of `inflexa setup`. Prompts the user
  * to pick an embedding mode via a clack `select` picker (local / api-key / off),
- * then for `local`: fetches the native runtime + GGUF, verifies it, and records
- * `embedding.mode = "local"` + `embedding.modelPath` in config.
+ * then for `local`: materializes the sidecar runtime + downloads the GGUF,
+ * verifies it through the sidecar, and records `embedding.mode = "local"` +
+ * `embedding.modelPath` in config.
  *
  * Non-interactive shells (no TTY, or `interactive === false`) skip the prompt
  * entirely without hanging — `mode` stays whatever it was. A preselected `mode`
@@ -218,15 +194,6 @@ export async function runEmbeddingSetup(interactive: boolean, preselected?: "loc
             return ok(undefined);
         }
         // preselected === "local"
-        if (isCompiledBinary()) {
-            // Fail immediately, before `runLocalSetup` can reach the 36 MB download: an explicit
-            // `--embeddings local` cannot work in the packaged binary. Name the flag alternative so the
-            // user has a next step, not just a rejection.
-            return err({
-                type: "local_unavailable",
-                message: `${COMPILED_LOCAL_UNAVAILABLE_REASON} Re-run with \`--embeddings api-key\` instead; nothing was downloaded.`,
-            });
-        }
         return runLocalSetup(config);
     }
 
@@ -277,24 +244,27 @@ function warnOnModeSwitch(current: "local" | "api-key" | "off", next: "local" | 
     );
 }
 
-/** The local-embeddings opt-in branch: trust runtime, download, verify, write config. */
+/** The local-embeddings opt-in branch: materialize runtime, download model, verify through the sidecar, write config. */
 async function runLocalSetup(config: ReturnType<typeof readConfig>): Promise<Result<void, EmbeddingSetupError>> {
-    // The single choke point for the whole local flow (trust + 36 MB download + verify). Guarding here
-    // makes the download unreachable toward local mode in the packaged binary no matter how it was
-    // requested — the flag path fails earlier and the picker never offers local, but this holds the line
-    // for any future caller so verification can never be doomed-to-fail against a native runtime that
-    // isn't there.
-    if (isCompiledBinary()) {
+    warnOnModeSwitch(config.embedding.mode, "local");
+    log.message("Setting up local embeddings (bge-small-en-v1.5 via the pinned llama-server runtime, no API key needed)");
+
+    // Materialize the runtime first, under its own spinner, so the one-time first-run
+    // cost is narrated rather than a silent stall: macOS pays a ~10s OS scan of the
+    // fresh binaries the first time they run, and paying it here (not mid-analysis) is
+    // the whole point of setup-time verification. Idempotent — a subsequent spawn reuses it.
+    const runtimeSpinner = clackSpinner();
+    runtimeSpinner.start("Preparing the local embedding runtime (llama-server)");
+    const runtime = await ensureLlamaServer();
+    if (runtime.isErr()) {
+        runtimeSpinner.error("Runtime setup failed");
         return err({
-            type: "local_unavailable",
-            message: `${COMPILED_LOCAL_UNAVAILABLE_REASON} Use \`api-key\` or \`off\` instead.`,
+            type: "runtime_unavailable",
+            message: `Local embedding runtime could not be prepared: ${runtime.error.message}`,
+            cause: runtime.error.cause,
         });
     }
-
-    warnOnModeSwitch(config.embedding.mode, "local");
-    log.message("Setting up local embeddings (bge-small-en-v1.5, in-process, no API key needed)");
-
-    await trustNativeRuntime();
+    runtimeSpinner.stop("Local embedding runtime ready");
 
     const downloadResult = await downloadModel();
     if (downloadResult.isErr()) return downloadResult;
@@ -319,19 +289,11 @@ async function runLocalSetup(config: ReturnType<typeof readConfig>): Promise<Res
  * chosen mode string; clack handles cancel (Ctrl-C / Esc) by aborting.
  */
 async function promptEmbeddingMode(): Promise<"local" | "api-key" | "off"> {
-    // In the packaged binary the native runtime isn't shipped, so "Local" cannot succeed — omit it from
-    // the picker and state why, leaving api-key/off selectable. Offering it and then failing verification
-    // (the old behavior) is the dishonest choice this replaces. From source, all three are offered.
-    if (isCompiledBinary()) {
-        log.info(`${COMPILED_LOCAL_UNAVAILABLE_REASON} Choose api-key or off.`);
-        const chosen = await select("Embedding mode", [
-            { value: "api-key", label: "API key (direct to an OpenAI-compatible endpoint)" },
-            { value: "off", label: "Off / skip" },
-        ]);
-        return chosen as "api-key" | "off";
-    }
+    // Local mode works identically in the compiled binary and from source (the runtime
+    // is a downloaded/embedded sidecar, not a native addon), so all three modes are
+    // offered in every install context — no context gates the offering.
     const chosen = await select("Embedding mode", [
-        { value: "local", label: "Local (in-process, downloads a 36 MB model, no API key)" },
+        { value: "local", label: "Local (downloads a ~36 MB model + runtime, no API key)" },
         { value: "api-key", label: "API key (direct to an OpenAI-compatible endpoint)" },
         { value: "off", label: "Off / skip" },
     ]);
@@ -339,33 +301,44 @@ async function promptEmbeddingMode(): Promise<"local" | "api-key" | "off"> {
 }
 
 /**
- * Hot-path readiness gate, mirroring `ensureProxyReady`. For `local` mode,
- * checks the GGUF file exists — a file-exists check is sufficient here (the
- * first `embed()` lazily loads it, and `verifyModel` ran at setup time). A
- * missing file directs the user to `inflexa setup`. For `off` / `api-key`,
- * readiness is not the embedding setup's concern — return `ok`.
+ * Launch-time readiness gate, mirroring `ensureProxyReady` (which likewise
+ * self-heals its container substrate at launch). For `local` mode:
  *
- * A `local` config can reach the packaged binary — a dev config, a hand edit, or
- * a config written by a from-source run — where `inflexa setup --embeddings local`
- * can never succeed. There the remediation is to switch modes, checked ahead of
- * (and instead of) the file-exists probe, so the chat path degrades with usable
- * instructions rather than pointing at a doomed command.
+ * 1. The GGUF must exist — a missing model means setup never ran (or was undone),
+ *    so the remediation is `inflexa setup --embeddings local`, which succeeds in
+ *    every install context.
+ * 2. The pinned runtime must be materialized. When it already is, this is a cheap
+ *    directory-existence check and no acquisition work happens. When it is NOT,
+ *    the gate materializes it right here rather than returning ok: deferring to
+ *    the first `embed()` would surface an acquisition failure (offline
+ *    source checkout) mid-chat, where the user can't act on it — at launch they
+ *    can. Compiled binaries materialize from their embedded asset with no
+ *    network, so this failure path is effectively the offline from-source case.
+ *
+ * It still NEVER spawns the sidecar or probe-embeds — materialization is
+ * download/extract only, and the launch gate must stay off the inference path.
+ * For `off` / `api-key`, readiness is not the embedding setup's concern —
+ * return `ok`.
  */
 export async function ensureEmbedderReady(): Promise<Result<void, EmbeddingSetupError>> {
     const { mode } = readConfig().embedding;
     if (mode !== "local") return ok(undefined);
 
-    if (isCompiledBinary()) {
-        return err({
-            type: "local_unavailable",
-            message: `${COMPILED_LOCAL_UNAVAILABLE_REASON} Switch \`embedding.mode\` to \`api-key\` or \`off\`.`,
-        });
-    }
-
     if (!(await Bun.file(env.embeddingModelPath).exists())) {
         return err({
             type: "not_configured",
             message: `Local embedding model not found at ${env.embeddingModelPath}. Run \`inflexa setup --embeddings local\` to download it.`,
+        });
+    }
+
+    if (materializedLlamaServer() !== null) return ok(undefined);
+
+    const materialized = await ensureLlamaServer();
+    if (materialized.isErr()) {
+        return err({
+            type: "runtime_unavailable",
+            message: `The local embedding runtime is not installed and could not be acquired: ${materialized.error.message}\n  Reconnect and relaunch, or run \`inflexa setup --embeddings local\`; to proceed without it, switch \`embedding.mode\` to \`api-key\` or \`off\`.`,
+            cause: materialized.error.cause,
         });
     }
     return ok(undefined);
