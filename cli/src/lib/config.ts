@@ -179,10 +179,12 @@ function discardedRuntimeValue(): string | null {
     try {
         const parsed: unknown = JSON.parse(readFileSync(env.configPath, "utf8")); // unknown: on-disk contents, shape-narrowed below
         if (typeof parsed !== "object" || parsed === null) return null;
+        // Sound: the typeof-object/null guard above narrowed `parsed` to a non-null object, so property access on a Record view is safe.
         const raw = (parsed as Record<string, unknown>).runtime;
         // Only a STRING the enum rejected is a discarded selection worth naming: a
         // valid id was never discarded, and a non-string was never a selection.
         if (typeof raw !== "string") return null;
+        // Widen the readonly id tuple to readonly string[] only so `.includes` accepts an arbitrary string — no runtime effect.
         return (runtimeIds as readonly string[]).includes(raw) ? null : raw;
     } catch {
         // Unreadable / unparseable raw config: no value to name, stay silent.

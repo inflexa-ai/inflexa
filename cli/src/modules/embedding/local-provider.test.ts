@@ -1,4 +1,9 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { randomUUIDv7 } from "bun";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { chmodSync, rmSync } from "node:fs";
+import { createServer, type Socket } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { err, ok } from "neverthrow";
 
 import type { ProviderError } from "@inflexa-ai/harness";
@@ -6,6 +11,7 @@ import type { ProviderError } from "@inflexa-ai/harness";
 import { env } from "../../lib/env.ts";
 import {
     __resetLocalRuntimeForTest,
+    __setProcessScanForTest,
     __setProxyBypassEnabledForTest,
     __setSidecarLauncherForTest,
     __setSpawnForTest,
@@ -13,6 +19,8 @@ import {
     launchWithBinary,
     pollLlamaHealth,
     stopLocalSidecar,
+    stopLocalSidecarAndWait,
+    sweepOrphanedSidecars,
 } from "./local-provider.ts";
 import { materializedLlamaServer } from "./llama_runtime.ts";
 
@@ -84,6 +92,7 @@ afterEach(() => {
     __resetLocalRuntimeForTest();
     __setSidecarLauncherForTest(null);
     __setSpawnForTest(null);
+    __setProcessScanForTest(null);
     __setProxyBypassEnabledForTest(true);
 });
 
@@ -270,6 +279,57 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
         }
     });
 
+    test("watcher ABA guard: a superseded sidecar's late crash does not clobber the replacement's cache", async () => {
+        const key = "test-key-aba";
+        const stub = startStub(key);
+        // Only the FIRST sidecar carries a resolvable exit; the replacement's never
+        // settles, so its own watcher stays dormant for the test.
+        let crashFirst!: () => void;
+        const firstExited = new Promise<number>((resolve) => {
+            crashFirst = (): void => resolve(137);
+        });
+        let launches = 0;
+        __setSidecarLauncherForTest(() => {
+            launches++;
+            const exited = launches === 1 ? firstExited : new Promise<number>(() => {});
+            return Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, key, stop: () => Promise.resolve(), exited }));
+        });
+        try {
+            const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
+            // Launch 1.
+            await provider.embed(["one"], fakeSession).match(
+                (v) => v,
+                () => null,
+            );
+            expect(launches).toBe(1);
+
+            // Stop supersedes launch 1: bumps the epoch, clears the cache.
+            await stopLocalSidecarAndWait();
+
+            // Launch 2 — a fresh spawn now that the cache is clear.
+            await provider.embed(["two"], fakeSession).match(
+                (v) => v,
+                () => null,
+            );
+            expect(launches).toBe(2);
+
+            // NOW crash sidecar 1, LATE. Its exit watcher fires against the current epoch:
+            // the epoch guard recognizes it as superseded and leaves launch 2's cache
+            // intact. Remove that guard and the watcher would clear the cache here.
+            crashFirst();
+            await Bun.sleep(10);
+
+            // Launch 2's cache survived: a third embed reuses it with no new launch.
+            await provider.embed(["three"], fakeSession).match(
+                (v) => v,
+                () => null,
+            );
+            expect(launches).toBe(2);
+        } finally {
+            stub.stop();
+        }
+    });
+
     test("a stop racing an in-flight launch reaps the launched process and caches nothing", async () => {
         const key = "test-key-race";
         const stub = startStub(key);
@@ -447,6 +507,9 @@ describe("launchWithBinary (readiness: exit race + authenticated /props gate)", 
         return {
             exited: new Promise<number>(() => {}),
             tail: (): string => "",
+            // A live modeled server never closes its stderr pipe; settled stays pending,
+            // matching production. These success/401 paths never await it.
+            tailSettled: new Promise<void>(() => {}),
             // server.stop's own settle promise is irrelevant to the test — the modeled
             // process is "gone" as soon as the listener closes to new connections.
             terminate: (): Promise<void> => {
@@ -492,6 +555,8 @@ describe("launchWithBinary (readiness: exit race + authenticated /props gate)", 
                 // Resolve immediately: the child died on startup (unloadable model, bound port).
                 exited: Promise.resolve(1),
                 tail: () => stderrTail,
+                // Already settled: the modeled child has exited and its pipe is closed.
+                tailSettled: Promise.resolve(),
                 terminate: () => {
                     terminations++;
                     return Promise.resolve();
@@ -511,6 +576,102 @@ describe("launchWithBinary (readiness: exit race + authenticated /props gate)", 
         expect(message).toContain(stderrTail);
         // Each of the two attempts reaped its (already-exited) process.
         expect(terminations).toBeGreaterThanOrEqual(1);
+    });
+
+    test("a shutdown mid-launch reaps the in-flight child through the spawn slot", async () => {
+        // The child never becomes ready (no server answers) and never exits on its own,
+        // so the launch stays in flight until we resolve the exit manually at the end.
+        let resolveExit!: (code: number) => void;
+        const exited = new Promise<number>((resolve) => {
+            resolveExit = resolve;
+        });
+        const terminate = mock(() => Promise.resolve());
+        // Signals that spawnFor has run — by the time it resolves, launchWithBinary has
+        // synchronously set the module-level spawn slot (no await between them).
+        let markSpawned!: () => void;
+        const spawnedOnce = new Promise<void>((resolve) => {
+            markSpawned = resolve;
+        });
+        __setSpawnForTest((_bin, _model, _port, _key) => {
+            markSpawned();
+            return ok({ exited, tail: () => "", tailSettled: Promise.resolve(), terminate });
+        });
+
+        // Kick off the launch but do NOT await it; the long health window means readiness
+        // never resolves within the test.
+        const launchP = launchWithBinary("/fake/llama-server", "/model.gguf", 30_000, 50);
+        await spawnedOnce;
+        expect(terminate).toHaveBeenCalledTimes(0);
+
+        // Shutdown lands mid-launch: `running` is still null (never promoted), so the reap
+        // must reach the in-flight child through the spawn slot. Remove slot tracking and
+        // this terminates nothing.
+        await stopLocalSidecarAndWait();
+        expect(terminate).toHaveBeenCalledTimes(1);
+
+        // Unblock the dangling launch so it resolves and leaves no pending poll behind.
+        resolveExit(0);
+        await launchP;
+    });
+
+    test.skipIf(process.platform === "win32")("tail completeness on early exit through the real drain (marker survives settlement)", async () => {
+        // A real short-lived process: writes a marker to stderr, then exits 1. The REAL
+        // spawnLlamaServer pipes and drains its stderr, and the exit-failure path awaits
+        // the drain's settlement so the marker reaches the failure message rather than
+        // racing it. spawnLlamaServer invokes `<serverBin> -m <model> --embeddings ...`,
+        // so the script simply ignores its args.
+        const marker = `llama-stub-marker-${randomUUIDv7()}`;
+        const scriptPath = join(tmpdir(), `llama-stub-${randomUUIDv7()}.sh`);
+        await Bun.write(scriptPath, `#!/bin/sh\necho "${marker}" >&2\nexit 1\n`);
+        chmodSync(scriptPath, 0o755);
+        try {
+            const result = await launchWithBinary(scriptPath, "/model.gguf", 2_000, 100, 200);
+            expect(result.isErr()).toBe(true);
+            // The marker was written to stderr, drained, and — because settlement was
+            // awaited — is present in the failure tail.
+            expect(result._unsafeUnwrapErr().message).toContain(marker);
+        } finally {
+            rmSync(scriptPath, { force: true });
+        }
+    });
+
+    test("a half-open server that accepts but never answers fails at the deadline, not a hang", async () => {
+        // Model a process whose port accepts TCP connections but never sends a response.
+        // Without the per-request timeout a single readiness fetch would hang forever and
+        // defeat the shared deadline; with it, each fetch aborts and the loop ends at the
+        // deadline.
+        const sockets = new Set<Socket>();
+        __setSpawnForTest((_bin, _model, port, _key) => {
+            const server = createServer((socket) => {
+                sockets.add(socket);
+                socket.on("close", () => sockets.delete(socket));
+                // Never write or end — hold the connection half-open.
+            });
+            server.listen(port, "127.0.0.1");
+            return ok({
+                // Stays alive (never exits) — only the per-request timeout can end the poll.
+                exited: new Promise<number>(() => {}),
+                tail: (): string => "",
+                tailSettled: new Promise<void>(() => {}),
+                terminate: (): Promise<void> => {
+                    for (const s of sockets) s.destroy();
+                    server.close();
+                    return Promise.resolve();
+                },
+            });
+        });
+        const started = Date.now();
+        // Shared deadline 600ms, poll 50ms, per-request timeout 100ms: each fetch aborts
+        // at ~100ms and the loop ends at the ~600ms deadline (twice, for the fresh-port
+        // retry).
+        const result = await launchWithBinary("/fake/llama-server", "/model.gguf", 600, 50, 100);
+        const elapsedMs = Date.now() - started;
+        expect(result.isErr()).toBe(true);
+        // Bounded — proof the per-request timeout defeated the half-open hang. Without it
+        // this launch never returns and the test times out.
+        expect(elapsedMs).toBeLessThan(5_000);
+        // And it waited for the deadline rather than failing instantly.
+        expect(elapsedMs).toBeGreaterThanOrEqual(500);
     });
 });
 
@@ -533,6 +694,38 @@ describe("pollLlamaHealth (public load-completion signal)", () => {
         } finally {
             stub.stop();
         }
+    });
+});
+
+describe("sweepOrphanedSidecars (orphan reap decision table)", () => {
+    test.skipIf(process.platform === "win32")("kills only the ppid-1 process running our binary; spares live-parented and foreign", async () => {
+        const serverBin = "/data/inflexa/llama/b9310/llama-server";
+        __setProcessScanForTest(() =>
+            Promise.resolve(
+                [
+                    // Orphan: our binary, reparented to init (ppid 1) → must be killed.
+                    `424242     1 ${serverBin} -m /model.gguf --embeddings --host 127.0.0.1 --port 5001`,
+                    // Live-parented: our binary, owned by a live CLI (ppid 4242) → spared.
+                    `  5555  4242 ${serverBin} -m /model.gguf --embeddings --host 127.0.0.1 --port 5002`,
+                    // Foreign: a different command reparented to init → spared (path mismatch).
+                    `  7777     1 /usr/local/bin/some-other-daemon --serve`,
+                ].join("\n"),
+            ),
+        );
+        const killed: number[] = [];
+        // Spy on process.kill so the injected pids are recorded, never actually signalled:
+        // the decision is observed through the spy, not against real processes. The cast
+        // narrows the recorder to process.kill's exact `(pid, signal?) => true` signature.
+        const killSpy = spyOn(process, "kill").mockImplementation(((pid: number): true => {
+            killed.push(pid);
+            return true;
+        }) as typeof process.kill);
+        try {
+            await sweepOrphanedSidecars(serverBin);
+        } finally {
+            killSpy.mockRestore();
+        }
+        expect(killed).toEqual([424242]);
     });
 });
 

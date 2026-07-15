@@ -106,6 +106,19 @@ const READINESS_TIMEOUT_MS = 30_000;
 const READINESS_POLL_INTERVAL_MS = 150;
 
 /**
+ * Per-request timeout on each individual readiness fetch, distinct from the
+ * whole-sequence {@link READINESS_TIMEOUT_MS}. A healthy loopback `/health` answers in
+ * single-digit ms, and a server still binding refuses the connection immediately (also
+ * fast) — so on every real path this never fires. It exists solely to bound a
+ * half-open server that accepts the TCP connection but never sends a response: without
+ * it, one such `fetch` hangs forever (the shared deadline is only re-checked BETWEEN
+ * requests), defeating the advertised bound. Capped at ~13× the poll interval — long
+ * enough never to clip a legitimately slow answer, short enough that a timed-out
+ * request is retried within the shared deadline rather than after it.
+ */
+const READINESS_REQUEST_TIMEOUT_MS = 2_000;
+
+/**
  * Upper bound on the stderr tail retained per spawn. The reader keeps only the
  * trailing window of bytes, so an undrained pipe can never fill and block the
  * server, while still preserving enough of llama-server's last output (model-load
@@ -165,6 +178,15 @@ type SpawnHandle = {
     readonly exited: Promise<number>;
     /** The last {@link STDERR_TAIL_BYTES} of the child's stderr, decoded. */
     tail(): string;
+    /**
+     * Resolves when the stderr drain loop has finished (the pipe closed). The
+     * early-exit failure path awaits this before reading {@link tail} so the tail is
+     * complete rather than raced — safe there because the child's exit closes the
+     * pipe, so the drain settles promptly. Never awaited while the child may still be
+     * alive (a plain readiness timeout), where the pipe stays open and this would be
+     * unbounded.
+     */
+    readonly tailSettled: Promise<void>;
     /** SIGTERM then SIGKILL after {@link STOP_GRACE_MS}; resolves when the child is gone. */
     terminate(): Promise<void>;
 };
@@ -195,6 +217,17 @@ let launchFor: SidecarLauncher = defaultLaunch;
 let spawnFor: (serverBin: string, modelPath: string, port: number, key: string) => Result<SpawnHandle, ProviderError> = spawnLlamaServer;
 
 /**
+ * How the orphan sweep enumerates processes. Production shells out to `ps`; a test
+ * seam ({@link __setProcessScanForTest}) supplies canned rows so the parse/decision
+ * runs without real processes. Returns raw `ps -axo pid=,ppid=,command=` output, one
+ * process per line.
+ */
+type ProcessScan = () => Promise<string>;
+
+/** The process lister {@link sweepOrphanedSidecars} uses; swapped in tests via {@link __setProcessScanForTest}. */
+let scanProcesses: ProcessScan = defaultProcessScan;
+
+/**
  * Cached first-launch outcome. A promise so concurrent first `embed()` calls
  * coalesce on one spawn; caches the failure too, so a persistent fault (runtime
  * not materializable) is not re-attempted (with its full readiness timeout) on
@@ -204,6 +237,18 @@ let ready: Promise<Result<ReadySidecar, ProviderError>> | null = null;
 
 /** The currently-running sidecar handle, held for reaping. `null` when none is up. */
 let running: SidecarHandle | null = null;
+
+/**
+ * The in-flight spawn handle, held from the moment {@link spawnLlamaServer} returns
+ * until the launch either fails (reaped, then cleared) or is promoted to
+ * {@link running}. It closes the reachability gap {@link launchEpoch} cannot: during
+ * the launch window (child spawned, readiness pending) `running` is still `null`, so a
+ * shutdown landing there would find nothing to reap — {@link stopLocalSidecarAndWait}
+ * terminates this slot instead. Set/cleared inside {@link launchWithBinary} (which
+ * tests also drive directly), so the slot lives at module scope rather than in the
+ * launch.
+ */
+let spawnSlot: SpawnHandle | null = null;
 
 /** Guards against registering more than one shutdown reap hook per process. */
 let reapHooked = false;
@@ -285,12 +330,18 @@ function mintApiKey(): string {
 /**
  * Continuously drain `stream` into a bounded ~{@link STDERR_TAIL_BYTES} tail. The
  * drain starts at spawn (before health polling) so the pipe can never fill and block
- * the server regardless of how the launch proceeds; the returned closure decodes the
- * retained bytes on demand for a launch-failure message.
+ * the server regardless of how the launch proceeds.
+ *
+ * Returns both the on-demand decoder (`tail`) and `settled`, which resolves when the
+ * reader loop finishes (the pipe closed). The early-exit failure path awaits `settled`
+ * before reading `tail` so the final diagnostics are captured rather than raced: the
+ * drain is a background loop, so `proc.exited` can resolve a tick before the loop has
+ * consumed the last chunk. `settled` never rejects — the reader swallows the
+ * pipe-closed error and always runs its `finally`.
  */
-function drainStderrTail(stream: ReadableStream<Uint8Array>): () => string {
+function drainStderrTail(stream: ReadableStream<Uint8Array>): { tail(): string; settled: Promise<void> } {
     let tail = new Uint8Array(0);
-    void (async () => {
+    const settled = (async (): Promise<void> => {
         const reader = stream.getReader();
         try {
             for (;;) {
@@ -311,24 +362,45 @@ function drainStderrTail(stream: ReadableStream<Uint8Array>): () => string {
             reader.releaseLock();
         }
     })();
-    // A leading multi-byte char can be sliced mid-sequence when the window rotates;
-    // TextDecoder emits a replacement char there, acceptable for a diagnostic tail.
-    return () => new TextDecoder().decode(tail);
+    return {
+        // A leading multi-byte char can be sliced mid-sequence when the window rotates;
+        // TextDecoder emits a replacement char there, acceptable for a diagnostic tail.
+        tail: () => new TextDecoder().decode(tail),
+        settled,
+    };
 }
+
+/**
+ * Memoized termination promises, keyed by the child process. The reap can be requested
+ * more than once for the same child (the fire-and-forget {@link stopLocalSidecar} and
+ * the awaited shutdown hook can both fire, and a failed launch reaps its own handle),
+ * and each request must send ONE SIGTERM and arm ONE SIGKILL timer — not stack
+ * duplicate signals and timers. A `WeakMap` so a reaped child's entry is collectable
+ * once the handle is dropped.
+ */
+const terminations = new WeakMap<Subprocess, Promise<void>>();
 
 /**
  * SIGTERM the child, escalating to SIGKILL if it has not exited within
  * {@link STOP_GRACE_MS}. Resolves only when the process is actually gone (via
  * `proc.exited`), so an awaiting shutdown hook never returns over an undead child.
+ * Idempotent: repeated calls return the first call's promise, so the signal and the
+ * escalation timer are issued exactly once per process.
  */
-async function terminateProcess(proc: Subprocess): Promise<void> {
-    proc.kill("SIGTERM");
-    const killer = setTimeout(() => proc.kill("SIGKILL"), STOP_GRACE_MS);
-    try {
-        await proc.exited;
-    } finally {
-        clearTimeout(killer);
-    }
+function terminateProcess(proc: Subprocess): Promise<void> {
+    const existing = terminations.get(proc);
+    if (existing !== undefined) return existing;
+    const done = (async (): Promise<void> => {
+        proc.kill("SIGTERM");
+        const killer = setTimeout(() => proc.kill("SIGKILL"), STOP_GRACE_MS);
+        try {
+            await proc.exited;
+        } finally {
+            clearTimeout(killer);
+        }
+    })();
+    terminations.set(proc, done);
+    return done;
 }
 
 /**
@@ -353,11 +425,13 @@ function spawnLlamaServer(serverBin: string, modelPath: string, port: number, ke
             stdout: "ignore",
             stderr: "pipe",
         });
+        // `stderr: "pipe"` above makes `proc.stderr` a ReadableStream; the literal
+        // option guarantees it, which the general Subprocess type cannot narrow.
+        const drain = drainStderrTail(proc.stderr);
         return ok({
             exited: proc.exited,
-            // `stderr: "pipe"` above makes `proc.stderr` a ReadableStream; the literal
-            // option guarantees it, which the general Subprocess type cannot narrow.
-            tail: drainStderrTail(proc.stderr),
+            tail: drain.tail,
+            tailSettled: drain.settled,
             terminate: () => terminateProcess(proc),
         });
     } catch (cause) {
@@ -365,6 +439,21 @@ function spawnLlamaServer(serverBin: string, modelPath: string, port: number, ke
             providerFault(`Could not start the local embedding runtime (llama-server): ${cause instanceof Error ? cause.message : String(cause)}`, false),
         );
     }
+}
+
+/**
+ * The abort signal for a single readiness `fetch`: the child-exit signal (if present)
+ * OR-combined with a fresh per-request timeout. Without the timeout, a half-open
+ * server that accepts the connection but never answers hangs one `fetch` forever, and
+ * because the shared deadline is only re-checked between requests, that one hang
+ * defeats the whole bound. The timeout converts the hang into an ordinary aborted
+ * request; the poll loop then treats it exactly like a refused connection and keeps
+ * polling until the shared deadline. The exit signal aborting is the separate,
+ * terminal case (the loop checks it and stops).
+ */
+function readinessRequestSignal(requestTimeoutMs: number, exitSignal?: AbortSignal): AbortSignal {
+    const perRequest = AbortSignal.timeout(requestTimeoutMs);
+    return exitSignal ? AbortSignal.any([exitSignal, perRequest]) : perRequest;
 }
 
 /**
@@ -379,23 +468,27 @@ function spawnLlamaServer(serverBin: string, modelPath: string, port: number, ke
  * @param origin loopback origin without the `/v1` suffix (e.g. `http://127.0.0.1:PORT`)
  * @param signal aborted by the launch's exit race so a dead-on-startup child does
  *   not leave this loop fetching a dead port until the deadline
+ * @param requestTimeoutMs per-fetch bound so a half-open server cannot hang a single
+ *   request past the shared deadline (parameterized so tests can drive it fast)
  */
 export async function pollLlamaHealth(
     origin: string,
     timeoutMs: number = READINESS_TIMEOUT_MS,
     intervalMs: number = READINESS_POLL_INTERVAL_MS,
     signal?: AbortSignal,
+    requestTimeoutMs: number = READINESS_REQUEST_TIMEOUT_MS,
 ): Promise<Result<void, ProviderError>> {
     const deadline = Date.now() + timeoutMs;
     const healthUrl = `${origin}/health`;
     for (;;) {
         if (signal?.aborted) return err(providerFault("Readiness polling was cancelled because the runtime exited.", true));
         try {
-            const res = await fetch(healthUrl, { signal });
+            const res = await fetch(healthUrl, { signal: readinessRequestSignal(requestTimeoutMs, signal) });
             if (res.status === 200) return ok(undefined);
         } catch {
-            // Connection refused/reset while the server is still binding — or an abort —
-            // is expected; the loop decides via the signal and the deadline below.
+            // Connection refused/reset while the server is still binding, a per-request
+            // timeout against a half-open server, or an exit abort — all expected; the
+            // loop decides via the exit signal and the deadline below.
         }
         if (Date.now() >= deadline) {
             return err(providerFault(`The local embedding runtime did not become ready within ${Math.round(timeoutMs / 1000)}s.`, true));
@@ -413,6 +506,13 @@ export async function pollLlamaHealth(
 type ReadinessFailure = {
     /** `false` when a fresh-port retry cannot change the outcome (key rejection). */
     readonly portRetryable: boolean;
+    /**
+     * `true` only when the child exited before readiness. The exit closes the stderr
+     * pipe, so {@link launchWithBinary} can await the drain's settlement for a complete
+     * tail; a plain-timeout failure (child possibly still alive) leaves this unset and
+     * the tail is read as-is.
+     */
+    readonly fromExit?: boolean;
     readonly error: ProviderError;
 };
 
@@ -441,16 +541,17 @@ async function awaitSidecarReady(
     timeoutMs: number,
     intervalMs: number,
     signal?: AbortSignal,
+    requestTimeoutMs: number = READINESS_REQUEST_TIMEOUT_MS,
 ): Promise<Result<void, ReadinessFailure>> {
     const deadline = Date.now() + timeoutMs;
-    const health = await pollLlamaHealth(origin, timeoutMs, intervalMs, signal);
+    const health = await pollLlamaHealth(origin, timeoutMs, intervalMs, signal, requestTimeoutMs);
     if (health.isErr()) return err({ portRetryable: true, error: health.error });
 
     const propsUrl = `${origin}/props`;
     for (;;) {
         if (signal?.aborted) return err({ portRetryable: true, error: providerFault("Readiness polling was cancelled because the runtime exited.", true) });
         try {
-            const res = await fetch(propsUrl, { headers: { Authorization: `Bearer ${key}` }, signal });
+            const res = await fetch(propsUrl, { headers: { Authorization: `Bearer ${key}` }, signal: readinessRequestSignal(requestTimeoutMs, signal) });
             if (res.status === 200) return ok(undefined);
             if (res.status === 401) {
                 return err({
@@ -496,6 +597,7 @@ export async function launchWithBinary(
     modelPath: string,
     healthTimeoutMs: number = READINESS_TIMEOUT_MS,
     healthPollMs: number = READINESS_POLL_INTERVAL_MS,
+    requestTimeoutMs: number = READINESS_REQUEST_TIMEOUT_MS,
 ): Promise<Result<SidecarHandle, ProviderError>> {
     let lastError: ProviderError | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -510,6 +612,11 @@ export async function launchWithBinary(
         // surface it immediately rather than burning the retry on the same fault.
         if (spawned.isErr()) return err(spawned.error);
         const handle = spawned.value;
+        // Track the live child for reaping from the instant it exists — before readiness
+        // resolves — so a shutdown landing mid-launch can terminate it. Left set on
+        // success (ensureReady clears it when it promotes to `running`); cleared here on
+        // failure, after the terminate that reaps this handle.
+        spawnSlot = handle;
         const origin = `http://127.0.0.1:${port.value}`;
 
         // Race readiness against the child's exit. A server that dies during startup
@@ -517,19 +624,29 @@ export async function launchWithBinary(
         // the exit; the abort tears down the readiness polling so no loop lingers.
         const pollAbort = new AbortController();
         const readyOrExit = await Promise.race([
-            awaitSidecarReady(origin, key, healthTimeoutMs, healthPollMs, pollAbort.signal),
+            awaitSidecarReady(origin, key, healthTimeoutMs, healthPollMs, pollAbort.signal, requestTimeoutMs),
             handle.exited.then((code): Result<void, ReadinessFailure> => {
                 pollAbort.abort();
-                return err({ portRetryable: true, error: providerFault(`The local embedding runtime exited (code ${code}) before becoming ready.`, true) });
+                return err({
+                    portRetryable: true,
+                    fromExit: true,
+                    error: providerFault(`The local embedding runtime exited (code ${code}) before becoming ready.`, true),
+                });
             }),
         ]);
         if (readyOrExit.isOk()) {
             return ok({ baseURL: `${origin}/v1`, key, exited: handle.exited, tail: handle.tail, stop: handle.terminate });
         }
-        // Reap ours (a no-op if already gone) and append the server's own stderr so
-        // its diagnostics reach the user.
+        // Reap ours (a no-op if already gone). Guard the clear against a concurrent
+        // launch having already re-set the slot to its own handle.
         void handle.terminate();
+        if (spawnSlot === handle) spawnSlot = null;
         const failure = readyOrExit.error;
+        // When the child exited, its stderr pipe closed, so the drain settles promptly —
+        // await it so the failure carries the COMPLETE tail rather than a raced partial.
+        // A plain readiness timeout may leave the child alive (a half-open server) with
+        // its pipe still open, where awaiting settlement would be unbounded: read as-is.
+        if (failure.fromExit) await handle.tailSettled;
         const tail = handle.tail().trim();
         lastError =
             tail.length > 0 ? providerFault(`${failure.error.message}\n  llama-server stderr (tail):\n${tail}`, failure.error.retryable) : failure.error;
@@ -538,10 +655,62 @@ export async function launchWithBinary(
     return err(lastError ?? providerFault("The local embedding runtime failed to start.", true));
 }
 
+/** Enumerate every process via `ps` for the orphan sweep. A spawn/read fault throws into {@link sweepOrphanedSidecars}'s own try/catch, which swallows it — the sweep is best-effort. */
+async function defaultProcessScan(): Promise<string> {
+    const proc = Bun.spawn(["ps", "-axo", "pid=,ppid=,command="], { stdout: "pipe", stderr: "ignore" });
+    const text = await new Response(proc.stdout).text();
+    await proc.exited;
+    return text;
+}
+
 /**
- * Production launcher: materialize the pinned runtime, then hand off to
- * {@link launchWithBinary}. A runtime that cannot be materialized points the user at
- * `inflexa setup --embeddings local`, which succeeds in every install context.
+ * Best-effort reap of leftover sidecars from a previous CLI that died without its
+ * shutdown chain (SIGKILL, crash). Kills every process executing THIS installation's
+ * materialized `serverBin` whose parent is pid 1 — reparenting to init is the one
+ * orphan signature that cannot lie, so a sidecar still owned by a live CLI (parented to
+ * that CLI, ppid ≠ 1) is never touched, and the binary path lives under inflexa's data
+ * dir so a foreign llama-server cannot prefix-match it. Runs at sidecar spawn, not CLI
+ * startup: a process that never embeds scans nothing, and the moment we add a sidecar
+ * is exactly when the graveyard matters.
+ *
+ * Best-effort throughout: a scan or kill fault must never fail the launch, and this
+ * module does not log, so faults are swallowed silently. Exported for the sweep
+ * decision-table test, which injects scan rows and spies on `process.kill`.
+ *
+ * @param serverBin absolute path to the materialized `llama-server` binary
+ */
+export async function sweepOrphanedSidecars(serverBin: string): Promise<void> {
+    // TODO(extend): Windows has no ppid-1 reparent signature (and the Windows sidecar
+    // target is cross-compiled and untested); a Job Object or a WMI ParentProcessId
+    // scan would be the equivalent to wire when that target is supported.
+    if (process.platform === "win32") return;
+    let output: string;
+    try {
+        output = await scanProcesses();
+    } catch {
+        return;
+    }
+    for (const line of output.split("\n")) {
+        // pid and ppid are the first two whitespace-delimited columns; the rest is the
+        // command, kept verbatim so a data-dir path containing spaces still matches.
+        const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
+        if (match === null) continue;
+        const ppid = Number(match[2]);
+        const command = match[3] ?? "";
+        if (ppid !== 1 || !command.startsWith(serverBin)) continue;
+        try {
+            process.kill(Number(match[1]), "SIGKILL");
+        } catch {
+            // Already gone (ESRCH) or not ours to signal (EPERM) — nothing left to heal.
+        }
+    }
+}
+
+/**
+ * Production launcher: materialize the pinned runtime, sweep any orphaned sidecars from
+ * an unsurvivable prior exit, then hand off to {@link launchWithBinary}. A runtime that
+ * cannot be materialized points the user at `inflexa setup --embeddings local`, which
+ * succeeds in every install context.
  */
 async function defaultLaunch(modelPath: string): Promise<Result<SidecarHandle, ProviderError>> {
     const runtime = await ensureLlamaServer();
@@ -553,6 +722,7 @@ async function defaultLaunch(modelPath: string): Promise<Result<SidecarHandle, P
             ),
         );
     }
+    await sweepOrphanedSidecars(runtime.value);
     return launchWithBinary(runtime.value, modelPath);
 }
 
@@ -614,6 +784,15 @@ function ensureReady(modelPath: string): Promise<Result<ReadySidecar, ProviderEr
         // later POSTs are both loopback fetches an ambient corporate proxy would
         // otherwise swallow.
         if (proxyBypassEnabled) ensureLoopbackProxyBypass();
+        if (!reapHooked) {
+            reapHooked = true;
+            // Register BEFORE the first launch begins, not in the success continuation:
+            // the launch window (child spawned, readiness pending) is exactly the gap a
+            // late registration leaves uncovered. A shutdown landing there reaps the
+            // in-flight child via `running ?? spawnSlot`. The awaited form keeps
+            // shutdown() from returning over an undead child.
+            onShutdown(stopLocalSidecarAndWait);
+        }
         const epoch = ++launchEpoch;
         ready = launchFor(modelPath).then((launched) =>
             launched.andThen((handle): Result<ReadySidecar, ProviderError> => {
@@ -624,6 +803,11 @@ function ensureReady(modelPath: string): Promise<Result<ReadySidecar, ProviderEr
                     return err(providerFault("The local embedding runtime was stopped while it was still launching.", true));
                 }
                 running = handle;
+                // Promotion supersedes the spawn slot: `running` is now the reachable
+                // handle a stop reaps, so the slot (its low-level SpawnHandle, matching
+                // the same child) is redundant and cleared. Epoch matched, so no
+                // concurrent launch owns the slot.
+                spawnSlot = null;
                 // Post-ready exit watcher: a sidecar that dies after readiness (a crash)
                 // invalidates the cached readiness so the next embed() spawns a fresh one —
                 // but only while this launch is still current, or a superseded handle's
@@ -635,12 +819,6 @@ function ensureReady(modelPath: string): Promise<Result<ReadySidecar, ProviderEr
                             ready = null;
                         }
                     });
-                }
-                if (!reapHooked) {
-                    reapHooked = true;
-                    // Reap on normal process exit so the sidecar never outlives the CLI; the
-                    // awaited form keeps shutdown() from returning over an undead child.
-                    onShutdown(stopLocalSidecarAndWait);
                 }
                 // The sidecar is just another loopback OpenAI endpoint, so the local
                 // provider IS the harness OpenAI-shaped client pointed at it — no bespoke
@@ -674,15 +852,21 @@ export function stopLocalSidecar(): void {
  * The awaited termination: same effect as {@link stopLocalSidecar}, but the returned
  * promise settles only once the child has actually exited (through the SIGTERM→SIGKILL
  * escalation). Registered as the shutdown reap hook.
+ *
+ * Reaps the ready sidecar if one exists, otherwise the in-flight spawn — a stop landing
+ * mid-launch (before promotion) still terminates the already-spawned child rather than
+ * finding nothing. Both are cleared, and the epoch bumped so an in-flight launch that
+ * has yet to resolve reaps its own process and caches nothing.
  */
 export async function stopLocalSidecarAndWait(): Promise<void> {
-    const handle = running;
+    const sidecar = running;
+    const spawn = spawnSlot;
     running = null;
+    spawnSlot = null;
     ready = null;
-    // Supersede any launch in flight: its captured epoch no longer matches, so when it
-    // resolves it reaps its own process and caches nothing.
     launchEpoch++;
-    if (handle) await handle.stop();
+    if (sidecar) await sidecar.stop();
+    else if (spawn) await spawn.terminate();
 }
 
 /**
@@ -740,6 +924,15 @@ export function __setProxyBypassEnabledForTest(enabled: boolean): void {
 }
 
 /**
+ * TEST ONLY. Override the process lister the orphan sweep uses, so a test drives the
+ * parse/decision against canned `ps` rows (spying on `process.kill`) without real
+ * processes. Pass `null` to restore the real `ps` scan.
+ */
+export function __setProcessScanForTest(fn: ProcessScan | null): void {
+    scanProcesses = fn ?? defaultProcessScan;
+}
+
+/**
  * TEST ONLY. Clear the module-level lazy-launch cache so a subsequent `embed()`
  * re-runs the launcher. Unlike {@link stopLocalSidecar} it does NOT signal the
  * handle — the test owns the stub server's lifecycle. Production never calls this;
@@ -748,4 +941,5 @@ export function __setProxyBypassEnabledForTest(enabled: boolean): void {
 export function __resetLocalRuntimeForTest(): void {
     ready = null;
     running = null;
+    spawnSlot = null;
 }

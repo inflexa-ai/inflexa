@@ -188,7 +188,10 @@ export async function composeUp(rt: ContainerRuntime, mode: ConnectionMode): Pro
     const guard = await ensureMountSources(mode);
     if (guard.isErr()) return err({ type: "mount_source_unavailable", message: formatInfraStateError(guard.error) });
 
-    const { code, stderr } = await capture(rt, composeArgs(["up", "-d"]));
+    // --remove-orphans: the compose file is regenerated from config at every entry point, so a service
+    // dropped by a mode switch (e.g. the proxy vanishing when the connection flips to direct) would
+    // otherwise leave its old container running unmanaged — the flag makes the engine reap it.
+    const { code, stderr } = await capture(rt, composeArgs(["up", "-d", "--remove-orphans"]));
     if (code !== 0) {
         return err({
             type: "container_start_failed",
