@@ -273,8 +273,12 @@ agent's (see `agent-model-selection`): the provider instance bound to the conver
 sub-agents. Specific to the conversation
 surface:
 
-- `templatesDir` SHALL resolve like `skillsDir` does: a config-overridable path
-  defaulting to the repository root's `templates/` directory, gated at pre-flight.
+- `skillsDir` and `templatesDir` SHALL each be a config-overridable path that, absent an
+  override, resolves to the extracted content directory
+  (`join(env.contentDir, <contentHash>, "skills")` / `.../templates`, materialized by
+  `content-assets`) in a **release build**, and to the repository-root `skills/` /
+  `templates/` trees in a **development run**; both remain gated at pre-flight, which now
+  passes because `content-assets` materializes the tree before the gate.
 - `chrome` SHALL be the empty config (no browser URL): with report preview
   unavailable, nothing in the local path reaches Chrome.
 - `createPreviewPublisher` SHALL yield the harness's unavailable preview publisher,
@@ -285,7 +289,7 @@ surface:
 #### Scenario: Conversation deps resolve to their designated backends
 
 - **WHEN** the runtime composes the conversation agent
-- **THEN** chat traffic targets the resolved model connection under the conversation agent's model (the local proxy in `cliproxy` mode, the configured endpoint in `direct` mode), threads and working memory live in the local Postgres, and templates resolve from the configured (or default root) templates directory
+- **THEN** chat traffic targets the resolved model connection under the conversation agent's model (the local proxy in `cliproxy` mode, the configured endpoint in `direct` mode), threads and working memory live in the local Postgres, and templates resolve from the configured directory or, absent an override, the extracted content directory in a release build (the repo-root `templates/` tree in a development run)
 
 #### Scenario: Report preview degrades visibly, report building does not
 
@@ -321,3 +325,4 @@ The realization SHALL be memoized through `workspaceRootForAnalysisId` (see path
 - **GIVEN** an analysis was deleted and a new one created with the same name under the same anchor
 - **WHEN** the resolver resolves the new analysis's root
 - **THEN** the root is the same path, and it holds none of the deleted analysis's artifacts
+
