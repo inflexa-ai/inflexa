@@ -12,11 +12,14 @@ name: Build Sandbox Images
 #     friendly), unchanged from before — only the tarball SOURCE moved (an image
 #     subtree, not a throwaway builder).
 #
-# amd64 needs a large self-hosted runner (label `inflexa-builder`) — the full R +
-# Bioconductor compile does not fit a GitHub-hosted runner. arm64 builds on the
-# hosted arm64 runner. Both arches attempt every image best-effort;
-# sandbox-python-r is continue-on-error (arm64 R source compiles are patchy), so
-# an arch that cannot build R still publishes base + python and the non-R tracks.
+# Both arches build on large self-hosted Graviton/x86 builders — the full R +
+# Bioconductor compile does not fit a GitHub-hosted runner. amd64 → label
+# `inflexa-builder` (m6i.4xlarge), arm64 → label `inflexa-builder-arm64`
+# (m7g.4xlarge); the boxes live in platform-infra (modules/internal/builder-ec2*.tf)
+# and are started via `just build-start [arch]`. Both arches attempt every image
+# best-effort; sandbox-python-r stays continue-on-error (a native-arm64 R build
+# still occasionally trips) so an arch that cannot build R still publishes base +
+# python and the non-R tracks.
 #
 # The build-time LOAD CHECK runs inside each image build (best-effort + non-empty
 # floor). The COVERAGE REPORT runs after extraction (want-vs-got + regression diff
@@ -43,7 +46,6 @@ permissions:
   contents: read
 
 env:
-  BUILDER_NAME: sandbox-image-builder
   MANIFEST: images/lib-store-manifest.yaml
   IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/sandbox-base
   IMAGE_PYTHON: ghcr.io/${{ github.repository_owner }}/sandbox-python
@@ -95,7 +97,7 @@ jobs:
             runner: '["self-hosted", "inflexa-builder"]'
           - arch: arm64
             platform: linux/arm64
-            runner: '"ubuntu-24.04-arm"'
+            runner: '["self-hosted", "inflexa-builder-arm64"]'
     runs-on: ${{ fromJSON(matrix.runner) }}
     env:
       PLATFORM: ${{ matrix.platform }}
@@ -107,41 +109,18 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Set up Docker Buildx
+        # Use the docker daemon's built-in builder (not a docker-container builder):
+        # its BuildKit cache lives in /var/lib/docker — the persistent EBS volume —
+        # so warm layers survive the box's stop/start with no long-lived builder to
+        # leave stale state, and no runner-writable cache dir to provision.
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
         with:
-          driver: docker-container
-          name: ${{ env.BUILDER_NAME }}
-          cleanup: false
-
-      - name: Free disk space (hosted arm64 runner)
-        if: matrix.arch == 'arm64'
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/hostedtoolcache/CodeQL 2>/dev/null || true
-          df -h /
-
-      - name: Recover stale builder state
-        if: matrix.arch == 'amd64'
-        # cleanup:false reuses the BuildKit container across runs on the
-        # persistent self-hosted builder. A cancelled prior run can leave orphaned
-        # sub-container network state behind — every subsequent build then sees
-        # "Connection refused" against public mirrors. Probe egress; recreate the
-        # builder only if broken.
-        run: |
-          set -eu
-          PROBE=$(mktemp -d) && trap 'rm -rf "$PROBE"' EXIT
-          cat > "$PROBE/Dockerfile" <<'EOF'
-          FROM alpine:3
-          RUN wget -q --spider --timeout=15 http://archive.ubuntu.com/ubuntu/dists/noble/InRelease
-          EOF
-          if ! docker buildx build --builder "$BUILDER_NAME" --platform "$PLATFORM" --no-cache "$PROBE" >/tmp/probe.log 2>&1; then
-            echo "::warning::Builder $BUILDER_NAME failed egress probe; recreating to clear stale state"
-            sed 's/^/probe: /' /tmp/probe.log || true
-            docker buildx rm --force "$BUILDER_NAME" || true
-            docker buildx create --driver docker-container --name "$BUILDER_NAME" --bootstrap >/dev/null
-          fi
+          driver: docker
 
       - name: Ensure zstd
-        run: command -v zstd >/dev/null || sudo apt-get install -y -qq zstd
+        # AL2023 ships zstd; fail loudly rather than install (the runner user has no
+        # sudo on the self-hosted builders).
+        run: command -v zstd >/dev/null || { echo "::error::zstd not found on the builder"; exit 1; }
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
@@ -161,7 +140,6 @@ jobs:
             -f images/sandbox-base/Dockerfile \
             --platform "$PLATFORM" \
             --build-arg "BASE_IMAGE=$BASE_IMAGE" \
-            --builder "$BUILDER_NAME" \
             -t "${IMAGE_BASE}:${VERSION}-${ARCH}" \
             .
           docker push "${IMAGE_BASE}:${VERSION}-${ARCH}"
@@ -173,7 +151,6 @@ jobs:
             --platform "$PLATFORM" \
             --build-arg "SANDBOX_BASE_IMAGE=${IMAGE_BASE}:${VERSION}-${ARCH}" \
             --build-arg "BASE_IMAGE=$BASE_IMAGE" \
-            --builder "$BUILDER_NAME" \
             -t "${IMAGE_PYTHON}:${VERSION}-${ARCH}" \
             .
           docker push "${IMAGE_PYTHON}:${VERSION}-${ARCH}"
@@ -190,7 +167,6 @@ jobs:
             --build-arg "SANDBOX_PYTHON_IMAGE=${IMAGE_PYTHON}:${VERSION}-${ARCH}" \
             --build-arg "BASE_IMAGE=$BASE_IMAGE" \
             --secret id=github_token,env=GITHUB_TOKEN \
-            --builder "$BUILDER_NAME" \
             -t "${IMAGE_PYTHON_R}:${VERSION}-${ARCH}" \
             .
           docker push "${IMAGE_PYTHON_R}:${VERSION}-${ARCH}"
