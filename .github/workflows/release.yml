@@ -21,12 +21,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  # attest-build-provenance signs with the workflow's OIDC identity.
-  id-token: write
-  attestations: write
-  # The final step dispatches homebrew.yml via `gh workflow run`.
-  actions: write
+  contents: read
 
 # Never cancel a half-published release; later pushes queue behind it and
 # their gate then sees the new tag and no-ops.
@@ -37,8 +32,13 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      actions: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Gate on an unreleased version
         id: gate
@@ -104,7 +104,7 @@ jobs:
             sleep 30
           done
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         if: steps.gate.outputs.release == 'true'
 
       # cli depends on @inflexa-ai/harness via file:../harness, whose exports
@@ -143,9 +143,21 @@ jobs:
         working-directory: cli/dist
         run: sha256sum inflexa-* > SHA256SUMS
 
+      - name: Install cosign
+        if: steps.gate.outputs.release == 'true'
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - name: Sign the checksum manifest
+        if: steps.gate.outputs.release == 'true'
+        working-directory: cli/dist
+        run: |
+          cosign sign-blob --yes \
+            --output-signature SHA256SUMS.sig \
+            --output-certificate SHA256SUMS.pem \
+            SHA256SUMS
+
       # Signed SLSA provenance: lets a user verify a downloaded binary was
       # built by this workflow from this repo (`gh attestation verify`).
-      - uses: actions/attest-build-provenance@v4
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         if: steps.gate.outputs.release == 'true'
         with:
           subject-path: cli/dist/inflexa-*
@@ -163,7 +175,7 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "v$VERSION" \
             --generate-notes \
-            dist/inflexa-* dist/SHA256SUMS dist/THIRD-PARTY-NOTICES.txt
+            dist/inflexa-* dist/SHA256SUMS dist/SHA256SUMS.sig dist/SHA256SUMS.pem dist/THIRD-PARTY-NOTICES.txt
 
       # Downstream distribution runs as separate dispatched workflows
       # (homebrew.yml explains why a `release:` trigger cannot work) so a

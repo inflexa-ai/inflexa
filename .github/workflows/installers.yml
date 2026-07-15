@@ -25,7 +25,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Install latest, then a pinned version
         run: |
           INFLEXA_INSTALL_DIR="$RUNNER_TEMP/bin" bash install.sh
@@ -40,7 +40,7 @@ jobs:
   powershell:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # Windows PowerShell 5.1 is what a stock machine's `irm | iex` runs in;
       # it exercises the HttpWebResponse redirect branch and TLS pinning.
       - name: Windows PowerShell 5.1 - latest

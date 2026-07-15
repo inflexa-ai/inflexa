@@ -17,7 +17,7 @@ jobs:
   dco:
     runs-on: ubuntu-latest
     steps:
-      - uses: KineticCafe/actions-dco@v3.1.0
+      - uses: KineticCafe/actions-dco@1da04282bbf757dab7d92a5c8535dbfb8113da5c # v3.1.0
         with:
           config: |
             [bot]

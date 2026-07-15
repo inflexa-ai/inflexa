@@ -23,6 +23,8 @@ on:
   issues:
     types: [opened, assigned]
 
+permissions: {}
+
 jobs:
   claude:
     # Run only when someone mentions @claude AND that someone is one of us:
@@ -41,13 +43,13 @@ jobs:
       issues: write
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # Full history so Claude can diff the PR's whole commit range.
           fetch-depth: 0
 
       - name: Run Claude Code
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@12531344451323133b0493233c759991ac61da12 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # NOTE: do NOT set `prompt:` here. Providing `prompt` forces the

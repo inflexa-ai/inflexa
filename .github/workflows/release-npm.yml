@@ -24,8 +24,6 @@ on:
 
 permissions:
   contents: read
-  # The OIDC token npm exchanges for its short-lived publish credential.
-  id-token: write
 
 concurrency:
   group: release-npm
@@ -37,8 +35,11 @@ jobs:
     # ever ship what main's automation assembled.
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Resolve and validate the version
         id: version
@@ -64,14 +65,14 @@ jobs:
             --pattern 'inflexa-*' --pattern SHA256SUMS --pattern THIRD-PARTY-NOTICES.txt \
             --dir assets
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       # Trusted publishing needs npm >= 11.5.1; Node 24's bundled npm
       # satisfies that. Deliberately NO registry-url: that writes an .npmrc
       # reading ${NODE_AUTH_TOKEN} and npm hard-fails on the unset var —
       # trusted publishing is tokenless and resolves the registry from each
       # package's publishConfig.
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
 
