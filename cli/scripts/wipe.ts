@@ -35,7 +35,6 @@ const REPO_ARTIFACTS = [join(import.meta.dir, "..", "node_modules"), join(import
 const TARGETS = {
     db: { label: "database — saved sessions (SQLite + WAL/SHM)", paths: [env.dbPath, `${env.dbPath}-wal`, `${env.dbPath}-shm`] },
     logs: { label: "logs", paths: [env.logDir] },
-    outputs: { label: "analysis outputs (anchor-fallback)", paths: [env.outputFallbackDir] },
     proxy: { label: "proxy config + provider auth", paths: [env.cliproxyConfigPath, env.cliproxyAuthDir] },
     config: { label: "config (settings)", paths: [env.configPath] },
     auth: { label: "auth (Auth0 tokens)", paths: [env.authPath] },
