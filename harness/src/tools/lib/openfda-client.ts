@@ -70,8 +70,17 @@ const OpenFdaLabelSchema = z.object({
 });
 type OpenFdaLabel = z.infer<typeof OpenFdaLabelSchema>;
 
+/**
+ * Escape a value for embedding inside a double-quoted openFDA (Lucene) phrase.
+ * The backslash is escaped first so a caller-supplied `\` cannot smuggle an
+ * unescaped `"` past the quote escaping and break out of the phrase.
+ */
+function escapeQueryPhrase(value: string): string {
+    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 function buildSearch(drugName: string, serious: boolean): string {
-    const escaped = drugName.replace(/"/g, '\\"');
+    const escaped = escapeQueryPhrase(drugName);
     let search = `patient.drug.openfda.generic_name:"${escaped}"`;
     if (serious) search += "+AND+serious:1";
     return search;
@@ -110,7 +119,7 @@ export async function getFaersByDrug(
  * and §2.6.8 risk summary.
  */
 export async function getFaersSeriousness(drugName: string): Promise<SeriousnessProfile | null> {
-    const escaped = drugName.replace(/"/g, '\\"');
+    const escaped = escapeQueryPhrase(drugName);
     const search = `patient.drug.openfda.generic_name:"${escaped}"`;
 
     const totalUrl = `${OPENFDA_BASE}?search=${encodeURIComponent(search)}&limit=1`;
@@ -226,7 +235,7 @@ const OpenFdaLabelResponseSchema = z.object({
  */
 export async function getDrugLabelActions(genericName: string, options: { limit?: number } = {}): Promise<DrugLabelAction[]> {
     const limit = options.limit ?? 5;
-    const escaped = genericName.replace(/"/g, '\\"');
+    const escaped = escapeQueryPhrase(genericName);
     const search = `openfda.generic_name:"${escaped}"`;
     const url = `${OPENFDA_LABEL_BASE}?search=${encodeURIComponent(search)}` + `&sort=effective_time:desc&limit=${limit}`;
     const res = await apiFetchValidated(url, OpenFdaLabelResponseSchema);

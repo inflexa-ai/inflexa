@@ -43,7 +43,16 @@ export interface IupharHeterodimer {
 const UNIPROT_ACCESSION_RE = /^[A-Z][0-9][A-Z0-9]{3}[0-9]$/;
 
 function stripHtml(name: string): string {
-    return name.replace(/<[^>]+>/g, "");
+    // Strip tags to a fixpoint: a single pass can leave a `<…>` behind when
+    // removing an inner tag lets the surrounding angle brackets form a new one,
+    // so repeat until the string stops changing.
+    let out = name;
+    let prev: string;
+    do {
+        prev = out;
+        out = out.replace(/<[^>]+>/g, "");
+    } while (out !== prev);
+    return out;
 }
 
 function notFound(error: ApiError): boolean {

@@ -12,10 +12,16 @@ const KEGG_BASE = "https://rest.kegg.jp";
 const REACTOME_BASE = "https://reactome.org/ContentService";
 
 export function stripHtmlAndCollapseWs(s: string): string {
-    return s
-        .replace(/<[^>]+>/g, "")
-        .replace(/\s+/g, " ")
-        .trim();
+    // Strip tags to a fixpoint: a single pass can leave a `<…>` behind when
+    // removing an inner tag lets the surrounding angle brackets form a new one,
+    // so repeat until the string stops changing.
+    let out = s;
+    let prev: string;
+    do {
+        prev = out;
+        out = out.replace(/<[^>]+>/g, "");
+    } while (out !== prev);
+    return out.replace(/\s+/g, " ").trim();
 }
 
 const ORGANISM_MAP: Record<string, string> = {
