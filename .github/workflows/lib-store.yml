@@ -231,7 +231,7 @@ jobs:
 
       - name: Configure AWS credentials
         if: steps.publish.outputs.enabled == 'true'
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        uses: aws-actions/configure-aws-credentials@517a711dbcd0e402f90c77e7e2f81e849156e31d # v6.2.2
         with:
           role-to-assume: ${{ vars.LIB_STORE_PUBLISH_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
