@@ -1,5 +1,4 @@
-import { mkdir, readdir, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readdir } from "node:fs/promises";
 
 import { intro, outro, log, note, spinner as clackSpinner } from "@clack/prompts";
 import { type Result, ok, err } from "neverthrow";
@@ -10,6 +9,7 @@ import { select, promptText } from "../../lib/cli.ts";
 import { detectedMachine, resolveHarnessConfig } from "../harness/config.ts";
 import { type PostgresConnection } from "./postgres_types.ts";
 import { writeComposeFile, composeUp, composePull, composePullIfMissing, composeAvailable, type ConnectionMode } from "./compose.ts";
+import { formatInfraStateError, writeProxyConfig } from "./proxy_config.ts";
 
 // `inflexa setup` provisions the inflexa infrastructure stack: CLIProxyAPI (the
 // local model proxy) and Postgres + pgvector (the harness substrate). Both run
@@ -109,12 +109,19 @@ export async function setup(options: SetupOptions): Promise<void> {
 
         if (mode === "cliproxy") {
             // --- proxy config ---
-            const { created, apiKey } = await writeProxyConfig();
-            if (created) {
+            const writeResult = await writeProxyConfig();
+            if (writeResult.isErr()) {
+                // Known filesystem-state faults (e.g. a directory manufactured at the config path) get a
+                // specific diagnosis + remediation here, before the outer catch — which stays a backstop
+                // for genuinely unknown throws only.
+                log.error(formatInfraStateError(writeResult.error));
+                process.exitCode = 1;
+                return;
+            }
+            const proxyConfigOutcome = writeResult.value;
+            if (proxyConfigOutcome.created) {
                 log.success(`Wrote proxy config at ${env.cliproxyConfigPath}`);
-                if (apiKey) {
-                    note(apiKey, "Client API key (use this to call the proxy)");
-                }
+                note(proxyConfigOutcome.apiKey, "Client API key (use this to call the proxy)");
             } else {
                 log.info(`Proxy config exists at ${env.cliproxyConfigPath}`);
             }
@@ -202,7 +209,7 @@ export async function setup(options: SetupOptions): Promise<void> {
 
             if (options.start) {
                 s.start("Starting containers");
-                const upResult = await composeUp(rt);
+                const upResult = await composeUp(rt, mode);
                 if (upResult.isErr()) {
                     s.error("Failed to start containers");
                     log.error(upResult.error.message);
@@ -647,46 +654,6 @@ function volumeArgs(rt: ContainerRuntime): string[] {
     return ["-v", rt.mountArg(env.cliproxyConfigPath, CONTAINER_CONFIG_PATH), "-v", rt.mountArg(env.cliproxyAuthDir, CONTAINER_AUTH_DIR)];
 }
 
-// --- config ----------------------------------------------------------------
-
-async function writeProxyConfig(): Promise<{ created: boolean; apiKey?: string }> {
-    await mkdir(dirname(env.cliproxyConfigPath), { recursive: true, mode: 0o700 });
-    await mkdir(env.cliproxyAuthDir, { recursive: true, mode: 0o700 });
-
-    if (await Bun.file(env.cliproxyConfigPath).exists()) return { created: false };
-
-    const apiKey = generateApiKey();
-    await writeFile(env.cliproxyConfigPath, proxyConfig(apiKey), { mode: 0o600 });
-    return { created: true, apiKey };
-}
-
-/**
- * auth-dir is the in-container Linux path (mounted from env.cliproxyAuthDir), so
- * it is OS-safe regardless of the host.
- */
-export function proxyConfig(apiKey: string): string {
-    return `host: ""
-port: ${env.cliproxyPort}
-auth-dir: "${CONTAINER_AUTH_DIR}"
-api-keys:
-  - "${apiKey}"
-debug: false
-`;
-}
-
-/**
- * Client-facing key for calling the proxy — distinct from the provider
- * credentials the login flows write under auth-dir.
- */
-export function generateApiKey(): string {
-    const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    const rand = new Uint8Array(45);
-    crypto.getRandomValues(rand);
-    let key = "sk-";
-    for (const b of rand) key += chars[b % chars.length];
-    return key;
-}
-
 // --- authentication --------------------------------------------------------
 
 async function isAuthenticated(): Promise<boolean> {
@@ -846,10 +813,11 @@ export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Res
     // proxy. A direct connection has neither, so both are skipped — the Postgres/compose
     // and embedder steps below still run as mode-independent prerequisites.
     if (mode === "cliproxy") {
-        try {
-            await writeProxyConfig();
-        } catch (cause) {
-            return err(new ProxyError(`Failed to write proxy config: ${cause instanceof Error ? cause.message : String(cause)}`));
+        const writeResult = await writeProxyConfig();
+        if (writeResult.isErr()) {
+            // Known filesystem-state faults surface with their diagnosis + remediation naming the path,
+            // not a raw errno — the launch gate must tell the user exactly how to unwedge.
+            return err(new ProxyError(formatInfraStateError(writeResult.error)));
         }
 
         if (!(await isAuthenticated())) {
@@ -887,7 +855,7 @@ export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Res
         return err(new ProxyError(pullResult.error.message));
     }
 
-    const upResult = await composeUp(rt);
+    const upResult = await composeUp(rt, mode);
     if (upResult.isErr()) {
         return err(new ProxyError(`Failed to start containers: ${upResult.error.message}`));
     }

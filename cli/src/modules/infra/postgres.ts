@@ -155,14 +155,17 @@ export async function ensurePostgresReady(): Promise<Result<PostgresConnection, 
     // The caller (ensurePostgresReadyOrExit or the TUI launch path) generates
     // the compose file if missing before calling this function; when this gate
     // is what generates it, shape it for the configured connection mode.
-    const composeWriteErr = ensureComposeFile(conn, resolveConnectionMode()).match(
+    const mode = resolveConnectionMode();
+    const composeWriteErr = ensureComposeFile(conn, mode).match(
         () => null,
         (e) => e,
     );
     if (composeWriteErr) return err(composeWriteErr);
 
+    // composeUp runs the mount-source integrity guard for this mode before the engine — the same seam
+    // every compose-up path shares, so this gate needs no guard of its own.
     console.log("  Starting inflexa containers…");
-    const upResult = await composeUp(rt);
+    const upResult = await composeUp(rt, mode);
     if (upResult.isErr()) return err(upResult.error);
 
     console.log("  Waiting for Postgres to be ready…");

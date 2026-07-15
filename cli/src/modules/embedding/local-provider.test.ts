@@ -1,6 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
-import { createLocalEmbeddingProvider } from "./local-provider.ts";
+import { __setCompiledBinaryForTest } from "../../lib/install_context.ts";
+import { __resetLocalRuntimeForTest, COMPILED_LOCAL_UNAVAILABLE_REASON, createLocalEmbeddingProvider } from "./local-provider.ts";
+
+afterEach(() => {
+    // The runtime cache and compiled-context flag are both process-wide singletons; restore them so a
+    // load-failure test can't poison a later test in this (or another) file.
+    __resetLocalRuntimeForTest();
+    __setCompiledBinaryForTest(null);
+});
 
 // The real GGUF model is a 36 MB download — the test runs against it only when
 // present (the spike left a copy here). In CI without the model, these skip.
@@ -26,6 +34,24 @@ describe("createLocalEmbeddingProvider", () => {
             () => null,
         );
         expect(outcome).toEqual([]);
+    });
+
+    test("compiled context: an import/load failure is remediated by switching modes, never a setup command", async () => {
+        __setCompiledBinaryForTest(true);
+        // A bogus path forces `loadRuntime` into its catch (the native import may resolve on a dev
+        // machine, but `loadModel` on a missing file cannot) — the same catch the packaged binary hits
+        // when `import("node-llama-cpp")` itself never resolves. Both routes must yield switch-modes
+        // guidance, not a doomed `inflexa setup --embeddings local`.
+        const provider = createLocalEmbeddingProvider({ modelPath: "/nonexistent/compiled-probe.gguf" });
+        const message = await provider.embed(["probe"], fakeSession).match(
+            () => null,
+            (e) => e.message,
+        );
+        expect(message).not.toBeNull();
+        expect(message!).toContain(COMPILED_LOCAL_UNAVAILABLE_REASON);
+        expect(message!).toContain("api-key");
+        expect(message!).toContain("off");
+        expect(message!).not.toContain("inflexa setup");
     });
 
     describe.skipIf(!modelPresent)("with the real GGUF model", () => {

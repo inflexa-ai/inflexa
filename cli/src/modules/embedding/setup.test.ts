@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { readConfig, writeConfig, type Config } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
+import { __setCompiledBinaryForTest } from "../../lib/install_context.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { ensureEmbedderReady, runEmbeddingSetup } from "./setup.ts";
 
@@ -28,6 +29,9 @@ afterEach(() => {
     assertTestSandbox(env.embeddingModelPath);
     rmSync(env.configPath, { force: true });
     rmSync(env.embeddingModelPath, { force: true });
+    // The compiled-context override is a process-wide singleton; leaving it set would leak into every
+    // later test (and file) in the same process. Restore real detection (not-compiled under `bun test`).
+    __setCompiledBinaryForTest(null);
 });
 
 describe("ensureEmbedderReady", () => {
@@ -79,5 +83,63 @@ describe("runEmbeddingSetup", () => {
         const result = await runEmbeddingSetup(true, "off");
         expect(result.isOk()).toBe(true);
         expect(readConfig().embedding.mode).toBe("off");
+    });
+});
+
+describe("compiled-context embeddings (native runtime unavailable)", () => {
+    test("`--embeddings local` fails before any download or bun spawn, naming the api-key alternative", async () => {
+        __setCompiledBinaryForTest(true);
+        writeConfigWith({ mode: "off" });
+        // If the guard ever regressed to running the local flow, the first thing it does is spawn
+        // `bun pm trust`; asserting spawn is untouched proves the trust step never runs here.
+        const spawnSpy = spyOn(Bun, "spawn");
+
+        const result = await runEmbeddingSetup(true, "local");
+
+        expect(result.isErr()).toBe(true);
+        const e = result._unsafeUnwrapErr();
+        expect(e.type).toBe("local_unavailable");
+        expect(e.message).toContain("--embeddings api-key");
+        // No download landed at the model path, and no `bun` process was spawned.
+        expect(await Bun.file(env.embeddingModelPath).exists()).toBe(false);
+        expect(spawnSpy).not.toHaveBeenCalled();
+        expect(readConfig().embedding.mode).toBe("off");
+
+        spawnSpy.mockRestore();
+    });
+
+    test("ensureEmbedderReady with local mode → local_unavailable, switch-modes remediation (even if the model file exists)", async () => {
+        __setCompiledBinaryForTest(true);
+        writeConfigWith({ mode: "local", modelPath: env.embeddingModelPath });
+        // A present model file must NOT be mistaken for readiness here: the native runtime still can't
+        // load it in the packaged binary, so the compiled check short-circuits ahead of the file probe.
+        mkdirSync(dirname(env.embeddingModelPath), { recursive: true });
+        writeFileSync(env.embeddingModelPath, "fake-gguf");
+
+        const result = await ensureEmbedderReady();
+
+        expect(result.isErr()).toBe(true);
+        const e = result._unsafeUnwrapErr();
+        expect(e.type).toBe("local_unavailable");
+        expect(e.message).toContain("api-key");
+        expect(e.message).toContain("off");
+        // Never points at a command that cannot succeed in the packaged binary.
+        expect(e.message).not.toContain("inflexa setup");
+    });
+});
+
+describe("from-source embeddings remediation (unchanged)", () => {
+    test("ensureEmbedderReady local + model missing → not_configured pointing at `inflexa setup --embeddings local`", async () => {
+        // Default detection under `bun test` is not-compiled; make the from-source context explicit so
+        // this asserts the from-source remediation string independently of the harness's default.
+        __setCompiledBinaryForTest(false);
+        writeConfigWith({ mode: "local", modelPath: env.embeddingModelPath });
+
+        const result = await ensureEmbedderReady();
+
+        expect(result.isErr()).toBe(true);
+        const e = result._unsafeUnwrapErr();
+        expect(e.type).toBe("not_configured");
+        expect(e.message).toContain("inflexa setup --embeddings local");
     });
 });

@@ -46,8 +46,11 @@ export async function up(): Promise<void> {
         return;
     }
 
+    // `up` provisions the same preconditions as the launch gate purely by routing through composeUp's
+    // guarded seam: in cliproxy mode the guard writes the proxy config before the engine runs (no
+    // manufactured directory at its path); direct mode provisions nothing proxy-related.
     console.log("  Starting inflexa containers…");
-    const upResult = await composeUp(rt);
+    const upResult = await composeUp(rt, mode);
     if (upResult.isErr()) {
         console.error(`\n  ${upResult.error.message}\n`);
         process.exitCode = 1;
