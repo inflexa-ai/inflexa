@@ -46,10 +46,11 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
 
+# Least privilege by default: the workflow-wide token is read-only. The build
+# and manifest jobs escalate to packages:write (GHCR push) and id-token:write
+# (AWS OIDC) explicitly, so no job inherits a write scope it does not use.
 permissions:
   contents: read
-  id-token: write
-  packages: write
 
 env:
   BUILDER_NAME: sandbox-image-builder
@@ -72,7 +73,7 @@ jobs:
       r_version: ${{ steps.meta.outputs.r_version }}
       python_version: ${{ steps.meta.outputs.python_version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Compute version + parse manifest
         id: meta
         run: |
@@ -89,6 +90,10 @@ jobs:
 
   build:
     needs: prepare
+    permissions:
+      contents: read # checkout
+      packages: write # push the per-arch images to GHCR
+      id-token: write # AWS OIDC for the optional S3 tarball publish
     strategy:
       fail-fast: false
       # Arch list — keep in lock-step with the workflow-level ARCHES env (manifest
@@ -109,10 +114,10 @@ jobs:
       BASE_IMAGE: ${{ needs.prepare.outputs.base_image }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
         with:
           driver: docker-container
           name: ${{ env.BUILDER_NAME }}
@@ -149,7 +154,7 @@ jobs:
         run: command -v zstd >/dev/null || sudo apt-get install -y -qq zstd
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -260,7 +265,7 @@ jobs:
 
       - name: Configure AWS credentials
         if: steps.publish.outputs.enabled == 'true'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           role-to-assume: ${{ vars.LIB_STORE_PUBLISH_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
@@ -292,7 +297,7 @@ jobs:
           cat "candidate/linux-${ARCH}.json"
 
       - name: Upload candidate artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lib-store-candidate-${{ matrix.arch }}
           path: candidate/
@@ -313,11 +318,13 @@ jobs:
     needs: [prepare, build]
     if: always()
     runs-on: ubuntu-latest
+    permissions:
+      packages: write # push the multi-arch manifest list to GHCR
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
