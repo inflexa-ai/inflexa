@@ -33,22 +33,12 @@ name: Build Sandbox Images
 #   - vars.AWS_REGION                 optional; defaults to us-east-1
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - images/lib-store-manifest.yaml
-      - images/sandbox-base/**
-      - images/sandbox-python/**
-      - images/sandbox-python-r/**
   workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
 
-# Least privilege by default: the workflow-wide token is read-only. The build
-# and manifest jobs escalate to packages:write (GHCR push) and id-token:write
-# (AWS OIDC) explicitly, so no job inherits a write scope it does not use.
 permissions:
   contents: read
 
@@ -91,9 +81,9 @@ jobs:
   build:
     needs: prepare
     permissions:
-      contents: read # checkout
-      packages: write # push the per-arch images to GHCR
-      id-token: write # AWS OIDC for the optional S3 tarball publish
+      contents: read
+      packages: write
+      id-token: write
     strategy:
       fail-fast: false
       # Arch list — keep in lock-step with the workflow-level ARCHES env (manifest
@@ -319,7 +309,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     permissions:
-      packages: write # push the multi-arch manifest list to GHCR
+      packages: write
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
     steps:

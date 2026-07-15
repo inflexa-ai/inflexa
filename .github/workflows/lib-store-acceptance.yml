@@ -11,32 +11,23 @@ name: Sandbox Image Acceptance
 # It is NON-GATING: `latest` was already advanced by the build. This run reports a
 # per-arch results table to the step summary and a green/red status for review —
 # it promotes nothing and rolls nothing back.
-#
-# Requires the same opt-in publish config as the build (LIB_STORE_S3_BUCKET,
-# LIB_STORE_PUBLISH_ROLE_ARN) to resolve the candidate pointer; without it the run
-# no-ops.
 
 on:
   workflow_run:
     workflows: ["Build Sandbox Images"]
     types: [completed]
-  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
-# Least privilege by default: the workflow-wide token is read-only; the
-# acceptance job escalates to id-token:write (AWS OIDC) explicitly.
 permissions:
   contents: read
 
 jobs:
   acceptance:
     # Only when the build succeeded (a fully-failed build has nothing to check).
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+    if: github.event.workflow_run.conclusion == 'success'
     strategy:
       fail-fast: false
       # Arch list — keep in lock-step with the build workflow matrix and its
@@ -49,49 +40,16 @@ jobs:
             runner: '"ubuntu-24.04-arm"'
     runs-on: ${{ fromJSON(matrix.runner) }}
     permissions:
-      contents: read # checkout
-      id-token: write # AWS OIDC to read the candidate pointer from S3
-      actions: read # download the candidate artifact from the build run
-      packages: read # pull the published image from GHCR
+      contents: read
+      actions: read
+      packages: read
     env:
       ARCH: ${{ matrix.arch }}
-      S3_BUCKET: ${{ vars.LIB_STORE_S3_BUCKET }}
     steps:
       - name: Checkout
-        # No `ref:` here — the triggering "Build Sandbox Images" workflow only
-        # runs on push to main and manual dispatch (both trusted), so its
-        # head_sha is always a main commit. Checking out event-supplied
-        # `workflow_run.head_sha` in this privileged (id-token/packages)
-        # workflow_run is exactly the "untrusted code checkout" pattern OpenSSF
-        # Scorecard flags as a Dangerous-Workflow, and static analysis cannot
-        # see that the source is trust-restricted. A bare checkout runs the
-        # current-main suite instead; since acceptance is NON-GATING, the small
-        # window where main advanced past the built commit is immaterial to
-        # what is only a post-publish report.
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - name: Gate publish configuration
-        id: cfg
-        run: |
-          if [ -n "$S3_BUCKET" ] && [ -n "${{ vars.LIB_STORE_PUBLISH_ROLE_ARN }}" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Acceptance skipped — LIB_STORE_S3_BUCKET / LIB_STORE_PUBLISH_ROLE_ARN unset, so nothing was published to promote."
-          fi
-
-      # AWS credentials are configured BEFORE resolving the candidate: the
-      # workflow_dispatch path reads the candidate pointer from S3 to find the image
-      # to validate. Acceptance itself promotes nothing.
-      - name: Configure AWS credentials
-        if: steps.cfg.outputs.enabled == 'true'
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
-        with:
-          role-to-assume: ${{ vars.LIB_STORE_PUBLISH_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
-
       - name: Download candidate metadata (from the build run)
-        if: steps.cfg.outputs.enabled == 'true' && github.event_name == 'workflow_run'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: lib-store-candidate-${{ matrix.arch }}
@@ -101,35 +59,12 @@ jobs:
 
       - name: Resolve candidate version + image
         id: candidate
-        if: steps.cfg.outputs.enabled == 'true'
         run: |
           set -euo pipefail
-          if [ -f "candidate/linux-${ARCH}.json" ]; then
-            VERSION=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json'))['version'])")
-            PUBLISHED=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json')).get('publish',''))")
-            IMAGE=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json')).get('image',''))")
-          else
-            # workflow_dispatch fallback: read the recorded candidate JSON pointer,
-            # which carries the exact top image ref for this arch (sandbox-python-r,
-            # or sandbox-python where R did not build) — validate that image rather
-            # than reconstructing a tag.
-            PUBLISHED=true
-            IMAGE=""
-            if aws s3 cp "s3://$S3_BUCKET/candidate/linux-${ARCH}.json" candidate.json 2>aws-err.log; then
-              VERSION=$(python3 -c "import json;print(json.load(open('candidate.json'))['version'])")
-              PUBLISHED=$(python3 -c "import json;print(json.load(open('candidate.json')).get('publish',''))")
-              IMAGE=$(python3 -c "import json;print(json.load(open('candidate.json')).get('image',''))")
-            elif grep -Eqi 'Not Found|404|NoSuchKey|does not exist' aws-err.log; then
-              echo "::notice::No candidate pointer object for linux-${ARCH}; nothing to validate."
-              VERSION=""
-            else
-              echo "::error::Failed to read the candidate pointer for linux-${ARCH}:"
-              cat aws-err.log >&2
-              exit 1
-            fi
-          fi
-          if [ -z "$VERSION" ] || [ "$PUBLISHED" != "true" ]; then
-            echo "::notice::No published candidate for linux-${ARCH}; nothing to validate."
+          VERSION=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json'))['version'])")
+          IMAGE=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json')).get('image',''))")
+          if [ -z "$IMAGE" ]; then
+            echo "::notice::No candidate image for linux-${ARCH}; nothing to validate."
             echo "present=false" >> "$GITHUB_OUTPUT"
           else
             echo "present=true" >> "$GITHUB_OUTPUT"
