@@ -246,7 +246,12 @@ for (const target of targets) {
         //     a local binary. The packages aren't installed (dbos-sdk fails to declare them as
         //     optionalDependencies), so external keeps the never-hit requires out of the bundle. Matches
         //     the harness's documented posture (runtime/otel-smoke.test.ts: OTLP exporter absent, DBOS degrades).
-        external: ["node-llama-cpp", "@node-llama-cpp/*", "winston", "winston-transport", "@opentelemetry/exporter-logs-otlp-proto"],
+        //   • cpu-features — a native addon (`require('../build/Release/cpufeatures.node')`, unbuilt here)
+        //     that ssh2 loads inside a try/catch purely to detect CPU crypto acceleration; ssh2 arrives via
+        //     dockerode → docker-modem and is only exercised over an SSH docker transport, which the local
+        //     backend never uses (unix socket / TCP). external stops the bundler descending into the package
+        //     and resolving its .node file; the runtime require then throws and ssh2's catch swallows it.
+        external: ["node-llama-cpp", "@node-llama-cpp/*", "winston", "winston-transport", "@opentelemetry/exporter-logs-otlp-proto", "cpu-features"],
         compile: {
             target: `bun-${target.os}-${target.arch}`,
             // Bun appends .exe automatically for windows targets.
