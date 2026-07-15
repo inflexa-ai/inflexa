@@ -150,7 +150,15 @@ jobs:
         working-directory: cli
         run: |
           bun run docs:gen
-          tar -czf dist/cli-docs.tar.gz -C dist-docs .
+          # Reproducible archive: pin entry order, mtime (the release commit's date), and
+          # ownership, and strip gzip's mtime/name header (-n), so the tarball is byte-identical
+          # when regenerated at this commit — not just its file contents (docs:gen already makes
+          # those deterministic). Keeps the door open to checksumming/re-verifying the asset later
+          # without the tar+gzip layer perturbing the bytes. The default Actions shell runs with
+          # `-o pipefail`, so a tar failure still fails the step through the pipe.
+          mtime="@$(git log -1 --format=%ct "$GITHUB_SHA")"
+          tar --sort=name --mtime="$mtime" --owner=0 --group=0 --numeric-owner \
+            -cf - -C dist-docs . | gzip -n > dist/cli-docs.tar.gz
 
       - name: Install cosign
         if: steps.gate.outputs.release == 'true'

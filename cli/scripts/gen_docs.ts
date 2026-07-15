@@ -74,9 +74,15 @@ function table(header: string[], rows: string[][]): string {
     return [line(header), `|${header.map(() => " --- ").join("|")}|`, ...rows.map(line)].join("\n");
 }
 
-/** Frontmatter limited to title + description — the subset every SSG reads. JSON.stringify is a valid YAML double-quoted scalar, so arbitrary prose is safe. */
+/**
+ * Frontmatter limited to title + description — the subset every SSG reads. Two layers: `escapeProse`
+ * neutralizes `<`/`{{` (the same treatment the body gets) so a consumer that inlines either field into
+ * HTML/markdown can't have it reinterpreted as a tag or Vue interpolation; `JSON.stringify` then wraps
+ * the result as a YAML double-quoted scalar, keeping arbitrary prose syntactically valid. The entities
+ * decode back to the literal text in the canonical `<meta>`-description usage.
+ */
 function frontmatter(title: string, description: string): string {
-    return `---\ntitle: ${JSON.stringify(title)}\ndescription: ${JSON.stringify(description)}\n---`;
+    return `---\ntitle: ${JSON.stringify(escapeProse(title))}\ndescription: ${JSON.stringify(escapeProse(description))}\n---`;
 }
 
 // --- registry introspection ---------------------------------------------------------
