@@ -1,15 +1,22 @@
 version: 2
 updates:
-  # JavaScript dependencies. The "npm" ecosystem covers Bun projects —
-  # Dependabot reads package.json and bun.lock. The two real manifests live in
-  # cli/ and harness/; the repo root has none, so scanning "/" finds nothing.
+  # JavaScript dependencies (real manifests in cli/ and harness/; the repo root
+  # has none). Version-update PRs are disabled here (limit 0) on purpose:
+  # Dependabot's npm ecosystem bumps package.json but does not maintain Bun's
+  # text bun.lock, so every such PR fails CI immediately at
+  # `bun install --frozen-lockfile` ("lockfile had changes, but lockfile is
+  # frozen"). The block is kept rather than deleted so (a) OpenSSF Scorecard's
+  # Dependency-Update-Tool check still detects a config, and (b) Dependabot
+  # *security* updates — governed by repo settings, not open-pull-requests-limit
+  # — keep opening PRs for CVEs. Routine npm bumps are done manually via
+  # `bun update`. Raise the limit again if Dependabot gains bun.lock support.
   - package-ecosystem: "npm"
     directories:
       - "/cli"
       - "/harness"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0
     # The repo uses Conventional Commits; "build(deps)" is the right type for
     # dependency bumps and keeps release-note generation tidy.
     commit-message:
