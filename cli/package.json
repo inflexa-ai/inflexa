@@ -1,6 +1,6 @@
 {
     "name": "inflexa",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "private": true,
     "type": "module",
     "scripts": {
@@ -10,6 +10,8 @@
         "dev:install": "bun scripts/dev_install.ts",
         "format": "prettier --write src/",
         "format:file": "prettier --write",
+        "harness:local": "cd ../harness && bun run build && bun link && cd ../cli && bun link @inflexa-ai/harness",
+        "harness:remote": "rm -rf node_modules/@inflexa-ai/harness && bun install",
         "lint": "eslint .",
         "start": "bun run src/index.ts",
         "test": "bun test",
@@ -18,7 +20,7 @@
     },
     "dependencies": {
         "@clack/prompts": "^1.7.0",
-        "@inflexa-ai/harness": "file:../harness",
+        "@inflexa-ai/harness": "0.2.0",
         "@inflexa-ai/tsprov": "0.5.1",
         "@opentelemetry/api": "^1.9.1",
         "@opentelemetry/api-logs": "^0.219.0",

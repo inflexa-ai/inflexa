@@ -107,16 +107,13 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         if: steps.gate.outputs.release == 'true'
 
-      # cli depends on @inflexa-ai/harness via file:../harness, whose exports
-      # resolve to harness/dist/ — not checked in, and bun blocks the package's
-      # own `prepare` (untrusted lifecycle scripts), so build it explicitly.
-      - name: Build harness (file:../harness dependency)
-        if: steps.gate.outputs.release == 'true'
-        working-directory: harness
-        run: |
-          bun install --frozen-lockfile
-          bun run build
-
+      # cli pins @inflexa-ai/harness to an exact version and installs it from
+      # npm, so the binary bundles the published, attested harness artifact —
+      # not a local build. The pinned version is always already on npm here:
+      # the harness bump is promoted first (release-harness.yml), and only a
+      # later, separate cli change consumes it — a combined harness+cli change
+      # cannot pass cli CI (the pin is unresolvable until harness publishes),
+      # so it never reaches this workflow.
       - name: Install cli dependencies
         if: steps.gate.outputs.release == 'true'
         working-directory: cli

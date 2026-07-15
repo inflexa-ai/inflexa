@@ -27,15 +27,11 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
-      # cli depends on @inflexa-ai/harness via file:../harness, whose exports
-      # resolve to harness/dist/ — not checked in, and bun blocks the package's
-      # own `prepare` (untrusted lifecycle scripts), so build it explicitly.
-      - name: Build harness (file:../harness dependency)
-        working-directory: harness
-        run: |
-          bun install --frozen-lockfile
-          bun run build
-
+      # cli pins @inflexa-ai/harness to an exact version and installs it from
+      # npm (not file:../harness), so a plain install resolves it — no in-repo
+      # harness build. A cli change that needs an unreleased harness must land
+      # AFTER that harness version publishes (release-harness.yml); until then
+      # this frozen install cannot resolve the pin. See the two-step promotion.
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
