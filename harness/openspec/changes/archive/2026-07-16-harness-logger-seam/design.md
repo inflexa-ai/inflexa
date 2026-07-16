@@ -62,9 +62,9 @@ export interface Logger {
 
 A raw `Error` is never passed through as a field value, tempting as it is — it satisfies `unknown` and type-checks, but `JSON.stringify(new Error("boom"))` is `{}`. A JSON-serializing sink would drop the message entirely: silent loss, which is the failure this whole change exists to remove.
 
-### `logger` is optional to the embedder, no-op internally
+### `logger` is required at `bootHarness`, optional below it, no-op internally
 
-`createConsoleLogger()` and `createNoopLogger()` both ship from `index.ts`. An embedder that omits `logger` gets the no-op; internal call sites therefore call `logger.warn(...)` unconditionally instead of `deps.logger?.warn(...)`.
+`createConsoleLogger()` and `createNoopLogger()` both ship from `index.ts`. `BootHarnessDeps.logger` stays **required** (as it already was) — booting is the one place an embedder should consciously decide where diagnostics go. Every deps bag below it takes `logger?`, and the harness resolves `?? createNoopLogger()` once per entry point, so internal call sites call `logger.warn(...)` unconditionally instead of `deps.logger?.warn(...)`, and a partially-wired bundle degrades rather than crashing.
 
 *Alternatives considered.* **Required dep** — makes the embedder choose, and an omission a compile error. Rejected: it forces every deps-bag constructor and test to name a logger for no gain over the no-op, and the optionality it removes is already expressible internally by resolving `?? createNoopLogger()` once per entry point. **Optional defaulting to console** — rejected outright: console is precisely what a TUI host eats, so a forgotten wire-up would silently restore today's bug. The accepted trade is that an embedder who forgets gets silence; that is a real cost, mitigated by silence being an honest signal (nothing appears anywhere) rather than a misleading one (records written to a destroyed stream).
 

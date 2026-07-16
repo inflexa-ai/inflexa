@@ -863,7 +863,10 @@ async function safeRun(logger: Logger, fn: () => Promise<void>, label: string): 
         await fn();
     } catch (err) {
         if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
-        logger.warn(`${label} failed (non-fatal)`, logger.errorFields(err));
+        // The stage rides as a namespace, not interpolated prose: `label` is what
+        // says WHICH post-step stage degraded, and a reader must be able to filter
+        // on it without parsing the message.
+        logger.named(label).warn("failed (non-fatal)", logger.errorFields(err));
     }
 }
 
@@ -877,7 +880,10 @@ async function safeRunValue<T>(logger: Logger, fn: () => Promise<T>, label: stri
         return await fn();
     } catch (err) {
         if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
-        logger.warn(`${label} failed (non-fatal)`, logger.errorFields(err));
+        // The stage rides as a namespace, not interpolated prose: `label` is what
+        // says WHICH post-step stage degraded, and a reader must be able to filter
+        // on it without parsing the message.
+        logger.named(label).warn("failed (non-fatal)", logger.errorFields(err));
         return fallback;
     }
 }

@@ -44,37 +44,11 @@
 ## 6. Lock it in
 
 - [x] 6.1 `no-console: "error"` on `src/**/*.ts` in `harness/eslint.config.js`, exempting `src/lib/console-logger.ts` + its test BY PATH in the config — no inline `eslint-disable` anywhere. Verified both directions: a planted `console.warn` in a normal src file errors (`Unexpected console statement`), and the exempt realization passes.
-- [x] 6.2 `bun test` green — 1026 pass, up from a 1011 pre-change baseline; the 111 failures are all the Postgres testcontainer with Docker down. Tests use the shared `silentLogger` / `createCapturingLogger` (`__tests__/setup/logger.ts`) instead of a silent pino. NOTE: `bun run lint` (`eslint .`) fails on `scripts/smoke.mjs` — a `.mjs` outside the type-aware program. Verified pre-existing by running HEAD's own config: identical failure. `npx eslint src/` is clean apart from a pre-existing `neverthrow/must-use-result` finding in `providers/ai-sdk.test.ts:346`. Both are out of scope here; see 7.3.
+- [x] 6.2 **Fully green against real infrastructure**: `TESTCONTAINERS_RYUK_DISABLED=true bun test` → harness **1233 pass / 0 fail**, cli **1147 pass / 0 fail** — including the DBOS workflow-replay and sandbox-step suites that exercise the changed bodies against a real Postgres + DBOS engine. (The ~111 failures seen earlier were never regressions: `/.*Started.*/` is Ryuk's wait, not Postgres's — testcontainers' reaper sidecar fails to start on this machine. Docker being down produces the identical message, which is what masked it.) Tests use the shared `silentLogger` / `createCapturingLogger` (`__tests__/setup/logger.ts`) instead of a silent pino. NOTE: `bun run lint` (`eslint .`) fails on `scripts/smoke.mjs` — a `.mjs` outside the type-aware program. Verified pre-existing by running HEAD's own config: identical failure. `npx eslint src/` is clean apart from a pre-existing `neverthrow/must-use-result` finding in `providers/ai-sdk.test.ts:346`. Both are out of scope here; see 7.3.
 - [x] 6.3 `tsc -p tsconfig.json` clean; `bun run format` applied. (It reformats ALL of `src/`, so it also touched two files unrelated to this change — `reference-data/catalog.test.ts`, `tools/sandbox/list-available-refs.ts` — which were reverted rather than committed as drift.)
 - [x] 6.4 `harness/CLAUDE.md`: the DI principle claimed `Logger` was already an injected construction dep — now true. Added design principle 7 (diagnostics through the seam, never console; renumbered the rest), listed the seam in the public-surface paragraph, and rewrote the Debugging section — `LOG_LEVEL` is the embedder's knob now, and a step failure's cause exists ONLY in the log line since `failStep` scrubs everything downstream.
-- [ ] 6.5 **At archive time**, replace the `structured-logging` Purpose prose. A delta carries requirement operations only and `openspec archive` rewrites nothing else, so the paragraph opening "The harness logs operationally through **pino**" survives the archive stale — contradicting the requirements directly above it. Doing it before archive is worse (Purpose would describe the new world while the requirements still mandate pino), so the replacement is pinned here verbatim rather than left to be improvised:
+- [x] 6.5 Replaced the `structured-logging` Purpose prose at archive time. `openspec archive` applies requirement operations only, so the paragraph opening "The harness logs operationally through **pino**" survived the archive and contradicted the requirements directly below it — rewritten by hand in `openspec/specs/structured-logging/spec.md` as part of the same archive step.
 
-      > The harness logs operationally through an injected `Logger` (`src/lib/logger.ts`) and names no
-      > logging library: it is published as `@inflexa-ai/harness` and must not push one onto its
-      > consumers. The interface is message-first — `error(msg, fields?)`, the order `slog`, winston, and
-      > `console` share — with `with(fields)` binding contextual fields, `named(name)` binding the
-      > module namespace it renders as a `[a.b]` message prefix, and `errorFields(err)` normalizing a
-      > thrown value. `errorFields` sits on the interface, not in the package, because the best shape for
-      > an error belongs to the sink: a pino-backed realization defers to pino's `err` serializer, an
-      > OTel-backed one to the `exception.*` semantic conventions. `defaultErrorFields` is the shipped
-      > mapping for a realization with no opinion, and `createConsoleLogger` / `createNoopLogger` are the
-      > shipped realizations.
-      >
-      > Every module that logs receives the `Logger` as a construction-time dependency on its existing
-      > deps or input object — the dependency-injection discipline the rest of the harness follows.
-      > `logger` is optional and falls back to `createNoopLogger()`, so internal call sites log
-      > unconditionally rather than threading `?.` through every diagnostic; it never falls back to
-      > `console`. `harness/src` calls `console` nowhere outside `lib/console-logger.ts` (enforced by
-      > `no-console` in `eslint.config.js`, exempted by path): a host whose UI owns stdout discards
-      > console output, so the write succeeds and the record is gone — silent loss exactly when
-      > something has failed.
-      >
-      > Run context rides as structured fields (`runId`, `stepId`, `analysisId`, `execId`, `sandboxId`,
-      > `agentId`) drawn from the `RunSession`'s `RunFrame` and `Scope`, never interpolated into the
-      > message and never carried by a `requestContext` object or a `[resourceId=]` / `[userId=]`
-      > prefix — those never existed here. Distributed tracing and metrics are a separate concern
-      > handled by OpenTelemetry (`src/lib/otel.ts`), not by the log line format.
-- [x] 6.6 Documented the breaking change in `harness/README.md` — there is no CHANGELOG in this package, and the embedder-facing surface doc is the README (per CLAUDE.md). Adds a "Logging" section: the interface, why `errorFields` is a realization's to define, why the fallback is noop and never console, and a copy-pasteable pino adapter under "Migrating from a version that took a `pino.Logger`". The version bump itself is deliberately NOT made here — releasing is the user's call, and `cli/package.json` pins `@inflexa-ai/harness` by version.
 
 ## 7. Follow-ups (not this change)
 
