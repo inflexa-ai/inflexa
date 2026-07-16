@@ -37,6 +37,9 @@ import {
     createNoopArtifactRegistry,     // ArtifactRegistry seam
     UnavailablePreviewPublisher,    // PreviewPublisher seam
     createDbosRunLauncher,          // shared RunLauncher
+    createConsoleLogger,            // Logger — writes to console
+    createNoopLogger,               // Logger — discards (the fallback when none is wired)
+    defaultErrorFields,             // the shipped `Logger.errorFields` mapping
     defineTool,
     runAgent,
     makeLocalAuth,
@@ -44,6 +47,51 @@ import {
 ```
 
 `assembleCoreRuntime` is the single composition point: it registers the durable workflows and builds the conversation agent over them. The harness declares **five capability seams** an embedder wires — `RunAuthorizer`, `ResolveBilling`, `ArtifactRegistry`, `RunCharge`, `PreviewPublisher` — plus the **shared `RunLauncher`** (one host-neutral realization, `createDbosRunLauncher`). Local, dependency-free realizations of all five ship from the barrel; an embedder constructs them (or its own) and passes them in. The harness only ever sees the interface.
+
+## Logging
+
+The harness names no logging library. It logs through a `Logger` you supply, so the destination, format, and verbosity stay yours:
+
+```ts
+export interface Logger {
+    debug(msg: string, fields?: LogFields): void;
+    info(msg: string, fields?: LogFields): void;
+    warn(msg: string, fields?: LogFields): void;
+    error(msg: string, fields?: LogFields): void;
+    with(fields: LogFields): Logger;        // bind context onto every record (slog's `With`)
+    named(name: string): Logger;            // bind a namespace, rendered as a `[a.b]` message prefix
+    errorFields(err: unknown): LogFields;   // normalize a thrown value; `defaultErrorFields` is the shipped mapping
+}
+```
+
+Pass `createConsoleLogger()` if you have no logging infrastructure. Wire nothing and the harness falls back to `createNoopLogger()` — it never falls back to `console`, because a host whose UI owns stdout (an alternate-screen TUI, say) discards console output, and a diagnostic written to a discarded stream is worse than no diagnostic at all.
+
+`errorFields` is on the interface, not a helper we own, so your realization can defer to your sink's native error handling rather than a shape we imposed.
+
+**Migrating from a version that took a `pino.Logger`** — `bootHarness` and the deps bags now take this interface. pino is object-first where this is message-first, so pass an adapter:
+
+```ts
+import type { LogFields, Logger } from "@inflexa-ai/harness";
+import type pino from "pino";
+
+function pinoAsHarnessLogger(p: pino.Logger, names: readonly string[] = []): Logger {
+    const prefixed = (msg: string): string => (names.length > 0 ? `[${names.join(".")}] ${msg}` : msg);
+    const emit =
+        (level: "debug" | "info" | "warn" | "error") =>
+        (msg: string, fields?: LogFields): void => {
+            p[level](fields ?? {}, prefixed(msg));
+        };
+    return {
+        debug: emit("debug"),
+        info: emit("info"),
+        warn: emit("warn"),
+        error: emit("error"),
+        with: (fields) => pinoAsHarnessLogger(p.child(fields), names),
+        named: (name) => pinoAsHarnessLogger(p, [...names, name]),
+        errorFields: (err) => ({ err }), // let pino's own `err` serializer render it
+    };
+}
+```
 
 ## How it executes
 

@@ -43,14 +43,41 @@
 
 ## 6. Lock it in
 
-- [ ] 6.1 Add `no-console` to `harness/eslint.config.js`, exempting `src/lib/console-logger.ts` by path in the config — NOT via an inline `eslint-disable` in that file (config over per-site disables).
-- [ ] 6.2 Run `bun run lint` and `bun test`; supply a silent/capturing `Logger` wherever tests previously relied on a silent pino.
-- [ ] 6.3 Run `tsc -p tsconfig.json` and `bun run format:file` on every touched `src/` file.
-- [ ] 6.4 Update `harness/CLAUDE.md`: its DI section names `Logger` as an injected construction dep — make that true, and note the console ban.
-- [ ] 6.5 Rewrite the `structured-logging` Purpose prose at sync time — the delta carries requirement operations only, so the paragraph opening "The harness logs operationally through **pino**" is otherwise left stale.
-- [ ] 6.6 Note the semver-major in the harness changelog/release notes with the pino-adapter snippet for downstream consumers.
+- [x] 6.1 `no-console: "error"` on `src/**/*.ts` in `harness/eslint.config.js`, exempting `src/lib/console-logger.ts` + its test BY PATH in the config — no inline `eslint-disable` anywhere. Verified both directions: a planted `console.warn` in a normal src file errors (`Unexpected console statement`), and the exempt realization passes.
+- [x] 6.2 `bun test` green — 1026 pass, up from a 1011 pre-change baseline; the 111 failures are all the Postgres testcontainer with Docker down. Tests use the shared `silentLogger` / `createCapturingLogger` (`__tests__/setup/logger.ts`) instead of a silent pino. NOTE: `bun run lint` (`eslint .`) fails on `scripts/smoke.mjs` — a `.mjs` outside the type-aware program. Verified pre-existing by running HEAD's own config: identical failure. `npx eslint src/` is clean apart from a pre-existing `neverthrow/must-use-result` finding in `providers/ai-sdk.test.ts:346`. Both are out of scope here; see 7.3.
+- [x] 6.3 `tsc -p tsconfig.json` clean; `bun run format` applied. (It reformats ALL of `src/`, so it also touched two files unrelated to this change — `reference-data/catalog.test.ts`, `tools/sandbox/list-available-refs.ts` — which were reverted rather than committed as drift.)
+- [x] 6.4 `harness/CLAUDE.md`: the DI principle claimed `Logger` was already an injected construction dep — now true. Added design principle 7 (diagnostics through the seam, never console; renumbered the rest), listed the seam in the public-surface paragraph, and rewrote the Debugging section — `LOG_LEVEL` is the embedder's knob now, and a step failure's cause exists ONLY in the log line since `failStep` scrubs everything downstream.
+- [ ] 6.5 **At archive time**, replace the `structured-logging` Purpose prose. A delta carries requirement operations only and `openspec archive` rewrites nothing else, so the paragraph opening "The harness logs operationally through **pino**" survives the archive stale — contradicting the requirements directly above it. Doing it before archive is worse (Purpose would describe the new world while the requirements still mandate pino), so the replacement is pinned here verbatim rather than left to be improvised:
+
+      > The harness logs operationally through an injected `Logger` (`src/lib/logger.ts`) and names no
+      > logging library: it is published as `@inflexa-ai/harness` and must not push one onto its
+      > consumers. The interface is message-first — `error(msg, fields?)`, the order `slog`, winston, and
+      > `console` share — with `with(fields)` binding contextual fields, `named(name)` binding the
+      > module namespace it renders as a `[a.b]` message prefix, and `errorFields(err)` normalizing a
+      > thrown value. `errorFields` sits on the interface, not in the package, because the best shape for
+      > an error belongs to the sink: a pino-backed realization defers to pino's `err` serializer, an
+      > OTel-backed one to the `exception.*` semantic conventions. `defaultErrorFields` is the shipped
+      > mapping for a realization with no opinion, and `createConsoleLogger` / `createNoopLogger` are the
+      > shipped realizations.
+      >
+      > Every module that logs receives the `Logger` as a construction-time dependency on its existing
+      > deps or input object — the dependency-injection discipline the rest of the harness follows.
+      > `logger` is optional and falls back to `createNoopLogger()`, so internal call sites log
+      > unconditionally rather than threading `?.` through every diagnostic; it never falls back to
+      > `console`. `harness/src` calls `console` nowhere outside `lib/console-logger.ts` (enforced by
+      > `no-console` in `eslint.config.js`, exempted by path): a host whose UI owns stdout discards
+      > console output, so the write succeeds and the record is gone — silent loss exactly when
+      > something has failed.
+      >
+      > Run context rides as structured fields (`runId`, `stepId`, `analysisId`, `execId`, `sandboxId`,
+      > `agentId`) drawn from the `RunSession`'s `RunFrame` and `Scope`, never interpolated into the
+      > message and never carried by a `requestContext` object or a `[resourceId=]` / `[userId=]`
+      > prefix — those never existed here. Distributed tracing and metrics are a separate concern
+      > handled by OpenTelemetry (`src/lib/otel.ts`), not by the log line format.
+- [x] 6.6 Documented the breaking change in `harness/README.md` — there is no CHANGELOG in this package, and the embedder-facing surface doc is the README (per CLAUDE.md). Adds a "Logging" section: the interface, why `errorFields` is a realization's to define, why the fallback is noop and never console, and a copy-pasteable pino adapter under "Migrating from a version that took a `pino.Logger`". The version bump itself is deliberately NOT made here — releasing is the user's call, and `cli/package.json` pins `@inflexa-ai/harness` by version.
 
 ## 7. Follow-ups (not this change)
 
-- [ ] 7.1 Re-enable harness telemetry at the CLI (`initTelemetry: initOtel`) now that the banner is gone, and confirm `cortex.artifact.reconcile.dropped` reports.
-- [ ] 7.2 With diagnostics landing, capture a real `lineage_attestation` failure and identify which of the three throw sites fires — then open the change fixing the inotify `IN_OPEN`-as-read misclassification.
+- [ ] 7.1 Re-enable harness telemetry at the CLI (`initTelemetry: initOtel`) now that the `lib/otel.ts` banner is gone, and confirm `cortex.artifact.reconcile.dropped` reports. The two OTel setups are complementary, not duplicative — the harness does traces + metrics, the cli does logs — so this should be additive, but it is a behaviour change that deserves its own verification.
+- [ ] 7.2 With diagnostics landing, capture a real `lineage_attestation` failure and read its `throwSite` + the ref's `source` — then open the change fixing the inotify `IN_OPEN`-as-read misclassification (`provenance_inotify_linux.go`'s `classifyInotifyMask` buckets every non-CREATE/DELETE event as a read, so write-opens and third-party opens become phantom "inputs" that fail-fast attestation).
+- [ ] 7.3 Pre-existing lint debt this change surfaced but did not touch: `bun run lint` (`eslint .`) dies on `scripts/smoke.mjs` — a `.mjs` outside `tsconfig.eslint.json`'s program, so type-aware rules cannot load — and `providers/ai-sdk.test.ts:346` has an unhandled `Result`. Both fail identically on HEAD's config.

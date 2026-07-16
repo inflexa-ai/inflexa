@@ -173,6 +173,23 @@ export default defineConfig([
             // variant — is caught. Complements, not replaces, the `satisfies never` idiom in exhaustive
             // switches (which the type checker enforces regardless of this rule).
             "@typescript-eslint/switch-exhaustiveness-check": ["error", { considerDefaultExhaustiveForUnions: true }],
+            // Diagnostics go through the injected `Logger` (`src/lib/logger.ts`), never
+            // console. The harness is embedded by hosts it does not control, and a host
+            // whose UI owns stdout — an alternate-screen TUI, say — discards console
+            // output entirely: the write succeeds and the record is gone. That is silent
+            // loss exactly when something has failed, and it is how a repeated production
+            // step failure came to be reported with no diagnostic detail at all.
+            //
+            // Enforced here rather than by review, and exempted BY PATH below rather than
+            // by inline `eslint-disable`, so the sanctioned console sites are enumerable
+            // in one place instead of scattered across the tree.
+            "no-console": "error",
         },
+    },
+    {
+        // The console realization IS the console sink — writing to console is its whole
+        // contract — and its test drives it by capturing those calls.
+        files: ["src/lib/console-logger.ts", "src/lib/console-logger.test.ts"],
+        rules: { "no-console": "off" },
     },
 ]);
