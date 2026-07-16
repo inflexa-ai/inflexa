@@ -20,10 +20,11 @@
  */
 
 import { createHash } from "node:crypto";
-import type pino from "pino";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { ResultAsync } from "neverthrow";
 
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 import type { DbError } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import type { ActiveSandboxRow } from "../state/index.js";
@@ -59,7 +60,7 @@ export interface CheckShardDeps {
      * this is `DBOS.send`; injected here for testability.
      */
     sendSynthetic: (workflowId: string, execId: string, failure: ExecResult, reason: string) => Promise<void>;
-    logger?: Pick<pino.Logger, "info" | "warn" | "error">;
+    logger?: Logger;
 }
 
 export interface CheckShardSummary {
@@ -79,6 +80,7 @@ const ACTIVE_WORKFLOW_STATUSES = new Set(["PENDING", "ENQUEUED"]);
  * notification.
  */
 export async function checkShard(rows: ActiveSandboxRow[], deps: CheckShardDeps): Promise<CheckShardSummary> {
+    const logger = (deps.logger ?? createNoopLogger()).named("sandbox-watchdog");
     let deadCount = 0;
     let syntheticSends = 0;
     let liveWorkflowsSkipped = 0;
@@ -96,10 +98,10 @@ export async function checkShard(rows: ActiveSandboxRow[], deps: CheckShardDeps)
         try {
             liveness = await deps.isAlive(ref);
         } catch (err) {
-            deps.logger?.warn(
-                { sandboxId: row.sandboxRef.sandboxId, err: err instanceof Error ? err.message : String(err) },
-                "[sandbox-watchdog] isAlive threw — skipping this round",
-            );
+            logger.warn("isAlive threw — skipping this round", {
+                sandboxId: row.sandboxRef.sandboxId,
+                err: err instanceof Error ? err.message : String(err),
+            });
             continue;
         }
         if (liveness.alive) continue;
@@ -130,7 +132,8 @@ export async function checkShard(rows: ActiveSandboxRow[], deps: CheckShardDeps)
         syntheticSends,
         liveWorkflowsSkipped,
     };
-    deps.logger?.info(summary, "[sandbox-watchdog] shard check completed");
+    // Spread: an interface has no implicit index signature, so it needs widening to `LogFields`.
+    logger.info("shard check completed", { ...summary });
     return summary;
 }
 
@@ -152,7 +155,7 @@ export interface WatchdogDeps {
     queryActiveSandboxes: () => ResultAsync<ActiveSandboxRow[], DbError>;
     sandboxClient: SandboxClient;
     shardCount?: number;
-    logger?: Pick<pino.Logger, "info" | "warn" | "error">;
+    logger?: Logger;
 }
 
 /**

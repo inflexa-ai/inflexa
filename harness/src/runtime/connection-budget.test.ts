@@ -8,13 +8,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import pino from "pino";
 import type { Pool } from "pg";
 
+import { silentLogger } from "../__tests__/setup/logger.js";
 import { assertConnectionBudget } from "./connection-budget.js";
 import { DBOS_SYSTEM_POOL_SIZE, DEFAULT_APP_POOL_SIZE } from "./pools.js";
-
-const silentLogger = pino({ level: "silent" });
 
 function fakePool(maxConnections: number): Pool {
     return {

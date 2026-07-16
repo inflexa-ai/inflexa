@@ -8,11 +8,10 @@
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import pino from "pino";
 
+import { silentLogger } from "../__tests__/setup/logger.js";
 import { __resetDbosStateForTest, __setDbosStateForTest, dbosState, type DbosConfig } from "./dbos.js";
 
-const silentLogger = pino({ level: "silent" });
 const stubConfig = {} as DbosConfig;
 
 /**

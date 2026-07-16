@@ -339,6 +339,16 @@ export { queryActiveSandboxes } from "./state/active-sandboxes.js";
 // sandbox step confines its artifact writes to (join onto the resolved root).
 export { runStepDir } from "./workspace/paths.js";
 
+// Operational logging seam. The harness names no logging library; an embedder
+// binds a realization at its composition root and the harness logs through it.
+// `createConsoleLogger` is the trivial realization for a consumer with no
+// logging infrastructure — offered, never defaulted (a host whose UI owns
+// stdout would silently discard it). Injecting nothing falls back to
+// `createNoopLogger`, which the harness also uses to keep internal call sites
+// free of optional chaining.
+export type { LogFields, LogLevel, Logger } from "./lib/logger.js";
+export { createConsoleLogger, createNoopLogger } from "./lib/console-logger.js";
+
 // Sandbox-hygiene scheduled workflows. Reaper reclaims a dead host's orphaned
 // containers; watchdog converts a dead sandbox into a prompt step failure
 // instead of a deadline-long `DBOS.recv` hang; the sweep prunes stale

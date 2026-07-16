@@ -14,9 +14,9 @@
  */
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
-import type pino from "pino";
 import type { Pool } from "pg";
 
+import type { Logger } from "../lib/logger.js";
 import { DBOS_SYSTEM_POOL_SIZE } from "./pools.js";
 
 /**
@@ -89,9 +89,10 @@ function systemDatabaseUrl(config: DbosConfig): string {
  * must resolve before the HTTP listener accepts traffic (otherwise the
  * readiness probe could 200 against a runtime that can't own workflows).
  */
-export async function launchDbos({ config, logger }: { config: DbosConfig; logger: pino.Logger }): Promise<void> {
+export async function launchDbos({ config, logger: injected }: { config: DbosConfig; logger: Logger }): Promise<void> {
     if (state.launched) return;
 
+    const logger = injected.named("dbos");
     const executorID = config.executorId;
     const adminPort = parseInt(config.adminPort, 10);
 
@@ -109,15 +110,12 @@ export async function launchDbos({ config, logger }: { config: DbosConfig; logge
     await DBOS.launch();
     state.launched = true;
     state.recoveryStarted = true;
-    logger.info(
-        {
-            executorID,
-            applicationVersion: config.applicationVersion,
-            adminPort,
-            durationMs: Math.round(performance.now() - start),
-        },
-        "[dbos] launched",
-    );
+    logger.info("launched", {
+        executorID,
+        applicationVersion: config.applicationVersion,
+        adminPort,
+        durationMs: Math.round(performance.now() - start),
+    });
 }
 
 /**
@@ -129,20 +127,18 @@ export async function launchDbos({ config, logger }: { config: DbosConfig; logge
  * Must run after HTTP has drained (so no inbound request is orphaned) and
  * before the application pool closes (DBOS needs the system DB).
  */
-export async function shutdownDbos({ logger }: { logger: pino.Logger }): Promise<void> {
+export async function shutdownDbos({ logger: injected }: { logger: Logger }): Promise<void> {
     if (!state.launched) return;
+    const logger = injected.named("dbos");
     const start = performance.now();
     try {
         await DBOS.shutdown();
-        logger.info({ durationMs: Math.round(performance.now() - start) }, "[dbos] shutdown");
+        logger.info("shutdown", { durationMs: Math.round(performance.now() - start) });
     } catch (err) {
-        logger.error(
-            {
-                err: err instanceof Error ? err.message : String(err),
-                durationMs: Math.round(performance.now() - start),
-            },
-            "[dbos] shutdown failed",
-        );
+        logger.error("shutdown failed", {
+            err: err instanceof Error ? err.message : String(err),
+            durationMs: Math.round(performance.now() - start),
+        });
     } finally {
         state.launched = false;
         state.recoveryStarted = false;
@@ -164,14 +160,15 @@ export async function shutdownDbos({ logger }: { logger: pino.Logger }): Promise
  */
 export async function sweepEphemeralWorkflows({
     pool,
-    logger,
+    logger: injectedLogger,
     executorId,
 }: {
     pool: Pool;
-    logger: pino.Logger;
+    logger: Logger;
     /** Stable per-pod executor id — must match `launchDbos`'s `executorId`. */
     executorId: string;
 }): Promise<void> {
+    const logger = injectedLogger.named("dbos");
     const executorID = executorId;
     try {
         const { rowCount } = await pool.query({
@@ -183,14 +180,14 @@ export async function sweepEphemeralWorkflows({
             values: [Date.now(), executorID],
         });
         if (rowCount && rowCount > 0) {
-            logger.info({ executorID, swept: rowCount }, "[dbos] swept orphaned ephemeral workflows");
+            logger.info("swept orphaned ephemeral workflows", { executorID, swept: rowCount });
         }
     } catch (err) {
         // First-ever boot: DBOS has not created its schema yet — nothing to sweep.
         if (err && typeof err === "object" && "code" in err && err.code === "42P01") {
             return;
         }
-        logger.error({ executorID, err: err instanceof Error ? err.message : String(err) }, "[dbos] ephemeral sweep failed");
+        logger.error("ephemeral sweep failed", { executorID, err: err instanceof Error ? err.message : String(err) });
     }
 }
 

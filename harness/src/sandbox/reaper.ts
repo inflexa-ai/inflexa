@@ -19,10 +19,11 @@
  * the thin production wiring.
  */
 
-import type pino from "pino";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { Pool } from "pg";
 
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { reconcileReapedSandbox } from "../state/active-sandboxes.js";
 import type { SandboxClient } from "./client.js";
@@ -78,7 +79,7 @@ export interface ReaperDeps {
     graceMs?: number;
     /** Wall-clock ms; injected for tests. */
     nowMs?: () => number;
-    logger?: Pick<pino.Logger, "info" | "warn" | "error">;
+    logger?: Logger;
 }
 
 export interface ReapSummary {
@@ -94,6 +95,7 @@ export interface ReapSummary {
  * failure on one machine is logged and skipped — the next sweep retries.
  */
 export async function reapOnce(deps: ReaperDeps): Promise<ReapSummary> {
+    const logger = (deps.logger ?? createNoopLogger()).named("sandbox-reaper");
     const nowMs = (deps.nowMs ?? (() => Date.now()))();
     const graceMs = deps.graceMs ?? DEFAULT_GRACE_MS;
 
@@ -116,13 +118,10 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapSummary> {
             const reconciled = unwrapOrThrow(await reconcileReapedSandbox(deps.pool, sb.sandboxId, terminalStepStatus(status?.status ?? null)));
             if (reconciled) rowsReconciled++;
         } catch (err) {
-            deps.logger?.warn(
-                {
-                    sandboxId: sb.sandboxId,
-                    err: err instanceof Error ? err.message : String(err),
-                },
-                "[sandbox-reaper] reap failed — skipping this round",
-            );
+            logger.warn("reap failed — skipping this round", {
+                sandboxId: sb.sandboxId,
+                err: err instanceof Error ? err.message : String(err),
+            });
         }
     }
 
@@ -132,7 +131,8 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapSummary> {
         rowsReconciled,
         leftCount,
     };
-    deps.logger?.info(summary, "[sandbox-reaper] sweep completed");
+    // Spread: an interface has no implicit index signature, so it needs widening to `LogFields`.
+    logger.info("sweep completed", { ...summary });
     return summary;
 }
 
@@ -140,7 +140,7 @@ export interface RegisterReaperDeps {
     pool: Pool;
     sandboxClient: Pick<SandboxClient, "listManagedSandboxes" | "teardownById">;
     graceMs?: number;
-    logger?: Pick<pino.Logger, "info" | "warn" | "error">;
+    logger?: Logger;
 }
 
 /** Production registration: a single (unsharded) `@DBOS.scheduled` workflow. */

@@ -1,13 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import pino from "pino";
+import { silentLogger } from "../__tests__/setup/logger.js";
 import type { Pool } from "pg";
 
 import { bootHarness, type BootHarnessDeps } from "./boot.js";
 import type { CoreRuntimeDeps } from "./assemble.js";
 import type { DbosConfig } from "./dbos.js";
 import type { ConnectionBudgetConfig } from "./connection-budget.js";
-
-const silentLogger = pino({ level: "silent" });
 
 /** A pool that fails loudly if boot reaches state-init / the budget guard. */
 function explodingPool(onUse: () => void): Pool {

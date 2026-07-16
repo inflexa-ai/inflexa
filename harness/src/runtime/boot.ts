@@ -32,8 +32,8 @@
  */
 
 import type { Pool } from "pg";
-import type pino from "pino";
 
+import type { Logger } from "../lib/logger.js";
 import { SANDBOX_AGENT_META } from "../agents/sandbox/index.js";
 import { validateAgentSkills } from "../agents/sandbox/validate-skills.js";
 import { initCortexState } from "../state/init.js";
@@ -57,7 +57,7 @@ export interface BootHarnessDeps {
     readonly dbos: DbosConfig;
     /** Connection-budget guard config. */
     readonly connectionBudget: ConnectionBudgetConfig;
-    readonly logger: pino.Logger;
+    readonly logger: Logger;
     /**
      * Host-specific work that must run AFTER workflow registration and BEFORE
      * DBOS launch (scheduled sweeps, ephemeral reap, agent-switch install). The
@@ -99,7 +99,7 @@ export async function bootHarness(deps: BootHarnessDeps): Promise<BootedHarness>
 
     await launchDbos({ config: deps.dbos, logger });
 
-    logger.info({ executorId: deps.dbos.executorId }, "[boot] harness booted");
+    logger.named("boot").info("harness booted", { executorId: deps.dbos.executorId });
 
     const shutdown = (signal: string): Promise<void> =>
         runShutdownSequence({
