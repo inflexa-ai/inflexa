@@ -4,6 +4,7 @@ import {
     createAnthropicProvider,
     createEmbeddingProvider,
     createNoopBillingResolver,
+    createNoopLogger,
     createPool,
     createSandboxClient,
     createWorkspaceFilesystem,
@@ -40,6 +41,7 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
     const modelProvider = overrides.modelProvider ?? "anthropic";
     return {
         pool,
+        logger: createNoopLogger(),
         embedding: createEmbeddingProvider({ baseURL: "http://emb.test/v1", token: "t", model: "text-embedding-3-small", resolveBilling }),
         sandboxClient: createSandboxClient({
             pool,
