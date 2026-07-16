@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { friendlyStepLabel } from "./profile.ts";
+import { describeBootError, friendlyStepLabel } from "./profile.ts";
 
 // Names as recorded in dbos.operation_outputs by the profile workflow — the
 // progress channel parses them, so pin the observed formats.
@@ -24,5 +24,16 @@ describe("friendlyStepLabel", () => {
 
     test("unknown step names pass through verbatim", () => {
         expect(friendlyStepLabel("DBOS.getResult")).toBe("DBOS.getResult");
+    });
+});
+
+// The sandbox_engine_unresolved arm carries a message already built against the
+// pinned runtime AND host platform at resolution time, so it must be surfaced
+// verbatim rather than re-wrapped.
+describe("describeBootError", () => {
+    test("sandbox_engine_unresolved surfaces the resolution message verbatim", () => {
+        const message =
+            "Could not resolve the Podman sandbox-engine socket — the Podman machine is not running.\n  Start it with `podman machine start`, then re-run.";
+        expect(describeBootError({ type: "sandbox_engine_unresolved", message })).toBe(message);
     });
 });

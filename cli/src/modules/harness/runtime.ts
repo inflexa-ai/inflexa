@@ -716,14 +716,16 @@ async function bootHarnessRuntimeOnce(
             resolveWorkspaceRoot,
             // Pull (`ensureSandboxImage`) and create must target the SAME engine, so
             // dial the socket resolved for the pinned runtime. Docker resolves to
-            // `undefined`; the conditional spread keeps the config byte-identical to
-            // today for a docker pin (no key materialized), so dockerode's default
-            // resolution — and any DOCKER_HOST the user relies on — is untouched.
+            // `undefined`: for a docker pin the conditional spread materializes no key,
+            // so dockerode keeps its default socket resolution — including any
+            // DOCKER_HOST the user relies on.
             ...(engineSocketPath === undefined ? {} : { engineSocketPath }),
-            // Podman machine's virtiofs presents the embedder user's real uid/modes,
-            // which the uid-1000 sandbox workload cannot write; world-write on the
-            // pre-created step tree lets its writes land. Docker Desktop's file-sharing
-            // layer masks that mismatch, so a docker pin keeps today's tighter modes.
+            // Engines whose bind mounts preserve host ownership honestly — podman
+            // machine's virtiofs on macOS, native binds / rootless userns uid-mapping
+            // on Linux — present a host uid the uid-1000 sandbox workload cannot write,
+            // so the pre-created step tree needs world-write for those writes to land.
+            // Docker Desktop's file-sharing layer masks that mismatch, so a docker pin
+            // leaves the step tree at its default mkdir modes.
             ...(pinnedRuntime.id === "podman" ? { stepTreeAccess: "world-writable" as const } : {}),
         });
         const workspaceFs = createWorkspaceFilesystem({ resolveWorkspaceRoot });

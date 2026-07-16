@@ -5,7 +5,7 @@
  * liveness. There is no gateway sidecar and no `--internal` network.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -672,6 +672,12 @@ describe("docker createSandbox — recovery reconciliation", () => {
             registerSandbox: async () => {},
         });
 
+    // The health-re-verification test advances the mocked clock; restore real time after
+    // every case so a thrown assertion can never leave a frozen clock for the next test.
+    afterEach(() => {
+        setSystemTime();
+    });
+
     test("adopts a running owned container when the engine answers the duplicate create with 500 (podman's shape)", async () => {
         const { docker, created, removed } = reconcileDocker({ createStatus: 500, standing: { labels: ownedLabels, running: true } });
 
@@ -710,6 +716,27 @@ describe("docker createSandbox — recovery reconciliation", () => {
         expect(removed).toEqual([]);
     });
 
+    test("refuses a STOPPED standing container owned by a different workflow with name_conflict, and never removes it", async () => {
+        const { docker, created, removed } = reconcileDocker({
+            createStatus: 500,
+            standing: { labels: { [OWNER_WORKFLOW_LABEL]: "someone-else" }, running: false },
+        });
+
+        const result = await reconcileOps(docker).createSandbox(META, mintSandboxIdentity("run-1"));
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.type).toBe("name_conflict");
+            if (result.error.type === "name_conflict") expect(result.error.owner).toBe("someone-else");
+        }
+        // The ownership guard is checked before the running-state check, so a foreign
+        // container is refused whether it is running or stopped. A stopped one must not be
+        // treated as our own reclaimable leftover and removed — the empty removal record
+        // pins that ordering.
+        expect(created).toEqual([]);
+        expect(removed).toEqual([]);
+    });
+
     test("returns the original create error (not the inspect 404) when no container stands under the name", async () => {
         const { docker } = reconcileDocker({ createStatus: 500, standing: null });
 
@@ -732,6 +759,38 @@ describe("docker createSandbox — recovery reconciliation", () => {
         // The stopped prior attempt is removed, then a fresh container is created.
         expect(removed.length).toBeGreaterThan(0);
         expect(created.length).toBeGreaterThan(0);
+    });
+
+    test("re-verifies an adopted container's health: a /health that never returns 200 fails adoption with container_create_failed", async () => {
+        const { docker, created, removed } = reconcileDocker({ createStatus: 500, standing: { labels: ownedLabels, running: true } });
+
+        // The running owned container is adopted, then its /health is polled afresh. This
+        // stub keeps /health unhealthy AND jumps the mocked clock past the poll deadline on
+        // the first probe, so the loop ends after a single tick instead of the real 30s wait.
+        const unhealthyFetch = (async () => {
+            setSystemTime(new Date(Date.now() + 10 * 60_000));
+            return new Response("unhealthy", { status: 503 });
+        }) as unknown as typeof fetch;
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            docker,
+            fetch: unhealthyFetch,
+            registerSandbox: async () => {},
+        });
+
+        const result = await ops.createSandbox(META, mintSandboxIdentity("run-1"));
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) expect(result.error.type).toBe("container_create_failed");
+        // Adoption path proof: the standing container was running and owned, so nothing was
+        // created or removed. The failure therefore comes from re-verifying the adopted
+        // container's health, not from a create attempt — deleting that re-verification
+        // would let this adoption succeed against an unhealthy sandbox.
+        expect(created).toEqual([]);
+        expect(removed).toEqual([]);
     });
 });
 
