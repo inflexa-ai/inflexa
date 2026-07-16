@@ -60,4 +60,38 @@ export interface Logger {
      * `[post-step.reconcile]`), matching the tag convention already in use.
      */
     named(name: string): Logger;
+    /**
+     * Normalize a thrown value into fields to spread onto a record:
+     * `logger.error("step failure", { ...logger.errorFields(err), stepId })`.
+     *
+     * Every catch block would otherwise hand-roll
+     * `err instanceof Error ? err.message : String(err)` — repetition that
+     * reliably drifts, and that silently drops the stack from whichever site
+     * forgot it.
+     *
+     * It lives on the interface rather than as a free function because how an
+     * error is best represented is a property of the SINK, not of the harness: a
+     * pino-backed realization may defer to pino's `err` serializer, an
+     * OTel-backed one to the `exception.*` semantic conventions. Owning the
+     * mapping here would foreclose both. `defaultErrorFields` is the shipped
+     * implementation — a realization with no opinion just references it.
+     */
+    errorFields(err: unknown): LogFields;
+}
+
+/**
+ * The default `Logger.errorFields`: `err` carries the message, `stack` rides as
+ * its own field when there is one.
+ *
+ * A raw `Error` is deliberately not passed through as a field value: it is
+ * assignable to `unknown` and so type-checks, but `JSON.stringify(new Error())`
+ * is `{}` — a sink that serializes to JSON would drop the message entirely,
+ * which is the silent-loss failure this seam exists to prevent. Normalizing to
+ * strings means any sink gets something printable regardless of its serializer.
+ */
+export function defaultErrorFields(err: unknown): LogFields {
+    if (err instanceof Error) {
+        return err.stack ? { err: err.message, stack: err.stack } : { err: err.message };
+    }
+    return { err: String(err) };
 }

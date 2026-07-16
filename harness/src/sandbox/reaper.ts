@@ -120,7 +120,7 @@ export async function reapOnce(deps: ReaperDeps): Promise<ReapSummary> {
         } catch (err) {
             logger.warn("reap failed — skipping this round", {
                 sandboxId: sb.sandboxId,
-                err: err instanceof Error ? err.message : String(err),
+                ...logger.errorFields(err),
             });
         }
     }

@@ -347,6 +347,10 @@ export { runStepDir } from "./workspace/paths.js";
 // `createNoopLogger`, which the harness also uses to keep internal call sites
 // free of optional chaining.
 export type { LogFields, LogLevel, Logger } from "./lib/logger.js";
+// `Logger.errorFields` is on the interface so a realization can defer to its
+// sink's native error handling (pino's `err` serializer, OTel's `exception.*`);
+// `defaultErrorFields` is the shipped mapping for one with no opinion.
+export { defaultErrorFields } from "./lib/logger.js";
 export { createConsoleLogger, createNoopLogger } from "./lib/console-logger.js";
 
 // Sandbox-hygiene scheduled workflows. Reaper reclaims a dead host's orphaned

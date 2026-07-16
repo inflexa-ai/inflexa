@@ -70,6 +70,37 @@ or be omitted, and a sink can recover the namespace without parsing prose.
 - **WHEN** it logs `info("bare")`
 - **THEN** the emitted message is exactly `bare`
 
+### Requirement: Error normalization is the realization's to define
+
+A `Logger` SHALL expose `errorFields(err: unknown): LogFields`, normalizing a
+thrown value into fields a caller spreads onto a record. Call sites SHALL use it
+rather than hand-rolling `err instanceof Error ? err.message : String(err)`, so
+the mapping cannot drift between sites or silently drop a stack.
+
+It SHALL sit on the interface rather than be a fixed harness-owned function,
+because the best representation of an error is a property of the sink: a
+pino-backed realization may defer to pino's `err` serializer, an OTel-backed one
+to the `exception.*` semantic conventions. The harness SHALL export
+`defaultErrorFields` as the shipped mapping — `err` carrying the message, `stack`
+its own field — which a realization with no opinion references directly.
+
+A raw `Error` SHALL NOT be passed through as a field value: it satisfies
+`unknown` and type-checks, but `JSON.stringify(new Error())` is `{}`, so a
+JSON-serializing sink would silently drop the message — the exact failure this
+capability exists to prevent.
+
+#### Scenario: The shipped mapping survives a JSON sink
+
+- **GIVEN** a record whose fields come from `defaultErrorFields(new Error("boom"))`
+- **WHEN** the sink serializes it to JSON
+- **THEN** the message `boom` is still present, unlike a raw `Error` field which serializes to `{}`
+
+#### Scenario: A realization substitutes its sink's error shape
+
+- **GIVEN** a realization whose `errorFields` maps onto its sink's native error representation
+- **WHEN** a harness call site logs a caught error through it
+- **THEN** the record carries that realization's shape, not the shipped mapping
+
 ### Requirement: The harness ships console and no-op Logger realizations
 
 The harness SHALL export `createConsoleLogger()` and `createNoopLogger()` from

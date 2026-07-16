@@ -136,7 +136,7 @@ export async function shutdownDbos({ logger: injected }: { logger: Logger }): Pr
         logger.info("shutdown", { durationMs: Math.round(performance.now() - start) });
     } catch (err) {
         logger.error("shutdown failed", {
-            err: err instanceof Error ? err.message : String(err),
+            ...logger.errorFields(err),
             durationMs: Math.round(performance.now() - start),
         });
     } finally {
@@ -187,7 +187,7 @@ export async function sweepEphemeralWorkflows({
         if (err && typeof err === "object" && "code" in err && err.code === "42P01") {
             return;
         }
-        logger.error("ephemeral sweep failed", { executorID, err: err instanceof Error ? err.message : String(err) });
+        logger.error("ephemeral sweep failed", { executorID, ...logger.errorFields(err) });
     }
 }
 

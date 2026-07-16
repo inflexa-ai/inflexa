@@ -37,7 +37,7 @@ async function safely(logger: Logger, step: string, fn: () => Promise<void>): Pr
     try {
         await fn();
     } catch (err) {
-        logger.error(`${step} failed`, { err: err instanceof Error ? err.message : String(err), step });
+        logger.error(`${step} failed`, { ...logger.errorFields(err), step });
     }
 }
 

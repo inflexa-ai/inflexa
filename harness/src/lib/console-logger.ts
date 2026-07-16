@@ -9,7 +9,7 @@
  * least honest about saying nothing.
  */
 
-import type { LogFields, LogLevel, Logger } from "./logger.js";
+import { defaultErrorFields, type LogFields, type LogLevel, type Logger } from "./logger.js";
 
 /** Renders accumulated namespace segments as the message's `[a.b]` prefix. */
 function prefixed(names: readonly string[], msg: string): string {
@@ -25,9 +25,9 @@ function makeConsoleLogger(names: readonly string[], bindings: LogFields): Logge
     const emit =
         (level: LogLevel) =>
         (msg: string, fields?: LogFields): void => {
-            // The one sanctioned console site in the harness: this realization IS
-            // the console sink, so the `no-console` rule exempts this file alone.
-            // eslint-disable-next-line no-console -- writing to console is this function's entire contract
+            // The one sanctioned console site in the harness — writing to console is
+            // this function's entire contract. `no-console` exempts this file by path
+            // in eslint.config.js rather than by an inline disable here.
             console[level](prefixed(names, msg), { ...bindings, ...fields });
         };
 
@@ -38,6 +38,9 @@ function makeConsoleLogger(names: readonly string[], bindings: LogFields): Logge
         error: emit("error"),
         with: (extra) => makeConsoleLogger(names, { ...bindings, ...extra }),
         named: (name) => makeConsoleLogger([...names, name], bindings),
+        // console renders whatever it is handed; there is no native error
+        // serializer here to defer to, so the shipped default is the right shape.
+        errorFields: defaultErrorFields,
     };
 }
 
@@ -59,6 +62,9 @@ export function createNoopLogger(): Logger {
         error: () => {},
         with: () => noop,
         named: () => noop,
+        // Still the real mapping, not `{}`: callers spread the result into fields
+        // they may pass elsewhere, so it must stay honest even when nothing is emitted.
+        errorFields: defaultErrorFields,
     };
     return noop;
 }

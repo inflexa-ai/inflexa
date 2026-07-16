@@ -100,7 +100,7 @@ export async function checkShard(rows: ActiveSandboxRow[], deps: CheckShardDeps)
         } catch (err) {
             logger.warn("isAlive threw — skipping this round", {
                 sandboxId: row.sandboxRef.sandboxId,
-                err: err instanceof Error ? err.message : String(err),
+                ...logger.errorFields(err),
             });
             continue;
         }

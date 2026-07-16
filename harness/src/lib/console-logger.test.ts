@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import { createConsoleLogger, createNoopLogger } from "./console-logger.js";
+import type { Logger } from "./logger.js";
 
 /**
  * The emitted record IS this module's observable output, so the console methods
@@ -100,6 +101,40 @@ describe("createConsoleLogger", () => {
             msg: "[sandbox-step.post-step] boom",
             fields: { runId: "r1", err: "x" },
         });
+    });
+});
+
+describe("errorFields", () => {
+    it("maps an Error to message + stack fields", () => {
+        const log = createConsoleLogger();
+        const fields = log.errorFields(new Error("boom"));
+
+        expect(fields.err).toBe("boom");
+        expect(fields.stack).toContain("boom");
+    });
+
+    it("stringifies a non-Error throw", () => {
+        expect(createConsoleLogger().errorFields("plain string")).toEqual({ err: "plain string" });
+        expect(createConsoleLogger().errorFields(42)).toEqual({ err: "42" });
+    });
+
+    it("survives the round trip a JSON sink would apply", () => {
+        // The reason a raw Error is never passed through as a field value:
+        // JSON.stringify(new Error("boom")) is "{}" — the message would vanish.
+        const fields = createConsoleLogger().errorFields(new Error("boom"));
+
+        expect(JSON.parse(JSON.stringify(fields)).err).toBe("boom");
+        expect(JSON.parse(JSON.stringify({ err: new Error("boom") })).err).toEqual({});
+    });
+
+    it("is a realization's to override — the reason it sits on the interface", () => {
+        // A pino- or OTel-backed realization defers to its sink's native error
+        // handling (pino's `err` serializer, the `exception.*` semconv) instead of
+        // the shipped mapping. Overriding must reach the harness's call sites.
+        const base = createConsoleLogger();
+        const custom: Logger = { ...base, errorFields: (err) => ({ "exception.message": String(err) }) };
+
+        expect(custom.errorFields(new Error("boom"))).toEqual({ "exception.message": "Error: boom" });
     });
 });
 
