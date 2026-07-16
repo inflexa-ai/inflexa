@@ -146,7 +146,13 @@ export type EngineSocketProbes = {
     readonly platform: NodeJS.Platform;
     /** Runs a runtime command and captures its output; the real one spawns the binary. */
     readonly capture: (rt: ContainerRuntime, args: string[]) => Promise<CaptureResult>;
-    /** True when `path` exists on disk — gates the Linux REST socket (a reachable CLI does not imply a listening socket). */
+    /**
+     * True when `path` exists on disk. Gates BOTH podman socket paths: the Linux REST
+     * socket (a reachable CLI does not imply a listening socket) and the macOS compat
+     * socket (the gvproxy forward backing it exists only while the machine runs, so a
+     * missing file detects a stopped machine that `machine inspect` still reports a
+     * path for).
+     */
     readonly exists: (path: string) => boolean;
 };
 
@@ -160,8 +166,13 @@ export type EngineSocketProbes = {
  *   dockerode client keeps its default resolution and any `DOCKER_HOST` the user
  *   already relies on.
  * - **Podman/macOS** resolves the running machine's host-forwarded compat socket
- *   (`podman machine inspect`); a stopped machine (non-zero exit) or an empty path
- *   is an actionable error hinting `podman machine start`.
+ *   (`podman machine inspect`), gated on that socket EXISTING on disk. Inspect
+ *   reports the persisted socket path on a zero exit even for a stopped machine, so
+ *   the reported path is NOT proof of a live machine; the gvproxy forward backing
+ *   the socket is torn down when the machine stops, so the socket file exists only
+ *   while the machine runs — which is what makes the stat a real stopped-machine
+ *   detector. A missing path, empty path, or non-zero exit is an actionable error
+ *   hinting `podman machine start`.
  * - **Podman/Linux** (and any other non-darwin host) resolves `podman info`'s
  *   reported REST socket, gated on that path EXISTING on disk: the podman CLI talks
  *   to the engine directly, so a reachable CLI does NOT imply a listening REST
@@ -185,7 +196,12 @@ export async function resolveEngineSocket(
             if (probes.platform === "darwin") {
                 const { code, stdout } = await probes.capture(rt, ["machine", "inspect", "--format", "{{.ConnectionInfo.PodmanSocket.Path}}"]);
                 const socket = stdout.trim();
-                if (code !== 0 || socket === "") {
+                // `podman machine inspect` reports the persisted socket path on a zero exit
+                // even when the machine is stopped, so the path alone cannot tell running from
+                // stopped. The gvproxy forward backing that socket exists only while the machine
+                // runs, so statting it on disk is the real liveness gate (mirrors the Linux
+                // REST-socket check below).
+                if (code !== 0 || socket === "" || !probes.exists(socket)) {
                     return err(
                         new ContainerRuntimeError(
                             "Could not resolve the Podman sandbox-engine socket — the Podman machine is not running.\n  Start it with `podman machine start`, then re-run.",

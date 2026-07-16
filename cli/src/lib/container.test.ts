@@ -80,8 +80,8 @@ describe("resolveEngineSocket", () => {
         const result = await resolveEngineSocket(runtimes.podman, {
             platform: "darwin",
             capture: captureReturning({ code: 0, stdout: "/var/folders/xy/podman-machine-default-api.sock\n", stderr: "" }, spawned),
-            // The darwin path trusts the machine's own report and never stats the socket.
-            exists: () => false,
+            // A running machine's gvproxy forward is live, so the reported socket exists on disk.
+            exists: () => true,
         });
 
         expect(result._unsafeUnwrap()).toBe("/var/folders/xy/podman-machine-default-api.sock");
@@ -93,6 +93,18 @@ describe("resolveEngineSocket", () => {
             platform: "darwin",
             capture: captureReturning({ code: 125, stdout: "", stderr: "VM does not exist" }),
             exists: () => true,
+        });
+
+        expect(result._unsafeUnwrapErr().message).toContain("podman machine start");
+    });
+
+    test("podman on macOS with a stopped machine still reporting its socket path fails on the on-disk gate", async () => {
+        const result = await resolveEngineSocket(runtimes.podman, {
+            platform: "darwin",
+            // `podman machine inspect` exits 0 with the persisted socket path even when the
+            // machine is stopped; the gvproxy forward is torn down, so the file is absent.
+            capture: captureReturning({ code: 0, stdout: "/var/folders/xy/podman-machine-default-api.sock\n", stderr: "" }),
+            exists: () => false,
         });
 
         expect(result._unsafeUnwrapErr().message).toContain("podman machine start");
