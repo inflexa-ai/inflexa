@@ -39,6 +39,8 @@ import type { SandboxAgentDeps } from "../agents/sandbox/shared.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 
 /** Sub-agent identity — appended to `callPath`, set as `agentId`. */
 export const EPHEMERAL_AGENT_ID = "ephemeral-executor";
@@ -63,6 +65,8 @@ const EPHEMERAL_SANDBOX_RESOURCES: ResourceSpec = { cpu: 4, memoryGb: 8 };
 
 /** The body's construction-time deps — closed over at registration. */
 export interface EphemeralDeps {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     readonly provider: ChatProvider;
     readonly pool: Pool;
     readonly sandboxClient: SandboxClient;
@@ -141,6 +145,9 @@ export async function runEphemeralBody(input: EphemeralWorkflowInput, deps: Ephe
         throw new Error(`runEphemeralBody requires an analysis-scoped session — got ${runSession.scope.kind}`);
     }
     const analysisId = runSession.scope.analysisId;
+    // Bound after the scope guard: `analysisId` comes off the session's scope,
+    // not the workflow input.
+    const logger = (deps.logger ?? createNoopLogger()).named("ephemeral").with({ analysisId });
     const startedAt = performance.now();
     const executionId = generateExecutionId(EPHEMERAL_AGENT_ID);
     const workflowId = DBOS.workflowID ?? `${EPHEMERAL_WORKFLOW_PREFIX}${executionId}`;
@@ -149,7 +156,7 @@ export async function runEphemeralBody(input: EphemeralWorkflowInput, deps: Ephe
     // Resolver throw = loud workflow failure, per the workspace-root-resolution contract.
     const workspaceRoot = deps.resolveWorkspaceRoot(analysisId);
 
-    console.log(`[ephemeral] execution=${executionId} analysis=${analysisId} starting sandbox`);
+    logger.info("starting sandbox", { executionId });
 
     const sandbox = await deps.sandboxClient.createSandbox(
         {
@@ -214,11 +221,11 @@ export async function runEphemeralBody(input: EphemeralWorkflowInput, deps: Ephe
         const text = finalText(finalMessages);
         const stepsUsed = countAssistantTurns(finalMessages);
         const durationMs = Math.round(performance.now() - startedAt);
-        console.log(`[ephemeral] execution=${executionId} completed stepsUsed=${stepsUsed} durationMs=${durationMs}`);
+        logger.info("completed", { executionId, stepsUsed, durationMs });
         return { text, stepsUsed, durationMs };
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.error(`[ephemeral] execution=${executionId} failed: ${message}`);
+        logger.error("failed", { executionId, err: message });
         throw err;
     } finally {
         try {
@@ -226,9 +233,7 @@ export async function runEphemeralBody(input: EphemeralWorkflowInput, deps: Ephe
         } catch (teardownErr) {
             // Teardown is idempotent — "already gone" is success. A failure here
             // is best-effort logged so the chat turn doesn't fail on cleanup.
-            console.warn(
-                `[ephemeral] execution=${executionId} teardown failed (non-fatal): ${teardownErr instanceof Error ? teardownErr.message : teardownErr}`,
-            );
+            logger.warn("teardown failed (non-fatal)", { executionId, ...logger.errorFields(teardownErr) });
         }
     }
 }

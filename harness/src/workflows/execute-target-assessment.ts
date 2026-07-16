@@ -38,6 +38,8 @@ import { z } from "zod";
 import type { AgentSession, RunSession } from "../auth/types.js";
 import { forSubAgent } from "../auth/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import type { AgentChat } from "../providers/types.js";
 
@@ -119,6 +121,8 @@ export interface ExecuteTargetAssessmentResult {
 // ── Dep injection ────────────────────────────────────────────────────
 
 export interface ExecuteTargetAssessmentDeps {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     readonly pool: Pool;
     /** Run-authorization seam — the terminal path revokes through `revoke`. */
     readonly runAuthorizer: RunAuthorizer;
@@ -212,6 +216,7 @@ export async function runExecuteTargetAssessmentBody(
     input: ExecuteTargetAssessmentInput,
     deps: ExecuteTargetAssessmentDeps,
 ): Promise<ExecuteTargetAssessmentResult> {
+    const logger = (deps.logger ?? createNoopLogger()).with({ assessmentId: input.assessmentId });
     // (§6.1) Outermost try/finally — every termination path dispatches the
     // matching terminal handler. Phase 0 throws are caught here; every
     // other phase wraps its body in coverage envelopes and does not throw.
@@ -240,7 +245,7 @@ export async function runExecuteTargetAssessmentBody(
         // (§5.3, §6.3) Phase 0 — target resolution. The only legitimate throw
         // site. On throw, the catch below records `phase0Error` and the
         // terminal block dispatches `markFailed({kind: "target-unresolved"})`.
-        await emitProgress(deps.pool, input.assessmentId, "resolving");
+        await emitProgress(deps.pool, logger, input.assessmentId, "resolving");
         const resolved: ResolvedTarget = await DBOS.runStep(
             async () => {
                 const r = await resolveTarget(input.target);
@@ -261,7 +266,7 @@ export async function runExecuteTargetAssessmentBody(
         // returns the cached envelope. The per-collector run functions emit
         // different bundle shapes; the union is widened to `unknown` here
         // and `Phase1Bundle` is reconstructed by manifest key below.
-        await emitProgress(deps.pool, input.assessmentId, "collecting");
+        await emitProgress(deps.pool, logger, input.assessmentId, "collecting");
         type CollectorEntry = {
             id: string;
             run: (r: ResolvedTarget, ctx: CollectorCtx) => Promise<unknown>;
@@ -301,7 +306,7 @@ export async function runExecuteTargetAssessmentBody(
         // (§5.5, §5.11) Phase 2 — decisions. Lazy billing resolution happens
         // inside the chat provider's closure (TA-aware provider in §12). The
         // session carries the `billingContextId` the provider reads from.
-        await emitProgress(deps.pool, input.assessmentId, "deciding");
+        await emitProgress(deps.pool, logger, input.assessmentId, "deciding");
         const decisionSession = buildSession(input, "ta-decisions");
         const [modulatorRes, drugsRes]: [ModulatorTriageResult, DrugsInClassResult] = await Promise.all([
             modulatorTriage(phase1, {
@@ -343,7 +348,7 @@ export async function runExecuteTargetAssessmentBody(
         // (§5.6) Phase 3 — fan-out blocks. Each block iterates items via
         // Promise.all over DBOS.runStep; `withHost` semaphores inside each
         // item function cap concurrency to 4 per host.
-        await emitProgress(deps.pool, input.assessmentId, "fanning_out");
+        await emitProgress(deps.pool, logger, input.assessmentId, "fanning_out");
 
         const triage = phase2.decisions.modulatorTriage;
         type ShortlistItem = {
@@ -441,7 +446,7 @@ export async function runExecuteTargetAssessmentBody(
         };
 
         // (§5.7) Phase 4 — deterministic assembly. Single DBOS step.
-        await emitProgress(deps.pool, input.assessmentId, "assembling");
+        await emitProgress(deps.pool, logger, input.assessmentId, "assembling");
         const phase4 = await DBOS.runStep(() => phase4Assemble(deps.pool, phase3 as Parameters<typeof phase4Assemble>[1]), { name: "ta-phase4-assemble" });
 
         // (§5.8-pre) Approval-precedent grounding — one deterministic openFDA
@@ -456,7 +461,7 @@ export async function runExecuteTargetAssessmentBody(
                     try {
                         result = await fetchApprovalPrecedents({ indication });
                     } catch (err) {
-                        console.warn(`[ta-approval-precedents] openFDA lookup failed for "${indication}": ${err instanceof Error ? err.message : err}`);
+                        logger.named("ta-approval-precedents").warn("openFDA lookup failed", { indication, ...logger.errorFields(err) });
                         result = null;
                     }
                 }
@@ -466,7 +471,7 @@ export async function runExecuteTargetAssessmentBody(
         );
 
         // (§5.8) Phase 5 — three per-section syntheses in parallel.
-        await emitProgress(deps.pool, input.assessmentId, "synthesizing");
+        await emitProgress(deps.pool, logger, input.assessmentId, "synthesizing");
         const synthesisDeps = (agentId: string) => ({
             chatProvider: deps.chatProvider,
             session: { ...buildSession(input, agentId) },
@@ -512,6 +517,7 @@ export async function runExecuteTargetAssessmentBody(
         const persisted = await DBOS.runStep(
             () =>
                 phase5Persist({
+                    logger,
                     assessmentId: input.assessmentId,
                     phase4Dossier: phase4.dossier,
                     phase2,
@@ -559,9 +565,9 @@ export async function runExecuteTargetAssessmentBody(
             await DBOS.runStep(async () => unwrapOrThrow(await setDossier(deps.pool, input.assessmentId, dossierForPersist!)), {
                 name: "ta-terminal-completed",
             });
-            await emitProgress(deps.pool, input.assessmentId, "completed");
+            await emitProgress(deps.pool, logger, input.assessmentId, "completed");
         } catch (err) {
-            console.error(`[ta-terminal] setDossier failed for ${input.assessmentId}: ${err instanceof Error ? err.message : err}`);
+            logger.named("ta-terminal").error("setDossier failed", logger.errorFields(err));
         }
         await revokeRunAuthorizationSafe(deps, authorization, "target-assessment-completed");
         recordTerminalReason("completed");
@@ -584,7 +590,7 @@ export async function runExecuteTargetAssessmentBody(
                 ),
             { name: "ta-terminal-failed-resolve" },
         );
-        await emitProgress(deps.pool, input.assessmentId, "failed");
+        await emitProgress(deps.pool, logger, input.assessmentId, "failed");
         await revokeRunAuthorizationSafe(deps, authorization, "target-assessment-failed");
         recordTerminalReason("target-unresolved");
         return {
@@ -607,7 +613,7 @@ export async function runExecuteTargetAssessmentBody(
                 ),
             { name: "ta-terminal-failed-schema" },
         );
-        await emitProgress(deps.pool, input.assessmentId, "failed");
+        await emitProgress(deps.pool, logger, input.assessmentId, "failed");
         await revokeRunAuthorizationSafe(deps, authorization, "target-assessment-failed");
         recordTerminalReason("schema-violation");
         return {
@@ -629,7 +635,7 @@ export async function runExecuteTargetAssessmentBody(
                 ),
             { name: "ta-terminal-failed-derived" },
         );
-        await emitProgress(deps.pool, input.assessmentId, "failed");
+        await emitProgress(deps.pool, logger, input.assessmentId, "failed");
         await revokeRunAuthorizationSafe(deps, authorization, "target-assessment-failed");
         recordTerminalReason("derived-invariant-violation");
         return {
@@ -649,7 +655,7 @@ export async function runExecuteTargetAssessmentBody(
             name: "ta-terminal-drain-marker",
         }).catch(() => null);
         await DBOS.runStep(async () => unwrapOrThrow(await markAssessmentSuspended(deps.pool, input.assessmentId)), { name: "ta-terminal-suspended" });
-        await emitProgress(deps.pool, input.assessmentId, "suspended");
+        await emitProgress(deps.pool, logger, input.assessmentId, "suspended");
         await revokeRunAuthorizationSafe(deps, authorization, "target-assessment-canceled");
         const workflowId = DBOS.workflowID;
         if (workflowId) {
@@ -682,7 +688,7 @@ export async function runExecuteTargetAssessmentBody(
                 ),
             { name: "ta-terminal-failed-unexpected" },
         );
-        await emitProgress(deps.pool, input.assessmentId, "failed");
+        await emitProgress(deps.pool, logger, input.assessmentId, "failed");
         await revokeRunAuthorizationSafe(deps, authorization, "target-assessment-failed");
         recordTerminalReason("unexpected-throw");
         return {
@@ -719,12 +725,13 @@ export async function runExecuteTargetAssessmentBody(
  * aborted by a transient revoke failure.
  */
 async function revokeRunAuthorizationSafe(deps: ExecuteTargetAssessmentDeps, authorization: RunAuthorization, reason: string): Promise<void> {
+    const logger = (deps.logger ?? createNoopLogger()).named("execute-target-assessment");
     try {
         await DBOS.runStep(() => deps.runAuthorizer.revoke(authorization, reason), {
             name: `ta-revoke-run-auth:${reason}`,
         });
     } catch (err) {
-        console.warn(`[execute-target-assessment] revokeRunAuthorization (${reason}) failed:`, err instanceof Error ? err.message : err);
+        logger.warn("revokeRunAuthorization failed", { reason, ...logger.errorFields(err) });
     }
 }
 

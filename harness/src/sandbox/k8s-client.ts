@@ -21,6 +21,8 @@ import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { buildMountPlan, buildSessionSubPaths } from "./mount-plan.js";
 import type { CreateSandboxMeta, ManagedSandbox, SandboxIdentity, SandboxLiveness, SandboxRef, SandboxTransport } from "./types.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 
 /** Read the originating HTTP status off any `SandboxError` variant that carries one. */
 function statusOf(e: SandboxError): number | undefined {
@@ -59,6 +61,8 @@ export function sanitizeLabelValue(value: string): string {
 }
 
 export interface K8sClientConfig {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     image: string;
     cortexBaseUrl: string;
     /**
@@ -513,12 +517,12 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                             }),
                         );
                         if (registered.isErr()) {
-                            await cleanupFailedJob(batchApi, config.namespace, sandboxId);
+                            await cleanupFailedJob(batchApi, config.namespace, sandboxId, config.logger ?? createNoopLogger());
                             return err(registered.error);
                         }
                         return ok(ref);
                     }
-                    await cleanupFailedJob(batchApi, config.namespace, sandboxId);
+                    await cleanupFailedJob(batchApi, config.namespace, sandboxId, config.logger ?? createNoopLogger());
                     return err(ready.error);
                 })(),
             );
@@ -602,9 +606,9 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
  * matters; a delete error here is logged and swallowed so it never masks the
  * create error returned to the caller.
  */
-async function cleanupFailedJob(batchApi: BatchV1Api, namespace: string, sandboxId: string): Promise<void> {
+async function cleanupFailedJob(batchApi: BatchV1Api, namespace: string, sandboxId: string, logger: Logger): Promise<void> {
     const deleted = await deleteJobIgnoreMissing(batchApi, namespace, sandboxId);
     if (deleted.isErr()) {
-        console.error(`K8sSandbox: failed to delete Job ${sandboxId} after startup failure`, deleted.error);
+        logger.named("k8s-client").error("failed to delete Job after startup failure", { sandboxId, err: deleted.error });
     }
 }

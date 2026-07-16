@@ -50,6 +50,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
 import { setupDbosForTests, type DbosTestRig } from "../../../__tests__/setup/dbos.js";
+import { silentLogger } from "../../../__tests__/setup/logger.js";
 
 // Reopen the registration window if an earlier test file already launched
 // the shared DBOS engine (see "Registration window" above).
@@ -184,7 +185,9 @@ const nonFatalSyncMirror = DBOS.registerWorkflow(
                 { name: "post-step.sync" },
             );
         } catch (err) {
-            console.warn(`[mirror] post-step.sync failed (non-fatal):`, err instanceof Error ? err.message : err);
+            // This body mirrors `sandbox-step`'s; keep it on the seam so the mirror
+            // stays faithful (and silent) rather than printing during the run.
+            silentLogger.named("mirror").warn("post-step.sync failed (non-fatal)", silentLogger.errorFields(err));
         }
 
         await DBOS.runStep(

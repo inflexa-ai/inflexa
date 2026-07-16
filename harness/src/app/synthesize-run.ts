@@ -37,8 +37,12 @@ import { ensureSearchIndex, searchIndexName } from "../workspace/search-config.j
 import { createVectorStore } from "../state/vector-store.js";
 import { loadPlan, queryRun } from "../state/index.js";
 import { unwrapOrThrow } from "../lib/result.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 
 export interface SynthesizeRunDeps {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     readonly pool: Pool;
     readonly provider: ChatProvider;
     /** Write-side embedder — its `dimensions` sizes the per-analysis index. */
@@ -132,7 +136,8 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
                 }),
             );
         } catch (indexErr) {
-            console.warn(`[synthesize-run] vector indexing failed for run ${runId}:`, indexErr instanceof Error ? indexErr.message : indexErr);
+            const logger = (deps.logger ?? createNoopLogger()).named("synthesize-run");
+            logger.warn("vector indexing failed", { runId, ...logger.errorFields(indexErr) });
         }
 
         await onProgress("persisting", "Persisting synthesis");

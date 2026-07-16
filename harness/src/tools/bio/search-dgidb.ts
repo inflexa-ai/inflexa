@@ -13,6 +13,8 @@ import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool } from "../define-tool.js";
+import { createNoopLogger } from "../../lib/console-logger.js";
+import type { Logger } from "../../lib/logger.js";
 import { apiFetchValidated, describeApiError } from "../lib/api-utils.js";
 
 const DGIDB_GRAPHQL_URL = "https://dgidb.org/api/graphql";
@@ -155,97 +157,112 @@ function applyFilters(
     return out;
 }
 
-export const searchDgidbTool = defineTool({
-    id: "search_dgidb",
-    description:
-        "Query the Drug-Gene Interaction Database (DGIdb) for drug-gene interactions. " +
-        "DGIdb aggregates 30+ sources (ChEMBL, DrugBank, TTD, PharmGKB, GuideToPharmacology, CIViC, etc.) " +
-        "and returns source counts as a confidence signal. " +
-        "searchType='gene' returns drugs interacting with input HUGO gene symbols (most common: 'what drugs hit my gene set?'). " +
-        "searchType='drug' returns the genes each input drug is known to act on. " +
-        "Free, no API key required. Sorted by source count desc.",
-    inputSchema: z.object({
-        query: z
-            .union([z.string(), z.array(z.string()).max(50)])
-            .describe("Single identifier or list of up to 50. For searchType='gene': HUGO symbols. For searchType='drug': drug names or DGIdb concept IDs."),
-        searchType: z.enum(["gene", "drug"]).default("gene"),
-        interactionTypes: z.array(z.string()).optional().describe("Case-insensitive substring filter on interaction type. e.g. ['inhibitor', 'antagonist']"),
-        sources: z.array(z.string()).optional().describe("Restrict to interactions from these source DBs (case-insensitive substring)."),
-        minSources: z.number().int().min(1).default(1).describe("Drop interactions supported by fewer than this many sources."),
-        limit: z.number().int().min(1).max(200).default(50).describe("Max interactions per input gene/drug after filtering."),
-    }),
-    execute: async ({ query, searchType = "gene", interactionTypes, sources, minSources = 1, limit = 50 }) => {
-        const inputs = typeof query === "string" ? [query] : query;
-        if (inputs.length === 0 || inputs.every((s) => !s.trim())) {
-            throw new Error("query must contain at least one identifier");
-        }
-
-        const isGene = searchType === "gene";
-        const variableName = isGene ? "genes" : "drugs";
-        const queryString = isGene ? GENE_INTERACTIONS_QUERY : DRUG_INTERACTIONS_QUERY;
-
-        const res = await apiFetchValidated(DGIDB_GRAPHQL_URL, DgidbResponseSchema, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                query: queryString,
-                variables: { [variableName]: inputs },
-            }),
-        });
-
-        if (res.isErr()) throw new Error(describeApiError(res.error));
-
-        const body = res.value;
-        if (!body || !body.data) throw new Error("DGIdb returned no data");
-
-        if (body.errors?.length) {
-            console.warn("dgidb.partial_errors", { errors: body.errors.slice(0, 3) });
-        }
-
-        const nodes = (isGene ? body.data.genes?.nodes : body.data.drugs?.nodes) ?? [];
-
-        const nodeMap = new Map<string, RawNode>();
-        for (const node of nodes) {
-            nodeMap.set(node.name.toLowerCase(), node);
-            if (!isGene && node.conceptId) {
-                nodeMap.set(node.conceptId.toLowerCase(), node);
+/**
+ * A factory rather than a bare const (unlike its bio-leaf siblings) because it
+ * logs: DGIdb answers GraphQL partial errors alongside usable data, and an
+ * operator debugging odd interaction results needs to see them. `ToolContext`
+ * carries no deps by design, so a tool that logs is dep-bearing — the same
+ * reason `createSearchClinvarTool` takes its key that way.
+ */
+export function createSearchDgidbTool(deps: { readonly logger?: Logger } = {}) {
+    const logger = (deps.logger ?? createNoopLogger()).named("search_dgidb");
+    return defineTool({
+        id: "search_dgidb",
+        description:
+            "Query the Drug-Gene Interaction Database (DGIdb) for drug-gene interactions. " +
+            "DGIdb aggregates 30+ sources (ChEMBL, DrugBank, TTD, PharmGKB, GuideToPharmacology, CIViC, etc.) " +
+            "and returns source counts as a confidence signal. " +
+            "searchType='gene' returns drugs interacting with input HUGO gene symbols (most common: 'what drugs hit my gene set?'). " +
+            "searchType='drug' returns the genes each input drug is known to act on. " +
+            "Free, no API key required. Sorted by source count desc.",
+        inputSchema: z.object({
+            query: z
+                .union([z.string(), z.array(z.string()).max(50)])
+                .describe(
+                    "Single identifier or list of up to 50. For searchType='gene': HUGO symbols. For searchType='drug': drug names or DGIdb concept IDs.",
+                ),
+            searchType: z.enum(["gene", "drug"]).default("gene"),
+            interactionTypes: z
+                .array(z.string())
+                .optional()
+                .describe("Case-insensitive substring filter on interaction type. e.g. ['inhibitor', 'antagonist']"),
+            sources: z.array(z.string()).optional().describe("Restrict to interactions from these source DBs (case-insensitive substring)."),
+            minSources: z.number().int().min(1).default(1).describe("Drop interactions supported by fewer than this many sources."),
+            limit: z.number().int().min(1).max(200).default(50).describe("Max interactions per input gene/drug after filtering."),
+        }),
+        execute: async ({ query, searchType = "gene", interactionTypes, sources, minSources = 1, limit = 50 }) => {
+            const inputs = typeof query === "string" ? [query] : query;
+            if (inputs.length === 0 || inputs.every((s) => !s.trim())) {
+                throw new Error("query must contain at least one identifier");
             }
-        }
 
-        const results = inputs.map((input) => {
-            const node = nodeMap.get(input.toLowerCase());
-            if (!node) {
-                return { input, found: false, interactions: [] };
-            }
-            const inputSide = isGene
-                ? { geneName: node.name }
-                : {
-                      drugName: node.name,
-                      drugConceptId: node.conceptId ?? undefined,
-                  };
+            const isGene = searchType === "gene";
+            const variableName = isGene ? "genes" : "drugs";
+            const queryString = isGene ? GENE_INTERACTIONS_QUERY : DRUG_INTERACTIONS_QUERY;
 
-            const mapped = (node.interactions ?? []).map((raw) => mapInteraction(raw, searchType, inputSide));
-
-            const filtered = applyFilters(mapped, {
-                interactionTypes,
-                sources,
-                minSources,
+            const res = await apiFetchValidated(DGIDB_GRAPHQL_URL, DgidbResponseSchema, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    query: queryString,
+                    variables: { [variableName]: inputs },
+                }),
             });
 
-            const sorted = filtered.sort((a, b) => {
-                if (b.sourceCount !== a.sourceCount) {
-                    return b.sourceCount - a.sourceCount;
+            if (res.isErr()) throw new Error(describeApiError(res.error));
+
+            const body = res.value;
+            if (!body || !body.data) throw new Error("DGIdb returned no data");
+
+            if (body.errors?.length) {
+                logger.warn("dgidb partial errors alongside data", { errors: body.errors.slice(0, 3) });
+            }
+
+            const nodes = (isGene ? body.data.genes?.nodes : body.data.drugs?.nodes) ?? [];
+
+            const nodeMap = new Map<string, RawNode>();
+            for (const node of nodes) {
+                nodeMap.set(node.name.toLowerCase(), node);
+                if (!isGene && node.conceptId) {
+                    nodeMap.set(node.conceptId.toLowerCase(), node);
                 }
-                return (b.interactionScore ?? 0) - (a.interactionScore ?? 0);
+            }
+
+            const results = inputs.map((input) => {
+                const node = nodeMap.get(input.toLowerCase());
+                if (!node) {
+                    return { input, found: false, interactions: [] };
+                }
+                const inputSide = isGene
+                    ? { geneName: node.name }
+                    : {
+                          drugName: node.name,
+                          drugConceptId: node.conceptId ?? undefined,
+                      };
+
+                const mapped = (node.interactions ?? []).map((raw) => mapInteraction(raw, searchType, inputSide));
+
+                const filtered = applyFilters(mapped, {
+                    interactionTypes,
+                    sources,
+                    minSources,
+                });
+
+                const sorted = filtered.sort((a, b) => {
+                    if (b.sourceCount !== a.sourceCount) {
+                        return b.sourceCount - a.sourceCount;
+                    }
+                    return (b.interactionScore ?? 0) - (a.interactionScore ?? 0);
+                });
+
+                return {
+                    input,
+                    found: true,
+                    interactions: sorted.slice(0, limit),
+                };
             });
 
-            return {
-                input,
-                found: true,
-                interactions: sorted.slice(0, limit),
-            };
-        });
-
-        return ok({ results });
-    },
-});
+            return ok({ results });
+        },
+    });
+}

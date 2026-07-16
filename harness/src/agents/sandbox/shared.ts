@@ -51,7 +51,7 @@ import {
     pubchemTool,
     searchBgeeExpressionTool,
     searchClinicalTrialsTool,
-    searchDgidbTool,
+    createSearchDgidbTool,
     searchFaersTool,
     searchGeneTool,
     searchGeoDatasetsTool,
@@ -78,6 +78,7 @@ import { setActiveExecId } from "../../state/index.js";
 
 import type { AgentMeta, SandboxToolName } from "./types.js";
 import { SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS } from "./types.js";
+import type { Logger } from "../../lib/logger.js";
 
 /**
  * Tools every sandbox agent receives — sandbox-environment introspection,
@@ -106,6 +107,8 @@ export interface SandboxStepCoords {
 
 /** The shared dependency graph every sandbox agent draws from. */
 export interface SandboxAgentDeps {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     readonly provider: ChatProvider;
     readonly pool: Pool;
     readonly sandboxClient: SandboxClient;
@@ -183,7 +186,7 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
         searchClinicalTrials: searchClinicalTrialsTool,
         searchGeoDatasets: searchGeoDatasetsTool,
         searchClinvar: ncbi.searchClinvar,
-        searchDgidb: searchDgidbTool,
+        searchDgidb: createSearchDgidbTool({ ...(deps.logger ? { logger: deps.logger } : {}) }),
         searchGwasCatalog: searchGwasCatalogTool,
         searchDisgenet: chemDb.searchDisgenet,
         searchDrugbank: chemDb.searchDrugbank,

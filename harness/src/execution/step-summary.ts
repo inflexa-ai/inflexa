@@ -38,6 +38,8 @@ import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { StepSummarySchema, type StepSummary } from "../schemas/step-summary.js";
 
 import { incrementSummaryNullCount } from "./step-summary-metrics.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 
 const SYSTEM_PROMPT = `You are a sandbox agent writing a post-step interpretive summary of work you just completed.
 
@@ -54,6 +56,8 @@ const SUMMARY_AGENT_ID = "step-summary-writer";
 const DEFAULT_MAX_ITERATIONS = 12;
 
 export interface GenerateStepSummaryOptions {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     readonly provider: AgentChat;
     readonly session: AgentSession;
     readonly modelId: string;
@@ -98,6 +102,7 @@ function sanitizeTranscript(messages: readonly LoopMessage[]): LoopMessage[] {
  * without `summary.md` in that case.
  */
 export async function generateStepSummary(opts: GenerateStepSummaryOptions): Promise<StepSummary | undefined> {
+    const logger = (opts.logger ?? createNoopLogger()).named("step-summary").with({ runId: opts.runId, stepId: opts.stepId, agentId: opts.agentId });
     const transcript = sanitizeTranscript(opts.messages);
     const userPrompt = stepSummaryPrompt(opts.artifactPaths.join("\n"));
 
@@ -120,16 +125,14 @@ export async function generateStepSummary(opts: GenerateStepSummaryOptions): Pro
             runStep: passthroughStep,
         });
     } catch (err) {
-        console.warn(
-            `[step-summary] Summary loop failed runId=${opts.runId} stepId=${opts.stepId} agentId=${opts.agentId}: ${err instanceof Error ? err.message : err}`,
-        );
+        logger.warn("summary loop failed", logger.errorFields(err));
         incrementSummaryNullCount(opts.agentId, "throw");
         return undefined;
     }
 
     const markdown = finalText(result.messages);
     if (!markdown || markdown.trim().length === 0) {
-        console.warn(`[step-summary] Empty markdown runId=${opts.runId} stepId=${opts.stepId} agentId=${opts.agentId}`);
+        logger.warn("empty markdown");
         incrementSummaryNullCount(opts.agentId, "empty");
         return undefined;
     }

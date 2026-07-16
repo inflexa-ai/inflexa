@@ -172,6 +172,7 @@ export async function reconcileAndRegisterStepArtifacts(
             collector: lineageCollector,
         },
         session,
+        deps.logger,
     );
     if (reg.externalFailed > 0) {
         const wholeActivityFailed = reg.externalRegistered === 0;
