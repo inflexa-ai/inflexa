@@ -148,14 +148,14 @@ describe("list_available_refs", () => {
                     datasetId: "alpha",
                     datasetVersion: "2026.07",
                     activatedAt: "2026-07-14T10:30:00.000Z",
-                    artifacts: [{ path: "reference.parquet", bytes: 999, sha256: HASH, integrity: "pinned" }],
+                    artifacts: [{ path: "reference.parquet", bytes: 999, sha256: HASH }],
                 },
                 {
                     version: 1,
                     datasetId: "ncbi-gene-human",
                     datasetVersion: "current",
                     activatedAt: "2026-07-14T10:30:00.000Z",
-                    artifacts: [{ path: "Homo_sapiens.gene_info.gz", bytes: 1_024, sha256: HASH, integrity: "unpinned" }],
+                    artifacts: [{ path: "Homo_sapiens.gene_info.gz", bytes: 1_024, sha256: HASH }],
                 },
             ],
             legacyEntries: [{ local_path: "legacy/pathways.gmt", category: "pathways", dataset: "legacy-pathways", rows: 200 }],
@@ -185,28 +185,6 @@ describe("list_available_refs", () => {
             metadata: { datasetId: "legacy-pathways", category: "pathways", rows: 200 },
         });
         expect(result.entries.find((entry) => entry.path.includes("/user/"))?.metadata).toBeUndefined();
-    });
-
-    it("ignores a receipt artifact that records no observed integrity", async () => {
-        const managedPath = "/mnt/refs/managed/alpha/2026.07/reference.parquet";
-        const client = makeClient({
-            state: "populated",
-            entries: [{ path: managedPath, kind: "file", bytes: 12 }],
-            scannedEntries: 1,
-            truncated: false,
-            receipts: [
-                {
-                    version: 1,
-                    datasetId: "alpha",
-                    datasetVersion: "2026.07",
-                    activatedAt: "2026-07-14T10:30:00.000Z",
-                    artifacts: [{ path: "reference.parquet", bytes: 999, sha256: HASH }],
-                },
-            ],
-        });
-
-        const result = (await createTool(client).execute({}, makeToolContext().ctx))._unsafeUnwrap();
-        expect(result.entries).toEqual([{ path: managedPath, kind: "file", bytes: 12 }]);
     });
 
     it("ignores invalid and stale metadata without hiding observed files", async () => {
@@ -332,7 +310,7 @@ describe("list_available_refs", () => {
                 datasetId: "wikipathways-human",
                 datasetVersion: "2026.07.10",
                 activatedAt: "2026-07-14T10:30:00.000Z",
-                artifacts: [{ path: "wikipathways_Homo_sapiens.gmt", bytes: 31, sha256: HASH, integrity: "pinned" }],
+                artifacts: [{ path: "wikipathways_Homo_sapiens.gmt", bytes: 31, sha256: HASH }],
             }),
         );
 
