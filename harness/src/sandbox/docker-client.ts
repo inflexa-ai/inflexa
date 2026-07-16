@@ -89,6 +89,13 @@ export interface DockerClientConfig {
      * create rather than crashing inside the sandbox.
      */
     platform?: string;
+    /**
+     * Unix socket of the Docker-API engine to dial — a Docker daemon socket or a
+     * podman Docker-compat socket (both serve the identical REST API). Unset
+     * preserves dockerode's default resolution (`DOCKER_HOST`, then the default
+     * Docker socket).
+     */
+    engineSocketPath?: string;
     /** Injected for tests. */
     docker?: Docker;
     /** Injected for tests so `/health` polling can be stubbed. */
@@ -139,11 +146,28 @@ async function pollHealth(fetchImpl: typeof fetch, url: string, timeoutMs: numbe
 }
 
 /**
+ * dockerode connection options for a configured engine socket, or `undefined`
+ * to leave construction as a bare `new Docker()` — which preserves dockerode's
+ * default resolution (`DOCKER_HOST`, then the default Docker socket). A set
+ * `engineSocketPath` dials that unix socket instead (a Docker daemon or a
+ * podman Docker-compat socket).
+ */
+export function engineConnectionOptions(engineSocketPath: string | undefined): Docker.DockerOptions | undefined {
+    return engineSocketPath === undefined ? undefined : { socketPath: engineSocketPath };
+}
+
+/**
  * Create the container, or adopt the one already standing under this
- * checkpointed name (a recovery re-run, see the harness-sandbox-exec spec). A
- * running container is adopted as-is; a stopped prior attempt is removed and
- * recreated. A 409 whose container belongs to a different workflow is a refused
- * name collision — never adopt or remove someone else's container.
+ * checkpointed name on a recovery re-run. Any create failure triggers an
+ * inspect of the name: engines disagree on the duplicate-name status (Docker
+ * answers 409, podman's compat API 500), so the reconcile keys on whether a
+ * container stands under the name, not on a status code. A standing container
+ * this workflow owns is adopted as-is if running, removed and recreated if
+ * stopped; one owned by a different workflow is a refused name collision — never
+ * adopt or remove someone else's container. When no container stands, the
+ * failure was not a name collision and the original create error is returned;
+ * the inspect's own failure is never surfaced, so a transient engine outage
+ * (both calls fail) still reports the create failure.
  */
 async function createOrAdopt(
     docker: Docker,
@@ -154,11 +178,12 @@ async function createOrAdopt(
 ): Promise<Result<{ container: Docker.Container; alreadyRunning: boolean }, SandboxError>> {
     const created = await trySandbox(() => docker.createContainer(createOpts), createFailed);
     if (created.isOk()) return ok({ container: created.value, alreadyRunning: false });
-    if (statusOf(created.error) !== 409) return err(created.error);
 
     const existing = docker.getContainer(name);
     const inspected = await trySandbox(() => existing.inspect(), createFailed);
-    if (inspected.isErr()) return err(inspected.error);
+    // No container stands under the name → the create failure was not a name
+    // collision, so surface the original create error rather than the inspect's.
+    if (inspected.isErr()) return err(created.error);
     const info = inspected.value;
 
     const owner = info.Config?.Labels?.[OWNER_WORKFLOW_LABEL];
@@ -201,7 +226,10 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
     isAlive(ref: SandboxRef): ResultAsync<SandboxLiveness, SandboxError>;
     listManagedSandboxes(): ResultAsync<ManagedSandbox[], SandboxError>;
 } {
-    const docker = config.docker ?? new Docker();
+    // The injected test instance wins; otherwise a configured socket dials that
+    // engine and an unset one stays a bare `new Docker()` (default resolution).
+    const connection = engineConnectionOptions(config.engineSocketPath);
+    const docker = config.docker ?? (connection ? new Docker(connection) : new Docker());
     const fetchImpl = config.fetch ?? fetch;
     const transport: SandboxTransport = config.transport ?? "poll";
     const pollMode = transport === "poll";
