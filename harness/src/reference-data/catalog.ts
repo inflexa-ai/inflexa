@@ -29,39 +29,19 @@ export const ReferenceSha256Schema = z.string().regex(SHA256, "Expected a lowerc
 const ReferenceArtifactUrlSchema = z.url().refine((value) => value.startsWith("https://"), "Reference artifacts must be fetched over https");
 
 /**
- * An artifact whose upstream publishes immutable, versioned bytes. The catalog
- * carries the size and digest, so a download is verified against *this file*
- * before it is ever activated: a mismatch means the bytes are not what we
- * reviewed, and the install fails.
+ * One final file distributed for a reference dataset: a stable install-relative
+ * path and the third-party https URL it is fetched from. The catalog carries no
+ * size or digest — every upstream is authenticated over TLS at download time,
+ * and the installer records the bytes it actually received in the receipt so
+ * `verify` can later prove the local copy has not changed since install. This is
+ * one uniform trust-on-first-use model; there is deliberately no per-artifact
+ * integrity class, so adding a source is only ever a URL, and no checked-in
+ * digest is ours to maintain or lets go stale when a `current` upstream rebuilds.
  */
-const PinnedReferenceArtifactSchema = z.strictObject({
-    integrity: z.literal("pinned"),
-    path: ReferenceArtifactPathSchema,
-    url: ReferenceArtifactUrlSchema,
-    bytes: z.number().int().positive(),
-    sha256: ReferenceSha256Schema,
-});
-
-/**
- * An artifact whose upstream regenerates the same URL in place — NCBI rebuilds
- * `gene_info` continuously and Reactome's `current` release is overwritten and
- * its predecessors deleted. No checked-in digest can survive that, and pinning
- * one would only guarantee a broken download. Integrity is therefore
- * trust-on-first-use: the installer records the bytes it actually received in
- * the receipt, and `verify` proves the files have not changed *since install*.
- * This is a weaker guarantee than `pinned` and is surfaced as such to the user.
- */
-const UnpinnedReferenceArtifactSchema = z.strictObject({
-    integrity: z.literal("unpinned"),
+export const ReferenceArtifactSchema = z.strictObject({
     path: ReferenceArtifactPathSchema,
     url: ReferenceArtifactUrlSchema,
 });
-
-/** One immutable final file distributed for a reference dataset. */
-export const ReferenceArtifactSchema = z.discriminatedUnion("integrity", [PinnedReferenceArtifactSchema, UnpinnedReferenceArtifactSchema]);
-
-/** Which integrity guarantee an artifact can actually offer. */
-export type ReferenceIntegrity = z.infer<typeof ReferenceArtifactSchema>["integrity"];
 
 /** Provenance and licensing information for one supported reference dataset. */
 export const ReferenceDatasetSchema = z.object({
@@ -141,14 +121,14 @@ function deepFreeze<T>(value: T): DeepReadonly<T> {
 /**
  * Canonical release catalog. Every artifact is fetched directly from the third
  * party that publishes it; this project hosts, mirrors, and redistributes
- * nothing. Entries are added only with real upstream URLs, provenance, and
- * licensing data — plus a size and digest whenever the upstream publishes
- * immutable bytes we can pin to.
+ * nothing. Entries are added with a real upstream https URL, provenance, and
+ * licensing data — and nothing else per file: no size, no digest to compute or
+ * keep in sync.
  *
  * `version` is the dataset's upstream release identifier. Datasets built on an
  * upstream that has no immutable release — NCBI regenerates `gene_info` daily,
  * Reactome overwrites `current` and deletes prior releases — are versioned
- * `current` and carry `unpinned` artifacts.
+ * `current`; those with an immutable release carry it verbatim.
  */
 export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
     ReferenceDataCatalogSchema.parse({
@@ -168,7 +148,6 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 recommendation: { group: "gene-identifiers", recommended: true },
                 artifacts: [
                     {
-                        integrity: "unpinned",
                         path: "Homo_sapiens.gene_info.gz",
                         url: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/Homo_sapiens.gene_info.gz",
                     },
@@ -188,7 +167,6 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 recommendation: { group: "gene-identifiers", recommended: true },
                 artifacts: [
                     {
-                        integrity: "unpinned",
                         path: "Mus_musculus.gene_info.gz",
                         url: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/Mus_musculus.gene_info.gz",
                     },
@@ -208,9 +186,87 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 recommendation: { group: "gene-identifiers", recommended: true },
                 artifacts: [
                     {
-                        integrity: "unpinned",
                         path: "Rattus_norvegicus.gene_info.gz",
                         url: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/Rattus_norvegicus.gene_info.gz",
+                    },
+                ],
+            },
+            {
+                // All-species monolithic table (~274 MB), not the per-organism split the gene_info entries use:
+                // NCBI publishes Entrez↔Ensembl only in this one combined file. Opt-in for that reason.
+                id: "ncbi-gene2ensembl",
+                version: "current",
+                title: "NCBI Entrez-to-Ensembl gene mapping (all species)",
+                description:
+                    "NCBI Gene's Entrez Gene ID ↔ Ensembl gene/transcript/protein identifier cross-reference for every species (gene2ensembl), tab-separated and gzipped — roughly 274 MB. NCBI rebuilds this file in place, so it is verified against what you downloaded rather than a checked-in digest.",
+                sourceUrl: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/",
+                license: {
+                    identifier: "NCBI-Molecular-Data-Usage-Policy",
+                    url: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+                },
+                recommendation: { group: "gene-identifiers", recommended: false },
+                artifacts: [{ path: "gene2ensembl.gz", url: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene2ensembl.gz" }],
+            },
+            {
+                // ~2.2 GB all-species monolithic table — the largest catalog entry. Opt-in like reactome-mappings.
+                id: "ncbi-gene2refseq",
+                version: "current",
+                title: "NCBI Entrez-to-RefSeq accession mapping (all species, large)",
+                description:
+                    "NCBI Gene's Entrez Gene ID ↔ RefSeq RNA/protein/genomic accession cross-reference for every species (gene2refseq), tab-separated and gzipped — roughly 2.2 GB. NCBI rebuilds this file in place, so it is verified against what you downloaded rather than a checked-in digest. Only needed to join RefSeq accessions onto genes.",
+                sourceUrl: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/",
+                license: {
+                    identifier: "NCBI-Molecular-Data-Usage-Policy",
+                    url: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+                },
+                recommendation: { group: "gene-identifiers", recommended: false },
+                artifacts: [{ path: "gene2refseq.gz", url: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene2refseq.gz" }],
+            },
+            {
+                id: "uniprot-idmapping-human",
+                version: "current",
+                title: "UniProt human ID mapping",
+                description:
+                    "UniProtKB accession ↔ Entrez, Ensembl, RefSeq and other identifiers for Homo sapiens (idmapping_selected, ~61 MB gzipped). UniProt overwrites `current_release` each cycle, so it is verified against what you downloaded rather than a checked-in digest.",
+                sourceUrl: "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/by_organism/",
+                license: { identifier: "CC-BY-4.0", url: "https://www.uniprot.org/help/license" },
+                recommendation: { group: "gene-identifiers", recommended: true },
+                artifacts: [
+                    {
+                        path: "HUMAN_9606_idmapping_selected.tab.gz",
+                        url: "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/by_organism/HUMAN_9606_idmapping_selected.tab.gz",
+                    },
+                ],
+            },
+            {
+                id: "uniprot-idmapping-mouse",
+                version: "current",
+                title: "UniProt mouse ID mapping",
+                description:
+                    "UniProtKB accession ↔ Entrez, Ensembl, RefSeq and other identifiers for Mus musculus (idmapping_selected, ~18 MB gzipped). UniProt overwrites `current_release` each cycle, so it is verified against what you downloaded rather than a checked-in digest.",
+                sourceUrl: "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/by_organism/",
+                license: { identifier: "CC-BY-4.0", url: "https://www.uniprot.org/help/license" },
+                recommendation: { group: "gene-identifiers", recommended: true },
+                artifacts: [
+                    {
+                        path: "MOUSE_10090_idmapping_selected.tab.gz",
+                        url: "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/by_organism/MOUSE_10090_idmapping_selected.tab.gz",
+                    },
+                ],
+            },
+            {
+                id: "uniprot-idmapping-rat",
+                version: "current",
+                title: "UniProt rat ID mapping",
+                description:
+                    "UniProtKB accession ↔ Entrez, Ensembl, RefSeq and other identifiers for Rattus norvegicus (idmapping_selected, ~6 MB gzipped). UniProt overwrites `current_release` each cycle, so it is verified against what you downloaded rather than a checked-in digest.",
+                sourceUrl: "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/by_organism/",
+                license: { identifier: "CC-BY-4.0", url: "https://www.uniprot.org/help/license" },
+                recommendation: { group: "gene-identifiers", recommended: true },
+                artifacts: [
+                    {
+                        path: "RAT_10116_idmapping_selected.tab.gz",
+                        url: "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/by_organism/RAT_10116_idmapping_selected.tab.gz",
                     },
                 ],
             },
@@ -224,8 +280,8 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 license: { identifier: "CC0-1.0", url: "https://reactome.org/license" },
                 recommendation: { group: "pathways", recommended: true },
                 artifacts: [
-                    { integrity: "unpinned", path: "ReactomePathways.gmt", url: "https://reactome.org/download/current/ReactomePathways.gmt" },
-                    { integrity: "unpinned", path: "ReactomePathways.txt", url: "https://reactome.org/download/current/ReactomePathways.txt" },
+                    { path: "ReactomePathways.gmt", url: "https://reactome.org/download/current/ReactomePathways.gmt" },
+                    { path: "ReactomePathways.txt", url: "https://reactome.org/download/current/ReactomePathways.txt" },
                 ],
             },
             {
@@ -243,17 +299,14 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 recommendation: { group: "pathways", recommended: false },
                 artifacts: [
                     {
-                        integrity: "unpinned",
                         path: "NCBI2Reactome_All_Levels.txt",
                         url: "https://reactome.org/download/current/NCBI2Reactome_All_Levels.txt",
                     },
                     {
-                        integrity: "unpinned",
                         path: "Ensembl2Reactome_All_Levels.txt",
                         url: "https://reactome.org/download/current/Ensembl2Reactome_All_Levels.txt",
                     },
                     {
-                        integrity: "unpinned",
                         path: "UniProt2Reactome_All_Levels.txt",
                         url: "https://reactome.org/download/current/UniProt2Reactome_All_Levels.txt",
                     },
@@ -269,11 +322,70 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 recommendation: { group: "pathways", recommended: true },
                 artifacts: [
                     {
-                        integrity: "pinned",
                         path: "wikipathways_Homo_sapiens.gmt",
                         url: "https://data.wikipathways.org/20260710/gmt/wikipathways-20260710-gmt-Homo_sapiens.gmt",
-                        bytes: 341_474,
-                        sha256: "79615a079246bb0b07cc3505265b1f75ea6cffec88001ce27f644dd86a39c97d",
+                    },
+                ],
+            },
+            {
+                id: "wikipathways-mouse",
+                version: "2026.07.10",
+                title: "WikiPathways mouse pathways",
+                description: "Community-curated Mus musculus pathway gene sets (GMT) from the immutable 2026-07-10 WikiPathways snapshot.",
+                sourceUrl: "https://data.wikipathways.org/20260710/gmt/",
+                license: { identifier: "CC0-1.0", url: "https://www.wikipathways.org/about/terms.html" },
+                recommendation: { group: "pathways", recommended: true },
+                artifacts: [
+                    {
+                        path: "wikipathways_Mus_musculus.gmt",
+                        url: "https://data.wikipathways.org/20260710/gmt/wikipathways-20260710-gmt-Mus_musculus.gmt",
+                    },
+                ],
+            },
+            {
+                id: "wikipathways-rat",
+                version: "2026.07.10",
+                title: "WikiPathways rat pathways",
+                description: "Community-curated Rattus norvegicus pathway gene sets (GMT) from the immutable 2026-07-10 WikiPathways snapshot.",
+                sourceUrl: "https://data.wikipathways.org/20260710/gmt/",
+                license: { identifier: "CC0-1.0", url: "https://www.wikipathways.org/about/terms.html" },
+                recommendation: { group: "pathways", recommended: true },
+                artifacts: [
+                    {
+                        path: "wikipathways_Rattus_norvegicus.gmt",
+                        url: "https://data.wikipathways.org/20260710/gmt/wikipathways-20260710-gmt-Rattus_norvegicus.gmt",
+                    },
+                ],
+            },
+            {
+                id: "msigdb-hallmark-human",
+                version: "2026.1",
+                title: "MSigDB human hallmark gene sets",
+                description:
+                    "The 50 MSigDB hallmark gene sets for Homo sapiens (symbols GMT) — coherent, well-defined biological states and processes for enrichment. From the immutable MSigDB 2026.1 human release.",
+                sourceUrl: "https://data.broadinstitute.org/gsea-msigdb/msigdb/",
+                license: { identifier: "MSigDB-License", url: "https://www.gsea-msigdb.org/gsea/msigdb/license.jsp" },
+                recommendation: { group: "pathways", recommended: true },
+                artifacts: [
+                    {
+                        path: "h.all.v2026.1.Hs.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/h.all.v2026.1.Hs.symbols.gmt",
+                    },
+                ],
+            },
+            {
+                id: "msigdb-hallmark-mouse",
+                version: "2026.1",
+                title: "MSigDB mouse hallmark gene sets",
+                description:
+                    "The MSigDB mouse hallmark gene sets for Mus musculus (symbols GMT) — the murine ortholog-mapped hallmark collection for enrichment. From the immutable MSigDB 2026.1 mouse release.",
+                sourceUrl: "https://data.broadinstitute.org/gsea-msigdb/msigdb/",
+                license: { identifier: "MSigDB-License", url: "https://www.gsea-msigdb.org/gsea/msigdb/license.jsp" },
+                recommendation: { group: "pathways", recommended: true },
+                artifacts: [
+                    {
+                        path: "mh.all.v2026.1.Mm.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Mm/mh.all.v2026.1.Mm.symbols.gmt",
                     },
                 ],
             },
@@ -287,11 +399,8 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 recommendation: { group: "regulatory-networks", recommended: true },
                 artifacts: [
                     {
-                        integrity: "pinned",
                         path: "CollecTRI_regulons.csv",
                         url: "https://zenodo.org/records/8192729/files/CollecTRI_regulons.csv",
-                        bytes: 4_345_649,
-                        sha256: "4473c9189dd53dacc80297709ad1452dda1086a1cc2185f9a56146c261668701",
                     },
                 ],
             },
@@ -306,20 +415,25 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 recommendation: { group: "normal-expression", recommended: true },
                 artifacts: [
                     {
-                        integrity: "pinned",
                         path: "GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz",
                         url: "https://storage.googleapis.com/adult-gtex/bulk-gex/v8/rna-seq/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz",
-                        bytes: 6_952_331,
-                        sha256: "ee7201ff2f280b0de5657d4b08e9a240362d9757efed7f7bd5dba35a5f8617b8",
                     },
                     {
-                        integrity: "pinned",
                         path: "GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt",
                         url: "https://storage.googleapis.com/adult-gtex/annotations/v8/metadata-files/GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt",
-                        bytes: 11_512_258,
-                        sha256: "74f6ab4c34ed2648d708a0ae6e6dff324f6c86ea723ae7d1c37d76f5221148f0",
                     },
                 ],
+            },
+            {
+                id: "hpa-proteinatlas",
+                version: "current",
+                title: "Human Protein Atlas",
+                description:
+                    "The full Human Protein Atlas table (proteinatlas.tsv.zip, ~7 MB): per-gene RNA/protein tissue expression, tissue specificity, subcellular location, secretome and blood-concentration annotations for Homo sapiens. HPA republishes this file per release, so it is verified against what you downloaded rather than a checked-in digest.",
+                sourceUrl: "https://www.proteinatlas.org/about/download",
+                license: { identifier: "CC-BY-SA-3.0", url: "https://www.proteinatlas.org/about/licence" },
+                recommendation: { group: "normal-expression", recommended: true },
+                artifacts: [{ path: "proteinatlas.tsv.zip", url: "https://www.proteinatlas.org/download/proteinatlas.tsv.zip" }],
             },
             {
                 id: "celltypist-immune",
@@ -332,18 +446,118 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 recommendation: { group: "cell-typing", recommended: true },
                 artifacts: [
                     {
-                        integrity: "pinned",
                         path: "Immune_All_Low.pkl",
                         url: "https://celltypist.cog.sanger.ac.uk/models/Pan_Immune_CellTypist/v2/Immune_All_Low.pkl",
-                        bytes: 2_824_990,
-                        sha256: "290874d35dac039d4c9218c343fde4aac1077709b72a331ce7266f6828c36502",
                     },
                     {
-                        integrity: "pinned",
                         path: "Immune_All_High.pkl",
                         url: "https://celltypist.cog.sanger.ac.uk/models/Pan_Immune_CellTypist/v2/Immune_All_High.pkl",
-                        bytes: 1_070_426,
-                        sha256: "a715fec36c2c421f7c4e31cf4cb4bea883eedab7fd7b20a4b76f091c22660448",
+                    },
+                ],
+            },
+            {
+                id: "celltypist-pan-fetal",
+                version: "2",
+                title: "CellTypist pan-fetal human model",
+                description:
+                    "CellTypist Pan_Fetal_Human model — cell-type annotation across human fetal tissues. Load by absolute path; CellTypist's by-name lookup expects its own cache layout, which the reference store deliberately does not impersonate.",
+                sourceUrl: "https://www.celltypist.org/models",
+                license: { identifier: "NOASSERTION" },
+                recommendation: { group: "cell-typing", recommended: true },
+                artifacts: [
+                    {
+                        path: "Pan_Fetal_Human.pkl",
+                        url: "https://celltypist.cog.sanger.ac.uk/models/Pan_Fetal_Suo/v2/Pan_Fetal_Human.pkl",
+                    },
+                ],
+            },
+            {
+                id: "celltypist-covid19",
+                version: "1",
+                title: "CellTypist COVID-19 immune model",
+                description:
+                    "CellTypist COVID19_Immune_Landscape model — immune cell-type annotation trained on the cross-study COVID-19 immune atlas. Load by absolute path; CellTypist's by-name lookup expects its own cache layout, which the reference store deliberately does not impersonate.",
+                sourceUrl: "https://www.celltypist.org/models",
+                license: { identifier: "NOASSERTION" },
+                recommendation: { group: "cell-typing", recommended: true },
+                artifacts: [
+                    {
+                        path: "COVID19_Immune_Landscape.pkl",
+                        url: "https://celltypist.cog.sanger.ac.uk/models/COVID19_Immune_Ren/v1/COVID19_Immune_Landscape.pkl",
+                    },
+                ],
+            },
+            {
+                id: "panglaodb-markers",
+                version: "2020.03.27",
+                title: "PanglaoDB cell-type markers",
+                description:
+                    "PanglaoDB cell-type marker panel (tab-separated, gzipped): curated marker genes per cell type across human and mouse, for marker-based annotation. From the immutable 27 March 2020 PanglaoDB marker release.",
+                sourceUrl: "https://panglaodb.se/markers.html",
+                license: { identifier: "NOASSERTION" },
+                recommendation: { group: "cell-typing", recommended: true },
+                artifacts: [
+                    {
+                        path: "PanglaoDB_markers_27_Mar_2020.tsv.gz",
+                        url: "https://panglaodb.se/markers/PanglaoDB_markers_27_Mar_2020.tsv.gz",
+                    },
+                ],
+            },
+            {
+                id: "azimuth-pbmc",
+                version: "1.0.0",
+                title: "Azimuth human PBMC reference",
+                description:
+                    "Azimuth annotated reference for human peripheral blood mononuclear cells: the Seurat reference object plus its Annoy nearest-neighbour index, for supervised mapping and cell-type label transfer. Immutable Zenodo release 4546839.",
+                sourceUrl: "https://zenodo.org/records/4546839",
+                license: { identifier: "CC-BY-4.0", url: "https://zenodo.org/records/4546839" },
+                recommendation: { group: "cell-typing", recommended: true },
+                artifacts: [
+                    {
+                        path: "ref.Rds",
+                        url: "https://zenodo.org/records/4546839/files/ref.Rds",
+                    },
+                    {
+                        path: "idx.annoy",
+                        url: "https://zenodo.org/records/4546839/files/idx.annoy",
+                    },
+                ],
+            },
+            {
+                // ~443 MB (ref + index), so it is opt-in rather than part of a default setup.
+                id: "azimuth-tonsil",
+                version: "1.0.0",
+                title: "Azimuth human tonsil reference",
+                description:
+                    "Azimuth annotated reference for human tonsil: the Seurat reference object plus its Annoy nearest-neighbour index, for supervised mapping and cell-type label transfer. Immutable Zenodo release 7032928, roughly 443 MB.",
+                sourceUrl: "https://zenodo.org/records/7032928",
+                license: { identifier: "CC-BY-4.0", url: "https://zenodo.org/records/7032928" },
+                recommendation: { group: "cell-typing", recommended: false },
+                artifacts: [
+                    {
+                        path: "ref.Rds",
+                        url: "https://zenodo.org/records/7032928/files/ref.Rds",
+                    },
+                    {
+                        path: "idx.annoy",
+                        url: "https://zenodo.org/records/7032928/files/idx.annoy",
+                    },
+                ],
+            },
+            {
+                // ~842 MB reference genome bundle, PGx-specific, so it is opt-in rather than a default download.
+                id: "pharmcat-grch38-fasta",
+                version: "GRCh38.p13",
+                title: "PharmCAT GRCh38 reference FASTA",
+                description:
+                    "The GRCh38.p13 reference genome FASTA that PharmCAT's VCF preprocessor expects (bgzip'd with a .fai/.gzi faidx), bundled as a tar — roughly 842 MB. Immutable Zenodo release 7288118. Needed only for pharmacogenomics (PharmCAT) workflows.",
+                sourceUrl: "https://zenodo.org/records/7288118",
+                license: { identifier: "CC-BY-4.0", url: "https://zenodo.org/records/7288118" },
+                recommendation: { group: "pharmacogenomics", recommended: false },
+                artifacts: [
+                    {
+                        path: "PharmCAT_GRCh38_reference_fasta.tar",
+                        url: "https://zenodo.org/records/7288118/files/GRCh38_reference_fasta.tar?download=1",
                     },
                 ],
             },

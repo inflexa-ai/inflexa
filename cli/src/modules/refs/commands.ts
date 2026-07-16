@@ -1,4 +1,4 @@
-import { isCancel, log, multiselect } from "@clack/prompts";
+import { groupMultiselect, isCancel, log } from "@clack/prompts";
 import { REFERENCE_DATA_CATALOG, type ReferenceDataCatalog } from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
 
@@ -8,7 +8,7 @@ import {
     ensureReferenceStore,
     inspectReferenceStore,
     installReferenceDatasets,
-    referenceDownloadBytes,
+    referenceDownloadEstimate,
     verifyReferenceDatasets,
     type ReferenceDownloadEstimate,
     type ReferenceInstallOutcome,
@@ -71,46 +71,14 @@ export function formatReferenceBytes(bytes: number): string {
     return `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
 }
 
-type ReferenceDatasetSize = {
-    /** Bytes across artifacts the catalog can size. */
-    readonly bytes: number;
-    /** Artifacts whose size only the mutable upstream knows. */
-    readonly unsized: number;
-};
-
-function datasetSize(dataset: ReferenceDataCatalog["datasets"][number]): ReferenceDatasetSize {
-    let bytes = 0;
-    let unsized = 0;
-    for (const artifact of dataset.artifacts) {
-        if (artifact.integrity === "pinned") bytes += artifact.bytes;
-        else unsized += 1;
-    }
-    return { bytes, unsized };
+/** A file count phrased for the terminal — the catalog pins no sizes, so the upstream determines
+ * the bytes at download time and the honest thing to state ahead of time is the number of files. */
+function formatFileCount(count: number): string {
+    return `${count} file${count === 1 ? "" : "s"} of upstream-determined size`;
 }
 
-/** Render a size the catalog may only partly know, without ever inventing a number. */
-function formatReferenceSize(size: ReferenceDatasetSize): string {
-    if (size.unsized === 0) return formatReferenceBytes(size.bytes);
-    const unsized = `${size.unsized} file${size.unsized === 1 ? "" : "s"} of upstream-determined size`;
-    return size.bytes === 0 ? unsized : `${formatReferenceBytes(size.bytes)} + ${unsized}`;
-}
-
-/** The strongest integrity guarantee that holds for every artifact in the dataset. */
-function datasetIntegrity(dataset: ReferenceDataCatalog["datasets"][number]): "pinned" | "unpinned" | "mixed" {
-    const pinned = dataset.artifacts.some((artifact) => artifact.integrity === "pinned");
-    const unpinned = dataset.artifacts.some((artifact) => artifact.integrity === "unpinned");
-    return pinned && unpinned ? "mixed" : unpinned ? "unpinned" : "pinned";
-}
-
-function renderIntegrity(dataset: ReferenceDataCatalog["datasets"][number]): string {
-    switch (datasetIntegrity(dataset)) {
-        case "pinned":
-            return "pinned — verified against the checksums in the catalog";
-        case "unpinned":
-            return "unpinned — upstream is rebuilt in place; verified against what you downloaded";
-        case "mixed":
-            return "mixed — some files are checksum-pinned, others are verified against what you downloaded";
-    }
+function formatDatasetSize(dataset: ReferenceDataCatalog["datasets"][number]): string {
+    return formatFileCount(dataset.artifacts.length);
 }
 
 function renderError(error: ReferenceProvisionError): string {
@@ -118,19 +86,29 @@ function renderError(error: ReferenceProvisionError): string {
 }
 
 function renderEstimate(estimate: ReferenceDownloadEstimate): string {
-    return formatReferenceSize({ bytes: estimate.bytes, unsized: estimate.unsizedArtifacts });
+    return formatFileCount(estimate.artifactsToFetch);
 }
 
 async function chooseIds(catalog: ReferenceDataCatalog): Promise<readonly string[] | undefined> {
     if (catalog.datasets.length === 0) return [];
-    const selected = await multiselect({
+    // Present the picker as labelled categories rather than one flat wall: the catalog already
+    // carries `recommendation.group` per dataset, so grouping is purely presentational. Group
+    // insertion order follows first appearance in the catalog (which is ordered by group), and
+    // toggling a group header selects every dataset under it — clack returns only the leaf ids,
+    // never the group label, so the strict resolver downstream never sees a phantom id.
+    const grouped: Record<string, { value: string; label: string; hint?: string }[]> = {};
+    for (const dataset of catalog.datasets) {
+        (grouped[dataset.recommendation.group] ??= []).push({
+            value: dataset.id,
+            label: `${dataset.title} (${formatDatasetSize(dataset)})`,
+            ...(dataset.recommendation.recommended ? { hint: "recommended" } : {}),
+        });
+    }
+    const selected = await groupMultiselect({
         message: "Reference datasets to download",
         required: false,
-        options: catalog.datasets.map((dataset) => ({
-            value: dataset.id,
-            label: `${dataset.title} (${formatReferenceSize(datasetSize(dataset))})`,
-            hint: `${dataset.recommendation.group}${dataset.recommendation.recommended ? ", recommended" : ""}`,
-        })),
+        selectableGroups: true,
+        options: grouped,
     });
     return isCancel(selected) ? undefined : selected;
 }
@@ -165,7 +143,7 @@ export async function downloadReferences(
     }
 
     const install = { force: options.force ?? false };
-    const estimate = await referenceDownloadBytes(ids, env.refsDir, options.source ?? undefined, install);
+    const estimate = await referenceDownloadEstimate(ids, env.refsDir, options.source ?? undefined, install);
     if (estimate.isErr()) return err(estimate.error);
     const size = renderEstimate(estimate.value);
     console.log(`Reference download plan: ${size} to fetch from the upstream publishers.`);
@@ -201,26 +179,37 @@ export function runRefsPath(): void {
     console.log(env.refsDir);
 }
 
-/** `inflexa refs list` — render canonical options and recoverable local state. */
-export async function runRefsList(): Promise<void> {
+/** `inflexa refs list` — render canonical options and recoverable local state. Pass `urls` to also
+ * print the exact upstream download URL of every artifact, so the source is inspectable before consent. */
+export async function runRefsList(options: { readonly urls?: boolean } = {}): Promise<void> {
     const result = await inspectReferenceStore(env.refsDir);
     result.match(
         (inspection) => {
             if (inspection.datasets.length === 0) console.log("No catalog reference datasets are published by this harness version yet.");
+            // Datasets arrive in catalog order, which clusters by group, so a header printed on each
+            // group change renders the listing as labelled categories instead of one flat wall.
+            let lastGroup: string | undefined;
             for (const item of inspection.datasets) {
                 const dataset = item.dataset;
-                console.log(`\n${dataset.id}  ${dataset.version}  ${item.state}`);
+                if (dataset.recommendation.group !== lastGroup) {
+                    lastGroup = dataset.recommendation.group;
+                    console.log(`\n== ${lastGroup} ==`);
+                }
+                console.log(`\n${dataset.id}  ${dataset.version}  ${item.state}${dataset.recommendation.recommended ? "" : "  (optional)"}`);
                 console.log(`  ${dataset.title} — ${dataset.description}`);
-                console.log(`  Size: ${formatReferenceSize(datasetSize(dataset))}`);
-                console.log(`  Integrity: ${renderIntegrity(dataset)}`);
-                console.log(`  Group: ${dataset.recommendation.group}${dataset.recommendation.recommended ? " (recommended)" : ""}`);
+                console.log(`  Size: ${formatDatasetSize(dataset)}`);
                 console.log(`  Source: ${dataset.sourceUrl}`);
                 console.log(`  License: ${dataset.license.identifier}${dataset.license.url ? ` — ${dataset.license.url}` : ""}`);
+                if (options.urls) for (const artifact of dataset.artifacts) console.log(`  URL: ${artifact.url}`);
             }
             if (inspection.userContent.length > 0) {
                 console.log(`\nUser/unmanaged top-level content: ${inspection.userContent.join(", ")} (left untouched)`);
             }
-            console.log("\nEvery dataset is downloaded straight from the third party that publishes it; nothing is mirrored or re-hosted here.");
+            console.log(
+                "\nEvery dataset is fetched straight over HTTPS from the third party that publishes it; nothing is mirrored, re-hosted, or checksum-pinned here.",
+            );
+            console.log("Integrity is trust-on-first-use: `inflexa refs verify` checks each installed file against the copy you downloaded.");
+            if (!options.urls) console.log("Re-run with `--urls` to print the exact upstream URL of every file.");
             console.log(`Add arbitrary references under ${env.refsDir}/user; sandboxes discover them dynamically.`);
             console.log("Missing a reusable option? Open a PR adding its upstream URL, provenance, and licensing to the harness reference-data catalog.");
         },
@@ -272,8 +261,7 @@ export async function runRefsVerify(ids: readonly string[]): Promise<void> {
             for (const dataset of verified) {
                 console.log(`${dataset.datasetId}${dataset.version ? `@${dataset.version}` : ""}: ${dataset.state}`);
                 for (const file of dataset.files) {
-                    const against = file.integrity === "pinned" ? "catalog checksum" : "checksum recorded at install";
-                    console.log(`  ${file.state.padEnd(8)} ${file.path}  (vs ${against})`);
+                    console.log(`  ${file.state.padEnd(8)} ${file.path}  (vs the checksum recorded at install)`);
                 }
             }
             const damaged = verified.filter((dataset) => dataset.state !== "valid");

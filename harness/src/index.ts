@@ -322,14 +322,7 @@ export {
     referenceArtifactKey,
     resolveReferenceInstallPlan,
 } from "./reference-data/catalog.js";
-export type {
-    ReferenceArtifact,
-    ReferenceDataCatalog,
-    ReferenceDataset,
-    ReferenceInstallPlan,
-    ReferenceInstallPlanDataset,
-    ReferenceIntegrity,
-} from "./reference-data/catalog.js";
+export type { ReferenceArtifact, ReferenceDataCatalog, ReferenceDataset, ReferenceInstallPlan, ReferenceInstallPlanDataset } from "./reference-data/catalog.js";
 export { REFERENCE_INSTALL_RECEIPT_VERSION, ReferenceInstallReceiptSchema, parseReferenceInstallReceipt } from "./reference-data/receipt.js";
 export type { ReferenceInstallReceipt, ReferenceReceiptArtifact } from "./reference-data/receipt.js";
 // Backs `WatchdogDeps.queryActiveSandboxes` when the embedder wires the watchdog.

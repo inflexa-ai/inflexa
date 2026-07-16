@@ -373,9 +373,10 @@ const refs = cli.command("refs").description("Manage reference data mounted read
 
 refs.command("list")
     .description("List catalog options, links, sizes, and local state")
-    .action(async () => {
+    .option("--urls", "Also print the exact upstream download URL of every file")
+    .action(async (options: { urls?: boolean }) => {
         const { runRefsList } = await import("../modules/refs/commands.ts");
-        await runRefsList();
+        await runRefsList({ urls: options.urls ?? false });
     });
 
 refs.command("download")
