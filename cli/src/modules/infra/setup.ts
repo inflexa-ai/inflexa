@@ -4,7 +4,7 @@ import { intro, outro, log, note, spinner as clackSpinner } from "@clack/prompts
 import { type Result, ok, err } from "neverthrow";
 import { ensureRuntime, readConfig, resolvePostgresConfig, selectedRuntime, writeConfig, type ConfigError } from "../../lib/config.ts";
 import { firstReadyRuntime, runtimeIds, runtimes, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
-import { env } from "../../lib/env.ts";
+import { detectProviderEnv, env, providerApiKeyVar, resolveModelApiKey, type ProviderEnvSnapshot } from "../../lib/env.ts";
 import { select, promptText } from "../../lib/cli.ts";
 import { detectedMachine, resolveHarnessConfig } from "../harness/config.ts";
 import { type PostgresConnection } from "./postgres_types.ts";
@@ -140,17 +140,33 @@ export async function setup(options: SetupOptions): Promise<void> {
             }
         } else {
             // --- direct connection ---
-            // The endpoint and provider are collected interactively (there are no non-interactive
-            // flags for them), so a scripted `--connection direct` cannot proceed — fail with a clear
-            // instruction rather than the shared prompt's generic "stdin is not interactive" bail-out.
-            if (!process.stdin.isTTY) {
+            // Setup can ADOPT an already-configured ecosystem env (ANTHROPIC_*/OPENAI_*) — a machine set up
+            // for Claude Code / the SDKs need not re-type the endpoint or re-export the key. The detection
+            // is a one-time setup read (never a runtime binding); only the non-secret fields are copied.
+            const snap = detectProviderEnv();
+            const adoptable = detectedAdoptable(snap);
+
+            let direct: DirectConnectionInput;
+            if (process.stdin.isTTY) {
+                direct = await promptDirectConnection(snap, adoptable);
+            } else if (adoptable.length > 0) {
+                // Non-interactive self-configure: adopt the detected env with no prompts, applying the
+                // deterministic anthropic-before-openai precedence so a scripted run is reproducible.
+                direct = adoptedConnection(adoptable[0]!, snap);
+                log.info(`Adopting the detected ${direct.provider} environment (${direct.baseURL}).`);
+            } else {
+                // No TTY and nothing to adopt: the endpoint/provider have no non-interactive flags, so a
+                // scripted `--connection direct` cannot proceed — fail with a clear instruction rather than
+                // the shared prompt's generic "stdin is not interactive" bail-out.
                 log.error(
-                    "Direct-connection setup needs an interactive terminal to collect the endpoint and provider.\n  Re-run `inflexa setup --connection direct` in an interactive shell.",
+                    "Direct-connection setup needs an interactive terminal to collect the endpoint and provider,\n" +
+                        "  or a detected ANTHROPIC_*/OPENAI_* environment to adopt.\n" +
+                        "  Re-run `inflexa setup --connection direct` in an interactive shell.",
                 );
                 process.exitCode = 1;
                 return;
             }
-            const direct = await promptDirectConnection();
+
             const writeErr = writeDirectConnection(direct).match(
                 () => null,
                 (e) => e,
@@ -161,8 +177,21 @@ export async function setup(options: SetupOptions): Promise<void> {
                 return;
             }
             log.success("Saved the direct model connection.");
+            // Tailor the key guidance to what is actually resolvable now: an adopted ecosystem env already
+            // carries the key (ANTHROPIC_API_KEY/OPENAI_API_KEY), so tell the user it is being read rather
+            // than instruct a redundant re-export. `resolveModelApiKey` reads the env only — nothing is copied.
+            const resolvedVar = resolveModelApiKey(direct.provider) ? providerApiKeyVar(direct.provider) : undefined;
             note(
-                `Export your provider API key before starting a chat:\n\n  export ${MODEL_API_KEY_VAR}=<your-key>\n\nThe key is read from the environment only — it is never written to config.`,
+                resolvedVar !== undefined && resolvedVar !== MODEL_API_KEY_VAR
+                    ? `Using ${resolvedVar} from your environment for the model key.\n` +
+                          `Override it any time by exporting ${MODEL_API_KEY_VAR}. The key is read from the environment only — never written to config.\n\n` +
+                          `Not adopted: ${ANTHROPIC_AUTH_TOKEN_VAR} (Anthropic-wire Bearer auth needs a harness capability) and Bedrock/Vertex (no direct signer).\n` +
+                          "  A bearer-token gateway can be reached today as protocol: openai-compatible."
+                    : `Export your provider API key before starting a chat:\n\n  export ${MODEL_API_KEY_VAR}=<your-key>\n` +
+                          `  (or the provider-conventional ${providerApiKeyVar(direct.provider)})\n\n` +
+                          "The key is read from the environment only — it is never written to config.\n\n" +
+                          `Not adopted: ${ANTHROPIC_AUTH_TOKEN_VAR} (Anthropic-wire Bearer auth needs a harness capability) and Bedrock/Vertex (no direct signer).\n` +
+                          "  A bearer-token gateway can be reached today as protocol: openai-compatible.",
                 "Model API key",
             );
         }
@@ -465,11 +494,19 @@ function printNextSteps(options: SetupOptions, conn: PostgresConnection, mode: C
 // Postgres provisioning is mode-independent.
 
 /**
- * The direct-mode secret's environment variable. Mirrors lib/env.ts's `modelApiKeyVar` — the sole
- * `process.env` reader, which does not export the name — because setup only PRINTS it (never reads it),
- * so the literal is duplicated rather than widening env.ts's surface for a display string.
+ * The direct-mode secret's environment variable, for DISPLAY only (setup prints the export hint but
+ * never reads the value — env.ts's {@link resolveModelApiKey} is the sole reader). The literal is
+ * duplicated rather than widening env.ts's surface for a display string.
  */
 const MODEL_API_KEY_VAR = "INFLEXA_MODEL_API_KEY";
+
+/**
+ * The deferred Anthropic-wire Bearer variable, named ONLY to tell the user it is not adopted (see the
+ * direct-path note): `ANTHROPIC_AUTH_TOKEN` is Anthropic-wire + Bearer, which needs a harness
+ * custom-auth-header capability the CLI cannot supply alone; a bearer gateway is reachable today as
+ * `protocol: openai-compatible`. Bedrock/Vertex are likewise out of scope (no direct-mode HTTP signer).
+ */
+const ANTHROPIC_AUTH_TOKEN_VAR = "ANTHROPIC_AUTH_TOKEN";
 
 /**
  * Validate the `--connection` flag value. `undefined` (flag absent) is OK — the mode is then chosen
@@ -499,8 +536,129 @@ async function chooseConnectionMode(preselected: ConnectionMode | undefined): Pr
     return chosen as ConnectionMode;
 }
 
+// --- ecosystem env adoption ------------------------------------------------
+//
+// The two ecosystems setup can adopt from the conventional provider env vars, each mapping to fixed
+// wire facts: ANTHROPIC_API_KEY/ANTHROPIC_BASE_URL ⇒ provider `anthropic`, protocol `anthropic`;
+// OPENAI_API_KEY/OPENAI_BASE_URL ⇒ provider `openai`, protocol `openai-compatible` (the OpenAI path
+// also covers the Groq/Ollama/vLLM/LiteLLM long tail via a custom OPENAI_BASE_URL).
+
+/** A provider ecosystem setup can adopt from the environment. */
+export type AdoptableProvider = "anthropic" | "openai";
+
+/** Public API roots used when no `*_BASE_URL` is exported — the `/v1`-terminated form the wire layer needs. */
+const ANTHROPIC_PUBLIC_ROOT = "https://api.anthropic.com/v1";
+const OPENAI_PUBLIC_ROOT = "https://api.openai.com/v1";
+
 /**
- * Collect a direct connection interactively: the endpoint URL (must parse as a URL), the provider slug
+ * Which ecosystems are adoptable (their API key is present), in the deterministic anthropic-before-openai
+ * precedence (design D6): a non-TTY setup adopts `[0]`, and an interactive both-present offer lists them
+ * in this order. An empty array means no conventional provider env was detected.
+ */
+export function detectedAdoptable(snap: ProviderEnvSnapshot): AdoptableProvider[] {
+    const out: AdoptableProvider[] = [];
+    if (snap.anthropicApiKeySet) out.push("anthropic");
+    if (snap.openaiApiKeySet) out.push("openai");
+    return out;
+}
+
+/**
+ * Normalize an adopted provider `baseURL` to the `/v1`-terminated form the wire layer requires (it POSTs
+ * `{baseURL}/messages` | `{baseURL}/chat/completions` and GETs `{baseURL}/models`). The conventions are
+ * ASYMMETRIC: `ANTHROPIC_BASE_URL` is a BARE root (`https://api.anthropic.com`; the Anthropic SDK appends
+ * `/v1/…`), whereas `OPENAI_BASE_URL` is usually already `/v1`-terminated — so `/v1` is appended ONLY when
+ * the path carries no `vN` version segment, leaving an already-versioned URL untouched. An unset
+ * `*_BASE_URL` defaults to the provider's public root. Because a gateway root like `https://gw.corp/anthropic`
+ * is genuinely ambiguous, the result is shown to the user as an EDITABLE pre-fill (see
+ * {@link promptDirectConnection}) — the normalization is a best guess the user confirms, not a silent rewrite.
+ */
+export function normalizeAdoptedBaseURL(provider: AdoptableProvider, rawBaseURL: string | undefined): string {
+    if (rawBaseURL === undefined || rawBaseURL.trim() === "") {
+        return provider === "anthropic" ? ANTHROPIC_PUBLIC_ROOT : OPENAI_PUBLIC_ROOT;
+    }
+    const trimmed = rawBaseURL.trim().replace(/\/+$/, ""); // drop trailing slashes so we never emit `…//v1`
+    return hasVersionSegment(trimmed) ? trimmed : `${trimmed}/v1`;
+}
+
+/**
+ * True when the URL's PATH already ends in a `/vN` version segment (any integer), so `/v1` must not be
+ * re-appended. Parses to inspect only the pathname — a `v1` in the host (`v1.gw.corp`) or a query must
+ * not count. `new URL` is guarded by `URL.canParse`, so it cannot throw here.
+ */
+function hasVersionSegment(url: string): boolean {
+    if (!URL.canParse(url)) return false;
+    const { pathname } = new URL(url);
+    return /\/v\d+\/?$/.test(pathname);
+}
+
+/**
+ * The non-secret connection an ecosystem adopts into config — the normalized `{ provider, baseURL,
+ * protocol }` written verbatim by {@link writeDirectConnection}. The API key is deliberately absent: it
+ * stays an environment read via {@link resolveModelApiKey}, never copied.
+ */
+export function adoptedConnection(which: AdoptableProvider, snap: ProviderEnvSnapshot): DirectConnectionInput {
+    return which === "anthropic"
+        ? { provider: "anthropic", baseURL: normalizeAdoptedBaseURL("anthropic", snap.anthropicBaseURL), protocol: "anthropic" }
+        : { provider: "openai", baseURL: normalizeAdoptedBaseURL("openai", snap.openaiBaseURL), protocol: "openai-compatible" };
+}
+
+/**
+ * Collect a direct connection interactively. When a conventional provider env is detected, offer its
+ * normalized connection as an editable pre-fill the user confirms (both-present ⇒ prompt which to adopt);
+ * declining — or no detection at all — falls through to the manual endpoint/provider/protocol prompts.
+ * Only `{ provider, baseURL, protocol }` are ever produced; the key is never read here.
+ */
+async function promptDirectConnection(snap: ProviderEnvSnapshot, adoptable: AdoptableProvider[]): Promise<DirectConnectionInput> {
+    if (adoptable.length > 0) {
+        const offered = await offerAdoption(snap, adoptable);
+        if (offered !== null) return offered;
+        // Declined the offer → fall through to today's manual entry.
+    }
+    return promptManualDirectConnection();
+}
+
+/**
+ * Offer to adopt a detected ecosystem env: ask which when both are present (design D6), then show the
+ * normalized `baseURL` as an EDITABLE pre-fill so an ambiguous gateway root is a one-keystroke edit, not
+ * a silent 404 (design D4). Returns the confirmed connection, or `null` when the user chooses manual entry.
+ */
+async function offerAdoption(snap: ProviderEnvSnapshot, adoptable: AdoptableProvider[]): Promise<DirectConnectionInput | null> {
+    let which: AdoptableProvider;
+    if (adoptable.length > 1) {
+        const chosen = await select("Detected both ANTHROPIC_* and OPENAI_* — adopt which provider environment?", [
+            { value: "anthropic", label: `Anthropic — ANTHROPIC_API_KEY${snap.anthropicBaseURL ? ` (${snap.anthropicBaseURL})` : ""}` },
+            { value: "openai", label: `OpenAI — OPENAI_API_KEY${snap.openaiBaseURL ? ` (${snap.openaiBaseURL})` : ""}` },
+            { value: "_manual", label: "Enter the connection manually instead" },
+        ]);
+        if (chosen === "_manual") return null;
+        which = chosen as AdoptableProvider;
+    } else {
+        which = adoptable[0]!;
+        const keyVar = which === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+        const chosen = await select(`Detected ${keyVar} — adopt this provider environment?`, [
+            { value: "adopt", label: "Adopt the detected environment (recommended)" },
+            { value: "_manual", label: "Enter the connection manually instead" },
+        ]);
+        if (chosen === "_manual") return null;
+    }
+
+    const prefill = adoptedConnection(which, snap);
+    const baseURL = await promptText("Model endpoint URL — the /v1-terminated root (confirm the pre-fill, or edit for a gateway)", {
+        defaultValue: prefill.baseURL,
+        placeholder: prefill.baseURL,
+        validate: (v) => {
+            const s = v.trim();
+            if (s === "") return undefined; // empty submit keeps the pre-filled default
+            if (!URL.canParse(s)) return "Must be a valid URL, including the scheme (e.g. https://…).";
+            return undefined;
+        },
+    });
+    const confirmedURL = baseURL.trim() === "" ? prefill.baseURL : baseURL.trim();
+    return { provider: prefill.provider, baseURL: confirmedURL, protocol: prefill.protocol };
+}
+
+/**
+ * Collect a direct connection from scratch: the endpoint URL (must parse as a URL), the provider slug
  * (open vocabulary, lowercased, non-empty), and an optional wire protocol. "Infer from provider" leaves
  * the protocol unset so `resolveModelConnection` (modules/harness/config.ts) implies it from the
  * provider.
@@ -511,7 +669,7 @@ async function chooseConnectionMode(preselected: ConnectionMode | undefined): Pr
  * root without `/v1` would 404 the chat path, so steering users to the terminated form here prevents a
  * connection that can list models but never chat.
  */
-async function promptDirectConnection(): Promise<DirectConnectionInput> {
+async function promptManualDirectConnection(): Promise<DirectConnectionInput> {
     const baseURL = await promptText("Model endpoint URL — the /v1-terminated root (e.g. https://api.openai.com/v1 or https://api.anthropic.com/v1)", {
         placeholder: "https://api.openai.com/v1",
         validate: (v) => {

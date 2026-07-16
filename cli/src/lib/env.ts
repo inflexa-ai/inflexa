@@ -43,6 +43,14 @@ const configVar = process.platform === "win32" ? "APPDATA" : "XDG_CONFIG_HOME";
 const logLevelVar = "INFLEXA_LOG_LEVEL";
 const otelEndpointVar = "OTEL_EXPORTER_OTLP_ENDPOINT";
 const modelApiKeyVar = "INFLEXA_MODEL_API_KEY";
+// The ecosystem-conventional provider variables a `direct` connection can read/adopt. The API-key vars
+// are the provider-derived FALLBACK for the direct-mode secret (after INFLEXA_MODEL_API_KEY); the
+// *_BASE_URL vars are read ONLY for one-time setup detection (never a runtime endpoint binding). Homed
+// here because env.ts is the sole `process.env` reader — see resolveModelApiKey / detectProviderEnv.
+const anthropicApiKeyVar = "ANTHROPIC_API_KEY";
+const openaiApiKeyVar = "OPENAI_API_KEY";
+const anthropicBaseUrlVar = "ANTHROPIC_BASE_URL";
+const openaiBaseUrlVar = "OPENAI_BASE_URL";
 
 function dataDir(): string {
     const base = process.env[dataVar];
@@ -206,14 +214,6 @@ export const env = Object.freeze({
     logLevel: process.env[logLevelVar],
     otelEndpoint: process.env[otelEndpointVar],
     /**
-     * The `direct`-connection chat API key (`models.connection.mode: "direct"` —
-     * see modules/harness/config.ts `resolveModelConnection`). Read here (the sole
-     * process.env reader) and consumed only at provider construction; it is NEVER
-     * written to config.json, telemetry, or provenance. Ignored in `cliproxy` mode,
-     * which mints and reads its own client key.
-     */
-    modelApiKey: process.env[modelApiKeyVar],
-    /**
      * CLIProxyAPI networking — internal constants, deliberately excluded from
      * envDoc/--help (see the Exclude on envDoc below).
      */
@@ -239,6 +239,70 @@ export const env = Object.freeze({
      */
     isDevelopment: isDevelopmentBuild(bakedEnv.buildChannel),
 });
+
+/**
+ * The provider-conventional API-key variable NAME for `provider` — `ANTHROPIC_API_KEY` for `anthropic`,
+ * `OPENAI_API_KEY` for every other provider. The name only, never the value: used to name the tried
+ * fallback in the boot key-missing error and setup's guidance, so those messages stay honest without a
+ * second `process.env` reader. See {@link resolveModelApiKey} for the resolution that consumes it.
+ */
+export function providerApiKeyVar(provider: string): string {
+    return provider === "anthropic" ? anthropicApiKeyVar : openaiApiKeyVar;
+}
+
+/**
+ * Resolve the `direct`-connection chat API key from the environment ONLY (env.ts is the sole
+ * `process.env` reader), parameterized by the connection's configured `provider`. Precedence:
+ * `INFLEXA_MODEL_API_KEY` (the explicit override) first; when unset, the provider-conventional variable
+ * ({@link providerApiKeyVar}) so a machine already provisioned for Claude Code / the SDKs works without
+ * re-exporting the key under a new name. Consumed only at provider construction / model listing; the
+ * resolved value is NEVER written to config.json, telemetry, logs, or provenance — the provider-derived
+ * fallback READS an existing ecosystem secret, it never copies it. Ignored in `cliproxy` mode, which
+ * mints and reads its own client key.
+ *
+ * Read at call time, not import (unlike the frozen `env` fields), so it reflects the live environment —
+ * correct for a value that may be exported after this module loads, and what makes it unit-testable.
+ *
+ * Out of scope (deferred): `ANTHROPIC_AUTH_TOKEN` (Anthropic-wire + Bearer needs a harness
+ * custom-auth-header capability the CLI cannot supply alone) and Bedrock/Vertex (no direct-mode HTTP
+ * `/v1` signer). A gateway that wants a bearer token can be adopted today as `protocol: openai-compatible`.
+ */
+export function resolveModelApiKey(provider: string): string | undefined {
+    return process.env[modelApiKeyVar] ?? process.env[providerApiKeyVar(provider)];
+}
+
+/**
+ * The presence + endpoint facts of the conventional provider environment, for `inflexa setup`'s
+ * one-time direct-path adoption (see modules/infra/setup.ts). Deliberately reports only WHETHER each API
+ * key is set — never its value — because setup copies only the non-secret `{ provider, baseURL, protocol }`
+ * into config; the key stays an environment read via {@link resolveModelApiKey}. The `*_BASE_URL` values
+ * are the RAW convention (asymmetric: `ANTHROPIC_BASE_URL` is a bare root, `OPENAI_BASE_URL` is usually
+ * already `/v1`-terminated); setup normalizes them before offering the pre-fill.
+ */
+export type ProviderEnvSnapshot = {
+    /** `ANTHROPIC_API_KEY` is set (value withheld — setup never copies the key). */
+    readonly anthropicApiKeySet: boolean;
+    /** `ANTHROPIC_BASE_URL` if set — a BARE root by convention (the Anthropic SDK appends `/v1/…`). */
+    readonly anthropicBaseURL: string | undefined;
+    /** `OPENAI_API_KEY` is set. */
+    readonly openaiApiKeySet: boolean;
+    /** `OPENAI_BASE_URL` if set — usually already `/v1`-terminated. */
+    readonly openaiBaseURL: string | undefined;
+};
+
+/**
+ * Snapshot the conventional provider environment for setup's direct-path detection. The SOLE reader of
+ * the ecosystem `*_BASE_URL` variables — a one-time setup read, never a runtime endpoint binding (boot
+ * resolves the endpoint from config only). Read at call time so `inflexa setup` sees the live shell.
+ */
+export function detectProviderEnv(): ProviderEnvSnapshot {
+    return {
+        anthropicApiKeySet: Boolean(process.env[anthropicApiKeyVar]),
+        anthropicBaseURL: process.env[anthropicBaseUrlVar] || undefined,
+        openaiApiKeySet: Boolean(process.env[openaiApiKeyVar]),
+        openaiBaseURL: process.env[openaiBaseUrlVar] || undefined,
+    };
+}
 
 /**
  * True when the dev/E2E command surface (`chat`, `profile`, `run`) should be registered.
@@ -316,12 +380,30 @@ export const envDoc: Readonly<
     provKeyPath: { kind: "path", label: "provenance key", description: "Ed25519 keypair for signing provenance chain hashes", baseVar: configVar },
     logLevel: { kind: "var", name: logLevelVar, description: "log verbosity: trace|debug|info|warn|error|fatal (default: info)" },
     otelEndpoint: { kind: "var", name: otelEndpointVar, description: "OTLP endpoint for log export; requires telemetry enabled via `inflexa config`" },
-    modelApiKey: {
-        kind: "var",
-        name: modelApiKeyVar,
-        description: 'API key for a direct model connection (config `models.connection.mode: "direct"`); unused with the default managed proxy',
-    },
 });
+
+/**
+ * `--help` documentation for the direct-connection secret channel — vars that are NOT backed by an `env`
+ * field because they are resolved on demand by {@link resolveModelApiKey} (parameterized by provider),
+ * not eagerly read into the frozen `env`. Kept separate from {@link envDoc} precisely because that record
+ * is key-locked to `env`'s fields: surfacing these as `env` fields would widen the secret's surface for
+ * no gain. Rendered alongside `envDoc`'s var rows by src/cli/index.ts.
+ *
+ * `ANTHROPIC_AUTH_TOKEN` and Bedrock/Vertex are deliberately ABSENT — not adopted in this version
+ * (see {@link resolveModelApiKey}); a bearer-only gateway is reachable today as `protocol: openai-compatible`.
+ */
+export const modelConnectionEnvDoc: readonly { readonly name: string; readonly description: string }[] = Object.freeze([
+    {
+        name: modelApiKeyVar,
+        description:
+            'API key for a direct model connection (config `models.connection.mode: "direct"`) — the explicit override, tried first; unused with the default managed proxy',
+    },
+    {
+        name: `${anthropicApiKeyVar} / ${openaiApiKeyVar}`,
+        description:
+            "provider-conventional fallback for the direct-connection key when INFLEXA_MODEL_API_KEY is unset (ANTHROPIC_API_KEY for provider anthropic, OPENAI_API_KEY otherwise); read from the environment only, never persisted",
+    },
+]);
 
 // Dev-tooling paths for `bun run dev:install` (scripts/dev_install.ts): where the `inflexa`
 // executable is placed on PATH, and where `wipe`'s `repo` target removes it. Homed here so the

@@ -110,8 +110,8 @@ export function describeBootError(e: HarnessBootError): string {
             return "Proxy client key not found — run `inflexa setup` to provision the proxy first.";
         case "model_api_key_missing":
             return [
-                "A direct model connection needs its API key in the `INFLEXA_MODEL_API_KEY` environment variable, which is unset.",
-                `Export it (e.g. \`export INFLEXA_MODEL_API_KEY=…\`) — the key is read from the environment only, never from ${env.configPath}.`,
+                `A direct model connection needs its API key, but neither \`INFLEXA_MODEL_API_KEY\` nor \`${e.providerVar}\` (the provider-conventional variable) is set.`,
+                `Export one (e.g. \`export ${e.providerVar}=…\`) — the key is read from the environment only, never from ${env.configPath}.`,
             ].join("\n");
         case "model_unresolved":
             return e.cause.type === "no_models"

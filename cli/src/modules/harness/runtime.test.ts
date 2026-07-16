@@ -578,7 +578,7 @@ describe("bootHarnessRuntime", () => {
         expect(calls).toContain("boot");
     });
 
-    test("direct mode with an unset INFLEXA_MODEL_API_KEY fails boot naming the variable", async () => {
+    test("direct mode with no resolvable key fails boot naming the provider-conventional variable", async () => {
         const calls: string[] = [];
         const seams: BootSeams = {
             ...recordingSeams(calls),
@@ -587,11 +587,25 @@ describe("bootHarnessRuntime", () => {
                 return undefined;
             },
         };
+        // The default direct connection is provider `deepseek` (openai-compatible), so the tried fallback
+        // is OPENAI_API_KEY; the error carries it so the message can name both it and INFLEXA_MODEL_API_KEY.
         const result = await bootHarnessRuntime({ seams, config: testConfig({ model: "some-alias-v2" }), connection: directConnection() });
 
-        expect(result._unsafeUnwrapErr()).toMatchObject({ type: "model_api_key_missing" });
+        expect(result._unsafeUnwrapErr()).toEqual({ type: "model_api_key_missing", providerVar: "OPENAI_API_KEY" });
         expect(calls).not.toContain("readKey");
         expect(calls).not.toContain("postgres");
+    });
+
+    test("direct mode with an anthropic provider names ANTHROPIC_API_KEY as the tried fallback", async () => {
+        const calls: string[] = [];
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            readModelApiKey: () => undefined,
+        };
+        const connection = directConnection({ provider: "anthropic", baseURL: "https://api.anthropic.com/v1", protocol: "anthropic" });
+        const result = await bootHarnessRuntime({ seams, config: testConfig({ model: "some-alias-v2" }), connection });
+
+        expect(result._unsafeUnwrapErr()).toEqual({ type: "model_api_key_missing", providerVar: "ANTHROPIC_API_KEY" });
     });
 
     test("missing skills dir fails before any side effect", async () => {
