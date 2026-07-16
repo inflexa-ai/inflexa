@@ -1,7 +1,7 @@
 import { type Result, ok, err } from "neverthrow";
 import { z } from "zod";
 
-import { env } from "../../lib/env.ts";
+import { env, resolveModelApiKey } from "../../lib/env.ts";
 import { readApiKey, type ChatSetupError } from "../proxy/models.ts";
 import { resolveModelConnection, type ResolvedModelConnection } from "./config.ts";
 
@@ -51,8 +51,11 @@ export type ListModelsSeams = {
     readonly resolveConnection: () => ResolvedModelConnection;
     /** Discover the cliproxy client key from the proxy config. Real: {@link readApiKey}. */
     readonly readProxyKey: () => Promise<Result<string, ChatSetupError>>;
-    /** The direct-mode secret from the environment (`env.modelApiKey`). Real: reads `env.modelApiKey`. */
-    readonly readModelApiKey: () => string | undefined;
+    /**
+     * The direct-mode secret from the environment, resolved for the connection's configured provider
+     * (INFLEXA_MODEL_API_KEY, else the provider-conventional variable). Real: {@link resolveModelApiKey}.
+     */
+    readonly readModelApiKey: (provider: string) => string | undefined;
     /** Issue the GET request with the mode-specific headers. Real: `fetch(url, { headers })`. */
     readonly fetch: (url: string, headers: Record<string, string>) => Promise<Response>;
 };
@@ -60,7 +63,7 @@ export type ListModelsSeams = {
 const realSeams: ListModelsSeams = {
     resolveConnection: resolveModelConnection,
     readProxyKey: readApiKey,
-    readModelApiKey: () => env.modelApiKey,
+    readModelApiKey: resolveModelApiKey,
     fetch: (url, headers) => fetch(url, { headers }),
 };
 
@@ -76,7 +79,7 @@ async function requestFor(
         if (keyResult.isErr()) return err({ type: "key_missing" });
         return ok({ url: `${env.cliproxyApiUrl}/models`, headers: { Authorization: `Bearer ${keyResult.value}` } });
     }
-    const key = seams.readModelApiKey();
+    const key = seams.readModelApiKey(connection.provider);
     if (!key) return err({ type: "key_missing" });
     if (connection.protocol === "anthropic") {
         // The configured `baseURL` is the `/v1`-terminated protocol root — the `@ai-sdk/anthropic`

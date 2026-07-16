@@ -40,7 +40,7 @@ import type pinoLib from "pino";
 
 import { ensureRuntime, readConfig } from "../../lib/config.ts";
 import { resolveEngineSocket, type ContainerRuntime, type ContainerRuntimeError } from "../../lib/container.ts";
-import { env } from "../../lib/env.ts";
+import { env, providerApiKeyVar, resolveModelApiKey } from "../../lib/env.ts";
 import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
 import { getLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
@@ -227,7 +227,7 @@ export type HarnessBootError =
     | { type: "skills_dir_missing"; path: string | null }
     | { type: "templates_dir_missing"; path: string | null }
     | { type: "proxy_key_missing"; cause: ChatSetupError }
-    | { type: "model_api_key_missing" }
+    | { type: "model_api_key_missing"; providerVar: string }
     | { type: "model_unresolved"; cause: ChatSetupError }
     | { type: "model_provider_mismatch"; provider: string; model: string }
     | { type: "model_required"; agents: readonly AgentName[] }
@@ -330,8 +330,12 @@ export type BootSeams = {
     readonly createSandbox: typeof createSandboxClient;
     readonly startIngress: () => Result<ExecIngress, IngressError>;
     readonly readKey: () => Promise<Result<string, ChatSetupError>>;
-    /** The `direct`-connection secret from the environment (`env.modelApiKey`); `undefined` when unset. */
-    readonly readModelApiKey: () => string | undefined;
+    /**
+     * The `direct`-connection secret from the environment, resolved for the connection's configured
+     * provider (INFLEXA_MODEL_API_KEY, else the provider-conventional variable); `undefined` when the
+     * whole chain resolves nothing. Real: {@link resolveModelApiKey}.
+     */
+    readonly readModelApiKey: (provider: string) => string | undefined;
     readonly resolveModel: (apiKey: string) => Promise<Result<string, ChatSetupError>>;
     readonly resolveEmbedding: () => Result<EmbeddingProvider, EmbeddingResolveError>;
     /**
@@ -366,7 +370,7 @@ const realSeams: BootSeams = {
     createSandbox: createSandboxClient,
     startIngress: () => startExecIngress(),
     readKey: readApiKey,
-    readModelApiKey: () => env.modelApiKey,
+    readModelApiKey: resolveModelApiKey,
     resolveModel: resolveModelId,
     resolveEmbedding: () => resolveEmbedder(readConfig()),
     boot: bootHarness,
@@ -503,8 +507,10 @@ async function bootHarnessRuntimeOnce(
         if (keyResult.isErr()) return err({ type: "proxy_key_missing", cause: keyResult.error });
         providerApiKey = keyResult.value;
     } else {
-        const key = seams.readModelApiKey();
-        if (!key) return err({ type: "model_api_key_missing" });
+        const key = seams.readModelApiKey(connection.provider);
+        // Name the provider-conventional variable that was tried alongside the override in the error, so
+        // the boot failure tells the user exactly which two env vars can unblock it.
+        if (!key) return err({ type: "model_api_key_missing", providerVar: providerApiKeyVar(connection.provider) });
         providerApiKey = key;
     }
 

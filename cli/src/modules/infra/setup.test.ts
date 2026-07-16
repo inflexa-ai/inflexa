@@ -5,9 +5,12 @@ import { dirname, join } from "node:path";
 
 import { ok, err } from "neverthrow";
 import {
+    adoptedConnection,
     classifyModelResolution,
+    detectedAdoptable,
     ensureLiveCredential,
     hasProviderCredential,
+    normalizeAdoptedBaseURL,
     parseConnectionMode,
     providerKindForSlug,
     recordCliproxyProvider,
@@ -16,8 +19,13 @@ import {
     type ProbeAttempt,
 } from "./setup.ts";
 import { readConfig } from "../../lib/config.ts";
-import { env } from "../../lib/env.ts";
+import { env, type ProviderEnvSnapshot } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
+
+/** Build a provider-env snapshot for the adoption helpers; every field defaults to "absent". */
+function snapshot(overrides: Partial<ProviderEnvSnapshot> = {}): ProviderEnvSnapshot {
+    return { anthropicApiKeySet: false, anthropicBaseURL: undefined, openaiApiKeySet: false, openaiBaseURL: undefined, ...overrides };
+}
 
 // generateApiKey + proxyConfig live in proxy_config.ts alongside writeProxyConfig; their unit tests
 // live beside them in proxy_config.test.ts.
@@ -39,6 +47,75 @@ describe("parseConnectionMode", () => {
         );
         expect(error).not.toBeNull();
         expect(error?.message).toContain("cliproxy, direct");
+    });
+});
+
+describe("normalizeAdoptedBaseURL", () => {
+    test("a bare anthropic root gets /v1 appended (the wire layer needs the terminated form)", () => {
+        expect(normalizeAdoptedBaseURL("anthropic", "https://api.anthropic.com")).toBe("https://api.anthropic.com/v1");
+    });
+
+    test("an already /v1-terminated URL is left unchanged (the openai convention)", () => {
+        expect(normalizeAdoptedBaseURL("openai", "https://gw.corp/v1")).toBe("https://gw.corp/v1");
+        expect(normalizeAdoptedBaseURL("anthropic", "https://api.anthropic.com/v1")).toBe("https://api.anthropic.com/v1");
+    });
+
+    test("any /vN version segment counts as terminated (not just v1)", () => {
+        expect(normalizeAdoptedBaseURL("openai", "https://gw.corp/v2")).toBe("https://gw.corp/v2");
+    });
+
+    test("an ambiguous gateway root without a version segment gets /v1 appended (the confirmable best guess)", () => {
+        expect(normalizeAdoptedBaseURL("anthropic", "https://gw.corp/anthropic")).toBe("https://gw.corp/anthropic/v1");
+    });
+
+    test("a trailing slash never produces a doubled //v1", () => {
+        expect(normalizeAdoptedBaseURL("anthropic", "https://api.anthropic.com/")).toBe("https://api.anthropic.com/v1");
+    });
+
+    test("an unset base URL defaults to the provider public root", () => {
+        expect(normalizeAdoptedBaseURL("anthropic", undefined)).toBe("https://api.anthropic.com/v1");
+        expect(normalizeAdoptedBaseURL("openai", undefined)).toBe("https://api.openai.com/v1");
+        expect(normalizeAdoptedBaseURL("openai", "  ")).toBe("https://api.openai.com/v1");
+    });
+});
+
+describe("ecosystem env adoption — detection → non-secret connection", () => {
+    test("anthropic detection adopts the normalized connection (no key)", () => {
+        const snap = snapshot({ anthropicApiKeySet: true, anthropicBaseURL: "https://api.anthropic.com" });
+        expect(detectedAdoptable(snap)).toEqual(["anthropic"]);
+        expect(adoptedConnection("anthropic", snap)).toEqual({
+            provider: "anthropic",
+            baseURL: "https://api.anthropic.com/v1",
+            protocol: "anthropic",
+        });
+    });
+
+    test("openai detection adopts its /v1-terminated gateway verbatim as openai-compatible", () => {
+        const snap = snapshot({ openaiApiKeySet: true, openaiBaseURL: "https://gw.corp/v1" });
+        expect(detectedAdoptable(snap)).toEqual(["openai"]);
+        expect(adoptedConnection("openai", snap)).toEqual({
+            provider: "openai",
+            baseURL: "https://gw.corp/v1",
+            protocol: "openai-compatible",
+        });
+    });
+
+    test("key present but base URL absent defaults to the provider root", () => {
+        expect(adoptedConnection("anthropic", snapshot({ anthropicApiKeySet: true })).baseURL).toBe("https://api.anthropic.com/v1");
+        expect(adoptedConnection("openai", snapshot({ openaiApiKeySet: true })).baseURL).toBe("https://api.openai.com/v1");
+    });
+
+    test("both ecosystems present tiebreak deterministically anthropic-before-openai", () => {
+        expect(detectedAdoptable(snapshot({ anthropicApiKeySet: true, openaiApiKeySet: true }))).toEqual(["anthropic", "openai"]);
+    });
+
+    test("no provider env is detected as nothing adoptable", () => {
+        expect(detectedAdoptable(snapshot())).toEqual([]);
+    });
+
+    test("an adopted connection carries only the non-secret fields (never a key)", () => {
+        const conn = adoptedConnection("anthropic", snapshot({ anthropicApiKeySet: true, anthropicBaseURL: "https://api.anthropic.com" }));
+        expect(Object.keys(conn).sort()).toEqual(["baseURL", "protocol", "provider"]);
     });
 });
 
@@ -113,6 +190,22 @@ describe("connection config writes", () => {
             baseURL: "https://gw.example/v1",
             protocol: "openai-compatible",
         });
+    });
+
+    test("an adopted ecosystem connection persists to config with no key material", () => {
+        // Adopt an anthropic env, write it, and assert config.json carries the three non-secret fields and
+        // no key: the whole config text must not contain any key-shaped material.
+        const conn = adoptedConnection("anthropic", snapshot({ anthropicApiKeySet: true, anthropicBaseURL: "https://api.anthropic.com" }));
+        writeDirectConnection(conn)._unsafeUnwrap();
+        expect(readModels().connection).toEqual({
+            mode: "direct",
+            provider: "anthropic",
+            baseURL: "https://api.anthropic.com/v1",
+            protocol: "anthropic",
+        });
+        const configText = JSON.stringify(readConfig());
+        expect(configText.toLowerCase()).not.toContain("apikey");
+        expect(configText).not.toContain("ANTHROPIC_API_KEY");
     });
 
     test("writeDirectConnection writes only endpoint facts (no secret key) and preserves models siblings", () => {

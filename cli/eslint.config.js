@@ -148,7 +148,17 @@ export default defineConfig([
         // authorize an individual destructive op (sandbox.ts); and the harness test toggles it to prove
         // the guard refuses when absent (harness.test.ts). The marker can't route through the frozen env
         // because it gates env's own derivation, and the reset lifecycle, not a value env exposes.
-        ignores: ["src/lib/env.ts", "src/test_support/preload.ts", "src/test_support/sandbox.ts", "src/test_support/harness.test.ts"],
+        // env.test.ts drives `process.env` directly to exercise the CALL-TIME readers env.ts exposes
+        // (resolveModelApiKey / detectProviderEnv): their contract is to read the LIVE environment, so
+        // asserting their precedence requires setting the variables — there is no frozen-env route to a
+        // value that is deliberately not frozen.
+        ignores: [
+            "src/lib/env.ts",
+            "src/lib/env.test.ts",
+            "src/test_support/preload.ts",
+            "src/test_support/sandbox.ts",
+            "src/test_support/harness.test.ts",
+        ],
         rules: {
             "no-restricted-properties": [
                 "error",
