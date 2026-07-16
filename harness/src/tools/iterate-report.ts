@@ -55,6 +55,8 @@ import { runReportIteration } from "../execution/report-runner.js";
 import { formatBytes, stageReportAssets, type StagedAsset } from "./lib/report-preflight.js";
 import type { PreviewPublisher } from "./report/preview-publisher.js";
 import type { ChromeConfig } from "../lib/chrome.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 
 const REPORT_TOOL_ACCESS_TTL_SECONDS = 3600;
 const PREVIEW_META_FILE = "preview-meta.json";
@@ -470,6 +472,8 @@ export const planReportTool: Tool = defineTool({
 // ── submit_report: the brief-submission tool ────────────────────────
 
 export interface SubmitReportDeps {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     readonly provider: ChatProvider;
     readonly pool: Pool;
     /** Embedder-supplied workspace-root resolution seam (see workspace/paths.ts). */
@@ -701,7 +705,8 @@ export function createReportSubmitTool(deps: SubmitReportDeps): Tool {
                         format,
                     });
                 } catch (err) {
-                    console.warn(`[submit-report] failed to persist preview meta: ${err instanceof Error ? err.message : err}`);
+                    const logger = (deps.logger ?? createNoopLogger()).named("submit-report");
+                    logger.warn("failed to persist preview meta", logger.errorFields(err));
                 }
             }
 

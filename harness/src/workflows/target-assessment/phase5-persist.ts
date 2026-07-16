@@ -17,6 +17,9 @@
 
 import { z } from "zod";
 
+import { createNoopLogger } from "../../lib/console-logger.js";
+import type { Logger } from "../../lib/logger.js";
+
 import {
     DossierV5Schema,
     type DossierV4Body,
@@ -72,6 +75,8 @@ export class DossierDerivedInvariantError extends Error {
 // ── Input/output shapes ──────────────────────────────────────────────
 
 export interface Phase5PersistInput {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     readonly assessmentId: string;
     readonly phase4Dossier: DossierV4Body;
     readonly phase2: Phase2Bundle;
@@ -146,7 +151,7 @@ interface CollectedSynthesis {
     readonly recommendation: DossierRecommendationStepOutput;
 }
 
-function stampSynthesis(phase4Dossier: DossierV4Body, syn: CollectedSynthesis, phase2: Phase2Bundle): DossierV4Body {
+function stampSynthesis(logger: Logger, phase4Dossier: DossierV4Body, syn: CollectedSynthesis, phase2: Phase2Bundle): DossierV4Body {
     const next = structuredClone(phase4Dossier);
 
     if (syn.bullets.coverage === "available") {
@@ -217,7 +222,10 @@ function stampSynthesis(phase4Dossier: DossierV4Body, syn: CollectedSynthesis, p
         try {
             const audit = validateRecommendationCitations(syn.recommendation.data, next);
             if (audit.citations_unresolved.length > 0) {
-                console.warn(`[phase5-persist] recommendation_audit: ${audit.citations_unresolved.length} unresolved citation(s)`);
+                logger.warn("recommendation_audit: unresolved citation(s)", {
+                    unresolvedCount: audit.citations_unresolved.length,
+                    unresolved: audit.citations_unresolved,
+                });
             }
             next.analytics.recommendation_audit = {
                 coverage: "available",
@@ -512,12 +520,13 @@ async function upgradeDossierToV5(body: Record<string, unknown>, phase2: Phase2B
  * rejects the final dossier.
  */
 export async function phase5Persist(input: Phase5PersistInput): Promise<Phase5PersistResult> {
+    const logger = (input.logger ?? createNoopLogger()).named("phase5-persist").with({ assessmentId: input.assessmentId });
     // The dossier rides through this function as an untyped working blob; the
     // `as unknown as DossierV{4,5}Body` casts below are version-shim views that
     // let the typed helpers operate on it. None of these casts is load-bearing
     // for soundness: `DossierV5Schema.safeParse(fullDossier)` at the end is the
     // single validation gate, and it throws before anything is returned.
-    let dossier: Record<string, unknown> = stampSynthesis(input.phase4Dossier, input.synthesis, input.phase2) as unknown as Record<string, unknown>;
+    let dossier: Record<string, unknown> = stampSynthesis(logger, input.phase4Dossier, input.synthesis, input.phase2) as unknown as Record<string, unknown>;
 
     // Demote organ-claim flagged bullets into coverage_qualifier.unverified_bullets.
     const exec = dossier.executive_recommendation as { coverage: string; data?: ExecutiveRecommendationData } | undefined;

@@ -56,6 +56,8 @@ import { createReportBuilderAgent, REPORT_BUILDER_AGENT_ID } from "../agents/rep
 import type { PreviewPublisher } from "../tools/report/preview-publisher.js";
 import { createSkillTools } from "../tools/sandbox/skills.js";
 import type { ChromeConfig } from "../lib/chrome.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 
 /** Skill pack the report-builder prompt directs the model to read (design-system reference). */
 const REPORT_BUILDER_SKILLS = ["report-html"] as const;
@@ -63,6 +65,8 @@ const REPORT_BUILDER_SKILLS = ["report-html"] as const;
 const REPORT_AGENT_MAX_STEPS = 75;
 
 export interface ReportRunnerDeps {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     readonly provider: ChatProvider;
     readonly pool: Pool;
     /** Model id — provenance / metric label; provider owns the wire model. */
@@ -115,6 +119,7 @@ export type ReportRunnerResult =
       };
 
 export async function runReportIteration(deps: ReportRunnerDeps, opts: ReportRunnerOptions): Promise<ReportRunnerResult> {
+    const logger = (deps.logger ?? createNoopLogger()).named("report-runner").with({ previewId: opts.previewId });
     const startTime = performance.now();
 
     return withPreviewLock(opts.previewId, async () => {
@@ -250,11 +255,7 @@ export async function runReportIteration(deps: ReportRunnerDeps, opts: ReportRun
         }
 
         if (!outcome || agentError || phantomSuccess) {
-            console.warn(
-                `[report-runner] event=report.agent.finish preview=${opts.previewId} v${newVersion} ` +
-                    `submitted=${outcome?.ok === true} phantom=${phantomSuccess} ` +
-                    `agentError=${agentError ?? "null"}`,
-            );
+            logger.warn("report.agent.finish", { version: newVersion, submitted: outcome?.ok === true, phantom: phantomSuccess, agentError });
             const { reason, errorKind } = classifyFailure({
                 phantomSuccess,
                 agentError,
@@ -264,7 +265,7 @@ export async function runReportIteration(deps: ReportRunnerDeps, opts: ReportRun
             try {
                 await rm(versionDirAbs, { recursive: true, force: true });
             } catch (err) {
-                console.error(`[report-runner] rollback failed for ${versionDirAbs}:`, err instanceof Error ? err.message : err);
+                logger.error("rollback failed", { versionDirAbs, ...logger.errorFields(err) });
             }
             return failure(opts.previewId, newVersion, reason, errorKind, startTime);
         }

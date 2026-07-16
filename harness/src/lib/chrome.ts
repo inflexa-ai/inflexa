@@ -10,7 +10,12 @@
 import puppeteer from "puppeteer-core";
 import type { Browser, BrowserContext, Page } from "puppeteer-core";
 
+import { createNoopLogger } from "./console-logger.js";
+import type { Logger } from "./logger.js";
+
 export interface ChromeConfig {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     readonly browserUrl?: string;
     readonly maxPages?: number;
 }
@@ -54,7 +59,8 @@ function getSemaphore(maxPages?: number): Semaphore {
     return semaphore;
 }
 
-export async function getBrowser(browserUrl?: string): Promise<Browser> {
+export async function getBrowser(browserUrl?: string, injected?: Logger): Promise<Browser> {
+    const logger = (injected ?? createNoopLogger()).named("chrome");
     if (browser && browser.connected) return browser;
     if (connecting) return connecting;
 
@@ -63,20 +69,20 @@ export async function getBrowser(browserUrl?: string): Promise<Browser> {
         throw new Error("CHROME_BROWSER_URL is not set — Cortex requires the chrome sidecar to be reachable");
     }
 
-    console.log(`[chrome] connecting to browser at ${browserURL}`);
+    logger.info("connecting to browser", { browserURL });
     connecting = puppeteer
         .connect({ browserURL })
         .then((b) => {
             browser = b;
             b.on("disconnected", () => {
-                console.log("[chrome] browser disconnected; will reconnect on next request");
+                logger.info("browser disconnected; will reconnect on next request");
                 if (browser === b) browser = undefined;
             });
-            console.log(`[chrome] connected (wsEndpoint=${b.wsEndpoint()})`);
+            logger.info("connected", { wsEndpoint: b.wsEndpoint() });
             return b;
         })
         .catch((err) => {
-            console.error("[chrome] failed to connect to browser:", err);
+            logger.error("failed to connect to browser", logger.errorFields(err));
             throw err;
         })
         .finally(() => {
@@ -90,7 +96,7 @@ export async function withPage<T>(cfg: ChromeConfig, fn: (page: Page, context: B
     const release = await getSemaphore(cfg.maxPages).acquire();
     let context: BrowserContext | undefined;
     try {
-        const b = await getBrowser(cfg.browserUrl);
+        const b = await getBrowser(cfg.browserUrl, cfg.logger);
         context = await b.createBrowserContext();
         const page = await context.newPage();
         return await fn(page, context);
@@ -99,7 +105,8 @@ export async function withPage<T>(cfg: ChromeConfig, fn: (page: Page, context: B
             try {
                 await context.close();
             } catch (err) {
-                console.error("[chrome] error closing browser context:", err);
+                const logger = (cfg.logger ?? createNoopLogger()).named("chrome");
+                logger.error("error closing browser context", logger.errorFields(err));
             }
         }
         release();

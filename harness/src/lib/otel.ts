@@ -17,6 +17,9 @@
  */
 
 import { propagation, metrics, trace } from "@opentelemetry/api";
+
+import { createNoopLogger } from "./console-logger.js";
+import type { Logger } from "./logger.js";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { MeterProvider, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
@@ -36,9 +39,10 @@ let registeredMeterProvider: MeterProvider | undefined;
  *
  * Safe to call multiple times — only the first call has effect.
  */
-export function initOtel(): void {
+export function initOtel(injected?: Logger): void {
     if (initialized) return;
     initialized = true;
+    const logger = (injected ?? createNoopLogger()).named("otel");
 
     // ── W3C Trace Context propagation ──────────────────────────────────
     propagation.setGlobalPropagator(new W3CTraceContextPropagator());
@@ -74,10 +78,11 @@ export function initOtel(): void {
         const testSpan = testTracer.startSpan("init-check");
         const ctx = testSpan.spanContext();
         const isNoop = ctx.spanId === "0000000000000000";
-        console.log(
-            `[otel] TracerProvider registered: spanId=${ctx.spanId}, noop=${isNoop}, ` +
-                `endpoint=${endpoint ?? "(none)"}, processors=${spanProcessors.length}`,
-        );
+        // A `console.log` here is what forced the CLI embedder to pass
+        // `initTelemetry: () => {}` — its TUI owns stdout, so the banner corrupted
+        // the screen and the whole of the harness's traces + metrics were switched
+        // off to avoid it. At debug through the injected seam it costs nothing.
+        logger.debug("TracerProvider registered", { spanId: ctx.spanId, noop: isNoop, endpoint: endpoint ?? null, processors: spanProcessors.length });
         testSpan.end();
     }
 

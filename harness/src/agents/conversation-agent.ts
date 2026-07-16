@@ -56,7 +56,7 @@ import {
     searchFaersTool,
     searchClinicalTrialsTool,
     searchGeoDatasetsTool,
-    searchDgidbTool,
+    createSearchDgidbTool,
     searchBgeeExpressionTool,
     getImpcKoProfileTool,
     checkSafetyPanelTool,
@@ -88,6 +88,7 @@ import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
 import { planReportTool, createReportSubmitTool, type SubmitReportDeps } from "../tools/iterate-report.js";
 import type { EphemeralWorkflowInput, EphemeralResult } from "../execution/ephemeral-runner.js";
+import type { Logger } from "../lib/logger.js";
 
 /** Canonical agent id — the single source of truth. */
 export const CONVERSATION_AGENT_ID = "conversation-agent" as const;
@@ -97,6 +98,8 @@ const CONVERSATION_MAX_ITERATIONS = 50;
 
 /** The shared dependencies the composition root explodes apart. */
 export interface ConversationAgentDeps {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     /** The LLM seam every loop-driving tool runs its sub-agent on. */
     readonly provider: ChatProvider;
     /** Postgres pool — plan persistence, run inspection, workspace index, working memory. */
@@ -197,7 +200,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         searchFaersTool,
         searchClinicalTrialsTool,
         searchGeoDatasetsTool,
-        searchDgidbTool,
+        createSearchDgidbTool({ ...(deps.logger ? { logger: deps.logger } : {}) }),
         // Preclinical.
         searchBgeeExpressionTool,
         getImpcKoProfileTool,

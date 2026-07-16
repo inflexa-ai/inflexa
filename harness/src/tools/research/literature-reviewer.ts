@@ -30,10 +30,11 @@ import { createNcbiTools, type BioToolKeys } from "../bio/keys.js";
 import { getImpcKoProfileTool } from "../bio/get-impc-ko-profile.js";
 import { lookupGoTermTool } from "../bio/lookup-go-term.js";
 import { searchBgeeExpressionTool } from "../bio/search-bgee-expression.js";
-import { searchDgidbTool } from "../bio/search-dgidb.js";
+import { createSearchDgidbTool } from "../bio/search-dgidb.js";
 import { searchGeneTool } from "../bio/search-gene.js";
 import { searchInteractionsTool } from "../bio/search-interactions.js";
 import { searchPathwayTool } from "../bio/search-pathway.js";
+import type { Logger } from "../../lib/logger.js";
 
 /** Sub-agent identity — appended to `callPath`, set as `agentId`. */
 const AGENT_ID = "literature-reviewer";
@@ -42,6 +43,8 @@ const AGENT_ID = "literature-reviewer";
 const REVIEWER_MAX_ITERATIONS = 30;
 
 export interface LiteratureReviewerDeps {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     /** The LLM seam the child loop runs on. */
     readonly provider: ChatProvider;
     /** Model id — provenance / metric label; the provider owns the wire model. */
@@ -59,7 +62,7 @@ export function createLiteratureReviewerTool(deps: LiteratureReviewerDeps): Tool
         lookupGoTermTool,
         searchInteractionsTool,
         ncbi.pubmed,
-        searchDgidbTool,
+        createSearchDgidbTool({ ...(deps.logger ? { logger: deps.logger } : {}) }),
         searchBgeeExpressionTool,
         getImpcKoProfileTool,
     ];

@@ -12,6 +12,8 @@
 
 import type { Pool, PoolClient } from "pg";
 import type { AgentSession } from "../auth/types.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 import type { RegisterArtifactInput } from "../state/index.js";
 import { upsertArtifacts, updateArtifactId } from "../state/index.js";
 import type { ArtifactRegistry, ArtifactRegistrationInput } from "./artifact-registry.js";
@@ -43,8 +45,13 @@ export async function registerStepArtifacts(
     registry: ArtifactRegistry,
     input: ArtifactRegistrationInput,
     session: AgentSession,
+    // A parameter rather than a field on `ArtifactRegistrationInput`: that type is
+    // the seam's payload, handed verbatim to `registry.register`, and an
+    // embedder's registry has no business receiving the host's logger.
+    logger: Logger = createNoopLogger(),
 ): Promise<ArtifactRegistrationResult> {
     const { resourceId, runId, stepId, artifacts } = input;
+    const log = logger.named("artifact-registration").with({ runId, stepId });
 
     if (artifacts.length === 0) {
         return { localCount: 0, externalRegistered: 0, externalFailed: 0, failureDetails: [] };
@@ -54,9 +61,7 @@ export async function registerStepArtifacts(
     const emptyHash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     const localEntries: RegisterArtifactInput[] = artifacts.map((a) => {
         if (a.size === 0 || a.hash === emptyHash) {
-            console.warn(
-                `[artifact-registration] empty artifact: path=${dbPathPrefix}${a.path} hash=${a.hash?.slice(0, 16)} size=${a.size} runId=${runId} stepId=${stepId}`,
-            );
+            log.warn("empty artifact", { path: `${dbPathPrefix}${a.path}`, hash: a.hash?.slice(0, 16), size: a.size });
         }
         return {
             resourceId,

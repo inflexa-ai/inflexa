@@ -32,14 +32,14 @@
 
 ## 5. Sweep the remaining console sites
 
-- [ ] 5.1 `tasks/data-profile.ts` (12) via `DataProfileDeps`.
-- [ ] 5.2 `workflows/execute-analysis.ts` (7) via `ExecuteAnalysisDeps`.
-- [ ] 5.3 `workflows/execute-target-assessment.ts` (3), `workflows/target-assessment/progress.ts` (2), `phase5-persist.ts` (1), `lib/llm-step.ts` (1).
-- [ ] 5.4 `execution/ephemeral-runner.ts` (4), `step-summary.ts` (2), `report-runner.ts` (2), `artifact-metadata.ts` (2).
-- [ ] 5.5 `lib/chrome.ts` (5), `state/init.ts` (1), `sandbox/k8s-client.ts` (1).
-- [ ] 5.6 `tools/workspace/execute-command.ts` (1), `tools/iterate-report.ts` (1), `tools/bio/search-dgidb.ts` (1). For tools, carry the logger on the tool's factory-closure deps — `ToolContext` stays `{session, signal, emit, runStep}`.
-- [ ] 5.7 `lib/otel.ts:77` — convert the TracerProvider `console.log` banner to `logger.debug`, so the CLI's `initTelemetry: () => {}` blocker is removed.
-- [ ] 5.8 Confirm zero remaining sites: `grep -rn "console\." src/ --include="*.ts" | grep -v test | grep -v console-logger`.
+- [x] 5.1 `tasks/data-profile.ts` (12) via `DataProfileDeps` + `DataProfileTriggerDeps`; module-scoped `logTerminalNoop` takes the bound logger.
+- [x] 5.2 `workflows/execute-analysis.ts` (7) via `ExecuteAnalysisDeps`.
+- [x] 5.3 `workflows/execute-target-assessment.ts` (3), `target-assessment/progress.ts` (2), `phase5-persist.ts` (1), `lib/llm-step.ts` (1). `emitProgress`/`stampSynthesis` take the logger as a parameter (they hold no deps bag); `structured-llm` forwards it to `runLlmStep`.
+- [x] 5.4 `execution/ephemeral-runner.ts` (4), `step-summary.ts` (2), `report-runner.ts` (2), `artifact-metadata.ts` (2), plus `artifact-registration.ts` (1) — the latter takes the logger as a PARAMETER, not a field on `ArtifactRegistrationInput`, since that type is the seam payload handed verbatim to an embedder's `registry.register`.
+- [x] 5.5 `lib/chrome.ts` (5) via `ChromeConfig`, `state/init.ts` (1), `sandbox/k8s-client.ts` (1) via `K8sClientConfig`.
+- [x] 5.6 `tools/workspace/execute-command.ts` (1), `tools/iterate-report.ts` (1) — both already factory closures. `tools/bio/search-dgidb.ts` (1) was a bare `defineTool` const: converted to `createSearchDgidbTool(deps)` and rewired at its 3 call sites (conversation-agent, sandbox/shared, literature-reviewer). `ToolContext` stays `{session, signal, emit, runStep}` — a tool that logs is dep-bearing, which is the existing rule (cf. `createSearchClinvarTool`).
+- [x] 5.7 `lib/otel.ts` — the TracerProvider `console.log` banner is now `logger.debug`, removing the stated blocker behind the CLI's `initTelemetry: () => {}`.
+- [x] 5.8 Zero remaining: `grep -rn "console\.\(log\|warn\|error\|info\|debug\)(" src/ --include="*.ts" | grep -v console-logger` returns nothing. Full suite 1026 pass (up from a 1011 pre-change baseline); the 111 failures are all the Postgres testcontainer with Docker down, unchanged in kind.
 
 ## 6. Lock it in
 

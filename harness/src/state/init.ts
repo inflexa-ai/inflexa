@@ -9,6 +9,8 @@
 
 import type { Pool } from "pg";
 import { backfillAiSdkMessageEnvelopes } from "../memory/message-backfill.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 
 const DDL = `
 -- Analysis-level state (status, context, data-profile tracking, billing identity).
@@ -249,7 +251,8 @@ CREATE TABLE IF NOT EXISTS cortex_working_memory (
  * Initialize Cortex state tables. Safe to call on every startup and across
  * concurrent replicas (advisory lock serializes the init flow).
  */
-export async function initCortexState(pool: Pool): Promise<void> {
+export async function initCortexState(pool: Pool, injected?: Logger): Promise<void> {
+    const logger = (injected ?? createNoopLogger()).named("cortex-state");
     const client = await pool.connect();
     try {
         // Serialize concurrent replica startups — cheap, no extra tooling.
@@ -395,12 +398,10 @@ export async function initCortexState(pool: Pool): Promise<void> {
            WITH (m = 16, ef_construction = 64)`,
                 );
             } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                console.warn(
-                    `[state-init] Could not create HNSW index on cortex_regulatory_chunks.embedding ` +
-                        `(pgvector < 0.5.0 or operator class unavailable): ${msg}. ` +
-                        `Cosine similarity queries will fall back to sequential scan. ` +
-                        `Upgrade pgvector and re-run init to get the ANN index.`,
+                logger.warn(
+                    "could not create HNSW index on cortex_regulatory_chunks.embedding (pgvector < 0.5.0 or operator class unavailable) — " +
+                        "cosine similarity queries fall back to sequential scan; upgrade pgvector and re-run init to get the ANN index",
+                    logger.errorFields(err),
                 );
             }
 

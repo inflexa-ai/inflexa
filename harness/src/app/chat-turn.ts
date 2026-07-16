@@ -22,8 +22,12 @@ import { createThreadStore } from "../memory/thread-store.js";
 import { createWorkingMemory } from "../memory/working-memory.js";
 import { loadAnalysisStatus } from "../state/index.js";
 import { assembleMessages, type AssembledMessages } from "./message-assembly.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 
 export interface PrepareChatTurnDeps {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     readonly pool: Pool;
 }
 
@@ -66,7 +70,8 @@ export async function prepareChatTurn(deps: PrepareChatTurnDeps, params: Prepare
             unwrapOrThrow(await store.updateTitle(threadId, deriveThreadTitle(userInput)));
         }
     } catch (err) {
-        console.warn("[harness.chat] title-seed failed (non-fatal):", err instanceof Error ? err.message : err);
+        const logger = (deps.logger ?? createNoopLogger()).named("harness.chat");
+        logger.warn("title-seed failed (non-fatal)", logger.errorFields(err));
     }
 
     const analysisState = await loadAnalysisStatus(pool, analysisId).unwrapOr(null);

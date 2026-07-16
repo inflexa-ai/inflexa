@@ -27,6 +27,7 @@ import { ResultAsync, err, ok } from "neverthrow";
 
 import { toProviderError } from "../../../providers/errors.js";
 import { setupDbosForTests, type DbosTestRig } from "../../../__tests__/setup/dbos.js";
+import { silentLogger } from "../../../__tests__/setup/logger.js";
 import { insertAssessment, getAssessment } from "../../../state/target-assessments.js";
 import { BUDGET_EXCEEDED_SENTINEL, BUDGET_EXCEEDED_TOPIC, runLlmStep, type BudgetExceededMarker } from "../../target-assessment/lib/llm-step.js";
 import { emitProgress } from "../../target-assessment/progress.js";
@@ -188,7 +189,7 @@ const emitProgressHarness = DBOS.registerWorkflow(
         if (!currentEmitArgs || !currentPool) {
             throw new Error("test bug: emit harness deps not installed");
         }
-        await emitProgress(currentPool, currentEmitArgs.assessmentId, input.phase);
+        await emitProgress(currentPool, silentLogger, currentEmitArgs.assessmentId, input.phase);
     },
     { name: "ta-emit-progress-harness" },
 );
