@@ -81,16 +81,18 @@ export interface CreateSandboxClientConfig {
      */
     engineSocketPath?: string;
     /**
-     * Docker: how the pre-created step write tree is made writable by the
-     * uid-1000 sandbox workload. `world-writable` chmods the step dir and its
-     * subdirs so a workload write lands through engines whose bind mounts
-     * preserve host ownership honestly — podman machine's virtiofs presents the
-     * embedder user's real uid and modes, which the uid-1000 workload cannot
-     * write. Docker Desktop's file-sharing layer masks that mismatch, so it
-     * stays unset there. A single-valued union (not a boolean) so the call site
-     * reads as policy and future strategies extend it without a breaking change.
+     * Docker: the engine's bind mounts expose honest host file ownership to
+     * the container — podman machine's virtiofs and native Linux binds present
+     * the embedder user's real uid and modes, which the uid-1000 sandbox
+     * workload cannot write; Docker Desktop's file-sharing layer masks that
+     * mismatch, so it stays unset there. When set, the client loosens each
+     * step's pre-created write tree so workload writes land. The field names
+     * the engine fact rather than the remediation, so how the harness
+     * compensates can evolve without changing the embedder surface; a
+     * single-valued union (not a boolean) so future ownership classes extend
+     * it without a breaking change.
      */
-    stepTreeAccess?: "world-writable";
+    engineBindOwnership?: "host-preserved";
     /** K8s: PVC claim backing the session PVC the workspace roots live under. */
     sessionPvc?: string;
     /**
@@ -237,7 +239,16 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
 
     return {
         createSandbox: async (meta, identity) => {
-            await precreateStepTree({ resolveWorkspaceRoot: config.resolveWorkspaceRoot, stepTreeAccess: config.stepTreeAccess }, meta);
+            // The config states an engine fact (binds preserve host ownership);
+            // which remediation that fact demands — today, a world-writable step
+            // write tree — is harness-owned and chosen here, not by the embedder.
+            await precreateStepTree(
+                {
+                    resolveWorkspaceRoot: config.resolveWorkspaceRoot,
+                    stepTreeAccess: config.engineBindOwnership === "host-preserved" ? "world-writable" : undefined,
+                },
+                meta,
+            );
             // Every caller must declare resources — a sandbox with no cpu/memory
             // request is a semantic error, not something to paper over with a
             // default (a DBOS replay of a pre-resources workflow input lands here).

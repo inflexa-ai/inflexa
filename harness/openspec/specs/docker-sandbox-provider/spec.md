@@ -180,38 +180,42 @@ property of how one backend addresses a volume, not of the container contract.
 - **THEN** the container has a read-only bind mount at `/mnt/libs`
 - **AND** the sandbox env injects the lib-store path variables from the mount plan
 
-### Requirement: Step-tree access mode for engines with honest bind ownership
+### Requirement: Declared host-preserved bind ownership loosens the step write tree
 
 `CreateSandboxClientConfig` SHALL carry an optional
-`stepTreeAccess: "world-writable"`. When set, the client SHALL `chmod` the
-pre-created step write tree — the step directory and each of its
-`STEP_SUBDIRS` — world-writable after creating it, so the uid-1000 sandbox
-workload can write through engines whose bind mounts preserve host ownership
-(podman machine's virtiofs presents the embedder user's real uid and modes;
-Docker Desktop's file-sharing layer masks the mismatch, which is why default
-modes suffice there). The mode SHALL be applied with an explicit `chmod`, not
-`mkdir`'s mode option (which the process umask masks), and SHALL be applied on
-replay when the directories already exist. When unset, pre-creation SHALL keep
-today's default modes. The loosening is scoped to the step write tree only:
-read-only mounts (analysis tree, lib/ref stores) rely on standard world-read
-and SHALL NOT be relabeled or re-moded.
+`engineBindOwnership: "host-preserved"`, by which the embedder states an
+engine fact: the engine's bind mounts expose honest host file ownership to the
+container (podman machine's virtiofs and native Linux binds present the
+embedder user's real uid and modes; Docker Desktop's file-sharing layer masks
+the mismatch, which is why default modes suffice there and the field stays
+unset). When set, the client SHALL `chmod` the pre-created step write tree —
+the step directory and each of its `STEP_SUBDIRS` — world-writable after
+creating it, so the uid-1000 sandbox workload can write through such mounts.
+The field names the fact, not the remediation: how the client compensates is
+harness-owned and MAY change without changing the config surface. The mode
+SHALL be applied with an explicit `chmod`, not `mkdir`'s mode option (which
+the process umask masks), and SHALL be applied on replay when the directories
+already exist. When unset, pre-creation SHALL keep today's default modes. The
+loosening is scoped to the step write tree only: read-only mounts (analysis
+tree, lib/ref stores) rely on standard world-read and SHALL NOT be relabeled
+or re-moded.
 
 #### Scenario: World-writable step tree under a podman connection
 
-- **GIVEN** `stepTreeAccess: "world-writable"`
+- **GIVEN** `engineBindOwnership: "host-preserved"`
 - **WHEN** `createSandbox` pre-creates the step tree
 - **THEN** the step directory and its subdirectories are world-writable
 - **AND** a workload write from uid 1000 through the read-write bind succeeds
 
 #### Scenario: Replayed pre-creation still applies the mode
 
-- **GIVEN** `stepTreeAccess: "world-writable"` and a step tree left by a prior attempt with default modes
+- **GIVEN** `engineBindOwnership: "host-preserved"` and a step tree left by a prior attempt with default modes
 - **WHEN** `createSandbox` runs again for the same step
 - **THEN** the existing directories are re-moded world-writable rather than skipped
 
 #### Scenario: Default modes when unset
 
-- **GIVEN** no `stepTreeAccess`
+- **GIVEN** no `engineBindOwnership`
 - **WHEN** `createSandbox` pre-creates the step tree
 - **THEN** directory modes are the process default, unchanged from today
 

@@ -724,13 +724,13 @@ async function bootHarnessRuntimeOnce(
             // so dockerode keeps its default socket resolution — including any
             // DOCKER_HOST the user relies on.
             ...(engineSocketPath === undefined ? {} : { engineSocketPath }),
-            // Engines whose bind mounts preserve host ownership honestly — podman
-            // machine's virtiofs on macOS, native binds / rootless userns uid-mapping
-            // on Linux — present a host uid the uid-1000 sandbox workload cannot write,
-            // so the pre-created step tree needs world-write for those writes to land.
-            // Docker Desktop's file-sharing layer masks that mismatch, so a docker pin
-            // leaves the step tree at its default mkdir modes.
-            ...(pinnedRuntime.id === "podman" ? { stepTreeAccess: "world-writable" as const } : {}),
+            // A podman pin declares an engine fact: its bind mounts expose honest host
+            // ownership — virtiofs on macOS, native binds / rootless userns uid-mapping
+            // on Linux — presenting a host uid the uid-1000 sandbox workload cannot
+            // write; the harness compensates (today by loosening each step's write
+            // tree). Docker Desktop's file-sharing layer masks that mismatch, so a
+            // docker pin leaves the field unset and the modes untouched.
+            ...(pinnedRuntime.id === "podman" ? { engineBindOwnership: "host-preserved" as const } : {}),
         });
         const workspaceFs = createWorkspaceFilesystem({ resolveWorkspaceRoot });
         // One authorizer instance, shared by the parent workflow's terminal revoke,

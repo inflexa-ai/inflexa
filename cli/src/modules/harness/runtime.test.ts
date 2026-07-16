@@ -670,7 +670,7 @@ describe("bootHarnessRuntime", () => {
         }
     });
 
-    test("a podman pin threads the resolved socket and world-writable step-tree access into the sandbox client", async () => {
+    test("a podman pin threads the resolved socket and host-preserved bind ownership into the sandbox client", async () => {
         const calls: string[] = [];
         // Captured on an object property: a bare `let` assigned only inside the seam
         // closure gets narrowed back to `null` by control-flow analysis across the await.
@@ -689,14 +689,14 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
         expect(result.isOk()).toBe(true);
-        // A podman pin dials the resolved compat socket and loosens the pre-created
-        // step tree so the uid-1000 workload can write through virtiofs.
+        // A podman pin dials the resolved compat socket and declares the engine's
+        // honest bind ownership so the harness makes the step tree workload-writable.
         expect(captured.config).not.toBeNull();
         expect(captured.config?.engineSocketPath).toBe("/var/folders/xy/podman-api.sock");
-        expect(captured.config?.stepTreeAccess).toBe("world-writable");
+        expect(captured.config?.engineBindOwnership).toBe("host-preserved");
     });
 
-    test("a docker pin builds today's exact sandbox config — no engineSocketPath key, no stepTreeAccess", async () => {
+    test("a docker pin builds today's exact sandbox config — no engineSocketPath key, no engineBindOwnership", async () => {
         const calls: string[] = [];
         const captured: { config: CreateSandboxClientConfig | null } = { config: null };
         const seams: BootSeams = {
@@ -717,7 +717,7 @@ describe("bootHarnessRuntime", () => {
         // Byte-identical to today: the keys must be ABSENT (not present-and-undefined),
         // so dockerode keeps its default resolution and the step tree keeps its modes.
         expect(captured.config !== null && "engineSocketPath" in captured.config).toBe(false);
-        expect(captured.config !== null && "stepTreeAccess" in captured.config).toBe(false);
+        expect(captured.config !== null && "engineBindOwnership" in captured.config).toBe(false);
     });
 
     test("an unresolvable engine socket fails boot with sandbox_engine_unresolved before postgres/lock/launch", async () => {
