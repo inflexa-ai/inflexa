@@ -46,8 +46,18 @@ ARG INFLEXA_LIB_ROOT
 # build-dep set + retry config is shared with sandbox-python; python3-yaml (the
 # system-python YAML the manifest parse reads) installs in the same apt
 # transaction as a stage-specific extra.
+#
+# The jags/libuv1t64/libprotobuf32t64/libglpk40 runtime .so set mirrors what
+# sandbox-base ships, and exists here for the load checks below — which run in this
+# builder, NOT in the runtime image. rjags/fs/otelsdk/igraph are binaries that
+# dyn.load these at library() time, so omitting them makes the checks report a DROP
+# (and omit the package from packages.txt) for packages that are in fact fine in the
+# shipped image. Keep in sync with the runtime list in images/sandbox-base/Dockerfile:
+# a lib there but missing here reappears as a phantom arch-specific coverage gap.
+# On amd64 the r2u apt path pulls these in as transitive Depends; the arm64 P3M path
+# resolves no system libs at all, so they must be named explicitly.
 COPY images/install-build-toolchain.sh /tmp/install-build-toolchain.sh
-RUN bash /tmp/install-build-toolchain.sh python3-yaml
+RUN bash /tmp/install-build-toolchain.sh python3-yaml jags libuv1t64 libprotobuf32t64 libglpk40
 
 # r2u — CRAN packages as Ubuntu .deb binaries. Patch the keyserver to hkps:443
 # — the script's default (port 11371) times out regularly from CI runners.
@@ -106,9 +116,18 @@ cat(sprintf("Load check OK: %d/%d %s package(s) loaded\n", length(ok), length(pk
 RSCRIPT
 
 # =============================================================================
-# Stage: cran — R CRAN packages.
-#   amd64: fast binary install via r2u .deb packages
-#   arm64: source install via install.packages() (r2u is amd64-only)
+# Stage: cran — R CRAN packages. Binary on both arches, by different routes.
+#   amd64: r2u .deb packages via apt (r2u is amd64-only). apt resolves each
+#          package's system libraries transitively, so they come in for free.
+#   arm64: install.packages() with NO repos= override. rocker/r-ver pins repos to
+#          a P3M snapshot and sets an HTTPUserAgent carrying the platform triple;
+#          that UA is what makes P3M serve prebuilt aarch64 binaries. Naming any
+#          repo here (e.g. cloud.r-project.org) drops that UA and silently falls
+#          back to ~300 source builds, which fail on every package needing a system
+#          -dev header: fs (uv.h), gmp, symengine, rjags, clarabel, otelsdk.
+#          Inheriting the option also keeps the snapshot in lockstep with BASE_IMAGE.
+#          Unlike the r2u path, P3M binaries do NOT pull system libs — anything
+#          with a runtime .so (e.g. rjags → libjags) needs it in the apt list above.
 # =============================================================================
 FROM r-toolchain AS cran
 ARG INFLEXA_LIB_ROOT
@@ -130,11 +149,11 @@ print('\n'.join(m.get('r',{}).get('cran',[])))" 2>/dev/null) \
          && cp -a /usr/lib/R/site-library/* ${INFLEXA_LIB_ROOT}/r/cran/ 2>/dev/null || true \
          && cp -a /usr/local/lib/R/site-library/* ${INFLEXA_LIB_ROOT}/r/cran/ 2>/dev/null || true; \
        else \
-         echo "Installing CRAN packages from source (r2u unavailable on $TARGETARCH)..." \
+         echo "Installing CRAN packages via the base image's P3M snapshot (binary) on $TARGETARCH..." \
          && R -e "\
            pkgs <- trimws(strsplit('$(echo "$CRAN_PKGS" | tr "\n" ",")', ',')[[1]]); \
            pkgs <- pkgs[nchar(pkgs) > 0]; \
-           install.packages(pkgs, lib='${INFLEXA_LIB_ROOT}/r/cran', repos='https://cloud.r-project.org', \
+           install.packages(pkgs, lib='${INFLEXA_LIB_ROOT}/r/cran', \
                             Ncpus=${R_NCPUS:-parallel::detectCores()}, quiet=FALSE)" > /tmp/cran-install.log 2>&1 \
          && grep -E '^\* (installing|DONE)|^Error|^ERROR:|had non-zero|is not available' /tmp/cran-install.log || true; \
        fi \
