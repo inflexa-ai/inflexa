@@ -306,6 +306,14 @@ RUN GH_PKGS=$(ls ${INFLEXA_LIB_ROOT}/r/github 2>/dev/null | tr '\n' ' ') \
          Rscript /usr/local/bin/lib-store-loadtest.R \
            "R (GitHub)" ${INFLEXA_LIB_ROOT}/github.packages.txt $GH_PKGS
 
+# World-readable for the unprivileged sandbox user, matching the managed
+# read-only mount. This MUST happen here, in the last builder stage to touch the
+# r/ subtree, and never after the COPY in a shipped stage: chmod is a write, so
+# it copies up every file it walks — even ones whose mode does not change — and
+# the shipped layer then carries a second copy of the whole subtree. The COPY
+# below preserves these modes, so the runtime needs no chmod of its own.
+RUN chmod -R a+rX ${INFLEXA_LIB_ROOT}
+
 # =============================================================================
 # Stage: runtime — the lean published image. FROM sandbox-python; COPY the built
 # r/ subtree + fragments in and regenerate packages.txt. No R build toolchain
@@ -328,8 +336,10 @@ COPY --from=github ${INFLEXA_LIB_ROOT}/github.packages.txt ${INFLEXA_LIB_ROOT}/g
 
 # Rebuild packages.txt from all six fragments (python/conda/node inherited from
 # sandbox-python plus the three R fragments just copied), load-tested set only.
-RUN INFLEXA_LIB_ROOT=${INFLEXA_LIB_ROOT} inflexa-libs-refresh --from-fragments \
-    && chmod -R a+rX ${INFLEXA_LIB_ROOT}
+# No chmod here: every subtree is already world-readable from the builder stage
+# that produced it, and re-walking the store with chmod would copy up the whole
+# thing into this layer (see the note in the github stage).
+RUN INFLEXA_LIB_ROOT=${INFLEXA_LIB_ROOT} inflexa-libs-refresh --from-fragments
 
 USER sandbox
 WORKDIR /workspace

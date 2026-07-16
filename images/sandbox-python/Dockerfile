@@ -219,6 +219,17 @@ RUN if [ "$(uname -m)" = aarch64 ]; then export NUMBA_CPU_NAME=generic; fi; \
     FRAGMENT_OUT=${INFLEXA_LIB_ROOT}/python.packages.txt \
     python3 /usr/local/bin/lib-store-py-loadtest.py
 
+# World-readable for the unprivileged sandbox user, matching the managed
+# read-only mount. Each builder stage chmods the subtree it owns, and the runtime
+# COPY preserves those modes. This MUST NOT be deferred to a single chmod after
+# the COPYs in the runtime stage: chmod is a write, so it copies up every file it
+# walks — even ones whose mode does not change — and the shipped layer then
+# carries a second copy of the entire store. Here the cost stays in a builder
+# layer that is never pushed. (Measured: a no-op `chmod -R a+rX` after COPY
+# duplicated the full 200 MB tree in a control build; on the real arm64 image it
+# cost 4.77 GB in sandbox-python and 9.76 GB in sandbox-python-r.)
+RUN chmod -R a+rX ${INFLEXA_LIB_ROOT}
+
 # =============================================================================
 # Stage: conda-builder — bioinformatics CLI tools via bioconda into the store's
 # conda prefix. Installed directly at the runtime mount path so conda writes
@@ -272,6 +283,9 @@ print('\n'.join(g['common'] + g.get(os.environ.get('TARGETARCH', 'amd64'), [])))
     if [ -z "$(printf '%s' $ok)" ]; then echo "ERROR: the conda track resolved ZERO tools (non-empty floor) — failing the build."; exit 1; fi; \
     echo "Load check OK: system tools resolved"
 
+# World-readable — see the note above the matching chmod in python-builder.
+RUN chmod -R a+rX ${INFLEXA_LIB_ROOT}
+
 # =============================================================================
 # Stage: node-builder — Node.js packages into the store's node subtree.
 # =============================================================================
@@ -304,6 +318,9 @@ require("fs").writeFileSync(process.env.FRAG, "## Node (npm)\n" + ok.join(", ") 
 if (bad.length) console.error("NOTE: " + bad.length + " Node package(s) dropped"); \
 if (!ok.length) { console.error("ERROR: the node track loaded ZERO packages (non-empty floor)"); process.exit(1); } \
 console.log("Load check OK: " + ok.length + "/" + pkgs.length + " Node package(s) loaded");'
+
+# World-readable — see the note above the matching chmod in python-builder.
+RUN chmod -R a+rX ${INFLEXA_LIB_ROOT}
 
 # =============================================================================
 # Stage: runtime — the lean published image. FROM sandbox-base; COPY the built
@@ -367,10 +384,6 @@ ENV INFLEXA_LIB_ROOT="${INFLEXA_LIB_ROOT}"
 ENV PIP_TARGET="${INFLEXA_LIB_ROOT}/python/site-packages"
 ENV R_LIBS_USER="${INFLEXA_LIB_ROOT}/r/github"
 ENV NPM_CONFIG_PREFIX="${INFLEXA_LIB_ROOT}/node"
-
-# The store is world-readable so the unprivileged sandbox user can read it, matching
-# the managed read-only mount's permissions.
-RUN chmod -R a+rX ${INFLEXA_LIB_ROOT}
 
 USER sandbox
 WORKDIR /workspace
