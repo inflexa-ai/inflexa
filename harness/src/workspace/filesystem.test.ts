@@ -106,15 +106,35 @@ describe("createWorkspaceFilesystem", () => {
         expect((await fs.stat({ session, path: "runs/r1/s1/leak.txt" }))._unsafeUnwrap().kind).toBe("out_of_scope");
     });
 
-    it("still reads an in-tree symlink and a hard-linked input", async () => {
-        // In-tree symlink → allowed (realpath stays in the tree).
+    it("refuses an in-tree symlink leaf (O_NOFOLLOW) but reads a hard-linked input", async () => {
+        // The read open uses O_NOFOLLOW, so it refuses EVERY leaf symlink — even
+        // one whose target stays in-tree and would pass the realpath containment
+        // check. This is the atomic guard that closes the check/open race: a leaf
+        // symlink swapped in after `classifyWithinRoot` validates the path is still
+        // refused at open, returning out_of_scope, never followed content.
         const real = join(sessions, ANALYSIS, "data", "inputs", "real.csv");
-        await writeFile(real, "gene\nBRCA1\n");
+        await writeFile(real, "gene\nBRCA1\nBRCA2\n");
         await symlink(real, join(sessions, ANALYSIS, "data", "inputs", "alias.csv"));
-        expect((await fs.readFile({ session, path: "data/inputs/alias.csv" }))._unsafeUnwrap().kind).toBe("ok");
+        // Every read mode goes through the no-follow open, not just the plain read.
+        expect((await fs.readFile({ session, path: "data/inputs/alias.csv" }))._unsafeUnwrap().kind).toBe("out_of_scope");
+        expect((await fs.readFile({ session, path: "data/inputs/alias.csv", maxBytes: 4 }))._unsafeUnwrap().kind).toBe("out_of_scope");
+        expect((await fs.readFile({ session, path: "data/inputs/alias.csv", headLines: 1 }))._unsafeUnwrap().kind).toBe("out_of_scope");
+        expect((await fs.readFile({ session, path: "data/inputs/alias.csv", tailLines: 1 }))._unsafeUnwrap().kind).toBe("out_of_scope");
+        // stat refuses the symlink leaf too (lstat, no follow) — no metadata leak.
+        expect((await fs.stat({ session, path: "data/inputs/alias.csv" }))._unsafeUnwrap().kind).toBe("out_of_scope");
+
+        // list refuses a symlinked directory leaf — a plain readdir would list the
+        // target's entries.
+        const realDir = join(sessions, ANALYSIS, "data", "inputs", "realdir");
+        await mkdir(realDir, { recursive: true });
+        await writeFile(join(realDir, "inner.txt"), "x\n");
+        await symlink(realDir, join(sessions, ANALYSIS, "data", "inputs", "aliasdir"));
+        expect((await fs.list({ session, path: "data/inputs/aliasdir" }))._unsafeUnwrap().kind).toBe("out_of_scope");
+        // The real directory still lists fine.
+        expect((await fs.list({ session, path: "data/inputs/realdir" }))._unsafeUnwrap().kind).toBe("ok");
 
         // Hard-linked input (mirrors stageFile's linkSync) → allowed: a hard link
-        // has no symlink target for realpath to follow, so it stays in-tree.
+        // is not a symlink, so O_NOFOLLOW opens it and realpath keeps it in-tree.
         const original = join(sessions, "user-original.csv");
         await writeFile(original, "hardlinked\n");
         await link(original, join(sessions, ANALYSIS, "data", "inputs", "staged.csv"));
