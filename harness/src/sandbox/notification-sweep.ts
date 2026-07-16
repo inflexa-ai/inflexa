@@ -42,7 +42,7 @@ export async function sweepStaleNotifications(deps: SweepDeps): Promise<number> 
         logger.info("cleared stale notifications", { rowsCleared: cleared });
         return cleared;
     } catch (err) {
-        logger.error("sweep failed", { err: err instanceof Error ? err.message : String(err) });
+        logger.error("sweep failed", logger.errorFields(err));
         throw err;
     }
 }

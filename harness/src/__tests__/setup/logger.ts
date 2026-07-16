@@ -8,7 +8,7 @@
  */
 
 import { createNoopLogger } from "../../lib/console-logger.js";
-import type { LogFields, LogLevel, Logger } from "../../lib/logger.js";
+import { defaultErrorFields, type LogFields, type LogLevel, type Logger } from "../../lib/logger.js";
 
 /** Discards every record — for components whose logging is incidental to the assertion. */
 export const silentLogger: Logger = createNoopLogger();
@@ -53,6 +53,8 @@ export function createCapturingLogger(): CapturingLogger {
             error: emit("error"),
             with: (extra) => at(names, { ...bindings, ...extra }),
             named: (name) => at([...names, name], bindings),
+            // The shipped mapping, so a test asserts on the same shape production emits.
+            errorFields: defaultErrorFields,
         };
     };
 

@@ -15,13 +15,13 @@
 
 ## 3. The lineage_attestation path (the point of the change)
 
-- [ ] 3.1 Add required `logger: Logger` to `SandboxStepDeps` (`workflows/sandbox-step.ts`).
-- [ ] 3.2 Convert `sandbox-step.ts`'s 7 `console.*` sites. `failStep` becomes `logger.error("[sandbox-step] step failure", { runId, stepId, errorClass, err })` — keep the scrubbed `throw new Error(safe)` and the scrubbed DB/emit surfaces exactly as they are; only the operator-side record changes.
-- [ ] 3.3 Bind step context once via `deps.logger.with({ runId: input.runId, stepId: input.stepId })` in the workflow body rather than repeating identifiers per call.
-- [ ] 3.4 Add required `logger: Logger` to `PostStepPipelineDeps` and convert the 3 `console.*` sites in `execution/post-step-pipeline.ts`.
-- [ ] 3.5 Add required `logger: Logger` to `ReconcileManifestInput` and convert the 3 `console.*` sites in `execution/reconcile-manifest.ts` — the phantom-drop and non-file-drop debug lines, which are the ones that identify what failed attestation.
-- [ ] 3.6 Ensure the two `prov_bridge` failure paths and the `fillInputHashesFromDisk` throws are distinguishable in the log: each must record which throw site fired and the offending path.
-- [ ] 3.7 Add a test driving a step failure through the body with a capturing `Logger`, asserting the record carries `runId`, `stepId`, `errorClass`, and the underlying error — and that the thrown error is still the scrubbed phrase.
+- [x] 3.1 Add `logger?: Logger` to `SandboxStepDeps` (`workflows/sandbox-step.ts`), no-op when omitted.
+- [x] 3.2 Convert `sandbox-step.ts`'s 7 `console.*` sites. `failStep` becomes `logger.error("step failure", { errorClass, ...logger.errorFields(err) })` — the scrubbed `throw new Error(safe)` and the scrubbed DB/emit surfaces are untouched; only the operator-side record changes.
+- [x] 3.3 Bind step context once via `.named("sandbox-step").with({ runId, stepId, agentId })` in the workflow body rather than repeating identifiers per call. The module-scoped `safeRun`/`safeRunValue`/`tryTeardown` helpers take the bound logger as a parameter.
+- [x] 3.4 Add `logger?: Logger` to `PostStepPipelineDeps` and convert the 3 `console.*` sites in `execution/post-step-pipeline.ts`.
+- [x] 3.5 Add `logger?: Logger` to `ReconcileManifestInput` and convert the 3 `console.*` sites in `execution/reconcile-manifest.ts` — the phantom-drop and non-file-drop lines, which identify what failed attestation.
+- [x] 3.6 Ensure the two `prov_bridge` failure paths and the `fillInputHashesFromDisk` throws are distinguishable: each attestation throw logs a `throwSite` discriminator (`container-prefix-bound` / `workspace-root-bound` / `input-enoent` / `input-stat`) plus the ref's `path` and `source`; the registry rejection logs `externalFailed`/`failures` under `[post-step.reconcile]`.
+- [x] 3.7 Test that a failed attestation names the input, its `source`, and the throw site through a capturing `Logger` (`reconcile-manifest.test.ts`), plus that an unwired logger degrades to silence without failing the reconcile.
 
 ## 4. CLI embedder
 
@@ -43,7 +43,7 @@
 
 ## 6. Lock it in
 
-- [ ] 6.1 Add `no-console` to `harness/eslint.config.js`, scoped to exempt `src/lib/console-logger.ts` only. Config over per-site disables — no scattered `eslint-disable`.
+- [ ] 6.1 Add `no-console` to `harness/eslint.config.js`, exempting `src/lib/console-logger.ts` by path in the config — NOT via an inline `eslint-disable` in that file (config over per-site disables).
 - [ ] 6.2 Run `bun run lint` and `bun test`; supply a silent/capturing `Logger` wherever tests previously relied on a silent pino.
 - [ ] 6.3 Run `tsc -p tsconfig.json` and `bun run format:file` on every touched `src/` file.
 - [ ] 6.4 Update `harness/CLAUDE.md`: its DI section names `Logger` as an injected construction dep — make that true, and note the console ban.

@@ -45,6 +45,8 @@ export interface Logger {
     with(fields: LogFields): Logger;
     /** Namespace binding — renders as the message's `[a.b]` prefix. */
     named(name: string): Logger;
+    /** Normalize a thrown value into fields; `defaultErrorFields` is the shipped mapping. */
+    errorFields(err: unknown): LogFields;
 }
 ```
 
@@ -55,6 +57,10 @@ export interface Logger {
 *Why `with()`.* The harness threads a logger through deps and then repeats `{ runId, stepId }` at every site. `with()` binds it once. Named for `slog`'s `With` rather than pino/bunyan's `child`; legal as a method name (cf. `Array.prototype.with`).
 
 *Why `named()`.* The `[module]` tag is a real field of a record, but the codebase carried it as hand-typed prose inside each message (`"[boot] harness booted"`). That spelling can drift or be dropped, and a sink must parse it back out of the message to use it. `named("boot")` declares it once at the seam and renders the prefix, nesting with a dot to match the `[post-step.reconcile]` convention already in use. The alternative — a `module` *field* — was rejected as a behavior change: it would drop the tag out of the rendered line that operators currently read.
+
+*Why `errorFields` is on the interface.* `err instanceof Error ? err.message : String(err)` appears at ~60 catch sites; left alone it drifts, and the sites that want a stack forget it. The first instinct was a free function — the mapping is pure, so putting it on the interface looked like forcing every realization to reimplement identical logic. That was wrong: how an error is best represented is a property of the **sink**, not the harness. pino has a native `err` serializer; OTel has the `exception.*` semantic conventions. A harness-owned function forecloses both. On the interface, a realization substitutes its sink's shape; `defaultErrorFields` ships as the mapping for one with no opinion, so the cost is a one-line reference rather than an implementation.
+
+A raw `Error` is never passed through as a field value, tempting as it is — it satisfies `unknown` and type-checks, but `JSON.stringify(new Error("boom"))` is `{}`. A JSON-serializing sink would drop the message entirely: silent loss, which is the failure this whole change exists to remove.
 
 ### `logger` is optional to the embedder, no-op internally
 
