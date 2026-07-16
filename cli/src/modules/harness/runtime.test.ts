@@ -4,8 +4,9 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
 import { ok, okAsync, err } from "neverthrow";
-import type { EmbeddingProvider } from "@inflexa-ai/harness";
+import { createSandboxClient, type CreateSandboxClientConfig, type EmbeddingProvider } from "@inflexa-ai/harness";
 
+import { ContainerRuntimeError, runtimes } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
@@ -67,10 +68,18 @@ function fakeIngress(calls: string[]): ExecIngress {
 // path runs fully offline.
 function recordingSeams(calls: string[]): BootSeams {
     return {
+        resolveSandboxEngine: async () => {
+            calls.push("resolveSandboxEngine");
+            // Default to a docker pin (today's behavior): no socket, no step-tree loosening.
+            return ok({ runtime: runtimes.docker, socketPath: undefined });
+        },
         ensurePostgres: async () => {
             calls.push("postgres");
             return ok({ host: "localhost", port: 5, database: "d", user: "u", password: "p" });
         },
+        // Real construction (pure, connects lazily) so the offline boot runs unchanged;
+        // the engine-wiring tests below swap this for a capturing variant.
+        createSandbox: createSandboxClient,
         startIngress: () => {
             calls.push("ingress");
             return ok(fakeIngress(calls));
@@ -220,6 +229,7 @@ describe("bootHarnessRuntime", () => {
             "resolveEmbedding",
             "readKey",
             "probeEmbedding",
+            "resolveSandboxEngine",
             "postgres",
             "boot",
             "sweepEphemeral",
@@ -360,7 +370,7 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
         expect(result._unsafeUnwrapErr()).toMatchObject({ type: "postgres_unavailable" });
-        expect(calls).toEqual(["resolveEmbedding", "readKey", "probeEmbedding", "postgres"]);
+        expect(calls).toEqual(["resolveEmbedding", "readKey", "probeEmbedding", "resolveSandboxEngine", "postgres"]);
     });
 
     test("an unresolved embedder fails before any side effect past resolution", async () => {
@@ -658,5 +668,82 @@ describe("bootHarnessRuntime", () => {
             holder.kill();
             await holder.exited;
         }
+    });
+
+    test("a podman pin threads the resolved socket and world-writable step-tree access into the sandbox client", async () => {
+        const calls: string[] = [];
+        // Captured on an object property: a bare `let` assigned only inside the seam
+        // closure gets narrowed back to `null` by control-flow analysis across the await.
+        const captured: { config: CreateSandboxClientConfig | null } = { config: null };
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            resolveSandboxEngine: async () => {
+                calls.push("resolveSandboxEngine");
+                return ok({ runtime: runtimes.podman, socketPath: "/var/folders/xy/podman-api.sock" });
+            },
+            createSandbox: (cfg) => {
+                captured.config = cfg;
+                return createSandboxClient(cfg);
+            },
+        };
+        const result = await bootHarnessRuntime({ seams, config: testConfig() });
+
+        expect(result.isOk()).toBe(true);
+        // A podman pin dials the resolved compat socket and loosens the pre-created
+        // step tree so the uid-1000 workload can write through virtiofs.
+        expect(captured.config).not.toBeNull();
+        expect(captured.config?.engineSocketPath).toBe("/var/folders/xy/podman-api.sock");
+        expect(captured.config?.stepTreeAccess).toBe("world-writable");
+    });
+
+    test("a docker pin builds today's exact sandbox config — no engineSocketPath key, no stepTreeAccess", async () => {
+        const calls: string[] = [];
+        const captured: { config: CreateSandboxClientConfig | null } = { config: null };
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            resolveSandboxEngine: async () => {
+                calls.push("resolveSandboxEngine");
+                return ok({ runtime: runtimes.docker, socketPath: undefined });
+            },
+            createSandbox: (cfg) => {
+                captured.config = cfg;
+                return createSandboxClient(cfg);
+            },
+        };
+        const result = await bootHarnessRuntime({ seams, config: testConfig() });
+
+        expect(result.isOk()).toBe(true);
+        expect(captured.config).not.toBeNull();
+        // Byte-identical to today: the keys must be ABSENT (not present-and-undefined),
+        // so dockerode keeps its default resolution and the step tree keeps its modes.
+        expect(captured.config !== null && "engineSocketPath" in captured.config).toBe(false);
+        expect(captured.config !== null && "stepTreeAccess" in captured.config).toBe(false);
+    });
+
+    test("an unresolvable engine socket fails boot with sandbox_engine_unresolved before postgres/lock/launch", async () => {
+        const calls: string[] = [];
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            resolveSandboxEngine: async () => {
+                calls.push("resolveSandboxEngine");
+                return err(
+                    new ContainerRuntimeError(
+                        "Could not resolve the Podman sandbox-engine socket — the Podman machine is not running.\n  Start it with `podman machine start`, then re-run.",
+                    ),
+                );
+            },
+        };
+        const result = await bootHarnessRuntime({ seams, config: testConfig() });
+
+        const error = result._unsafeUnwrapErr();
+        expect(error.type).toBe("sandbox_engine_unresolved");
+        // The resolution's runtime-specific remediation rides through verbatim.
+        expect(error.type === "sandbox_engine_unresolved" && error.message).toContain("podman machine start");
+        // The gate sits ahead of Postgres, the instance lock, the pool, and the DBOS
+        // boot, so a failure there reaches none of them (proven by call order: postgres
+        // and boot follow the gate, and the lock/pool sit inside the boot's try block).
+        expect(calls).not.toContain("postgres");
+        expect(calls).not.toContain("boot");
+        expect(calls).not.toContain("ingress");
     });
 });
