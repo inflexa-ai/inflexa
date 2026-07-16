@@ -714,6 +714,10 @@ async function bootHarnessRuntimeOnce(
             ...existingRefStoreConfig(env.refsDir),
             resourceLimits: cfg.resourcePolicy.perStep,
             resolveWorkspaceRoot,
+            // The docker backend's diagnostics (lib-store degradation, recovery
+            // adoption) are observable only through this seam — unset, they fall to
+            // the harness's noop logger and vanish.
+            logger,
             // Pull (`ensureSandboxImage`) and create must target the SAME engine, so
             // dial the socket resolved for the pinned runtime. Docker resolves to
             // `undefined`: for a docker pin the conditional spread materializes no key,

@@ -175,6 +175,7 @@ async function createOrAdopt(
     name: string,
     ownerWorkflowId: string,
     createFailed: (status: number | undefined, cause: unknown) => SandboxError,
+    logger: Logger,
 ): Promise<Result<{ container: Docker.Container; alreadyRunning: boolean }, SandboxError>> {
     const created = await trySandbox(() => docker.createContainer(createOpts), createFailed);
     if (created.isOk()) return ok({ container: created.value, alreadyRunning: false });
@@ -190,12 +191,19 @@ async function createOrAdopt(
     if (owner !== ownerWorkflowId) {
         return err({ type: "name_conflict", op: "docker.createSandbox", sandboxId: name, owner: owner ?? null });
     }
-    if (info.State.Running) return ok({ container: existing, alreadyRunning: true });
+    // Both mutating reconcile outcomes are logged: adoption reuses a container the
+    // current attempt did not create, so without a record here nothing ties the
+    // step's sandbox back to the prior attempt that made it.
+    if (info.State.Running) {
+        logger.info("adopted standing container on recovery re-run", { sandboxId: name, ownerWorkflowId });
+        return ok({ container: existing, alreadyRunning: true });
+    }
 
     const removed = await removeContainerIgnoreMissing(docker, name);
     if (removed.isErr()) return err(removed.error);
     const recreated = await trySandbox(() => docker.createContainer(createOpts), createFailed);
     if (recreated.isErr()) return err(recreated.error);
+    logger.info("removed stopped prior attempt and recreated", { sandboxId: name, ownerWorkflowId });
     return ok({ container: recreated.value, alreadyRunning: false });
 }
 
@@ -230,6 +238,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
     // engine and an unset one stays a bare `new Docker()` (default resolution).
     const connection = engineConnectionOptions(config.engineSocketPath);
     const docker = config.docker ?? (connection ? new Docker(connection) : new Docker());
+    const logger = (config.logger ?? createNoopLogger()).named("docker-client");
     const fetchImpl = config.fetch ?? fetch;
     const transport: SandboxTransport = config.transport ?? "poll";
     const pollMode = transport === "poll";
@@ -246,12 +255,10 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     // since an otherwise-silent libs-mount drop is invisible to operators.
                     const libsMounted = !!config.libStorePath && libStoreUsable(config.libStorePath);
                     if (config.libStorePath && !libsMounted) {
-                        (config.logger ?? createNoopLogger())
-                            .named("docker-client")
-                            .warn(
-                                "lib store configured but `current` is missing or incomplete at sandbox creation — mounting no library store (sandbox degrades to available:false)",
-                                { libStorePath: config.libStorePath, sandboxId },
-                            );
+                        logger.warn(
+                            "lib store configured but `current` is missing or incomplete at sandbox creation — mounting no library store (sandbox degrades to available:false)",
+                            { libStorePath: config.libStorePath, sandboxId },
+                        );
                     }
 
                     const plan = buildMountPlan(meta, {
@@ -331,7 +338,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         },
                     };
 
-                    const sandbox = await createOrAdopt(docker, createOpts, sandboxId, meta.childWorkflowId, createFailed);
+                    const sandbox = await createOrAdopt(docker, createOpts, sandboxId, meta.childWorkflowId, createFailed, logger);
                     if (sandbox.isErr()) return err(sandbox.error);
                     if (!sandbox.value.alreadyRunning) {
                         const started = await trySandbox(() => sandbox.value.container.start(), createFailed);
