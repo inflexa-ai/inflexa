@@ -9,6 +9,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import { ProvenanceCollector } from "../provenance/collector.js";
 import { feedExecFrame } from "../provenance/exec-frame.js";
 import { reconcileManifestWithDisk } from "./reconcile-manifest.js";
@@ -137,6 +138,63 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
                     collector,
                 }),
             ).rejects.toThrow(/cannot attest input/);
+        } finally {
+            await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+
+    test("names the unattestable input and its throw site in the log", async () => {
+        // The regression this change exists for: a step failed this way repeatedly
+        // in the field and the operator log said nothing, because the throw was
+        // console.error'd (discarded by the host) and the raised message is scrubbed
+        // downstream. The record below is the ONLY account of which input died.
+        const { sessionPath, root, upstreamRel, collector, manifest } = await setup({ writeUpstream: false });
+        const logger = createCapturingLogger();
+        try {
+            await expect(
+                reconcileManifestWithDisk({
+                    workspaceRoot: root,
+                    resourceId: RID,
+                    runId: "run-001",
+                    stepId: "de",
+                    agentId: "agent-x",
+                    manifest,
+                    collector,
+                    logger,
+                }),
+            ).rejects.toThrow();
+
+            const errors = logger.records.filter((r) => r.level === "error");
+            expect(errors).toHaveLength(1);
+            expect(errors[0]!.msg).toBe("[reconcile-manifest] cannot attest input — not present at reconcile");
+            expect(errors[0]!.fields).toMatchObject({
+                // Which step died, which input, and how it was classified — the read's
+                // `source` is what says whether the step ever declared this input.
+                runId: "run-001",
+                stepId: "de",
+                agentId: "agent-x",
+                path: `/${RID}/${upstreamRel}`,
+                source: "upstream",
+                throwSite: "input-enoent",
+            });
+        } finally {
+            await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+
+    test("stays silent when no logger is wired, without failing the reconcile", async () => {
+        const { sessionPath, root, collector, manifest } = await setup({ writeUpstream: true });
+        try {
+            const result = await reconcileManifestWithDisk({
+                workspaceRoot: root,
+                resourceId: RID,
+                runId: "run-001",
+                stepId: "de",
+                agentId: "agent-x",
+                manifest,
+                collector,
+            });
+            expect(result.manifest).toHaveLength(1);
         } finally {
             await rm(sessionPath, { recursive: true, force: true });
         }

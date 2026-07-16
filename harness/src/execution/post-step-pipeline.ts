@@ -20,6 +20,8 @@ import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { StepSummary } from "../schemas/step-summary.js";
 import { unwrapOrThrow } from "../lib/result.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 import { writeFileWithinRoot } from "../lib/fs-helpers.js";
 
 import type { ArtifactRegistry } from "./artifact-registry.js";
@@ -37,6 +39,8 @@ import type { PostStepArtifacts, PostStepContext, StepFileEntry, StepOutputs } f
  */
 export interface PostStepPipelineDeps {
     readonly pool: Pool;
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     /** Non-streaming chat — the metadata + summary sub-agent loops. */
     readonly provider: AgentChat;
     /** Write-side embedder for the vector index. */
@@ -118,7 +122,12 @@ export async function generateStepSummaryAndWrite(
             // never reach the hard-linked `data/` inputs, which are RO by design.
             await writeFileWithinRoot(writePrefix, join(writePrefix, "output", "summary.md"), summary.markdown);
         } catch (err) {
-            console.warn(`[post-step.summary] writeFile output/summary.md failed for ${input.stepId}: ${err instanceof Error ? err.message : err}`);
+            const logger = (deps.logger ?? createNoopLogger()).named("post-step").named("summary");
+            logger.warn("writeFile output/summary.md failed", {
+                runId: input.runId,
+                stepId: input.stepId,
+                ...logger.errorFields(err),
+            });
         }
     }
     return summary;
@@ -147,6 +156,7 @@ export async function reconcileAndRegisterStepArtifacts(
         agentId: input.agentId,
         manifest: [...manifest],
         collector: lineageCollector,
+        ...(deps.logger ? { logger: deps.logger } : {}),
     });
 
     if (reconciled.manifest.length === 0) return reconciled.manifest;
@@ -162,6 +172,7 @@ export async function reconcileAndRegisterStepArtifacts(
             collector: lineageCollector,
         },
         session,
+        deps.logger,
     );
     if (reg.externalFailed > 0) {
         const wholeActivityFailed = reg.externalRegistered === 0;
@@ -171,7 +182,19 @@ export async function reconcileAndRegisterStepArtifacts(
             `${reg.externalFailed} row(s) rejected, ${reg.externalRegistered}/${reg.localCount} local artifact(s) registered` +
             (wholeActivityFailed ? " (WHOLE ACTIVITY ROLLED BACK — outputs orphaned)" : "") +
             (detail ? `\n  ${detail}` : "");
-        console.error(msg);
+        // Logged as fields as well as thrown: the throw reaches `failStep` as one
+        // opaque string, so the per-path rejections are only queryable from here.
+        // This is what distinguishes a registry rejection from the attestation
+        // throws in `reconcileManifestWithDisk` when a step dies.
+        (deps.logger ?? createNoopLogger()).named("post-step").named("reconcile").error("external registration failed", {
+            runId: input.runId,
+            stepId: input.stepId,
+            externalFailed: reg.externalFailed,
+            externalRegistered: reg.externalRegistered,
+            localCount: reg.localCount,
+            wholeActivityFailed,
+            failures: reg.failureDetails,
+        });
         throw new Error(msg);
     }
 
@@ -236,7 +259,8 @@ export async function vectorIndexStepOutputs(deps: PostStepPipelineDeps, postCtx
             );
         }
     } catch (err) {
-        console.warn(`[post-step.vector-index] indexing failed for ${input.stepId}: ${err instanceof Error ? err.message : err}`);
+        const logger = (deps.logger ?? createNoopLogger()).named("post-step").named("vector-index");
+        logger.warn("indexing failed", { runId: input.runId, stepId: input.stepId, ...logger.errorFields(err) });
     }
 }
 

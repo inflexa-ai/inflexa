@@ -127,6 +127,12 @@ export function describeBootError(e: HarnessBootError): string {
                 `A direct model connection needs an explicit model for the ${e.agents.join(" and ")} agent${e.agents.length > 1 ? "s" : ""} — there is no proxy \`/models\` to auto-resolve one from.`,
                 "Set `harness.model` in config.json (applies to both agents), or `models.agents.<agent>` per agent, to the model id your endpoint serves.",
             ].join("\n");
+        case "sandbox_engine_unresolved":
+            // The message was built at resolution time against the pinned runtime AND
+            // host platform (start the podman machine on macOS; enable `podman.socket`
+            // on Linux; or the container-runtime remediation when no runtime resolved),
+            // so it already names the exact command to run — surface it verbatim.
+            return e.message;
         case "postgres_unavailable":
             return e.cause.message;
         case "ingress_failed":

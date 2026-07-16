@@ -26,6 +26,8 @@
 
 import { DBOS } from "@dbos-inc/dbos-sdk";
 
+import { createNoopLogger } from "../../../lib/console-logger.js";
+import type { Logger } from "../../../lib/logger.js";
 import { unwrapOrThrow } from "../../../lib/result.js";
 import { isBudgetExceeded } from "../../../loop/budget-exceeded.js";
 import type { AgentChat, ChatRequest, ChatResponse } from "../../../providers/types.js";
@@ -46,6 +48,8 @@ export interface BudgetExceededMarker {
 }
 
 export interface RunLlmStepOptions {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     /** Durable-step name — already attempt-numbered by the caller. */
     readonly stepName: string;
     /** Agent id stamped in the marker for telemetry. */
@@ -111,7 +115,8 @@ export async function runLlmStep(opts: RunLlmStepOptions): Promise<RunLlmStepRes
         try {
             await DBOS.runStep(() => DBOS.send(workflowId, marker, BUDGET_EXCEEDED_TOPIC), { name: `${stepName}:notify-budget-exceeded` });
         } catch (sendErr) {
-            console.warn(`[ta-llm-step] notify-budget-exceeded send failed (non-fatal): ${sendErr instanceof Error ? sendErr.message : sendErr}`);
+            const logger = (opts.logger ?? createNoopLogger()).named("ta-llm-step");
+            logger.warn("notify-budget-exceeded send failed (non-fatal)", { stepName, ...logger.errorFields(sendErr) });
         }
 
         return { kind: "budget-exceeded", sentinel: BUDGET_EXCEEDED_SENTINEL };

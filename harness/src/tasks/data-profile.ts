@@ -30,6 +30,8 @@ import type { SandboxAgentDeps } from "../agents/sandbox/shared.js";
 import type { BioToolKeys } from "../tools/bio/keys.js";
 import { runToTerminal } from "../loop/run-to-terminal.js";
 import { durableStep } from "../loop/run-step.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { defineTool } from "../tools/define-tool.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
@@ -66,6 +68,8 @@ const DEFAULT_DEADLINE_MS = 300_000;
 
 /** The body's construction-time deps — closed over at registration. */
 export interface DataProfileDeps {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     readonly provider: ChatProvider;
     readonly pool: Pool;
     readonly sandboxClient: SandboxClient;
@@ -209,6 +213,7 @@ export function registerDataProfileWorkflow(deps: DataProfileDeps): (input: Data
  * 'failed' on error, and revokes the run authorization on every terminal path.
  */
 export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: DataProfileDeps): Promise<void> {
+    const logger = (deps.logger ?? createNoopLogger()).named("data-profile").with({ analysisId: input.analysisId });
     // Ownership defaults to true for inputs persisted before the field existed
     // (a #247 workflow recovered across this deploy): those were always
     // Cortex-owned and must be revoked here.
@@ -220,8 +225,8 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         // embedder populated the tree and handed us this manifest in the workflow
         // input. The body never downloads.
         if (stagedInputs.length === 0) {
-            console.warn(`[data-profile] No input files staged for ${analysisId}`);
-            if (!unwrapOrThrow(await completeDataProfile(deps.pool, analysisId))) logTerminalNoop(analysisId, "completion");
+            logger.warn("no input files staged");
+            if (!unwrapOrThrow(await completeDataProfile(deps.pool, analysisId))) logTerminalNoop(logger, analysisId, "completion");
             await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
             return;
         }
@@ -278,7 +283,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             `All file paths in your response must be relative to the analysis root and must EXACTLY match the paths listed above.`,
         ].join("\n");
 
-        console.log(`[data-profile] execution=${executionId} analysis=${analysisId} starting sandbox`);
+        logger.info("starting sandbox", { executionId });
 
         const sandbox = await deps.sandboxClient.createSandbox(
             {
@@ -421,30 +426,31 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             }
 
             if (fallbackCount > 0) {
-                console.warn(
-                    `[data-profile] ${fallbackCount}/${stagedInputs.length} input file(s) used a deterministic fallback description (analysis=${analysisId}) — profiler omitted them`,
-                );
+                logger.warn("input file(s) used a deterministic fallback description — profiler omitted them", {
+                    fallbackCount,
+                    stagedCount: stagedInputs.length,
+                });
             }
-            console.log(`[data-profile] Indexed ${indexed} file(s) for ${analysisId}`);
+            logger.info("indexed file(s)", { indexed });
 
             // 5. Complete — store the FULL profiler finding plus the input snapshot for
             // staleness detection. The scratch tree is gone; this row is all that survives.
             if (
                 !unwrapOrThrow(await completeDataProfile(deps.pool, analysisId, buildDataProfileResult(profilerData, stagedInputs, new Date().toISOString())))
             ) {
-                logTerminalNoop(analysisId, "completion");
+                logTerminalNoop(logger, analysisId, "completion");
             }
             await deps.runAuthorizer.revoke(authorization, "data-profile-completed");
         } finally {
             try {
                 await deps.sandboxClient.teardown(sandbox);
             } catch (teardownErr) {
-                console.warn(`[data-profile] execution=${executionId} teardown failed (non-fatal):`, teardownErr);
+                logger.warn("teardown failed (non-fatal)", { executionId, ...logger.errorFields(teardownErr) });
             }
         }
     } catch (err) {
-        console.error(`[data-profile] Failed for ${analysisId}:`, err);
-        if (!unwrapOrThrow(await failDataProfile(deps.pool, analysisId, profileFailureReason(err)))) logTerminalNoop(analysisId, "failure");
+        logger.error("profile failed", logger.errorFields(err));
+        if (!unwrapOrThrow(await failDataProfile(deps.pool, analysisId, profileFailureReason(err)))) logTerminalNoop(logger, analysisId, "failure");
         await deps.runAuthorizer.revoke(authorization, "data-profile-failed");
     }
 }
@@ -455,8 +461,8 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
  * there is no `running` row to stamp. Not an error — the ledger correctly moved
  * on; the workflow still revokes its own authorization on the same terminal path.
  */
-function logTerminalNoop(analysisId: string, write: string): void {
-    console.warn(`[data-profile] ${write} write skipped for ${analysisId}: ledger row not running (cleared or expired concurrently)`);
+function logTerminalNoop(logger: Logger, analysisId: string, write: string): void {
+    logger.warn("terminal write skipped: ledger row not running (cleared or expired concurrently)", { analysisId, write });
 }
 
 export type DataProfileTriggerResult = "started" | "restarted" | "already_running" | "failed";
@@ -468,6 +474,8 @@ export type DataProfileTriggerResult = "started" | "restarted" | "already_runnin
  * (`registerDataProfileWorkflow`); the route never holds them.
  */
 export interface DataProfileTriggerDeps {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     readonly pool: Pool;
     readonly runAuthorizer: RunAuthorizer;
     readonly workflow: (input: DataProfileWorkflowInput) => Promise<void>;
@@ -552,6 +560,7 @@ async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: Da
  * Returns what happened, so the caller can surface it (e.g. in the seed response).
  */
 export async function triggerDataProfile(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams): Promise<DataProfileTriggerResult> {
+    const logger = (deps.logger ?? createNoopLogger()).named("data-profile").with({ analysisId: params.analysisId });
     const { analysisId } = params;
     try {
         // ADVISORY pre-check, not the enforcement — the claim CAS carries the same seed
@@ -563,7 +572,7 @@ export async function triggerDataProfile(deps: DataProfileTriggerDeps, params: D
         // a NULL-seed row (`loadDataProfileStatus` would hide the seed of a cleared row).
         const seeded = unwrapOrThrow(await loadSeedInputFileIds(deps.pool, analysisId));
         if (seeded === null || seeded.length === 0) {
-            console.error(`[data-profile] Trigger rejected for ${analysisId}: no seeded input set (missing analysis row or caller skipped seeding)`);
+            logger.error("trigger rejected: no seeded input set (missing analysis row or caller skipped seeding)");
             return "failed";
         }
 
@@ -573,7 +582,7 @@ export async function triggerDataProfile(deps: DataProfileTriggerDeps, params: D
         // NULL result while the seed still names files, an incoherence a staleness policy
         // then loops on re-triggering. Refuse the divergence before any claim.
         if (params.stagedInputs.length === 0) {
-            console.error(`[data-profile] Trigger rejected for ${analysisId}: empty manifest dispatched against a seed naming ${seeded.length} file(s)`);
+            logger.error("trigger rejected: empty manifest dispatched against a non-empty seed", { seededCount: seeded.length });
             return "failed";
         }
 
@@ -591,7 +600,7 @@ export async function triggerDataProfile(deps: DataProfileTriggerDeps, params: D
         if (status?.status === "running") return "already_running";
         return "failed";
     } catch (err) {
-        console.error(`[data-profile] Trigger error for ${analysisId}:`, err);
+        logger.error("trigger error", logger.errorFields(err));
         return "failed";
     }
 }
@@ -606,16 +615,17 @@ export async function triggerDataProfile(deps: DataProfileTriggerDeps, params: D
  * there is no further channel to report it on.
  */
 async function compensateStartFailure(deps: DataProfileTriggerDeps, analysisId: string, phase: string, err: unknown): Promise<void> {
-    console.error(`[data-profile] ${phase} error for ${analysisId}:`, err);
+    const logger = (deps.logger ?? createNoopLogger()).named("data-profile").with({ analysisId });
+    logger.error("start failed", { phase, ...logger.errorFields(err) });
     const failed = await failDataProfile(deps.pool, analysisId, profileFailureReason(err));
     if (failed.isErr()) {
-        console.error(`[data-profile] Failed to mark ${analysisId} failed after a start error:`, failed.error);
+        logger.error("failed to mark failed after a start error", { phase, err: failed.error });
     } else if (!failed.value) {
         // The row this compensation was written to fail is no longer `running` — a
         // concurrent clear/expire already moved it on, so the running-CAS refused the
         // stamp. Nothing wedged at `running`, which is the outcome compensation exists
         // to guarantee; just record the no-op.
-        logTerminalNoop(analysisId, "compensation");
+        logTerminalNoop(logger, analysisId, "compensation");
     }
 }
 

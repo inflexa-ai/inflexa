@@ -21,6 +21,7 @@ import { jsonSchema, tool as aiTool, type ToolCallPart } from "ai";
 import { z } from "zod";
 
 import type { AgentSession } from "../../../auth/types.js";
+import type { Logger } from "../../../lib/logger.js";
 import type { AgentChat, ChatRequest } from "../../../providers/types.js";
 
 import { BUDGET_EXCEEDED_SENTINEL, runLlmStep, type RunLlmStepResult } from "./llm-step.js";
@@ -28,6 +29,8 @@ import { BUDGET_EXCEEDED_SENTINEL, runLlmStep, type RunLlmStepResult } from "./l
 const SUBMIT_TOOL_NAME = "submit";
 
 export interface StructuredLlmCallOptions<TSchema extends z.ZodType> {
+    /** Operational logging seam, forwarded to `runLlmStep`; omitted falls back to no-op. */
+    readonly logger?: Logger;
     /** Attempt-numbered durable-step name (e.g. `"ta-decision:modulator-triage:0"`). */
     readonly stepName: string;
     /** Agent id stamped on telemetry and billing-gateway provenance. */
@@ -109,6 +112,7 @@ export async function structuredLlmCall<TSchema extends z.ZodType>(opts: Structu
     };
 
     const result: RunLlmStepResult = await runLlmStep({
+        ...(opts.logger ? { logger: opts.logger } : {}),
         stepName: opts.stepName,
         agentId: opts.agentId,
         provider: opts.provider,

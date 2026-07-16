@@ -24,6 +24,8 @@ import path from "node:path";
 
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { ProvenanceCollector } from "../provenance/collector.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 import { computeSha256File, hasValidContentHash } from "../lib/fs-helpers.js";
 import { artifactReconcileDropped } from "../lib/metrics.js";
 
@@ -42,6 +44,12 @@ export interface ReconcileManifestInput {
     manifest: ArtifactManifestEntry[];
     /** Collector backing the manifest; mutated to reflect drops/rehashes. */
     collector: ProvenanceCollector;
+    /**
+     * Operational logging seam; omitted falls back to no-op. Attestation is
+     * fail-fast, so what this records — which entry was dropped, which input
+     * could not be hashed — is the account of why a step died.
+     */
+    logger?: Logger;
 }
 
 export interface ReconcileManifestResult {
@@ -53,6 +61,7 @@ export interface ReconcileManifestResult {
 
 export async function reconcileManifestWithDisk(input: ReconcileManifestInput): Promise<ReconcileManifestResult> {
     const { workspaceRoot, resourceId, runId, stepId, agentId, manifest, collector } = input;
+    const logger = (input.logger ?? createNoopLogger()).named("reconcile-manifest").with({ runId, stepId, agentId });
     const stepRoot = path.join(workspaceRoot, "runs", runId, stepId);
 
     const reconciled: ArtifactManifestEntry[] = [];
@@ -66,7 +75,7 @@ export async function reconcileManifestWithDisk(input: ReconcileManifestInput): 
         // ENOENT and silently drop a real artifact, or — worse — succeed
         // against a host file the step never produced.
         if (!absPath.startsWith(stepRoot + path.sep) && absPath !== stepRoot) {
-            console.warn(`[reconcile-manifest] skipping out-of-bounds path=${entry.path} stepId=${stepId} runId=${runId}`);
+            logger.warn("skipping out-of-bounds entry", { path: entry.path });
             continue;
         }
         let info;
@@ -74,7 +83,7 @@ export async function reconcileManifestWithDisk(input: ReconcileManifestInput): 
             info = await stat(absPath);
         } catch (err) {
             if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-                console.debug(`[reconcile-manifest] dropping phantom path=${entry.path} stepId=${stepId} runId=${runId}`);
+                logger.debug("dropping phantom entry", { path: entry.path });
                 collector.removeRecord(entry.path);
                 droppedCount++;
                 artifactReconcileDropped.add(1, { agent_id: agentId, step_id: stepId });
@@ -88,7 +97,7 @@ export async function reconcileManifestWithDisk(input: ReconcileManifestInput): 
         // uses `createReadStream`, which throws `EISDIR` on directories and would
         // fail the whole step's reconciliation.
         if (!info.isFile()) {
-            console.debug(`[reconcile-manifest] dropping non-file path=${entry.path} stepId=${stepId} runId=${runId}`);
+            logger.debug("dropping non-file entry", { path: entry.path });
             collector.removeRecord(entry.path);
             droppedCount++;
             artifactReconcileDropped.add(1, { agent_id: agentId, step_id: stepId });
@@ -104,7 +113,7 @@ export async function reconcileManifestWithDisk(input: ReconcileManifestInput): 
         reconciled.push({ ...entry, hash, size: info.size });
     }
 
-    await fillInputHashesFromDisk(collector, workspaceRoot, resourceId, runId, stepId);
+    await fillInputHashesFromDisk(collector, workspaceRoot, resourceId, runId, stepId, logger);
 
     return { manifest: reconciled, droppedCount };
 }
@@ -128,6 +137,7 @@ async function fillInputHashesFromDisk(
     resourceId: string,
     runId: string,
     stepId: string,
+    logger: Logger,
 ): Promise<void> {
     const resourceRoot = path.resolve(workspaceRoot);
 
@@ -135,15 +145,25 @@ async function fillInputHashesFromDisk(
         if (ref.source === "artifacts") continue;
         if (hasValidContentHash(ref.hash)) continue;
 
+        // Each throw below is logged before it is raised. The thrown message reaches
+        // `failStep` as one opaque string and everything downstream of that is
+        // scrubbed, so naming the site and the offending ref HERE is what makes a
+        // fail-fast attestation distinguishable from a registry rejection after the
+        // fact — the read's `source` in particular says whether the step declared
+        // this input at all.
+        const attestation = { path: ref.path, source: ref.source, refRunId: ref.runId, refStepId: ref.stepId };
+
         // `ref.path` is the absolute container path `/{resourceId}/...`; strip the
         // mount segment and map the tail onto the host workspace root. `path.join`
         // normalizes any `..`, and the bound confines the read to the analysis tree.
         const containerPrefix = `/${resourceId}`;
         if (ref.path !== containerPrefix && !ref.path.startsWith(containerPrefix + "/")) {
+            logger.error("input read resolves outside the analysis tree", { ...attestation, throwSite: "container-prefix-bound" });
             throw new Error(`[reconcile-manifest] input read resolves outside the analysis tree: path=${ref.path} stepId=${stepId} runId=${runId}`);
         }
         const hostPath = path.join(resourceRoot, ref.path.slice(containerPrefix.length + 1));
         if (hostPath !== resourceRoot && !hostPath.startsWith(resourceRoot + path.sep)) {
+            logger.error("input read resolves outside the analysis tree", { ...attestation, hostPath, throwSite: "workspace-root-bound" });
             throw new Error(`[reconcile-manifest] input read resolves outside the analysis tree: path=${ref.path} stepId=${stepId} runId=${runId}`);
         }
 
@@ -152,10 +172,12 @@ async function fillInputHashesFromDisk(
             info = await stat(hostPath);
         } catch (err) {
             if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+                logger.error("cannot attest input — not present at reconcile", { ...attestation, hostPath, throwSite: "input-enoent" });
                 throw new Error(`[reconcile-manifest] cannot attest input ${ref.path}: not present at reconcile (stepId=${stepId} runId=${runId})`, {
                     cause: err,
                 });
             }
+            logger.error("cannot attest input — stat failed", { ...attestation, hostPath, throwSite: "input-stat", ...logger.errorFields(err) });
             throw err;
         }
         if (!info.isFile()) {
@@ -164,6 +186,7 @@ async function fillInputHashesFromDisk(
             // it from lineage rather than failing the step — mirrors the output-side
             // non-file drop above. A genuinely missing FILE (ENOENT) still fails fast
             // as drift; a directory is not drift.
+            logger.debug("dropping non-file input from lineage", attestation);
             collector.dropInput(ref);
             continue;
         }

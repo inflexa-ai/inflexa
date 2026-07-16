@@ -32,6 +32,8 @@ import type { ProvenanceCollector } from "../../provenance/collector.js";
 import { feedExecFrame } from "../../provenance/exec-frame.js";
 import { boundExecResult } from "./result-bounds.js";
 import { runSandboxExec } from "./run-exec.js";
+import { createNoopLogger } from "../../lib/console-logger.js";
+import type { Logger } from "../../lib/logger.js";
 
 const ExecuteCommandInputSchema = z.object({
     command: z
@@ -54,6 +56,8 @@ const ExecuteCommandInputSchema = z.object({
 });
 
 export interface ExecuteCommandDeps {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     readonly sandboxClient: SandboxClient;
     /** Live sandbox handle for the step. Created once per step at composition root. */
     readonly sandbox: SandboxRef;
@@ -138,7 +142,8 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
                         ...(result.provenance ? { provenance: result.provenance } : {}),
                     });
                 } catch (err) {
-                    console.warn(`[execute_command] provenance frame handling failed (non-fatal) for ${execId}: ${err instanceof Error ? err.message : err}`);
+                    const logger = (deps.logger ?? createNoopLogger()).named("execute_command");
+                    logger.warn("provenance frame handling failed (non-fatal)", { execId, ...logger.errorFields(err) });
                 }
             }
 

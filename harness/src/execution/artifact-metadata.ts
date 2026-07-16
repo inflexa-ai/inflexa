@@ -35,6 +35,8 @@ import { composeSystemPrompt } from "../agents/system-prompt.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { inferArtifactType } from "../schemas/artifact-manifest.js";
 import { SubmitFileMetadataInputSchema, type SubmittedFileDescription } from "../schemas/file-metadata.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 
 export interface ArtifactForMetadata {
     /** Path used to update `cortex_artifacts` after metadata generation. */
@@ -46,6 +48,8 @@ export interface ArtifactForMetadata {
 }
 
 export interface GenerateFileMetadataOptions {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     readonly provider: AgentChat;
     readonly session: AgentSession;
     readonly artifacts: readonly ArtifactForMetadata[];
@@ -215,6 +219,7 @@ function fallbackEntry(artifact: ArtifactForMetadata, extra: Record<string, unkn
  * result always carries exactly one entry per input artifact.
  */
 export async function generateFileMetadata(opts: GenerateFileMetadataOptions): Promise<FileMetadataResult> {
+    const logger = (opts.logger ?? createNoopLogger()).named("artifact-metadata").with({ resourceId: opts.resourceId });
     if (opts.artifacts.length === 0) {
         return { indexed: 0, entries: [] };
     }
@@ -247,7 +252,7 @@ export async function generateFileMetadata(opts: GenerateFileMetadataOptions): P
             runStep: passthroughStep,
         });
     } catch (err) {
-        console.warn(`[artifact-metadata] describer loop failed (resource=${opts.resourceId}); using fallbacks: ${err instanceof Error ? err.message : err}`);
+        logger.warn("describer loop failed; using fallbacks", logger.errorFields(err));
     }
 
     const entries: FileMetadataEntry[] = [];
@@ -263,9 +268,11 @@ export async function generateFileMetadata(opts: GenerateFileMetadataOptions): P
     }
 
     if (fallbackPaths.length > 0) {
-        console.warn(
-            `[artifact-metadata] ${fallbackPaths.length}/${opts.artifacts.length} file(s) used a deterministic fallback description (resource=${opts.resourceId}): ${fallbackPaths.join(", ")}`,
-        );
+        logger.warn("file(s) used a deterministic fallback description", {
+            fallbackCount: fallbackPaths.length,
+            artifactCount: opts.artifacts.length,
+            fallbackPaths,
+        });
     }
 
     return { indexed: holder.size, entries };

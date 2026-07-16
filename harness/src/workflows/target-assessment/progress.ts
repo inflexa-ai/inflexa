@@ -15,6 +15,7 @@ import { DBOS } from "@dbos-inc/dbos-sdk";
 import type { Pool } from "pg";
 import type { TargetAssessmentPhase, TargetAssessmentProgressEvent } from "@inflexa-ai/harness/contracts/target-dossier.js";
 
+import type { Logger } from "../../lib/logger.js";
 import { describeDbError } from "../../lib/db-result.js";
 import { updateProgress } from "../../state/target-assessments.js";
 
@@ -66,7 +67,8 @@ export const PROGRESS_MESSAGES: Record<ProgressPhase, string> = {
  * Best-effort: a DB or stream failure logs and continues — progress
  * emission MUST NOT block the workflow.
  */
-export async function emitProgress(pool: Pool, assessmentId: string, phase: ProgressPhase): Promise<void> {
+export async function emitProgress(pool: Pool, logger: Logger, assessmentId: string, phase: ProgressPhase): Promise<void> {
+    const log = logger.named("ta-progress").with({ assessmentId, phase });
     const message = PROGRESS_MESSAGES[phase];
     const percent = PROGRESS_PERCENTS[phase];
 
@@ -79,7 +81,7 @@ export async function emitProgress(pool: Pool, assessmentId: string, phase: Prog
             try {
                 await DBOS.writeStream(TA_PROGRESS_STREAM_KEY, part);
             } catch (err) {
-                console.warn(`[ta-progress] writeStream failed for ${assessmentId} (${phase}): ${err instanceof Error ? err.message : err}`);
+                log.warn("writeStream failed", log.errorFields(err));
             }
             // The "suspended" phase is owned by the terminal handler
             // (`markAssessmentSuspended` already set status + progress text). A
@@ -92,7 +94,7 @@ export async function emitProgress(pool: Pool, assessmentId: string, phase: Prog
                 (await updateProgress(pool, assessmentId, message, rowStatus)).match(
                     () => {},
                     (error) => {
-                        console.warn(`[ta-progress] updateProgress failed for ${assessmentId} (${phase}): ${describeDbError(error)}`);
+                        log.warn("updateProgress failed", { err: describeDbError(error) });
                     },
                 );
             }

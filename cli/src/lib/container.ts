@@ -5,6 +5,7 @@
 // config-reading resolvers (`selectedRuntime` / `ensureRuntime`) therefore live in
 // lib/config.ts, not here. The proxy module is today's only caller of the spawn core.
 
+import { existsSync } from "node:fs";
 import { type Result, ok, err } from "neverthrow";
 
 /**
@@ -132,4 +133,99 @@ export async function firstReadyRuntime(
     }
     const needs = candidates.map((rt) => rt.label).join(", ");
     return err(new ContainerRuntimeError([`No usable container runtime found — inflexa needs one of ${needs}.`, ...failures].join("\n\n")));
+}
+
+/**
+ * The effectful probes {@link resolveEngineSocket} uses, injectable so tests can
+ * exercise every runtime/platform branch without spawning a real binary or
+ * touching the filesystem — the same test seam {@link firstReadyRuntime}'s `probe`
+ * parameter provides.
+ */
+export type EngineSocketProbes = {
+    /** Host platform: selects the podman resolution path (`podman machine inspect` on darwin, `podman info` elsewhere). */
+    readonly platform: NodeJS.Platform;
+    /** Runs a runtime command and captures its output; the real one spawns the binary. */
+    readonly capture: (rt: ContainerRuntime, args: string[]) => Promise<CaptureResult>;
+    /**
+     * True when `path` exists on disk. Gates BOTH podman socket paths: the Linux REST
+     * socket (a reachable CLI does not imply a listening socket) and the macOS compat
+     * socket (the gvproxy forward backing it exists only while the machine runs, so a
+     * missing file detects a stopped machine that `machine inspect` still reports a
+     * path for).
+     */
+    readonly exists: (path: string) => boolean;
+};
+
+/**
+ * Resolve the Docker-API socket the embedded harness dials to create sandbox
+ * containers on the pinned runtime, per platform. This keeps the per-runtime
+ * divergence on the descriptor surface (the `mountArg` `:z` precedent) rather than
+ * as a conditional in the harness composition root.
+ *
+ * - **Docker** resolves to `undefined` — no explicit socket, so the harness's
+ *   dockerode client keeps its default resolution and any `DOCKER_HOST` the user
+ *   already relies on.
+ * - **Podman/macOS** resolves the running machine's host-forwarded compat socket
+ *   (`podman machine inspect`), gated on that socket EXISTING on disk. Inspect
+ *   reports the persisted socket path on a zero exit even for a stopped machine, so
+ *   the reported path is NOT proof of a live machine; the gvproxy forward backing
+ *   the socket is torn down when the machine stops, so the socket file exists only
+ *   while the machine runs — which is what makes the stat a real stopped-machine
+ *   detector. A missing path, empty path, or non-zero exit is an actionable error
+ *   hinting `podman machine start`.
+ * - **Podman/Linux** (and any other non-darwin host) resolves `podman info`'s
+ *   reported REST socket, gated on that path EXISTING on disk: the podman CLI talks
+ *   to the engine directly, so a reachable CLI does NOT imply a listening REST
+ *   socket (it exists only when `podman.socket` is enabled or `podman system
+ *   service` runs). A missing path or non-zero exit hints
+ *   `systemctl --user enable --now podman.socket`.
+ *
+ * The result rides the ok channel as `string | undefined` — absence is in-band,
+ * not an error. It is per-boot state and MUST NOT be persisted: the macOS compat
+ * socket lives under `$TMPDIR` and moves across machine restarts, so a saved path
+ * is a future ECONNREFUSED. `probes` is injectable for tests only.
+ */
+export async function resolveEngineSocket(
+    rt: ContainerRuntime,
+    probes: EngineSocketProbes = { platform: process.platform, capture, exists: existsSync },
+): Promise<Result<string | undefined, ContainerRuntimeError>> {
+    switch (rt.id) {
+        case "docker":
+            return ok(undefined);
+        case "podman": {
+            if (probes.platform === "darwin") {
+                const { code, stdout } = await probes.capture(rt, ["machine", "inspect", "--format", "{{.ConnectionInfo.PodmanSocket.Path}}"]);
+                const socket = stdout.trim();
+                // `podman machine inspect` reports the persisted socket path on a zero exit
+                // even when the machine is stopped, so the path alone cannot tell running from
+                // stopped. The gvproxy forward backing that socket exists only while the machine
+                // runs, so statting it on disk is the real liveness gate (mirrors the Linux
+                // REST-socket check below).
+                if (code !== 0 || socket === "" || !probes.exists(socket)) {
+                    return err(
+                        new ContainerRuntimeError(
+                            "Could not resolve the Podman sandbox-engine socket — the Podman machine is not running.\n  Start it with `podman machine start`, then re-run.",
+                        ),
+                    );
+                }
+                return ok(socket);
+            }
+            const { code, stdout } = await probes.capture(rt, ["info", "--format", "{{.Host.RemoteSocket.Path}}"]);
+            const socket = stdout.trim();
+            // `podman info` succeeding does not imply the REST API is listening, so the
+            // reported path only counts when it is actually present on disk.
+            if (code !== 0 || socket === "" || !probes.exists(socket)) {
+                return err(
+                    new ContainerRuntimeError(
+                        "Could not resolve the Podman sandbox-engine socket — the Podman API service is not listening.\n  Enable it with `systemctl --user enable --now podman.socket`, then re-run.",
+                    ),
+                );
+            }
+            return ok(socket);
+        }
+        default: {
+            const exhaustive: never = rt.id;
+            throw new Error(`unhandled runtime: ${JSON.stringify(exhaustive)}`);
+        }
+    }
 }

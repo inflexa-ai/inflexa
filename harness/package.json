@@ -1,101 +1,100 @@
 {
-  "name": "@inflexa-ai/harness",
-  "version": "0.2.0",
-  "description": "Host-agnostic bioinformatics agent harness — hand-rolled agent loop, DBOS-durable workflows, sandboxed compute.",
-  "license": "Apache-2.0",
-  "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+    "name": "@inflexa-ai/harness",
+    "version": "0.4.0",
+    "description": "Host-agnostic bioinformatics agent harness \u2014 hand-rolled agent loop, DBOS-durable workflows, sandboxed compute.",
+    "license": "Apache-2.0",
+    "type": "module",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+        },
+        "./*.js": {
+            "types": "./dist/*.d.ts",
+            "import": "./dist/*.js"
+        },
+        "./*": {
+            "types": "./dist/*.d.ts",
+            "import": "./dist/*.js"
+        }
     },
-    "./*.js": {
-      "types": "./dist/*.d.ts",
-      "import": "./dist/*.js"
+    "files": [
+        "dist",
+        "NOTICE"
+    ],
+    "engines": {
+        "node": ">=24"
     },
-    "./*": {
-      "types": "./dist/*.d.ts",
-      "import": "./dist/*.js"
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/inflexa-ai/inflexa.git",
+        "directory": "harness"
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "format": "prettier --write src/",
+        "format:file": "prettier --write",
+        "lint": "eslint .",
+        "prepare": "tsc -p tsconfig.json",
+        "prepublishOnly": "bun run build && bun run smoke",
+        "smoke": "node scripts/smoke.mjs",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@ai-sdk/anthropic": "^4.0.15",
+        "@ai-sdk/openai-compatible": "^3.0.10",
+        "@ai-sdk/provider": "^4.0.3",
+        "@anthropic-ai/sdk": "^0.107.0",
+        "@dbos-inc/dbos-sdk": "^4.23.6",
+        "@kubernetes/client-node": "^1.4.0",
+        "@opentelemetry/api": "^1.9.1",
+        "@opentelemetry/core": "^2.9.0",
+        "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
+        "@opentelemetry/exporter-trace-otlp-proto": "^0.219.0",
+        "@opentelemetry/resources": "^2.9.0",
+        "@opentelemetry/sdk-metrics": "^2.9.0",
+        "@opentelemetry/sdk-trace-base": "^2.9.0",
+        "@opentelemetry/sdk-trace-node": "^2.9.0",
+        "@opentelemetry/semantic-conventions": "^1.43.0",
+        "ai": "^7.0.28",
+        "cheerio": "^1.2.0",
+        "dockerode": "^4.0.12",
+        "fast-xml-parser": "^5.10.0",
+        "hono": "^4.12.30",
+        "js-tiktoken": "^1.0.21",
+        "mime": "^4.1.0",
+        "nanoid": "^5.1.16",
+        "neverthrow": "^8.2.0",
+        "nunjucks": "^3.2.4",
+        "openai": "^4.104.0",
+        "pdf-parse": "^2.4.5",
+        "pg": "^8.22.0",
+        "puppeteer-core": "^23.11.1",
+        "zod": "^4.4.3"
+    },
+    "devDependencies": {
+        "@eslint/js": "^10.0.1",
+        "@types/bun": "latest",
+        "@types/dockerode": "^3.3.47",
+        "@types/node": "^24.13.3",
+        "@types/nunjucks": "^3.2.6",
+        "@types/pdf-parse": "^1.1.5",
+        "@types/pg": "^8.20.0",
+        "eslint": "^10.7.0",
+        "eslint-plugin-neverthrow": "^1.1.4",
+        "globals": "^17.7.0",
+        "prettier": "^3.9.5",
+        "testcontainers": "^10.28.0",
+        "typescript": "^6.0.3",
+        "typescript-eslint": "^8.64.0"
+    },
+    "publishConfig": {
+        "access": "public",
+        "registry": "https://registry.npmjs.org"
+    },
+    "patchedDependencies": {
+        "eslint-plugin-neverthrow@1.1.4": "patches/eslint-plugin-neverthrow@1.1.4.patch"
     }
-  },
-  "files": [
-    "dist",
-    "NOTICE"
-  ],
-  "engines": {
-    "node": ">=24"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/inflexa-ai/inflexa.git",
-    "directory": "harness"
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "format": "prettier --write src/",
-    "format:file": "prettier --write",
-    "lint": "eslint .",
-    "prepare": "tsc -p tsconfig.json",
-    "prepublishOnly": "bun run build && bun run smoke",
-    "smoke": "node scripts/smoke.mjs",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@ai-sdk/anthropic": "^4.0.15",
-    "@ai-sdk/openai-compatible": "^3.0.10",
-    "@ai-sdk/provider": "^4.0.3",
-    "@anthropic-ai/sdk": "^0.107.0",
-    "@dbos-inc/dbos-sdk": "^4.23.6",
-    "@kubernetes/client-node": "^1.4.0",
-    "@opentelemetry/api": "^1.9.1",
-    "@opentelemetry/core": "^2.9.0",
-    "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
-    "@opentelemetry/exporter-trace-otlp-proto": "^0.219.0",
-    "@opentelemetry/resources": "^2.9.0",
-    "@opentelemetry/sdk-metrics": "^2.9.0",
-    "@opentelemetry/sdk-trace-base": "^2.9.0",
-    "@opentelemetry/sdk-trace-node": "^2.9.0",
-    "@opentelemetry/semantic-conventions": "^1.43.0",
-    "ai": "^7.0.28",
-    "cheerio": "^1.2.0",
-    "dockerode": "^4.0.12",
-    "fast-xml-parser": "^5.10.0",
-    "hono": "^4.12.30",
-    "js-tiktoken": "^1.0.21",
-    "mime": "^4.1.0",
-    "nanoid": "^5.1.16",
-    "neverthrow": "^8.2.0",
-    "nunjucks": "^3.2.4",
-    "openai": "^4.104.0",
-    "pdf-parse": "^2.4.5",
-    "pg": "^8.22.0",
-    "pino": "^10.3.1",
-    "puppeteer-core": "^23.11.1",
-    "zod": "^4.4.3"
-  },
-  "devDependencies": {
-    "@eslint/js": "^10.0.1",
-    "@types/bun": "latest",
-    "@types/dockerode": "^3.3.47",
-    "@types/node": "^24.13.3",
-    "@types/nunjucks": "^3.2.6",
-    "@types/pdf-parse": "^1.1.5",
-    "@types/pg": "^8.20.0",
-    "eslint": "^10.7.0",
-    "eslint-plugin-neverthrow": "^1.1.4",
-    "globals": "^17.7.0",
-    "prettier": "^3.9.5",
-    "testcontainers": "^10.28.0",
-    "typescript": "^6.0.3",
-    "typescript-eslint": "^8.64.0"
-  },
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org"
-  },
-  "patchedDependencies": {
-    "eslint-plugin-neverthrow@1.1.4": "patches/eslint-plugin-neverthrow@1.1.4.patch"
-  }
 }

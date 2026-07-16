@@ -32,6 +32,8 @@ import type { StepPhase } from "@inflexa-ai/harness/contracts/chat-parts.js";
 import type { Pool } from "pg";
 
 import { insertStepExecution, updateStepExecution } from "../state/index.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { isBudgetExceeded } from "../loop/budget-exceeded.js";
 import type { AgentDefinition, EmitFn, LoopMessage } from "../loop/types.js";
@@ -219,6 +221,14 @@ export interface SandboxAgentBuildContext {
  */
 export interface SandboxStepDeps {
     readonly pool: Pool;
+    /**
+     * Operational logging seam. Omit it and the body falls back to a no-op —
+     * but a failed step's cause is written here and NOWHERE else (`failStep`
+     * scrubs the error before it reaches the DB row, the run panel, or the
+     * parent's re-raise), so an embedder that wires nothing gives up its only
+     * account of why a step died.
+     */
+    readonly logger?: Logger;
     /** Non-streaming chat — drives the agent loop + the post-step sub-agents. */
     readonly provider: AgentChat;
     /** Write-side embedder for the post-step vector index. */
@@ -324,6 +334,14 @@ export function registerSandboxStep(deps: SandboxStepDeps): (input: SandboxStepI
  * (the DBOS calls inside still rely on a workflow context being present).
  */
 async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps): Promise<SandboxStepResult> {
+    // Step coordinates bind once — every record below carries them without each
+    // call site restating them. REPLAY: a recovered workflow re-executes this body
+    // and re-emits its records, so a reader dedups by (runId, stepId), not by count.
+    const logger = (deps.logger ?? createNoopLogger()).named("sandbox-step").with({
+        runId: input.runId,
+        stepId: input.stepId,
+        agentId: input.agentId,
+    });
     const childWorkflowId = DBOS.workflowID ?? `${input.runId}-${input.stepId}`;
     // Checkpointed so the value (and every `durationMs` derived from it) replays
     // identically — a raw `Date.now()` in the workflow body drifts on recovery.
@@ -444,7 +462,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
         try {
             await emitToParentStream(part);
         } catch (err) {
-            console.warn(`[sandbox-step] emitToParentStream failed (non-fatal):`, err instanceof Error ? err.message : err);
+            logger.warn("emitToParentStream failed (non-fatal)", logger.errorFields(err));
         }
     };
     // Schema-conformant step-activity emitter — stable id per (runId, stepId)
@@ -469,10 +487,15 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
     // control-flow, not a failure — re-raise it verbatim.
     const failStep = async (errorClass: "agent_loop" | "lineage_attestation", err: unknown): Promise<never> => {
         if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
-        await tryTeardown(deps, sandbox);
+        await tryTeardown(logger, deps, sandbox);
         const durationMs = (await DBOS.now()) - startedAt;
-        const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
-        console.error(`[sandbox-step] ${errorClass} failure for ${input.runId}/${input.stepId}: ${detail}`);
+        // The scrub below is deliberate and load-bearing, which makes this record
+        // the ONLY account of why the step died — the thrown error carries just the
+        // generic phrase, so nothing downstream can reconstruct the cause.
+        logger.error("step failure", {
+            errorClass,
+            ...logger.errorFields(err),
+        });
         const safe = userFacingStepFailure(errorClass);
         await DBOS.runStep(
             async () => {
@@ -583,7 +606,9 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
             try {
                 await DBOS.runStep(() => DBOS.send(input.parentWorkflowId, notification, BUDGET_EXCEEDED_TOPIC), { name: "notify-parent-budget-exceeded" });
             } catch (sendErr) {
-                console.warn(`[sandbox-step] notify-parent-budget-exceeded failed (non-fatal): ${sendErr instanceof Error ? sendErr.message : sendErr}`);
+                logger.warn("notify-parent-budget-exceeded failed (non-fatal)", {
+                    ...logger.errorFields(sendErr),
+                });
             }
 
             // Self-cancel to CANCELLED so the parent's `getResult` observes the
@@ -626,7 +651,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
     // terminal-failure status so the parent's fail-fast cascade fires.
     const blockerOutcome = blockerHolder.outcome;
     if (blockerOutcome) {
-        await tryTeardown(deps, sandbox);
+        await tryTeardown(logger, deps, sandbox);
         const durationMs = (await DBOS.now()) - startedAt;
         await DBOS.runStep(
             async () => {
@@ -678,6 +703,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
 
     await emitActivity("generating-metadata", "Describing output files");
     const manifest = await safeRunValue(
+        logger,
         () =>
             walkStepArtifacts({
                 writePrefix,
@@ -693,6 +719,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
     // LLM calls are not re-issued on recovery. The remaining stages (walk /
     // reconcile / sync / index) stay inline — a separate follow-up.
     const metadataEntries = await safeRunValue(
+        logger,
         () =>
             DBOS.runStep(() => generateStepFileMetadata(deps, postCtx, manifest), {
                 name: "post-step.generate-file-metadata",
@@ -702,6 +729,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
     );
     await emitActivity("generating-summary", "Summarizing step results");
     const summary = await safeRunValue(
+        logger,
         () =>
             DBOS.runStep(() => generateStepSummaryAndWrite(deps, postCtx, manifest), {
                 name: "post-step.generate-step-summary",
@@ -741,11 +769,11 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
     try {
         stepOutputs = collectStepOutputs(postCtx, postArtifacts);
     } catch (err) {
-        console.warn(`[sandbox-step] post-step.collect failed (non-fatal):`, err instanceof Error ? err.message : err);
+        logger.warn("post-step.collect failed (non-fatal)", logger.errorFields(err));
     }
 
     await emitActivity("indexing", "Indexing outputs for search");
-    await safeRun(() => vectorIndexStepOutputs(deps, postCtx, postArtifacts), "post-step.vector-index");
+    await safeRun(logger, () => vectorIndexStepOutputs(deps, postCtx, postArtifacts), "post-step.vector-index");
 
     // (9) teardown — destroy sandbox + clear sandbox_ref.
     await DBOS.runStep(() => deps.sandboxClient.teardown(sandbox), { name: "sandbox.teardown" });
@@ -830,12 +858,15 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
  * swallows non-fatal failures — these are reflected in the step summary
  * but do not fail the step itself (synthesis/sync/index can be retried).
  */
-async function safeRun(fn: () => Promise<void>, label: string): Promise<void> {
+async function safeRun(logger: Logger, fn: () => Promise<void>, label: string): Promise<void> {
     try {
         await fn();
     } catch (err) {
         if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
-        console.warn(`[sandbox-step] ${label} failed (non-fatal):`, err instanceof Error ? err.message : err);
+        // The stage rides as a namespace, not interpolated prose: `label` is what
+        // says WHICH post-step stage degraded, and a reader must be able to filter
+        // on it without parsing the message.
+        logger.named(label).warn("failed (non-fatal)", logger.errorFields(err));
     }
 }
 
@@ -844,20 +875,23 @@ async function safeRun(fn: () => Promise<void>, label: string): Promise<void> {
  * logs and yields `fallback` so the body can thread a safe default downstream
  * instead of aborting the post-step pipeline.
  */
-async function safeRunValue<T>(fn: () => Promise<T>, label: string, fallback: T): Promise<T> {
+async function safeRunValue<T>(logger: Logger, fn: () => Promise<T>, label: string, fallback: T): Promise<T> {
     try {
         return await fn();
     } catch (err) {
         if (err instanceof DBOSErrors.DBOSWorkflowCancelledError) throw err;
-        console.warn(`[sandbox-step] ${label} failed (non-fatal):`, err instanceof Error ? err.message : err);
+        // The stage rides as a namespace, not interpolated prose: `label` is what
+        // says WHICH post-step stage degraded, and a reader must be able to filter
+        // on it without parsing the message.
+        logger.named(label).warn("failed (non-fatal)", logger.errorFields(err));
         return fallback;
     }
 }
 
-async function tryTeardown(deps: SandboxStepDeps, sandbox: SandboxRef): Promise<void> {
+async function tryTeardown(logger: Logger, deps: SandboxStepDeps, sandbox: SandboxRef): Promise<void> {
     try {
         await DBOS.runStep(() => deps.sandboxClient.teardown(sandbox), { name: "sandbox.teardown" });
     } catch (err) {
-        console.warn(`[sandbox-step] teardown failed (non-fatal):`, err instanceof Error ? err.message : err);
+        logger.warn("teardown failed (non-fatal)", logger.errorFields(err));
     }
 }

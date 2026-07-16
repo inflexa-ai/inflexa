@@ -19,11 +19,11 @@
  * any single step's failure.
  */
 
-import type pino from "pino";
+import type { Logger } from "../lib/logger.js";
 
 export interface ShutdownDeps {
     signal: string;
-    logger: pino.Logger;
+    logger: Logger;
     markDraining: () => void;
     closeHttpServer: () => Promise<void>;
     shutdownDbos: () => Promise<void>;
@@ -33,17 +33,18 @@ export interface ShutdownDeps {
     exit: (code: number) => void;
 }
 
-async function safely(logger: pino.Logger, step: string, fn: () => Promise<void>): Promise<void> {
+async function safely(logger: Logger, step: string, fn: () => Promise<void>): Promise<void> {
     try {
         await fn();
     } catch (err) {
-        logger.error({ err: err instanceof Error ? err.message : String(err), step }, `[shutdown] ${step} failed`);
+        logger.error(`${step} failed`, { ...logger.errorFields(err), step });
     }
 }
 
 export async function runShutdownSequence(deps: ShutdownDeps): Promise<void> {
-    const { logger, signal } = deps;
-    logger.info({ signal }, "[shutdown] requested");
+    const { signal } = deps;
+    const logger = deps.logger.named("shutdown");
+    logger.info("requested", { signal });
     deps.markDraining();
 
     await safely(logger, "http-drain", deps.closeHttpServer);

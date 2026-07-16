@@ -63,6 +63,8 @@ import type { MachineBudget, ResourceSpec } from "../config/resource-limits.js";
 import { forStep } from "../auth/types.js";
 import type { RunSession } from "../auth/types.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import {
     RunDedupCollisionError,
@@ -238,6 +240,8 @@ export type RunProvenanceEvent =
  * embedder, model, keys, roots) the in-body synthesis needs.
  */
 export interface ExecuteAnalysisDeps {
+    /** Operational logging seam; omitted falls back to no-op. */
+    readonly logger?: Logger;
     readonly pool: Pool;
     /** Chat provider for the in-body literature-grounded synthesis. */
     readonly provider: ChatProvider;
@@ -289,11 +293,12 @@ function emitStreamPart(part: unknown): Promise<void> {
  * host's own ledger, not here.
  */
 function emitProvenanceGuarded(deps: ExecuteAnalysisDeps, event: RunProvenanceEvent): void {
+    const logger = (deps.logger ?? createNoopLogger()).named("executeAnalysis");
     if (!deps.emitProvenance) return;
     try {
         deps.emitProvenance(event);
     } catch (err) {
-        console.error(`[executeAnalysis] emitProvenance threw for run ${event.runId} (event=${event.type}):`, err);
+        logger.error("emitProvenance threw", { runId: event.runId, event: event.type, ...logger.errorFields(err) });
     }
 }
 
@@ -508,6 +513,7 @@ export function registerExecuteAnalysis(deps: ExecuteAnalysisDeps): (input: Exec
  * (the DBOS calls inside still rely on a workflow context being present).
  */
 export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: ExecuteAnalysisDeps): Promise<ExecuteAnalysisResult> {
+    const logger = (deps.logger ?? createNoopLogger()).named("executeAnalysis").with({ analysisId: input.analysisId });
     // (0) Validate up-front — no side effects yet, so a malformed plan does
     // NOT leak a runId, run authorization, or running charge.
     validatePlanDag(input.steps);
@@ -608,7 +614,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
             synthesisFindings = synthOut.findings;
         } catch (err) {
             synthesisError = err;
-            console.error(`[executeAnalysis] synthesizeFindings failed for run ${runId} — failing the run:`, err instanceof Error ? err.message : err);
+            logger.error("synthesizeFindings failed — failing the run", { runId, ...logger.errorFields(err) });
         }
     }
 
@@ -862,8 +868,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
         inFlight.delete(childId);
 
         let settled:
-            | { childId: string; stepId: string; kind: "result"; result: SandboxStepResult }
-            | { childId: string; stepId: string; kind: "error"; err: unknown };
+            { childId: string; stepId: string; kind: "result"; result: SandboxStepResult } | { childId: string; stepId: string; kind: "error"; err: unknown };
         try {
             const result = await entry.handle.getResult();
             settled = { childId, stepId: entry.stepId, kind: "result", result };
@@ -1035,6 +1040,7 @@ interface CollectAndCompleteArgs {
 
 async function collectAndComplete(args: CollectAndCompleteArgs): Promise<ExecuteAnalysisResult> {
     const { input, runId, workflowId, startedAtMs, completed, failed, canceled, budgetExceeded, failureReason, forceFailed, deps } = args;
+    const logger = (deps.logger ?? createNoopLogger()).named("executeAnalysis").with({ runId, analysisId: input.analysisId });
 
     const status = forceFailed
         ? "failed"
@@ -1087,7 +1093,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
             { name: "persist-final-status" },
         );
     } catch (err) {
-        console.error(`[executeAnalysis] persist-final-status failed for run ${runId} (status=${status}):`, err);
+        logger.error("persist-final-status failed", { status, ...logger.errorFields(err) });
     }
 
     // Sweep never-started steps to `skipped` — but ONLY on genuinely-terminal
@@ -1104,7 +1110,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                 { name: "sweep-pending-steps" },
             );
         } catch (err) {
-            console.error(`[executeAnalysis] sweep-pending-steps failed for run ${runId}:`, err);
+            logger.error("sweep-pending-steps failed", logger.errorFields(err));
         }
     }
 
@@ -1119,7 +1125,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
                 { name: "suspend-analysis" },
             );
         } catch (err) {
-            console.error(`[executeAnalysis] suspend-analysis failed for run ${runId}:`, err);
+            logger.error("suspend-analysis failed", logger.errorFields(err));
         }
     }
 
@@ -1135,7 +1141,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
             { name: "close-running-charge" },
         );
     } catch (err) {
-        console.error(`[executeAnalysis] closeRunningCharge failed for run ${runId} (reason=${chargeReason}):`, err);
+        logger.error("closeRunningCharge failed", { chargeReason, ...logger.errorFields(err) });
     }
 
     // Revoke the run authorization for the terminal run state. Ownership
@@ -1148,7 +1154,7 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
     try {
         await DBOS.runStep(() => deps.runAuthorizer.revoke(authorization, revokeReason), { name: "revoke-run-auth" });
     } catch (err) {
-        console.error(`[executeAnalysis] revokeRunAuthorization failed for run ${runId} (reason=${revokeReason}):`, err);
+        logger.error("revokeRunAuthorization failed", { revokeReason, ...logger.errorFields(err) });
     }
 
     // The `run_completed` provenance was already emitted above (before the status write, to
