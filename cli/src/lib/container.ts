@@ -5,6 +5,7 @@
 // config-reading resolvers (`selectedRuntime` / `ensureRuntime`) therefore live in
 // lib/config.ts, not here. The proxy module is today's only caller of the spawn core.
 
+import { existsSync } from "node:fs";
 import { type Result, ok, err } from "neverthrow";
 
 /**
@@ -132,4 +133,83 @@ export async function firstReadyRuntime(
     }
     const needs = candidates.map((rt) => rt.label).join(", ");
     return err(new ContainerRuntimeError([`No usable container runtime found — inflexa needs one of ${needs}.`, ...failures].join("\n\n")));
+}
+
+/**
+ * The effectful probes {@link resolveEngineSocket} uses, injectable so tests can
+ * exercise every runtime/platform branch without spawning a real binary or
+ * touching the filesystem — the same test seam {@link firstReadyRuntime}'s `probe`
+ * parameter provides.
+ */
+export type EngineSocketProbes = {
+    /** Host platform: selects the podman resolution path (`podman machine inspect` on darwin, `podman info` elsewhere). */
+    readonly platform: NodeJS.Platform;
+    /** Runs a runtime command and captures its output; the real one spawns the binary. */
+    readonly capture: (rt: ContainerRuntime, args: string[]) => Promise<CaptureResult>;
+    /** True when `path` exists on disk — gates the Linux REST socket (a reachable CLI does not imply a listening socket). */
+    readonly exists: (path: string) => boolean;
+};
+
+/**
+ * Resolve the Docker-API socket the embedded harness dials to create sandbox
+ * containers on the pinned runtime, per platform. This keeps the per-runtime
+ * divergence on the descriptor surface (the `mountArg` `:z` precedent) rather than
+ * as a conditional in the harness composition root.
+ *
+ * - **Docker** resolves to `undefined` — no explicit socket, so the harness's
+ *   dockerode client keeps its default resolution and any `DOCKER_HOST` the user
+ *   already relies on.
+ * - **Podman/macOS** resolves the running machine's host-forwarded compat socket
+ *   (`podman machine inspect`); a stopped machine (non-zero exit) or an empty path
+ *   is an actionable error hinting `podman machine start`.
+ * - **Podman/Linux** (and any other non-darwin host) resolves `podman info`'s
+ *   reported REST socket, gated on that path EXISTING on disk: the podman CLI talks
+ *   to the engine directly, so a reachable CLI does NOT imply a listening REST
+ *   socket (it exists only when `podman.socket` is enabled or `podman system
+ *   service` runs). A missing path or non-zero exit hints
+ *   `systemctl --user enable --now podman.socket`.
+ *
+ * The result rides the ok channel as `string | undefined` — absence is in-band,
+ * not an error. It is per-boot state and MUST NOT be persisted: the macOS compat
+ * socket lives under `$TMPDIR` and moves across machine restarts, so a saved path
+ * is a future ECONNREFUSED. `probes` is injectable for tests only.
+ */
+export async function resolveEngineSocket(
+    rt: ContainerRuntime,
+    probes: EngineSocketProbes = { platform: process.platform, capture, exists: existsSync },
+): Promise<Result<string | undefined, ContainerRuntimeError>> {
+    switch (rt.id) {
+        case "docker":
+            return ok(undefined);
+        case "podman": {
+            if (probes.platform === "darwin") {
+                const { code, stdout } = await probes.capture(rt, ["machine", "inspect", "--format", "{{.ConnectionInfo.PodmanSocket.Path}}"]);
+                const socket = stdout.trim();
+                if (code !== 0 || socket === "") {
+                    return err(
+                        new ContainerRuntimeError(
+                            "Could not resolve the Podman sandbox-engine socket — the Podman machine is not running.\n  Start it with `podman machine start`, then re-run.",
+                        ),
+                    );
+                }
+                return ok(socket);
+            }
+            const { code, stdout } = await probes.capture(rt, ["info", "--format", "{{.Host.RemoteSocket.Path}}"]);
+            const socket = stdout.trim();
+            // `podman info` succeeding does not imply the REST API is listening, so the
+            // reported path only counts when it is actually present on disk.
+            if (code !== 0 || socket === "" || !probes.exists(socket)) {
+                return err(
+                    new ContainerRuntimeError(
+                        "Could not resolve the Podman sandbox-engine socket — the Podman API service is not listening.\n  Enable it with `systemctl --user enable --now podman.socket`, then re-run.",
+                    ),
+                );
+            }
+            return ok(socket);
+        }
+        default: {
+            const exhaustive: never = rt.id;
+            throw new Error(`unhandled runtime: ${JSON.stringify(exhaustive)}`);
+        }
+    }
 }

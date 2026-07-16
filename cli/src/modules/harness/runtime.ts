@@ -38,7 +38,8 @@ import {
 } from "@inflexa-ai/harness";
 import type pinoLib from "pino";
 
-import { readConfig } from "../../lib/config.ts";
+import { ensureRuntime, readConfig } from "../../lib/config.ts";
+import { resolveEngineSocket, type ContainerRuntime, type ContainerRuntimeError } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
 import { getLogger } from "../../lib/log.ts";
@@ -230,6 +231,7 @@ export type HarnessBootError =
     | { type: "model_unresolved"; cause: ChatSetupError }
     | { type: "model_provider_mismatch"; provider: string; model: string }
     | { type: "model_required"; agents: readonly AgentName[] }
+    | { type: "sandbox_engine_unresolved"; message: string }
     | { type: "postgres_unavailable"; cause: PostgresError }
     | { type: "ingress_failed"; cause: IngressError }
     | { type: "runtime_already_active"; holderPid: number }
@@ -287,11 +289,45 @@ async function probeEmbeddingProvider(provider: EmbeddingProvider): Promise<Resu
 }
 
 /**
+ * The pinned container runtime plus the Docker-API socket the sandbox client dials
+ * for it. `socketPath` is `undefined` under Docker — dockerode keeps its default
+ * resolution — and the resolved compat socket path under Podman.
+ */
+export type ResolvedSandboxEngine = {
+    readonly runtime: ContainerRuntime;
+    readonly socketPath: string | undefined;
+};
+
+/**
+ * Pin the container runtime and resolve the Docker-API socket the sandbox client
+ * dials for it. `ensureRuntime` probes and may PIN on first use — sanctioned here
+ * because boot is a deliberate trigger, the same class as `ensureSandboxImage`'s
+ * image pre-pull, and it never prompts. The resolved socket is per-boot state (the
+ * macOS compat socket moves across machine restarts), so it is returned, never
+ * persisted.
+ */
+async function resolveSandboxEngineOnce(): Promise<Result<ResolvedSandboxEngine, ContainerRuntimeError>> {
+    const rtResult = await ensureRuntime();
+    if (rtResult.isErr()) return err(rtResult.error);
+    const runtime = rtResult.value;
+    return (await resolveEngineSocket(runtime)).map((socketPath) => ({ runtime, socketPath }));
+}
+
+/**
  * The boot sequence's effectful seams, injectable so the sequencing test runs
  * offline (no Postgres, no proxy, no DBOS). Production callers pass nothing.
  */
 export type BootSeams = {
+    /**
+     * Resolve the pinned container runtime and its sandbox-engine socket. The real
+     * seam pins via `ensureRuntime` (which may pin on first use) then resolves the
+     * socket off the runtime descriptor; injected so the sequencing test stays
+     * offline (no runtime binaries spawned).
+     */
+    readonly resolveSandboxEngine: () => Promise<Result<ResolvedSandboxEngine, ContainerRuntimeError>>;
     readonly ensurePostgres: () => Promise<Result<PostgresConnection, PostgresError>>;
+    /** Construct the sandbox client — a seam so boot tests can inspect the engine config it is wired with. */
+    readonly createSandbox: typeof createSandboxClient;
     readonly startIngress: () => Result<ExecIngress, IngressError>;
     readonly readKey: () => Promise<Result<string, ChatSetupError>>;
     /** The `direct`-connection secret from the environment (`env.modelApiKey`); `undefined` when unset. */
@@ -325,7 +361,9 @@ export type BootSeams = {
 };
 
 const realSeams: BootSeams = {
+    resolveSandboxEngine: resolveSandboxEngineOnce,
     ensurePostgres: ensurePostgresReady,
+    createSandbox: createSandboxClient,
     startIngress: () => startExecIngress(),
     readKey: readApiKey,
     readModelApiKey: () => env.modelApiKey,
@@ -534,6 +572,17 @@ async function bootHarnessRuntimeOnce(
     const conversationModel = conversationResolved.value;
     const sandboxModel = sandboxResolved.value;
 
+    // Resolve the pinned container runtime and the Docker-API socket the sandbox
+    // client will dial, BEFORE Postgres (which is provisioned on that same runtime)
+    // and every durable side effect. A stopped podman machine then fails boot for
+    // free with an actionable message instead of surfacing as an opaque dockerode
+    // ECONNREFUSED mid-run. `ensureSandboxImage` already pulled the image through
+    // this same pin, so resolving the socket here makes pull and create target ONE
+    // engine by construction.
+    const engineResult = await seams.resolveSandboxEngine();
+    if (engineResult.isErr()) return err({ type: "sandbox_engine_unresolved", message: engineResult.error.message });
+    const { runtime: pinnedRuntime, socketPath: engineSocketPath } = engineResult.value;
+
     const pgResult = await seams.ensurePostgres();
     if (pgResult.isErr()) return err({ type: "postgres_unavailable", cause: pgResult.error });
     const conn = pgResult.value;
@@ -645,11 +694,12 @@ async function bootHarnessRuntimeOnce(
         const sandboxProvider = createSwappableProvider(sandboxInner);
         const conversationBackend: AgentBackend = { provider: conversationProvider, model: conversationModel };
         const sandboxBackend: AgentBackend = { provider: sandboxProvider, model: sandboxModel };
-        const sandboxClient = createSandboxClient({
+        const sandboxClient = seams.createSandbox({
             pool,
-            // TODO(extend): sandbox steps always target docker — the harness sandbox backend is
-            // docker|k8s only, so even a pinned-podman machine still needs Docker here; podman
-            // sandbox support is a harness capability to add first, not a CLI flag.
+            // Podman speaks the Docker API, so the harness's dockerode-based `docker`
+            // backend drives it unchanged — the only divergence is the *socket* it
+            // dials (supplied below), not the backend kind. (`k8s` is a managed-embedder
+            // concern, never selected here.)
             env: { backend: "docker", namespace: "" },
             transport: SANDBOX_TRANSPORT,
             // Empty in poll mode (the no-op ingress advertises no URL); the sandbox
@@ -664,6 +714,17 @@ async function bootHarnessRuntimeOnce(
             ...existingRefStoreConfig(env.refsDir),
             resourceLimits: cfg.resourcePolicy.perStep,
             resolveWorkspaceRoot,
+            // Pull (`ensureSandboxImage`) and create must target the SAME engine, so
+            // dial the socket resolved for the pinned runtime. Docker resolves to
+            // `undefined`; the conditional spread keeps the config byte-identical to
+            // today for a docker pin (no key materialized), so dockerode's default
+            // resolution — and any DOCKER_HOST the user relies on — is untouched.
+            ...(engineSocketPath === undefined ? {} : { engineSocketPath }),
+            // Podman machine's virtiofs presents the embedder user's real uid/modes,
+            // which the uid-1000 sandbox workload cannot write; world-write on the
+            // pre-created step tree lets its writes land. Docker Desktop's file-sharing
+            // layer masks that mismatch, so a docker pin keeps today's tighter modes.
+            ...(pinnedRuntime.id === "podman" ? { stepTreeAccess: "world-writable" as const } : {}),
         });
         const workspaceFs = createWorkspaceFilesystem({ resolveWorkspaceRoot });
         // One authorizer instance, shared by the parent workflow's terminal revoke,
