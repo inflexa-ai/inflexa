@@ -1,7 +1,7 @@
 import { Command } from "commander";
 
 import pkg from "../../package.json";
-import { devCommandsEnabled, env, envDoc, type EnvDocEntry } from "../lib/env.ts";
+import { devCommandsEnabled, env, envDoc, modelConnectionEnvDoc, type EnvDocEntry } from "../lib/env.ts";
 
 /** The root command. `src/index.ts` wires telemetry/logging, then calls `cli.parseAsync()`. */
 export const cli = new Command();
@@ -28,6 +28,11 @@ function renderEnvHelp(): string {
         } else {
             varRows.push([doc.name, doc.description]);
         }
+    }
+    // The direct-connection secret vars are not `env`-field-backed (resolveModelApiKey reads them on
+    // demand), so they live in their own doc list; render them among the other var rows.
+    for (const doc of modelConnectionEnvDoc) {
+        varRows.push([doc.name, doc.description]);
     }
     for (const [name, labels] of baseVarLabels) {
         varRows.push([name, `overrides the base directory for: ${labels.join(", ")}`]);

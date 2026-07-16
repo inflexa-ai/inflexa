@@ -1,7 +1,17 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
-import { devCommandsActive, env, envDoc, isDevelopmentBuild, isUnsandboxedTestRun } from "./env.ts";
+import {
+    detectProviderEnv,
+    devCommandsActive,
+    env,
+    envDoc,
+    isDevelopmentBuild,
+    isUnsandboxedTestRun,
+    modelConnectionEnvDoc,
+    providerApiKeyVar,
+    resolveModelApiKey,
+} from "./env.ts";
 
 // The truth table behind env.isDevelopment: a build is development unless the baked channel is exactly
 // "production". We test the pure helper because env freezes its bakedEnv.buildChannel read at import.
@@ -84,22 +94,119 @@ describe("isUnsandboxedTestRun", () => {
     });
 });
 
-// The direct-connection secret channel: exposed on the frozen env object (its sole reader) and
-// documented in envDoc for --help. env freezes its process.env read at import, so the presence/absence
-// behavior itself is exercised where it is consumed (the boot's readModelApiKey seam, runtime.test.ts);
-// here we assert only that the surface exists and is a string-or-undefined secret, never persisted.
-describe("INFLEXA_MODEL_API_KEY", () => {
-    test("env exposes modelApiKey as a string-or-absent secret", () => {
-        expect("modelApiKey" in env).toBe(true);
-        // Present ⇒ a string; absent ⇒ undefined — never any other shape.
-        expect(env.modelApiKey === undefined || typeof env.modelApiKey === "string").toBe(true);
+// The direct-connection secret channel is resolved on demand (never an eager `env` field) by
+// resolveModelApiKey, parameterized by the connection's provider. Because it reads process.env at call
+// time (not import), the precedence is directly testable here by driving the three variables.
+describe("resolveModelApiKey — direct-connection key precedence (env only)", () => {
+    const KEYS = ["INFLEXA_MODEL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"] as const;
+    const saved: Record<string, string | undefined> = {};
+
+    beforeEach(() => {
+        // Isolate from the developer's real environment: snapshot then clear all three before each case.
+        for (const k of KEYS) {
+            saved[k] = process.env[k];
+            delete process.env[k];
+        }
+    });
+    afterEach(() => {
+        for (const k of KEYS) {
+            if (saved[k] === undefined) delete process.env[k];
+            else process.env[k] = saved[k];
+        }
     });
 
-    test("envDoc documents INFLEXA_MODEL_API_KEY as an environment variable", () => {
-        const entry = envDoc.modelApiKey;
-        expect(entry.kind).toBe("var");
-        if (entry.kind !== "var") throw new Error("expected a var entry");
-        expect(entry.name).toBe("INFLEXA_MODEL_API_KEY");
+    test("the explicit INFLEXA_MODEL_API_KEY override wins over the provider variable", () => {
+        process.env.INFLEXA_MODEL_API_KEY = "sk-override";
+        process.env.ANTHROPIC_API_KEY = "sk-ant";
+        expect(resolveModelApiKey("anthropic")).toBe("sk-override");
+    });
+
+    test("provider anthropic falls back to ANTHROPIC_API_KEY when the override is unset", () => {
+        process.env.ANTHROPIC_API_KEY = "sk-ant";
+        expect(resolveModelApiKey("anthropic")).toBe("sk-ant");
+    });
+
+    test("every other provider falls back to OPENAI_API_KEY (the openai-compatible long tail)", () => {
+        process.env.OPENAI_API_KEY = "sk-openai";
+        expect(resolveModelApiKey("openai")).toBe("sk-openai");
+        expect(resolveModelApiKey("deepseek")).toBe("sk-openai");
+    });
+
+    test("anthropic ignores OPENAI_API_KEY", () => {
+        process.env.OPENAI_API_KEY = "sk-openai";
+        expect(resolveModelApiKey("anthropic")).toBeUndefined();
+    });
+
+    test("a non-anthropic provider ignores ANTHROPIC_API_KEY", () => {
+        process.env.ANTHROPIC_API_KEY = "sk-ant";
+        expect(resolveModelApiKey("openai")).toBeUndefined();
+    });
+
+    test("nothing set → undefined", () => {
+        expect(resolveModelApiKey("anthropic")).toBeUndefined();
+        expect(resolveModelApiKey("openai")).toBeUndefined();
+    });
+});
+
+describe("providerApiKeyVar", () => {
+    test("anthropic → ANTHROPIC_API_KEY; every other provider → OPENAI_API_KEY", () => {
+        expect(providerApiKeyVar("anthropic")).toBe("ANTHROPIC_API_KEY");
+        expect(providerApiKeyVar("openai")).toBe("OPENAI_API_KEY");
+        expect(providerApiKeyVar("deepseek")).toBe("OPENAI_API_KEY");
+    });
+});
+
+// The one-time setup detection: reports presence + raw base URLs, deliberately WITHOUT the key value
+// (setup copies only the non-secret fields; the key stays an environment read via resolveModelApiKey).
+describe("detectProviderEnv", () => {
+    const KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL"] as const;
+    const saved: Record<string, string | undefined> = {};
+
+    beforeEach(() => {
+        for (const k of KEYS) {
+            saved[k] = process.env[k];
+            delete process.env[k];
+        }
+    });
+    afterEach(() => {
+        for (const k of KEYS) {
+            if (saved[k] === undefined) delete process.env[k];
+            else process.env[k] = saved[k];
+        }
+    });
+
+    test("reports whether each API key is set — never its value — plus the raw base URLs", () => {
+        process.env.ANTHROPIC_API_KEY = "sk-ant-secret";
+        process.env.ANTHROPIC_BASE_URL = "https://api.anthropic.com";
+        const snap = detectProviderEnv();
+        expect(snap).toEqual({
+            anthropicApiKeySet: true,
+            anthropicBaseURL: "https://api.anthropic.com",
+            openaiApiKeySet: false,
+            openaiBaseURL: undefined,
+        });
+        // The snapshot must never carry the key value.
+        expect(JSON.stringify(snap)).not.toContain("sk-ant-secret");
+    });
+
+    test("an empty *_BASE_URL is treated as unset (undefined)", () => {
+        process.env.OPENAI_API_KEY = "sk-openai";
+        process.env.OPENAI_BASE_URL = "";
+        const snap = detectProviderEnv();
+        expect(snap.openaiApiKeySet).toBe(true);
+        expect(snap.openaiBaseURL).toBeUndefined();
+    });
+});
+
+describe("model-connection env documentation", () => {
+    test("modelConnectionEnvDoc names INFLEXA_MODEL_API_KEY and the provider-conventional fallback vars", () => {
+        const names = modelConnectionEnvDoc.map((d) => d.name);
+        expect(names).toContain("INFLEXA_MODEL_API_KEY");
+        expect(names.some((n) => n.includes("ANTHROPIC_API_KEY") && n.includes("OPENAI_API_KEY"))).toBe(true);
+    });
+
+    test("the secret is no longer an env field, so envDoc carries no modelApiKey entry", () => {
+        expect(Object.keys(envDoc)).not.toContain("modelApiKey");
     });
 });
 
