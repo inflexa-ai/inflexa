@@ -36,9 +36,9 @@
  */
 
 import { afterEach, beforeAll } from "bun:test";
+import { silentLogger } from "./logger.js";
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
-import pino from "pino";
 
 import { getTestPool, withSchema } from "./postgres.js";
 import { launchDbos, shutdownDbos } from "../../runtime/dbos.js";
@@ -56,8 +56,6 @@ const shared: SharedDbosState = {
     launchPromise: null,
     shutdownRegistered: false,
 };
-
-const silentLogger = pino({ level: "silent" });
 
 export interface DbosTestRig {
     /** Per-test pool scoped to a fresh cortex schema via `search_path`. */

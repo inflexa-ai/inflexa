@@ -6,6 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createCapturingLogger } from "../__tests__/setup/logger.js";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -433,7 +434,7 @@ describe("docker createSandbox — mounts and platform", () => {
     test("logs a warning when a configured store is unusable at create time", async () => {
         const { docker } = stubDocker();
         await rm(join(libRoot, "current"), { force: true });
-        const warnings: Array<{ obj: unknown; msg: string }> = [];
+        const logger = createCapturingLogger();
 
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
@@ -442,15 +443,36 @@ describe("docker createSandbox — mounts and platform", () => {
             libStorePath: libRoot,
             docker,
             fetch: okFetch,
-            logger: { info: () => {}, error: () => {}, warn: (obj: unknown, msg?: string) => warnings.push({ obj, msg: msg ?? "" }) },
+            logger,
             registerSandbox: async () => {},
         });
 
         (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
 
+        const warnings = logger.records.filter((r) => r.level === "warn");
         expect(warnings).toHaveLength(1);
         expect(warnings[0]!.msg).toContain("lib store");
-        expect(warnings[0]!.obj).toMatchObject({ libStorePath: libRoot });
+        expect(warnings[0]!.msg).toStartWith("[docker-client] ");
+        expect(warnings[0]!.fields).toMatchObject({ libStorePath: libRoot });
+    });
+
+    test("degrades to silence rather than throwing when no logger is wired", async () => {
+        const { docker } = stubDocker();
+        await rm(join(libRoot, "current"), { force: true });
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            libStorePath: libRoot,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        // The unusable-store path logs; with no logger injected it must take the
+        // no-op fallback instead of dereferencing undefined.
+        expect((await ops.createSandbox(META, mintSandboxIdentity("run-1"))).isOk()).toBe(true);
     });
 
     test("skips the /mnt/libs mount when `current` is a dangling symlink to a pruned version", async () => {

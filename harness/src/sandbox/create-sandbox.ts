@@ -17,8 +17,8 @@ import { join } from "node:path";
 
 import type { V1Toleration } from "@kubernetes/client-node";
 import type { Pool } from "pg";
-import type pino from "pino";
 
+import type { Logger } from "../lib/logger.js";
 import { clampResources, type ResourceLimits } from "../config/resource-limits.js";
 import { stepWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { tryMutation } from "../lib/db-result.js";
@@ -99,7 +99,7 @@ export interface CreateSandboxClientConfig {
      * (a configured store whose `current` vanished/went incomplete mid-session) is
      * observable rather than a silent mount drop. No-op when unset.
      */
-    logger?: Pick<pino.Logger, "info" | "warn" | "error">;
+    logger?: Logger;
     /** Dependency seams (fetch, durable step/sleep, clock, recv, warn sink) forwarded to submit/await. */
     submitDeps?: SubmitExecDeps;
     awaitOptions?: AwaitExecOptions;

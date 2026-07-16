@@ -1,9 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import pino from "pino";
+import { silentLogger } from "../__tests__/setup/logger.js";
 
 import { runShutdownSequence } from "./shutdown.js";
-
-const silentLogger = pino({ level: "silent" });
 
 function makeRecordedDeps(
     overrides: Partial<{

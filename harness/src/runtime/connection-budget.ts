@@ -22,8 +22,8 @@
  */
 
 import type { Pool } from "pg";
-import type pino from "pino";
 
+import type { Logger } from "../lib/logger.js";
 import { DBOS_SYSTEM_POOL_SIZE, resolveAppPoolSize, SAFETY_MARGIN } from "./pools.js";
 
 /**
@@ -36,7 +36,7 @@ export interface ConnectionBudgetConfig {
 
 export interface AssertConnectionBudgetOptions {
     pool: Pool;
-    logger: pino.Logger;
+    logger: Logger;
     config: ConnectionBudgetConfig;
 }
 
@@ -69,18 +69,20 @@ export async function assertConnectionBudget({ pool, logger, config }: AssertCon
 
     const supportedReplicas = Math.floor((maxConnections - SAFETY_MARGIN) / podFootprint);
 
-    logger.info(
-        {
-            maxConnections,
-            appPoolSize,
-            dbosPoolSize,
-            podFootprint,
-            safetyMargin: SAFETY_MARGIN,
-            supportedReplicas,
-        },
-        `[boot] postgres connection budget OK — this cluster's max_connections ` +
-            `supports ~${supportedReplicas} cortex replicas; size replicas/pooler accordingly`,
-    );
+    logger
+        .named("boot")
+        .info(
+            `postgres connection budget OK — this cluster's max_connections ` +
+                `supports ~${supportedReplicas} cortex replicas; size replicas/pooler accordingly`,
+            {
+                maxConnections,
+                appPoolSize,
+                dbosPoolSize,
+                podFootprint,
+                safetyMargin: SAFETY_MARGIN,
+                supportedReplicas,
+            },
+        );
 
     return {
         maxConnections,

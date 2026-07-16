@@ -18,8 +18,10 @@
  */
 
 import type { Pool } from "pg";
-import type pino from "pino";
 import { DBOS } from "@dbos-inc/dbos-sdk";
+
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 
 const SWEEP_CRON = "0 */5 * * * *";
 const DELETE_BATCH_LIMIT = 10_000;
@@ -30,16 +32,17 @@ export interface SweepDeps {
      * for tests; production wires the app pool.
      */
     deleteStale: (limit: number) => Promise<number>;
-    logger?: Pick<pino.Logger, "info" | "warn" | "error">;
+    logger?: Logger;
 }
 
 export async function sweepStaleNotifications(deps: SweepDeps): Promise<number> {
+    const logger = (deps.logger ?? createNoopLogger()).named("notification-sweep");
     try {
         const cleared = await deps.deleteStale(DELETE_BATCH_LIMIT);
-        deps.logger?.info({ rowsCleared: cleared }, "[notification-sweep] cleared stale notifications");
+        logger.info("cleared stale notifications", { rowsCleared: cleared });
         return cleared;
     } catch (err) {
-        deps.logger?.error({ err: err instanceof Error ? err.message : String(err) }, "[notification-sweep] sweep failed");
+        logger.error("sweep failed", { err: err instanceof Error ? err.message : String(err) });
         throw err;
     }
 }
@@ -76,7 +79,7 @@ export function makeDefaultDeleteStale(pool: Pool) {
 
 export interface RegisterNotificationSweepDeps {
     pool: Pool;
-    logger?: Pick<pino.Logger, "info" | "warn" | "error">;
+    logger?: Logger;
     /** Override the DELETE driver — production defaults to the app pool. */
     deleteStale?: (limit: number) => Promise<number>;
 }

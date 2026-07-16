@@ -32,9 +32,10 @@
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import Docker from "dockerode";
-import type pino from "pino";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 import { stepWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { buildMountPlan } from "./mount-plan.js";
@@ -97,7 +98,7 @@ export interface DockerClientConfig {
      * vanished or went incomplete by sandbox-create time) is observable instead of a
      * silent libs-mount drop. Matches the `reaper`/`watchdog` logger seam.
      */
-    logger?: Pick<pino.Logger, "info" | "warn" | "error">;
+    logger?: Logger;
     /** Hook called after the registry row is written. */
     registerSandbox: (meta: CreateSandboxMeta, ref: SandboxRef) => Promise<void>;
 }
@@ -217,10 +218,12 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     // since an otherwise-silent libs-mount drop is invisible to operators.
                     const libsMounted = !!config.libStorePath && libStoreUsable(config.libStorePath);
                     if (config.libStorePath && !libsMounted) {
-                        config.logger?.warn(
-                            { libStorePath: config.libStorePath, sandboxId },
-                            "[docker-client] lib store configured but `current` is missing or incomplete at sandbox creation — mounting no library store (sandbox degrades to available:false)",
-                        );
+                        (config.logger ?? createNoopLogger())
+                            .named("docker-client")
+                            .warn(
+                                "lib store configured but `current` is missing or incomplete at sandbox creation — mounting no library store (sandbox degrades to available:false)",
+                                { libStorePath: config.libStorePath, sandboxId },
+                            );
                     }
 
                     const plan = buildMountPlan(meta, {
