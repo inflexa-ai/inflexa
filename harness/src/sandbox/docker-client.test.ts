@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Docker from "dockerode";
 
-import { createDockerSandboxOps } from "./docker-client.js";
+import { createDockerSandboxOps, engineConnectionOptions } from "./docker-client.js";
 import { mintSandboxIdentity } from "./identity.js";
 
 // A real, COMPLETE on-disk lib store: the Docker client re-checks `<libStorePath>/current`
@@ -594,5 +594,173 @@ describe("docker teardown / isAlive", () => {
         const result = await ops.isAlive({ sandboxId: "x", host: "h", port: 1, backend: "docker", callbackSecret: "x" });
         expect(result.isErr()).toBe(true);
         if (result.isErr()) expect(result.error.type).toBe("liveness_failed");
+    });
+});
+
+/** The owner label the reconcile guard reads (module-private in docker-client.ts). */
+const OWNER_WORKFLOW_LABEL = "cortex/owner-workflow-id";
+
+/**
+ * A docker stub whose FIRST `createContainer` fails with `createStatus` and
+ * whose `getContainer(...).inspect()` reports `standing` (or 404s when
+ * `standing` is null). A post-removal recreate lands as a fresh, startable
+ * container. Models the recovery re-run: create fails, then the reconcile
+ * inspects the checkpointed name.
+ */
+function reconcileDocker(opts: { createStatus: number; standing: { labels: Record<string, string>; running: boolean } | null }): {
+    docker: Docker;
+    created: string[];
+    removed: string[];
+} {
+    const created: string[] = [];
+    const removed: string[] = [];
+    let standing = opts.standing;
+    let attempts = 0;
+
+    const container = (id: string) => ({
+        id,
+        start: async () => {
+            if (standing) standing.running = true;
+        },
+        stop: async () => {
+            if (standing) standing.running = false;
+        },
+        remove: async () => {
+            removed.push(id);
+            standing = null;
+        },
+        inspect: async () => {
+            if (!standing) throw notFound();
+            return {
+                Config: { Labels: standing.labels },
+                NetworkSettings: { Ports: { "8765/tcp": [{ HostIp: "127.0.0.1", HostPort: "32100" }] } },
+                State: { Running: standing.running, OOMKilled: false },
+            };
+        },
+    });
+
+    const docker = {
+        createContainer: async (o: CreateOpts) => {
+            attempts += 1;
+            // The first create is the one that races the standing container; a
+            // later attempt is a post-removal recreate and lands cleanly.
+            if (attempts === 1) {
+                const e = new Error("that name is already in use") as Error & { statusCode: number };
+                e.statusCode = opts.createStatus;
+                throw e;
+            }
+            created.push(o.name);
+            standing = { labels: o.Labels ?? {}, running: false };
+            return container(o.name);
+        },
+        getContainer: (id: string) => container(id),
+    } as unknown as Docker;
+
+    return { docker, created, removed };
+}
+
+describe("docker createSandbox — recovery reconciliation", () => {
+    const ownedLabels = { [OWNER_WORKFLOW_LABEL]: META.childWorkflowId, role: "sandbox" };
+
+    const reconcileOps = (docker: Docker) =>
+        createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+    test("adopts a running owned container when the engine answers the duplicate create with 500 (podman's shape)", async () => {
+        const { docker, created, removed } = reconcileDocker({ createStatus: 500, standing: { labels: ownedLabels, running: true } });
+
+        const ref = (await reconcileOps(docker).createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        expect(ref.backend).toBe("docker");
+        // Adopted as-is: no create landed and nothing was removed.
+        expect(created).toEqual([]);
+        expect(removed).toEqual([]);
+    });
+
+    test("adopts a running owned container when the engine answers the duplicate create with 409 (Docker's shape)", async () => {
+        const { docker, created, removed } = reconcileDocker({ createStatus: 409, standing: { labels: ownedLabels, running: true } });
+
+        (await reconcileOps(docker).createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        expect(created).toEqual([]);
+        expect(removed).toEqual([]);
+    });
+
+    test("refuses a standing container owned by a different workflow with name_conflict", async () => {
+        const { docker, created, removed } = reconcileDocker({
+            createStatus: 500,
+            standing: { labels: { [OWNER_WORKFLOW_LABEL]: "someone-else" }, running: true },
+        });
+
+        const result = await reconcileOps(docker).createSandbox(META, mintSandboxIdentity("run-1"));
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.type).toBe("name_conflict");
+            if (result.error.type === "name_conflict") expect(result.error.owner).toBe("someone-else");
+        }
+        // A foreign container is neither adopted nor removed.
+        expect(created).toEqual([]);
+        expect(removed).toEqual([]);
+    });
+
+    test("returns the original create error (not the inspect 404) when no container stands under the name", async () => {
+        const { docker } = reconcileDocker({ createStatus: 500, standing: null });
+
+        const result = await reconcileOps(docker).createSandbox(META, mintSandboxIdentity("run-1"));
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.type).toBe("container_create_failed");
+            // The status is the create's 500, proving the inspect's 404 was never surfaced.
+            if (result.error.type === "container_create_failed") expect(result.error.status).toBe(500);
+        }
+    });
+
+    test("removes and recreates a stopped owned container", async () => {
+        const { docker, created, removed } = reconcileDocker({ createStatus: 500, standing: { labels: ownedLabels, running: false } });
+
+        const ref = (await reconcileOps(docker).createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        expect(ref.backend).toBe("docker");
+        // The stopped prior attempt is removed, then a fresh container is created.
+        expect(removed.length).toBeGreaterThan(0);
+        expect(created.length).toBeGreaterThan(0);
+    });
+});
+
+describe("engineConnectionOptions", () => {
+    test("maps a configured socket path to dockerode connection options", () => {
+        expect(engineConnectionOptions("/run/podman/podman.sock")).toEqual({ socketPath: "/run/podman/podman.sock" });
+    });
+
+    test("is undefined when unset so construction stays a bare new Docker() (default resolution)", () => {
+        expect(engineConnectionOptions(undefined)).toBeUndefined();
+    });
+});
+
+describe("docker createSandbox — engine connection", () => {
+    test("an injected docker instance takes precedence over a configured engineSocketPath", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            engineSocketPath: "/nonexistent/should-not-be-dialed.sock",
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        // The create landed through the injected stub — the configured socket was never dialed.
+        expect(sandboxOf(created)).toBeDefined();
     });
 });

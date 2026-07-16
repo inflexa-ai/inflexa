@@ -12,7 +12,7 @@
  * `awaitExec` are backend-agnostic — they only need the SandboxRef.
  */
 
-import { mkdir } from "node:fs/promises";
+import { chmod, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { V1Toleration } from "@kubernetes/client-node";
@@ -74,6 +74,23 @@ export interface CreateSandboxClientConfig {
     refStorePath?: string;
     /** Docker: force the container platform (e.g. `linux/amd64`) so the sandbox matches the mounted lib store's arch. */
     platform?: string;
+    /**
+     * Docker: unix socket of the Docker-API engine to dial — a Docker daemon
+     * socket or a podman Docker-compat socket. Unset preserves dockerode's
+     * default resolution (`DOCKER_HOST`, then the default Docker socket).
+     */
+    engineSocketPath?: string;
+    /**
+     * Docker: how the pre-created step write tree is made writable by the
+     * uid-1000 sandbox workload. `world-writable` chmods the step dir and its
+     * subdirs so a workload write lands through engines whose bind mounts
+     * preserve host ownership honestly — podman machine's virtiofs presents the
+     * embedder user's real uid and modes, which the uid-1000 workload cannot
+     * write. Docker Desktop's file-sharing layer masks that mismatch, so it
+     * stays unset there. A single-valued union (not a boolean) so the call site
+     * reads as policy and future strategies extend it without a breaking change.
+     */
+    stepTreeAccess?: "world-writable";
     /** K8s: PVC claim backing the session PVC the workspace roots live under. */
     sessionPvc?: string;
     /**
@@ -120,6 +137,39 @@ export function composeAwaitOptions(
     return { isAlive, ...base, transport };
 }
 
+/**
+ * Backend-agnostic pre-creation of the writable step tree under the analysis's
+ * resolved workspace root. On Docker that root is the host dir the container
+ * binds; on K8s it lives under the session PVC the sandbox pod mounts via
+ * subPath. `mkdir(recursive)` is idempotent, so an existing tree (replay, retry)
+ * is not an error. A read-only sandbox has no writable step mount, so there is
+ * nothing to pre-create.
+ *
+ * `stepTreeAccess: "world-writable"` chmods the step dir and each subdir so the
+ * uid-1000 sandbox workload can write them through engines that honor host bind
+ * ownership. The chmod is explicit, not `mkdir`'s `mode` option: the process
+ * umask masks `mkdir`'s mode, and on replay the dirs already exist so `mkdir`
+ * would not touch them either way. Scoped to the step write tree — the
+ * read-only mount sources are never re-moded. Exported for tests.
+ */
+export async function precreateStepTree(
+    deps: { resolveWorkspaceRoot: ResolveWorkspaceRoot; stepTreeAccess?: "world-writable" },
+    meta: CreateSandboxMeta,
+): Promise<void> {
+    if (meta.readOnly) return;
+    const stepDir = stepWritePrefix({
+        workspaceRoot: deps.resolveWorkspaceRoot(meta.analysisId),
+        runId: meta.runId,
+        stepId: meta.stepId,
+    });
+    await mkdir(stepDir, { recursive: true });
+    await Promise.all(STEP_SUBDIRS.map((sub) => mkdir(join(stepDir, sub), { recursive: true })));
+    if (deps.stepTreeAccess === "world-writable") {
+        await chmod(stepDir, 0o777);
+        await Promise.all(STEP_SUBDIRS.map((sub) => chmod(join(stepDir, sub), 0o777)));
+    }
+}
+
 export function createSandboxClient(config: CreateSandboxClientConfig): SandboxClient {
     const backend = config.backend ?? config.env.backend;
     const transport = config.transport ?? "poll";
@@ -153,26 +203,10 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   libStorePath: config.libStorePath,
                   refStorePath: config.refStorePath,
                   platform: config.platform,
+                  engineSocketPath: config.engineSocketPath,
                   logger: config.logger,
                   registerSandbox,
               });
-
-    // Backend-agnostic pre-creation of the writable step tree under the
-    // analysis's resolved workspace root. On Docker that root is the host dir
-    // the container binds; on K8s it lives under the session PVC the sandbox
-    // pod mounts via subPath. mkdir(recursive) is idempotent, so an existing
-    // tree (replay, retry) is not an error.
-    const precreateStepTree = async (meta: CreateSandboxMeta): Promise<void> => {
-        // A read-only sandbox has no writable step mount — nothing to pre-create.
-        if (meta.readOnly) return;
-        const stepDir = stepWritePrefix({
-            workspaceRoot: config.resolveWorkspaceRoot(meta.analysisId),
-            runId: meta.runId,
-            stepId: meta.stepId,
-        });
-        await mkdir(stepDir, { recursive: true });
-        await Promise.all(STEP_SUBDIRS.map((sub) => mkdir(join(stepDir, sub), { recursive: true })));
-    };
 
     // `teardown` needs the registry-clear closure but the SandboxRef alone
     // doesn't carry runId/stepId. Wrap the backend impl so callers pass the
@@ -203,7 +237,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
 
     return {
         createSandbox: async (meta, identity) => {
-            await precreateStepTree(meta);
+            await precreateStepTree({ resolveWorkspaceRoot: config.resolveWorkspaceRoot, stepTreeAccess: config.stepTreeAccess }, meta);
             // Every caller must declare resources — a sandbox with no cpu/memory
             // request is a semantic error, not something to paper over with a
             // default (a DBOS replay of a pre-resources workflow input lands here).
