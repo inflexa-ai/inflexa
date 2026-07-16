@@ -7,16 +7,15 @@ export const REFERENCE_INSTALL_RECEIPT_VERSION = 1 as const;
 
 /**
  * What was actually written to disk for one artifact. The size and digest are
- * *observed at install*, never copied from the catalog — for a `pinned`
- * artifact they equal the catalog's (the install would have failed otherwise),
- * and for an `unpinned` one they are the only record of what the mutable
- * upstream served, which is what `verify` later checks the files against.
+ * *observed at install* — the catalog carries neither, so this receipt is the
+ * sole record of the bytes the upstream served, and what `verify` later checks
+ * the local files against. A receipt written by an older build may still carry
+ * an `integrity` field; it is simply ignored (unknown keys are stripped).
  */
 const ReferenceReceiptArtifactSchema = z.object({
     path: ReferenceArtifactPathSchema,
     bytes: z.number().int().nonnegative(),
     sha256: ReferenceSha256Schema,
-    integrity: z.enum(["pinned", "unpinned"]),
 });
 
 /** Optional metadata describing one activated reference dataset version. */
