@@ -67,8 +67,12 @@ if [ -n "$BAKED_IMAGE" ]; then
   # too, so mount only the suite + the per-library validators + a writable
   # /mnt/refs stub (celltypist and friends probe $CELLTYPIST_FOLDER=/mnt/refs/...
   # at import time).
+  #
+  # --entrypoint "" because sandbox images inherit sandbox-base's ENTRYPOINT,
+  # which boots sandbox-server and exits non-zero without SANDBOX_CALLBACK_SECRET.
+  # Without the override the probe dies before validate.py is ever reached.
   echo "Validating baked store inside $BAKED_IMAGE ..."
-  docker run --rm \
+  docker run --rm --entrypoint "" \
     -v "$SUITE_DIR:/opt/lib-store-validate:ro" \
     -v "$VALIDATOR_DIR:/opt/lib-validator:ro" \
     --tmpfs /mnt/refs \
@@ -101,7 +105,10 @@ echo "Validating store at $LIB_PATH/current in $MOUNT_IMAGE ..."
 # The /mnt/libs/current/... paths below are CONTAINER-INTERNAL: they name where
 # the store lives inside the image, independent of any host INFLEXA_LIB_ROOT, so
 # they are hardcoded rather than sourced from lib-store-common.sh's LIB_STORE_ROOT.
-docker run --rm \
+#
+# --entrypoint "" for the same reason as the baked path above: MOUNT_IMAGE is
+# sandbox-base, which defines the ENTRYPOINT the sandbox images inherit.
+docker run --rm --entrypoint "" \
   -v "$LIB_PATH:/mnt/libs:ro" \
   -v "$SUITE_DIR:/opt/lib-store-validate:ro" \
   -v "$VALIDATOR_DIR:/opt/lib-validator:ro" \
