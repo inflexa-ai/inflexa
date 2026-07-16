@@ -29,9 +29,8 @@
  * calls become `err`.
  */
 
-import { open as fsOpen, readFile as fsReadFile, readdir as fsReaddir, stat as fsStat } from "node:fs/promises";
-import type { Stats } from "node:fs";
-import { createReadStream } from "node:fs";
+import { lstat as fsLstat, open as fsOpen, readdir as fsReaddir, stat as fsStat, type FileHandle } from "node:fs/promises";
+import { constants as fsConstants, type Stats } from "node:fs";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 
@@ -205,13 +204,22 @@ export function createWorkspaceFilesystem(deps: WorkspaceFilesystemDeps): Worksp
                 }
                 const absolute = resolved.absolute;
 
-                return tryFs<readonly { name: string; isDirectory(): boolean }[] | { notFound: true }>(
-                    "workspace.list",
-                    () => fsReaddir(absolute, { withFileTypes: true }),
-                    { path: absolute, onAbsent: () => ({ notFound: true }) },
-                ).andThen((dirents): ResultAsync<ListResult, FsError> => {
-                    if ("notFound" in dirents) return okAsync<ListResult>({ kind: "not_found" });
-                    return collectEntries(absolute, dirents).map((entries): ListResult => ({ kind: "ok", entries }));
+                // `lstat` first so a symlinked directory leaf is refused, not
+                // followed: a plain `readdir` would list the target's entries,
+                // and a leaf swapped to an escaping symlink after the realpath
+                // check would leak an off-tree directory's names. Node has no
+                // fd-based readdir, so this narrows (does not fully close) the
+                // readdir race — the atomic guarantee is on the content reads.
+                return safeLstat(absolute).andThen((s): ResultAsync<ListResult, FsError> => {
+                    if (s?.isSymbolicLink()) return okAsync<ListResult>({ kind: "out_of_scope" });
+                    return tryFs<readonly { name: string; isDirectory(): boolean }[] | { notFound: true }>(
+                        "workspace.list",
+                        () => fsReaddir(absolute, { withFileTypes: true }),
+                        { path: absolute, onAbsent: () => ({ notFound: true }) },
+                    ).andThen((dirents): ResultAsync<ListResult, FsError> => {
+                        if ("notFound" in dirents) return okAsync<ListResult>({ kind: "not_found" });
+                        return collectEntries(absolute, dirents).map((entries): ListResult => ({ kind: "ok", entries }));
+                    });
                 });
             });
         },
@@ -222,8 +230,14 @@ export function createWorkspaceFilesystem(deps: WorkspaceFilesystemDeps): Worksp
                     return okAsync<StatResult>({ kind: "out_of_scope" });
                 }
 
-                return safeStat(resolved.absolute).map((s): StatResult => {
+                // `lstat`, not `stat`: a leaf symlink is refused rather than
+                // followed — same policy as the read open's `O_NOFOLLOW`.
+                // Reporting a followed target's type/size would re-open the
+                // metadata side of the confused-deputy leak, and it is atomic
+                // (a single non-following syscall, no check/use gap).
+                return safeLstat(resolved.absolute).map((s): StatResult => {
                     if (!s) return { kind: "not_found" };
+                    if (s.isSymbolicLink()) return { kind: "out_of_scope" };
                     return {
                         kind: "ok",
                         type: s.isDirectory() ? "directory" : "file",
@@ -250,34 +264,103 @@ function safeStat(absolute: string): ResultAsync<Stats | null, FsError> {
     });
 }
 
-/** Stat each directory entry to attach a size; absence/I/O failures degrade to no size. */
+/** Like {@link safeStat} but NEVER follows a leaf symlink (`lstat`) — the seam's
+ *  read-side no-follow policy for the `stat`/`list` metadata surface. */
+function safeLstat(absolute: string): ResultAsync<Stats | null, FsError> {
+    return tryFs<Stats | null>("workspace.lstat", () => fsLstat(absolute), {
+        path: absolute,
+        onAbsent: () => null,
+    });
+}
+
+/** Lstat each directory entry to attach a size; absence/I/O failures degrade to
+ *  no size. `lstat` (not `stat`) so a symlink entry reports its own size, never
+ *  its target's — a followed target could be off-tree. `d.isDirectory()` comes
+ *  from the dirent, which does not follow, so a symlink is a plain `file` entry. */
 function collectEntries(dir: string, dirents: readonly { name: string; isDirectory(): boolean }[]): ResultAsync<ListEntry[], FsError> {
     return ResultAsync.combine(
         dirents.map((d): ResultAsync<ListEntry, FsError> => {
             if (d.isDirectory()) return okAsync<ListEntry>({ name: d.name, type: "directory" });
-            return safeStat(join(dir, d.name)).map((s): ListEntry => ({ name: d.name, type: "file", size: s?.size ?? undefined }));
+            return safeLstat(join(dir, d.name)).map((s): ListEntry => ({ name: d.name, type: "file", size: s?.size ?? undefined }));
         }),
     );
 }
 
+/**
+ * Read-only open flags that REFUSE to follow a final-component symlink.
+ * `classifyWithinRoot` validated a snapshot of the path; a symlink swapped into
+ * the leaf between that check and the open here would otherwise be followed
+ * off-tree, re-opening the read-exfiltration hole for the length of the race
+ * (CWE-367). `O_NOFOLLOW` makes the leaf open atomic — a symlinked final
+ * component fails `ELOOP` in the same syscall that opens it, so there is no
+ * check/use gap. `?? 0` keeps the mask valid on a platform that lacks the flag.
+ *
+ * This refuses EVERY leaf symlink, including an in-tree one the persistent check
+ * would allow: pure Node cannot express "follow only if it stays in-tree" (that
+ * needs `openat2(RESOLVE_BENEATH)`), so the atomic, race-free choice is to not
+ * follow the leaf at all. Hard-linked staged inputs are unaffected — a hard link
+ * is not a symlink. An intermediate-directory symlink is beyond this guard (Node
+ * exposes no `openat2`); the upstream realpath check still rejects the
+ * persistent case of that.
+ */
+const READ_NO_FOLLOW = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
+
+type OpenedFile = { readonly kind: "ok"; readonly fh: FileHandle } | { readonly kind: "out_of_scope" };
+
+/**
+ * Open a workspace file read-only without following a leaf symlink (see
+ * {@link READ_NO_FOLLOW}). A symlinked final component surfaces as `out_of_scope`
+ * — the same verdict a persistent escape gets — never as off-tree bytes. Every
+ * content read (`readWithCap`, `readHeadLines`, `readTailLines`) opens through
+ * here so the bytes it streams come from a non-symlink leaf. Absence /
+ * permission / other I/O throws flow the `FsError` channel unchanged.
+ */
+function openReadNoFollow(absolute: string): ResultAsync<OpenedFile, FsError> {
+    return tryFs<OpenedFile>(
+        "workspace.openNoFollow",
+        async () => {
+            try {
+                return { kind: "ok", fh: await fsOpen(absolute, READ_NO_FOLLOW) };
+            } catch (cause) {
+                if ((cause as NodeJS.ErrnoException).code === "ELOOP") return { kind: "out_of_scope" };
+                throw cause;
+            }
+        },
+        { path: absolute },
+    );
+}
+
 function readWithCap(absolute: string, totalSize: number, maxBytes: number | undefined): ResultAsync<ReadFileResult, FsError> {
-    if (maxBytes !== undefined && totalSize > maxBytes) {
+    return openReadNoFollow(absolute).andThen((opened): ResultAsync<ReadFileResult, FsError> => {
+        if (opened.kind === "out_of_scope") return okAsync<ReadFileResult>({ kind: "out_of_scope" });
+        const fh = opened.fh;
+        if (maxBytes !== undefined && totalSize > maxBytes) {
+            return tryFs<ReadFileResult>(
+                "workspace.readCapped",
+                async () => {
+                    try {
+                        const buf = Buffer.alloc(maxBytes);
+                        await fh.read(buf, 0, maxBytes, 0);
+                        return { kind: "truncated", content: buf, totalSize };
+                    } finally {
+                        await fh.close();
+                    }
+                },
+                { path: absolute },
+            );
+        }
         return tryFs<ReadFileResult>(
-            "workspace.readCapped",
+            "workspace.readFile",
             async () => {
-                const fh = await fsOpen(absolute, "r");
                 try {
-                    const buf = Buffer.alloc(maxBytes);
-                    await fh.read(buf, 0, maxBytes, 0);
-                    return { kind: "truncated", content: buf, totalSize };
+                    return { kind: "ok", content: await fh.readFile(), truncated: false };
                 } finally {
                     await fh.close();
                 }
             },
             { path: absolute },
         );
-    }
-    return tryFs<ReadFileResult>("workspace.readFile", async () => ({ kind: "ok", content: await fsReadFile(absolute), truncated: false }), { path: absolute });
+    });
 }
 
 function capBuffer(content: Buffer, maxBytes: number | undefined): ReadFileResult {
@@ -301,43 +384,50 @@ function capBuffer(content: Buffer, maxBytes: number | undefined): ReadFileResul
  * follow-up `safeStat` (a discrete `fs` call) flows the `FsError` channel.
  */
 function readHeadLines(absolute: string, headLines: number, maxBytes: number | undefined): ResultAsync<ReadFileResult, FsError> {
-    return new ResultAsync(
-        (async () => {
-            const stream = createReadStream(absolute, { highWaterMark: 16 * 1024 });
-            const rl = createInterface({ input: stream, crlfDelay: Infinity });
-            const collected: string[] = [];
-            let bytes = 0;
-            let truncated = false;
-            try {
-                for await (const line of rl) {
-                    const lineBytes = Buffer.byteLength(line, "utf8") + 1;
-                    if (maxBytes !== undefined && bytes + lineBytes > maxBytes) {
-                        truncated = true;
-                        break;
+    return openReadNoFollow(absolute).andThen((opened): ResultAsync<ReadFileResult, FsError> => {
+        if (opened.kind === "out_of_scope") return okAsync<ReadFileResult>({ kind: "out_of_scope" });
+        const fh = opened.fh;
+        return new ResultAsync(
+            (async () => {
+                // `autoClose: false` keeps the FileHandle ours to close — destroying
+                // the stream must not race a close against our own `fh.close()`.
+                const stream = fh.createReadStream({ highWaterMark: 16 * 1024, autoClose: false });
+                const rl = createInterface({ input: stream, crlfDelay: Infinity });
+                const collected: string[] = [];
+                let bytes = 0;
+                let truncated = false;
+                try {
+                    for await (const line of rl) {
+                        const lineBytes = Buffer.byteLength(line, "utf8") + 1;
+                        if (maxBytes !== undefined && bytes + lineBytes > maxBytes) {
+                            truncated = true;
+                            break;
+                        }
+                        collected.push(line);
+                        bytes += lineBytes;
+                        if (collected.length >= headLines) break;
                     }
-                    collected.push(line);
-                    bytes += lineBytes;
-                    if (collected.length >= headLines) break;
+                } finally {
+                    rl.close();
+                    stream.destroy();
+                    await fh.close();
                 }
-            } finally {
-                rl.close();
-                stream.destroy();
-            }
-            const content = Buffer.from(collected.join("\n"));
-            if (truncated) {
-                // Total size is unknown without a full stat; report it as a separate read.
-                return (await safeStat(absolute)).map((s): ReadFileResult => ({
-                    kind: "truncated",
-                    content,
-                    totalSize: s?.size ?? content.length,
-                }));
-            }
-            // Whether the loop exhausted the file or hit the line cap, the agent asked
-            // for exactly this window, so this is `ok` not `truncated`. The tool layer
-            // reports `mode: "head"` so the agent knows it's a window.
-            return ok<ReadFileResult, FsError>({ kind: "ok", content, truncated: false });
-        })(),
-    );
+                const content = Buffer.from(collected.join("\n"));
+                if (truncated) {
+                    // Total size is unknown without a full stat; report it as a separate read.
+                    return (await safeStat(absolute)).map((s): ReadFileResult => ({
+                        kind: "truncated",
+                        content,
+                        totalSize: s?.size ?? content.length,
+                    }));
+                }
+                // Whether the loop exhausted the file or hit the line cap, the agent asked
+                // for exactly this window, so this is `ok` not `truncated`. The tool layer
+                // reports `mode: "head"` so the agent knows it's a window.
+                return ok<ReadFileResult, FsError>({ kind: "ok", content, truncated: false });
+            })(),
+        );
+    });
 }
 
 /**
@@ -350,34 +440,37 @@ function readHeadLines(absolute: string, headLines: number, maxBytes: number | u
  * slicing is pure and runs inside the same `fn`.
  */
 function readTailLines(absolute: string, totalSize: number, tailLines: number, maxBytes: number | undefined): ResultAsync<ReadFileResult, FsError> {
-    return tryFs<ReadFileResult>(
-        "workspace.readTail",
-        async () => {
-            const windowSize = Math.min(totalSize, maxBytes ?? totalSize);
-            const offset = totalSize - windowSize;
-            const fh = await fsOpen(absolute, "r");
-            try {
-                const buf = Buffer.alloc(windowSize);
-                if (windowSize > 0) {
-                    await fh.read(buf, 0, windowSize, offset);
-                }
-                const allLines = buf.toString("utf8").split(/\r?\n/);
-                // Drop the partial leading line if the window doesn't cover the file start.
-                const candidateLines = offset > 0 ? allLines.slice(1) : allLines;
-                const sliced = candidateLines.length > tailLines ? candidateLines.slice(-tailLines) : candidateLines;
-                const content = Buffer.from(sliced.join("\n"));
+    return openReadNoFollow(absolute).andThen((opened): ResultAsync<ReadFileResult, FsError> => {
+        if (opened.kind === "out_of_scope") return okAsync<ReadFileResult>({ kind: "out_of_scope" });
+        const fh = opened.fh;
+        return tryFs<ReadFileResult>(
+            "workspace.readTail",
+            async () => {
+                try {
+                    const windowSize = Math.min(totalSize, maxBytes ?? totalSize);
+                    const offset = totalSize - windowSize;
+                    const buf = Buffer.alloc(windowSize);
+                    if (windowSize > 0) {
+                        await fh.read(buf, 0, windowSize, offset);
+                    }
+                    const allLines = buf.toString("utf8").split(/\r?\n/);
+                    // Drop the partial leading line if the window doesn't cover the file start.
+                    const candidateLines = offset > 0 ? allLines.slice(1) : allLines;
+                    const sliced = candidateLines.length > tailLines ? candidateLines.slice(-tailLines) : candidateLines;
+                    const content = Buffer.from(sliced.join("\n"));
 
-                const gotEnoughLines = sliced.length >= tailLines || offset === 0;
-                if (!gotEnoughLines) {
-                    return { kind: "truncated", content, totalSize };
+                    const gotEnoughLines = sliced.length >= tailLines || offset === 0;
+                    if (!gotEnoughLines) {
+                        return { kind: "truncated", content, totalSize };
+                    }
+                    return { kind: "ok", content, truncated: false };
+                } finally {
+                    await fh.close();
                 }
-                return { kind: "ok", content, truncated: false };
-            } finally {
-                await fh.close();
-            }
-        },
-        { path: absolute },
-    );
+            },
+            { path: absolute },
+        );
+    });
 }
 
 function sliceHeadLines(content: Buffer, headLines: number, maxBytes: number | undefined): ReadFileResult {
