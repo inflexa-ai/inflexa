@@ -25,10 +25,10 @@
 
 ## 4. CLI embedder
 
-- [ ] 4.1 Add a pino → `Logger` adapter at the CLI composition root (`cli/src/modules/harness/`): flip argument order, map `with(fields)` → `child(bindings)`.
-- [ ] 4.2 Pass the adapter to `bootHarness` in `cli/src/modules/harness/runtime.ts`, replacing the raw pino logger.
-- [ ] 4.3 Pass it into `buildSandboxStepDeps` and `buildExecuteAnalysisDeps` (`cli/src/modules/harness/run_deps.ts`).
-- [ ] 4.4 Run `bun run typecheck` in `cli/` and confirm harness records reach the file log tagged `module: "harness"`.
+- [x] 4.1 Add a pino → `Logger` adapter at the CLI composition root (`runtime.ts`'s `pinoAsHarnessLogger`, kept beside its single caller): flip argument order, map `with(fields)` → `child(bindings)`, render `named()` as the message prefix (NOT a `module` binding — `getLogger("harness")` already owns that field and the existing lines read `[dbos] launched`). `errorFields` hands the raw value to pino's own `err` serializer, which is richer than the shipped string mapping.
+- [x] 4.2 Pass the adapter to `bootHarness` in `cli/src/modules/harness/runtime.ts`, replacing the raw pino logger.
+- [x] 4.3 Carry it on `RunEngineComposition` (REQUIRED there, though the harness deps take it optionally — a bundle assembled without it type-checks and silently discards every diagnostic) and pass it from `buildSandboxStepDeps`.
+- [x] 4.4 `bun run typecheck` + `bun test` green in `cli/`; verified end-to-end that a reconcile attestation failure lands in a real pino file destination carrying `module: "harness"`, the `[reconcile-manifest]` prefix, `runId`/`stepId`/`agentId`, and `path`/`source`/`throwSite`.
 
 ## 5. Sweep the remaining console sites
 

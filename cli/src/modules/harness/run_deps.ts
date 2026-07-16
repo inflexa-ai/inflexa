@@ -9,6 +9,7 @@ import {
     type CoreWorkflowDeps,
     type EmbeddingProvider,
     type ExecuteAnalysisDeps,
+    type Logger,
     type Pool,
     type ResolveWorkspaceRoot,
     type RunAuthorizer,
@@ -53,6 +54,13 @@ export type AgentBackend = {
 export type RunEngineComposition = {
     /** App pool over the provisioned Postgres — shared with the harness ledger queries. */
     readonly pool: Pool;
+    /**
+     * The harness `Logger` seam realized over the cli's pino (see `runtime.ts`).
+     * Carried on the composition because the harness's deps accept it OPTIONALLY:
+     * a bundle assembled without it type-checks and then discards every
+     * diagnostic it makes — including a failed step's only account of its cause.
+     */
+    readonly logger: Logger;
     /** Real embedding-provider INSTANCE (not the config shape the profile path passes). */
     readonly embedding: EmbeddingProvider;
     readonly sandboxClient: SandboxClient;
@@ -165,6 +173,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
 export function buildSandboxStepDeps(comp: RunEngineComposition): SandboxStepDeps {
     return {
         pool: comp.pool,
+        logger: comp.logger,
         provider: comp.sandbox.provider,
         embedding: comp.embedding,
         sandboxClient: comp.sandboxClient,
