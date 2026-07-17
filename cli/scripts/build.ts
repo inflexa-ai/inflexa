@@ -13,6 +13,7 @@ import { createSolidTransformPlugin, resetSolidTransformPluginState } from "@ope
 
 import { audienceInvalidReason } from "../src/modules/auth/auth.ts";
 import { LLAMA_PINS, LLAMA_RUNTIME_TAG, llamaArtifactUrl, type LlamaPin, type LlamaTargetKey } from "../src/modules/embedding/llama_runtime.ts";
+import { MODEL_ARTIFACT, MODEL_SHA256, MODEL_URL } from "../src/modules/embedding/model_pin.ts";
 import { contentHashOf, packContent, type PackEntry } from "../src/modules/harness/content-pack.ts";
 
 // This process autoloads the repo bunfig.toml, whose preload installs
@@ -217,12 +218,14 @@ const buildRoot = process.cwd();
 const workerEntry = Bun.resolveSync("@opentui/core/parser.worker", buildRoot);
 const workerRelToRoot = relative(buildRoot, workerEntry);
 
-// On-disk cache for the pinned llama-server release archives (local-embeddings sidecar runtime),
-// kept OUTSIDE git (see .gitignore) so a rebuild need not re-download ~10 MB per target. Each target's
-// archive MUST be present here before Bun.build so the define-gated `import(... with { type: "file" })`
-// in src/modules/embedding/llama_runtime.ts can embed it. A host-only `bun run build` caches only the
-// host target's archive: the other three targets' imports are DCE'd away (their `__INFLEXA_LLAMA_TARGET__`
-// comparisons fold to false) and never resolved, so their archives are neither needed nor fetched.
+// On-disk cache for the build-time embedded artifacts — the per-target llama-server release archives
+// (local-embeddings sidecar runtime) AND the platform-independent embedding-model GGUF — kept OUTSIDE git
+// (see .gitignore) so a rebuild need not re-download them. Each artifact MUST be present here before
+// Bun.build so the define-gated `import(... with { type: "file" })` (in src/modules/embedding/llama_runtime.ts
+// for the archives, src/modules/embedding/setup.ts for the model) can embed it. A host-only `bun run build`
+// caches only the host target's archive plus the one model: the other three targets' archive imports are
+// DCE'd away (their `__INFLEXA_LLAMA_TARGET__` comparisons fold to false) and never resolved, so those
+// archives are neither needed nor fetched.
 const LLAMA_CACHE_DIR = join(process.cwd(), ".llama-cache");
 
 // Ensure `targetKey`'s pinned archive sits in the cache, hash-verified against the vendored SHA-256
@@ -262,25 +265,63 @@ async function ensureLlamaArchiveCached(targetKey: string): Promise<LlamaTargetK
     return pin.target;
 }
 
-// Remove every cache file that matches no current LLAMA_PINS artifact BEFORE compiling. A pin bump renames
-// the artifacts (new tag → new filenames) but leaves the superseded archives on disk; if the embed-import
-// literals in llama_runtime.ts were not all updated in lockstep, a stale literal could still resolve
-// against one of those leftover files and embed the WRONG runtime silently. Deleting them turns that
-// mistake into a loud import-resolution build failure instead — the same failure a clean CI checkout would
-// produce. Only flat archive files live here, so directories (none expected) are left untouched.
+// Ensure the pinned embedding-model GGUF sits in the cache, hash-verified against MODEL_SHA256. The model
+// is platform-independent, so unlike the per-target llama-server archives it is cached ONCE per build and
+// embedded into EVERY target binary via the `__INFLEXA_COMPILED__`-gated import in
+// src/modules/embedding/setup.ts (one asset, no per-target DCE selection). MODEL_SHA256 is the SAME
+// integrity authority runtime acquisition re-applies (one hash source, two gates), so the build-time and
+// first-run verifications can never disagree. A cache hit re-verifies rather than trusting the bytes on
+// disk. Any fetch/hash failure fails the build LOUDLY (process.exit(1)) — a binary that silently embedded
+// a wrong or corrupt model is worse than no binary.
+async function ensureModelCached(): Promise<void> {
+    const cachedPath = join(LLAMA_CACHE_DIR, MODEL_ARTIFACT);
+    if (existsSync(cachedPath)) {
+        const cachedDigest = new Bun.CryptoHasher("sha256").update(await Bun.file(cachedPath).bytes()).digest("hex");
+        if (cachedDigest === MODEL_SHA256) return;
+        console.error(`error: cached ${MODEL_ARTIFACT} sha256 ${cachedDigest} does not match the vendored pin ${MODEL_SHA256} — delete ${LLAMA_CACHE_DIR} and rebuild`);
+        process.exit(1);
+    }
+    console.log(`fetching embedding model ${MODEL_ARTIFACT} …`);
+    const response = await fetch(MODEL_URL);
+    if (!response.ok) {
+        console.error(`error: could not download ${MODEL_URL} — HTTP ${response.status} ${response.statusText}`);
+        process.exit(1);
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+    if (digest !== MODEL_SHA256) {
+        console.error(`error: downloaded ${MODEL_ARTIFACT} sha256 ${digest} does not match the vendored pin ${MODEL_SHA256} — upstream may have re-cut the file; refusing to embed it`);
+        process.exit(1);
+    }
+    await Bun.write(cachedPath, bytes); // Bun.write creates LLAMA_CACHE_DIR if absent
+    console.log(`cached ${MODEL_ARTIFACT} (${(bytes.length / 1024 / 1024).toFixed(1)} MB)`);
+}
+
+// Remove every cache file that matches no current pin BEFORE compiling — covering both artifact kinds: the
+// per-target llama-server archives (LLAMA_PINS) and the platform-independent embedding-model GGUF
+// (MODEL_ARTIFACT). A pin bump renames the artifacts (new tag/revision → new filenames) but leaves the
+// superseded files on disk; if the embed-import literals in llama_runtime.ts / setup.ts were not all
+// updated in lockstep, a stale literal could still resolve against one of those leftover files and embed
+// the WRONG artifact silently. Deleting them turns that mistake into a loud import-resolution build failure
+// instead — the same failure a clean CI checkout would produce. Only flat files live here, so directories
+// (none expected) are left untouched.
 function sweepLlamaCache(): void {
     if (!existsSync(LLAMA_CACHE_DIR)) return;
-    // Widen to Set<string>: LLAMA_PINS is `as const`, so the mapped artifact names infer a literal union
-    // that would reject a plain-string `.has(entry.name)` membership test.
-    const currentArtifacts = new Set<string>(Object.values(LLAMA_PINS).map((pin) => pin.artifact));
+    // Widen to Set<string>: LLAMA_PINS is `as const` (and MODEL_ARTIFACT is a literal too), so the artifact
+    // names infer a literal union that would reject a plain-string `.has(entry.name)` membership test.
+    const currentArtifacts = new Set<string>([...Object.values(LLAMA_PINS).map((pin) => pin.artifact), MODEL_ARTIFACT]);
     for (const entry of readdirSync(LLAMA_CACHE_DIR, { withFileTypes: true })) {
         if (!entry.isFile() || currentArtifacts.has(entry.name)) continue;
         rmSync(join(LLAMA_CACHE_DIR, entry.name), { force: true });
-        console.log(`swept stale llama-cache archive ${entry.name} (matches no current LLAMA_PINS artifact)`);
+        console.log(`swept stale llama-cache file ${entry.name} (matches no current pin)`);
     }
 }
 
 sweepLlamaCache();
+
+// Fetch + verify the platform-independent embedding model ONCE, outside the target loop: every target
+// embeds the same asset (D7), so a per-target fetch would be wasted work.
+await ensureModelCached();
 
 const plugin = createSolidTransformPlugin();
 for (const target of targets) {

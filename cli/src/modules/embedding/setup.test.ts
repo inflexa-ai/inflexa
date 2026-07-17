@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -8,9 +8,10 @@ import { err, ok } from "neverthrow";
 
 import { readConfig, writeConfig, type Config } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
+import { __setCompiledBinaryForTest } from "../../lib/install_context.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { __resetLlamaRuntimeForTest, __setLlamaAcquireForTest, __setLlamaPinForTest, materializedLlamaServer, type ResolvedPin } from "./llama_runtime.ts";
-import { ensureEmbedderReady, runEmbeddingSetup } from "./setup.ts";
+import { __setEmbeddedModelForTest, __setModelPinForTest, acquireModel, ensureEmbedderReady, runEmbeddingSetup } from "./setup.ts";
 
 // The test preload sandboxes XDG_DATA_HOME/XDG_CONFIG_HOME, so env.configPath
 // and env.embeddingModelPath point into a temp dir — safe to create/delete here.
@@ -177,5 +178,135 @@ describe("runEmbeddingSetup", () => {
         const result = await runEmbeddingSetup(true, "off");
         expect(result.isOk()).toBe(true);
         expect(readConfig().embedding.mode).toBe("off");
+        // Declined setup acquires nothing: the model path stays empty (no embedded copy, no download).
+        expect(existsSync(env.embeddingModelPath)).toBe(false);
+    });
+});
+
+// --- acquireModel source routing ---------------------------------------------
+// acquireModel is source-aware: a compiled binary copies its build-time embedded asset (no network), a
+// source checkout streams the pinned file from HuggingFace, and BOTH byte sources are SHA-256-verified
+// before anything lands at the final path. These tests force the install context
+// (__setCompiledBinaryForTest), the embedded-asset path (__setEmbeddedModelForTest), and the pin
+// (__setModelPinForTest), and stub globalThis.fetch so no test ever touches the real network — a
+// recorded fetch call proves a wrongly-taken download branch instead of it being silently exercised.
+describe("acquireModel", () => {
+    // A small non-gguf payload standing in for the model; its true SHA-256 lets a forced pin pass (or,
+    // with a deliberately different hash, fail) verification against either byte source.
+    const modelBytes = new TextEncoder().encode("bge-small fixture model bytes — not a real gguf");
+    const modelSha256 = new Bun.CryptoHasher("sha256").update(modelBytes).digest("hex");
+    const partPath = `${env.embeddingModelPath}.part`;
+    const PIN_URL = "https://fixture.invalid/bge-small-en-v1.5-q8_0.gguf";
+
+    // The real fetch, captured ONCE so the per-test stub is always restored regardless of which test set it.
+    const realFetch = globalThis.fetch;
+    // Temp dirs holding embedded-asset fixtures, reaped in afterEach so no fixture leaks between tests.
+    const fixtureDirs: string[] = [];
+
+    /** Write `bytes` to a fresh temp file and return its path, standing in for the compiled binary's embedded asset. */
+    function writeEmbeddedFixture(bytes: Uint8Array): string {
+        const dir = mkdtempSync(join(tmpdir(), "inflexa-embed-asset-"));
+        fixtureDirs.push(dir);
+        const path = join(dir, "bge-small-en-v1.5-q8_0.gguf");
+        writeFileSync(path, bytes);
+        return path;
+    }
+
+    /** Stub globalThis.fetch to record each call's URL and serve `bytes`, standing in for the HuggingFace download. */
+    function stubFetch(bytes: Uint8Array): { calls: string[] } {
+        const spy = { calls: [] as string[] };
+        // Test-only replacement of the global fetch: it records call URLs (so a wrongly-taken download
+        // branch is caught, not silently exercised) and serves fixture bytes for the source path. The
+        // cast is required because a bare recorder is narrower than fetch's overloaded signature; it is
+        // sound because this is a test-only substitution restored to realFetch in this describe's afterEach.
+        globalThis.fetch = ((input: string | URL | Request): Promise<Response> => {
+            spy.calls.push(String(input));
+            return Promise.resolve(new Response(bytes));
+        }) as unknown as typeof globalThis.fetch;
+        return spy;
+    }
+
+    afterEach(() => {
+        globalThis.fetch = realFetch;
+        __setCompiledBinaryForTest(null);
+        __setEmbeddedModelForTest(null);
+        __setModelPinForTest(null);
+        // The .part sidecar and any embedded-asset fixture are the two artifacts these tests create
+        // outside the paths the top-level afterEach already reaps.
+        assertTestSandbox(partPath);
+        rmSync(partPath, { force: true });
+        for (const dir of fixtureDirs) rmSync(dir, { recursive: true, force: true });
+        fixtureDirs.length = 0;
+    });
+
+    test("compiled context copies the embedded asset with no fetch", async () => {
+        __setCompiledBinaryForTest(true);
+        __setEmbeddedModelForTest(writeEmbeddedFixture(modelBytes));
+        __setModelPinForTest({ url: PIN_URL, sha256: modelSha256 });
+        const spy = stubFetch(modelBytes);
+
+        const result = await acquireModel();
+
+        expect(result.isOk()).toBe(true);
+        expect(await Bun.file(env.embeddingModelPath).text()).toBe(new TextDecoder().decode(modelBytes));
+        expect(spy.calls).toEqual([]);
+    });
+
+    test("source context downloads from the pinned URL", async () => {
+        __setCompiledBinaryForTest(false);
+        __setModelPinForTest({ url: PIN_URL, sha256: modelSha256 });
+        const spy = stubFetch(modelBytes);
+
+        const result = await acquireModel();
+
+        expect(result.isOk()).toBe(true);
+        expect(existsSync(env.embeddingModelPath)).toBe(true);
+        expect(spy.calls).toEqual([PIN_URL]);
+    });
+
+    test("checksum mismatch leaves nothing at the final path or a .part sidecar", async () => {
+        __setCompiledBinaryForTest(false);
+        // A pin hash the fixture bytes cannot produce, so verification must reject the download.
+        __setModelPinForTest({ url: PIN_URL, sha256: "0".repeat(64) });
+        stubFetch(modelBytes);
+
+        const result = await acquireModel();
+
+        expect(result.isErr()).toBe(true);
+        expect(result._unsafeUnwrapErr().type).toBe("download_failed");
+        expect(existsSync(env.embeddingModelPath)).toBe(false);
+        expect(existsSync(partPath)).toBe(false);
+    });
+
+    test("compiled context with no embedded asset is an actionable error, never a fetch", async () => {
+        __setCompiledBinaryForTest(true);
+        // Embedded override left null: in a test process the __INFLEXA_COMPILED__ define is absent, so
+        // embeddedModelPath() resolves to null — the "this binary did not embed the model" case.
+        const spy = stubFetch(modelBytes);
+
+        const result = await acquireModel();
+
+        expect(result.isErr()).toBe(true);
+        const e = result._unsafeUnwrapErr();
+        expect(e.type).toBe("download_failed");
+        expect(e.message).toContain("Reinstall the official binary");
+        expect(spy.calls).toEqual([]);
+    });
+
+    test("already-present model skips acquisition in both install contexts", async () => {
+        placeFakeModel();
+        const spy = stubFetch(modelBytes);
+
+        for (const compiled of [true, false]) {
+            __setCompiledBinaryForTest(compiled);
+            __setModelPinForTest({ url: PIN_URL, sha256: modelSha256 });
+
+            const result = await acquireModel();
+
+            expect(result.isOk()).toBe(true);
+            // The pre-existing fake marker is untouched — neither an embedded copy nor a download ran.
+            expect(await Bun.file(env.embeddingModelPath).text()).toBe("fake-gguf");
+        }
+        expect(spy.calls).toEqual([]);
     });
 });
