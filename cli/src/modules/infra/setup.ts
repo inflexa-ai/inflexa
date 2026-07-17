@@ -80,6 +80,26 @@ export async function setup(options: SetupOptions): Promise<void> {
     );
     if (connectionFlag === null) return;
 
+    // Local embeddings need no container runtime — the llama-server sidecar is a
+    // plain subprocess, not a compose service — and the bge-small model ships as a
+    // build-time embedded asset. So a preselected `--embeddings` mode is configured
+    // ahead of the runtime gate below, so an air-gapped / egress-restricted
+    // `inflexa setup --embeddings local` still durably configures embeddings on a
+    // host with no ready Docker/Podman; the gate that follows governs only the
+    // container stack, which genuinely needs a runtime. The interactive
+    // no-preselection flow keeps its embedding question in its spec-bound position
+    // after provider auth (see the in-flow step below), so this fires ONLY for an
+    // explicit `--embeddings` value.
+    if (options.embeddings !== undefined) {
+        const { runEmbeddingSetup } = await import("../embedding/setup.ts");
+        const embedResult = await runEmbeddingSetup(process.stdin.isTTY, options.embeddings);
+        if (embedResult.isErr()) {
+            log.error(`Embedding setup: ${embedResult.error.message}`);
+            process.exitCode = 1;
+            return;
+        }
+    }
+
     // Setup treats the runtime selection as a preference, not a gate: the selected
     // runtime (when there is one) is probed first, then the other supported
     // runtimes, and the first ready one wins ("Docker configured but stopped,
@@ -338,16 +358,21 @@ export async function setup(options: SetupOptions): Promise<void> {
         await promptResourceConfig();
 
         // --- embeddings ---
-        // Runs after auth + postgres, before "Setup complete". The interactive
-        // prompt (clack select) offers local / api-key / off; a non-TTY shell or
-        // a preselected `--embeddings` mode skips the prompt. See
-        // modules/embedding/setup.ts.
-        const { runEmbeddingSetup } = await import("../embedding/setup.ts");
-        const embedResult = await runEmbeddingSetup(process.stdin.isTTY, options.embeddings);
-        if (embedResult.isErr()) {
-            log.error(`Embedding setup: ${embedResult.error.message}`);
-            process.exitCode = 1;
-            return;
+        // The spec-bound position for the INTERACTIVE embedding question — after auth
+        // + postgres, before "Setup complete". The clack select offers
+        // local / api-key / off; a non-TTY shell skips the prompt. A preselected
+        // `--embeddings` mode is instead configured ahead of the runtime gate (local
+        // embeddings need no container runtime), so only the no-preselection flow
+        // reaches this call — the guard keeps the preselected step from running a
+        // second time here. See modules/embedding/setup.ts.
+        if (options.embeddings === undefined) {
+            const { runEmbeddingSetup } = await import("../embedding/setup.ts");
+            const embedResult = await runEmbeddingSetup(process.stdin.isTTY, options.embeddings);
+            if (embedResult.isErr()) {
+                log.error(`Embedding setup: ${embedResult.error.message}`);
+                process.exitCode = 1;
+                return;
+            }
         }
 
         // --- reference data ---
