@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -248,7 +249,32 @@ func (pt *ProvenanceTracker) parseDatagram(data []byte) {
 	pt.recordOp(op, dg.Path, dg.Layer)
 }
 
+// underWatchDir reports whether a cleaned absolute path lies within one of the
+// watch dirs. Entries carry a trailing slash, so this also excludes a watch dir
+// itself — a read of the mount root is a directory, never an attestable file.
+func underWatchDir(path string, dirs []string) bool {
+	for _, d := range dirs {
+		if strings.HasPrefix(path, d) {
+			return true
+		}
+	}
+	return false
+}
+
 func (pt *ProvenanceTracker) recordOp(op, path, layer string) {
+	// Canonicalize and re-check here, the one point every layer converges on:
+	// each hook filters by string prefix on whatever path its caller passed,
+	// which need not be canonical. "/{id}/.." literally starts with the watch
+	// dir "/{id}/" yet names its parent, so it survives the hook's filter and
+	// reaches the host as a tracked read that resolves above the mount root —
+	// which the host cannot attest, and fails the step over. Filtering on the
+	// cleaned path makes each hook's own check an optimization and this the
+	// boundary.
+	path = filepath.Clean(path)
+	if !underWatchDir(path, pt.watchDirs) {
+		return
+	}
+
 	pt.mu.Lock()
 	defer pt.mu.Unlock()
 	opMap := pt.ops[op]

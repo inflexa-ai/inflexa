@@ -25,6 +25,12 @@ in-container layers per command by injecting `PYTHONPATH`, `R_PROFILE`,
 process environment, then drains the socket after the child exits and folds the
 result into the exec frame.
 
+**The server, not the layers, is the boundary.** Each layer filters by string
+prefix on the path its caller passed, which need not be canonical — so a layer
+can report a path that matches a watch dir textually while naming somewhere
+else. Every report is canonicalized and re-checked against the watch dirs where
+the layers converge; a layer's own filter only keeps a datagram off the socket.
+
 This tracking is **production-wired**, not a prototype: the harness's
 `buildMountPlan` sets `PROVENANCE_WATCH_DIRS` to each step's analysis resource
 mount root (`/{resourceId}`), and the resulting frame is consumed by the
@@ -44,9 +50,7 @@ survives an adversary is artifact *content*, not lineage: hashes are recomputed
 host-side from disk at registration (see the exec-provenance-lineage and
 artifact-manifest specs), so content integrity holds even when the self-reported
 operation frame cannot be trusted.
-
 ## Requirements
-
 ### Requirement: Python audit hook tracks file I/O via sitecustomize.py
 
 A `sitecustomize.py` file SHALL be installed at `/opt/provenance/sitecustomize.py` in the sandbox container image. When `PYTHONPATH` includes `/opt/provenance`, the hook SHALL be loaded automatically before any user script.
@@ -292,6 +296,22 @@ configured watch dirs. After the child exits, the server SHALL drain the socket,
 combine the socket reports with the inotify verification channel, and surface the
 result as the exec `provenance` frame.
 
+The server SHALL canonicalize every reported path — collapsing `.` and `..`
+segments — and SHALL record it only if the canonical path lies **within** a
+configured watch dir, at the single point where all layers converge. A watch dir
+itself SHALL NOT be recorded: a read of the mount root is a directory, never an
+attestable file.
+
+Each in-container layer filters by string prefix on whatever path its caller
+passed, and an absolute path need not be canonical: `/{resourceId}/..` literally
+begins with the watch dir `/{resourceId}/` yet names its parent, so it survives
+every layer's own filter. The host maps such a path to a location above the
+workspace root, where it cannot attest it. The layer filters are therefore an
+optimization — they keep a datagram off the socket — and this re-check is the
+boundary that decides what a frame may contain. Canonicalization is
+**lexical**: resolving symlinks would make the reported path disagree with the
+name the workload used, and the layers report names, not inodes.
+
 #### Scenario: Layers are injected for a Python command
 
 - **GIVEN** a sandbox-server with the provenance files installed at `/opt/provenance`
@@ -303,3 +323,22 @@ result as the exec `provenance` frame.
 - **WHEN** a script reads `/{resourceId}/data/inputs/test.csv` via `pandas.read_csv` and the command completes
 - **THEN** the exec `provenance` frame's `reads` contains that path
 - **AND** does not contain stdlib paths like `/usr/lib/python3/...`
+
+#### Scenario: A read of the mount's parent is not reported
+
+- **GIVEN** a watch dir of `/{resourceId}/` and a layer reporting a read of `/{resourceId}/..` (the container root, which the workload may legitimately open)
+- **WHEN** the server records the report
+- **THEN** the canonical path is `/`, which lies outside every watch dir, and the exec `provenance` frame does NOT contain it
+
+#### Scenario: A traversal out of the tree is not reported
+
+- **GIVEN** a layer reporting a read of `/{resourceId}/../../../etc/passwd`
+- **WHEN** the server records the report
+- **THEN** the canonical path is `/etc/passwd`, which lies outside every watch dir, and the exec `provenance` frame does NOT contain it
+
+#### Scenario: A non-canonical in-tree path folds onto its canonical name
+
+- **GIVEN** R's `normalizePath(mustWork = FALSE)` reporting a write to `/{resourceId}/runs/r1/T3S1/scripts/../output/enrich.csv` (it leaves `..` intact whenever a component does not exist yet — the common case for a new output file), and the inotify layer reporting `/{resourceId}/runs/r1/T3S1/output/enrich.csv`
+- **WHEN** the server records both reports
+- **THEN** the frame carries ONE entry, under the canonical path, attributed to both layers
+

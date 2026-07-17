@@ -124,6 +124,115 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
         }
     });
 
+    test("drops a read resolving outside the analysis tree instead of failing the step", async () => {
+        // The field failure this behaviour exists for: a capture layer reported a
+        // read of `/{RID}/..` — the container root, since the tree mounts at
+        // `/{RID}` — which maps to a host path ABOVE the workspace root. It is not
+        // attestable and not this analysis's lineage, but it is not drift either:
+        // throwing here killed a whole enrichment run in the field.
+        const sessionPath = await mkdtemp(join(tmpdir(), "cortex-reconcile-"));
+        const root = join(sessionPath, RID);
+        const logger = createCapturingLogger();
+        try {
+            await mkdir(join(root, "runs/run-001/de/output"), { recursive: true });
+            await writeFile(join(root, "runs/run-001/de/output/result.csv"), "result\n1\n");
+
+            const collector = new ProvenanceCollector({ stepId: "de", runId: "run-001" });
+            feedExecFrame({
+                collector,
+                mountRoot: `/${RID}`,
+                command: ["python3", "scripts/enrich.py"],
+                exitCode: 0,
+                durationMs: 100,
+                provenance: {
+                    disabled: false,
+                    reads: [{ path: `/${RID}/..`, layers: ["preload"] }],
+                    writes: [{ path: `/${RID}/runs/run-001/de/output/result.csv`, layers: ["inotify"] }],
+                    deletes: [],
+                },
+            });
+            const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: "output/result.csv", size: 0, type: "output", hash: "" }];
+
+            const result = await reconcileManifestWithDisk({
+                workspaceRoot: root,
+                resourceId: RID,
+                runId: "run-001",
+                stepId: "de",
+                agentId: "agent-x",
+                manifest,
+                collector,
+                logger,
+            });
+
+            // The step survives and its real output still reconciles.
+            expect(result.manifest).toHaveLength(1);
+            // The out-of-tree ref is gone from both the tracked inputs and any record.
+            expect(collector.getTrackedInputs().some((r) => r.path === `/${RID}/..`)).toBe(false);
+            expect(
+                collector
+                    .getRecords()
+                    .flatMap((r) => r.inputs)
+                    .some((i) => i.path === `/${RID}/..`),
+            ).toBe(false);
+
+            // Dropping lineage is never silent — the warn names the ref and the bound.
+            const warns = logger.records.filter((r) => r.level === "warn");
+            expect(warns).toHaveLength(1);
+            expect(warns[0]!.msg).toBe("[reconcile-manifest] dropping out-of-tree input from lineage");
+            expect(warns[0]!.fields).toMatchObject({
+                runId: "run-001",
+                stepId: "de",
+                path: `/${RID}/..`,
+                boundSite: "workspace-root",
+            });
+            // A drop is not a failure: nothing is logged at error.
+            expect(logger.records.filter((r) => r.level === "error")).toHaveLength(0);
+        } finally {
+            await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+
+    test("drops a read that never names the mount root (container-prefix bound)", async () => {
+        // The other bound: a path that is not under `/{RID}` at all, so it cannot
+        // even be mapped onto the host tree. Same verdict as the workspace-root
+        // bound — out of scope, not drift.
+        const sessionPath = await mkdtemp(join(tmpdir(), "cortex-reconcile-"));
+        const root = join(sessionPath, RID);
+        const logger = createCapturingLogger();
+        try {
+            await mkdir(join(root, "runs/run-001/de/output"), { recursive: true });
+            await writeFile(join(root, "runs/run-001/de/output/result.csv"), "result\n1\n");
+
+            const collector = new ProvenanceCollector({ stepId: "de", runId: "run-001" });
+            // `feedExecFrame` strips the mount prefix, so an absolute path outside the
+            // mount survives verbatim onto the ref — drive the collector directly to
+            // get one, exactly as a leaked stdlib read would arrive.
+            collector.trackInputAccess("/etc", "passwd", null);
+            const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: "output/result.csv", size: 0, type: "output", hash: "" }];
+
+            const result = await reconcileManifestWithDisk({
+                workspaceRoot: root,
+                resourceId: RID,
+                runId: "run-001",
+                stepId: "de",
+                agentId: "agent-x",
+                manifest,
+                collector,
+                logger,
+            });
+
+            expect(result.manifest).toHaveLength(1);
+            expect(collector.getTrackedInputs().some((r) => r.path === "/etc/passwd")).toBe(false);
+
+            const warns = logger.records.filter((r) => r.level === "warn");
+            expect(warns).toHaveLength(1);
+            expect(warns[0]!.fields).toMatchObject({ path: "/etc/passwd", boundSite: "container-prefix" });
+            expect(logger.records.filter((r) => r.level === "error")).toHaveLength(0);
+        } finally {
+            await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+
     test("throws when an attested input is missing at reconcile (fail-fast)", async () => {
         const { sessionPath, root, collector, manifest } = await setup({ writeUpstream: false });
         try {
