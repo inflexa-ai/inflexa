@@ -34,7 +34,10 @@ import { createLocalEmbeddingProvider, LOCAL_EMBEDDING_DIMENSIONS, stopLocalSide
 import { MODEL_SHA256, MODEL_URL } from "./model_pin.ts";
 
 export type EmbeddingSetupError =
-    | { readonly type: "download_failed"; readonly message: string; readonly cause?: unknown }
+    // Model acquisition failed — spans BOTH byte sources: a from-source HuggingFace download fault AND a
+    // compiled-binary embedded-asset fault (this binary embedded no model, or the embedded bytes are
+    // corrupt). Named for `acquireModel`, not "download", because neither embedded case is a download.
+    | { readonly type: "acquire_failed"; readonly message: string; readonly cause?: unknown }
     | { readonly type: "verify_failed"; readonly message: string; readonly cause?: unknown }
     | { readonly type: "dimension_mismatch"; readonly message: string; readonly expected: number; readonly actual: number }
     | { readonly type: "not_configured"; readonly message: string }
@@ -88,7 +91,7 @@ async function embeddedModelPath(): Promise<string | null> {
  * (no network — the point of this path for egress-restricted environments); a source checkout streams
  * the pinned file from HuggingFace. Both sources are verified against the pinned SHA-256 before any
  * bytes land at the final path, so the "nothing lands unverified" invariant holds unconditionally
- * rather than per-source. Every failure surfaces as `download_failed` — never thrown.
+ * rather than per-source. Every failure surfaces as `acquire_failed` — never thrown.
  *
  * The bytes stage in a `.part` sidecar renamed into place only after a complete, verified flush: the
  * "already present" check above trusts bare existence, so a mid-acquisition failure must never leave
@@ -117,7 +120,7 @@ export async function acquireModel(): Promise<Result<void, EmbeddingSetupError>>
             if (assetPath === null) {
                 s.error("Bundled model missing");
                 return err({
-                    type: "download_failed",
+                    type: "acquire_failed",
                     message:
                         "This inflexa binary did not embed the bge-small embedding model. Reinstall the official binary for your platform, or run inflexa from source.",
                 });
@@ -133,7 +136,7 @@ export async function acquireModel(): Promise<Result<void, EmbeddingSetupError>>
             if (!response.ok || response.body === null) {
                 s.error("Download failed");
                 return err({
-                    type: "download_failed",
+                    type: "acquire_failed",
                     message: `Download failed: HTTP ${response.status} ${response.statusText}`,
                 });
             }
@@ -155,7 +158,7 @@ export async function acquireModel(): Promise<Result<void, EmbeddingSetupError>>
             s.error("Checksum mismatch");
             await unlink(partPath).catch(() => {});
             return err({
-                type: "download_failed",
+                type: "acquire_failed",
                 message: embedded
                     ? `The bundled model's sha256 (${digest}) does not match the pinned checksum — the embedded asset is corrupt. Reinstall the official binary for your platform.`
                     : `Downloaded file's sha256 (${digest}) does not match the pinned model checksum. Retry, or check your network path to huggingface.co.`,
@@ -171,7 +174,7 @@ export async function acquireModel(): Promise<Result<void, EmbeddingSetupError>>
         // for the model) but would confuse a du/ls of the model dir.
         await unlink(partPath).catch(() => {});
         return err({
-            type: "download_failed",
+            type: "acquire_failed",
             message: `Model acquisition failed: ${cause instanceof Error ? cause.message : String(cause)}`,
             cause,
         });
