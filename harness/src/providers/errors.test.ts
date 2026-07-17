@@ -8,6 +8,21 @@ function apiError(status: number): Error {
 }
 
 describe("classifyProviderError", () => {
+    it("classifies a 401 as a non-retryable auth error", () => {
+        // The field failure: an expired OAuth access token reached a step as a
+        // bare non-retryable 4xx, indistinguishable from a malformed request, so
+        // nothing downstream could say "re-authenticate".
+        expect(classifyProviderError(apiError(401))).toEqual({
+            kind: "auth",
+            retryable: false,
+        });
+    });
+
+    it("reads a 401 nested on the cause chain (the AI SDK wraps it)", () => {
+        const wrapped = Object.assign(new Error("AI_APICallError"), { cause: apiError(401) });
+        expect(classifyProviderError(wrapped)).toEqual({ kind: "auth", retryable: false });
+    });
+
     it("classifies a billing gateway 402 as a non-retryable budget error", () => {
         expect(classifyProviderError(apiError(402))).toEqual({
             kind: "budget",
@@ -82,6 +97,14 @@ describe("toProviderError idempotency", () => {
         expect(rewrapped.message).toBe(inner.message);
         expect(rewrapped.message).not.toBe("[object Object]");
         expect(rewrapped.message).toContain("Tool result is missing");
+    });
+
+    it("wraps a 401 into an auth error whose message names the credential, not the request", () => {
+        const err = toProviderError(apiError(401), "chat");
+        expect(err.type).toBe("auth");
+        expect(err.retryable).toBe(false);
+        expect(err.message).toMatch(/credential/i);
+        expect(isProviderError(err)).toBe(true);
     });
 
     it("wraps a plain Error into a provider error carrying its own message", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { causeDetailLines, describeCause } from "./cause.ts";
+import { causeDetailLines, describeCause, findAuthCause } from "./cause.ts";
 
 describe("describeCause", () => {
     test("an Error renders `name: message`", () => {
@@ -197,5 +197,46 @@ describe("causeDetailLines — AggregateError", () => {
     test("a non-Error member renders through the normal value path", () => {
         const agg = new AggregateError([{ type: "io", detail: "disk full" }], "agg");
         expect(causeDetailLines(agg).join("\n")).toContain('"type": "io"');
+    });
+});
+
+describe("findAuthCause", () => {
+    // The exact harness ProviderError auth shape as it crosses the turn boundary.
+    const authValue = { type: "auth", retryable: false, message: "Provider rejected the credential for chat — it is expired, revoked, or absent" };
+
+    test("matches the ProviderError auth shape directly", () => {
+        expect(findAuthCause(authValue)?.message).toContain("credential");
+    });
+
+    test("finds the auth value nested on an Error cause chain (the wrapped wire shape)", () => {
+        const wrapped = new Error("ResultError: turn failed", { cause: new Error("AI_APICallError", { cause: authValue }) });
+        expect(findAuthCause(wrapped)?.message).toContain("credential");
+    });
+
+    test("finds the auth value inside an AggregateError member", () => {
+        const agg = new AggregateError([new Error("other"), Object.assign(new Error("x"), { cause: authValue })], "agg");
+        expect(findAuthCause(agg)).not.toBeNull();
+    });
+
+    test("a type:auth without retryable:false does not match — shape guard, not name match", () => {
+        expect(findAuthCause({ type: "auth", message: "some other domain's auth error" })).toBeNull();
+    });
+
+    test("a chain deeper than the depth bound yields null instead of walking forever", () => {
+        let chain: unknown = authValue;
+        for (let i = 0; i < 10; i++) chain = new Error(`wrapper-${i}`, { cause: chain });
+        expect(findAuthCause(chain)).toBeNull();
+    });
+
+    test("a self-referential chain terminates at the bound", () => {
+        const cyclic: { type: string; cause?: unknown } = { type: "loop" };
+        cyclic.cause = cyclic;
+        expect(findAuthCause(cyclic)).toBeNull();
+    });
+
+    test("non-object and null causes yield null", () => {
+        expect(findAuthCause("auth")).toBeNull();
+        expect(findAuthCause(null)).toBeNull();
+        expect(findAuthCause(undefined)).toBeNull();
     });
 });

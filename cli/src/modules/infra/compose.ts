@@ -201,6 +201,24 @@ export async function composeUp(rt: ContainerRuntime, mode: ConnectionMode): Pro
     return ok(undefined);
 }
 
+/**
+ * Restart the proxy service in place. Exists for the launch-time credential probe: after a
+ * probe-triggered re-login rewrites the credential file, the RUNNING proxy must observe it before the
+ * re-probe — whether the vendor binary hot-reloads its auth dir is fork behavior we cannot verify, so
+ * an explicit restart removes the assumption. No mount guard: callers reach this only after a
+ * successful `composeUp`, and a restart re-executes the same compose file without recreating sources.
+ */
+export async function composeRestartProxy(rt: ContainerRuntime): Promise<Result<void, PostgresError>> {
+    const { code, stderr } = await capture(rt, composeArgs(["restart", PROXY_CONTAINER_NAME]));
+    if (code !== 0) {
+        return err({
+            type: "container_start_failed",
+            message: `Failed to restart the proxy container.${stderr ? `\n  ${stderr.trim()}` : ""}`,
+        });
+    }
+    return ok(undefined);
+}
+
 /** Pull all images in the compose file. */
 export async function composePull(rt: ContainerRuntime): Promise<Result<void, PostgresError>> {
     const { code, stderr } = await capture(rt, composeArgs(["pull"]));
