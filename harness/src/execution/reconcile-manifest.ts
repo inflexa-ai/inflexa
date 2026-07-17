@@ -27,7 +27,7 @@ import type { ProvenanceCollector } from "../provenance/collector.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { computeSha256File, hasValidContentHash } from "../lib/fs-helpers.js";
-import { artifactReconcileDropped } from "../lib/metrics.js";
+import { artifactReconcileDropped, lineageInputDropped } from "../lib/metrics.js";
 
 export interface ReconcileManifestInput {
     /** Absolute host root of the analysis's workspace tree. */
@@ -113,7 +113,7 @@ export async function reconcileManifestWithDisk(input: ReconcileManifestInput): 
         reconciled.push({ ...entry, hash, size: info.size });
     }
 
-    await fillInputHashesFromDisk(collector, workspaceRoot, resourceId, runId, stepId, logger);
+    await fillInputHashesFromDisk(collector, workspaceRoot, resourceId, runId, stepId, agentId, logger);
 
     return { manifest: reconciled, droppedCount };
 }
@@ -142,6 +142,7 @@ async function fillInputHashesFromDisk(
     resourceId: string,
     runId: string,
     stepId: string,
+    agentId: string,
     logger: Logger,
 ): Promise<void> {
     const resourceRoot = path.resolve(workspaceRoot);
@@ -167,12 +168,14 @@ async function fillInputHashesFromDisk(
         const containerPrefix = `/${resourceId}`;
         if (ref.path !== containerPrefix && !ref.path.startsWith(containerPrefix + "/")) {
             logger.warn("dropping out-of-tree input from lineage", { ...attestation, boundSite: "container-prefix" });
+            lineageInputDropped.add(1, { agent_id: agentId, step_id: stepId, reason: "container-prefix" });
             collector.dropInput(ref);
             continue;
         }
         const hostPath = path.join(resourceRoot, ref.path.slice(containerPrefix.length + 1));
         if (hostPath !== resourceRoot && !hostPath.startsWith(resourceRoot + path.sep)) {
             logger.warn("dropping out-of-tree input from lineage", { ...attestation, hostPath, boundSite: "workspace-root" });
+            lineageInputDropped.add(1, { agent_id: agentId, step_id: stepId, reason: "workspace-root" });
             collector.dropInput(ref);
             continue;
         }
@@ -197,6 +200,7 @@ async function fillInputHashesFromDisk(
             // non-file drop above. A genuinely missing FILE (ENOENT) still fails fast
             // as drift; a directory is not drift.
             logger.debug("dropping non-file input from lineage", attestation);
+            lineageInputDropped.add(1, { agent_id: agentId, step_id: stepId, reason: "directory" });
             collector.dropInput(ref);
             continue;
         }

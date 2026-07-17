@@ -193,9 +193,11 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
     });
 
     test("drops a read that never names the mount root (container-prefix bound)", async () => {
-        // The other bound: a path that is not under `/{RID}` at all, so it cannot
-        // even be mapped onto the host tree. Same verdict as the workspace-root
-        // bound — out of scope, not drift.
+        // The other bound: a frame report naming somewhere outside the mount
+        // entirely — a hook that failed to filter, e.g. a leaked stdlib read.
+        // `feedExecFrame` keeps such a path verbatim on the ref, so reconcile
+        // sees the real name and reaches the same verdict as the workspace-root
+        // bound: out of scope, not drift.
         const sessionPath = await mkdtemp(join(tmpdir(), "cortex-reconcile-"));
         const root = join(sessionPath, RID);
         const logger = createCapturingLogger();
@@ -204,10 +206,19 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
             await writeFile(join(root, "runs/run-001/de/output/result.csv"), "result\n1\n");
 
             const collector = new ProvenanceCollector({ stepId: "de", runId: "run-001" });
-            // `feedExecFrame` strips the mount prefix, so an absolute path outside the
-            // mount survives verbatim onto the ref — drive the collector directly to
-            // get one, exactly as a leaked stdlib read would arrive.
-            collector.trackInputAccess("/etc", "passwd", null);
+            feedExecFrame({
+                collector,
+                mountRoot: `/${RID}`,
+                command: ["python3", "scripts/enrich.py"],
+                exitCode: 0,
+                durationMs: 100,
+                provenance: {
+                    disabled: false,
+                    reads: [{ path: "/etc/passwd", layers: ["preload"] }],
+                    writes: [{ path: `/${RID}/runs/run-001/de/output/result.csv`, layers: ["inotify"] }],
+                    deletes: [],
+                },
+            });
             const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: "output/result.csv", size: 0, type: "output", hash: "" }];
 
             const result = await reconcileManifestWithDisk({

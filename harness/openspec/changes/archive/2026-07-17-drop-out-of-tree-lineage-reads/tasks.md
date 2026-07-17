@@ -20,3 +20,10 @@
 - [x] 3.2 Delta on `sandbox-provenance-tracking`: the server canonicalizes and re-checks the watch dirs where the layers converge, so a layer's prefix filter is an optimization and the server is the boundary.
 - [x] 3.3 Hand-rewrite both **Purpose** sections, which deltas do not carry: `artifact-manifest` claimed an input "resolving outside the analysis tree" was terminal (only *missing* is), and `sandbox-provenance-tracking` described the fold without naming the server as the boundary.
 - [x] 3.4 Archived (`openspec archive`); both main specs updated and all 57 validate strict.
+
+## 4. Review follow-ups
+
+- [x] 4.1 Close the ingestion gap: an out-of-mount frame path rides verbatim onto its `InputRef` (never mount-root-prefixed, which forged an in-tree name and turned the read into phantom ENOENT drift), and separators doubled at the mount boundary collapse to the canonical relative form. The container-prefix bound is now reachable end-to-end; its regression test drives `feedExecFrame` with a literal `/etc/passwd` read.
+- [x] 4.2 Count every reconcile input drop on `cortex.artifact.reconcile.input_dropped` (tagged `agent_id`, `step_id`, `reason` ∈ `directory` / `container-prefix` / `workspace-root`).
+- [x] 4.3 sandbox-server: debug-log each report `recordOp` drops — a dropped report never reaches the host, so this is the only trace of a hook-filter leak on a current image.
+- [x] 4.4 Spec sync: delta + main update on `exec-provenance-lineage` (verbatim out-of-mount refs, boundary canonicalization); `artifact-manifest` warn-record wording scoped to the bound that actually resolves a host path, plus the input-drop counter.

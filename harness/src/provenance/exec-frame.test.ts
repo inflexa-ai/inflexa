@@ -75,6 +75,53 @@ describe("feedExecFrame", () => {
         expect(rec.inputs[0]!.runId).toBe("run-002");
     });
 
+    test("a read outside the mount keeps its own name on the ref", () => {
+        // A path no hook should have let through. Prepending the mount root
+        // would forge the in-tree name `/a1/etc/passwd` and reconcile would
+        // fail the step over a missing file; verbatim, reconcile recognizes
+        // it as out-of-tree and drops it.
+        const collector = new ProvenanceCollector({ stepId: "s", runId: "r" });
+        feedExecFrame({
+            collector,
+            mountRoot: MOUNT,
+            command: ["python3", "scripts/x.py"],
+            exitCode: 0,
+            durationMs: 5,
+            provenance: {
+                disabled: false,
+                reads: [{ path: "/etc/passwd", layers: ["preload"] }],
+                writes: [],
+                deletes: [],
+            },
+        });
+        const refs = collector.getTrackedInputs();
+        expect(refs).toHaveLength(1);
+        expect(refs[0]!.path).toBe("/etc/passwd");
+    });
+
+    test("separators doubled at the mount boundary collapse to the canonical name", () => {
+        // POSIX-wise `/a1//data/x.csv` names `/a1/data/x.csv`; the ref must land
+        // on the canonical form so it maps into the host tree and dedups.
+        const collector = new ProvenanceCollector({ stepId: "s", runId: "r" });
+        feedExecFrame({
+            collector,
+            mountRoot: MOUNT,
+            command: ["python3", "scripts/x.py"],
+            exitCode: 0,
+            durationMs: 5,
+            provenance: {
+                disabled: false,
+                reads: [{ path: "/a1//data/inputs/Lab/counts.csv", layers: ["python"] }],
+                writes: [],
+                deletes: [],
+            },
+        });
+        const refs = collector.getTrackedInputs();
+        expect(refs).toHaveLength(1);
+        expect(refs[0]!.path).toBe("/a1/data/inputs/Lab/counts.csv");
+        expect(refs[0]!.source).toBe("data");
+    });
+
     test("missing frame degrades to no inputs without throwing", () => {
         const collector = new ProvenanceCollector({ stepId: "s", runId: "r" });
         expect(() =>

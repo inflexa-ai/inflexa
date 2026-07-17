@@ -17,10 +17,16 @@ import type { ProvenanceFrame } from "../sandbox/types.js";
 import { classifyReadPath, type ProvenanceCollector, type ObservedWrite } from "./collector.js";
 import type { InputRef } from "./types.js";
 
-/** Strip the `/{resourceId}/` mount prefix from an absolute frame path. */
+/**
+ * Strip the `/{resourceId}/` mount prefix from an absolute frame path.
+ * Separators doubled at the boundary collapse (`/{rid}//a` → `a`) so an
+ * in-mount name lands on its canonical relative form. A path not under the
+ * mount comes back unchanged — still absolute — and the collector carries it
+ * verbatim (see `trackInputAccess`).
+ */
 export function stripMountPrefix(mountRoot: string, absPath: string): string {
     const prefix = mountRoot.endsWith("/") ? mountRoot : `${mountRoot}/`;
-    return absPath.startsWith(prefix) ? absPath.slice(prefix.length) : absPath;
+    return absPath.startsWith(prefix) ? absPath.slice(prefix.length).replace(/^\/+/, "") : absPath;
 }
 
 export interface FeedExecFrameArgs {
