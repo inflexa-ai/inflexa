@@ -9,7 +9,7 @@ import { firstReadyRuntime, runtimeIds, runtimes, ContainerRuntimeError, type Co
 import { env } from "../../lib/env.ts";
 import { select, promptText } from "../../lib/cli.ts";
 import { detectedMachine, resolveHarnessConfig, resolveModelConnection } from "../harness/config.ts";
-import { readApiKey, resolveModelId } from "../proxy/models.ts";
+import { readApiKey, resolveModelId, type ChatSetupError } from "../proxy/models.ts";
 import { type PostgresConnection } from "./postgres_types.ts";
 import { writeComposeFile, composeUp, composePull, composePullIfMissing, composeAvailable, composeRestartProxy, type ConnectionMode } from "./compose.ts";
 import { formatInfraStateError, writeProxyConfig } from "./proxy_config.ts";
@@ -471,9 +471,11 @@ function printNextSteps(options: SetupOptions, conn: PostgresConnection, mode: C
 // Postgres provisioning is mode-independent.
 
 /**
- * The direct-mode secret's environment variable. Mirrors lib/env.ts's `modelApiKeyVar` — the sole
- * `process.env` reader, which does not export the name — because setup only PRINTS it (never reads it),
- * so the literal is duplicated rather than widening env.ts's surface for a display string.
+ * The direct-mode secret's environment variable, as a NAME to show the user — the string every surface
+ * that must tell them which variable to set (setup's next-steps, the chat auth banner) prints. It
+ * mirrors lib/env.ts's `modelApiKeyVar`, the sole `process.env` reader, which does not export the name:
+ * nothing here ever READS the variable, so this duplicates one display literal rather than widening
+ * env.ts's surface with a value that would invite reading the secret from outside its owner.
  */
 export const MODEL_API_KEY_VAR = "INFLEXA_MODEL_API_KEY";
 
@@ -866,15 +868,32 @@ async function authenticate(rt: ContainerRuntime, preselected: Provider | undefi
 // inline. cliproxy mode only: a direct connection is the user's own endpoint and key, not ours to
 // spend on validation.
 
-/** Bounds the probe request so a wedged proxy can never stall the launch. */
+/** Bounds each probe request so a wedged proxy can never stall the launch. */
 const PROBE_TIMEOUT_MS = 10_000;
 
 /**
- * What one probe request observed. `unobservable` covers everything that is not a credential verdict
- * — outage, timeout, cold container, a malformed probe — and never gates the launch: the probe must
- * not add new ways for a launch to block.
+ * How long a not-yet-answering proxy is retried before its silence is called unreadable, and the pause
+ * between tries. The budget is deliberately larger than a container's start latency and smaller than a
+ * user's patience; a refused connection costs nothing per try, so the pause is what paces the loop.
+ */
+const PROXY_BOOT_BUDGET_MS = 10_000;
+const PROXY_BOOT_PAUSE_MS = 250;
+
+/**
+ * What one probe request observed, as the launch policy sees it. `unobservable` covers everything that
+ * is not a credential verdict — an outage, a timeout, a malformed probe — and never gates the launch:
+ * the probe must not add new ways for a launch to block.
  */
 type CredentialProbe = { kind: "ok" } | { kind: "unauthorized" } | { kind: "unobservable"; detail: string };
+
+/**
+ * One attempt's raw outcome, before {@link retryWhileUnreachable} folds it into a {@link CredentialProbe}.
+ * `unreachable` — no HTTP answer at all — is split out because it is the ONE outcome worth retrying:
+ * `compose up`/`restart` return when the ENGINE reports the container started, not when the proxy
+ * binary inside it has bound its port, so a request issued right after either can lose that race and
+ * observe a refused connection that says nothing about the credential.
+ */
+export type ProbeAttempt = CredentialProbe | { kind: "unreachable"; detail: string };
 
 /**
  * One minimal completion through the proxy to observe whether the provider credential works. This is
@@ -883,7 +902,7 @@ type CredentialProbe = { kind: "ok" } | { kind: "unauthorized" } | { kind: "unob
  * Anthropic Messages route the chat path targets (see resolveModelConnection: cliproxy has no
  * protocol choice).
  */
-async function probeProviderCredential(apiKey: string, modelId: string): Promise<CredentialProbe> {
+async function askProxy(apiKey: string, modelId: string): Promise<ProbeAttempt> {
     let res: Response;
     try {
         res = await fetch(`${env.cliproxyApiUrl}/messages`, {
@@ -893,12 +912,74 @@ async function probeProviderCredential(apiKey: string, modelId: string): Promise
             signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
         });
     } catch (cause) {
-        // Timeout, refused connection, DNS — bridge the throw in-band: none of these is a verdict.
-        return { kind: "unobservable", detail: cause instanceof Error ? cause.message : String(cause) };
+        // Refused connection, DNS, or the timeout above — bridge the throw in-band. A timeout lands
+        // here too and is retried like any other silence, but it burns the whole per-try bound, so the
+        // budget check below ends the loop rather than paying it twice.
+        return { kind: "unreachable", detail: cause instanceof Error ? cause.message : String(cause) };
     }
     if (res.status === 401) return { kind: "unauthorized" };
     if (!res.ok) return { kind: "unobservable", detail: `HTTP ${res.status}` };
     return { kind: "ok" };
+}
+
+/**
+ * Map a model-resolution failure onto a probe attempt. Exported for its unit tests.
+ *
+ * `resolveModelId` collapses "the proxy never answered" and "the proxy answered with a status" into
+ * one `proxy_unreachable` whose `detail` is either `HTTP <status>` or the fetch throw's message, so
+ * that prefix is the only discriminator available. The check is kept here rather than widening
+ * `ChatSetupError`, because the chat path that owns that type has no use for the distinction.
+ */
+export function classifyModelResolution(error: ChatSetupError): ProbeAttempt {
+    switch (error.type) {
+        case "proxy_key_missing":
+            return { kind: "unobservable", detail: error.type };
+        case "no_models":
+            // An empty model list is a credential verdict, not an outage. The proxy serves this list
+            // from its own registry and answers with the FULL list even when the credential behind it
+            // is dead (verified live against the fork), so an empty one means it loaded no credential
+            // at all — while the static presence check just proved a file exists. The two disagree,
+            // which means the file is not one the proxy can use, and the remedy is a 401's: sign in
+            // again. Reaching this needs the proxy to be answering, so the boot race cannot fake it.
+            return { kind: "unauthorized" };
+        case "proxy_unreachable":
+            // /models should answer from the proxy's local registry with the client key alone; if the
+            // fork gates it on the provider credential after all, a 401 here IS the credential
+            // verdict, not an outage.
+            if (error.detail === "HTTP 401") return { kind: "unauthorized" };
+            return error.detail.startsWith("HTTP ")
+                ? { kind: "unobservable", detail: `${error.type}: ${error.detail}` }
+                : { kind: "unreachable", detail: error.detail };
+        default: {
+            const unhandled: never = error;
+            throw new Error(`unhandled ChatSetupError: ${JSON.stringify(unhandled)}`);
+        }
+    }
+}
+
+/**
+ * Run `attempt` until it reads something other than silence, then hand the policy a verdict it can
+ * act on. Every other container path in this module waits for readiness rather than assuming it (see
+ * `waitForReady` in postgres.ts); the proxy publishes no health endpoint, so answering AT ALL is the
+ * only readiness signal there is, and retrying the probe itself is that wait. Without it the re-probe
+ * after a re-login — the step whose whole job is confirming the fresh credential took — would
+ * silently degrade to a warning on exactly the cold container its own restart just created.
+ *
+ * A proxy still silent at the budget is a fault no verdict can be read from, so it warns and proceeds
+ * like any other `unobservable`.
+ */
+export async function retryWhileUnreachable(
+    attempt: () => Promise<ProbeAttempt>,
+    budgetMs = PROXY_BOOT_BUDGET_MS,
+    pauseMs = PROXY_BOOT_PAUSE_MS,
+): Promise<CredentialProbe> {
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+        const outcome = await attempt();
+        if (outcome.kind !== "unreachable") return outcome;
+        if (Date.now() >= deadline) return { kind: "unobservable", detail: outcome.detail };
+        await Promise.sleep(pauseMs);
+    }
 }
 
 /**
@@ -913,14 +994,16 @@ type LiveCredentialDeps = {
     /** Make the fresh credential observable to the RUNNING proxy (see composeRestartProxy). */
     restartProxy: () => Promise<Result<void, { message: string }>>;
     isInteractive: () => boolean;
+    /** Tell the user why the launch is about to hand them an interactive login — a notice, not a fault. */
+    announce: (message: string) => void;
     warn: (message: string) => void;
 };
 
 /**
- * The launch-gate credential policy: only a definite 401 gates. On a TTY it drives one re-login →
- * proxy restart → re-probe cycle; a second 401 fails hard naming BOTH remaining causes, because
- * looping the login again cannot distinguish them. Every non-verdict outcome warns and proceeds —
- * the chat surface's auth mapping is the backstop for anything the probe could not see.
+ * The launch-gate credential policy: only a definite credential rejection gates. On a TTY it drives
+ * one re-login → proxy restart → re-probe cycle; a second rejection fails hard naming BOTH remaining
+ * causes, because looping the login again cannot distinguish them. Every non-verdict outcome warns
+ * and proceeds — the chat surface's auth mapping is the backstop for anything the probe could not see.
  */
 export async function ensureLiveCredential(deps: LiveCredentialDeps): Promise<Result<void, ProxyError>> {
     const first = await deps.probe();
@@ -934,7 +1017,7 @@ export async function ensureLiveCredential(deps: LiveCredentialDeps): Promise<Re
         return err(new ProxyError("The provider login has expired or been revoked.\n  Run `inflexa setup --provider <name>` to sign in again."));
     }
 
-    console.log("\n  Your provider login has expired or been revoked — let's sign in again.");
+    deps.announce("Your provider login has expired or been revoked — let's sign in again.");
     if (!(await deps.relogin())) {
         return err(new ProxyError("Re-authentication didn't complete.\n  Run `inflexa setup --provider <name>` to sign in, then try again."));
     }
@@ -957,30 +1040,28 @@ export async function ensureLiveCredential(deps: LiveCredentialDeps): Promise<Re
 }
 
 /**
- * Production assembly of {@link ensureLiveCredential}: resolve the probe inputs from the provisioned
- * config and the proxy's own model list, pre-select the re-login account from the recorded provider
- * slug, and restart the proxy after a re-login. A spinner frames each probe attempt so the launch
- * shows why it is pausing for ~a second.
+ * One full probe attempt: resolve the inputs from the provisioned config and the proxy's own model
+ * list, then ask. Both round-trips are bounded, so {@link retryWhileUnreachable}'s budget bounds the
+ * whole loop — an unbounded one would hand a wedged proxy the launch indefinitely.
+ */
+async function probeOnce(): Promise<ProbeAttempt> {
+    const key = await readApiKey();
+    if (key.isErr()) return { kind: "unobservable", detail: key.error.type };
+    const model = await resolveModelId(key.value, AbortSignal.timeout(PROBE_TIMEOUT_MS));
+    return model.isErr() ? classifyModelResolution(model.error) : askProxy(key.value, model.value);
+}
+
+/**
+ * Production assembly of {@link ensureLiveCredential}: probe (retrying a proxy that is not answering
+ * yet), pre-select the re-login account from the recorded provider slug, and restart the proxy after a
+ * re-login. A spinner frames each probe so the launch shows why it is pausing for ~a second.
  */
 async function verifyCredentialAtLaunch(rt: ContainerRuntime): Promise<Result<void, ProxyError>> {
     return ensureLiveCredential({
         probe: async () => {
             const s = clackSpinner();
             s.start("Verifying provider login");
-            const outcome = await (async (): Promise<CredentialProbe> => {
-                const key = await readApiKey();
-                if (key.isErr()) return { kind: "unobservable", detail: key.error.type };
-                const model = await resolveModelId(key.value);
-                if (model.isErr()) {
-                    // /models should answer from the proxy's local registry with the client key
-                    // alone; if the fork gates it on the provider credential after all, a 401 here
-                    // IS the credential verdict, not an outage.
-                    if (model.error.type === "proxy_unreachable" && model.error.detail === "HTTP 401") return { kind: "unauthorized" };
-                    const detail = model.error.type === "proxy_unreachable" ? `${model.error.type}: ${model.error.detail}` : model.error.type;
-                    return { kind: "unobservable", detail };
-                }
-                return probeProviderCredential(key.value, model.value);
-            })();
+            const outcome = await retryWhileUnreachable(probeOnce);
             if (outcome.kind === "ok") s.stop("Provider login verified");
             else if (outcome.kind === "unauthorized") s.stop("Provider login expired or revoked");
             else s.stop("Provider login not verifiable");
@@ -989,6 +1070,9 @@ async function verifyCredentialAtLaunch(rt: ContainerRuntime): Promise<Result<vo
         relogin: () => authenticate(rt, providerKindForSlug(resolveModelConnection().provider)),
         restartProxy: () => composeRestartProxy(rt),
         isInteractive: () => Boolean(process.stdin.isTTY),
+        // Printed, not logged: this lands in the normal-stdio launch phase right before the login
+        // takes the terminal, beside ensureProxyReady's own fresh-login notice.
+        announce: (message) => console.log(`\n  ${message}`),
         warn: (message) => log.warn(message),
     });
 }

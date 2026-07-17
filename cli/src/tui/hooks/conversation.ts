@@ -497,6 +497,30 @@ function dropEmptyAssistant(assistantId: string): void {
 }
 
 /**
+ * The banner line for a failed turn. An auth-kind provider failure gets a dedicated remedy because
+ * the generic rendering buries the one fact that matters — a human has to re-authenticate: in
+ * cliproxy mode that names the configured provider and the two ways back in (relaunch, where the
+ * launch gate re-authenticates inline, or the forced setup re-login); in direct mode the credential
+ * is the user's own env key, so the remedy names the variable instead. Any non-auth failure falls
+ * back to the generic cause rendering. Exported for its unit tests.
+ *
+ * Both modes always have a provider slug to name: {@link resolveModelConnection} requires one for a
+ * `direct` connection and defaults a `cliproxy` one to `anthropic`, so there is no slug-less branch
+ * to guard. Only the ACCOUNT KIND behind the slug can be unknown (a slug we never recorded — see
+ * {@link providerKindForSlug}), and that costs the forced-re-login hint, not the message.
+ */
+export function turnFailureMessage(cause: unknown): string {
+    if (!findAuthCause(cause)) return `The turn failed: ${describeCause(cause)} — ${detailsHint()}`;
+    const connection = resolveModelConnection();
+    if (connection.mode === "direct") {
+        return `The ${connection.provider} endpoint rejected your API key — check ${MODEL_API_KEY_VAR}, then restart the chat. — ${detailsHint()}`;
+    }
+    const kind = providerKindForSlug(connection.provider);
+    const relogin = kind ? ` (or run \`inflexa setup --provider ${kind}\`)` : "";
+    return `Your ${connection.provider} login has expired or been revoked — restart the chat to sign in again${relogin}. — ${detailsHint()}`;
+}
+
+/**
  * Reduce the engine's {@link TurnOutcome} onto the store for the CURRENT turn (the caller's C1 guard
  * has already dropped a superseded turn's outcome, so `assistantId` still identifies a live message):
  * flush the streamed text (or the engine's `fallbackText` on a delta-less turn), close any open tool
@@ -505,30 +529,6 @@ function dropEmptyAssistant(assistantId: string): void {
  * `aborted` returns to idle with no error (the user cancelled), having flushed what streamed.
  * `prepare_failed`/`thread_gone` bail before the loop, so they pop the empty assistant bubble instead.
  */
-/**
- * The banner line for a failed turn. An auth-kind provider failure gets a dedicated remedy because
- * the generic rendering buries the one fact that matters — a human has to re-authenticate: in
- * cliproxy mode that names the configured provider and the two ways back in (relaunch, where the
- * launch gate re-authenticates inline, or the forced setup re-login); in direct mode the credential
- * is the user's own env key, so the remedy names the variable instead. No recorded provider slug —
- * or any non-auth failure — falls back to the generic cause rendering. Exported for its unit tests.
- */
-export function turnFailureMessage(cause: unknown): string {
-    const auth = findAuthCause(cause);
-    if (auth) {
-        const connection = resolveModelConnection();
-        if (connection.mode === "direct") {
-            return `The ${connection.provider} endpoint rejected your API key — check ${MODEL_API_KEY_VAR}, then restart the chat. — ${detailsHint()}`;
-        }
-        if (connection.provider) {
-            const kind = providerKindForSlug(connection.provider);
-            const relogin = kind ? ` (or run \`inflexa setup --provider ${kind}\`)` : "";
-            return `Your ${connection.provider} login has expired or been revoked — restart the chat to sign in again${relogin}. — ${detailsHint()}`;
-        }
-    }
-    return `The turn failed: ${describeCause(cause)} — ${detailsHint()}`;
-}
-
 function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number): void {
     switch (outcome.kind) {
         case "ok":

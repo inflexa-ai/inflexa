@@ -14,15 +14,17 @@
 
 - [x] 3.1 Verify against the running fork that `GET /models` answers without exercising the provider credential (design open question); if it 401s on a dead credential, use that as the probe signal instead of a completion request
 - [x] 3.2 Implement the probe in `ensureProxyReady` after `composeUp`, cliproxy mode only: `readApiKey` → `resolveModelId` → minimal completion (`max_tokens: 1`, ~10s timeout) via `env.cliproxyApiUrl`; `Result`-channel wrapper for the fetch per the neverthrow boundary rule
-- [x] 3.3 Wire the 401 policy: TTY → inline `authenticate()`, restart the proxy service, re-probe once, second 401 fails naming both causes (re-login didn't take / client-key mismatch); non-TTY → `ProxyError` naming `inflexa setup --provider <kind>`
-- [x] 3.4 Wire the non-401 policy: warn (including the observed status/failure) and proceed — no new blocking failure modes; record the status the fork actually emits for a dead credential in the change notes (feeds the harness classifier caveat)
-- [x] 3.5 Unit-test the probe policy matrix with a mocked fetch: healthy, 401+TTY (re-login path invoked), 401+non-TTY, 5xx, timeout, connection refused, direct mode (no request made)
+- [x] 3.3 Wire the rejection policy: TTY → inline `authenticate()`, restart the proxy service, re-probe once, second rejection fails naming both causes (re-login didn't take / client-key mismatch); non-TTY → `ProxyError` naming `inflexa setup --provider <kind>`
+- [x] 3.4 Wire the non-rejection policy: warn (including the observed status/failure) and proceed — no new blocking failure modes; record the status the fork actually emits for a dead credential in the change notes (feeds the harness classifier caveat)
+- [x] 3.5 Unit-test the probe policy matrix through the injected seams: healthy, rejection+TTY (re-login path invoked), rejection+non-TTY, unobservable, failed relogin, failed restart, second rejection
+- [x] 3.6 Classify an answering proxy's empty model list as a rejection, not an outage — it is the one signal that catches a credential the presence check let through but the proxy cannot load; unit-test `classifyModelResolution` over every `ChatSetupError`
+- [x] 3.7 Retry a probe that gets no answer within a bounded budget (a started container is not a bound port; the re-probe's own restart guarantees a cold one), bound every probe round-trip so the budget bounds the loop, and degrade to warn-and-proceed at the deadline; unit-test `retryWhileUnreachable`
 
 ## 4. Chat-surface auth mapping
 
 - [x] 4.1 Add a structural auth-kind finder beside `describeCause` in `src/lib/cause.ts` (walks the cause chain, bounded depth, matches `{ type: "auth" }` provider-error shape)
-- [x] 4.2 In `src/tui/hooks/conversation.ts` turn-failure handling (`:540`), branch on the finder: render the provider-naming remedy message (provider slug from `models.connection.provider`), falling back to generic rendering when no slug is recorded
-- [x] 4.3 Extend `conversation.test.ts` + `cause.test.ts`: auth cause at depth → remedy banner; auth cause without provider slug → generic fallback; non-auth causes unchanged
+- [x] 4.2 In `src/tui/hooks/conversation.ts` turn-failure handling, branch on the finder: render the provider-naming remedy message from the RESOLVED connection (which always carries a slug — no slug-less branch), naming `INFLEXA_MODEL_API_KEY` in `direct` mode and dropping only the re-login hint when the slug maps to no login flow
+- [x] 4.3 Extend `conversation.test.ts` + `cause.test.ts`: auth cause at depth → remedy banner; direct mode → env-key remedy; unrecognized slug → no re-login hint; auth cause below the depth bound → generic fallback; non-auth causes unchanged
 
 ## 5. Verify
 

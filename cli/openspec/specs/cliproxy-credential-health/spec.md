@@ -24,7 +24,11 @@ The cliproxy authenticated-state check SHALL consider only `*.json` entries in t
 
 ### Requirement: The launch gate probes the live credential in cliproxy mode
 
-In `cliproxy` connection mode, `ensureProxyReady` SHALL send one minimal model request through the running proxy (bounded `max_tokens`, bounded timeout) after the compose stack is up, using the proxy client key and the resolved default model. In `direct` connection mode no probe SHALL run. Only a definite HTTP 401 SHALL gate the launch: on a TTY it SHALL drive the existing interactive provider login inline, make the refreshed credential observable to the running proxy (restarting the proxy service or equivalent), and re-probe once — a second 401 fails the launch with an error naming both remaining causes (provider re-login did not take; proxy client key mismatch). On a non-TTY a 401 SHALL fail with an error naming the forced re-login command (`inflexa setup --provider <kind>`). Any other probe failure (non-401 status, timeout, connection failure) SHALL log a warning with the observed status and proceed — the probe must never add a new way for launch to block.
+In `cliproxy` connection mode, `ensureProxyReady` SHALL send one minimal model request through the running proxy (bounded `max_tokens`, bounded timeout on every round-trip the probe makes) after the compose stack is up, using the proxy client key and the resolved default model. In `direct` connection mode no probe SHALL run.
+
+Only a definite credential rejection SHALL gate the launch — an HTTP 401, or an empty model list from a proxy that is answering (it serves that list from its own registry and answers with the full list even behind a dead credential, so an empty one means it loaded no credential at all, contradicting the presence check that just passed). On a TTY a rejection SHALL drive the existing interactive provider login inline, make the refreshed credential observable to the running proxy (restarting the proxy service or equivalent), and re-probe once — a second rejection fails the launch with an error naming both remaining causes (provider re-login did not take; proxy client key mismatch). On a non-TTY a rejection SHALL fail with an error naming the forced re-login command (`inflexa setup --provider <kind>`). Any other probe failure (non-401 served status, missing client key) SHALL log a warning with the observed status and proceed — the probe must never add a new way for launch to block.
+
+Because starting a container does not make its server reachable — the engine returns when the container is started, not when the proxy has bound its port — a probe that gets no answer at all SHALL be retried within a bounded budget rather than read as a verdict or as an outage. A proxy still silent at the budget SHALL warn and proceed like any other unreadable failure. This wait SHALL apply to every probe, including the re-probe that follows a proxy restart, whose container is always cold.
 
 #### Scenario: Healthy credential launches without interruption
 
@@ -36,6 +40,12 @@ In `cliproxy` connection mode, `ensureProxyReady` SHALL send one minimal model r
 - **GIVEN** a credential whose refresh has died (every provider call answers 401)
 - **WHEN** the TUI launches on a TTY
 - **THEN** the interactive provider login runs before the TUI takes the terminal, the proxy observes the fresh credential, the re-probe passes, and launch proceeds
+
+#### Scenario: A credential the proxy cannot load is caught, not warned past
+
+- **GIVEN** a credential file that passes the presence check but the proxy loads nothing from (e.g. its contents are corrupt)
+- **WHEN** the TUI launches on a TTY and the answering proxy serves an empty model list
+- **THEN** the launch treats it as a credential rejection and drives the interactive login, rather than warning and launching a chat that cannot work
 
 #### Scenario: Non-interactive launch fails actionably on a dead credential
 
@@ -49,7 +59,18 @@ In `cliproxy` connection mode, `ensureProxyReady` SHALL send one minimal model r
 
 #### Scenario: A provider outage does not block launch
 
-- **WHEN** the probe fails with a 5xx, a timeout, or a connection failure
+- **WHEN** the probe fails with a served 5xx
+- **THEN** launch logs a warning carrying the observed failure and proceeds
+
+#### Scenario: A cold proxy is waited for, not misread
+
+- **GIVEN** a proxy container that has started but not yet bound its port
+- **WHEN** the probe finds nothing answering
+- **THEN** it retries within its budget and reads the verdict once the proxy answers, rather than reporting an unverifiable login
+
+#### Scenario: A proxy that never answers does not block launch
+
+- **WHEN** nothing answers for the whole retry budget
 - **THEN** launch logs a warning carrying the observed failure and proceeds
 
 ### Requirement: Setup reports credential state truthfully

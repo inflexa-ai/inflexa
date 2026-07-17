@@ -1115,6 +1115,16 @@ describe("turnFailureMessage", () => {
         expect(msg).not.toContain("--provider");
     });
 
+    test("a slug no login flow owns still names the provider, minus the re-login hint it cannot spell", () => {
+        // `resolveModelConnection` guarantees a slug in both modes, so there is no slug-less banner to
+        // test — only a slug whose account kind is unknown, reachable by hand-editing the config to a
+        // vendor `inflexa setup` never logs into.
+        seedConfig({ telemetry: false, models: { connection: { mode: "cliproxy", provider: "deepseek" } } });
+        const msg = turnFailureMessage(authCause);
+        expect(msg).toContain("Your deepseek login has expired");
+        expect(msg).not.toContain("--provider");
+    });
+
     test("a non-auth failure renders the generic cause line", () => {
         const msg = turnFailureMessage({ type: "provider", retryable: true, message: "rate limited" });
         expect(msg).toStartWith("The turn failed:");
