@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -18,10 +18,14 @@ import {
     providerKindForSlug,
     recordCliproxyProvider,
     retryWhileUnreachable,
+    setup,
     writeDirectConnection,
     type ProbeAttempt,
 } from "./setup.ts";
+import * as embeddingSetup from "../embedding/setup.ts";
+import * as refsCommands from "../refs/commands.ts";
 import { readConfig } from "../../lib/config.ts";
+import * as container from "../../lib/container.ts";
 import { env, type ProviderEnvSnapshot } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 
@@ -543,5 +547,61 @@ describe("retryWhileUnreachable", () => {
         });
         expect(result).toEqual({ kind: "unauthorized" });
         expect(tries).toBe(1);
+    });
+});
+
+// Drives the `setup()` command through the repo's spyOn seam pattern (mirroring compose.test.ts's
+// "entry-point wiring" block): the runtime gate and the embedding step are stubbed, so no real
+// container runtime is spawned and no real model is acquired. These assert design D9 — a preselected
+// `--embeddings` mode is configured AHEAD of the runtime gate (so an air-gapped host with no ready
+// runtime still configures embeddings), and the in-flow embedding step does not run a second time.
+describe("setup() — preselected embeddings run ahead of the runtime gate", () => {
+    const spies: { mockRestore: () => void }[] = [];
+
+    beforeEach(() => {
+        assertTestSandbox(env.configPath);
+    });
+    afterEach(() => {
+        for (const s of spies.splice(0)) s.mockRestore();
+        // setup() sets process.exitCode as a global side effect; reset so it never leaks to sibling tests.
+        process.exitCode = 0;
+        assertTestSandbox(env.configPath);
+        rmSync(env.configPath, { force: true });
+    });
+
+    test("a preselected --embeddings mode is configured even when NO container runtime is ready", async () => {
+        // mockImplementation (not mockResolvedValue) so the returned Result is consumed, per the neverthrow
+        // must-use-result rule (same reasoning as compose.test.ts's wiring block).
+        const embedSpy = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(async () => ok(undefined));
+        const runtimeSpy = spyOn(container, "firstReadyRuntime").mockImplementation(async () => err(new container.ContainerRuntimeError("no usable runtime")));
+        spies.push(embedSpy, runtimeSpy);
+
+        await setup({ auth: false, start: false, force: false, postgres: true, embeddings: "local" });
+
+        // The embedding step ran (hoisted ahead of the gate) with the preselected mode — configured despite
+        // the dead runtime.
+        expect(embedSpy).toHaveBeenCalledTimes(1);
+        expect(embedSpy.mock.calls[0]).toEqual([process.stdin.isTTY, "local"]);
+        // ...and setup still reports the missing runtime and takes the failure exit (the remainder genuinely
+        // needs a runtime).
+        expect(runtimeSpy).toHaveBeenCalledTimes(1);
+        expect(process.exitCode).toBe(1);
+    });
+
+    test("with a ready runtime and a preselected mode, the embedding step runs exactly once", async () => {
+        const embedSpy = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(async () => ok(undefined));
+        spies.push(embedSpy);
+        spies.push(spyOn(container, "firstReadyRuntime").mockImplementation(async () => ok(container.runtimes.docker)));
+        // Stub the reference-data step so the full non-interactive flow reaches (and skips) the in-flow
+        // embedding site without doing real reference provisioning.
+        spies.push(spyOn(refsCommands, "runReferenceSetup").mockImplementation(async () => ok(undefined)));
+
+        // postgres:false skips the compose/engine block (which would spawn a real runtime); the flow still
+        // runs past the in-flow embedding site so its guard is exercised.
+        await setup({ auth: false, start: false, force: false, postgres: false, embeddings: "local" });
+
+        // Called exactly once — the preselected step ahead of the gate; the in-flow site is guarded and skipped.
+        expect(embedSpy).toHaveBeenCalledTimes(1);
+        expect(embedSpy.mock.calls[0]).toEqual([process.stdin.isTTY, "local"]);
     });
 });
