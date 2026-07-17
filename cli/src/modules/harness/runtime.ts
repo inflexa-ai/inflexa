@@ -457,15 +457,18 @@ type InjectingFetch = (input: string | URL | Request, init?: RequestInit) => Pro
 const CREDENTIAL_PLACEHOLDER_API_KEY = "inflexa-credential-source-placeholder";
 
 /**
- * Apply a resolved credential to an outgoing request's headers per scheme. `bearer` DELETES the `x-api-key`
- * the AI SDK set from the placeholder and sets `Authorization: Bearer` (this is what delivers a bearer over
- * the anthropic wire); `x-api-key` sets the header the Anthropic Messages API reads.
+ * Apply a resolved credential to an outgoing request's headers per scheme, replacing whatever the AI SDK
+ * derived from the placeholder apiKey. Each branch strips the OTHER scheme's placeholder header so a stale
+ * one never rides along: `bearer` deletes the SDK's `x-api-key` and sets `Authorization: Bearer` (this is
+ * what delivers a bearer over the anthropic wire); `x-api-key` deletes the SDK's `Authorization` and sets
+ * the header the Anthropic Messages API reads (an openai-compatible endpoint derives a Bearer placeholder).
  */
 function applyCredential(headers: Headers, cred: Credential): void {
     if (cred.scheme === "bearer") {
         headers.delete("x-api-key");
         headers.set("authorization", `Bearer ${cred.token}`);
     } else {
+        headers.delete("authorization");
         headers.set("x-api-key", cred.token);
     }
 }

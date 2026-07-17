@@ -190,6 +190,19 @@ export async function setup(options: SetupOptions): Promise<void> {
             let direct: DirectConnectionInput;
             if (process.stdin.isTTY) {
                 direct = await promptDirectConnection(snap, adoptable);
+                // A detected credential-helper setup can supply a refreshing token (a helper command or an
+                // env bearer) in place of a static key. Offer it opt-in — the command/scheme need
+                // confirmation, and an org-managed helper must never be auto-executed. Only for an
+                // anthropic-wire connection: the detection signals (Claude Code's `apiKeyHelper`,
+                // `ANTHROPIC_AUTH_TOKEN`) are Anthropic-specific, so minting one to probe against an
+                // unrelated openai-compatible endpoint would be a confusing, wrong offer.
+                if (effectiveProtocol(direct) === "anthropic") {
+                    const detection = detectCredentialHelper();
+                    if (credentialHelperDetected(detection)) {
+                        const auth = await offerCredentialSource(direct, detection);
+                        if (auth !== null) direct = { ...direct, auth };
+                    }
+                }
             } else if (adoptable.length > 0) {
                 // Non-interactive self-configure: adopt the detected env with no prompts, applying the
                 // deterministic anthropic-before-openai precedence so a scripted run is reproducible.
@@ -206,18 +219,6 @@ export async function setup(options: SetupOptions): Promise<void> {
                 );
                 process.exitCode = 1;
                 return;
-            }
-
-            // A detected credential-helper setup can supply a refreshing token (a helper command or an env
-            // bearer) in place of a static key. Offer it opt-in and only interactively — the command/scheme
-            // need confirmation, and an org-managed helper must never be auto-executed. A non-TTY run keeps
-            // the static-key path.
-            if (process.stdin.isTTY) {
-                const detection = detectCredentialHelper();
-                if (credentialHelperDetected(detection)) {
-                    const auth = await offerCredentialSource(direct, detection);
-                    if (auth !== null) direct = { ...direct, auth };
-                }
             }
 
             const writeErr = writeDirectConnection(direct).match(

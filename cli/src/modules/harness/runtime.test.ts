@@ -811,11 +811,14 @@ describe("buildAuthInjectingFetch", () => {
         expect(seen[0]!.get("x-api-key")).toBeNull();
     });
 
-    test("x-api-key scheme sets the x-api-key header", async () => {
+    test("x-api-key scheme sets x-api-key and strips the SDK's placeholder Authorization", async () => {
         const { fetch: underlying, seen } = recordingFetch([200]);
         const f = buildAuthInjectingFetch(fixedSource("xtok", "x-api-key"), underlying);
-        await f("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": "placeholder" } });
+        // An openai-compatible endpoint derives `Authorization: Bearer <placeholder>` from the placeholder
+        // apiKey; the x-api-key branch must remove it so the stale placeholder never rides along.
+        await f("https://gw.corp/v1/messages", { method: "POST", headers: { authorization: "Bearer placeholder" } });
         expect(seen[0]!.get("x-api-key")).toBe("xtok");
+        expect(seen[0]!.get("authorization")).toBeNull();
     });
 
     test("an HTTP 401 forces exactly one refresh + retry with the new token", async () => {
