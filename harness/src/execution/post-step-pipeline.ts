@@ -202,66 +202,87 @@ export async function reconcileAndRegisterStepArtifacts(
 }
 
 /**
- * Vector-index the threaded file descriptions + summary into the per-analysis
- * pgvector store. Best-effort (see the artifact-manifest spec): indexing degrades on any failure
- * without failing the step — the internal try/catch logs + swallows.
+ * Vector-index the threaded file descriptions + the step summary into the
+ * per-analysis pgvector store. Best-effort (see the artifact-manifest spec):
+ * indexing degrades without failing the step.
+ *
+ * Degradation is per-item. Index setup (ensuring the index exists and building
+ * the store) is all-or-nothing — a setup failure logs and skips the stage,
+ * because without an index there is nowhere to index into. Past setup, each
+ * file description and the summary is embedded and upserted under its own
+ * failure boundary, so one rejected input (e.g. an over-length document the
+ * embedding backend rejects) costs only its own entry and every other item is
+ * still attempted. A partial index is invisible at the search surface — it
+ * returns fewer hits, never an error — so each per-item failure logs the item
+ * id and input text length, and when any item fails a final record carries the
+ * indexed/failed counts as the only signal that degradation occurred.
  */
 export async function vectorIndexStepOutputs(deps: PostStepPipelineDeps, postCtx: PostStepContext, artifacts: PostStepArtifacts): Promise<void> {
     const { input } = postCtx;
     const { metadataEntries, summary, reconciledManifest } = artifacts;
+    const logger = (deps.logger ?? createNoopLogger()).named("post-step").named("vector-index").with({ runId: input.runId, stepId: input.stepId });
 
+    let vectorStore: ReturnType<typeof createVectorStore>;
+    let indexName: string;
     try {
+        // Setup is all-or-nothing: without an index there is nothing to index into.
         await ensureSearchIndex(deps.pool, input.analysisId, deps.embedding.dimensions);
-        const vectorStore = createVectorStore(deps.pool);
-        const indexName = searchIndexName(input.analysisId);
-
-        const embedOne = async (text: string): Promise<number[]> => {
-            const [vec] = unwrapOrThrow(await deps.embedding.embed([text], postCtx.session));
-            if (!vec) throw new Error("vectorIndexStepOutputs: empty embedding response");
-            return vec;
-        };
-
-        const dbPathPrefix = `runs/${input.runId}/${input.stepId}/`;
-        const survivingPaths = new Set(reconciledManifest.map((a) => a.path));
-        const liveMetadata = metadataEntries.filter((e) => survivingPaths.has(e.dbPath.slice(dbPathPrefix.length)));
-        for (const entry of liveMetadata) {
-            const embedding = await embedOne(entry.description);
-            unwrapOrThrow(
-                await vectorStore.upsert({
-                    indexName,
-                    vectors: [embedding],
-                    metadata: [{ text: entry.description, type: "output", ...entry.metadata }],
-                    ids: [`/${input.analysisId}/${entry.dbPath}`],
-                }),
-            );
-        }
-
-        if (summary && summary.markdown.trim().length > 0) {
-            const relPath = `runs/${input.runId}/${input.stepId}/output/summary.md`;
-            const summaryDbPath = `/${input.analysisId}/${relPath}`;
-            const summaryEmbedding = await embedOne(summary.markdown);
-            unwrapOrThrow(
-                await vectorStore.upsert({
-                    indexName,
-                    vectors: [summaryEmbedding],
-                    metadata: [
-                        {
-                            text: summary.markdown,
-                            type: "summary",
-                            stepId: input.stepId,
-                            runId: input.runId,
-                            agentId: input.agentId,
-                            path: relPath,
-                        },
-                    ],
-                    ids: [summaryDbPath],
-                }),
-            );
-        }
+        vectorStore = createVectorStore(deps.pool);
+        indexName = searchIndexName(input.analysisId);
     } catch (err) {
-        const logger = (deps.logger ?? createNoopLogger()).named("post-step").named("vector-index");
-        logger.warn("indexing failed", { runId: input.runId, stepId: input.stepId, ...logger.errorFields(err) });
+        logger.warn("indexing failed", logger.errorFields(err));
+        return;
     }
+
+    const embedOne = async (text: string): Promise<number[]> => {
+        const [vec] = unwrapOrThrow(await deps.embedding.embed([text], postCtx.session));
+        if (!vec) throw new Error("vectorIndexStepOutputs: empty embedding response");
+        return vec;
+    };
+
+    /** Index one item, absorbing its failure so the rest of the step still lands. */
+    const indexOne = async (id: string, text: string, metadata: Record<string, unknown>): Promise<boolean> => {
+        try {
+            const embedding = await embedOne(text);
+            unwrapOrThrow(await vectorStore.upsert({ indexName, vectors: [embedding], metadata: [metadata], ids: [id] }));
+            return true;
+        } catch (err) {
+            // Text length rides as a field because over-length input is the known
+            // failure driver, and the description/summary itself stays out of logs.
+            logger.warn("indexing failed", { id, textLength: text.length, ...logger.errorFields(err) });
+            return false;
+        }
+    };
+
+    const dbPathPrefix = `runs/${input.runId}/${input.stepId}/`;
+    const survivingPaths = new Set(reconciledManifest.map((a) => a.path));
+    const liveMetadata = metadataEntries.filter((e) => survivingPaths.has(e.dbPath.slice(dbPathPrefix.length)));
+
+    let indexed = 0;
+    let failed = 0;
+    for (const entry of liveMetadata) {
+        const ok = await indexOne(`/${input.analysisId}/${entry.dbPath}`, entry.description, { text: entry.description, type: "output", ...entry.metadata });
+        if (ok) indexed++;
+        else failed++;
+    }
+
+    if (summary && summary.markdown.trim().length > 0) {
+        const relPath = `runs/${input.runId}/${input.stepId}/output/summary.md`;
+        const ok = await indexOne(`/${input.analysisId}/${relPath}`, summary.markdown, {
+            text: summary.markdown,
+            type: "summary",
+            stepId: input.stepId,
+            runId: input.runId,
+            agentId: input.agentId,
+            path: relPath,
+        });
+        if (ok) indexed++;
+        else failed++;
+    }
+
+    // A partial index is invisible at the search surface — it returns fewer hits,
+    // never an error — so the count of what did not land is the only signal.
+    if (failed > 0) logger.warn("indexed with failures", { indexed, failed });
 }
 
 /**

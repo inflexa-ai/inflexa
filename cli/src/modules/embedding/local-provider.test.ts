@@ -15,6 +15,7 @@ import {
     __setProxyBypassEnabledForTest,
     __setSidecarLauncherForTest,
     __setSpawnForTest,
+    __setTokenizeTimeoutForTest,
     createLocalEmbeddingProvider,
     launchWithBinary,
     pollLlamaHealth,
@@ -30,10 +31,12 @@ import { materializedLlamaServer } from "./llama_runtime.ts";
 const fakeSession = { scope: { kind: "analysis", analysisId: "test" } } as never;
 
 // The launcher handle type is intentionally not exported; a structural literal
-// (`baseURL` / `key` / `stop`, plus the optional `exited` for the crash-recovery
-// tests) satisfies the injected-launcher parameter.
+// (`baseURL` / `origin` / `key` / `stop`, plus the optional `exited` for the
+// crash-recovery tests) satisfies the injected-launcher parameter. `origin` is the
+// server root the token-exact fit hits `/tokenize` on.
 type StubHandle = {
     readonly baseURL: string;
+    readonly origin: string;
     readonly key: string;
     stop: () => Promise<void>;
     readonly exited?: Promise<number>;
@@ -46,15 +49,47 @@ function fixedVector(): number[] {
     return new Array(384).fill(c);
 }
 
+/** Uniform stub tokenizer: ~4 code units per token. */
+function uniformTokens(content: string): number {
+    return Math.ceil(content.length / 4);
+}
+
+/**
+ * Non-uniform stub tokenizer: the first {@link DENSE_PREFIX_CHARS} code units cost
+ * ~2 chars/token (dense), the rest ~4 chars/token. Because the fit only ever keeps head
+ * prefixes, every candidate shares char 0, so this density is consistent across
+ * re-measured prefixes — and a cut scaled to the whole-input average density overshoots,
+ * exercising the re-measure loop rather than landing in one round.
+ */
+const DENSE_PREFIX_CHARS = 400;
+function nonUniformTokens(content: string): number {
+    const dense = Math.min(content.length, DENSE_PREFIX_CHARS);
+    const sparse = Math.max(0, content.length - DENSE_PREFIX_CHARS);
+    return Math.ceil(dense / 2) + Math.ceil(sparse / 4);
+}
+
 /**
  * Build a fetch handler modeling the real (b9310, verified live) llama-server auth
  * shape: `/health` is PUBLIC (no auth honored; `healthStatus` simulates the 503 it
- * answers during model load), `/props` and `/v1/embeddings` are auth-gated (401 to
- * a wrong or missing key). `/v1/embeddings` returns fixed 384-dim vectors and
- * records the last inputs so the over-length guard can be asserted from the
- * server's point of view.
+ * answers during model load), `/props`, `/tokenize`, and `/v1/embeddings` are auth-gated
+ * (401 to a wrong or missing key). `/v1/embeddings` returns fixed 384-dim vectors and
+ * records the last inputs so the token-exact fit can be asserted from the server's point
+ * of view. `/tokenize` returns `{ tokens: number[] }` whose length is the count from the
+ * injected `tokenize` model (default {@link uniformTokens}); `tokenizeStatus` forces an
+ * error status and `tokenizeHang` holds the request open forever, so the fallback paths
+ * are drivable.
  */
-function llamaShapedFetch(serverKey: string, opts?: { readonly healthStatus?: number; readonly onEmbedInputs?: (inputs: string[]) => void }) {
+function llamaShapedFetch(
+    serverKey: string,
+    opts?: {
+        readonly healthStatus?: number;
+        readonly onEmbedInputs?: (inputs: string[]) => void;
+        readonly tokenize?: (content: string) => number;
+        readonly tokenizeStatus?: number;
+        readonly tokenizeHang?: boolean;
+        readonly onTokenize?: (content: string) => void;
+    },
+) {
     return async function fetchHandler(req: Request): Promise<Response> {
         const url = new URL(req.url);
         const authed = req.headers.get("authorization") === `Bearer ${serverKey}`;
@@ -64,6 +99,16 @@ function llamaShapedFetch(serverKey: string, opts?: { readonly healthStatus?: nu
         }
         if (url.pathname === "/props") {
             return authed ? Response.json({ model_path: "/model.gguf" }) : new Response("unauthorized", { status: 401 });
+        }
+        if (url.pathname === "/tokenize" && req.method === "POST") {
+            if (!authed) return new Response("unauthorized", { status: 401 });
+            const body = (await req.json()) as { content: string };
+            opts?.onTokenize?.(body.content);
+            // Never resolve — models a wedged server so the fit's per-request timeout fires.
+            if (opts?.tokenizeHang) return new Promise<Response>(() => {});
+            if (opts?.tokenizeStatus !== undefined && opts.tokenizeStatus !== 200) return new Response("tokenize error", { status: opts.tokenizeStatus });
+            const count = (opts?.tokenize ?? uniformTokens)(body.content);
+            return Response.json({ tokens: new Array(count).fill(0) });
         }
         if (url.pathname === "/v1/embeddings" && req.method === "POST") {
             if (!authed) return Response.json({ error: { message: "invalid api key" } }, { status: 401 });
@@ -77,13 +122,32 @@ function llamaShapedFetch(serverKey: string, opts?: { readonly healthStatus?: nu
 }
 
 /** A {@link llamaShapedFetch} stub on an ephemeral port, for the launcher-level tests. */
-function startStub(expectedKey: string, opts?: { readonly healthStatus?: number }) {
+function startStub(
+    expectedKey: string,
+    opts?: {
+        readonly healthStatus?: number;
+        readonly tokenize?: (content: string) => number;
+        readonly tokenizeStatus?: number;
+        readonly tokenizeHang?: boolean;
+    },
+) {
     let lastInputs: string[] = [];
+    const tokenizeInputs: string[] = [];
     const server = Bun.serve({
         port: 0,
-        fetch: llamaShapedFetch(expectedKey, { ...opts, onEmbedInputs: (inputs) => (lastInputs = inputs) }),
+        fetch: llamaShapedFetch(expectedKey, {
+            ...opts,
+            onEmbedInputs: (inputs) => (lastInputs = inputs),
+            onTokenize: (content) => void tokenizeInputs.push(content),
+        }),
     });
-    return { origin: `http://127.0.0.1:${server.port}`, getLastInputs: (): string[] => lastInputs, stop: (): void => void server.stop(true) };
+    return {
+        origin: `http://127.0.0.1:${server.port}`,
+        getLastInputs: (): string[] => lastInputs,
+        getTokenizeInputs: (): string[] => tokenizeInputs,
+        getTokenizeCount: (): number => tokenizeInputs.length,
+        stop: (): void => void server.stop(true),
+    };
 }
 
 afterEach(() => {
@@ -94,6 +158,7 @@ afterEach(() => {
     __setSpawnForTest(null);
     __setProcessScanForTest(null);
     __setProxyBypassEnabledForTest(true);
+    __setTokenizeTimeoutForTest(null);
 });
 
 describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
@@ -101,7 +166,9 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
         let launches = 0;
         __setSidecarLauncherForTest(() => {
             launches++;
-            return Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: "http://127.0.0.1:1/v1", key: "k", stop: () => Promise.resolve() }));
+            return Promise.resolve(
+                ok<StubHandle, ProviderError>({ baseURL: "http://127.0.0.1:1/v1", origin: "http://127.0.0.1:1", key: "k", stop: () => Promise.resolve() }),
+            );
         });
         const provider = createLocalEmbeddingProvider({ modelPath: "/nonexistent/path.gguf" });
         const outcome = await provider.embed([], fakeSession).match(
@@ -118,7 +185,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
         let launches = 0;
         __setSidecarLauncherForTest(() => {
             launches++;
-            return Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, key, stop: () => Promise.resolve() }));
+            return Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve() }));
         });
         try {
             const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
@@ -152,7 +219,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
         let launches = 0;
         __setSidecarLauncherForTest(() => {
             launches++;
-            return Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, key, stop: () => Promise.resolve() }));
+            return Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve() }));
         });
         try {
             const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
@@ -181,7 +248,9 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
     test("embed returns 384-dim vectors from the sidecar endpoint", async () => {
         const key = "test-key-vectors";
         const stub = startStub(key);
-        __setSidecarLauncherForTest(() => Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, key, stop: () => Promise.resolve() })));
+        __setSidecarLauncherForTest(() =>
+            Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve() })),
+        );
         try {
             const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
             const vectors = await provider.embed(["a", "b"], fakeSession).match(
@@ -197,22 +266,131 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
         }
     });
 
-    test("over-length input is truncated client-side so the server never sees >512 tokens", async () => {
-        const key = "test-key-guard";
+    test("fast path: a <=510-code-unit input embeds with zero /tokenize requests", async () => {
+        const key = "test-key-fast";
         const stub = startStub(key);
-        __setSidecarLauncherForTest(() => Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, key, stop: () => Promise.resolve() })));
+        __setSidecarLauncherForTest(() =>
+            Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve() })),
+        );
         try {
             const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
-            // Way past the 1600-char budget; the guard must shrink it before the wire.
-            const huge = "word ".repeat(20_000);
-            const outcome = await provider.embed([huge], fakeSession).match(
+            const short = "a short one-sentence file description, well under the token budget";
+            expect(short.length).toBeLessThanOrEqual(510);
+            const vectors = await provider.embed([short], fakeSession).match(
                 (v) => v,
                 () => null,
             );
-            expect(outcome).not.toBeNull();
+            expect(vectors).not.toBeNull();
+            // Embedded unchanged, and no round-trip: ≤510 code units cannot exceed 510 tokens.
+            expect(stub.getLastInputs()).toEqual([short]);
+            expect(stub.getTokenizeCount()).toBe(0);
+        } finally {
+            stub.stop();
+        }
+    });
+
+    test("recovery: a >510-char input the tokenizer measures <=510 tokens embeds unchanged", async () => {
+        const key = "test-key-recovery";
+        // ~4 chars/token uniform: 2000 code units → 500 tokens, under the 510 budget.
+        const stub = startStub(key, { tokenize: uniformTokens });
+        __setSidecarLauncherForTest(() =>
+            Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve() })),
+        );
+        try {
+            const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
+            const fits = "abcd ".repeat(400); // 2000 code units — measured (not fast path), yet fits
+            expect(fits.length).toBeGreaterThan(510);
+            expect(uniformTokens(fits)).toBeLessThanOrEqual(510);
+            const vectors = await provider.embed([fits], fakeSession).match(
+                (v) => v,
+                () => null,
+            );
+            expect(vectors).not.toBeNull();
+            // A long document that fits the token budget is embedded WHOLE — no char cap cuts it.
+            expect(stub.getLastInputs()).toEqual([fits]);
+            // It passed through measurement (the whole-input measure), not the fast path.
+            expect(stub.getTokenizeCount()).toBe(1);
+        } finally {
+            stub.stop();
+        }
+    });
+
+    test("convergence: an over-budget input with non-uniform density embeds as a verified word-boundary prefix", async () => {
+        const key = "test-key-convergence";
+        const stub = startStub(key, { tokenize: nonUniformTokens });
+        __setSidecarLauncherForTest(() =>
+            Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve() })),
+        );
+        try {
+            const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
+            // 3000 code units of space-delimited words; nonUniformTokens measures it well over
+            // budget (200 dense + 650 sparse = 850 tokens), so it must be cut and re-measured.
+            const over = "abcd ".repeat(600);
+            expect(nonUniformTokens(over)).toBeGreaterThan(510);
+            const vectors = await provider.embed([over], fakeSession).match(
+                (v) => v,
+                () => null,
+            );
+            expect(vectors).not.toBeNull();
             const seen = stub.getLastInputs();
             expect(seen.length).toBe(1);
-            expect(seen[0]!.length).toBeLessThanOrEqual(1600);
+            const embedded = seen[0]!;
+            // A head-keeping prefix of the original, cut strictly shorter.
+            expect(over.startsWith(embedded)).toBe(true);
+            expect(embedded.length).toBeLessThan(over.length);
+            // Cut at a word boundary: the original character right after the prefix is a space.
+            expect(over[embedded.length]).toBe(" ");
+            // The endpoint never saw an over-length input — the embedded text re-measures within
+            // budget by the SAME tokenizer.
+            expect(nonUniformTokens(embedded)).toBeLessThanOrEqual(510);
+        } finally {
+            stub.stop();
+        }
+    });
+
+    test("fallback: /tokenize answering 500 embeds the 510-code-unit hard cut and still succeeds", async () => {
+        const key = "test-key-fallback-500";
+        const stub = startStub(key, { tokenizeStatus: 500 });
+        __setSidecarLauncherForTest(() =>
+            Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve() })),
+        );
+        try {
+            const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
+            const over = "abcd ".repeat(600); // 3000 code units, over budget
+            const vectors = await provider.embed([over], fakeSession).match(
+                (v) => v,
+                () => null,
+            );
+            // The embed succeeds even though measurement failed.
+            expect(vectors).not.toBeNull();
+            const embedded = stub.getLastInputs()[0]!;
+            // Hard cut at 510 code units (word-boundary-backed) — a provable fit with no tokenizer.
+            expect(over.startsWith(embedded)).toBe(true);
+            expect(embedded.length).toBeLessThanOrEqual(510);
+        } finally {
+            stub.stop();
+        }
+    });
+
+    test("fallback: /tokenize hanging past the timeout embeds the 510-code-unit hard cut and still succeeds", async () => {
+        const key = "test-key-fallback-hang";
+        const stub = startStub(key, { tokenizeHang: true });
+        // A short per-request bound so the wedged /tokenize degrades to the fallback fast.
+        __setTokenizeTimeoutForTest(100);
+        __setSidecarLauncherForTest(() =>
+            Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve() })),
+        );
+        try {
+            const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
+            const over = "abcd ".repeat(600);
+            const vectors = await provider.embed([over], fakeSession).match(
+                (v) => v,
+                () => null,
+            );
+            expect(vectors).not.toBeNull();
+            const embedded = stub.getLastInputs()[0]!;
+            expect(over.startsWith(embedded)).toBe(true);
+            expect(embedded.length).toBeLessThanOrEqual(510);
         } finally {
             stub.stop();
         }
@@ -252,7 +430,9 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
             // Only the first handle carries the resolvable exit; the replacement's exit
             // never settles, so its watcher stays dormant.
             const exited = launches === 1 ? firstExited : new Promise<number>(() => {});
-            return Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, key, stop: () => Promise.resolve(), exited }));
+            return Promise.resolve(
+                ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve(), exited }),
+            );
         });
         try {
             const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
@@ -292,7 +472,9 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
         __setSidecarLauncherForTest(() => {
             launches++;
             const exited = launches === 1 ? firstExited : new Promise<number>(() => {});
-            return Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, key, stop: () => Promise.resolve(), exited }));
+            return Promise.resolve(
+                ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve(), exited }),
+            );
         });
         try {
             const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
@@ -353,7 +535,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
             stopLocalSidecar();
             // Now the launch resolves: the map sees a superseded epoch, reaps its own
             // process, and caches nothing.
-            resolveLaunch({ baseURL: `${stub.origin}/v1`, key, stop: stopSpy });
+            resolveLaunch({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: stopSpy });
             const outcome = await embedOutcome;
             expect(outcome.ok).toBe(false);
             expect(stopSpy).toHaveBeenCalledTimes(1);
@@ -382,7 +564,9 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
         process.env.http_proxy = "http://127.0.0.1:9";
         process.env.NO_PROXY = "corp.example.com";
         process.env.no_proxy = "corp.example.com";
-        __setSidecarLauncherForTest(() => Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, key, stop: () => Promise.resolve() })));
+        __setSidecarLauncherForTest(() =>
+            Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve() })),
+        );
         try {
             const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
             const vectors = await provider.embed(["through the bypass"], fakeSession).match(
@@ -417,7 +601,9 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
         // The user set the bypass in ONLY the lowercase spelling; uppercase is empty.
         process.env.NO_PROXY = "";
         process.env.no_proxy = "corp.example.com";
-        __setSidecarLauncherForTest(() => Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, key, stop: () => Promise.resolve() })));
+        __setSidecarLauncherForTest(() =>
+            Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve() })),
+        );
         try {
             const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
             await provider.embed(["x"], fakeSession).match(
@@ -456,7 +642,9 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
         process.env.NO_PROXY = "corp.example.com";
         process.env.no_proxy = "corp.example.com";
         __setProxyBypassEnabledForTest(false);
-        __setSidecarLauncherForTest(() => Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, key, stop: () => Promise.resolve() })));
+        __setSidecarLauncherForTest(() =>
+            Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop: () => Promise.resolve() })),
+        );
         try {
             const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
             const outcome = await provider.embed(["through the dead proxy"], fakeSession).match(
@@ -479,7 +667,7 @@ describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
         const key = "test-key-reap";
         const stub = startStub(key);
         const stop = mock(() => Promise.resolve());
-        __setSidecarLauncherForTest(() => Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, key, stop })));
+        __setSidecarLauncherForTest(() => Promise.resolve(ok<StubHandle, ProviderError>({ baseURL: `${stub.origin}/v1`, origin: stub.origin, key, stop })));
         try {
             const provider = createLocalEmbeddingProvider({ modelPath: "/model.gguf" });
             await provider.embed(["one"], fakeSession).match(
