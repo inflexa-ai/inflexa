@@ -27,24 +27,26 @@ input hashes can be read from disk now because inputs are immutable for the
 step's lifetime (the analysis tree is mounted read-only; the only writable mount
 is the step's own directory). This makes the registered hash equal `sha256sum` of
 the bytes the sync target receives at upload time. The reconcile/register/sync
-stages are pulled out of the best-effort net: an input that cannot be hashed
-(missing, or resolving outside the analysis tree) and a registry rejection are
-**terminal** — they fail the step loudly rather than orphaning real outputs
-green. Genuine *file* drift fails fast; a read that resolves to a **directory**
-(e.g. `ls` of a mount) is not a content-attestable artifact and is dropped from
-lineage instead. The enrichment stages — file-metadata, step-summary,
-vector-index — stay best-effort and keep degrading via `safeRun`, because they
-are search/UX quality, not integrity.
+stages are pulled out of the best-effort net: a tracked input **file** that is
+missing at reconcile, and a registry rejection, are **terminal** — they fail the
+step loudly rather than orphaning real outputs green.
+
+Genuine *file* drift fails fast. A read that is not a content-attestable file of
+this analysis is dropped from lineage instead — a **directory** (e.g. `ls` of a
+mount), and a read **resolving outside the analysis tree** (e.g. `/{resourceId}/..`,
+the container root, which the sandbox may legitimately open). Neither is drift:
+nothing about the analysis changed and no edge is at risk, so dropping upholds
+"never register a hashless lineage edge" exactly as a throw would, without
+destroying a legitimate analysis over an untracked read. The enrichment stages —
+file-metadata, step-summary, vector-index — stay best-effort and keep degrading
+via `safeRun`, because they are search/UX quality, not integrity.
 
 The ledger is a thin index: identity (`path`, `hash`, `size`), provenance
 (`source_step`, `source_run`), and optional external registration state
 (`artifact_id`, `file_id`). It stores no file descriptions — the per-analysis
 vector index is the sole source of truth for descriptions and discovery.
-
 ## Requirements
-
 ### Requirement: The step manifest is a disk walk of the writable step directory
-
 
 The per-step artifact manifest SHALL be produced by `walkStepArtifacts`, which
 recursively walks the step's writable directory (`writePrefix`,
@@ -71,7 +73,6 @@ the manifest.
 
 ### Requirement: cortex_artifacts is the local ledger
 
-
 The `cortex_artifacts` table SHALL be the local ledger for file registration and
 provenance tracking. Each row SHALL carry: `analysis_id` (TEXT, NOT NULL),
 `path` (TEXT, NOT NULL — analysis-relative canonical path), `hash` (TEXT, NOT
@@ -92,12 +93,10 @@ index owns those.
 
 ### Requirement: The manifest is reconciled against disk before registration
 
-
-Before registration, the draft manifest SHALL be reconciled against disk by
-`reconcileManifestWithDisk`. For each manifest entry the helper SHALL stat the
-absolute step path (`{workspaceRoot}/runs/{runId}/{stepId}/{path}`, where
-`{workspaceRoot}` is the analysis's resolved workspace root),
-bounded to the step root, and:
+`reconcileManifestWithDisk(input)` SHALL run after the sandbox is destroyed and
+before any artifact is registered or synced. For each manifest entry it SHALL
+stat the file at `{workspaceRoot}/runs/{runId}/{stepId}/{entry.path}`, bounded
+to the step root, and:
 
 - If the file does not exist (`ENOENT`) → drop the entry from the returned manifest, call `collector.removeRecord(path)`, increment the `cortex.artifact.reconcile.dropped` counter (tagged `agent_id`, `step_id`), and emit a debug log line.
 - If the path is not a regular file (a directory) → drop it the same way.
@@ -108,10 +107,29 @@ fast path that skips hashing. The reconcile step SHALL also content-attest the
 collector's tracked inputs via `fillInputHashesFromDisk`: for each tracked input
 that is not an `artifacts`-source read and lacks a valid content hash, it maps
 the container path onto the host workspace tree, bounds it to
-`{workspaceRoot}`, and hashes the file from disk. A directory input is
-dropped via `collector.dropInput`. An input file that is missing or resolves
-outside the analysis tree SHALL throw (fail-fast attestation), never register a
-hashless lineage edge.
+`{workspaceRoot}`, and hashes the file from disk.
+
+An input that is not a content-attestable file **of this analysis** SHALL be
+dropped via `collector.dropInput` and SHALL NOT fail the step:
+
+- An input resolving to a **directory** (e.g. `ls` of a mount) → dropped, logged at debug.
+- An input resolving **outside the analysis tree**, at either the container-prefix or the workspace-root bound → dropped, logged at **warn** with the ref, the resolved host path, and a `boundSite` discriminator.
+
+An out-of-tree read is out of scope rather than drift: the analysis tree mounts
+at `/{resourceId}`, so a reported read of `/{resourceId}/..` names the container
+root and describes nothing about the analysis. The capture hooks are meant to
+filter such reads by data prefix, so the lineage graph already describes only
+in-tree inputs — dropping a leaked one restores that graph. Dropping upholds
+"never register a hashless lineage edge" exactly as a throw would, without
+destroying a legitimate analysis over an untracked read, and it mirrors the
+out-of-bounds *output* skip in the same function. Warn rather than debug is
+deliberate: a directory read is ordinary, whereas an out-of-tree read means a
+capture layer reported something it should have filtered — not worth a dead
+analysis, but worth noticing.
+
+Fail-fast SHALL remain for genuine drift: an input **file** that is missing at
+reconcile (`ENOENT`) SHALL throw, as SHALL an unexpected `stat` failure, never
+registering a hashless lineage edge.
 
 #### Scenario: Phantom file is dropped silently
 
@@ -126,9 +144,9 @@ hashless lineage edge.
 - **WHEN** `reconcileManifestWithDisk` runs
 - **THEN** `computeSha256File` IS invoked for `output/clean.csv` and the entry's hash and size are set from the on-disk bytes
 
-#### Scenario: An input that cannot be hashed fails the step
+#### Scenario: A missing input file fails the step
 
-- **GIVEN** the collector tracked a non-`artifacts` input read whose file is absent at reconcile time (or resolves outside the analysis tree)
+- **GIVEN** the collector tracked a non-`artifacts` input read whose file is absent at reconcile time
 - **WHEN** `fillInputHashesFromDisk` runs
 - **THEN** it throws, the step fails loudly, and no hashless lineage edge is registered
 
@@ -138,8 +156,14 @@ hashless lineage edge.
 - **WHEN** `fillInputHashesFromDisk` runs
 - **THEN** `collector.dropInput` is called for that ref and the step does NOT fail
 
-### Requirement: Registration through the ArtifactRegistry seam
+#### Scenario: A read resolving outside the analysis tree is dropped, not failed
 
+- **GIVEN** a tracked input read of `/{resourceId}/..` — the container root, which maps to a host path above the workspace root
+- **WHEN** `fillInputHashesFromDisk` runs
+- **THEN** `collector.dropInput` is called for that ref, a warn record naming the ref, its resolved `hostPath`, and `boundSite` is emitted, and the step does NOT fail
+- **AND** the step's real outputs still reconcile and register
+
+### Requirement: Registration through the ArtifactRegistry seam
 
 `registerStepArtifacts(db, registry, input, session)` SHALL: (1) build the
 `cortex_artifacts` rows from the reconciled manifest — `role = 'step_output'`,
@@ -167,7 +191,6 @@ return all-zero counts immediately and SHALL NOT call the registry.
 
 ### Requirement: Integrity stages fail-fast; enrichment stages degrade
 
-
 `reconcileAndRegisterStepArtifacts` SHALL reconcile, then register, then
 `ArtifactRegistry.sync` the step's artifacts, and SHALL treat the whole sequence
 as fail-fast: a non-zero `externalFailed` SHALL throw with the
@@ -190,7 +213,6 @@ failure degrades without failing the step.
 
 ### Requirement: Artifact upsert semantics
 
-
 `upsertArtifact` and `upsertArtifacts` SHALL use a Postgres `INSERT ... ON
 CONFLICT (analysis_id, path) DO UPDATE` that updates `hash`, `size`, `role`,
 `source_step`, `source_run`, and `COALESCE`s `file_type` and `file_id`.
@@ -204,7 +226,6 @@ existing row rather than fail on the duplicate key.
 - **THEN** the existing `cortex_artifacts` row is updated with the new `hash`, `size`, and `source_run`, and no duplicate row is created
 
 ### Requirement: Optional external sync tracking
-
 
 `cortex_artifacts` SHALL track external sync state via `artifact_id` (set after
 external registration by `updateArtifactId`) and `file_id` (set when an adapter
@@ -230,7 +251,6 @@ IS NULL`, ordered by `created_at`.
 
 ### Requirement: Manifest is scoped per analysis with cross-run visibility
 
-
 `cortex_artifacts` SHALL hold all runs of an analysis in one table, queryable by
 `source_run`; the flat read-only mount gives filesystem access to all runs.
 Agents discover cross-run files via workspace vector search, not by reading the
@@ -241,3 +261,4 @@ artifact table directly.
 - **WHEN** a step in run-2 runs `workspace_search("normalized expression matrix")`
 - **THEN** results MAY include files from run-1 (e.g. `runs/run-01/qc/output/normalized.csv`)
 - **AND** the file is accessible via the flat read-only mount
+

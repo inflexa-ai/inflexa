@@ -323,10 +323,11 @@ export class ProvenanceCollector {
      * Drop an input ref from lineage entirely — removes it from the tracked-input
      * map and from every record's `inputs` array (identity match, since the refs
      * are shared objects). `reconcileManifestWithDisk` calls this for a read that
-     * resolves to a directory (e.g. an `ls` / `list.files` of a mount): the
-     * inotify frame tracks the open, but a directory is not a content-attestable
-     * file artifact and must never reach registration. Mirrors the output-side
-     * non-file drop.
+     * is not a content-attestable file of this analysis: one resolving to a
+     * directory (e.g. an `ls` / `list.files` of a mount, which the inotify frame
+     * tracks as an open), or one resolving outside the analysis tree (e.g.
+     * `/{resourceId}/..`, the container root). Neither may reach registration.
+     * Mirrors the output-side non-file and out-of-bounds drops.
      */
     dropInput(ref: InputRef): void {
         for (const [key, val] of this.inputAccesses) {

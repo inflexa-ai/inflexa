@@ -45,9 +45,9 @@ export interface ReconcileManifestInput {
     /** Collector backing the manifest; mutated to reflect drops/rehashes. */
     collector: ProvenanceCollector;
     /**
-     * Operational logging seam; omitted falls back to no-op. Attestation is
-     * fail-fast, so what this records — which entry was dropped, which input
-     * could not be hashed — is the account of why a step died.
+     * Operational logging seam; omitted falls back to no-op. What this records
+     * — which entry or input was dropped, which input could not be hashed — is
+     * the sole account of why lineage changed or a step died.
      */
     logger?: Logger;
 }
@@ -128,8 +128,13 @@ export async function reconcileManifestWithDisk(input: ReconcileManifestInput): 
  *
  * `artifacts`-source reads are the step's OWN files (mutating, dropped by the
  * registration translator), so they are not attested and not hashed here.
- * Lineage attestation is fail-fast: an input we cannot hash (gone, or resolving
- * outside the analysis tree) throws rather than registering a hashless edge.
+ * Lineage attestation is fail-fast for drift: an input that should be on disk
+ * and is not (ENOENT) throws rather than registering a hashless edge. A read
+ * that resolves OUTSIDE the analysis tree is dropped from lineage instead —
+ * the sandbox can legitimately open paths above its mount (`/{resourceId}/..`
+ * is the container root) and a capture layer may report them; that is out of
+ * scope, not drift, and failing the step over it killed real analyses in the
+ * field. Dropping still registers no hashless edge, which is the invariant.
  */
 async function fillInputHashesFromDisk(
     collector: ProvenanceCollector,
@@ -145,26 +150,31 @@ async function fillInputHashesFromDisk(
         if (ref.source === "artifacts") continue;
         if (hasValidContentHash(ref.hash)) continue;
 
-        // Each throw below is logged before it is raised. The thrown message reaches
-        // `failStep` as one opaque string and everything downstream of that is
-        // scrubbed, so naming the site and the offending ref HERE is what makes a
-        // fail-fast attestation distinguishable from a registry rejection after the
-        // fact — the read's `source` in particular says whether the step declared
+        // Every throw below is logged before it is raised, and every drop is
+        // logged as it happens. The thrown message reaches `failStep` as one
+        // opaque string and everything downstream of that is scrubbed, so naming
+        // the site and the offending ref HERE is the only account of why a step
+        // died — the read's `source` in particular says whether the step declared
         // this input at all.
         const attestation = { path: ref.path, source: ref.source, refRunId: ref.runId, refStepId: ref.stepId };
 
         // `ref.path` is the absolute container path `/{resourceId}/...`; strip the
         // mount segment and map the tail onto the host workspace root. `path.join`
         // normalizes any `..`, and the bound confines the read to the analysis tree.
+        // An out-of-tree resolution is dropped, not thrown: it is not an attestable
+        // lineage edge, but it is also not drift — mirrors the out-of-bounds output
+        // skip in `reconcileManifestWithDisk` and the directory drop below.
         const containerPrefix = `/${resourceId}`;
         if (ref.path !== containerPrefix && !ref.path.startsWith(containerPrefix + "/")) {
-            logger.error("input read resolves outside the analysis tree", { ...attestation, throwSite: "container-prefix-bound" });
-            throw new Error(`[reconcile-manifest] input read resolves outside the analysis tree: path=${ref.path} stepId=${stepId} runId=${runId}`);
+            logger.warn("dropping out-of-tree input from lineage", { ...attestation, boundSite: "container-prefix" });
+            collector.dropInput(ref);
+            continue;
         }
         const hostPath = path.join(resourceRoot, ref.path.slice(containerPrefix.length + 1));
         if (hostPath !== resourceRoot && !hostPath.startsWith(resourceRoot + path.sep)) {
-            logger.error("input read resolves outside the analysis tree", { ...attestation, hostPath, throwSite: "workspace-root-bound" });
-            throw new Error(`[reconcile-manifest] input read resolves outside the analysis tree: path=${ref.path} stepId=${stepId} runId=${runId}`);
+            logger.warn("dropping out-of-tree input from lineage", { ...attestation, hostPath, boundSite: "workspace-root" });
+            collector.dropInput(ref);
+            continue;
         }
 
         let info;
