@@ -5,12 +5,15 @@ import { dirname, join } from "node:path";
 
 import { ok, err } from "neverthrow";
 import {
+    classifyModelResolution,
     ensureLiveCredential,
     hasProviderCredential,
     parseConnectionMode,
     providerKindForSlug,
     recordCliproxyProvider,
+    retryWhileUnreachable,
     writeDirectConnection,
+    type ProbeAttempt,
 } from "./setup.ts";
 import { readConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
@@ -195,6 +198,9 @@ describe("ensureLiveCredential", () => {
                 return ok<void, { message: string }>(undefined);
             },
             isInteractive: () => true,
+            // Not recorded: announcing is narration, not a policy step, and asserting it would pin the
+            // wording of every re-login message into the matrix below.
+            announce: () => {},
             warn: () => {
                 calls.push("warn");
             },
@@ -256,5 +262,77 @@ describe("ensureLiveCredential", () => {
         const { deps, calls } = scripted([{ kind: "unauthorized" }, { kind: "unobservable", detail: "HTTP 502" }]);
         expect((await ensureLiveCredential(deps)).isOk()).toBe(true);
         expect(calls).toEqual(["probe", "relogin", "restart", "probe", "warn"]);
+    });
+});
+
+// How a raw attempt becomes a verdict the policy above can act on. These are the two seams where a
+// misread turns the launch gate into a no-op: a boot race read as an outage, or an outage read as a
+// rejection.
+describe("classifyModelResolution", () => {
+    test("an empty model list is a credential verdict — the proxy answered, and it has nothing to serve with", () => {
+        expect(classifyModelResolution({ type: "no_models" })).toEqual({ kind: "unauthorized" });
+    });
+
+    test("a 401 from /models is the credential verdict, not an outage", () => {
+        expect(classifyModelResolution({ type: "proxy_unreachable", detail: "HTTP 401" })).toEqual({ kind: "unauthorized" });
+    });
+
+    test("a served status that is not 401 is unobservable — a fault, but not one about the credential", () => {
+        expect(classifyModelResolution({ type: "proxy_unreachable", detail: "HTTP 503" })).toEqual({
+            kind: "unobservable",
+            detail: "proxy_unreachable: HTTP 503",
+        });
+    });
+
+    test("silence is unreachable, NOT unobservable — it is the retryable one", () => {
+        // The shape resolveModelId reports for a refused connection (see its own tests).
+        expect(classifyModelResolution({ type: "proxy_unreachable", detail: "socket hang up" })).toEqual({
+            kind: "unreachable",
+            detail: "socket hang up",
+        });
+    });
+
+    test("a missing client key is unobservable — nothing was asked, so nothing was learned", () => {
+        expect(classifyModelResolution({ type: "proxy_key_missing" })).toEqual({ kind: "unobservable", detail: "proxy_key_missing" });
+    });
+});
+
+// The readiness wait the probe has instead of a health endpoint. Budget/pause are injected so these
+// run in milliseconds rather than the production 10s.
+describe("retryWhileUnreachable", () => {
+    test("retries silence until the proxy answers, then returns that verdict", async () => {
+        const outcomes: ProbeAttempt[] = [{ kind: "unreachable", detail: "ECONNREFUSED" }, { kind: "unreachable", detail: "ECONNREFUSED" }, { kind: "ok" }];
+        let tries = 0;
+        const result = await retryWhileUnreachable(
+            async () => {
+                tries++;
+                return outcomes.shift() ?? { kind: "ok" };
+            },
+            1_000,
+            1,
+        );
+        expect(result).toEqual({ kind: "ok" });
+        expect(tries).toBe(3);
+    });
+
+    test("a 401 behind a cold container is still caught — the wait does not swallow the verdict it exists to reach", async () => {
+        const outcomes: ProbeAttempt[] = [{ kind: "unreachable", detail: "ECONNREFUSED" }, { kind: "unauthorized" }];
+        const result = await retryWhileUnreachable(async () => outcomes.shift() ?? { kind: "ok" }, 1_000, 1);
+        expect(result).toEqual({ kind: "unauthorized" });
+    });
+
+    test("a proxy silent past the budget degrades to unobservable — warn and proceed, never block", async () => {
+        const result = await retryWhileUnreachable(async () => ({ kind: "unreachable", detail: "ECONNREFUSED" }), 5, 1);
+        expect(result).toEqual({ kind: "unobservable", detail: "ECONNREFUSED" });
+    });
+
+    test("an answering proxy is never paced — one try, no wait", async () => {
+        let tries = 0;
+        const result = await retryWhileUnreachable(async () => {
+            tries++;
+            return { kind: "unauthorized" };
+        });
+        expect(result).toEqual({ kind: "unauthorized" });
+        expect(tries).toBe(1);
     });
 });

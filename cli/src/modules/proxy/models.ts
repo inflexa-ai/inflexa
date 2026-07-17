@@ -49,13 +49,20 @@ export async function readApiKey(): Promise<Result<string, ChatSetupError>> {
     return ok(key);
 }
 
-/** Resolve the default chat model from the proxy's `/models`, cached per process. */
-export async function resolveModelId(apiKey: string): Promise<Result<string, ChatSetupError>> {
+/**
+ * Resolve the default chat model from the proxy's `/models`, cached per process.
+ *
+ * `signal` bounds the round-trip for callers that cannot afford to wait on a proxy that accepts the
+ * connection and then never answers — the launch-time credential probe, which would otherwise hold
+ * the terminal indefinitely. It is optional because the chat path resolves lazily behind a UI that
+ * can already be cancelled, and imposing a deadline on it would only invent a new failure mode.
+ */
+export async function resolveModelId(apiKey: string, signal?: AbortSignal): Promise<Result<string, ChatSetupError>> {
     if (cachedModelId) return ok(cachedModelId);
     let res: Response;
-    // fetch throws on a dead endpoint; bridge that throw into the Result channel.
+    // fetch throws on a dead endpoint (or an aborted signal); bridge that throw into the Result channel.
     try {
-        res = await fetch(`${env.cliproxyApiUrl}/models`, { headers: { Authorization: `Bearer ${apiKey}` } });
+        res = await fetch(`${env.cliproxyApiUrl}/models`, { headers: { Authorization: `Bearer ${apiKey}` }, signal });
     } catch (cause) {
         return err({ type: "proxy_unreachable", detail: cause instanceof Error ? cause.message : String(cause) });
     }
