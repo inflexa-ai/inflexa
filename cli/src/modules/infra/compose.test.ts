@@ -17,6 +17,7 @@ import { up } from "./lifecycle.ts";
 import { ensurePostgresReady } from "./postgres.ts";
 import * as config from "../../lib/config.ts";
 import { resolveConnectionMode, resolvePostgresConfig } from "../../lib/config.ts";
+import * as container from "../../lib/container.ts";
 import { runtimes } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
@@ -237,5 +238,39 @@ describe("entry-point compose regeneration wiring", () => {
         (await ensurePostgresReady())._unsafeUnwrapErr();
 
         expect(hasProxyService(composeAtHandoff)).toBe(currentMode === "cliproxy");
+    });
+});
+
+// The engine's `name=` filter matches substrings, so the parsing must demand an exact line match —
+// otherwise any container whose name merely CONTAINS the proxy's would count as the proxy running
+// and trigger a restart of a container that never served the stale credential.
+describe("composeProxyRunning", () => {
+    const spies: Array<{ mockRestore: () => void }> = [];
+    afterEach(() => {
+        for (const spy of spies.splice(0)) spy.mockRestore();
+    });
+
+    function stubPs(result: { code: number; stdout: string; stderr: string }): void {
+        spies.push(spyOn(container, "capture").mockImplementation(async () => result));
+    }
+
+    test("an exact name line reads as running", async () => {
+        stubPs({ code: 0, stdout: `${PROXY_CONTAINER_NAME}\n`, stderr: "" });
+        expect((await compose.composeProxyRunning(runtimes.docker))._unsafeUnwrap()).toBe(true);
+    });
+
+    test("a superset name is NOT the proxy — the engine filter is substring, the verdict must not be", async () => {
+        stubPs({ code: 0, stdout: `${PROXY_CONTAINER_NAME}-login\n`, stderr: "" });
+        expect((await compose.composeProxyRunning(runtimes.docker))._unsafeUnwrap()).toBe(false);
+    });
+
+    test("no matching container reads as not running", async () => {
+        stubPs({ code: 0, stdout: "\n", stderr: "" });
+        expect((await compose.composeProxyRunning(runtimes.docker))._unsafeUnwrap()).toBe(false);
+    });
+
+    test("an engine failure is an error, not a verdict", async () => {
+        stubPs({ code: 1, stderr: "cannot connect to the daemon", stdout: "" });
+        expect((await compose.composeProxyRunning(runtimes.docker)).isErr()).toBe(true);
     });
 });

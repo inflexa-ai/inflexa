@@ -73,6 +73,27 @@ Because starting a container does not make its server reachable — the engine r
 - **WHEN** nothing answers for the whole retry budget
 - **THEN** launch logs a warning carrying the observed failure and proceeds
 
+### Requirement: A fresh login is made observable to an already-running proxy
+
+The proxy loads credentials only at container start — host-side writes to the mounted auth dir do not reach the running binary's file watcher, and compose-up leaves a running container untouched. Therefore any interactive provider login that completes while a proxy container is already running — setup's authentication step, or the launch gate's missing-credential login — SHALL restart the proxy service so it serves the credential the user just created. When no proxy container is running, no restart SHALL be attempted: the next container start reads the auth dir at boot. A restart failure after a successful login SHALL surface as an actionable error naming the remedy, never proceed silently with a proxy that cannot serve the new credential. (The launch probe's own re-login path already restarts before its re-probe; this requirement extends the same guarantee to logins that run before any probe.)
+
+#### Scenario: Forced re-login reaches the running proxy
+
+- **GIVEN** the compose stack is up and the proxy is serving a dead credential
+- **WHEN** `inflexa setup --provider <name>` completes a sign-in
+- **THEN** the proxy service is restarted before setup exits, and the next chat uses the fresh credential without a relaunch
+
+#### Scenario: Launch-gate login does not demand a second login
+
+- **GIVEN** a proxy container left running with no usable credential (the login was previously skipped)
+- **WHEN** the TUI launches and the missing-credential login completes
+- **THEN** the proxy is restarted before the credential probe runs, the probe reads the fresh credential, and no second login is driven
+
+#### Scenario: No running proxy, no restart
+
+- **WHEN** a login completes while no proxy container is running
+- **THEN** no restart is attempted and the container reads the credential when it next starts
+
 ### Requirement: Setup reports credential state truthfully
 
 `inflexa setup`'s already-authenticated branch SHALL state only what it can know statically — that a credential exists — and SHALL name the forced re-login path (`--provider <name>`) as the remedy when provider calls fail authentication. It SHALL NOT assert that the credential is valid.

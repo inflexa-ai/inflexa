@@ -219,6 +219,34 @@ export async function composeRestartProxy(rt: ContainerRuntime): Promise<Result<
     return ok(undefined);
 }
 
+/**
+ * Whether the proxy container is currently running. Asks the ENGINE directly (`ps`, not compose):
+ * callers need this answer in states where the compose file may not exist yet — setup's auth step
+ * runs before this invocation regenerates the file — and `ps` is compose-file-free. The engine's
+ * `name=` filter is a substring match, so the verdict requires an exact line match on the reported
+ * names. Exists for the fresh-login flows: a running proxy loads credentials only at boot (host
+ * writes to the mounted auth dir never reach its file watcher), so a login that lands while one is
+ * serving must know whether there is a container to bounce.
+ */
+export async function composeProxyRunning(rt: ContainerRuntime): Promise<Result<boolean, PostgresError>> {
+    const { code, stdout, stderr } = await capture(rt, [
+        "ps",
+        "--filter",
+        `name=${PROXY_CONTAINER_NAME}`,
+        "--filter",
+        "status=running",
+        "--format",
+        "{{.Names}}",
+    ]);
+    if (code !== 0) {
+        return err({
+            type: "runtime_not_ready",
+            message: `Could not read the proxy container state.${stderr ? `\n  ${stderr.trim()}` : ""}`,
+        });
+    }
+    return ok(stdout.split("\n").some((line) => line.trim() === PROXY_CONTAINER_NAME));
+}
+
 /** Pull all images in the compose file. */
 export async function composePull(rt: ContainerRuntime): Promise<Result<void, PostgresError>> {
     const { code, stderr } = await capture(rt, composeArgs(["pull"]));

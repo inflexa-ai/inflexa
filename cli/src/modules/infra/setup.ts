@@ -11,7 +11,16 @@ import { select, promptText } from "../../lib/cli.ts";
 import { detectedMachine, resolveHarnessConfig, resolveModelConnection } from "../harness/config.ts";
 import { readApiKey, resolveModelId, type ChatSetupError } from "../proxy/models.ts";
 import { type PostgresConnection } from "./postgres_types.ts";
-import { writeComposeFile, composeUp, composePull, composePullIfMissing, composeAvailable, composeRestartProxy, type ConnectionMode } from "./compose.ts";
+import {
+    writeComposeFile,
+    composeUp,
+    composePull,
+    composePullIfMissing,
+    composeAvailable,
+    composeProxyRunning,
+    composeRestartProxy,
+    type ConnectionMode,
+} from "./compose.ts";
 import { formatInfraStateError, writeProxyConfig } from "./proxy_config.ts";
 
 // `inflexa setup` provisions the inflexa infrastructure stack: CLIProxyAPI (the
@@ -141,7 +150,30 @@ export async function setup(options: SetupOptions): Promise<void> {
                     log.info("A provider credential exists. If chats fail to authenticate, re-run with `--provider <name>` to sign in again.");
                 } else {
                     const authed = await authenticate(rt, provider);
-                    if (!authed) log.warn("No provider authenticated yet — re-run `inflexa setup` to sign in.");
+                    if (!authed) {
+                        log.warn("No provider authenticated yet — re-run `inflexa setup` to sign in.");
+                    } else {
+                        // A proxy left running by an earlier launch keeps serving whatever credentials
+                        // it loaded at boot — host writes to the mounted auth dir never reach its file
+                        // watcher, and the compose-up below is idempotent — so without a bounce the
+                        // sign-in that just completed stays invisible to it and chats keep failing
+                        // auth. Only a currently-running container needs this; a stopped or
+                        // not-yet-created one reads the auth dir when it next starts. An unanswerable
+                        // engine skips the bounce rather than failing a setup that otherwise
+                        // succeeded — the launch-gate probe still adjudicates the credential live.
+                        const running = (await composeProxyRunning(rt)).unwrapOr(false);
+                        if (running) {
+                            const restarted = await composeRestartProxy(rt);
+                            if (restarted.isErr()) {
+                                log.error(
+                                    `The sign-in succeeded, but the running proxy could not be restarted to load it: ${restarted.error.message}\n  Restart the stack (\`inflexa down\`, then launch again) before chatting.`,
+                                );
+                                process.exitCode = 1;
+                                return;
+                            }
+                            log.info("Restarted the proxy so it serves the fresh sign-in.");
+                        }
+                    }
                 }
             }
         } else {
@@ -1099,6 +1131,7 @@ export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Res
     // Proxy config + provider OAuth are only meaningful when chat targets the managed
     // proxy. A direct connection has neither, so both are skipped — the Postgres/compose
     // and embedder steps below still run as mode-independent prerequisites.
+    let proxyPredatesLogin = false;
     if (mode === "cliproxy") {
         const writeResult = await writeProxyConfig();
         if (writeResult.isErr()) {
@@ -1119,6 +1152,15 @@ export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Res
             } catch (cause) {
                 return err(new ProxyError(`Authentication failed: ${cause instanceof Error ? cause.message : String(cause)}`));
             }
+            // The login just rewrote the auth dir, but a proxy container from an earlier session may
+            // still be serving without having loaded it — host writes to the mounted auth dir never
+            // reach its file watcher, and composeUp below will not bounce a running container. A
+            // proxy composeUp starts COLD reads the fresh file at boot and needs nothing, so only a
+            // pre-existing container must be restarted — after composeUp, which is where the compose
+            // file for this run has been regenerated (composeRestartProxy's contract). An
+            // unanswerable engine skips the bounce: the probe below still reads the truth and can
+            // recover interactively.
+            proxyPredatesLogin = (await composeProxyRunning(rt)).unwrapOr(false);
         }
     }
 
@@ -1152,6 +1194,14 @@ export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Res
     // so the probe has a serving proxy; cliproxy mode only — a direct connection is the user's own
     // endpoint and key, never probed.
     if (mode === "cliproxy") {
+        if (proxyPredatesLogin) {
+            // Without this bounce the probe below would read the pre-login emptiness, call the
+            // credential rejected, and drive a SECOND login the user's first one already earned.
+            const restarted = await composeRestartProxy(rt);
+            if (restarted.isErr()) {
+                return err(new ProxyError(`Could not restart the proxy to pick up the fresh login: ${restarted.error.message}`));
+            }
+        }
         const live = await verifyCredentialAtLaunch(rt);
         if (live.isErr()) return err(live.error);
     }
