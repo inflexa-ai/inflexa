@@ -18,7 +18,6 @@ import {
     type ReferenceInstallPlan,
     type ReferenceInstallPlanDataset,
     type ReferenceInstallReceipt,
-    type ReferenceIntegrity,
     type ReferenceReceiptArtifact,
     type UnknownReferenceDatasetError,
 } from "@inflexa-ai/harness";
@@ -71,10 +70,8 @@ export type ReferenceStoreInspection = {
 export type ReferenceFileVerification = {
     /** Dataset-relative final path. */
     readonly path: string;
-    /** Verification outcome. */
+    /** Verification outcome, checked against the size and digest recorded in the receipt at install. */
     readonly state: "valid" | "missing" | "modified";
-    /** Which guarantee this file's digest was checked against. */
-    readonly integrity: ReferenceIntegrity;
 };
 
 /** Explicit verification result for an active catalog dataset. */
@@ -109,19 +106,6 @@ type ProvisionOperationError = {
     readonly cause?: unknown;
 };
 
-type ContentMismatchError = {
-    /** Integrity mismatch kind. */
-    readonly type: "size_mismatch" | "digest_mismatch";
-    /** User-facing explanation. */
-    readonly message: string;
-    /** Dataset-relative artifact path. */
-    readonly path: string;
-    /** Expected size or digest. */
-    readonly expected: number | string;
-    /** Observed size or digest. */
-    readonly actual: number | string;
-};
-
 type ManagedPathConflictError = {
     /** Stable discriminator. */
     readonly type: "managed_path_conflict";
@@ -132,7 +116,7 @@ type ManagedPathConflictError = {
 };
 
 /** Typed failures from local inspection, verification, transfer, or activation. */
-export type ReferenceProvisionError = UnknownDatasetError | ProvisionOperationError | ContentMismatchError | ManagedPathConflictError;
+export type ReferenceProvisionError = UnknownDatasetError | ProvisionOperationError | ManagedPathConflictError;
 
 /** Network dependencies supplied by the CLI composition edge. */
 export type ReferenceInstallDeps = {
@@ -151,10 +135,10 @@ export type ReferenceInstallDeps = {
 /** Caller-chosen installation behavior. */
 export type ReferenceInstallOptions = {
     /**
-     * Re-fetch and re-activate even when the active install is intact. This is the
-     * only way to pull a fresh copy of an `unpinned` dataset whose mutable upstream
-     * has moved on — an intact install of the bytes we previously received is
-     * indistinguishable from an up-to-date one without going to the network.
+     * Re-fetch and re-activate even when the active install is intact. Because the catalog pins no
+     * digest, this is the only way to pull a fresh copy of a dataset whose upstream has moved on —
+     * an intact install of the bytes we previously received is indistinguishable from an up-to-date
+     * one without going to the network.
      */
     readonly force?: boolean;
 };
@@ -188,12 +172,10 @@ export type ReferenceInstallOutcome = {
     readonly installed: readonly InstalledReferenceDataset[];
 };
 
-/** Bytes still to transfer, plus what cannot be known before contacting the upstream. */
+/** What a download would fetch. The catalog carries no sizes, so only a count is knowable locally. */
 export type ReferenceDownloadEstimate = {
-    /** Bytes missing across `pinned` artifacts, whose sizes the catalog knows. */
-    readonly bytes: number;
-    /** Count of `unpinned` artifacts whose size only the mutable upstream can report. */
-    readonly unsizedArtifacts: number;
+    /** Artifacts that still need fetching, whose sizes only the upstream can report. */
+    readonly artifactsToFetch: number;
 };
 
 /** Resolve all owned paths without creating anything. */
@@ -303,20 +285,17 @@ async function receiptFilesIntact(paths: ReferenceStorePaths, root: string, rece
 }
 
 /**
- * Whether the receipt still describes what the catalog now says. A `pinned` artifact
- * must match the catalog's size and digest; an `unpinned` one has no catalog digest to
- * match, so only its presence and class are compared.
+ * Whether the receipt still describes the same dataset the catalog now names: same version and the
+ * same set of artifact destinations. The catalog carries no size or digest to compare against —
+ * those live only in the receipt (observed at install) and are checked against the files themselves
+ * by `verify`, not against the catalog.
  */
 function receiptMatchesCurrentCatalog(dataset: ReferenceDataset, receipt: ReferenceInstallReceipt): boolean {
     if (receipt.datasetVersion !== dataset.version || receipt.artifacts.length !== dataset.artifacts.length) return false;
-    const expected = new Map(dataset.artifacts.map((artifact) => [artifact.path, artifact]));
+    const expected = new Set(dataset.artifacts.map((artifact) => artifact.path));
     const actualPaths = new Set(receipt.artifacts.map((artifact) => artifact.path));
     if (actualPaths.size !== receipt.artifacts.length) return false;
-    return receipt.artifacts.every((recorded) => {
-        const artifact = expected.get(recorded.path);
-        if (artifact === undefined || artifact.integrity !== recorded.integrity) return false;
-        return artifact.integrity === "pinned" ? artifact.bytes === recorded.bytes && artifact.sha256 === recorded.sha256 : true;
-    });
+    return receipt.artifacts.every((recorded) => expected.has(recorded.path));
 }
 
 function activeManagedRoot(paths: ReferenceStorePaths, dataset: ReferenceDataset, receipt: ReferenceInstallReceipt): string | undefined {
@@ -388,10 +367,9 @@ export async function inspectReferenceStore(
 }
 
 /**
- * Hash active managed files against the receipt without mutating disk. The receipt is
- * the reference in both integrity classes: for `pinned` artifacts it equals the catalog
- * digest (activation would have failed otherwise), and for `unpinned` ones it is the
- * only honest record — what the mutable upstream actually served at install time.
+ * Hash active managed files against the receipt without mutating disk. The receipt is the sole
+ * reference: the catalog pins no digest, so this compares each file to the size and digest observed
+ * when it was installed — the honest record of what the upstream actually served at that time.
  */
 export async function verifyReferenceDatasets(
     root: string,
@@ -433,18 +411,17 @@ export async function verifyReferenceDatasets(
                 const infoResult = owned.isOk() ? await pathLstat(path) : ok(undefined);
                 const info = infoResult.isOk() ? infoResult.value : undefined;
                 if (info === undefined || info.isSymbolicLink() || !info.isFile()) {
-                    files.push({ path: artifact.path, state: "missing", integrity: artifact.integrity });
+                    files.push({ path: artifact.path, state: "missing" });
                     continue;
                 }
                 if (info.size !== artifact.bytes) {
-                    files.push({ path: artifact.path, state: "modified", integrity: artifact.integrity });
+                    files.push({ path: artifact.path, state: "modified" });
                     continue;
                 }
                 const digestResult = await sha256File(path);
                 files.push({
                     path: artifact.path,
                     state: digestResult.isOk() && digestResult.value === artifact.sha256 ? "valid" : "modified",
-                    integrity: artifact.integrity,
                 });
             }
             const state = files.every((file) => file.state === "valid") ? "valid" : files.some((file) => file.state === "modified") ? "modified" : "missing";
@@ -512,77 +489,37 @@ async function downloadArtifact(
         if (owned.isErr()) return err(owned.error);
         await mkdir(paths.downloads, { recursive: true });
 
-        // Resume is only sound when the catalog knows the final size and digest: without
-        // them a partial file cannot be told apart from a complete one, and appending to
-        // bytes an upstream has since changed would splice two different files together.
-        let resumeAt = 0;
-        if (artifact.integrity === "pinned") {
-            const priorResult = await pathStat(partPath);
-            if (priorResult.isErr()) return err(priorResult.error);
-            const prior = priorResult.value;
-            const offset = prior?.isFile() ? prior.size : 0;
-            if (offset > artifact.bytes) await rm(partPath, { force: true });
-            resumeAt = offset <= artifact.bytes ? offset : 0;
-            if (resumeAt === artifact.bytes) {
-                const existingDigest = await sha256File(partPath);
-                if (existingDigest.isOk() && existingDigest.value === artifact.sha256) {
-                    return ok({
-                        partPath,
-                        bytesDownloaded: 0,
-                        observed: { path: artifact.path, bytes: artifact.bytes, sha256: artifact.sha256, integrity: "pinned" },
-                    });
-                }
-                await rm(partPath, { force: true });
-                resumeAt = 0;
-            }
-        } else {
-            await rm(partPath, { force: true });
-        }
+        // The catalog carries no size or digest, so a partial file cannot be told apart from a
+        // complete one, and appending to bytes the upstream may have changed would splice two
+        // versions together — always fetch the whole artifact fresh.
+        // TODO(robustness): a conditional If-Range resume could restore resumable large downloads
+        // without that risk, keying the precondition off an ETag captured on the first attempt.
+        await rm(partPath, { force: true });
 
-        const response = await (deps.fetch ?? fetch)(artifact.url, { headers: resumeAt > 0 ? { Range: `bytes=${resumeAt}-` } : undefined });
+        const response = await (deps.fetch ?? fetch)(artifact.url, {});
         if (!response.ok || response.body === null) {
             return err({
                 type: "download_failed",
                 message: `Download failed for ${artifact.path}: HTTP ${response.status} ${response.statusText} (${artifact.url})`,
             });
         }
-        // The catalog guarantees an https URL, but fetch follows redirects, so the guarantee has to
-        // hold for whatever actually served the bytes. A `pinned` artifact would still be caught by
-        // its digest; an `unpinned` one has none, and would trust a downgraded hop on first use.
+        // https is now the whole integrity story: nothing downstream re-checks the bytes against a
+        // reviewed digest, so a downgraded redirect hop would be trusted on first use. The catalog
+        // guarantees an https URL, but fetch follows redirects, so enforce it on whatever served us.
         if (response.url !== "" && !response.url.startsWith("https://")) {
             return err({
                 type: "download_failed",
                 message: `Refusing ${artifact.path}: ${artifact.url} redirected to a non-https location (${response.url}).`,
             });
         }
-        const appending = resumeAt > 0 && response.status === 206;
-        await pipeline(Readable.fromWeb(response.body), createWriteStream(partPath, { flags: appending ? "a" : "w" }));
+        await pipeline(Readable.fromWeb(response.body), createWriteStream(partPath, { flags: "w" }));
         const written = (await stat(partPath)).size;
-
-        if (artifact.integrity === "pinned" && written !== artifact.bytes) {
-            return err({
-                type: "size_mismatch",
-                path: artifact.path,
-                expected: artifact.bytes,
-                actual: written,
-                message: `Size mismatch for ${artifact.path}.`,
-            });
-        }
         const digest = await sha256File(partPath);
         if (digest.isErr()) return err({ type: "io_failed", message: `Could not hash ${artifact.path}.`, cause: digest.error.cause });
-        if (artifact.integrity === "pinned" && digest.value !== artifact.sha256) {
-            return err({
-                type: "digest_mismatch",
-                path: artifact.path,
-                expected: artifact.sha256,
-                actual: digest.value,
-                message: `SHA-256 mismatch for ${artifact.path}. The upstream bytes are not the reviewed bytes; nothing was activated.`,
-            });
-        }
         return ok({
             partPath,
-            bytesDownloaded: appending ? written - resumeAt : written,
-            observed: { path: artifact.path, bytes: written, sha256: digest.value, integrity: artifact.integrity },
+            bytesDownloaded: written,
+            observed: { path: artifact.path, bytes: written, sha256: digest.value },
         });
     } catch (cause) {
         return err({ type: "download_failed", message: `Download failed for ${artifact.path} (${artifact.url}).`, cause });
@@ -763,7 +700,7 @@ export async function installReferenceDatasets(
 }
 
 /** Estimate the transfer without creating state or contacting any upstream. */
-export async function referenceDownloadBytes(
+export async function referenceDownloadEstimate(
     datasetIds: readonly string[],
     root: string,
     source: ReferenceCatalogSource = CANONICAL_REFERENCE_SOURCE,
@@ -775,8 +712,7 @@ export async function referenceDownloadBytes(
     }
     const paths = referenceStorePaths(root);
     try {
-        let bytes = 0;
-        let unsizedArtifacts = 0;
+        let artifactsToFetch = 0;
         for (const dataset of plan.value.datasets) {
             const receiptRead = await readReceipt(join(paths.receipts, `${dataset.id}.json`), paths.root);
             const activeReceipt = receiptRead.receipt;
@@ -790,31 +726,12 @@ export async function referenceDownloadBytes(
                     continue;
                 }
             }
-            for (const artifact of dataset.artifacts) {
-                // Only a mutable upstream can say how big its current file is, and asking
-                // would mean a network round-trip inside what is a purely local estimate.
-                if (artifact.integrity === "unpinned") {
-                    unsizedArtifacts += 1;
-                    continue;
-                }
-                const partPath = join(paths.downloads, `${downloadName(referenceArtifactKey(dataset, artifact))}.part`);
-                const owned = await assertOwnedPath(paths.root, partPath);
-                if (owned.isErr()) return err(owned.error);
-                const partialResult = await pathLstat(partPath);
-                if (partialResult.isErr()) return err(partialResult.error);
-                const partial = partialResult.value;
-                if (partial?.isSymbolicLink())
-                    return err({ type: "managed_path_conflict", path: partPath, message: `Refusing resumable symlink path: ${partPath}` });
-                if (partial?.isFile() && partial.size === artifact.bytes) {
-                    const digest = await sha256File(partPath);
-                    bytes += digest.isOk() && digest.value === artifact.sha256 ? 0 : artifact.bytes;
-                } else {
-                    bytes += Math.max(0, artifact.bytes - (partial?.isFile() ? Math.min(partial.size, artifact.bytes) : 0));
-                }
-            }
+            // The catalog knows no sizes, and there is no resume to net out, so the estimate is a
+            // count: every artifact of a dataset that is not already intact is fetched fresh.
+            artifactsToFetch += dataset.artifacts.length;
         }
-        return ok({ bytes, unsizedArtifacts });
+        return ok({ artifactsToFetch });
     } catch (cause) {
-        return err({ type: "io_failed", message: `Could not inspect resumable downloads at ${root}.`, cause });
+        return err({ type: "io_failed", message: `Could not inspect the reference store at ${root}.`, cause });
     }
 }

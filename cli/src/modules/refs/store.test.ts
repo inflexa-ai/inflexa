@@ -5,13 +5,13 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
 
-import { REFERENCE_DATA_CATALOG_VERSION, UnknownReferenceDatasetError, type ReferenceDataCatalog, type ReferenceIntegrity } from "@inflexa-ai/harness";
+import { REFERENCE_DATA_CATALOG_VERSION, UnknownReferenceDatasetError, type ReferenceDataCatalog } from "@inflexa-ai/harness";
 import { err, ok } from "neverthrow";
 
 import {
     inspectReferenceStore,
     installReferenceDatasets,
-    referenceDownloadBytes,
+    referenceDownloadEstimate,
     referenceStorePaths,
     verifyReferenceDatasets,
     type ReferenceCatalogSource,
@@ -35,8 +35,6 @@ type Fixture = {
     readonly path: string;
     /** Bytes the stub upstream returns. */
     readonly body: string;
-    /** Which integrity class the catalog publishes it under. */
-    readonly integrity: ReferenceIntegrity;
 };
 
 /** Every fixture artifact is fetched straight from its own third-party upstream — there is no distribution base. */
@@ -44,9 +42,9 @@ function url(path: string): string {
     return `https://upstream.test/${path}`;
 }
 
-const PINNED: readonly Fixture[] = [{ path: "a.txt", body: "alpha", integrity: "pinned" }];
+const ARTIFACTS: readonly Fixture[] = [{ path: "a.txt", body: "alpha" }];
 
-function catalog(files: readonly Fixture[] = PINNED): ReferenceDataCatalog {
+function catalog(files: readonly Fixture[] = ARTIFACTS): ReferenceDataCatalog {
     return {
         version: REFERENCE_DATA_CATALOG_VERSION,
         datasets: [
@@ -58,17 +56,8 @@ function catalog(files: readonly Fixture[] = PINNED): ReferenceDataCatalog {
                 sourceUrl: "https://example.test/source",
                 license: { identifier: "CC0-1.0", url: "https://example.test/license" },
                 recommendation: { group: "testing", recommended: true },
-                artifacts: files.map((file) =>
-                    file.integrity === "pinned"
-                        ? {
-                              integrity: "pinned" as const,
-                              path: file.path,
-                              url: url(file.path),
-                              bytes: Buffer.byteLength(file.body),
-                              sha256: sha(file.body),
-                          }
-                        : { integrity: "unpinned" as const, path: file.path, url: url(file.path) },
-                ),
+                // The catalog pins nothing but the https URL: no size, no digest, no integrity class.
+                artifacts: files.map((file) => ({ path: file.path, url: url(file.path) })),
             },
         ],
     };
@@ -104,21 +93,19 @@ function source(value: ReferenceDataCatalog): ReferenceCatalogSource {
     };
 }
 
-/** What the installer asked the upstream for; `range` is the resume request, absent on a fresh transfer. */
+/** What the installer asked the upstream for; the installer never resumes, so `range` is always null. */
 type Asked = { readonly url: string; readonly range: string | null };
 
-/** Offline upstream. Serves each fixture's bytes and honors a Range request the way a real server would. */
+/** Offline upstream. Serves each fixture's bytes fresh; records the (never-present) Range header so a
+ * test can prove the installer refetches whole rather than resuming from a partial. */
 function serve(files: readonly Fixture[], asked: Asked[] = []): (input: string | URL | Request, init?: RequestInit) => Promise<Response> {
     const bodies = new Map(files.map((file) => [url(file.path), file.body]));
     return async (input, init) => {
         const target = String(input);
-        const range = new Headers(init?.headers).get("range");
-        asked.push({ url: target, range });
+        asked.push({ url: target, range: new Headers(init?.headers).get("range") });
         const body = bodies.get(target);
         if (body === undefined) return new Response("missing", { status: 404, statusText: "Not Found" });
-        if (range === null) return new Response(body);
-        // Bodies are ASCII in every fixture, so a character offset is a byte offset.
-        return new Response(body.slice(Number(range.slice("bytes=".length, -1))), { status: 206 });
+        return new Response(body);
     };
 }
 
@@ -156,7 +143,7 @@ describe("reference store inspection", () => {
                 datasetId: "demo",
                 datasetVersion: "2025.01",
                 activatedAt: "2026-07-14T12:00:00.000Z",
-                artifacts: [{ path: "old.txt", bytes: 3, sha256: sha("old"), integrity: "pinned" }],
+                artifacts: [{ path: "old.txt", bytes: 3, sha256: sha("old") }],
             }),
         );
         mkdirSync(join(paths.managed, "demo", "2025.01"), { recursive: true });
@@ -175,12 +162,12 @@ describe("reference store inspection", () => {
     });
 });
 
-describe("pinned installation", () => {
-    test("verifies size and digest, activates atomically, and records the observed bytes in the receipt", async () => {
+describe("installation", () => {
+    test("activates atomically and records the observed bytes and digest in the receipt", async () => {
         const path = root();
         const files: readonly Fixture[] = [
-            { path: "nested/a.txt", body: "alpha", integrity: "pinned" },
-            { path: "b.txt", body: "beta", integrity: "pinned" },
+            { path: "nested/a.txt", body: "alpha" },
+            { path: "b.txt", body: "beta" },
         ];
         const fixture = catalog(files);
         mkdirSync(join(path, "user"), { recursive: true });
@@ -204,8 +191,8 @@ describe("pinned installation", () => {
             datasetVersion: "2026.07",
             activatedAt: "2026-07-14T12:00:00.000Z",
             artifacts: [
-                { path: "nested/a.txt", bytes: 5, sha256: sha("alpha"), integrity: "pinned" },
-                { path: "b.txt", bytes: 4, sha256: sha("beta"), integrity: "pinned" },
+                { path: "nested/a.txt", bytes: 5, sha256: sha("alpha") },
+                { path: "b.txt", bytes: 4, sha256: sha("beta") },
             ],
         });
         expect(readFileSync(join(path, "user", "mine.fa"), "utf8")).toBe("mine");
@@ -214,69 +201,31 @@ describe("pinned installation", () => {
         expect(readdirSync(paths.staging)).toEqual([]);
         expect((await inspectReferenceStore(path, fixture))._unsafeUnwrap().datasets[0]?.state).toBe("installed");
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]?.state).toBe("valid");
-        expect((await referenceDownloadBytes(["demo"], path, source(fixture)))._unsafeUnwrap()).toEqual({ bytes: 0, unsizedArtifacts: 0 });
+        expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toEqual({ artifactsToFetch: 0 });
 
-        // An intact install is skipped: the hostile upstream below would fail the digest check if it
-        // were ever contacted, so a clean `ok` with zero bytes is the proof that it was not.
+        // An intact install is skipped: the upstream below serves entirely different bytes, so a clean
+        // `ok` with zero bytes downloaded and the file left unchanged is the proof it was never contacted.
         const repeated = await installReferenceDatasets(["demo"], {
             root: path,
             source: source(fixture),
             fetch: serve([
-                { path: "nested/a.txt", body: "ALPHA", integrity: "pinned" },
-                { path: "b.txt", body: "BETA", integrity: "pinned" },
+                { path: "nested/a.txt", body: "ALPHA" },
+                { path: "b.txt", body: "BETA" },
             ]),
         });
         expect(repeated._unsafeUnwrap().installed[0]?.bytesDownloaded).toBe(0);
         expect(readFileSync(join(paths.managed, "demo", "2026.07", "nested", "a.txt"), "utf8")).toBe("alpha");
     });
 
-    test("resumes a partial transfer with Range, because the catalog knows the final size and digest", async () => {
+    // Removed: the model no longer pins a catalog size/digest, so there is nothing to resume against
+    // or to fail a download on — a size_mismatch/digest_mismatch install failure is unrepresentable.
+    // The installer always refetches whole (covered below) and trusts-on-first-use whatever https
+    // serves, recording the observed bytes in the receipt (covered above).
+
+    test("an interrupted stream never activates partial data", async () => {
         const path = root();
         const fixture = catalog();
         const paths = referenceStorePaths(path);
-        mkdirSync(paths.downloads, { recursive: true });
-        writeFileSync(join(paths.downloads, `${sha("demo/2026.07/a.txt")}.part`), "al");
-
-        const asked: Asked[] = [];
-        const installed = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(PINNED, asked) });
-        expect(installed._unsafeUnwrap().installed[0]?.bytesDownloaded).toBe(3);
-        expect(asked).toEqual([{ url: url("a.txt"), range: "bytes=2-" }]);
-        expect(readFileSync(join(paths.managed, "demo", "2026.07", "a.txt"), "utf8")).toBe("alpha");
-    });
-
-    test("a digest mismatch activates nothing and leaves an existing activation intact", async () => {
-        const path = root();
-        const fixture = catalog();
-        const paths = referenceStorePaths(path);
-        const corrupt: readonly Fixture[] = [{ path: "a.txt", body: "ALPHA", integrity: "pinned" }];
-
-        const damaged = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(corrupt) });
-        expect(damaged._unsafeUnwrapErr()).toMatchObject({ type: "digest_mismatch", path: "a.txt", expected: sha("alpha"), actual: sha("ALPHA") });
-        expect(existsSync(join(paths.managed, "demo", "2026.07"))).toBe(false);
-        expect(existsSync(join(paths.receipts, "demo.json"))).toBe(false);
-
-        const good = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(PINNED) });
-        expect(good.isOk()).toBe(true);
-        const receipt = readFileSync(join(paths.receipts, "demo.json"), "utf8");
-
-        const forced = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(corrupt) }, { force: true });
-        expect(forced._unsafeUnwrapErr().type).toBe("digest_mismatch");
-        expect(readFileSync(join(paths.managed, "demo", "2026.07", "a.txt"), "utf8")).toBe("alpha");
-        expect(readFileSync(join(paths.receipts, "demo.json"), "utf8")).toBe(receipt);
-    });
-
-    test("size mismatch and interrupted streams never activate partial data", async () => {
-        const path = root();
-        const fixture = catalog();
-        const paths = referenceStorePaths(path);
-
-        const short = await installReferenceDatasets(["demo"], {
-            root: path,
-            source: source(fixture),
-            fetch: serve([{ path: "a.txt", body: "a", integrity: "pinned" }]),
-        });
-        expect(short._unsafeUnwrapErr()).toMatchObject({ type: "size_mismatch", path: "a.txt", expected: 5, actual: 1 });
-        expect(existsSync(join(paths.receipts, "demo.json"))).toBe(false);
 
         const interrupted = await installReferenceDatasets(["demo"], {
             root: path,
@@ -285,6 +234,7 @@ describe("pinned installation", () => {
         });
         expect(interrupted._unsafeUnwrapErr().type).toBe("download_failed");
         expect(existsSync(join(paths.managed, "demo", "2026.07", "a.txt"))).toBe(false);
+        expect(existsSync(join(paths.receipts, "demo.json"))).toBe(false);
     });
 
     test("a failed update preserves the prior active version and its receipt", async () => {
@@ -299,28 +249,30 @@ describe("pinned installation", () => {
             datasetId: "demo",
             datasetVersion: "2025.01",
             activatedAt: "2025-01-01T00:00:00.000Z",
-            artifacts: [{ path: "old.txt", bytes: 3, sha256: sha("old"), integrity: "pinned" }],
+            artifacts: [{ path: "old.txt", bytes: 3, sha256: sha("old") }],
         });
         writeFileSync(receiptPath, prior);
 
+        // The update fetch fails outright (a 404 from the upstream); activation is atomic, so the prior
+        // active version and its receipt must survive untouched.
         const failed = await installReferenceDatasets(["demo"], {
             root: path,
             source: source(catalog()),
-            fetch: serve([{ path: "a.txt", body: "ALPHA", integrity: "pinned" }]),
+            fetch: serve([]),
         });
-        expect(failed._unsafeUnwrapErr().type).toBe("digest_mismatch");
+        expect(failed._unsafeUnwrapErr().type).toBe("download_failed");
         expect(readFileSync(receiptPath, "utf8")).toBe(prior);
         expect(readFileSync(join(paths.managed, "demo", "2025.01", "old.txt"), "utf8")).toBe("old");
     });
 });
 
-describe("unpinned installation", () => {
+describe("mutable upstream installation", () => {
     test("installs without a catalog digest and records what the mutable upstream actually served", async () => {
         const path = root();
-        const files: readonly Fixture[] = [{ path: "gene_info.gz", body: "mutable-bytes", integrity: "unpinned" }];
+        const files: readonly Fixture[] = [{ path: "gene_info.gz", body: "mutable-bytes" }];
         const fixture = catalog(files);
-        // The catalog carries no size or digest for an upstream that rebuilds the file in place.
-        expect(fixture.datasets[0]?.artifacts[0]).toEqual({ integrity: "unpinned", path: "gene_info.gz", url: url("gene_info.gz") });
+        // The catalog carries only the https URL — no size or digest — for an upstream that rebuilds in place.
+        expect(fixture.datasets[0]?.artifacts[0]).toEqual({ path: "gene_info.gz", url: url("gene_info.gz") });
 
         const installed = await installReferenceDatasets(["demo"], {
             root: path,
@@ -333,17 +285,17 @@ describe("unpinned installation", () => {
         const paths = referenceStorePaths(path);
         expect(readFileSync(join(paths.managed, "demo", "2026.07", "gene_info.gz"), "utf8")).toBe("mutable-bytes");
         expect(JSON.parse(readFileSync(join(paths.receipts, "demo.json"), "utf8")).artifacts).toEqual([
-            { path: "gene_info.gz", bytes: 13, sha256: sha("mutable-bytes"), integrity: "unpinned" },
+            { path: "gene_info.gz", bytes: 13, sha256: sha("mutable-bytes") },
         ]);
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]).toMatchObject({
             state: "valid",
-            files: [{ path: "gene_info.gz", state: "valid", integrity: "unpinned" }],
+            files: [{ path: "gene_info.gz", state: "valid" }],
         });
     });
 
     test("never resumes a stale partial — a rebuilt upstream would splice two files together", async () => {
         const path = root();
-        const files: readonly Fixture[] = [{ path: "gene_info.gz", body: "fresh-upstream", integrity: "unpinned" }];
+        const files: readonly Fixture[] = [{ path: "gene_info.gz", body: "fresh-upstream" }];
         const fixture = catalog(files);
         const paths = referenceStorePaths(path);
         mkdirSync(paths.downloads, { recursive: true });
@@ -358,11 +310,11 @@ describe("unpinned installation", () => {
 
     test("--force is the only way to pull a refreshed copy of a mutable upstream", async () => {
         const path = root();
-        const files: readonly Fixture[] = [{ path: "gene_info.gz", body: "release-a", integrity: "unpinned" }];
+        const files: readonly Fixture[] = [{ path: "gene_info.gz", body: "release-a" }];
         const fixture = catalog(files);
         const paths = referenceStorePaths(path);
         const active = join(paths.managed, "demo", "2026.07", "gene_info.gz");
-        const refreshed: readonly Fixture[] = [{ path: "gene_info.gz", body: "release-b-longer", integrity: "unpinned" }];
+        const refreshed: readonly Fixture[] = [{ path: "gene_info.gz", body: "release-b-longer" }];
 
         const first = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(files) });
         expect(first.isOk()).toBe(true);
@@ -377,7 +329,7 @@ describe("unpinned installation", () => {
         expect(forced._unsafeUnwrap().installed[0]?.bytesDownloaded).toBe(16);
         expect(readFileSync(active, "utf8")).toBe("release-b-longer");
         expect(JSON.parse(readFileSync(join(paths.receipts, "demo.json"), "utf8")).artifacts).toEqual([
-            { path: "gene_info.gz", bytes: 16, sha256: sha("release-b-longer"), integrity: "unpinned" },
+            { path: "gene_info.gz", bytes: 16, sha256: sha("release-b-longer") },
         ]);
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]?.state).toBe("valid");
     });
@@ -390,17 +342,17 @@ describe("self-healing installs", () => {
         const paths = referenceStorePaths(path);
         const active = join(paths.managed, "demo", "2026.07", "a.txt");
 
-        const first = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(PINNED) });
+        const first = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(ARTIFACTS) });
         expect(first._unsafeUnwrap().installed[0]?.bytesDownloaded).toBe(5);
 
         writeFileSync(active, "ALPHA");
         // `refs list` state is deliberately cheap (size-only), so it still reads as installed — but the
         // install gate hashes, so the damage must be seen and healed rather than skipped.
         expect((await inspectReferenceStore(path, fixture))._unsafeUnwrap().datasets[0]?.state).toBe("installed");
-        expect((await referenceDownloadBytes(["demo"], path, source(fixture)))._unsafeUnwrap()).toEqual({ bytes: 5, unsizedArtifacts: 0 });
+        expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toEqual({ artifactsToFetch: 1 });
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]?.state).toBe("modified");
 
-        const healed = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(PINNED) });
+        const healed = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(ARTIFACTS) });
         expect(healed._unsafeUnwrap().installed[0]?.bytesDownloaded).toBe(5);
         expect(readFileSync(active, "utf8")).toBe("alpha");
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]?.state).toBe("valid");
@@ -408,11 +360,11 @@ describe("self-healing installs", () => {
 });
 
 describe("verification", () => {
-    test("reports each file against the integrity it was checked with, and detects same-size damage", async () => {
+    test("reports each file against the digest recorded at install, and detects same-size damage", async () => {
         const path = root();
         const files: readonly Fixture[] = [
-            { path: "a.txt", body: "alpha", integrity: "pinned" },
-            { path: "b.txt", body: "bravo", integrity: "unpinned" },
+            { path: "a.txt", body: "alpha" },
+            { path: "b.txt", body: "bravo" },
         ];
         const fixture = catalog(files);
         const installed = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(files) });
@@ -423,8 +375,8 @@ describe("verification", () => {
             version: "2026.07",
             state: "valid",
             files: [
-                { path: "a.txt", state: "valid", integrity: "pinned" },
-                { path: "b.txt", state: "valid", integrity: "unpinned" },
+                { path: "a.txt", state: "valid" },
+                { path: "b.txt", state: "valid" },
             ],
         });
 
@@ -434,15 +386,15 @@ describe("verification", () => {
         const damaged = (await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0];
         expect(damaged?.state).toBe("modified");
         expect(damaged?.files).toEqual([
-            { path: "a.txt", state: "modified", integrity: "pinned" },
-            { path: "b.txt", state: "missing", integrity: "unpinned" },
+            { path: "a.txt", state: "modified" },
+            { path: "b.txt", state: "missing" },
         ]);
     });
 
     test("a symlinked managed file is never followed", async () => {
         const path = root();
         const fixture = catalog();
-        const installed = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(PINNED) });
+        const installed = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(ARTIFACTS) });
         expect(installed.isOk()).toBe(true);
 
         const active = join(referenceStorePaths(path).managed, "demo", "2026.07");
@@ -454,33 +406,34 @@ describe("verification", () => {
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]?.files[0]).toEqual({
             path: "a.txt",
             state: "missing",
-            integrity: "pinned",
         });
     });
 });
 
 describe("download estimate", () => {
-    test("sums pinned bytes, counts unsized artifacts, and subtracts resumable partials", async () => {
+    test("counts every artifact not already intact, ignoring leftover partials, and never hits the network", async () => {
         const path = root();
         const files: readonly Fixture[] = [
-            { path: "a.txt", body: "alpha", integrity: "pinned" },
-            { path: "b.bin", body: "mutable", integrity: "unpinned" },
+            { path: "a.txt", body: "alpha" },
+            { path: "b.bin", body: "mutable" },
         ];
         const fixture = catalog(files);
         const paths = referenceStorePaths(path);
 
-        // Only the mutable upstream can report its own size, and the estimate never goes to the network.
-        expect((await referenceDownloadBytes(["demo"], path, source(fixture)))._unsafeUnwrap()).toEqual({ bytes: 5, unsizedArtifacts: 1 });
+        // The catalog knows no sizes and there is no resume to net out, so the estimate is a count of
+        // the artifacts a fresh install would fetch — never going to the network to size them.
+        expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toEqual({ artifactsToFetch: 2 });
 
+        // A leftover partial nets out nothing now: the installer always refetches the whole artifact.
         mkdirSync(paths.downloads, { recursive: true });
         writeFileSync(join(paths.downloads, `${sha("demo/2026.07/a.txt")}.part`), "al");
-        expect((await referenceDownloadBytes(["demo"], path, source(fixture)))._unsafeUnwrap()).toEqual({ bytes: 3, unsizedArtifacts: 1 });
+        expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toEqual({ artifactsToFetch: 2 });
 
         const installed = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(files) });
         expect(installed.isOk()).toBe(true);
-        expect((await referenceDownloadBytes(["demo"], path, source(fixture)))._unsafeUnwrap()).toEqual({ bytes: 0, unsizedArtifacts: 0 });
-        expect((await referenceDownloadBytes(["demo"], path, source(fixture), { force: true }))._unsafeUnwrap()).toEqual({ bytes: 5, unsizedArtifacts: 1 });
-        expect((await referenceDownloadBytes(["unknown"], path, source(fixture)))._unsafeUnwrapErr().type).toBe("unknown_dataset");
+        expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toEqual({ artifactsToFetch: 0 });
+        expect((await referenceDownloadEstimate(["demo"], path, source(fixture), { force: true }))._unsafeUnwrap()).toEqual({ artifactsToFetch: 2 });
+        expect((await referenceDownloadEstimate(["unknown"], path, source(fixture)))._unsafeUnwrapErr().type).toBe("unknown_dataset");
     });
 });
 
@@ -495,7 +448,7 @@ describe("installer-owned path safety", () => {
         mkdirSync(path, { recursive: true });
         mkdirSync(outside, { recursive: true });
         symlinkSync(outside, join(path, ".inflexa"));
-        const conflict = await installReferenceDatasets(["demo"], { root: path, source: source(catalog()), fetch: serve(PINNED) });
+        const conflict = await installReferenceDatasets(["demo"], { root: path, source: source(catalog()), fetch: serve(ARTIFACTS) });
         expect(conflict._unsafeUnwrapErr().type).toBe("managed_path_conflict");
         expect(Array.from(new Bun.Glob("**/*").scanSync(outside))).toEqual([]);
     });
@@ -504,28 +457,26 @@ describe("installer-owned path safety", () => {
         const path = root();
         const active = join(referenceStorePaths(path).managed, "demo", "2026.07");
         mkdirSync(join(active, "surprise"), { recursive: true });
-        const conflict = await installReferenceDatasets(["demo"], { root: path, source: source(catalog()), fetch: serve(PINNED) });
+        const conflict = await installReferenceDatasets(["demo"], { root: path, source: source(catalog()), fetch: serve(ARTIFACTS) });
         expect(conflict._unsafeUnwrapErr().type).toBe("managed_path_conflict");
         expect(statSync(join(active, "surprise")).isDirectory()).toBe(true);
     });
 
-    // The catalog can only promise https for the URL we ask for. An unpinned artifact has no digest
-    // to catch a hostile substitution, so a downgraded redirect would be trusted on first use.
+    // The catalog can only promise https for the URL we ask for, and nothing downstream re-checks the
+    // bytes against a reviewed digest (trust-on-first-use), so a downgraded redirect must be refused.
     test("refuses bytes served from a non-https location after a redirect", async () => {
-        for (const integrity of ["pinned", "unpinned"] as const) {
-            const path = root();
-            const fixture = catalog([{ path: "a.txt", body: "alpha", integrity }]);
-            const redirected = await installReferenceDatasets(["demo"], {
-                root: path,
-                source: source(fixture),
-                fetch: serveRedirectedTo("http://downgraded.test/a.txt", [{ path: "a.txt", body: "alpha", integrity }]),
-            });
+        const path = root();
+        const fixture = catalog([{ path: "a.txt", body: "alpha" }]);
+        const redirected = await installReferenceDatasets(["demo"], {
+            root: path,
+            source: source(fixture),
+            fetch: serveRedirectedTo("http://downgraded.test/a.txt", [{ path: "a.txt", body: "alpha" }]),
+        });
 
-            expect(redirected._unsafeUnwrapErr().type).toBe("download_failed");
-            expect(redirected._unsafeUnwrapErr().message).toContain("non-https");
-            expect(existsSync(join(referenceStorePaths(path).managed, "demo"))).toBe(false);
-            expect(existsSync(join(referenceStorePaths(path).receipts, "demo.json"))).toBe(false);
-        }
+        expect(redirected._unsafeUnwrapErr().type).toBe("download_failed");
+        expect(redirected._unsafeUnwrapErr().message).toContain("non-https");
+        expect(existsSync(join(referenceStorePaths(path).managed, "demo"))).toBe(false);
+        expect(existsSync(join(referenceStorePaths(path).receipts, "demo.json"))).toBe(false);
     });
 
     // A receipt is a plain file on disk that anyone can edit, so it is untrusted input. A traversal
@@ -534,7 +485,7 @@ describe("installer-owned path safety", () => {
         const path = root();
         const paths = referenceStorePaths(path);
         const fixture = catalog();
-        const installed = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(PINNED) });
+        const installed = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(ARTIFACTS) });
         expect(installed.isOk()).toBe(true);
 
         const secret = join(paths.user, "private.txt");
@@ -548,7 +499,7 @@ describe("installer-owned path safety", () => {
                 datasetId: "demo",
                 datasetVersion: "2026.07",
                 activatedAt: "2026-07-14T10:30:00.000Z",
-                artifacts: [{ path: "../../../user/private.txt", bytes: 42, sha256: sha("alpha"), integrity: "pinned" }],
+                artifacts: [{ path: "../../../user/private.txt", bytes: 42, sha256: sha("alpha") }],
             }),
         );
 

@@ -37,8 +37,8 @@ function catalog(artifacts: ReferenceDataCatalog["datasets"][number]["artifacts"
     };
 }
 
-const PINNED_ARTIFACT = { integrity: "pinned", path: "file", url: "https://upstream.test/file", bytes: 5, sha256: sha("alpha") } as const;
-const UNPINNED_ARTIFACT = { integrity: "unpinned", path: "mutable", url: "https://upstream.test/mutable" } as const;
+const FILE_ARTIFACT = { path: "file", url: "https://upstream.test/file" } as const;
+const MUTABLE_ARTIFACT = { path: "mutable", url: "https://upstream.test/mutable" } as const;
 
 function source(value: ReferenceDataCatalog): ReferenceCatalogSource {
     return {
@@ -52,7 +52,7 @@ function source(value: ReferenceDataCatalog): ReferenceCatalogSource {
     };
 }
 
-const pinnedSource = source(catalog([PINNED_ARTIFACT]));
+const singleFileSource = source(catalog([FILE_ARTIFACT]));
 
 /** Activate the pinned fixture on disk exactly as a completed install would leave it. */
 function seedIntactInstall(): void {
@@ -68,7 +68,7 @@ function seedIntactInstall(): void {
             datasetId: "demo",
             datasetVersion: "1",
             activatedAt: "2026-07-14T12:00:00.000Z",
-            artifacts: [{ path: "file", bytes: 5, sha256: sha("alpha"), integrity: "pinned" }],
+            artifacts: [{ path: "file", bytes: 5, sha256: sha("alpha") }],
         }),
     );
 }
@@ -86,28 +86,28 @@ describe("reference command policy", () => {
 
     test("headless downloads require ids and explicit consent before mutation", async () => {
         assertTestSandbox(env.refsDir);
-        const noIds = await downloadReferences({ ids: [], interactive: false, source: pinnedSource });
+        const noIds = await downloadReferences({ ids: [], interactive: false, source: singleFileSource });
         expect(noIds.isErr()).toBe(true);
-        const noConsent = await downloadReferences({ ids: ["demo"], interactive: false, source: pinnedSource });
-        expect(noConsent._unsafeUnwrapErr().message).toBe("Downloading 5 B requires explicit consent; re-run with --yes.");
+        const noConsent = await downloadReferences({ ids: ["demo"], interactive: false, source: singleFileSource });
+        expect(noConsent._unsafeUnwrapErr().message).toBe("Downloading 1 file of upstream-determined size requires explicit consent; re-run with --yes.");
         expect(await Bun.file(env.refsDir).exists()).toBe(false);
     });
 
-    test("an unpinned artifact is quoted as upstream-determined rather than given an invented size", async () => {
-        const unsized = await downloadReferences({ ids: ["demo"], interactive: false, source: source(catalog([UNPINNED_ARTIFACT])) });
-        expect(unsized._unsafeUnwrapErr().message).toBe("Downloading 1 file of upstream-determined size requires explicit consent; re-run with --yes.");
+    test("every artifact is quoted as upstream-determined rather than given an invented size", async () => {
+        const oneFile = await downloadReferences({ ids: ["demo"], interactive: false, source: source(catalog([MUTABLE_ARTIFACT])) });
+        expect(oneFile._unsafeUnwrapErr().message).toBe("Downloading 1 file of upstream-determined size requires explicit consent; re-run with --yes.");
 
-        const mixed = await downloadReferences({ ids: ["demo"], interactive: false, source: source(catalog([PINNED_ARTIFACT, UNPINNED_ARTIFACT])) });
-        expect(mixed._unsafeUnwrapErr().message).toBe("Downloading 5 B + 1 file of upstream-determined size requires explicit consent; re-run with --yes.");
+        const twoFiles = await downloadReferences({ ids: ["demo"], interactive: false, source: source(catalog([FILE_ARTIFACT, MUTABLE_ARTIFACT])) });
+        expect(twoFiles._unsafeUnwrapErr().message).toBe("Downloading 2 files of upstream-determined size requires explicit consent; re-run with --yes.");
     });
 
-    test("--force turns an intact install back into bytes to fetch; without it there is nothing to do", async () => {
+    test("--force turns an intact install back into a file to fetch; without it there is nothing to do", async () => {
         seedIntactInstall();
-        const intact = await downloadReferences({ ids: ["demo"], interactive: false, source: pinnedSource });
-        expect(intact._unsafeUnwrapErr().message).toBe("Downloading 0 B requires explicit consent; re-run with --yes.");
+        const intact = await downloadReferences({ ids: ["demo"], interactive: false, source: singleFileSource });
+        expect(intact._unsafeUnwrapErr().message).toBe("Downloading 0 files of upstream-determined size requires explicit consent; re-run with --yes.");
 
-        const forced = await downloadReferences({ ids: ["demo"], interactive: false, force: true, source: pinnedSource });
-        expect(forced._unsafeUnwrapErr().message).toBe("Downloading 5 B requires explicit consent; re-run with --yes.");
+        const forced = await downloadReferences({ ids: ["demo"], interactive: false, force: true, source: singleFileSource });
+        expect(forced._unsafeUnwrapErr().message).toBe("Downloading 1 file of upstream-determined size requires explicit consent; re-run with --yes.");
     });
 
     test("a declined interactive download activates nothing", async () => {
@@ -115,14 +115,14 @@ describe("reference command policy", () => {
         const result = await downloadReferences({
             ids: ["demo"],
             interactive: true,
-            source: pinnedSource,
+            source: singleFileSource,
             confirmDownload: async (question) => {
                 questions.push(question);
                 return false;
             },
         });
         expect(result._unsafeUnwrap()).toMatchObject({ declined: true, installed: [] });
-        expect(questions).toEqual([`Download 5 B of reference data into ${env.refsDir}?`]);
+        expect(questions).toEqual([`Download 1 file of upstream-determined size of reference data into ${env.refsDir}?`]);
         expect(await Bun.file(env.refsDir).exists()).toBe(false);
     });
 

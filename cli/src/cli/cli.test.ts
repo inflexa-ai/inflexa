@@ -32,15 +32,16 @@ describe("inflexa help & usage (e2e)", () => {
         expect(result.stderr).toContain("Unknown reference dataset");
     });
 
-    test("refs list explains custom content, integrity, and catalog contributions", () => {
+    test("refs list explains custom content, trust-on-first-use integrity, and catalog contributions", () => {
         const result = runCli(["refs", "list"]);
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("Add arbitrary references under");
         expect(result.stdout).toContain("Open a PR");
-        // Nothing is re-hosted: each dataset states the integrity guarantee its own upstream can offer.
-        expect(result.stdout).toContain("Integrity: pinned — verified against the checksums in the catalog");
-        expect(result.stdout).toContain("Integrity: unpinned — upstream is rebuilt in place; verified against what you downloaded");
-        expect(result.stdout).toContain("nothing is mirrored or re-hosted here");
+        // Nothing is mirrored, re-hosted, or checksum-pinned: integrity is trust-on-first-use, checked
+        // against the copy you downloaded rather than a catalog digest.
+        expect(result.stdout).toContain("nothing is mirrored, re-hosted, or checksum-pinned here");
+        expect(result.stdout).toContain("Integrity is trust-on-first-use: `inflexa refs verify` checks each installed file against the copy you downloaded.");
+        expect(result.stdout).toContain("Re-run with `--urls` to print the exact upstream URL of every file.");
     });
 
     test("refs download offers --force to repair damage and refresh mutable upstreams", () => {
