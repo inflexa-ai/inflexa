@@ -1,12 +1,15 @@
 import { readdir, readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { intro, outro, log, note, spinner as clackSpinner } from "@clack/prompts";
 import { type Result, ok, err } from "neverthrow";
 import { z } from "zod";
-import { ensureRuntime, readConfig, resolvePostgresConfig, selectedRuntime, writeConfig, type ConfigError } from "../../lib/config.ts";
+import { ensureRuntime, readConfig, resolvePostgresConfig, selectedRuntime, writeConfig, type ConfigError, type ModelAuthConfig } from "../../lib/config.ts";
 import { firstReadyRuntime, runtimeIds, runtimes, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
-import { detectProviderEnv, env, providerApiKeyVar, resolveModelApiKey, type ProviderEnvSnapshot } from "../../lib/env.ts";
+import { anthropicAuthTokenSet, detectProviderEnv, env, providerApiKeyVar, resolveModelApiKey, type ProviderEnvSnapshot } from "../../lib/env.ts";
+import { createCredentialSource, credentialErrorMessage, type CredentialScheme } from "../../lib/credential.ts";
 import { select, promptText } from "../../lib/cli.ts";
 import { detectedMachine, resolveHarnessConfig, resolveModelConnection } from "../harness/config.ts";
 import { readApiKey, resolveModelId, type ChatSetupError } from "../proxy/models.ts";
@@ -205,6 +208,18 @@ export async function setup(options: SetupOptions): Promise<void> {
                 return;
             }
 
+            // A detected credential-helper setup can supply a refreshing token (a helper command or an env
+            // bearer) in place of a static key. Offer it opt-in and only interactively — the command/scheme
+            // need confirmation, and an org-managed helper must never be auto-executed. A non-TTY run keeps
+            // the static-key path.
+            if (process.stdin.isTTY) {
+                const detection = detectCredentialHelper();
+                if (credentialHelperDetected(detection)) {
+                    const auth = await offerCredentialSource(direct, detection);
+                    if (auth !== null) direct = { ...direct, auth };
+                }
+            }
+
             const writeErr = writeDirectConnection(direct).match(
                 () => null,
                 (e) => e,
@@ -215,23 +230,36 @@ export async function setup(options: SetupOptions): Promise<void> {
                 return;
             }
             log.success("Saved the direct model connection.");
-            // Tailor the key guidance to what is actually resolvable now: an adopted ecosystem env already
-            // carries the key (ANTHROPIC_API_KEY/OPENAI_API_KEY), so tell the user it is being read rather
-            // than instruct a redundant re-export. `resolveModelApiKey` reads the env only — nothing is copied.
-            const resolvedVar = resolveModelApiKey(direct.provider) ? providerApiKeyVar(direct.provider) : undefined;
-            note(
-                resolvedVar !== undefined && resolvedVar !== MODEL_API_KEY_VAR
-                    ? `Using ${resolvedVar} from your environment for the model key.\n` +
-                          `Override it any time by exporting ${MODEL_API_KEY_VAR}. The key is read from the environment only — never written to config.\n\n` +
-                          `Not adopted: ${ANTHROPIC_AUTH_TOKEN_VAR} (Anthropic-wire Bearer auth needs a harness capability) and Bedrock/Vertex (no direct signer).\n` +
-                          "  A bearer-token gateway can be reached today as protocol: openai-compatible."
-                    : `Export your provider API key before starting a chat:\n\n  export ${MODEL_API_KEY_VAR}=<your-key>\n` +
-                          `  (or the provider-conventional ${providerApiKeyVar(direct.provider)})\n\n` +
-                          "The key is read from the environment only — it is never written to config.\n\n" +
-                          `Not adopted: ${ANTHROPIC_AUTH_TOKEN_VAR} (Anthropic-wire Bearer auth needs a harness capability) and Bedrock/Vertex (no direct signer).\n` +
-                          "  A bearer-token gateway can be reached today as protocol: openai-compatible.",
-                "Model API key",
-            );
+            if (direct.auth !== undefined) {
+                // A configured credential source supersedes the static key entirely: tell the user what is
+                // stored (name/command + scheme, never the token).
+                note(
+                    direct.auth.kind === "command"
+                        ? `Minting the model token with a credential command, sent as ${direct.auth.scheme}.\n` +
+                              "Only the command and scheme are stored — the token value is never written to config."
+                        : `Reading the model token from ${direct.auth.var}, sent as ${direct.auth.scheme}.\n` +
+                              "Only the variable name and scheme are stored — the token value is never written to config.",
+                    "Model credential source",
+                );
+            } else {
+                // Tailor the key guidance to what is actually resolvable now: an adopted ecosystem env already
+                // carries the key (ANTHROPIC_API_KEY/OPENAI_API_KEY), so tell the user it is being read rather
+                // than instruct a redundant re-export. `resolveModelApiKey` reads the env only — nothing is copied.
+                const resolvedVar = resolveModelApiKey(direct.provider) ? providerApiKeyVar(direct.provider) : undefined;
+                note(
+                    resolvedVar !== undefined && resolvedVar !== MODEL_API_KEY_VAR
+                        ? `Using ${resolvedVar} from your environment for the model key.\n` +
+                              `Override it any time by exporting ${MODEL_API_KEY_VAR}. The key is read from the environment only — never written to config.\n\n` +
+                              `For a short-lived token instead (${ANTHROPIC_AUTH_TOKEN_VAR} bearer, or a credential helper), re-run setup to configure a credential source.\n` +
+                              "Bedrock/Vertex are not adopted (no direct signer)."
+                        : `Export your provider API key before starting a chat:\n\n  export ${MODEL_API_KEY_VAR}=<your-key>\n` +
+                              `  (or the provider-conventional ${providerApiKeyVar(direct.provider)})\n\n` +
+                              "The key is read from the environment only — it is never written to config.\n\n" +
+                              `For a short-lived token instead (${ANTHROPIC_AUTH_TOKEN_VAR} bearer, or a credential helper), re-run setup to configure a credential source.\n` +
+                              "Bedrock/Vertex are not adopted (no direct signer).",
+                    "Model API key",
+                );
+            }
         }
 
         // --- postgres config ---
@@ -541,10 +569,9 @@ function printNextSteps(options: SetupOptions, conn: PostgresConnection, mode: C
 export const MODEL_API_KEY_VAR = "INFLEXA_MODEL_API_KEY";
 
 /**
- * The deferred Anthropic-wire Bearer variable, named ONLY to tell the user it is not adopted (see the
- * direct-path note): `ANTHROPIC_AUTH_TOKEN` is Anthropic-wire + Bearer, which needs a harness
- * custom-auth-header capability the CLI cannot supply alone; a bearer gateway is reachable today as
- * `protocol: openai-compatible`. Bedrock/Vertex are likewise out of scope (no direct-mode HTTP signer).
+ * The Anthropic-wire Bearer variable. When set, setup OFFERS it as a `direct`-mode credential source
+ * (`{ kind: "env", var: "ANTHROPIC_AUTH_TOKEN", scheme: "bearer" }`); the presence check is env.ts's
+ * {@link anthropicAuthTokenSet}. Bedrock/Vertex remain out of scope (no direct-mode HTTP signer).
  */
 const ANTHROPIC_AUTH_TOKEN_VAR = "ANTHROPIC_AUTH_TOKEN";
 
@@ -740,12 +767,15 @@ type DirectConnectionInput = {
     provider: string;
     baseURL: string;
     protocol?: "anthropic" | "openai-compatible";
+    /** An optional REFRESHING credential source (name/command + scheme, never a token) — {@link offerCredentialSource}. */
+    auth?: ModelAuthConfig;
 };
 
 /**
  * Persist a direct-mode model connection. Spread-preserving: keeps every other config key and every
- * other key inside the `models` block (e.g. the `agents` overrides), rewriting only `connection`. The API
- * key is NEVER written here — it comes from {@link MODEL_API_KEY_VAR} at provider construction.
+ * other key inside the `models` block (e.g. the `agents` overrides), rewriting only `connection`. No token
+ * is EVER written here — the static key comes from {@link MODEL_API_KEY_VAR} at provider construction, and a
+ * configured `auth` block persists only the non-secret variable name / command string / scheme.
  */
 export function writeDirectConnection(input: DirectConnectionInput): Result<void, ConfigError> {
     const config = readConfig();
@@ -758,8 +788,217 @@ export function writeDirectConnection(input: DirectConnectionInput): Result<void
         baseURL: input.baseURL,
         // Omit `protocol` when absent so the resolver implies it from the provider.
         ...(input.protocol !== undefined && { protocol: input.protocol }),
+        // The credential source is token-free by construction (setup only ever attaches a {kind, var|command, scheme}).
+        ...(input.auth !== undefined && { auth: input.auth }),
     };
     return writeConfig({ ...config, models: { ...models, connection } });
+}
+
+// --- credential-source auth (direct mode) ----------------------------------
+//
+// A `direct` connection may draw its wire token from a refreshing credential source instead of a static key:
+// a helper command (Claude Code `apiKeyHelper` parity) or a short-lived env bearer. Setup detects one from
+// read-only signals and OFFERS the path opt-in — the user confirms the command (never the org-managed helper
+// auto-executed) — then VALIDATES the source before its token-free `auth` block is written. The refresh /
+// injection lives at the wire (modules/harness/runtime.ts).
+
+/**
+ * The read-only signals that a credential-helper Anthropic setup exists. A pure shape (no IO) so the
+ * offer/precedence is unit-testable. User-level vs org-managed is tracked SEPARATELY because only the
+ * user's OWN `apiKeyHelper` may be pre-filled — the managed one is surfaced but never lifted.
+ */
+export type CredentialHelperDetection = {
+    /** An `apiKeyHelper` from the user's OWN `~/.claude/settings.json` — pre-fillable as an editable default. */
+    readonly userHelperCommand: string | null;
+    /** An org-managed `apiKeyHelper` is present — surfaced to the user, but NEVER pre-filled or auto-executed. */
+    readonly managedHelperPresent: boolean;
+    /** `ANTHROPIC_AUTH_TOKEN` is set — the env-bearer source is offerable. */
+    readonly authTokenEnvSet: boolean;
+};
+
+/** True when ANY credential-helper signal was detected, so setup should offer the credential-source path. */
+export function credentialHelperDetected(d: CredentialHelperDetection): boolean {
+    return d.userHelperCommand !== null || d.managedHelperPresent || d.authTokenEnvSet;
+}
+
+/**
+ * Assemble the detection from its raw signals — pure, so the offer logic (and the "managed helper is not
+ * auto-executed" guarantee) is testable without touching the filesystem or environment.
+ */
+export function detectCredentialHelperFrom(
+    userHelperCommand: string | null,
+    managedHelperPresent: boolean,
+    authTokenEnvSet: boolean,
+): CredentialHelperDetection {
+    return { userHelperCommand, managedHelperPresent, authTokenEnvSet };
+}
+
+/** The user's OWN Claude Code settings — an `apiKeyHelper` here is theirs, so setup may pre-fill it as an editable default. */
+function userClaudeSettingsPath(): string {
+    return join(homedir(), ".claude", "settings.json");
+}
+
+/**
+ * The org-managed Claude Code settings file (Claude Code's documented per-platform managed-settings path).
+ * An `apiKeyHelper` here belongs to the organization: setup surfaces that one exists but NEVER pre-fills or
+ * auto-executes it — the governance decision stays with the user, and the file may be unreadable or need
+ * special env anyway.
+ */
+function managedClaudeSettingsPath(): string {
+    if (process.platform === "darwin") return "/Library/Application Support/ClaudeCode/managed-settings.json";
+    if (process.platform === "win32") return "C:\\ProgramData\\ClaudeCode\\managed-settings.json";
+    return "/etc/claude-code/managed-settings.json";
+}
+
+/**
+ * Read a Claude Code settings file's `apiKeyHelper` command, or `null` when the file is absent / unreadable
+ * / carries no helper. Boundary-wrapped: a missing file is the common case, not an error — a settings file
+ * usually does not exist, so `readFileSync` throwing ENOENT resolves to `null`.
+ */
+function readApiKeyHelper(path: string): string | null {
+    try {
+        const parsed: unknown = JSON.parse(readFileSync(path, "utf8")); // on-disk settings — shape-narrowed below
+        if (typeof parsed !== "object" || parsed === null) return null;
+        // Narrowed to a non-null object above, so a Record view for the single field read is sound.
+        const helper = (parsed as Record<string, unknown>).apiKeyHelper;
+        return typeof helper === "string" && helper.trim() !== "" ? helper.trim() : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Detect a credential-helper setup from read-only signals: the user's + org-managed Claude settings, and
+ * `ANTHROPIC_AUTH_TOKEN` in the environment (read via env.ts, the sole `process.env` reader). A configured
+ * `claude auth status` api-key-helper method writes an `apiKeyHelper` into settings.json, so the
+ * settings-file signal already subsumes it — no fragile `claude` subprocess is spawned.
+ */
+function detectCredentialHelper(): CredentialHelperDetection {
+    return detectCredentialHelperFrom(
+        readApiKeyHelper(userClaudeSettingsPath()),
+        readApiKeyHelper(managedClaudeSettingsPath()) !== null,
+        anthropicAuthTokenSet(),
+    );
+}
+
+/** The wire protocol a direct connection speaks, resolving the "infer from provider" default the way `resolveModelConnection` does — the probe needs it to add the anthropic version header. */
+function effectiveProtocol(direct: DirectConnectionInput): "anthropic" | "openai-compatible" {
+    return direct.protocol ?? (direct.provider === "anthropic" ? "anthropic" : "openai-compatible");
+}
+
+/** Why the setup credential probe failed — a single actionable message naming the likely cause (command, scheme, or endpoint). */
+export type CredentialProbeError = { readonly message: string };
+
+/**
+ * Validate a credential source before it is persisted: run it ONCE — surfacing a command/env failure as its
+ * own cause — then make a cheap authenticated `GET {baseURL}/models` under the resolved
+ * scheme, so a wrong scheme or endpoint surfaces as an HTTP/auth failure at setup, not on first chat. The
+ * anthropic wire's `/models` needs a version header even on GET, added when the protocol is anthropic.
+ * `doFetch` is injectable for tests; production uses global `fetch`.
+ */
+export async function probeCredentialSource(
+    baseURL: string,
+    protocol: "anthropic" | "openai-compatible",
+    auth: ModelAuthConfig,
+    doFetch: (url: string, init: RequestInit) => Promise<Response> = fetch,
+): Promise<Result<void, CredentialProbeError>> {
+    const cred = await createCredentialSource(auth).get();
+    if (cred.isErr()) {
+        return err({
+            message: `The credential ${auth.kind === "command" ? "command" : "source"} did not produce a token: ${credentialErrorMessage(cred.error)}.`,
+        });
+    }
+
+    const headers = new Headers();
+    if (cred.value.scheme === "bearer") headers.set("authorization", `Bearer ${cred.value.token}`);
+    else headers.set("x-api-key", cred.value.token);
+    // The Anthropic Messages API requires a version header even on GET /models.
+    if (protocol === "anthropic") headers.set("anthropic-version", "2023-06-01");
+
+    const url = `${baseURL.replace(/\/+$/, "")}/models`;
+    let response: Response;
+    try {
+        response = await doFetch(url, { method: "GET", headers });
+    } catch (cause) {
+        return err({ message: `Could not reach the endpoint ${url}: ${cause instanceof Error ? cause.message : String(cause)}. Check the endpoint URL.` });
+    }
+    if (response.status === 401 || response.status === 403) {
+        return err({
+            message: `The endpoint rejected the credential (HTTP ${response.status}). Check the ${cred.value.scheme} scheme and that the source mints a valid token for ${baseURL}.`,
+        });
+    }
+    if (!response.ok) {
+        return err({ message: `The endpoint ${url} returned HTTP ${response.status}. Check the endpoint URL exposes a /models route.` });
+    }
+    return ok(undefined);
+}
+
+/** Shorten a command for a menu label so a long helper path does not wrap the clack box. */
+function truncateCommand(s: string, max = 44): string {
+    return s.length <= max ? s : `${s.slice(0, max - 1)}...`;
+}
+
+/**
+ * Offer the credential-source path for a detected helper setup. Opt-in: the user chooses a credential
+ * command (pre-filled from their OWN settings when present, always editable), the
+ * `ANTHROPIC_AUTH_TOKEN` env bearer (when set), or declines to the static-key path. An org-managed helper is
+ * announced but the user must still supply/confirm the command — it is never auto-executed. The chosen
+ * source is VALIDATED (run once + auth probe) before it is returned; a probe failure reports the likely
+ * cause and returns `null` (falling back to the static key). Returns the token-free `auth` block, or `null`.
+ */
+async function offerCredentialSource(direct: DirectConnectionInput, detection: CredentialHelperDetection): Promise<ModelAuthConfig | null> {
+    // A managed-only helper: announce it, but the user must still supply/confirm a command — never lifted.
+    if (detection.managedHelperPresent && detection.userHelperCommand === null) {
+        log.info(
+            "An organization-managed Claude credential helper was detected. Inflexa will not run it automatically — supply or confirm the command to use it.",
+        );
+    }
+
+    const options: { value: string; label: string }[] = [];
+    if (detection.userHelperCommand !== null) {
+        options.push({
+            value: "command_prefill",
+            label: `Use the credential command from ~/.claude/settings.json (${truncateCommand(detection.userHelperCommand)})`,
+        });
+    }
+    options.push({ value: "command", label: "Run a credential command to mint a short-lived token" });
+    if (detection.authTokenEnvSet) options.push({ value: "env_bearer", label: `Use ${ANTHROPIC_AUTH_TOKEN_VAR} from your environment (bearer)` });
+    options.push({ value: "_skip", label: "Skip — use a static API key from the environment" });
+
+    const chosen = await select("A credential-helper setup was detected. How should inflexa obtain the model token?", options);
+    if (chosen === "_skip") return null;
+
+    let auth: ModelAuthConfig;
+    if (chosen === "env_bearer") {
+        auth = { kind: "env", var: ANTHROPIC_AUTH_TOKEN_VAR, scheme: "bearer" };
+    } else {
+        const prefill = chosen === "command_prefill" ? (detection.userHelperCommand ?? "") : "";
+        const command = (
+            await promptText("Credential command (its stdout is the token — Claude Code apiKeyHelper compatible)", {
+                ...(prefill !== "" && { defaultValue: prefill, placeholder: prefill }),
+                validate: (v) => (v.trim() === "" ? "Enter a command." : undefined),
+            })
+        ).trim();
+        // Infer a scheme default and let the user override (the probe validates it): an apiKeyHelper mints an
+        // `x-api-key`; a bearer is the OAuth/WIF case.
+        const scheme = (await select("How is the minted token sent on the wire?", [
+            { value: "x-api-key", label: "x-api-key header (a minted API key — apiKeyHelper default)" },
+            { value: "bearer", label: "Authorization: Bearer (an OAuth / WIF access token)" },
+        ])) as CredentialScheme;
+        auth = { kind: "command", command, scheme };
+    }
+
+    const s = clackSpinner();
+    s.start("Validating the credential source");
+    const probe = await probeCredentialSource(direct.baseURL, effectiveProtocol(direct), auth);
+    if (probe.isErr()) {
+        s.error("Credential source validation failed");
+        log.error(probe.error.message);
+        log.warn("Not writing the credential source — falling back to a static API key. Re-run `inflexa setup` to try again.");
+        return null;
+    }
+    s.stop("Credential source validated");
+    return auth;
 }
 
 /**

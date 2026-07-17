@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { MachineBudget, ResourceLimits, ResourcePolicy } from "@inflexa-ai/harness";
 import { type Result } from "neverthrow";
-import { modelsConfigSchema, readConfig, writeConfig, type ConfigError } from "../../lib/config.ts";
+import { modelsConfigSchema, readConfig, writeConfig, type ConfigError, type ModelAuthConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { DEFAULT_SANDBOX_IMAGE } from "../libs/images.ts";
 
@@ -266,6 +266,12 @@ export type ResolvedModelConnection =
           /** The configured endpoint (required in direct mode). */
           readonly baseURL: string;
           readonly protocol: ModelWireProtocol;
+          /**
+           * An optional refreshing credential source (`models.connection.auth`) — a named env var or a
+           * token-minting command — that supersedes the env-key resolution. Carries only the non-secret
+           * name/command/scheme; the token is resolved lazily at the wire, never at boot.
+           */
+          readonly auth?: ModelAuthConfig;
           readonly agents: AgentModelOverrides;
           readonly configError?: { issues: string };
       };
@@ -320,5 +326,13 @@ export function resolveModelConnection(): ResolvedModelConnection {
         return { mode: "cliproxy", provider: connection.provider ?? "anthropic", agents };
     }
     const protocol: ModelWireProtocol = connection.protocol ?? (connection.provider === "anthropic" ? "anthropic" : "openai-compatible");
-    return { mode: "direct", provider: connection.provider, baseURL: connection.baseURL, protocol, agents };
+    // Carry the optional token-free `auth` source verbatim (present only on a well-formed direct block).
+    return {
+        mode: "direct",
+        provider: connection.provider,
+        baseURL: connection.baseURL,
+        protocol,
+        agents,
+        ...(connection.auth !== undefined && { auth: connection.auth }),
+    };
 }

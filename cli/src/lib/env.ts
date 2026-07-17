@@ -51,6 +51,11 @@ const anthropicApiKeyVar = "ANTHROPIC_API_KEY";
 const openaiApiKeyVar = "OPENAI_API_KEY";
 const anthropicBaseUrlVar = "ANTHROPIC_BASE_URL";
 const openaiBaseUrlVar = "OPENAI_BASE_URL";
+// The Anthropic-wire BEARER token variable. A short-lived first-party token (WIF / gateway / enterprise
+// credential) rather than a static `x-api-key`; consumed as a `direct`-mode credential source via a
+// configured `{ kind: "env", var: "ANTHROPIC_AUTH_TOKEN", scheme: "bearer" }` auth block, and detected by
+// setup. Read here (the sole `process.env` reader) — see {@link anthropicAuthTokenSet}.
+const anthropicAuthTokenVar = "ANTHROPIC_AUTH_TOKEN";
 
 function dataDir(): string {
     const base = process.env[dataVar];
@@ -251,24 +256,38 @@ export function providerApiKeyVar(provider: string): string {
 }
 
 /**
- * Resolve the `direct`-connection chat API key from the environment ONLY (env.ts is the sole
- * `process.env` reader), parameterized by the connection's configured `provider`. Precedence:
- * `INFLEXA_MODEL_API_KEY` (the explicit override) first; when unset, the provider-conventional variable
- * ({@link providerApiKeyVar}) so a machine already provisioned for Claude Code / the SDKs works without
- * re-exporting the key under a new name. Consumed only at provider construction / model listing; the
- * resolved value is NEVER written to config.json, telemetry, logs, or provenance — the provider-derived
- * fallback READS an existing ecosystem secret, it never copies it. Ignored in `cliproxy` mode, which
- * mints and reads its own client key.
+ * Resolve the `direct`-connection chat API key from the environment ONLY (env.ts is the sole `process.env`
+ * reader), parameterized by the connection's `provider`. Precedence: `INFLEXA_MODEL_API_KEY` (the explicit
+ * override), then the provider-conventional variable ({@link providerApiKeyVar}) so a machine already
+ * provisioned for Claude Code / the SDKs works unchanged. Read at call time (not frozen at import) so it
+ * reflects the live environment. The resolved value is NEVER written to config, telemetry, logs, or
+ * provenance — it READS an existing secret, never copies it. Ignored in `cliproxy` mode (its own client key).
  *
- * Read at call time, not import (unlike the frozen `env` fields), so it reflects the live environment —
- * correct for a value that may be exported after this module loads, and what makes it unit-testable.
- *
- * Out of scope (deferred): `ANTHROPIC_AUTH_TOKEN` (Anthropic-wire + Bearer needs a harness
- * custom-auth-header capability the CLI cannot supply alone) and Bedrock/Vertex (no direct-mode HTTP
- * `/v1` signer). A gateway that wants a bearer token can be adopted today as `protocol: openai-compatible`.
+ * This is the DEFAULT credential path; a configured `auth` block instead supplies a refreshing source that
+ * supersedes it (including the `ANTHROPIC_AUTH_TOKEN` bearer case — see lib/credential.ts). Bedrock/Vertex
+ * stay out of scope (no direct-mode HTTP `/v1` signer).
  */
 export function resolveModelApiKey(provider: string): string | undefined {
     return process.env[modelApiKeyVar] ?? process.env[providerApiKeyVar(provider)];
+}
+
+/**
+ * True when {@link anthropicAuthTokenVar} (`ANTHROPIC_AUTH_TOKEN`) is set — the env signal of a bearer-token
+ * Anthropic setup. Read here because env.ts is the sole `process.env` reader; setup consumes it (never the
+ * value) to OFFER the `{ kind: "env", var: "ANTHROPIC_AUTH_TOKEN", scheme: "bearer" }` credential source.
+ */
+export function anthropicAuthTokenSet(): boolean {
+    return Boolean(process.env[anthropicAuthTokenVar]);
+}
+
+/**
+ * Read a single environment variable for the credential source's `env` kind (lib/credential.ts) — the sole
+ * sanctioned `process.env` read behind it. A live read (not frozen at import) so a re-exported token is
+ * picked up and a 401 can re-read it; an empty value counts as unset.
+ */
+export function readEnvCredentialVar(name: string): string | undefined {
+    const value = process.env[name];
+    return value === undefined || value === "" ? undefined : value;
 }
 
 /**
@@ -389,8 +408,9 @@ export const envDoc: Readonly<
  * is key-locked to `env`'s fields: surfacing these as `env` fields would widen the secret's surface for
  * no gain. Rendered alongside `envDoc`'s var rows by src/cli/index.ts.
  *
- * `ANTHROPIC_AUTH_TOKEN` and Bedrock/Vertex are deliberately ABSENT — not adopted in this version
- * (see {@link resolveModelApiKey}); a bearer-only gateway is reachable today as `protocol: openai-compatible`.
+ * `ANTHROPIC_AUTH_TOKEN` is consumed not as a bare env fallback here but via a configured `direct`-mode
+ * `auth` block (`{ kind: "env", var: "ANTHROPIC_AUTH_TOKEN", scheme: "bearer" }` — see lib/credential.ts);
+ * setup offers it when detected. Bedrock/Vertex remain out of scope (no direct-mode HTTP signer).
  */
 export const modelConnectionEnvDoc: readonly { readonly name: string; readonly description: string }[] = Object.freeze([
     {

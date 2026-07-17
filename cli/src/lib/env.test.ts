@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
 import {
+    anthropicAuthTokenSet,
     detectProviderEnv,
     devCommandsActive,
     env,
@@ -207,6 +208,20 @@ describe("model-connection env documentation", () => {
 
     test("the secret is no longer an env field, so envDoc carries no modelApiKey entry", () => {
         expect(Object.keys(envDoc)).not.toContain("modelApiKey");
+    });
+});
+
+describe("anthropicAuthTokenSet", () => {
+    const saved = process.env.ANTHROPIC_AUTH_TOKEN;
+    afterEach(() => {
+        if (saved === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN;
+        else process.env.ANTHROPIC_AUTH_TOKEN = saved;
+    });
+    test("reports presence of ANTHROPIC_AUTH_TOKEN without exposing its value", () => {
+        delete process.env.ANTHROPIC_AUTH_TOKEN;
+        expect(anthropicAuthTokenSet()).toBe(false);
+        process.env.ANTHROPIC_AUTH_TOKEN = "sk-ant-oat-secret";
+        expect(anthropicAuthTokenSet()).toBe(true);
     });
 });
 

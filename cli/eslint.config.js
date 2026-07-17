@@ -151,10 +151,12 @@ export default defineConfig([
         // env.test.ts drives `process.env` directly to exercise the CALL-TIME readers env.ts exposes
         // (resolveModelApiKey / detectProviderEnv): their contract is to read the LIVE environment, so
         // asserting their precedence requires setting the variables — there is no frozen-env route to a
-        // value that is deliberately not frozen.
+        // value that is deliberately not frozen. credential.test.ts does the same to exercise the `env`-kind
+        // credential source, which reads the live environment through env.ts's `readEnvCredentialVar` seam.
         ignores: [
             "src/lib/env.ts",
             "src/lib/env.test.ts",
+            "src/lib/credential.test.ts",
             "src/test_support/preload.ts",
             "src/test_support/sandbox.ts",
             "src/test_support/harness.test.ts",
