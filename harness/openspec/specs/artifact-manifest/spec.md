@@ -113,7 +113,11 @@ An input that is not a content-attestable file **of this analysis** SHALL be
 dropped via `collector.dropInput` and SHALL NOT fail the step:
 
 - An input resolving to a **directory** (e.g. `ls` of a mount) → dropped, logged at debug.
-- An input resolving **outside the analysis tree**, at either the container-prefix or the workspace-root bound → dropped, logged at **warn** with the ref, the resolved host path, and a `boundSite` discriminator.
+- An input resolving **outside the analysis tree**, at either the container-prefix or the workspace-root bound → dropped, logged at **warn** with the ref and a `boundSite` discriminator; the workspace-root record also carries the resolved host path (the container-prefix bound rejects the path before a host mapping exists).
+
+Every input drop SHALL increment the `cortex.artifact.reconcile.input_dropped`
+counter, tagged `agent_id`, `step_id`, and `reason` (`directory`,
+`container-prefix`, or `workspace-root`).
 
 An out-of-tree read is out of scope rather than drift: the analysis tree mounts
 at `/{resourceId}`, so a reported read of `/{resourceId}/..` names the container

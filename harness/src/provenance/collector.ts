@@ -181,7 +181,9 @@ export class ProvenanceCollector {
      * Called by sandbox exec provenance frame processing.
      *
      * @param mountPath - The workspace mount path (e.g., "/a1/data" or "/a1" for single-mount)
-     * @param relativePath - Path relative to the mount root
+     * @param relativePath - Path relative to the mount root; or, for a frame
+     *   report naming somewhere outside the mount, the verbatim absolute path
+     *   (see `stripMountPrefix`)
      * @param hash - SHA-256 hash of the file content, or null if file no longer exists
      * @param context - Explicit classification context from the caller. When provided,
      *   the collector uses it directly instead of classifying from the path.
@@ -193,7 +195,12 @@ export class ProvenanceCollector {
 
         // Use explicit context if provided, otherwise fall back to path classification
         const classification = context ?? classifyReadPath(relativePath, this.stepId, this.runId, this.dependsOn);
-        const fullPath = `${mountPath}/${relativePath}`;
+        // A still-absolute `relativePath` is a report the caller could not
+        // relativize — it names somewhere outside the mount. It rides verbatim:
+        // prepending the mount root would forge an in-tree name for a foreign
+        // path, and reconcile would then see phantom drift (a missing file,
+        // which fails the step) instead of an out-of-tree read (which it drops).
+        const fullPath = relativePath.startsWith("/") ? relativePath : `${mountPath}/${relativePath}`;
 
         // Resolve fileId for data-source inputs via materialized file metadata map
         let fileId: string | undefined;

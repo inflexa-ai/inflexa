@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -76,7 +77,7 @@ func NewProvenanceTracker(id string, watchDirs []string) *ProvenanceTracker {
 		socketPath: socketPath,
 		rlogPath:   socketPath + ".rlog",
 		watchDirs:  watchDirs,
-		stopCh: make(chan struct{}),
+		stopCh:     make(chan struct{}),
 		ops: map[string]map[string]map[string]bool{
 			"read":   {},
 			"write":  {},
@@ -272,6 +273,11 @@ func (pt *ProvenanceTracker) recordOp(op, path, layer string) {
 	// boundary.
 	path = filepath.Clean(path)
 	if !underWatchDir(path, pt.watchDirs) {
+		// A dropped report never reaches the host, so nothing over there can
+		// account for it — this line is the only trace of a hook-filter leak.
+		if sandboxLogLevel == logLevelDebug {
+			log.Printf("[provenance] dropping out-of-tree report op=%s layer=%s path=%q", op, layer, path)
+		}
 		return
 	}
 
