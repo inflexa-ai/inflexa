@@ -8,9 +8,10 @@ import { createSandboxClient, type CreateSandboxClientConfig, type EmbeddingProv
 
 import { ContainerRuntimeError, runtimes } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
+import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../lib/credential.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { bootHarnessRuntime, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
+import { bootHarnessRuntime, buildAuthInjectingFetch, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
 import { agentProviderInner } from "./agent_switch.ts";
 import type { ResolvedHarnessConfig, ResolvedModelConnection } from "./config.ts";
 import type { ExecIngress } from "./ingress.ts";
@@ -618,6 +619,22 @@ describe("bootHarnessRuntime", () => {
         expect(result._unsafeUnwrapErr()).toEqual({ type: "model_api_key_missing", providerVar: "ANTHROPIC_API_KEY" });
     });
 
+    test("a configured auth source overrides the env key — readModelApiKey is never consulted", async () => {
+        const calls: string[] = [];
+        // recordingSeams' readModelApiKey returns a key and records the call; the auth block must short-circuit
+        // it so the env key is never consulted (spec: a configured source overrides INFLEXA_MODEL_API_KEY).
+        const result = await bootHarnessRuntime({
+            seams: recordingSeams(calls),
+            config: testConfig({ model: "some-model" }),
+            connection: directConnection({ auth: { kind: "env", var: "SOME_BEARER_TOKEN", scheme: "bearer" } }),
+        });
+
+        result._unsafeUnwrap();
+        expect(calls).not.toContain("readModelApiKey");
+        // The command/env is resolved lazily at the wire, not at boot, so boot proceeds without a token in hand.
+        expect(calls).toContain("boot");
+    });
+
     test("missing skills dir fails before any side effect", async () => {
         const calls: string[] = [];
         const cfg = testConfig();
@@ -759,5 +776,92 @@ describe("bootHarnessRuntime", () => {
         expect(calls).not.toContain("postgres");
         expect(calls).not.toContain("boot");
         expect(calls).not.toContain("ingress");
+    });
+});
+
+// The direct-mode auth-injecting fetch (the config.fetch seam): per-request scheme rewrite + one 401
+// refresh/retry. Driven with a recording underlying fetch so the OUTGOING headers and retry count are the
+// assertions — no real network, no provider boot.
+describe("buildAuthInjectingFetch", () => {
+    /** A recording underlying fetch: captures each request's headers and returns the queued statuses in order. */
+    function recordingFetch(statuses: number[]): { fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>; seen: Headers[] } {
+        const seen: Headers[] = [];
+        let i = 0;
+        return {
+            seen,
+            fetch: (_input, init) => {
+                seen.push(new Headers(init?.headers));
+                return Promise.resolve(new Response(null, { status: statuses[i++] ?? 200 }));
+            },
+        };
+    }
+
+    /** A fixed, expiry-less credential source for the header-rewrite cases (get and forceRefresh yield the same token). */
+    function fixedSource(token: string, scheme: CredentialScheme): CredentialSource {
+        const cred = ok<Credential, CredentialError>({ token, scheme });
+        return { get: () => Promise.resolve(cred), forceRefresh: () => Promise.resolve(cred) };
+    }
+
+    test("bearer scheme sets Authorization: Bearer and strips the SDK's x-api-key", async () => {
+        const { fetch: underlying, seen } = recordingFetch([200]);
+        const f = buildAuthInjectingFetch(fixedSource("btok", "bearer"), underlying);
+        // The AI SDK's anthropic provider sets x-api-key from the placeholder apiKey — the bearer path must remove it.
+        await f("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": "placeholder" } });
+        expect(seen[0]!.get("authorization")).toBe("Bearer btok");
+        expect(seen[0]!.get("x-api-key")).toBeNull();
+    });
+
+    test("x-api-key scheme sets the x-api-key header", async () => {
+        const { fetch: underlying, seen } = recordingFetch([200]);
+        const f = buildAuthInjectingFetch(fixedSource("xtok", "x-api-key"), underlying);
+        await f("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": "placeholder" } });
+        expect(seen[0]!.get("x-api-key")).toBe("xtok");
+    });
+
+    test("an HTTP 401 forces exactly one refresh + retry with the new token", async () => {
+        const { fetch: underlying, seen } = recordingFetch([401, 200]);
+        let refreshCount = 0;
+        let token = "tok-1";
+        const source: CredentialSource = {
+            get: () => Promise.resolve(ok<Credential, CredentialError>({ token, scheme: "bearer" })),
+            forceRefresh: () => {
+                refreshCount++;
+                token = "tok-2";
+                return Promise.resolve(ok<Credential, CredentialError>({ token, scheme: "bearer" }));
+            },
+        };
+        const response = await buildAuthInjectingFetch(source, underlying)("https://api.anthropic.com/v1/messages", { method: "POST" });
+
+        expect(response.status).toBe(200);
+        expect(refreshCount).toBe(1); // exactly one forced refresh
+        expect(seen).toHaveLength(2); // one retry only
+        expect(seen[0]!.get("authorization")).toBe("Bearer tok-1");
+        expect(seen[1]!.get("authorization")).toBe("Bearer tok-2");
+    });
+
+    test("a persistent 401 retries only once, then surfaces the 401", async () => {
+        const { fetch: underlying, seen } = recordingFetch([401, 401]);
+        let refreshCount = 0;
+        const source: CredentialSource = {
+            get: () => Promise.resolve(ok<Credential, CredentialError>({ token: "t", scheme: "bearer" })),
+            forceRefresh: () => {
+                refreshCount++;
+                return Promise.resolve(ok<Credential, CredentialError>({ token: "t2", scheme: "bearer" }));
+            },
+        };
+        const response = await buildAuthInjectingFetch(source, underlying)("https://api.anthropic.com/v1/messages", {});
+
+        expect(response.status).toBe(401);
+        expect(refreshCount).toBe(1);
+        expect(seen).toHaveLength(2); // original + exactly one retry, never a third attempt
+    });
+
+    test("a credential-resolution failure rejects the fetch (its throwing contract) with an actionable message", async () => {
+        const { fetch: underlying } = recordingFetch([200]);
+        const source: CredentialSource = {
+            get: () => Promise.resolve(err<Credential, CredentialError>({ type: "env_var_unset", var: "MISSING" })),
+            forceRefresh: () => Promise.resolve(err<Credential, CredentialError>({ type: "env_var_unset", var: "MISSING" })),
+        };
+        await expect(buildAuthInjectingFetch(source, underlying)("https://x/messages", {})).rejects.toThrow(/MISSING/);
     });
 });
