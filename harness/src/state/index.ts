@@ -31,6 +31,7 @@ export {
     updateRunStatus,
     promoteFailedToPartial,
     setRunMandate, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+    setRunSynthesisOutcome,
     queryRun,
     queryActiveRun,
     queryRunsByAnalysis,
@@ -69,6 +70,7 @@ export {
     ArtifactRowSchema,
     RunStatus,
     StepExecutionStatus,
+    SynthesisStatus,
     CortexRunRowSchema,
     StepExecutionRowSchema,
     CortexPlanRowSchema,

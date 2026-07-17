@@ -15,7 +15,7 @@ import type { ResultAsync } from "neverthrow";
 import type { DbError } from "../lib/db-result.js";
 import { tryMutation, tryQuery } from "../lib/db-result.js";
 import type { Querier } from "./db.js";
-import type { CortexRunRow } from "./schema.js";
+import type { CortexRunRow, SynthesisStatus } from "./schema.js";
 
 export interface InsertRunInput {
     runId: string;
@@ -98,7 +98,7 @@ export function queryActiveRun(pool: Querier, analysisId: string, planId: string
     return tryQuery("runs.queryActiveRun", async () => {
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
-                   status, started_at, completed_at, error, parts,
+                   status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1
@@ -144,7 +144,7 @@ export function queryRun(pool: Querier, runId: string): ResultAsync<CortexRunRow
     return tryQuery("runs.queryRun", async () => {
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
-                   status, started_at, completed_at, error, parts,
+                   status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE run_id = $1`,
@@ -163,7 +163,7 @@ export function queryRunsByAnalysis(
     return tryQuery("runs.queryRunsByAnalysis", async () => {
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
-                   status, started_at, completed_at, error, parts,
+                   status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1
@@ -183,7 +183,7 @@ export function queryRunsByThread(
     return tryQuery("runs.queryRunsByThread", async () => {
         const result = await pool.query({
             text: `SELECT run_id, analysis_id, thread_id, workflow_name,
-                   status, started_at, completed_at, error, parts,
+                   status, started_at, completed_at, error, synthesis_status, synthesis_reason, parts,
                    mandate_jti, mandate_expires_at, plan_id -- oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
             FROM cortex_runs
             WHERE analysis_id = $1 AND thread_id = $2
@@ -213,6 +213,27 @@ export function setRunMandate(pool: Querier, runId: string, jti: string, expires
     });
 }
 
+/**
+ * Record the run-level synthesis outcome on the run ledger. `synthesisReason`
+ * carries operator-facing detail for a skipped/failed outcome; it stays null
+ * for the "produced" case.
+ */
+export function setRunSynthesisOutcome(
+    pool: Querier,
+    runId: string,
+    synthesisStatus: SynthesisStatus,
+    synthesisReason?: string | null,
+): ResultAsync<void, DbError> {
+    return tryMutation("runs.setRunSynthesisOutcome", async () => {
+        await pool.query({
+            text: `UPDATE cortex_runs
+            SET synthesis_status = $1, synthesis_reason = $2
+            WHERE run_id = $3`,
+            values: [synthesisStatus, synthesisReason ?? null, runId],
+        });
+    });
+}
+
 function mapRunRow(row: Record<string, unknown>): CortexRunRow {
     // JSONB is parsed by `pg` into native arrays/objects. Treat legacy TEXT
     // rows (if anything slipped through) as strings and parse them.
@@ -235,6 +256,8 @@ function mapRunRow(row: Record<string, unknown>): CortexRunRow {
         startedAt: row.started_at as string,
         completedAt: (row.completed_at as string) ?? null,
         error: (row.error as string) ?? null,
+        synthesisStatus: (row.synthesis_status as CortexRunRow["synthesisStatus"]) ?? null,
+        synthesisReason: (row.synthesis_reason as string) ?? null,
         parts,
         mandateJti: (row.mandate_jti as string) ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
         mandateExpiresAt: (row.mandate_expires_at as string) ?? null, // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)

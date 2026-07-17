@@ -73,10 +73,12 @@ import {
     queryActiveRun,
     queryStepArtifactPaths,
     seedStepExecutions,
+    setRunSynthesisOutcome,
     suspendAnalysis as suspendAnalysisQuery,
     sweepPendingStepExecutions,
     updateRunStatus,
 } from "../state/index.js";
+import type { SynthesisStatus } from "../state/index.js";
 import { isBudgetExceeded } from "../loop/budget-exceeded.js";
 import { loadStepSummariesFromDisk } from "../execution/run-synthesis.js";
 import { MAX_UPSTREAM_ARTIFACTS, composeStepBriefing, type UpstreamHandoff } from "../prompts/briefing.js";
@@ -452,7 +454,7 @@ export function synthesizeFindings(args: {
     completedSteps: readonly string[];
     session: RunSession;
     deps: ExecuteAnalysisDeps;
-}): Promise<{ findings: readonly RunFinding[] }> {
+}): Promise<{ findings: readonly RunFinding[]; synthesisStatus: Exclude<SynthesisStatus, "failed">; synthesisReason: string | null }> {
     const { analysisId, runId, completedSteps, session, deps } = args;
     const emit: EmitFn = (event) => {
         const part = isChatDataPart(event)
@@ -597,6 +599,9 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
     // after so the workflow record goes to ERROR.
     let synthesisError: unknown = null;
     let synthesisFindings: readonly RunFinding[] = [];
+    // Null when synthesis never ran (disabled or no completed steps): the ledger
+    // columns stay NULL — "unknown", not a recorded skip.
+    let synthesisOutcome: { status: SynthesisStatus; reason: string | null } | null = null;
     const synthesisEnabled = deps.synthesisEnabled ?? true;
     if (synthesisEnabled && final.completed.size > 0) {
         try {
@@ -612,8 +617,10 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
                 { name: "synthesize-findings" },
             );
             synthesisFindings = synthOut.findings;
+            synthesisOutcome = { status: synthOut.synthesisStatus, reason: synthOut.synthesisReason };
         } catch (err) {
             synthesisError = err;
+            synthesisOutcome = { status: "failed", reason: err instanceof Error ? err.message : String(err) };
             logger.error("synthesizeFindings failed — failing the run", { runId, ...logger.errorFields(err) });
         }
     }
@@ -637,6 +644,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
             : final.failureReason,
         forceFailed: synthesisError !== null,
         findings: synthesisFindings,
+        synthesisOutcome,
         deps,
     });
 
@@ -1035,6 +1043,11 @@ interface CollectAndCompleteArgs {
     readonly forceFailed?: boolean;
     /** Quick-display findings from synthesis for the run-completed card. */
     readonly findings: readonly RunFinding[];
+    /**
+     * Classified synthesis outcome to record on the run ledger. Null when
+     * synthesis never ran — the columns stay NULL ("unknown").
+     */
+    readonly synthesisOutcome: { status: SynthesisStatus; reason: string | null } | null;
     readonly deps: ExecuteAnalysisDeps;
 }
 
@@ -1094,6 +1107,25 @@ async function collectAndComplete(args: CollectAndCompleteArgs): Promise<Execute
         );
     } catch (err) {
         logger.error("persist-final-status failed", { status, ...logger.errorFields(err) });
+    }
+
+    // Record the run's synthesis outcome AFTER the status write — a reader that
+    // sees a terminal status then also sees whether (and why) synthesis ran. A
+    // null outcome means synthesis never ran; leave the columns NULL ("unknown").
+    // Log-don't-rollback, like the sibling terminal steps: a failed ledger note
+    // must not undo an otherwise-complete run.
+    const outcome = args.synthesisOutcome;
+    if (outcome !== null) {
+        try {
+            await DBOS.runStep(
+                async () => {
+                    unwrapOrThrow(await setRunSynthesisOutcome(deps.pool, runId, outcome.status, outcome.reason));
+                },
+                { name: "persist-synthesis-outcome" },
+            );
+        } catch (err) {
+            logger.error("persist-synthesis-outcome failed", { synthesisStatus: outcome.status, ...logger.errorFields(err) });
+        }
     }
 
     // Sweep never-started steps to `skipped` — but ONLY on genuinely-terminal

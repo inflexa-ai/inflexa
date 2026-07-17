@@ -16,6 +16,7 @@ import type { Pool } from "pg";
 
 import { okAsync } from "neverthrow";
 
+import { defaultErrorFields, type LogFields, type LogLevel, type Logger } from "../lib/logger.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 import type { RunSession } from "../auth/types.js";
@@ -87,9 +88,38 @@ function validSynthesisPayload(): unknown {
     };
 }
 
+/** One record captured by the test logger — the emitted diagnostic, as state. */
+interface LoggedRecord {
+    readonly level: LogLevel;
+    readonly msg: string;
+    readonly fields: LogFields;
+}
+
+/**
+ * A `Logger` that appends every record to `sink`, so a test asserts on the
+ * diagnostics the code actually emitted (loud skips) rather than on call counts.
+ */
+function makeCapturingLogger(sink: LoggedRecord[], bindings: LogFields = {}): Logger {
+    const emit =
+        (level: LogLevel) =>
+        (msg: string, fields?: LogFields): void => {
+            sink.push({ level, msg, fields: { ...bindings, ...fields } });
+        };
+    return {
+        debug: emit("debug"),
+        info: emit("info"),
+        warn: emit("warn"),
+        error: emit("error"),
+        with: (extra) => makeCapturingLogger(sink, { ...bindings, ...extra }),
+        named: () => makeCapturingLogger(sink, bindings),
+        errorFields: defaultErrorFields,
+    };
+}
+
 interface Harness {
     deps: SynthesizeRunDeps;
     embedderCalls: number;
+    logs: LoggedRecord[];
     cleanup: () => Promise<void>;
 }
 
@@ -108,8 +138,10 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
             return okAsync(texts.map(() => new Array(1536).fill(0.01)));
         },
     };
+    const logs: LoggedRecord[] = [];
     return {
         deps: {
+            logger: makeCapturingLogger(logs),
             pool: emptyPool(),
             provider,
             embedding,
@@ -120,6 +152,7 @@ async function makeHarness(provider: SynthesizeRunDeps["provider"], opts: { with
         get embedderCalls() {
             return embedderCalls;
         },
+        logs,
         cleanup: () => rm(base, { recursive: true, force: true }),
     };
 }
@@ -138,7 +171,7 @@ function captureProgress(): {
 }
 
 describe("synthesizeRun", () => {
-    it("returns no findings and reports skipped when there are no step summaries", async () => {
+    it("returns no findings and reports skipped_no_summaries with a warn when there are no step summaries", async () => {
         const provider = scriptedProvider([]);
         const h = await makeHarness(provider, { withSummary: false });
         const { phases, onProgress } = captureProgress();
@@ -152,7 +185,12 @@ describe("synthesizeRun", () => {
                 onProgress,
             });
             expect(result.findings).toEqual([]);
+            expect(result.synthesisStatus).toBe("skipped_no_summaries");
+            expect(result.synthesisReason).toBe("no-summaries");
             expect(phases).toEqual(["starting", "skipped"]);
+            // The skip is logged loudly, carrying the run id + reason as fields.
+            const warn = h.logs.find((r) => r.level === "warn");
+            expect(warn?.fields).toMatchObject({ runId: RUN_ID, reason: "no-summaries" });
             // The synthesizer loop never ran.
             expect(provider.calls.length).toBe(0);
             expect(h.embedderCalls).toBe(0);
@@ -191,13 +229,51 @@ describe("synthesizeRun", () => {
             });
 
             expect(result.findings).toEqual([{ title: "Upregulation of FOXP3", confidence: "high" }]);
+            expect(result.synthesisStatus).toBe("produced");
+            expect(result.synthesisReason).toBeNull();
             expect(phases).toEqual(["starting", "indexing", "persisting", "complete"]);
             expect(h.embedderCalls).toBe(1);
+            // The produced path does not warn.
+            expect(h.logs.some((r) => r.level === "warn")).toBe(false);
             // The final run-synthesis chat part was emitted.
             expect(emitted.some((e) => typeof e === "object" && e !== null && (e as { type?: string }).type === "data-run-synthesis")).toBe(true);
             // synthesis.json was written under the run directory.
             const path = join(h.deps.resolveWorkspaceRoot(ANALYSIS_ID), "runs", RUN_ID, "synthesis.json");
             expect((await stat(path)).isFile()).toBe(true);
+        } finally {
+            await h.cleanup();
+        }
+    });
+
+    it("returns skipped_blocker with the reason and a warn, writing no synthesis.json, when the synthesizer reports a blocker", async () => {
+        const BLOCKER_REASON = "all step summaries were empty";
+        const provider = scriptedProvider((i) =>
+            i === 0
+                ? makeMessage([toolUseBlock("tu-1", "report_blocker", { reason: BLOCKER_REASON })], "tool_use")
+                : makeMessage([textBlock("done")], "end_turn"),
+        );
+        const h = await makeHarness(provider, { withSummary: true });
+        const { phases, onProgress } = captureProgress();
+        try {
+            const result = await synthesizeRun(h.deps, {
+                analysisId: ANALYSIS_ID,
+                runId: RUN_ID,
+                completedSteps: [STEP_ID],
+                session: makeRunSession(),
+                emit: () => {},
+                onProgress,
+            });
+
+            expect(result.findings).toEqual([]);
+            expect(result.synthesisStatus).toBe("skipped_blocker");
+            expect(result.synthesisReason).toBe(BLOCKER_REASON);
+            expect(phases).toEqual(["starting", "skipped"]);
+            // The blocker is logged loudly, carrying the run id + blocker reason as fields.
+            const warn = h.logs.find((r) => r.level === "warn");
+            expect(warn?.fields).toMatchObject({ runId: RUN_ID, reason: BLOCKER_REASON });
+            // A blocker writes no synthesis result to disk.
+            const path = join(h.deps.resolveWorkspaceRoot(ANALYSIS_ID), "runs", RUN_ID, "synthesis.json");
+            await expect(stat(path)).rejects.toThrow();
         } finally {
             await h.cleanup();
         }

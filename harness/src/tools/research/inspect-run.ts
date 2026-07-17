@@ -9,8 +9,8 @@
  * conversation thread on completion. The retired `run-result-writer` push
  * payload (run status, step summaries, run synthesis, artifact paths) is
  * surfaced here on demand: the run row + step `summaryPath` references +
- * the `synthesisPath` for completed runs let the conversation agent
- * `read_file` the artefacts it needs.
+ * the `synthesisPath` for runs whose synthesis was produced let the
+ * conversation agent `read_file` the artefacts it needs.
  */
 
 import { ok, type Result } from "neverthrow";
@@ -50,7 +50,15 @@ function formatRun(r: CortexRunRow, verbose: boolean) {
         startedAt: r.startedAt,
         completedAt: r.completedAt,
         planId: r.planId,
-        synthesisPath: r.status === "completed" ? `runs/${r.runId}/synthesis.json` : null,
+        // synthesis.json is written only when synthesis actually produced a
+        // result; a skipped/failed synthesis leaves no file, so pointing at a
+        // path would send the agent to a stale or absent artifact. The recorded
+        // outcome — surfaced as synthesisStatus (and synthesisReason when set) —
+        // lets a consumer tell "produced" from "skipped/failed/unknown" without
+        // reading a file.
+        synthesisPath: r.synthesisStatus === "produced" ? `runs/${r.runId}/synthesis.json` : null,
+        synthesisStatus: r.synthesisStatus,
+        ...(r.synthesisReason !== null ? { synthesisReason: r.synthesisReason } : {}),
         ...(verbose ? { error: r.error } : {}),
     };
 }
@@ -61,7 +69,7 @@ export function createInspectRunTool(pool: Pool) {
         description:
             "Inspect workflow runs for this analysis. " +
             "Without a runId: lists all runs. " +
-            "With a runId: returns step-level details with paths to summary.md (and synthesis.json on completed runs). " +
+            "With a runId: returns step-level details with paths to summary.md, plus each run's synthesisStatus and a synthesisPath to synthesis.json only when synthesis was produced. " +
             "Default response is lightweight — pass includeDiagnostics:true to add error/duration/retry telemetry. " +
             "Read summary.md or synthesis.json for findings, or use workspace search with type:summary or type:synthesis.",
         inputSchema: z.object({
