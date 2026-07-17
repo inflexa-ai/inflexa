@@ -71,27 +71,65 @@ export const LOCAL_EMBEDDING_DIMENSIONS = 384;
 const LOCAL_EMBEDDING_MODEL = "bge-small-en-v1.5";
 
 /**
- * Character budget applied to every input before it reaches the sidecar.
+ * Content-token budget every input is fitted under before it reaches the embeddings
+ * endpoint.
  *
- * bge-small's context ceiling is 512 WordPiece tokens; llama-server answers an
- * over-length input with HTTP 500 ("input is too large to process"), so the
- * guard must live client-side (the harness sends whole documents — step
- * summaries and run syntheses — un-chunked, so over-length inputs do occur). We
- * cannot tokenize without pulling in the model's tokenizer, so we bound by
- * characters: English prose runs ~4 chars/token, and we budget at a deliberately
- * conservative ~3.1 chars/token (512 tokens → 1600 chars, leaving headroom for
- * the 2 special tokens and for token-dense content like citations, markdown, and
- * numbers) so even dense prose stays under 512 and the server never 500s.
+ * bge-small's hard ceiling is 512 WordPiece positions per input, and llama-server
+ * answers an over-length input with HTTP 500 ("input is too large to process"), so the
+ * bound MUST hold client-side (the harness sends whole documents — step summaries, run
+ * syntheses — un-chunked, so over-length inputs do occur). The budget is 510, not 512:
+ * the tokenizer wraps content in a `[CLS]`/`[SEP]` pair that consumes the remaining two
+ * positions (measured live — a 590-content-token input is rejected as 592), and
+ * `/tokenize` is called WITHOUT special tokens so it measures content only, leaving the
+ * pair already reserved here.
  *
- * Truncation (keep the head) is chosen over chunk-then-mean-pool: these inputs
- * are retrieval documents whose salient topic sits up front (a synthesis leads
- * with its overview/conclusions; a summary with its lede), mean-pooling several
- * chunk vectors dilutes that signal and would make local vectors qualitatively
- * unlike the api-key path's, and truncation matches the prior in-process
- * realization (llama.cpp silently truncated to its context) — no retrieval
- * regression, far less code.
+ * The bound is token-EXACT, not a chars-per-token estimate: counts come from the ready
+ * sidecar's own `/tokenize` — the exact tokenizer of the loaded model, in the process
+ * that serves the embed — so an input the fit passes can NEVER be rejected as
+ * over-length. A char cap cannot promise that: the only provable char cap is 510 (worst
+ * case one token per char), which discards ~⅔ of a typical document, and any higher cap
+ * is the same probabilistic bet that let dense prose (~2.69 chars/token) cross 512 and
+ * draw a 500. `/tokenize` is the loaded model's own tokenizer — free, no bundled-vocab
+ * dependency, and no drift against the model actually loaded.
+ *
+ * The same 510 doubles as the fast-path length threshold and the fallback cut, both
+ * sound because a WordPiece token spans at least one UTF-16 code unit: an input of ≤510
+ * code units cannot exceed 510 tokens (skip measurement entirely — the dominant
+ * one-sentence-description case pays no round-trip), and a hard cut at 510 code units
+ * provably fits with no tokenizer (the deterministic landing zone when measurement
+ * fails).
+ *
+ * Truncation keeps the HEAD rather than chunk-then-mean-pool: these are retrieval
+ * documents whose salient topic sits up front (a synthesis leads with its conclusions,
+ * a summary with its lede); mean-pooling chunk vectors dilutes that signal and would
+ * make local vectors qualitatively unlike the api-key path's single-vector embeds.
  */
-const MAX_INPUT_CHARS = 1600;
+const CONTENT_TOKEN_BUDGET = 510;
+
+/**
+ * Safety margin on a proportional cut: aim slightly under budget so the first cut
+ * typically lands in a single round. A few tokens of headroom traded for convergence —
+ * density is near-uniform within a document, so 0.95 almost always fits immediately.
+ */
+const PROPORTIONAL_MARGIN = 0.95;
+
+/**
+ * Measurement rounds after the whole-input measurement before degrading to the fallback:
+ * one proportional cut, then one overshoot-scaled shrink. Density can vary within a
+ * document (prose lede, then a dense table), so each candidate is re-measured rather
+ * than trusting the margin; two rounds converge on essentially every real input, and
+ * exhaustion degrades to the provable 510-code-unit cut.
+ */
+const PROPORTIONAL_ROUNDS = 2;
+
+/**
+ * Per-request timeout on a single `/tokenize` call, distinct from any whole-batch bound.
+ * A healthy loopback `/tokenize` answers in sub-ms, so on every real path this never
+ * fires; it exists solely to bound a half-open server that accepts the connection but
+ * never answers. Measurement must never fail an embed, so a timed-out request becomes
+ * the deterministic hard-cut fallback rather than a hung embed path.
+ */
+const TOKENIZE_REQUEST_TIMEOUT_MS = 2_000;
 
 /**
  * How long to wait for the sidecar's whole readiness sequence (`/health` 200,
@@ -141,6 +179,13 @@ const STOP_GRACE_MS = 2_000;
 type SidecarHandle = {
     /** OpenAI base URL for the harness client — `http://127.0.0.1:<port>/v1`. */
     readonly baseURL: string;
+    /**
+     * Server root origin (`http://127.0.0.1:<port>`), carried beside `baseURL` because
+     * `/tokenize` (the token-exact fit's measurement endpoint) lives at the root, not
+     * under `/v1`. The launch site has the origin in scope and records it here so the
+     * fit never string-parses it back out of `baseURL`.
+     */
+    readonly origin: string;
     /**
      * The per-spawn minted key every request presents; the authenticated `/props`
      * gate verified at launch that the server on this port holds it.
@@ -270,27 +315,132 @@ let launchEpoch = 0;
  */
 let proxyBypassEnabled = true;
 
+/**
+ * Per-request `/tokenize` timeout the fit uses. Its own mutable so a test can drive the
+ * measurement-timeout → fallback path fast ({@link __setTokenizeTimeoutForTest}) without
+ * waiting the production {@link TOKENIZE_REQUEST_TIMEOUT_MS}. Always the production value
+ * in a real run.
+ */
+let tokenizeRequestTimeoutMs = TOKENIZE_REQUEST_TIMEOUT_MS;
+
 /** Build a `provider`-kind {@link ProviderError} for a local-runtime fault. */
 function providerFault(message: string, retryable: boolean): ProviderError {
     return { type: "provider", retryable, message };
 }
 
 /**
- * Truncate to {@link MAX_INPUT_CHARS}, backing off to the last word boundary when
- * one sits near the cut so a dangling partial word is not embedded. A single
- * enormous token (rare for these inputs) falls back to the hard cut rather than
- * collapsing the input.
+ * Measure `text`'s content-token count with the ready sidecar's own tokenizer via
+ * `POST {origin}/tokenize` — the exact tokenizer of the loaded model, in the same
+ * process that serves the embed. The body is `{ content }` and no special tokens are
+ * requested, so the count is content-only (the `[CLS]`/`[SEP]` pair is already reserved
+ * in {@link CONTENT_TOKEN_BUDGET}). The minted key is sent because the pinned b9310 build
+ * key-gates `/tokenize` (verified live against the pinned binary: a missing or wrong key
+ * answers 401, the minted key answers 200) — and sending it stays correct even if a
+ * future build stopped gating it. The response is `{ "tokens": number[] }`; the count is
+ * its length.
+ *
+ * Returns `Result` per the CLI's error discipline: fetch/JSON throws, a non-200 status,
+ * and a malformed body are all bridged into an `err` at the boundary so this never
+ * throws. {@link fitInput} consumes the error locally to select the fallback — it never
+ * reaches the embed's error channel — so `retryable` is a formality here.
  */
-function guardInputLength(text: string): string {
-    // TODO(robustness): the budget is tuned for ~3.1 chars/token English prose. CJK
-    // and emoji tokenize far denser (often <1 char/token), so a sub-MAX_INPUT_CHARS
-    // input of such text can still cross the model's 512-token ceiling and draw an
-    // HTTP 500 for that one request — a bounded per-request failure, not a wedge. The
-    // real fix is token-aware truncation, which needs the model's own tokenizer.
-    if (text.length <= MAX_INPUT_CHARS) return text;
-    const hardCut = text.slice(0, MAX_INPUT_CHARS);
+async function tokenizeCount(origin: string, key: string, text: string, timeoutMs: number): Promise<Result<number, ProviderError>> {
+    try {
+        const res = await fetch(`${origin}/tokenize`, {
+            method: "POST",
+            headers: { "content-type": "application/json", Authorization: `Bearer ${key}` },
+            body: JSON.stringify({ content: text }),
+            signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (res.status !== 200) return err(providerFault(`The local embedding runtime's /tokenize endpoint answered ${res.status}.`, true));
+        // External JSON: the Array.isArray guard below validates the shape before the
+        // count is trusted, so this cast only names the one field we probe.
+        const body = (await res.json()) as { tokens?: unknown };
+        if (!Array.isArray(body.tokens)) {
+            return err(providerFault("The local embedding runtime's /tokenize endpoint returned an unexpected body (no tokens array).", true));
+        }
+        return ok(body.tokens.length);
+    } catch (cause) {
+        return err(providerFault(`Measuring token length via /tokenize failed: ${cause instanceof Error ? cause.message : String(cause)}`, true));
+    }
+}
+
+/**
+ * Back a cut off to the last word boundary when a space sits within the final 20% of the
+ * cut, so a dangling partial word is dropped without discarding a meaningful tail. A cut
+ * whose only near text is a single enormous token (rare for these inputs) is kept as the
+ * hard cut.
+ */
+function truncateAtWordBoundary(text: string, cut: number): string {
+    const hardCut = text.slice(0, cut);
     const lastSpace = hardCut.lastIndexOf(" ");
-    return lastSpace > MAX_INPUT_CHARS * 0.8 ? hardCut.slice(0, lastSpace) : hardCut;
+    return lastSpace > cut * 0.8 ? hardCut.slice(0, lastSpace) : hardCut;
+}
+
+/**
+ * The deterministic fallback: a hard cut at {@link CONTENT_TOKEN_BUDGET} code units,
+ * word-boundary-backed. It provably fits with no tokenizer — a WordPiece token spans at
+ * least one code unit, so ≤510 code units is ≤510 tokens — so measurement failure or
+ * exhausted rounds degrade the input bound, never the embed. Backoff may shorten it
+ * slightly, which only drops a partial word and cannot break the ≤510-token guarantee.
+ */
+function hardCutToBudget(text: string): string {
+    return truncateAtWordBoundary(text, CONTENT_TOKEN_BUDGET);
+}
+
+/**
+ * Cut `text` proportionally to its measured chars-per-token density, aimed at the token
+ * budget with the {@link PROPORTIONAL_MARGIN} margin, then backed off to a word boundary.
+ * `measuredTokens` is always over {@link CONTENT_TOKEN_BUDGET} at the call sites, so the
+ * target is strictly shorter than `text` and the fit makes progress every round.
+ */
+function proportionalCut(text: string, measuredTokens: number): string {
+    const target = Math.floor(CONTENT_TOKEN_BUDGET * (text.length / measuredTokens) * PROPORTIONAL_MARGIN);
+    return truncateAtWordBoundary(text, target);
+}
+
+/**
+ * Fit one input under the token budget against the ready sidecar, keeping the head:
+ *
+ * 1. ≤{@link CONTENT_TOKEN_BUDGET} code units → unchanged, no round-trip (a token spans
+ *    ≥1 code unit, so it cannot be over budget).
+ * 2. Measure the whole input; at or under budget → unchanged (a long document that
+ *    actually fits is embedded whole, not cut by a worst-case char cap).
+ * 3. Over budget → cut proportionally to the measured density and re-measure, up to
+ *    {@link PROPORTIONAL_ROUNDS} rounds (each round re-scales by the latest overshoot).
+ * 4. Rounds exhausted, or ANY `/tokenize` failure → {@link hardCutToBudget}.
+ *
+ * Never rejects: every path yields a fitting string, so measurement can never fail an
+ * embed.
+ */
+async function fitInput(origin: string, key: string, text: string): Promise<string> {
+    if (text.length <= CONTENT_TOKEN_BUDGET) return text;
+
+    const whole = await tokenizeCount(origin, key, text, tokenizeRequestTimeoutMs);
+    if (whole.isErr()) return hardCutToBudget(text);
+    if (whole.value <= CONTENT_TOKEN_BUDGET) return text;
+
+    let candidate = text;
+    let measured = whole.value;
+    for (let round = 0; round < PROPORTIONAL_ROUNDS; round++) {
+        candidate = proportionalCut(candidate, measured);
+        const remeasured = await tokenizeCount(origin, key, candidate, tokenizeRequestTimeoutMs);
+        if (remeasured.isErr()) return hardCutToBudget(text);
+        if (remeasured.value <= CONTENT_TOKEN_BUDGET) return candidate;
+        measured = remeasured.value;
+    }
+    return hardCutToBudget(text);
+}
+
+/**
+ * Fit every input in a batch under the token budget against the ready sidecar. Fitted in
+ * order; the dominant short-input case returns synchronously with no round-trip, and only
+ * over-length inputs pay measurement.
+ */
+async function fitInputs(handle: SidecarHandle, texts: readonly string[]): Promise<string[]> {
+    const fitted: string[] = [];
+    for (const text of texts) fitted.push(await fitInput(handle.origin, handle.key, text));
+    return fitted;
 }
 
 /**
@@ -681,7 +831,7 @@ export async function launchWithBinary(
             }),
         ]);
         if (readyOrExit.isOk()) {
-            return ok({ baseURL: `${origin}/v1`, key, exited: handle.exited, tail: handle.tail, stop: handle.terminate });
+            return ok({ baseURL: `${origin}/v1`, origin, key, exited: handle.exited, tail: handle.tail, stop: handle.terminate });
         }
         // Reap ours (a no-op if already gone). Guard the clear against a concurrent
         // launch having already re-set the slot to its own handle.
@@ -930,13 +1080,14 @@ export function createLocalEmbeddingProvider(deps: LocalEmbeddingProviderDeps): 
         // Matches the harness `createEmbeddingProvider` shortcut.
         if (texts.length === 0) return okAsync([]);
 
-        // Guard the 512-token ceiling before anything hits the wire.
-        const guarded = texts.map(guardInputLength);
-
         return new ResultAsync(
             ensureReady(deps.modelPath).then((rs) =>
                 rs.match(
-                    (sidecar) => sidecar.provider.embed(guarded, session),
+                    // The token-exact fit measures against the sidecar's own tokenizer, so
+                    // it runs AFTER readiness against the ready handle; the fitted texts
+                    // then embed. Fitting always yields a fitting string (never fails), so it
+                    // enters the Result chain through fromSafePromise.
+                    (sidecar) => ResultAsync.fromSafePromise(fitInputs(sidecar.handle, texts)).andThen((fitted) => sidecar.provider.embed(fitted, session)),
                     (e) => errAsync<number[][], ProviderError>(e),
                 ),
             ),
@@ -972,6 +1123,15 @@ export function __setSpawnForTest(fn: typeof spawnFor | null): void {
  */
 export function __setProxyBypassEnabledForTest(enabled: boolean): void {
     proxyBypassEnabled = enabled;
+}
+
+/**
+ * TEST ONLY. Override the per-request `/tokenize` timeout so a test can drive the
+ * measurement-timeout → hard-cut fallback fast against a hanging stub, instead of
+ * waiting the production {@link TOKENIZE_REQUEST_TIMEOUT_MS}. Pass `null` to restore it.
+ */
+export function __setTokenizeTimeoutForTest(ms: number | null): void {
+    tokenizeRequestTimeoutMs = ms ?? TOKENIZE_REQUEST_TIMEOUT_MS;
 }
 
 /**
