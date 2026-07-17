@@ -3,9 +3,9 @@
 - [x] 1.1 Extend the `models.connection` schema (`src/modules/harness/config.ts`) with an optional `auth` block: `{ kind: "env"; var; scheme }` | `{ kind: "command"; command; scheme; format?: "raw" | "exec-credential"; ttlMs? }`, `scheme: "x-api-key" | "bearer"`. Carry it on `ResolvedModelConnection` (direct arm). — schema (`modelAuthSchema`/`ModelAuthConfig`) added in `src/lib/config.ts` beside `modelConnectionSchema` (where that schema lives); `ResolvedModelConnection.auth` carried in `src/modules/harness/config.ts`.
 - [x] 1.2 Validate it in `resolveModelConnection` (fail-closed with a config error naming the offending field, same pattern as the rest of the block).
 
-## 2. Credential source resolver (env.ts)
+## 2. Credential source resolver (credential.ts)
 
-- [x] 2.1 In `src/lib/env.ts`, add a `CredentialSource` = cached async supplier returning `{ token, scheme, expiresAt? }`; keep `lib/env.ts` the sole `process.env` reader for the env kinds.
+- [x] 2.1 In `src/lib/credential.ts`, add a `CredentialSource` = cached async supplier returning `{ token, scheme, expiresAt? }`; the `env` kind reads through `env.ts`'s `readEnvCredentialVar` seam, so `lib/env.ts` stays the sole `process.env` reader.
 - [x] 2.2 `kind: "env"` — read the named var; no expiry; scheme as configured.
 - [x] 2.3 `kind: "command"` — run the command via `Bun.spawn`, boundary-wrapped to `Result`; parse stdout as raw token (default) OR Kubernetes `ExecCredential` JSON (`status.token` + `status.expirationTimestamp`).
 - [x] 2.4 Caching + refresh: reuse until `expiresAt − buffer`; fall back to `ttlMs` for a raw token; expose a `forceRefresh()` for the 401 path.
@@ -25,7 +25,7 @@
 
 ## 5. Documentation
 
-- [x] 5.1 Document the `auth` block + the two output formats (raw / ExecCredential) and the scheme in the CLI help / setup notes; state that the token value is never persisted. — documented on `modelAuthSchema` JSDoc, the setup "Model credential source" / "Model API key" notes, and env.ts credential-source docs.
+- [x] 5.1 Document the `auth` block + the two output formats (raw / ExecCredential) and the scheme in the CLI help / setup notes; state that the token value is never persisted. — documented on `modelAuthSchema` JSDoc, the setup "Model credential source" / "Model API key" notes, and credential.ts credential-source docs.
 
 ## 6. Tests
 

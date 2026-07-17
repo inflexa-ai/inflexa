@@ -90,16 +90,13 @@ const configSchema = z.object({
 export type Config = z.infer<typeof configSchema>;
 
 /**
- * The `models.connection.auth` block — a REFRESHING credential source for a `direct` connection, in place
- * of the static environment key. `env` names a variable holding a token (e.g. a short-lived
- * `ANTHROPIC_AUTH_TOKEN` bearer); `command` names a helper that mints one on demand (Claude Code
- * `apiKeyHelper` parity), its stdout parsed as a raw token (`format: "raw"`, the default) or a Kubernetes
- * `ExecCredential` JSON (`format: "exec-credential"`). `scheme` selects the wire header the token is sent
- * under — `x-api-key`, or `Authorization: Bearer`. ONLY the non-secret variable name / command string /
- * scheme is ever persisted; the token value is resolved at runtime and never written to config. Resolved
- * into a cached, refreshing source by `createCredentialSource` (lib/env.ts) at the provider-construction
- * site. Declared here beside {@link modelConnectionSchema} — the model connection is a cli-owned config
- * concept — and consumed as {@link ModelAuthConfig}.
+ * The `models.connection.auth` block — a refreshing credential source for a `direct` connection, in place of
+ * the static env key. `env` names a variable holding a token (e.g. a short-lived `ANTHROPIC_AUTH_TOKEN`
+ * bearer); `command` names a helper that mints one on demand (Claude Code `apiKeyHelper` parity), its stdout
+ * a raw token (`format: "raw"`, default) or a Kubernetes `ExecCredential` JSON (`format: "exec-credential"`).
+ * `scheme` is the wire header — `x-api-key` or `Authorization: Bearer`. Only the non-secret name/command/scheme
+ * is persisted; the token is resolved at runtime by `createCredentialSource` (lib/credential.ts), never written
+ * to config. Consumed as {@link ModelAuthConfig}.
  */
 export const modelAuthSchema = z.discriminatedUnion("kind", [
     z.object({
@@ -140,7 +137,7 @@ export const modelConnectionSchema = z.discriminatedUnion("mode", [
         provider: z.string(),
         baseURL: z.string(),
         protocol: z.enum(["anthropic", "openai-compatible"]).optional(),
-        // An optional REFRESHING credential source, in place of the static env key (see {@link modelAuthSchema}).
+        // An optional refreshing credential source, in place of the static env key (see {@link modelAuthSchema}).
         auth: modelAuthSchema.optional(),
     }),
 ]);

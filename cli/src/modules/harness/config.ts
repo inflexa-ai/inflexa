@@ -267,10 +267,9 @@ export type ResolvedModelConnection =
           readonly baseURL: string;
           readonly protocol: ModelWireProtocol;
           /**
-           * An optional REFRESHING credential source (`models.connection.auth`) — a named env var or a
-           * token-minting command — that supersedes the env-key resolution at provider construction. Absent
-           * ⇒ the static {@link resolveModelApiKey} env chain applies. Carries only the non-secret
-           * name/command/scheme; the token is never resolved here (never at boot), only lazily at the wire.
+           * An optional refreshing credential source (`models.connection.auth`) — a named env var or a
+           * token-minting command — that supersedes the env-key resolution. Carries only the non-secret
+           * name/command/scheme; the token is resolved lazily at the wire, never at boot.
            */
           readonly auth?: ModelAuthConfig;
           readonly agents: AgentModelOverrides;
@@ -327,8 +326,7 @@ export function resolveModelConnection(): ResolvedModelConnection {
         return { mode: "cliproxy", provider: connection.provider ?? "anthropic", agents };
     }
     const protocol: ModelWireProtocol = connection.protocol ?? (connection.provider === "anthropic" ? "anthropic" : "openai-compatible");
-    // Carry the optional `auth` credential source verbatim (only present on a well-formed direct block). It
-    // holds no token — just the name/command/scheme boot hands to `createCredentialSource` at the wire seam.
+    // Carry the optional token-free `auth` source verbatim (present only on a well-formed direct block).
     return {
         mode: "direct",
         provider: connection.provider,

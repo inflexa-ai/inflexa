@@ -7,17 +7,8 @@ import { intro, outro, log, note, spinner as clackSpinner } from "@clack/prompts
 import { type Result, ok, err } from "neverthrow";
 import { ensureRuntime, readConfig, resolvePostgresConfig, selectedRuntime, writeConfig, type ConfigError, type ModelAuthConfig } from "../../lib/config.ts";
 import { firstReadyRuntime, runtimeIds, runtimes, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
-import {
-    anthropicAuthTokenSet,
-    createCredentialSource,
-    credentialErrorMessage,
-    detectProviderEnv,
-    env,
-    providerApiKeyVar,
-    resolveModelApiKey,
-    type CredentialScheme,
-    type ProviderEnvSnapshot,
-} from "../../lib/env.ts";
+import { anthropicAuthTokenSet, detectProviderEnv, env, providerApiKeyVar, resolveModelApiKey, type ProviderEnvSnapshot } from "../../lib/env.ts";
+import { createCredentialSource, credentialErrorMessage, type CredentialScheme } from "../../lib/credential.ts";
 import { select, promptText } from "../../lib/cli.ts";
 import { detectedMachine, resolveHarnessConfig } from "../harness/config.ts";
 import { type PostgresConnection } from "./postgres_types.ts";
@@ -180,11 +171,10 @@ export async function setup(options: SetupOptions): Promise<void> {
                 return;
             }
 
-            // A detected credential-helper setup can supply a REFRESHING token (a helper command or an env
-            // bearer) in place of a static key. Offer it opt-in, and only interactively: the command/scheme
-            // need the user's confirmation, and an org-managed helper must never be auto-executed. The
-            // source is validated (run once + auth probe) before its `auth` block is attached — a non-TTY
-            // run keeps the static-key path.
+            // A detected credential-helper setup can supply a refreshing token (a helper command or an env
+            // bearer) in place of a static key. Offer it opt-in and only interactively — the command/scheme
+            // need confirmation, and an org-managed helper must never be auto-executed. A non-TTY run keeps
+            // the static-key path.
             if (process.stdin.isTTY) {
                 const detection = detectCredentialHelper();
                 if (credentialHelperDetected(detection)) {
@@ -541,10 +531,8 @@ const MODEL_API_KEY_VAR = "INFLEXA_MODEL_API_KEY";
 
 /**
  * The Anthropic-wire Bearer variable. When set, setup OFFERS it as a `direct`-mode credential source
- * (`{ kind: "env", var: "ANTHROPIC_AUTH_TOKEN", scheme: "bearer" }`) — the injecting fetch delivers it as
- * `Authorization: Bearer` over the anthropic wire (see modules/harness/runtime.ts). Named here to construct
- * that offer and the guidance note; the presence check itself is env.ts's {@link anthropicAuthTokenSet}
- * (the sole `process.env` reader). Bedrock/Vertex remain out of scope (no direct-mode HTTP signer).
+ * (`{ kind: "env", var: "ANTHROPIC_AUTH_TOKEN", scheme: "bearer" }`); the presence check is env.ts's
+ * {@link anthropicAuthTokenSet}. Bedrock/Vertex remain out of scope (no direct-mode HTTP signer).
  */
 const ANTHROPIC_AUTH_TOKEN_VAR = "ANTHROPIC_AUTH_TOKEN";
 
@@ -769,11 +757,11 @@ export function writeDirectConnection(input: DirectConnectionInput): Result<void
 
 // --- credential-source auth (direct mode) ----------------------------------
 //
-// A `direct` connection may draw its wire token from a REFRESHING credential source instead of a static
-// key: a helper command (Claude Code `apiKeyHelper` parity) or a short-lived env bearer. Setup DETECTS such
-// a setup from read-only signals and OFFERS the path opt-in; the user supplies/confirms the command (never
-// the org-managed helper auto-executed), and the source is VALIDATED against the endpoint before its
-// token-free `auth` block is written. The refresh/injection itself lives at the wire (modules/harness/runtime.ts).
+// A `direct` connection may draw its wire token from a refreshing credential source instead of a static key:
+// a helper command (Claude Code `apiKeyHelper` parity) or a short-lived env bearer. Setup detects one from
+// read-only signals and OFFERS the path opt-in — the user confirms the command (never the org-managed helper
+// auto-executed) — then VALIDATES the source before its token-free `auth` block is written. The refresh /
+// injection lives at the wire (modules/harness/runtime.ts).
 
 /**
  * The read-only signals that a credential-helper Anthropic setup exists. A pure shape (no IO) so the
@@ -863,8 +851,8 @@ function effectiveProtocol(direct: DirectConnectionInput): "anthropic" | "openai
 export type CredentialProbeError = { readonly message: string };
 
 /**
- * Validate a credential source before it is persisted (design D6): run it ONCE — surfacing a command/env
- * failure as its own cause — then make a cheap authenticated `GET {baseURL}/models` under the resolved
+ * Validate a credential source before it is persisted: run it ONCE — surfacing a command/env failure as its
+ * own cause — then make a cheap authenticated `GET {baseURL}/models` under the resolved
  * scheme, so a wrong scheme or endpoint surfaces as an HTTP/auth failure at setup, not on first chat. The
  * anthropic wire's `/models` needs a version header even on GET, added when the protocol is anthropic.
  * `doFetch` is injectable for tests; production uses global `fetch`.
@@ -912,8 +900,8 @@ function truncateCommand(s: string, max = 44): string {
 }
 
 /**
- * Offer the credential-source path for a detected helper setup (design D5). Opt-in: the user chooses a
- * credential command (pre-filled from their OWN settings when present, always editable), the
+ * Offer the credential-source path for a detected helper setup. Opt-in: the user chooses a credential
+ * command (pre-filled from their OWN settings when present, always editable), the
  * `ANTHROPIC_AUTH_TOKEN` env bearer (when set), or declines to the static-key path. An org-managed helper is
  * announced but the user must still supply/confirm the command — it is never auto-executed. The chosen
  * source is VALIDATED (run once + auth probe) before it is returned; a probe failure reports the likely
@@ -952,8 +940,8 @@ async function offerCredentialSource(direct: DirectConnectionInput, detection: C
                 validate: (v) => (v.trim() === "" ? "Enter a command." : undefined),
             })
         ).trim();
-        // Infer the scheme default from the wire (design open question: infer, let the user override — the
-        // probe validates it). An apiKeyHelper mints an `x-api-key`; a bearer is the OAuth/WIF case.
+        // Infer a scheme default and let the user override (the probe validates it): an apiKeyHelper mints an
+        // `x-api-key`; a bearer is the OAuth/WIF case.
         const scheme = (await select("How is the minted token sent on the wire?", [
             { value: "x-api-key", label: "x-api-key header (a minted API key — apiKeyHelper default)" },
             { value: "bearer", label: "Authorization: Bearer (an OAuth / WIF access token)" },

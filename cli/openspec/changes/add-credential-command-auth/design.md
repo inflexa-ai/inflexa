@@ -28,10 +28,13 @@ live in Inflexa.
 
 ## Decisions
 
-**D1 — A credential SOURCE, not a string.** Replace "resolve a string" with a cached async supplier
-`CredentialSource = () => Promise<{ token, scheme, expiresAt? }>`. The static env key stays one
-(expiry-less) source; env-bearer and command are the new ones. Caching keyed by expiry means the
-command runs only on refresh, not per request.
+**D1 — A credential SOURCE, not a string (only when configured).** A configured `auth` block resolves to a
+cached async supplier `CredentialSource = () => Promise<{ token, scheme, expiresAt? }>` (env-bearer or
+command). The plain env key is left untouched — resolved once and passed as the AI SDK `apiKey`, exactly as
+today — so the common path keeps its behavior and only an `auth` block engages the source machinery. Caching
+keyed by expiry means the command runs only on refresh, not per request. (An earlier revision wrapped even
+the static key in an expiry-less source "for uniformity"; that was dropped — it re-set the identical header
+the SDK already derives, so it was pure ceremony on the hot path.)
 
 **D2 — Two proven output formats, nothing bespoke.** A command's stdout is either (a) a **raw token**
 — byte-for-byte Claude Code's `apiKeyHelper`, so an org's existing helper works unchanged (the
@@ -42,14 +45,15 @@ widely-implemented standard for short-lived bearer tokens with expiry. Rejected:
 awkward for a plain bearer; we mirror its *refresh contract* (Version-gate + Expiration) without its
 field names.
 
-**D3 — Inject via the `config.fetch` seam (CLI-side), no hard harness change.** The CLI builds the
-`fetch` passed as `config.fetch`. Per request it calls the source and sets the auth header: for
-`bearer` it deletes the `x-api-key` the AI SDK added and sets `Authorization: Bearer`; for
-`x-api-key` it sets `x-api-key`. The static `apiKey` becomes a placeholder. Alternative: add a
-first-class `{ getToken, authScheme }` to `AiSdkProviderConfig` (cleaner, but a harness change). Chose
-the fetch seam for v1 because it already exists and keeps the whole credential concern in the
-embedder; the first-class API is noted as a future cleanup. This one seam also delivers Bearer for
-`ANTHROPIC_AUTH_TOKEN`, closing the prior deferral.
+**D3 — Inject via the `config.fetch` seam (CLI-side), no hard harness change.** When an `auth` source is
+configured, the CLI builds the `fetch` passed as `config.fetch`: per request it calls the source and sets the
+auth header — `bearer` deletes the `x-api-key` the AI SDK added and sets `Authorization: Bearer`; `x-api-key`
+sets `x-api-key`; the SDK `apiKey` is a placeholder. The static env-key path installs NO fetch — the SDK sends
+the key as the wire's conventional header exactly as before — so the credential concern touches only
+connections that opt in. Alternative: add a first-class `{ getToken, authScheme }` to `AiSdkProviderConfig`
+(cleaner, but a harness change). Chose the fetch seam for v1 because it already exists and keeps the whole
+credential concern in the embedder; the first-class API is noted as a future cleanup. This one seam also
+delivers Bearer for `ANTHROPIC_AUTH_TOKEN`, closing the prior deferral.
 
 **D4 — Refresh = expiry + ttl fallback + 401 retry; no mid-stream refresh.** A single request uses the
 header set at its start and Anthropic validates auth at request start, so a token cannot expire

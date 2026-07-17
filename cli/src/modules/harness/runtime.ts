@@ -36,17 +36,8 @@ import {
 } from "@inflexa-ai/harness";
 
 import { readConfig } from "../../lib/config.ts";
-import {
-    env,
-    providerApiKeyVar,
-    resolveModelApiKey,
-    createCredentialSource,
-    staticCredentialSource,
-    credentialErrorMessage,
-    type Credential,
-    type CredentialScheme,
-    type CredentialSource,
-} from "../../lib/env.ts";
+import { env, providerApiKeyVar, resolveModelApiKey } from "../../lib/env.ts";
+import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialSource } from "../../lib/credential.ts";
 import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
 import { getLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
@@ -381,18 +372,16 @@ export function bootHarnessRuntime(
 type InjectingFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 /**
- * The apiKey passed to the AI SDK in `direct` mode. Never sent — the injecting fetch overwrites the auth
- * header on every request — but the SDK requires a non-empty string, and the credential (env key or a
- * lazily-minted command token) is not known here as a static value. See {@link buildAuthInjectingFetch}.
+ * The apiKey handed to the AI SDK when a credential SOURCE is configured: never sent (the injecting fetch
+ * overwrites the auth header per request), but the SDK requires a non-empty string and the token is minted
+ * lazily, not known here. See {@link buildAuthInjectingFetch}.
  */
 const CREDENTIAL_PLACEHOLDER_API_KEY = "inflexa-credential-source-placeholder";
 
 /**
- * Apply a resolved credential to an outgoing request's headers per its wire scheme. `bearer` DELETES the
- * `x-api-key` the AI SDK derived from the placeholder apiKey and sets `Authorization: Bearer` — this is
- * what delivers `ANTHROPIC_AUTH_TOKEN` / a gateway bearer over the anthropic wire; `x-api-key` sets the
- * header the Anthropic Messages API reads. Header names are case-insensitive, so this overwrites whatever
- * the SDK set from the placeholder.
+ * Apply a resolved credential to an outgoing request's headers per scheme. `bearer` DELETES the `x-api-key`
+ * the AI SDK set from the placeholder and sets `Authorization: Bearer` (this is what delivers a bearer over
+ * the anthropic wire); `x-api-key` sets the header the Anthropic Messages API reads.
  */
 function applyCredential(headers: Headers, cred: Credential): void {
     if (cred.scheme === "bearer") {
@@ -404,13 +393,11 @@ function applyCredential(headers: Headers, cred: Credential): void {
 }
 
 /**
- * Build the `fetch` the CLI passes as the harness provider's `config.fetch` for a `direct` connection.
- * Per request it resolves the credential from `source` (cached — the underlying command/env is hit only on
- * a real refresh), rewrites the auth header per scheme, and calls `underlying`. On an HTTP 401 — the signal
- * that a cached token rotated out from under us — it force-refreshes the source and retries EXACTLY once; a
- * second 401 (or a refresh failure) surfaces to the SDK unchanged. A credential-resolution failure REJECTS
- * the fetch (its contract, the same way a network failure does), which the harness maps to a provider error
- * carrying the actionable message. `underlying` is injectable for tests; production uses global `fetch`.
+ * Build the `fetch` the CLI passes as the harness provider's `config.fetch` when a credential source is
+ * configured. Per request it resolves the (cached) credential, rewrites the auth header per scheme, and
+ * calls `underlying`. On an HTTP 401 it force-refreshes and retries EXACTLY once; a second 401 or a refresh
+ * failure surfaces unchanged. A resolution failure REJECTS the fetch (its throwing contract), which the
+ * harness maps to a provider error with the actionable message. `underlying` is injectable for tests.
  */
 export function buildAuthInjectingFetch(source: CredentialSource, underlying: InjectingFetch = fetch): InjectingFetch {
     const attempt = (input: string | URL | Request, init: RequestInit | undefined, cred: Credential): Promise<Response> => {
@@ -489,17 +476,15 @@ async function bootHarnessRuntimeOnce(
     if (embedderResult.isErr()) return err({ type: "embedding_unresolved", cause: embedderResult.error });
     const embedding = embedderResult.value;
 
-    // The chat credential is mode-specific: cliproxy discovers the
-    // minted proxy client key (and contacts the proxy for auto-resolve below);
-    // direct uses a CREDENTIAL SOURCE and NEVER touches the proxy. Resolved before the
-    // probe so a missing credential fails as cheaply as the proxy-key path always did.
+    // The chat credential is mode-specific: cliproxy discovers the minted proxy client key (and contacts the
+    // proxy for auto-resolve below); direct reads the env key OR a configured credential source, and NEVER
+    // touches the proxy. Resolved before the probe so a missing credential fails as cheaply as before.
     //
-    // In direct mode the wire credential always flows through the source seam (injected via the fetch
-    // below), so `providerApiKey` is a placeholder there — the real header is set per request. Precedence
-    // (spec): a configured `auth` block WINS; otherwise the env key ({@link resolveModelApiKey}, via the
-    // injectable seam) modeled as a static source under the wire protocol's conventional scheme. A
-    // configured `auth` block is trusted lazily — setup already probed it — so boot does NOT run the command
-    // here; only the env fallback (auth absent) fails boot up front when nothing resolves.
+    // Precedence in direct mode (spec): a configured `auth` block WINS — resolved lazily at the wire via the
+    // injecting fetch, so `providerApiKey` is a placeholder and boot does not run the command (setup probed it).
+    // Otherwise the static env key ({@link resolveModelApiKey}, via the injectable seam) is passed as `apiKey`
+    // exactly as before — the AI SDK sends it as the wire's conventional header, no injecting fetch — and its
+    // absence fails boot up front.
     let providerApiKey: string;
     let credentialSource: CredentialSource | undefined;
     if (connection.mode === "cliproxy") {
@@ -511,14 +496,9 @@ async function bootHarnessRuntimeOnce(
         providerApiKey = CREDENTIAL_PLACEHOLDER_API_KEY;
     } else {
         const key = seams.readModelApiKey(connection.provider);
-        // Name the provider-conventional variable that was tried alongside the override in the error, so
-        // the boot failure tells the user exactly which two env vars can unblock it.
+        // Name the provider-conventional variable tried alongside the override, so the failure names both env vars.
         if (!key) return err({ type: "model_api_key_missing", providerVar: providerApiKeyVar(connection.provider) });
-        // The anthropic wire sends the key as `x-api-key`; every openai-compatible endpoint as `Bearer` —
-        // the same header the AI SDK would have derived from `apiKey`, now set explicitly by the fetch.
-        const defaultScheme: CredentialScheme = connection.protocol === "anthropic" ? "x-api-key" : "bearer";
-        credentialSource = staticCredentialSource(key, defaultScheme);
-        providerApiKey = CREDENTIAL_PLACEHOLDER_API_KEY;
+        providerApiKey = key;
     }
 
     // Probe the resolved embedder before anything expensive: embeddings are
@@ -669,9 +649,9 @@ async function bootHarnessRuntimeOnce(
         // toolCalling: true }`), so the proxy path is indistinguishable from a bare
         // Anthropic connection. direct resolves to the configured protocol kind at the
         // configured endpoint with the env secret.
-        // The direct-mode auth-injecting fetch (undefined for cliproxy, which sends the proxy key as-is).
-        // One instance shared by every per-model provider over this connection — it holds only the cached
-        // credential source, so all agents' requests refresh/rotate through the same token.
+        // The auth-injecting fetch, present only when a credential source is configured (undefined for
+        // cliproxy and for the static env key, which the SDK sends as-is). One instance shared by every
+        // per-model provider over this connection, so all agents refresh/rotate through the same cached token.
         const authFetch = credentialSource !== undefined ? buildAuthInjectingFetch(credentialSource) : undefined;
         const providerConfigFor = (agentModel: string): AiSdkProviderConfig =>
             connection.mode === "cliproxy"

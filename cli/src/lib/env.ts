@@ -1,11 +1,5 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { ok, err, type Result } from "neverthrow";
-import { z } from "zod";
-// Type-only (erased at compile): the declarative credential-source shape is owned by the config schema
-// beside the model-connection block. lib/config.ts imports this module for `env`, so this back-reference
-// stays type-only to avoid a runtime import cycle.
-import type { ModelAuthConfig } from "./config.ts";
 
 /**
  * True when this process is a `bun test` run whose sandbox preload never executed — the one condition
@@ -262,23 +256,16 @@ export function providerApiKeyVar(provider: string): string {
 }
 
 /**
- * Resolve the `direct`-connection chat API key from the environment ONLY (env.ts is the sole
- * `process.env` reader), parameterized by the connection's configured `provider`. Precedence:
- * `INFLEXA_MODEL_API_KEY` (the explicit override) first; when unset, the provider-conventional variable
- * ({@link providerApiKeyVar}) so a machine already provisioned for Claude Code / the SDKs works without
- * re-exporting the key under a new name. Consumed only at provider construction / model listing; the
- * resolved value is NEVER written to config.json, telemetry, logs, or provenance — the provider-derived
- * fallback READS an existing ecosystem secret, it never copies it. Ignored in `cliproxy` mode, which
- * mints and reads its own client key.
+ * Resolve the `direct`-connection chat API key from the environment ONLY (env.ts is the sole `process.env`
+ * reader), parameterized by the connection's `provider`. Precedence: `INFLEXA_MODEL_API_KEY` (the explicit
+ * override), then the provider-conventional variable ({@link providerApiKeyVar}) so a machine already
+ * provisioned for Claude Code / the SDKs works unchanged. Read at call time (not frozen at import) so it
+ * reflects the live environment. The resolved value is NEVER written to config, telemetry, logs, or
+ * provenance — it READS an existing secret, never copies it. Ignored in `cliproxy` mode (its own client key).
  *
- * Read at call time, not import (unlike the frozen `env` fields), so it reflects the live environment —
- * correct for a value that may be exported after this module loads, and what makes it unit-testable.
- *
- * This is the DEFAULT credential path (static env key, sent as the wire protocol's conventional header). A
- * connection that configures an `auth` block instead supplies a refreshing source that takes precedence —
- * including the Anthropic-wire Bearer case (`ANTHROPIC_AUTH_TOKEN`), now reachable via
- * `{ kind: "env", var: "ANTHROPIC_AUTH_TOKEN", scheme: "bearer" }` (see {@link createCredentialSource}).
- * Still out of scope here: Bedrock/Vertex (no direct-mode HTTP `/v1` signer).
+ * This is the DEFAULT credential path; a configured `auth` block instead supplies a refreshing source that
+ * supersedes it (including the `ANTHROPIC_AUTH_TOKEN` bearer case — see lib/credential.ts). Bedrock/Vertex
+ * stay out of scope (no direct-mode HTTP `/v1` signer).
  */
 export function resolveModelApiKey(provider: string): string | undefined {
     return process.env[modelApiKeyVar] ?? process.env[providerApiKeyVar(provider)];
@@ -293,185 +280,14 @@ export function anthropicAuthTokenSet(): boolean {
     return Boolean(process.env[anthropicAuthTokenVar]);
 }
 
-// --- direct-mode credential source -----------------------------------------
-//
-// A `direct` connection's wire credential, generalized from "a static key read once at boot" to a cached,
-// refreshing SOURCE. This lets `direct` mode consume a short-lived first-party token from a credential
-// helper (the pattern Claude Code's `apiKeyHelper` / kubectl exec-plugins use) that a static string can
-// neither refresh nor send as a Bearer. env.ts owns it because it reads `process.env` (the `env` kind) and
-// runs the configured command (the `command` kind) — both credential-material boundaries the rest of the
-// codebase reaches only through here.
-
-/** The wire scheme a resolved credential is sent under: the Anthropic `x-api-key` header, or `Authorization: Bearer`. */
-export type CredentialScheme = "x-api-key" | "bearer";
-
 /**
- * A resolved wire credential: the token to send, the scheme to send it under, and an OPTIONAL absolute
- * expiry (epoch ms). `expiresAt` is absent for a source with no self-described lifetime (a static env var);
- * {@link createCredentialSource} still ages a raw command token off its `ttlMs`, so an absent `expiresAt`
- * here means "cache until an explicit forceRefresh" — never a per-request re-resolution.
+ * Read a single environment variable for the credential source's `env` kind (lib/credential.ts) — the sole
+ * sanctioned `process.env` read behind it. A live read (not frozen at import) so a re-exported token is
+ * picked up and a 401 can re-read it; an empty value counts as unset.
  */
-export type Credential = {
-    readonly token: string;
-    readonly scheme: CredentialScheme;
-    readonly expiresAt?: number;
-};
-
-/** How a credential resolution failed — one actionable variant per boundary (env read, command spawn/exit, output parse). */
-export type CredentialError =
-    | { readonly type: "env_var_unset"; readonly var: string }
-    | { readonly type: "command_spawn_failed"; readonly command: string; readonly cause: unknown }
-    | { readonly type: "command_exit_nonzero"; readonly command: string; readonly exitCode: number; readonly stderr: string }
-    | { readonly type: "command_empty_output"; readonly command: string }
-    | { readonly type: "exec_credential_invalid"; readonly command: string; readonly detail: string };
-
-/**
- * A cached async supplier of the wire credential. `get()` returns the cached token, transparently
- * refreshing when it has aged past its expiry (minus a safety buffer); `forceRefresh()` re-runs the
- * underlying source unconditionally — the reactive path for an HTTP 401 (a token rotated out from under the
- * cache). Caching keyed on expiry means a credential COMMAND runs only on a real refresh, never per request.
- */
-export type CredentialSource = {
-    readonly get: () => Promise<Result<Credential, CredentialError>>;
-    readonly forceRefresh: () => Promise<Result<Credential, CredentialError>>;
-};
-
-/** Render a {@link CredentialError} as an actionable one-line message — the wire boundary surfaces it to the chat error path, and setup's probe names it as the likely cause. */
-export function credentialErrorMessage(e: CredentialError): string {
-    switch (e.type) {
-        case "env_var_unset":
-            return `environment variable ${e.var} is not set`;
-        case "command_spawn_failed":
-            return `credential command could not be run (${e.command}): ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`;
-        case "command_exit_nonzero":
-            return `credential command exited ${e.exitCode} (${e.command})${e.stderr.trim() ? `: ${e.stderr.trim()}` : ""}`;
-        case "command_empty_output":
-            return `credential command produced no token (${e.command})`;
-        case "exec_credential_invalid":
-            return `credential command output is not valid ExecCredential JSON (${e.command}): ${e.detail}`;
-    }
-}
-
-/** Safety margin subtracted from a credential's expiry so it is refreshed slightly early, never used in its final moments. */
-const CREDENTIAL_REFRESH_BUFFER_MS = 30_000;
-/** Default lifetime for a raw command token with no self-described expiry and no configured `ttlMs` — Claude Code's `apiKeyHelper` refresh cadence. */
-const DEFAULT_RAW_TOKEN_TTL_MS = 5 * 60_000;
-
-/**
- * The subset of a Kubernetes client-go `ExecCredential` this reads: the minted token and its optional
- * expiry. `apiVersion` is required present (so a plain JSON blob that merely happens to carry `status.token`
- * is not mistaken for one) but matched only on the `client.authentication.k8s.io/` prefix rather than pinned
- * to `v1`, so a helper emitting the equally-common `v1beta1` still interops — the interop guarantee is the
- * whole point of adopting the standard shape. See the client-authentication API reference.
- */
-const execCredentialSchema = z.object({
-    apiVersion: z.string().startsWith("client.authentication.k8s.io/"),
-    status: z.object({
-        token: z.string().min(1),
-        expirationTimestamp: z.string().optional(),
-    }),
-});
-
-/**
- * Run a credential command and capture its stdout, boundary-wrapped to a {@link Result} (Bun.spawn and the
- * stream reads throw). Executed through the system shell (`sh -c`) so a configured command string with
- * arguments / flags / pipes runs exactly as a Claude Code `apiKeyHelper` would.
- */
-async function runCredentialCommand(command: string): Promise<Result<string, CredentialError>> {
-    try {
-        // `proc` is inferred from the piped options here (not annotated), so `proc.stdout`/`.stderr` narrow
-        // to `ReadableStream` — an outer type annotation would widen them back to the generic union.
-        const proc = Bun.spawn(["/bin/sh", "-c", command], { stdout: "pipe", stderr: "pipe" });
-        const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-        if (exitCode !== 0) return err({ type: "command_exit_nonzero", command, exitCode, stderr });
-        return ok(stdout);
-    } catch (cause) {
-        // A spawn throw (missing shell / bad exec) and a stream-read throw both mean "the command could not be run".
-        return err({ type: "command_spawn_failed", command, cause });
-    }
-}
-
-/** Parse a credential command's stdout into a {@link Credential} per the configured format. */
-function parseCommandCredential(
-    command: string,
-    stdout: string,
-    scheme: CredentialScheme,
-    format: "raw" | "exec-credential",
-    ttlMs: number | undefined,
-): Result<Credential, CredentialError> {
-    if (format === "exec-credential") {
-        let json: unknown; // command output — validated by execCredentialSchema below
-        try {
-            json = JSON.parse(stdout);
-        } catch (cause) {
-            return err({ type: "exec_credential_invalid", command, detail: cause instanceof Error ? cause.message : String(cause) });
-        }
-        const parsed = execCredentialSchema.safeParse(json);
-        if (!parsed.success) {
-            return err({ type: "exec_credential_invalid", command, detail: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") });
-        }
-        const ts = parsed.data.status.expirationTimestamp;
-        const expiresAt = ts !== undefined ? Date.parse(ts) : NaN;
-        // A present-but-unparseable timestamp degrades to "no self-described expiry" rather than an error:
-        // the token itself is valid, and the 401 forceRefresh path still covers a rotation we didn't foresee.
-        return ok({ token: parsed.data.status.token, scheme, ...(Number.isNaN(expiresAt) ? {} : { expiresAt }) });
-    }
-    // raw: the whole stdout IS the token, trimmed of the trailing newline a helper prints — apiKeyHelper parity.
-    const token = stdout.trim();
-    if (token === "") return err({ type: "command_empty_output", command });
-    // A raw token describes no lifetime, so it ages off ttlMs (or the apiKeyHelper-default window) and is re-minted on expiry.
-    return ok({ token, scheme, expiresAt: Date.now() + (ttlMs ?? DEFAULT_RAW_TOKEN_TTL_MS) });
-}
-
-/** Resolve one credential from its source config, uncached (the `env` read / the `command` run). */
-async function resolveCredentialOnce(config: ModelAuthConfig): Promise<Result<Credential, CredentialError>> {
-    if (config.kind === "env") {
-        const token = process.env[config.var];
-        if (token === undefined || token === "") return err({ type: "env_var_unset", var: config.var });
-        // An env token is expiry-less: a rotated ANTHROPIC_AUTH_TOKEN is picked up when the user re-exports it,
-        // and a 401 forceRefresh re-reads the live variable.
-        return ok({ token, scheme: config.scheme });
-    }
-    const out = await runCredentialCommand(config.command);
-    return out.andThen((stdout) => parseCommandCredential(config.command, stdout, config.scheme, config.format ?? "raw", config.ttlMs));
-}
-
-/** True once a cached credential has aged to within the refresh buffer of its expiry; an expiry-less credential never ages out (only forceRefresh replaces it). */
-function credentialExpired(cred: Credential): boolean {
-    return cred.expiresAt !== undefined && Date.now() >= cred.expiresAt - CREDENTIAL_REFRESH_BUFFER_MS;
-}
-
-/**
- * Build a cached, refreshing {@link CredentialSource} from a declarative {@link ModelAuthConfig}. Nothing
- * runs until the first {@link CredentialSource.get}; the result is then cached until it ages past its expiry
- * (minus {@link CREDENTIAL_REFRESH_BUFFER_MS}) or {@link CredentialSource.forceRefresh} is called. The `env`
- * kind reads a named variable; the `command` kind runs the command and parses its stdout as a raw token
- * (default) or Kubernetes ExecCredential JSON. The token value is obtained lazily by the returned source and
- * NEVER logged or persisted — only this config's name/command/scheme are ever written to disk.
- */
-export function createCredentialSource(config: ModelAuthConfig): CredentialSource {
-    let cached: Credential | null = null;
-    const refresh = async (): Promise<Result<Credential, CredentialError>> => {
-        const resolved = await resolveCredentialOnce(config);
-        if (resolved.isOk()) cached = resolved.value;
-        return resolved;
-    };
-    return {
-        get: () => (cached !== null && !credentialExpired(cached) ? Promise.resolve(ok(cached)) : refresh()),
-        forceRefresh: refresh,
-    };
-}
-
-/**
- * Wrap an already-resolved static token (the environment key resolved via {@link resolveModelApiKey}) as an
- * expiry-less {@link CredentialSource}, so the wire path is UNIFORM: `direct` mode always injects its
- * credential through the same source seam whether the token comes from a configured `auth` block or the plain
- * env key. `forceRefresh` returns the same token — a static env key has nothing to re-mint.
- */
-export function staticCredentialSource(token: string, scheme: CredentialScheme): CredentialSource {
-    const credential: Credential = { token, scheme };
-    const resolve = (): Promise<Result<Credential, CredentialError>> => Promise.resolve(ok(credential));
-    return { get: resolve, forceRefresh: resolve };
+export function readEnvCredentialVar(name: string): string | undefined {
+    const value = process.env[name];
+    return value === undefined || value === "" ? undefined : value;
 }
 
 /**
@@ -593,9 +409,8 @@ export const envDoc: Readonly<
  * no gain. Rendered alongside `envDoc`'s var rows by src/cli/index.ts.
  *
  * `ANTHROPIC_AUTH_TOKEN` is consumed not as a bare env fallback here but via a configured `direct`-mode
- * `auth` block (`{ kind: "env", var: "ANTHROPIC_AUTH_TOKEN", scheme: "bearer" }`) — see
- * {@link createCredentialSource}; setup offers it when detected. Bedrock/Vertex remain out of scope
- * (no direct-mode HTTP signer).
+ * `auth` block (`{ kind: "env", var: "ANTHROPIC_AUTH_TOKEN", scheme: "bearer" }` — see lib/credential.ts);
+ * setup offers it when detected. Bedrock/Vertex remain out of scope (no direct-mode HTTP signer).
  */
 export const modelConnectionEnvDoc: readonly { readonly name: string; readonly description: string }[] = Object.freeze([
     {

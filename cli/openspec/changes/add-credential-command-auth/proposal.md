@@ -43,8 +43,9 @@ Inflexa against their existing budget with a one-time opt-in.
 
 ## Impact
 
-- **Code:** `cli/src/lib/env.ts` (a `CredentialSource` resolver — cache + refresh over env/command,
-  raw/ExecCredential parsing, `Bun.spawn` boundary-wrapped as `Result`); the provider-construction
+- **Code:** `cli/src/lib/credential.ts` (a `CredentialSource` resolver — cache + refresh over env/command,
+  raw/ExecCredential parsing, `Bun.spawn` boundary-wrapped as `Result`; the `env` kind reads through
+  `env.ts`'s `readEnvCredentialVar` seam so `env.ts` stays the sole `process.env` reader); the provider-construction
   site in `cli/src/modules/harness/` (build the auth-injecting `fetch` passed as `config.fetch`, with
   scheme rewrite + 401-retry); `cli/src/modules/infra/setup.ts` (helper detection, the opt-in
   credential-source prompt, and the validation probe).

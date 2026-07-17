@@ -6,7 +6,8 @@ import { randomUUIDv7 } from "bun";
 import { ok, okAsync, err } from "neverthrow";
 import type { EmbeddingProvider } from "@inflexa-ai/harness";
 
-import { env, staticCredentialSource, type CredentialSource, type Credential, type CredentialError } from "../../lib/env.ts";
+import { env } from "../../lib/env.ts";
+import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../lib/credential.ts";
 import { instanceLockPath } from "../../lib/lock.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { bootHarnessRuntime, buildAuthInjectingFetch, __resetHarnessRuntimeForTest, type BootSeams } from "./runtime.ts";
@@ -708,9 +709,15 @@ describe("buildAuthInjectingFetch", () => {
         };
     }
 
+    /** A fixed, expiry-less credential source for the header-rewrite cases (get and forceRefresh yield the same token). */
+    function fixedSource(token: string, scheme: CredentialScheme): CredentialSource {
+        const cred = ok<Credential, CredentialError>({ token, scheme });
+        return { get: () => Promise.resolve(cred), forceRefresh: () => Promise.resolve(cred) };
+    }
+
     test("bearer scheme sets Authorization: Bearer and strips the SDK's x-api-key", async () => {
         const { fetch: underlying, seen } = recordingFetch([200]);
-        const f = buildAuthInjectingFetch(staticCredentialSource("btok", "bearer"), underlying);
+        const f = buildAuthInjectingFetch(fixedSource("btok", "bearer"), underlying);
         // The AI SDK's anthropic provider sets x-api-key from the placeholder apiKey — the bearer path must remove it.
         await f("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": "placeholder" } });
         expect(seen[0]!.get("authorization")).toBe("Bearer btok");
@@ -719,7 +726,7 @@ describe("buildAuthInjectingFetch", () => {
 
     test("x-api-key scheme sets the x-api-key header", async () => {
         const { fetch: underlying, seen } = recordingFetch([200]);
-        const f = buildAuthInjectingFetch(staticCredentialSource("xtok", "x-api-key"), underlying);
+        const f = buildAuthInjectingFetch(fixedSource("xtok", "x-api-key"), underlying);
         await f("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": "placeholder" } });
         expect(seen[0]!.get("x-api-key")).toBe("xtok");
     });
