@@ -1,14 +1,17 @@
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { intro, outro, log, note, spinner as clackSpinner } from "@clack/prompts";
 import { type Result, ok, err } from "neverthrow";
+import { z } from "zod";
 import { ensureRuntime, readConfig, resolvePostgresConfig, selectedRuntime, writeConfig, type ConfigError } from "../../lib/config.ts";
 import { firstReadyRuntime, runtimeIds, runtimes, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { select, promptText } from "../../lib/cli.ts";
-import { detectedMachine, resolveHarnessConfig } from "../harness/config.ts";
+import { detectedMachine, resolveHarnessConfig, resolveModelConnection } from "../harness/config.ts";
+import { readApiKey, resolveModelId } from "../proxy/models.ts";
 import { type PostgresConnection } from "./postgres_types.ts";
-import { writeComposeFile, composeUp, composePull, composePullIfMissing, composeAvailable, type ConnectionMode } from "./compose.ts";
+import { writeComposeFile, composeUp, composePull, composePullIfMissing, composeAvailable, composeRestartProxy, type ConnectionMode } from "./compose.ts";
 import { formatInfraStateError, writeProxyConfig } from "./proxy_config.ts";
 
 // `inflexa setup` provisions the inflexa infrastructure stack: CLIProxyAPI (the
@@ -132,7 +135,10 @@ export async function setup(options: SetupOptions): Promise<void> {
             // the authenticated vendor.
             if (options.auth) {
                 if (provider === undefined && (await isAuthenticated())) {
-                    log.info("Already authenticated — use `--provider <name>` to add or switch.");
+                    // "exists", not "authenticated": a dead refresh token is statically invisible
+                    // (nothing in the credential file records it), so this branch cannot promise the
+                    // credential works — it can only say one is present and name the way to re-login.
+                    log.info("A provider credential exists. If chats fail to authenticate, re-run with `--provider <name>` to sign in again.");
                 } else {
                     const authed = await authenticate(rt, provider);
                     if (!authed) log.warn("No provider authenticated yet — re-run `inflexa setup` to sign in.");
@@ -469,7 +475,7 @@ function printNextSteps(options: SetupOptions, conn: PostgresConnection, mode: C
  * `process.env` reader, which does not export the name — because setup only PRINTS it (never reads it),
  * so the literal is duplicated rather than widening env.ts's surface for a display string.
  */
-const MODEL_API_KEY_VAR = "INFLEXA_MODEL_API_KEY";
+export const MODEL_API_KEY_VAR = "INFLEXA_MODEL_API_KEY";
 
 /**
  * Validate the `--connection` flag value. `undefined` (flag absent) is OK — the mode is then chosen
@@ -635,6 +641,18 @@ const PROVIDER_CALLBACK_PORT: Record<Provider, number | null> = {
 const PROVIDERS = Object.keys(PROVIDER_LOGIN_FLAG) as Provider[];
 
 /**
+ * Map a recorded connection provider slug back to the account kind that logs into it — the inverse of
+ * {@link PROVIDER_SLUG}, and legitimate for the same reason that map is: it connects two CONFIGURED
+ * facts (the slug setup recorded at login time, the account kind that recorded it), deriving nothing.
+ * Total only over slugs we wrote; anything else (absent, a hand-edited value) yields `undefined` and
+ * callers fall back to the interactive chooser / generic wording.
+ */
+export function providerKindForSlug(slug: string | undefined): Provider | undefined {
+    if (!slug) return undefined;
+    return PROVIDERS.find((p) => PROVIDER_SLUG[p] === slug);
+}
+
+/**
  * Expected, user-actionable failures. Callers print `.message` and exit rather
  * than dumping a stack.
  */
@@ -656,11 +674,43 @@ function volumeArgs(rt: ContainerRuntime): string[] {
 
 // --- authentication --------------------------------------------------------
 
-async function isAuthenticated(): Promise<boolean> {
-    return readdir(env.cliproxyAuthDir).then(
-        (entries) => entries.some((name) => !name.startsWith(".")),
-        () => false,
+/**
+ * The one field the presence check may read from a credential file. `disabled` is operator-set
+ * (upstream documents it as "intentionally disabled by operator"), so it is a legitimate static
+ * signal; everything else in the file is refresh-lifecycle state that must NOT gate presence — in
+ * particular `expired`, which goes stale every 8 hours by design while the running proxy refreshes it.
+ */
+const credentialFileSchema = z.object({ disabled: z.boolean().optional() });
+
+/**
+ * Whether a usable provider credential is present in `dir`. Structural only: the vendor also writes a
+ * `logs/` subdirectory into the auth dir, so "any non-dot entry" overcounts — only `*.json` entries
+ * are credentials. Validity is deliberately NOT judged here: a dead refresh token leaves no trace in
+ * the file (the vendor persists no failure state), so the launch-time probe is the sole authority on
+ * whether the credential still works. An unreadable or unparseable credential file counts as present
+ * for the same reason — refusing it here would lock the user into a re-login the probe could have
+ * proven unnecessary.
+ */
+export async function hasProviderCredential(dir: string): Promise<boolean> {
+    // A missing/unreadable dir is the ordinary never-logged-in state — in-band false, not an error.
+    const entries = await readdir(dir).then(
+        (names) => names,
+        () => null,
     );
+    if (entries === null) return false;
+    for (const name of entries) {
+        if (name.startsWith(".") || !name.endsWith(".json")) continue;
+        const parsed = await readFile(join(dir, name), "utf8").then(
+            (text) => JSON.parseWith(text, credentialFileSchema),
+            () => null,
+        );
+        if (parsed === null || parsed.disabled !== true) return true;
+    }
+    return false;
+}
+
+async function isAuthenticated(): Promise<boolean> {
+    return hasProviderCredential(env.cliproxyAuthDir);
 }
 
 /**
@@ -806,6 +856,143 @@ async function authenticate(rt: ContainerRuntime, preselected: Provider | undefi
     return isAuthenticated();
 }
 
+// --- launch-time credential probe ------------------------------------------
+//
+// A credential file proves nothing: the provider access token expires every 8 hours and the proxy
+// refreshes it with the stored refresh token — when THAT dies (revocation, vendor bug), the file
+// looks exactly like a healthy one and every call answers 401. The only honest check is a live
+// request, and the cheapest place that prevents the "looks ready, fails mid-work, exit the TUI to
+// re-login" trap is the launch gate, where stdio is still normal and the interactive login can run
+// inline. cliproxy mode only: a direct connection is the user's own endpoint and key, not ours to
+// spend on validation.
+
+/** Bounds the probe request so a wedged proxy can never stall the launch. */
+const PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * What one probe request observed. `unobservable` covers everything that is not a credential verdict
+ * — outage, timeout, cold container, a malformed probe — and never gates the launch: the probe must
+ * not add new ways for a launch to block.
+ */
+type CredentialProbe = { kind: "ok" } | { kind: "unauthorized" } | { kind: "unobservable"; detail: string };
+
+/**
+ * One minimal completion through the proxy to observe whether the provider credential works. This is
+ * a real, metered provider request (~1 token) — the accepted per-launch cost of catching a dead
+ * credential before work starts. `x-api-key` + `anthropic-version` because the proxy exposes the
+ * Anthropic Messages route the chat path targets (see resolveModelConnection: cliproxy has no
+ * protocol choice).
+ */
+async function probeProviderCredential(apiKey: string, modelId: string): Promise<CredentialProbe> {
+    let res: Response;
+    try {
+        res = await fetch(`${env.cliproxyApiUrl}/messages`, {
+            method: "POST",
+            headers: { "x-api-key": apiKey, "content-type": "application/json", "anthropic-version": "2023-06-01" },
+            body: JSON.stringify({ model: modelId, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }),
+            signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+        });
+    } catch (cause) {
+        // Timeout, refused connection, DNS — bridge the throw in-band: none of these is a verdict.
+        return { kind: "unobservable", detail: cause instanceof Error ? cause.message : String(cause) };
+    }
+    if (res.status === 401) return { kind: "unauthorized" };
+    if (!res.ok) return { kind: "unobservable", detail: `HTTP ${res.status}` };
+    return { kind: "ok" };
+}
+
+/**
+ * The seams {@link ensureLiveCredential} drives, injectable so the policy matrix is unit-testable
+ * without a terminal, a container runtime, or clack. Production assembly: {@link verifyCredentialAtLaunch}.
+ */
+type LiveCredentialDeps = {
+    /** One probe attempt (includes resolving the key/model inputs; a resolution failure is `unobservable`). */
+    probe: () => Promise<CredentialProbe>;
+    /** The interactive provider login; resolves true when a credential was (re)established. */
+    relogin: () => Promise<boolean>;
+    /** Make the fresh credential observable to the RUNNING proxy (see composeRestartProxy). */
+    restartProxy: () => Promise<Result<void, { message: string }>>;
+    isInteractive: () => boolean;
+    warn: (message: string) => void;
+};
+
+/**
+ * The launch-gate credential policy: only a definite 401 gates. On a TTY it drives one re-login →
+ * proxy restart → re-probe cycle; a second 401 fails hard naming BOTH remaining causes, because
+ * looping the login again cannot distinguish them. Every non-verdict outcome warns and proceeds —
+ * the chat surface's auth mapping is the backstop for anything the probe could not see.
+ */
+export async function ensureLiveCredential(deps: LiveCredentialDeps): Promise<Result<void, ProxyError>> {
+    const first = await deps.probe();
+    if (first.kind === "ok") return ok(undefined);
+    if (first.kind === "unobservable") {
+        deps.warn(`Could not verify the provider login (${first.detail}) — continuing; chat will surface any real failure.`);
+        return ok(undefined);
+    }
+
+    if (!deps.isInteractive()) {
+        return err(new ProxyError("The provider login has expired or been revoked.\n  Run `inflexa setup --provider <name>` to sign in again."));
+    }
+
+    console.log("\n  Your provider login has expired or been revoked — let's sign in again.");
+    if (!(await deps.relogin())) {
+        return err(new ProxyError("Re-authentication didn't complete.\n  Run `inflexa setup --provider <name>` to sign in, then try again."));
+    }
+    const restarted = await deps.restartProxy();
+    if (restarted.isErr()) {
+        return err(new ProxyError(`Could not restart the proxy to pick up the fresh login: ${restarted.error.message}`));
+    }
+
+    const second = await deps.probe();
+    if (second.kind === "ok") return ok(undefined);
+    if (second.kind === "unobservable") {
+        deps.warn(`Could not verify the provider login after re-authenticating (${second.detail}) — continuing.`);
+        return ok(undefined);
+    }
+    return err(
+        new ProxyError(
+            `Still unauthorized after re-authenticating. Either the sign-in did not take, or the client key in ${env.cliproxyConfigPath} no longer matches the proxy.\n  Re-run \`inflexa setup\` to reprovision.`,
+        ),
+    );
+}
+
+/**
+ * Production assembly of {@link ensureLiveCredential}: resolve the probe inputs from the provisioned
+ * config and the proxy's own model list, pre-select the re-login account from the recorded provider
+ * slug, and restart the proxy after a re-login. A spinner frames each probe attempt so the launch
+ * shows why it is pausing for ~a second.
+ */
+async function verifyCredentialAtLaunch(rt: ContainerRuntime): Promise<Result<void, ProxyError>> {
+    return ensureLiveCredential({
+        probe: async () => {
+            const s = clackSpinner();
+            s.start("Verifying provider login");
+            const outcome = await (async (): Promise<CredentialProbe> => {
+                const key = await readApiKey();
+                if (key.isErr()) return { kind: "unobservable", detail: key.error.type };
+                const model = await resolveModelId(key.value);
+                if (model.isErr()) {
+                    // /models should answer from the proxy's local registry with the client key
+                    // alone; if the fork gates it on the provider credential after all, a 401 here
+                    // IS the credential verdict, not an outage.
+                    if (model.error.type === "proxy_unreachable" && model.error.detail === "HTTP 401") return { kind: "unauthorized" };
+                    const detail = model.error.type === "proxy_unreachable" ? `${model.error.type}: ${model.error.detail}` : model.error.type;
+                    return { kind: "unobservable", detail };
+                }
+                return probeProviderCredential(key.value, model.value);
+            })();
+            if (outcome.kind === "ok") s.stop("Provider login verified");
+            else if (outcome.kind === "unauthorized") s.stop("Provider login expired or revoked");
+            else s.stop("Provider login not verifiable");
+            return outcome;
+        },
+        relogin: () => authenticate(rt, providerKindForSlug(resolveModelConnection().provider)),
+        restartProxy: () => composeRestartProxy(rt),
+        isInteractive: () => Boolean(process.stdin.isTTY),
+        warn: (message) => log.warn(message),
+    });
+}
+
 // --- shared entry used by the TUI ------------------------------------------
 
 /**
@@ -874,6 +1061,15 @@ export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Res
     const upResult = await composeUp(rt, mode);
     if (upResult.isErr()) {
         return err(new ProxyError(`Failed to start containers: ${upResult.error.message}`));
+    }
+
+    // The static check above only proved a credential FILE exists; whether the provider still honors
+    // it is observable only by asking (a dead refresh token leaves no trace on disk). After composeUp
+    // so the probe has a serving proxy; cliproxy mode only — a direct connection is the user's own
+    // endpoint and key, never probed.
+    if (mode === "cliproxy") {
+        const live = await verifyCredentialAtLaunch(rt);
+        if (live.isErr()) return err(live.error);
     }
 
     // Embedding readiness gate: if the user previously opted into local mode,

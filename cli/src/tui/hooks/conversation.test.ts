@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { okAsync, ResultAsync } from "neverthrow";
 import type { MessagePage } from "@inflexa-ai/harness";
 
@@ -15,8 +17,11 @@ import {
     send,
     streamPartId,
     streamText,
+    turnFailureMessage,
     type SendSeams,
 } from "./conversation.ts";
+import { env } from "../../lib/env.ts";
+import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { chatStatus } from "./status.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { RunChatTurnArgs, TurnOutcome } from "../../modules/harness/turn.ts";
@@ -1073,5 +1078,52 @@ describe("display-card parts map identically live and on reload", () => {
         const reloaded = cortexToUiMessage({ id: "m1", role: "assistant", parts: [{ type: "data-widget" }] } as unknown as CortexMsg, SID, AID);
         const mention = reloaded.parts.find((p) => p.type === "text" && "text" in p && p.text.includes("[part:data-widget]"));
         expect(mention).toBeDefined();
+    });
+});
+
+// turnFailureMessage resolves the connection from config, so these seed the SANDBOXED env.configPath
+// (guarded like setup.test.ts's config-write tests) and exercise the pure message mapping directly.
+describe("turnFailureMessage", () => {
+    // The exact harness ProviderError auth shape as the turn engine surfaces it.
+    const authCause = { type: "auth", retryable: false, message: "Provider rejected the credential for chat — it is expired, revoked, or absent" };
+
+    beforeEach(() => {
+        assertTestSandbox(env.configPath);
+    });
+    afterEach(() => {
+        assertTestSandbox(env.configPath);
+        rmSync(env.configPath, { force: true });
+    });
+
+    function seedConfig(value: Record<string, unknown>): void {
+        mkdirSync(dirname(env.configPath), { recursive: true });
+        writeFileSync(env.configPath, JSON.stringify(value));
+    }
+
+    test("an auth failure on the default (cliproxy/anthropic) connection names the provider and the forced re-login", () => {
+        const msg = turnFailureMessage(new Error("ResultError", { cause: authCause }));
+        expect(msg).toContain("anthropic login has expired");
+        expect(msg).toContain("inflexa setup --provider claude");
+    });
+
+    test("an auth failure in direct mode names the env key — a re-login cannot fix the user's own key", () => {
+        // `telemetry` carries no zod default, so a seed without it fails the WHOLE config parse and
+        // silently falls back to the default cliproxy connection — the exact miss this test exists to catch.
+        seedConfig({ telemetry: false, models: { connection: { mode: "direct", provider: "openai", baseURL: "https://api.openai.com/v1" } } });
+        const msg = turnFailureMessage(authCause);
+        expect(msg).toContain("INFLEXA_MODEL_API_KEY");
+        expect(msg).not.toContain("--provider");
+    });
+
+    test("a non-auth failure renders the generic cause line", () => {
+        const msg = turnFailureMessage({ type: "provider", retryable: true, message: "rate limited" });
+        expect(msg).toStartWith("The turn failed:");
+        expect(msg).toContain("provider: rate limited");
+    });
+
+    test("a 401 whose auth value hides below the depth bound falls back to generic rendering rather than mislabeling", () => {
+        let chain: unknown = authCause;
+        for (let i = 0; i < 10; i++) chain = new Error(`wrapper-${i}`, { cause: chain });
+        expect(turnFailureMessage(chain)).toStartWith("The turn failed:");
     });
 });

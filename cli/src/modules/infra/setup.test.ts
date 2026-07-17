@@ -1,8 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
-import { parseConnectionMode, recordCliproxyProvider, writeDirectConnection } from "./setup.ts";
+import { ok, err } from "neverthrow";
+import {
+    ensureLiveCredential,
+    hasProviderCredential,
+    parseConnectionMode,
+    providerKindForSlug,
+    recordCliproxyProvider,
+    writeDirectConnection,
+} from "./setup.ts";
 import { readConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
@@ -110,5 +119,142 @@ describe("connection config writes", () => {
         // The written connection carries exactly mode/provider/baseURL — no apiKey/token field. The
         // direct-mode secret lives only in INFLEXA_MODEL_API_KEY, never in config.
         expect(Object.keys(readModels().connection as Record<string, unknown>).sort()).toEqual(["baseURL", "mode", "provider"]);
+    });
+});
+
+// hasProviderCredential takes the dir as a parameter, so these run against plain temp dirs — no env
+// sandbox involvement, no shared state.
+describe("hasProviderCredential", () => {
+    let dir: string;
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "inflexa-cred-"));
+    });
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("a missing dir is unauthenticated (the ordinary never-logged-in state)", async () => {
+        expect(await hasProviderCredential(join(dir, "absent"))).toBe(false);
+    });
+
+    test("a logs-only dir is unauthenticated — the vendor writes logs/ beside credentials", async () => {
+        mkdirSync(join(dir, "logs"));
+        expect(await hasProviderCredential(dir)).toBe(false);
+    });
+
+    test("an operator-disabled credential is unauthenticated", async () => {
+        writeFileSync(join(dir, "claude-user@example.com.json"), JSON.stringify({ disabled: true, expired: "2099-01-01T00:00:00Z" }));
+        expect(await hasProviderCredential(dir)).toBe(false);
+    });
+
+    test("a PAST expired timestamp does not fail the static check — the proxy refreshes access tokens", async () => {
+        writeFileSync(join(dir, "claude-user@example.com.json"), JSON.stringify({ disabled: false, expired: "2020-01-01T00:00:00Z" }));
+        expect(await hasProviderCredential(dir)).toBe(true);
+    });
+
+    test("an unparseable credential counts as present — the live probe adjudicates validity, not the parser", async () => {
+        writeFileSync(join(dir, "claude-user@example.com.json"), "{not json");
+        expect(await hasProviderCredential(dir)).toBe(true);
+    });
+
+    test("dotfiles and non-json entries never count", async () => {
+        mkdirSync(join(dir, "logs"));
+        writeFileSync(join(dir, ".hidden.json"), "{}");
+        writeFileSync(join(dir, "readme.txt"), "hi");
+        expect(await hasProviderCredential(dir)).toBe(false);
+    });
+});
+
+describe("providerKindForSlug", () => {
+    test("maps recorded slugs back to their account kind and everything else to undefined", () => {
+        expect(providerKindForSlug("anthropic")).toBe("claude");
+        expect(providerKindForSlug("openai")).toBe("openai");
+        expect(providerKindForSlug("deepseek")).toBeUndefined();
+        expect(providerKindForSlug(undefined)).toBeUndefined();
+    });
+});
+
+// The launch-gate policy matrix, driven through injected seams — no terminal, container runtime, or
+// clack involved. `probes` is consumed in order so each call observes the scripted next outcome.
+describe("ensureLiveCredential", () => {
+    type Probe = { kind: "ok" } | { kind: "unauthorized" } | { kind: "unobservable"; detail: string };
+
+    function scripted(probes: Probe[], over: Partial<Parameters<typeof ensureLiveCredential>[0]> = {}) {
+        const calls: string[] = [];
+        const deps: Parameters<typeof ensureLiveCredential>[0] = {
+            probe: async () => {
+                calls.push("probe");
+                return probes.shift() ?? { kind: "ok" };
+            },
+            relogin: async () => {
+                calls.push("relogin");
+                return true;
+            },
+            restartProxy: async () => {
+                calls.push("restart");
+                return ok<void, { message: string }>(undefined);
+            },
+            isInteractive: () => true,
+            warn: () => {
+                calls.push("warn");
+            },
+            ...over,
+        };
+        return { deps, calls };
+    }
+
+    test("a healthy probe proceeds without touching the login", async () => {
+        const { deps, calls } = scripted([{ kind: "ok" }]);
+        expect((await ensureLiveCredential(deps)).isOk()).toBe(true);
+        expect(calls).toEqual(["probe"]);
+    });
+
+    test("an unobservable probe (outage, timeout, cold container) warns and proceeds — never blocks launch", async () => {
+        const { deps, calls } = scripted([{ kind: "unobservable", detail: "HTTP 503" }]);
+        expect((await ensureLiveCredential(deps)).isOk()).toBe(true);
+        expect(calls).toEqual(["probe", "warn"]);
+    });
+
+    test("a 401 on a non-TTY fails actionably naming the forced re-login command", async () => {
+        const { deps, calls } = scripted([{ kind: "unauthorized" }], { isInteractive: () => false });
+        const result = await ensureLiveCredential(deps);
+        expect(result.isErr()).toBe(true);
+        expect(result.isErr() ? result.error.message : "").toContain("inflexa setup --provider");
+        expect(calls).toEqual(["probe"]);
+    });
+
+    test("a 401 on a TTY drives re-login, restarts the proxy BEFORE re-probing, then proceeds", async () => {
+        const { deps, calls } = scripted([{ kind: "unauthorized" }, { kind: "ok" }]);
+        expect((await ensureLiveCredential(deps)).isOk()).toBe(true);
+        expect(calls).toEqual(["probe", "relogin", "restart", "probe"]);
+    });
+
+    test("an incomplete re-login fails without restarting or re-probing", async () => {
+        const { deps, calls } = scripted([{ kind: "unauthorized" }], { relogin: async () => false });
+        const result = await ensureLiveCredential(deps);
+        expect(result.isErr() ? result.error.message : "").toContain("didn't complete");
+        expect(calls).toEqual(["probe"]);
+    });
+
+    test("a failed proxy restart fails rather than re-probing a proxy that never saw the fresh login", async () => {
+        const { deps, calls } = scripted([{ kind: "unauthorized" }], {
+            restartProxy: async () => err({ message: "compose exploded" }),
+        });
+        const result = await ensureLiveCredential(deps);
+        expect(result.isErr() ? result.error.message : "").toContain("restart");
+        expect(calls).toEqual(["probe", "relogin"]);
+    });
+
+    test("a second 401 after re-login fails hard naming both remaining causes", async () => {
+        const { deps, calls } = scripted([{ kind: "unauthorized" }, { kind: "unauthorized" }]);
+        const result = await ensureLiveCredential(deps);
+        expect(result.isErr() ? result.error.message : "").toContain("Still unauthorized");
+        expect(calls).toEqual(["probe", "relogin", "restart", "probe"]);
+    });
+
+    test("an unobservable re-probe after re-login warns and proceeds", async () => {
+        const { deps, calls } = scripted([{ kind: "unauthorized" }, { kind: "unobservable", detail: "HTTP 502" }]);
+        expect((await ensureLiveCredential(deps)).isOk()).toBe(true);
+        expect(calls).toEqual(["probe", "relogin", "restart", "probe", "warn"]);
     });
 });

@@ -10,10 +10,13 @@
  * is required to disambiguate): the gateway emits `402` exclusively for
  * `budget_exceeded` and `403` for a blocked tenant. Provider-originated
  * failures (429, 5xx, connection) surface with their own status or as a
- * network error with no status at all.
+ * network error with no status at all. A `401` is `auth`: the credential the
+ * host put behind the call is expired, revoked, or absent, and only a human
+ * re-authenticating fixes it — which is a different remedy from every other
+ * non-retryable 4xx, so it is a different kind.
  */
 
-export type ProviderErrorKind = "budget" | "tenant-blocked" | "provider";
+export type ProviderErrorKind = "auth" | "budget" | "tenant-blocked" | "provider";
 
 /**
  * The provider error value channel — a `DomainError`-conforming
@@ -25,6 +28,7 @@ export type ProviderErrorKind = "budget" | "tenant-blocked" | "provider";
  * step boundary.
  */
 export type ProviderError =
+    | { readonly type: "auth"; readonly retryable: false; readonly message: string; readonly cause?: unknown }
     | { readonly type: "budget"; readonly retryable: false; readonly message: string; readonly cause?: unknown }
     | { readonly type: "tenant-blocked"; readonly retryable: false; readonly message: string; readonly cause?: unknown }
     | { readonly type: "provider"; readonly retryable: boolean; readonly message: string; readonly cause?: unknown };
@@ -38,7 +42,11 @@ export type ProviderError =
 export function isProviderError(value: unknown): value is ProviderError {
     if (typeof value !== "object" || value === null) return false;
     const v = value as { type?: unknown; retryable?: unknown; message?: unknown };
-    return (v.type === "budget" || v.type === "tenant-blocked" || v.type === "provider") && typeof v.retryable === "boolean" && typeof v.message === "string";
+    return (
+        (v.type === "auth" || v.type === "budget" || v.type === "tenant-blocked" || v.type === "provider") &&
+        typeof v.retryable === "boolean" &&
+        typeof v.message === "string"
+    );
 }
 
 /**
@@ -58,6 +66,14 @@ export function toProviderError(e: unknown, workload: string): ProviderError {
     if (isProviderError(e)) return e;
     const { kind, retryable } = classifyProviderError(e);
     const detail = e instanceof Error ? e.message : String(e);
+    if (kind === "auth") {
+        return {
+            type: "auth",
+            retryable: false,
+            message: `Provider rejected the credential for ${workload} — it is expired, revoked, or absent: ${detail}`,
+            cause: e,
+        };
+    }
     if (kind === "budget") {
         return {
             type: "budget",
@@ -150,6 +166,7 @@ function looksLikeConnectionError(err: unknown): boolean {
 /**
  * Classify a provider failure by origin.
  *
+ * - Provider `401` → `auth`, not retryable.
  * - Billing-gateway `402` → `budget`, not retryable.
  * - Billing-gateway `403` → `tenant-blocked`, not retryable.
  * - Provider `429` / `5xx` / connection errors → `provider`, retryable.
@@ -158,6 +175,12 @@ function looksLikeConnectionError(err: unknown): boolean {
 export function classifyProviderError(e: unknown): ProviderErrorClassification {
     const status = extractStatus(e);
 
+    // `auth` is its own kind rather than a plain non-retryable 4xx because the
+    // remedy is categorically different: the request was well-formed and the
+    // credential behind it is not, so no amount of re-issuing or rephrasing
+    // helps — a human has to re-authenticate. Callers surface that; the generic
+    // 4xx branch below would tell them the request was wrong, which is false.
+    if (status === 401) return { kind: "auth", retryable: false };
     if (status === 402) return { kind: "budget", retryable: false };
     if (status === 403) return { kind: "tenant-blocked", retryable: false };
     if (status === 429 || (status !== undefined && status >= 500)) {

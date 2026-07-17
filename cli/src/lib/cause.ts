@@ -105,6 +105,29 @@ function describeNonError(cause: unknown): string {
 }
 
 /**
+ * Locate a harness provider `auth` failure anywhere on a cause chain. The match is STRUCTURAL — the
+ * exact `ProviderError` auth shape (`type: "auth"`, `retryable: false`, a string `message`) rather
+ * than an imported harness type or provider message text — so it finds the value under any wrapping
+ * (a `ResultError`'s cause, the AI SDK's `AI_APICallError`, an `AggregateError` member) and never
+ * couples the cli's rendering to wire strings a third-party proxy authors. The `retryable: false`
+ * leg is what keeps a coincidental `{ type: "auth" }` from some other domain union from matching.
+ * Depth-bounded like {@link causeDetailLines} so a self-referential chain cannot loop.
+ */
+export function findAuthCause(cause: unknown, depth = 0): { message: string } | null {
+    if (depth > MAX_CAUSE_DEPTH || cause === null || typeof cause !== "object") return null;
+    const record = cause as { type?: unknown; retryable?: unknown; message?: unknown; cause?: unknown };
+    if (record.type === "auth" && record.retryable === false && typeof record.message === "string") return { message: record.message };
+    const aggregated = aggregateErrors(cause);
+    if (aggregated) {
+        for (const sub of aggregated) {
+            const hit = findAuthCause(sub, depth + 1);
+            if (hit) return hit;
+        }
+    }
+    return findAuthCause(record.cause, depth + 1);
+}
+
+/**
  * The full multi-line rendering of a failure value for a details view (no ANSI — plain strings):
  * - an `Error` → `name: message`, then its stack frames, then an indented, recursively-rendered
  *   `caused by:` section for one level of `.cause` (bounded by {@link MAX_CAUSE_DEPTH});

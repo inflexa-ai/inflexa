@@ -13,7 +13,9 @@ import {
     type ThreadHistory,
 } from "@inflexa-ai/harness";
 
-import { describeCause } from "../../lib/cause.ts";
+import { describeCause, findAuthCause } from "../../lib/cause.ts";
+import { resolveModelConnection } from "../../modules/harness/config.ts";
+import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setup.ts";
 import { workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
 import { isSubAgentEvent, readPlanCard, readRunCard } from "../../modules/harness/chat_printer.ts";
 import { readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "../../modules/harness/artifact_open.ts";
@@ -503,6 +505,30 @@ function dropEmptyAssistant(assistantId: string): void {
  * `aborted` returns to idle with no error (the user cancelled), having flushed what streamed.
  * `prepare_failed`/`thread_gone` bail before the loop, so they pop the empty assistant bubble instead.
  */
+/**
+ * The banner line for a failed turn. An auth-kind provider failure gets a dedicated remedy because
+ * the generic rendering buries the one fact that matters — a human has to re-authenticate: in
+ * cliproxy mode that names the configured provider and the two ways back in (relaunch, where the
+ * launch gate re-authenticates inline, or the forced setup re-login); in direct mode the credential
+ * is the user's own env key, so the remedy names the variable instead. No recorded provider slug —
+ * or any non-auth failure — falls back to the generic cause rendering. Exported for its unit tests.
+ */
+export function turnFailureMessage(cause: unknown): string {
+    const auth = findAuthCause(cause);
+    if (auth) {
+        const connection = resolveModelConnection();
+        if (connection.mode === "direct") {
+            return `The ${connection.provider} endpoint rejected your API key — check ${MODEL_API_KEY_VAR}, then restart the chat. — ${detailsHint()}`;
+        }
+        if (connection.provider) {
+            const kind = providerKindForSlug(connection.provider);
+            const relogin = kind ? ` (or run \`inflexa setup --provider ${kind}\`)` : "";
+            return `Your ${connection.provider} login has expired or been revoked — restart the chat to sign in again${relogin}. — ${detailsHint()}`;
+        }
+    }
+    return `The turn failed: ${describeCause(cause)} — ${detailsHint()}`;
+}
+
 function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number): void {
     switch (outcome.kind) {
         case "ok":
@@ -537,7 +563,7 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
             drainOpenTools();
             stampDuration(assistantId, startedAt);
             setLastTurnFailure(outcome.cause);
-            setErrorMsg(`The turn failed: ${describeCause(outcome.cause)} — ${detailsHint()}`);
+            setErrorMsg(turnFailureMessage(outcome.cause));
             reportAppendError(outcome.appendError);
             setChatStatus("error");
             return;
