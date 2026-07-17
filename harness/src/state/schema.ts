@@ -49,6 +49,13 @@ export type RunStatus = z.infer<typeof RunStatus>;
 export const StepExecutionStatus = z.enum(["pending", "running", "completed", "failed", "skipped", "canceled", "blocked"]);
 export type StepExecutionStatus = z.infer<typeof StepExecutionStatus>;
 
+// Run-level synthesis outcome, distinct from RunStatus: a run can reach
+// status="completed" while synthesis produced nothing. "produced" is the only
+// outcome that wrote a synthesis result; the two "skipped_*" variants and
+// "failed" record why none exists.
+export const SynthesisStatus = z.enum(["produced", "skipped_no_summaries", "skipped_blocker", "failed"]);
+export type SynthesisStatus = z.infer<typeof SynthesisStatus>;
+
 export const CortexRunRowSchema = z.object({
     runId: z.string(),
     analysisId: z.string(),
@@ -58,6 +65,10 @@ export const CortexRunRowSchema = z.object({
     startedAt: z.string(),
     completedAt: z.string().nullable(),
     error: z.string().nullable(),
+    // NULL synthesisStatus means "unknown" — a legacy row, or a run whose
+    // synthesis never recorded an outcome.
+    synthesisStatus: SynthesisStatus.nullable(),
+    synthesisReason: z.string().nullable(),
     parts: z.array(z.any()).nullable(),
     mandateJti: z.string().nullable(), // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
     mandateExpiresAt: z.string().nullable(), // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)

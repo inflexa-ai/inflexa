@@ -36,6 +36,7 @@ import type { ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { ensureSearchIndex, searchIndexName } from "../workspace/search-config.js";
 import { createVectorStore } from "../state/vector-store.js";
 import { loadPlan, queryRun } from "../state/index.js";
+import type { SynthesisStatus } from "../state/index.js";
 import { unwrapOrThrow } from "../lib/result.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
@@ -76,6 +77,11 @@ export interface SynthesizeRunParams {
 
 export interface SynthesizeRunResult {
     readonly findings: readonly RunFinding[];
+    // Only the non-failed outcomes are ever returned — a genuine failure re-throws
+    // and the workflow body records "failed" itself. `synthesisReason` carries the
+    // skip detail; it is null for the "produced" case.
+    readonly synthesisStatus: Exclude<SynthesisStatus, "failed">;
+    readonly synthesisReason: string | null;
 }
 
 export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeRunParams): Promise<SynthesizeRunResult> {
@@ -92,10 +98,12 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             completedSteps,
         });
         if (summaries.length === 0) {
+            const logger = (deps.logger ?? createNoopLogger()).named("synthesize-run");
+            logger.warn("synthesis skipped — no step summaries on disk", { runId, reason: "no-summaries" });
             await onProgress("skipped", "No step summaries available for synthesis", {
                 reason: "no-summaries",
             });
-            return { findings: [] };
+            return { findings: [], synthesisStatus: "skipped_no_summaries", synthesisReason: "no-summaries" };
         }
 
         const planNarrative = await loadPlanNarrative(pool, runId, analysisId);
@@ -113,8 +121,10 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
         });
 
         if (result.kind === "skipped") {
+            const logger = (deps.logger ?? createNoopLogger()).named("synthesize-run");
+            logger.warn("synthesis skipped — synthesizer reported a blocker", { runId, reason: result.reason });
             await onProgress("skipped", "Synthesis skipped — run did not produce synthesizable content", { reason: result.reason });
-            return { findings: [] };
+            return { findings: [], synthesisStatus: "skipped_blocker", synthesisReason: result.reason };
         }
 
         const synthesis = result.synthesis;
@@ -150,6 +160,8 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
                 title: f.title,
                 confidence: f.confidence,
             })),
+            synthesisStatus: "produced",
+            synthesisReason: null,
         };
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

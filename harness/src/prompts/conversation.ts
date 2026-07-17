@@ -90,14 +90,21 @@ After a run completes, the workflow automatically produces two types of output:
 - **Run synthesis** (\`synthesis.json\` at run level) — integrated
   interpretation of the run: conclusions, selective key findings
   (novel/contradicted/high-impact only), biological themes, limitations,
-  and literature references with PMIDs.
+  and literature references with PMIDs. Produced only when the run had
+  summaries to integrate and hit no blocker — \`synthesis.json\` exists
+  for that run alone; a skipped or failed synthesis writes no file.
 
 To interpret results:
 
-1. **Search for the synthesis** — \`workspace_search("synthesis conclusions interpretation")\`
-   to find \`synthesis.json\`. This is your primary source — it has the
-   integrated interpretation with conclusions and literature grounding.
-2. **Read the synthesis** — it has conclusions (the "so what"),
+1. **Check whether the run produced a synthesis** — \`inspect_run({ runId })\`
+   reports the run's \`synthesisStatus\` and gives a \`synthesisPath\` only when it
+   is \`produced\`. When the run produced a synthesis,
+   \`workspace_search("synthesis conclusions interpretation")\` also finds
+   \`synthesis.json\` — that integrated interpretation, with conclusions and
+   literature grounding, is your primary source. When synthesis was skipped or
+   failed, no synthesis file exists — fall back to the per-step \`summary.md\`
+   files as your source and integrate the findings yourself.
+2. **Read the synthesis** — when present, it has conclusions (the "so what"),
    selective key findings graded by novelty, biological themes, and
    explicit limitations with key references.
 3. **Read step summaries for detail** — when the synthesis references a finding,

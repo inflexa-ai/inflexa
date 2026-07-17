@@ -65,6 +65,10 @@ CREATE TABLE IF NOT EXISTS cortex_runs (
   started_at          TEXT NOT NULL,
   completed_at        TEXT,
   error               TEXT,
+  -- Run-level synthesis outcome. NULL means "unknown": a legacy row written
+  -- before these columns existed, or a run whose synthesis never recorded a result.
+  synthesis_status    TEXT,
+  synthesis_reason    TEXT,
   parts               JSONB,
   mandate_jti         TEXT, -- oss-core-managed-ok run-mandate ledger, nullable, OSS leaves null
   mandate_expires_at  TEXT -- oss-core-managed-ok run-mandate ledger, nullable, OSS leaves null
@@ -331,6 +335,8 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
                 "ALTER TABLE cortex_runs ADD COLUMN IF NOT EXISTS parts JSONB",
                 "ALTER TABLE cortex_runs ADD COLUMN IF NOT EXISTS mandate_jti TEXT", // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
                 "ALTER TABLE cortex_runs ADD COLUMN IF NOT EXISTS mandate_expires_at TEXT", // oss-core-managed-ok: run-mandate ledger (nullable; OSS leaves null)
+                "ALTER TABLE cortex_runs ADD COLUMN IF NOT EXISTS synthesis_status TEXT",
+                "ALTER TABLE cortex_runs ADD COLUMN IF NOT EXISTS synthesis_reason TEXT",
                 "ALTER TABLE cortex_analysis_state ADD COLUMN IF NOT EXISTS data_profile_result JSONB",
                 "ALTER TABLE cortex_analysis_state ADD COLUMN IF NOT EXISTS billing_context JSONB",
                 // Sandbox reliability telemetry (from sandbox-reliability change on main).
