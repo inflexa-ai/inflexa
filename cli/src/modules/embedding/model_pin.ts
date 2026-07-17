@@ -19,14 +19,21 @@
  * {@link MODEL_SHA256} here AND — in lockstep — the string-literal import
  * specifier in setup.ts's `embeddedModelPath` (Bun can only embed
  * statically-known paths, so that literal cannot be derived from these
- * constants), plus {@link MODEL_ARTIFACT} if the filename changed. The build's
- * stale-cache sweep removes superseded model files, so a missed literal fails
- * the release build loudly instead of embedding the old model — the same
- * protection LLAMA_RUNTIME_TAG's bump procedure relies on (llama_runtime.ts).
+ * constants), plus {@link MODEL_ARTIFACT} if the filename changed. Two
+ * build-time guards keep a half-done bump from silently embedding the old
+ * model: if the filename changed, the stale-cache sweep deletes the superseded
+ * file so a missed import literal fails to resolve (the loud-failure protection
+ * LLAMA_RUNTIME_TAG's tag-named archives rely on); if only the revision/hash
+ * changed and the filename did NOT — the common bge case, since
+ * {@link MODEL_ARTIFACT} carries no revision — the sweep keeps the same-named
+ * file and scripts/build.ts's `ensureModelCached` catches it instead, re-hashing
+ * the cached bytes against the new SHA-256 and failing the build ("delete the
+ * cache") on a mismatch.
  */
 
 /** Download URL for the pinned model revision on HuggingFace. */
-export const MODEL_URL = "https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/d32f8c040ea3b516330eeb75b72bcc2d3a780ab7/bge-small-en-v1.5-q8_0.gguf";
+export const MODEL_URL =
+    "https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/d32f8c040ea3b516330eeb75b72bcc2d3a780ab7/bge-small-en-v1.5-q8_0.gguf";
 
 /** SHA-256 of the pinned model file — the sole integrity authority for build-time and runtime verification. */
 export const MODEL_SHA256 = "ec38e8da142596baa913124ae50550de284b6916bf59577ef2f0cb9660c2f514";

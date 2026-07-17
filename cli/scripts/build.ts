@@ -299,12 +299,14 @@ async function ensureModelCached(): Promise<void> {
 
 // Remove every cache file that matches no current pin BEFORE compiling — covering both artifact kinds: the
 // per-target llama-server archives (LLAMA_PINS) and the platform-independent embedding-model GGUF
-// (MODEL_ARTIFACT). A pin bump renames the artifacts (new tag/revision → new filenames) but leaves the
-// superseded files on disk; if the embed-import literals in llama_runtime.ts / setup.ts were not all
-// updated in lockstep, a stale literal could still resolve against one of those leftover files and embed
-// the WRONG artifact silently. Deleting them turns that mistake into a loud import-resolution build failure
-// instead — the same failure a clean CI checkout would produce. Only flat files live here, so directories
-// (none expected) are left untouched.
+// (MODEL_ARTIFACT). The llama archives are tag-named, so a pin bump renames them (new tag → new filenames)
+// and leaves the superseded archives on disk; if the embed-import literals in llama_runtime.ts / setup.ts
+// were not all updated in lockstep, a stale literal could still resolve against one of those leftovers and
+// embed the WRONG runtime silently. Deleting them turns that mistake into a loud import-resolution build
+// failure instead — the same failure a clean CI checkout would produce. (The model GGUF's filename usually
+// does NOT change across a revision bump — MODEL_ARTIFACT carries no revision — so the sweep keeps it and
+// ensureModelCached's cache re-hash, not this sweep, is what catches a stale model.) Only flat files live
+// here, so directories (none expected) are left untouched.
 function sweepLlamaCache(): void {
     if (!existsSync(LLAMA_CACHE_DIR)) return;
     // Widen to Set<string>: LLAMA_PINS is `as const` (and MODEL_ARTIFACT is a literal too), so the artifact

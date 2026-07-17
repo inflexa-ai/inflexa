@@ -273,7 +273,7 @@ describe("acquireModel", () => {
         const result = await acquireModel();
 
         expect(result.isErr()).toBe(true);
-        expect(result._unsafeUnwrapErr().type).toBe("download_failed");
+        expect(result._unsafeUnwrapErr().type).toBe("acquire_failed");
         expect(existsSync(env.embeddingModelPath)).toBe(false);
         expect(existsSync(partPath)).toBe(false);
     });
@@ -288,7 +288,7 @@ describe("acquireModel", () => {
 
         expect(result.isErr()).toBe(true);
         const e = result._unsafeUnwrapErr();
-        expect(e.type).toBe("download_failed");
+        expect(e.type).toBe("acquire_failed");
         expect(e.message).toContain("Reinstall the official binary");
         expect(spy.calls).toEqual([]);
     });
