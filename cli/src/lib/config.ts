@@ -90,14 +90,45 @@ const configSchema = z.object({
 export type Config = z.infer<typeof configSchema>;
 
 /**
+ * The `models.connection.auth` block — a REFRESHING credential source for a `direct` connection, in place
+ * of the static environment key. `env` names a variable holding a token (e.g. a short-lived
+ * `ANTHROPIC_AUTH_TOKEN` bearer); `command` names a helper that mints one on demand (Claude Code
+ * `apiKeyHelper` parity), its stdout parsed as a raw token (`format: "raw"`, the default) or a Kubernetes
+ * `ExecCredential` JSON (`format: "exec-credential"`). `scheme` selects the wire header the token is sent
+ * under — `x-api-key`, or `Authorization: Bearer`. ONLY the non-secret variable name / command string /
+ * scheme is ever persisted; the token value is resolved at runtime and never written to config. Resolved
+ * into a cached, refreshing source by `createCredentialSource` (lib/env.ts) at the provider-construction
+ * site. Declared here beside {@link modelConnectionSchema} — the model connection is a cli-owned config
+ * concept — and consumed as {@link ModelAuthConfig}.
+ */
+export const modelAuthSchema = z.discriminatedUnion("kind", [
+    z.object({
+        kind: z.literal("env"),
+        var: z.string().min(1),
+        scheme: z.enum(["x-api-key", "bearer"]),
+    }),
+    z.object({
+        kind: z.literal("command"),
+        command: z.string().min(1),
+        scheme: z.enum(["x-api-key", "bearer"]),
+        format: z.enum(["raw", "exec-credential"]).optional(),
+        ttlMs: z.number().int().positive().optional(),
+    }),
+]);
+
+/** The resolved shape of a {@link modelAuthSchema} block — the declarative credential source (a name/command + scheme, never a token). */
+export type ModelAuthConfig = z.infer<typeof modelAuthSchema>;
+
+/**
  * The `models.connection` union — the user-owned chat backend, mirroring the `embedding` block's
  * mode discrimination. `cliproxy` is the managed local proxy (today's default); `direct` is any
  * user-supplied Anthropic or OpenAI-compatible endpoint. `provider` is the vendor slug (an OPEN
  * vocabulary, e.g. `anthropic`/`openai`/`google`) — a configured FACT in both modes, never derived
  * from a model id. `protocol` selects the harness wire kind for direct endpoints; when absent it is
- * implied from the provider (see `resolveModelConnection`). Validated by `resolveModelConnection`
- * (modules/harness/config.ts), not inline, so a malformed block reports a precise error and fails
- * closed without dropping its config siblings.
+ * implied from the provider (see `resolveModelConnection`). A `direct` connection MAY carry an `auth`
+ * block ({@link modelAuthSchema}) — a refreshing credential source that supersedes the static env key.
+ * Validated by `resolveModelConnection` (modules/harness/config.ts), not inline, so a malformed block
+ * reports a precise error and fails closed without dropping its config siblings.
  */
 export const modelConnectionSchema = z.discriminatedUnion("mode", [
     z.object({
@@ -109,6 +140,8 @@ export const modelConnectionSchema = z.discriminatedUnion("mode", [
         provider: z.string(),
         baseURL: z.string(),
         protocol: z.enum(["anthropic", "openai-compatible"]).optional(),
+        // An optional REFRESHING credential source, in place of the static env key (see {@link modelAuthSchema}).
+        auth: modelAuthSchema.optional(),
     }),
 ]);
 

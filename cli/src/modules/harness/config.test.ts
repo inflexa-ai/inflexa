@@ -133,6 +133,75 @@ describe("resolveModelConnection — agent overrides ride through", () => {
     });
 });
 
+describe("resolveModelConnection — direct-mode auth (credential source) round-trip", () => {
+    test("a valid env auth block rides through verbatim onto the resolved direct connection", () => {
+        writeConfigWithModels({
+            connection: {
+                mode: "direct",
+                provider: "anthropic",
+                baseURL: "https://api.anthropic.com/v1",
+                auth: { kind: "env", var: "ANTHROPIC_AUTH_TOKEN", scheme: "bearer" },
+            },
+        });
+        expect(resolveModelConnection()).toEqual({
+            mode: "direct",
+            provider: "anthropic",
+            baseURL: "https://api.anthropic.com/v1",
+            protocol: "anthropic",
+            auth: { kind: "env", var: "ANTHROPIC_AUTH_TOKEN", scheme: "bearer" },
+            agents: {},
+        });
+    });
+
+    test("a valid command auth block carries format + ttlMs verbatim", () => {
+        writeConfigWithModels({
+            connection: {
+                mode: "direct",
+                provider: "deepseek",
+                baseURL: "https://api.deepseek.com/v1",
+                auth: { kind: "command", command: "mint-token --json", scheme: "x-api-key", format: "exec-credential", ttlMs: 300000 },
+            },
+        });
+        expect(resolveModelConnection()).toEqual({
+            mode: "direct",
+            provider: "deepseek",
+            baseURL: "https://api.deepseek.com/v1",
+            protocol: "openai-compatible",
+            auth: { kind: "command", command: "mint-token --json", scheme: "x-api-key", format: "exec-credential", ttlMs: 300000 },
+            agents: {},
+        });
+    });
+
+    test("a direct connection with no auth block resolves without an auth field (env-key path)", () => {
+        writeConfigWithModels({ connection: { mode: "direct", provider: "anthropic", baseURL: "https://api.anthropic.com/v1" } });
+        const resolved = resolveModelConnection();
+        expect(resolved).not.toHaveProperty("auth");
+    });
+
+    test("an invalid auth scheme fails the whole models parse closed, naming the offending field", () => {
+        writeConfigWithModels({
+            connection: { mode: "direct", provider: "anthropic", baseURL: "https://api.anthropic.com/v1", auth: { kind: "env", var: "X", scheme: "basic" } },
+        });
+        const resolved = resolveModelConnection();
+        expect(resolved).toMatchObject({ mode: "cliproxy", provider: "anthropic", agents: {} });
+        expect(resolved.configError?.issues).toContain("models.connection");
+    });
+
+    test("an unknown auth kind fails closed with a config error", () => {
+        writeConfigWithModels({
+            connection: { mode: "direct", provider: "anthropic", baseURL: "https://api.anthropic.com/v1", auth: { kind: "aws-sso", scheme: "bearer" } },
+        });
+        expect(resolveModelConnection().configError).toBeDefined();
+    });
+
+    test("a command auth block missing its command fails closed", () => {
+        writeConfigWithModels({
+            connection: { mode: "direct", provider: "openai", baseURL: "https://api.openai.com/v1", auth: { kind: "command", scheme: "bearer" } },
+        });
+        expect(resolveModelConnection().configError).toBeDefined();
+    });
+});
+
 describe("resolveModelConnection — fail closed", () => {
     test("a direct block missing baseURL fails closed to the default connection, carrying a configError", () => {
         writeConfigWithModels({ connection: { mode: "direct", provider: "openai" } });
