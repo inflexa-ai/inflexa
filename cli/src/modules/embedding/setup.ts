@@ -1,17 +1,20 @@
 /**
- * Local embedding model lifecycle: download, verify, configure, and the hot-path
- * readiness gate. Mirrors `modules/infra/setup.ts` — "download a thing on opt-in,
+ * Local embedding model lifecycle: acquire, verify, configure, and the hot-path
+ * readiness gate. Mirrors `modules/infra/setup.ts` — "acquire a thing on opt-in,
  * verify it, record the choice in config, and gate the hot path on it being
  * present" — and uses the same `@clack/prompts` UI (`select`/`spinner`/`log`) so
  * the two setup flows feel consistent.
  *
- * The model is `bge-small-en-v1.5` (GGUF, q8_0, 384-dim, ~36 MB) from
- * `CompendiumLabs/bge-small-en-v1.5-gguf` on HuggingFace. Download is skipped if
- * the file already exists; verification (spawn the sidecar + embed probe + dim
- * check) always runs so a truncated/corrupt file is caught now, not on the first
- * hot-path `embed()` call. Verification goes through the SAME `llama-server`
- * sidecar the hot path uses, so it is identical in the compiled binary and from
- * source — no separate load path to diverge.
+ * The model is `bge-small-en-v1.5` (GGUF, q8_0, 384-dim, ~36 MB), pinned in
+ * `model_pin.ts`. Acquisition is source-aware, mirroring the llama runtime: the
+ * compiled binary copies its build-time embedded asset (no network — the whole
+ * point for egress-restricted environments); a source checkout downloads the
+ * pinned revision from HuggingFace. Acquisition is skipped if the file already
+ * exists; verification (spawn the sidecar + embed probe + dim check) always runs
+ * so a truncated/corrupt file is caught now, not on the first hot-path `embed()`
+ * call. Verification goes through the SAME `llama-server` sidecar the hot path
+ * uses, so it is identical in the compiled binary and from source — no separate
+ * load path to diverge.
  */
 
 import { mkdir, rename, stat, unlink } from "node:fs/promises";
@@ -25,8 +28,10 @@ import type { AgentSession } from "@inflexa-ai/harness";
 import { readConfig, writeConfig } from "../../lib/config.ts";
 import { select } from "../../lib/cli.ts";
 import { env } from "../../lib/env.ts";
+import { isCompiledBinary } from "../../lib/install_context.ts";
 import { ensureLlamaServer, materializedLlamaServer } from "./llama_runtime.ts";
 import { createLocalEmbeddingProvider, LOCAL_EMBEDDING_DIMENSIONS, stopLocalSidecar } from "./local-provider.ts";
+import { MODEL_SHA256, MODEL_URL } from "./model_pin.ts";
 
 export type EmbeddingSetupError =
     | { readonly type: "download_failed"; readonly message: string; readonly cause?: unknown }
@@ -39,30 +44,61 @@ export type EmbeddingSetupError =
     // since a compiled binary materializes from its embedded asset without touching the network.
     | { readonly type: "runtime_unavailable"; readonly message: string; readonly cause?: unknown };
 
-/**
- * Pinned to the repo revision current as of 2026-07 (last modified 2024-02-17),
- * not `main`: an unpinned ref would let a repo update (or a MITM on the ref)
- * silently swap the model, with only the dimension probe standing between a
- * different model and the vector store. The sha256 below is the file's LFS
- * object id at this revision, verified against the download stream.
- */
-const MODEL_URL = "https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/d32f8c040ea3b516330eeb75b72bcc2d3a780ab7/bge-small-en-v1.5-q8_0.gguf";
-const MODEL_SHA256 = "ec38e8da142596baa913124ae50550de284b6916bf59577ef2f0cb9660c2f514";
+// Baked to the literal `true` by scripts/build.ts for every release target, exactly as
+// install_context.ts's `__INFLEXA_COMPILED__` — that module owns the canonical declaration and its
+// `isCompiledBinary()` accessor. It is RE-declared here because the constant-fold in
+// `embeddedModelPath` below needs the BARE identifier under a `typeof` guard: a read through
+// `isCompiledBinary()` is opaque to the bundler and would not fold, whereas the folded-away branch
+// is precisely what keeps the `.llama-cache/` import specifier from being resolved outside a release
+// build (the asset is absent from a from-source tree). Safe because the only read is `typeof`-guarded,
+// so an undeclared identifier in dev/test evaluates to `undefined`, never a ReferenceError.
+declare const __INFLEXA_COMPILED__: boolean | undefined;
+
+// Module-level test seams (mirroring llama_runtime's __set…ForTest): a forced embedded path lets a
+// unit test exercise the embedded-copy branch without a real compiled binary; a forced pin drives the
+// whole acquire pipeline against a fixture url/hash. Both `null` in production.
+let embeddedModelOverride: string | null = null;
+let modelPinOverride: { readonly url: string; readonly sha256: string } | null = null;
+
+/** The active model pin (url + sha256), honoring a test override; otherwise the vendored constants. */
+function modelPin(): { readonly url: string; readonly sha256: string } {
+    return modelPinOverride ?? { url: MODEL_URL, sha256: MODEL_SHA256 };
+}
 
 /**
- * Download the GGUF model to {@link env.embeddingModelPath}, skipping if it is
- * already present. Streams the response to disk under a clack spinner so the
- * ~36 MB download is visible. A network/HTTP failure surfaces as
- * `download_failed` — never thrown.
- *
- * The stream lands in a `.part` sidecar that is renamed into place only after a
- * complete flush: the "already present" check above trusts bare existence, so a
- * mid-stream failure must never leave bytes at the final path — a truncated
- * file there would be skipped as "already present" on retry and only caught by
- * `verifyModel`, with no hint that deleting it fixes things.
+ * The compiled binary's embedded model asset path, or `null` from source / dev / test. Unlike the
+ * per-target llama archives, ONE platform-independent asset serves every target — so this gates on the
+ * every-target `__INFLEXA_COMPILED__` define rather than a per-target key. The `typeof` guard folds to
+ * a compile-time boolean: the bundler keeps the `import(... with { type: "file" })` only when
+ * compiling and drops it otherwise, so the specifier into the out-of-git `.llama-cache/` (which
+ * scripts/build.ts populates before compiling) is never resolved outside a release build. That literal
+ * must be edited in lockstep with the pin — Bun embeds only statically-known paths (see model_pin.ts).
  */
-export async function downloadModel(): Promise<Result<void, EmbeddingSetupError>> {
+async function embeddedModelPath(): Promise<string | null> {
+    if (embeddedModelOverride !== null) return embeddedModelOverride;
+    if (typeof __INFLEXA_COMPILED__ !== "undefined" && __INFLEXA_COMPILED__ === true) {
+        return (await import("../../../.llama-cache/bge-small-en-v1.5-q8_0.gguf", { with: { type: "file" } })).default;
+    }
+    return null;
+}
+
+/**
+ * Acquire the GGUF model to {@link env.embeddingModelPath}, skipping if it is already present.
+ * Source-aware, mirroring the llama runtime: a compiled binary copies its build-time embedded asset
+ * (no network — the point of this path for egress-restricted environments); a source checkout streams
+ * the pinned file from HuggingFace. Both sources are verified against the pinned SHA-256 before any
+ * bytes land at the final path, so the "nothing lands unverified" invariant holds unconditionally
+ * rather than per-source. Every failure surfaces as `download_failed` — never thrown.
+ *
+ * The bytes stage in a `.part` sidecar renamed into place only after a complete, verified flush: the
+ * "already present" check above trusts bare existence, so a mid-acquisition failure must never leave
+ * bytes at the final path — a truncated file there would be skipped as "already present" on retry and
+ * only caught by `verifyModel`, with no hint that deleting it fixes things.
+ */
+export async function acquireModel(): Promise<Result<void, EmbeddingSetupError>> {
     const partPath = `${env.embeddingModelPath}.part`;
+    const pin = modelPin();
+    const embedded = isCompiledBinary();
     try {
         if (await Bun.file(env.embeddingModelPath).exists()) {
             log.info(`Embedding model already present at ${env.embeddingModelPath}`);
@@ -72,42 +108,63 @@ export async function downloadModel(): Promise<Result<void, EmbeddingSetupError>
         await mkdir(dirname(env.embeddingModelPath), { recursive: true });
 
         const s = clackSpinner();
-        s.start("Downloading bge-small-en-v1.5 (q8_0, ~36 MB) from HuggingFace");
+        s.start(embedded ? "Installing the bundled bge-small-en-v1.5 model (q8_0, ~36 MB)" : "Downloading bge-small-en-v1.5 (q8_0, ~36 MB) from HuggingFace");
 
-        const response = await fetch(MODEL_URL);
-        if (!response.ok || response.body === null) {
-            s.error("Download failed");
-            return err({
-                type: "download_failed",
-                message: `Download failed: HTTP ${response.status} ${response.statusText}`,
-            });
-        }
-
-        const file = Bun.file(partPath);
-        const writer = file.writer();
-        const reader = response.body.getReader();
+        // One hasher spans both byte sources so the digest check below is source-agnostic.
         const hasher = new Bun.CryptoHasher("sha256");
-        for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            hasher.update(value);
-            await writer.write(value);
+        if (embedded) {
+            const assetPath = await embeddedModelPath();
+            if (assetPath === null) {
+                s.error("Bundled model missing");
+                return err({
+                    type: "download_failed",
+                    message:
+                        "This inflexa binary did not embed the bge-small embedding model. Reinstall the official binary for your platform, or run inflexa from source.",
+                });
+            }
+            // Bun.file().bytes() mmaps the embedded segment and Bun.write() lands it on a real disk
+            // path — the bunfs-safe pair (fd-based APIs ENOENT on /$bunfs), the same constraint
+            // documented at llama_runtime's writeEmbeddedArchive.
+            const bytes = await Bun.file(assetPath).bytes();
+            hasher.update(bytes);
+            await Bun.write(partPath, bytes);
+        } else {
+            const response = await fetch(pin.url);
+            if (!response.ok || response.body === null) {
+                s.error("Download failed");
+                return err({
+                    type: "download_failed",
+                    message: `Download failed: HTTP ${response.status} ${response.statusText}`,
+                });
+            }
+
+            const file = Bun.file(partPath);
+            const writer = file.writer();
+            const reader = response.body.getReader();
+            for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                hasher.update(value);
+                await writer.write(value);
+            }
+            await writer.flush();
         }
-        await writer.flush();
 
         const digest = hasher.digest("hex");
-        if (digest !== MODEL_SHA256) {
+        if (digest !== pin.sha256) {
             s.error("Checksum mismatch");
             await unlink(partPath).catch(() => {});
             return err({
                 type: "download_failed",
-                message: `Downloaded file's sha256 (${digest}) does not match the pinned model checksum. Retry, or check your network path to huggingface.co.`,
+                message: embedded
+                    ? `The bundled model's sha256 (${digest}) does not match the pinned checksum — the embedded asset is corrupt. Reinstall the official binary for your platform.`
+                    : `Downloaded file's sha256 (${digest}) does not match the pinned model checksum. Retry, or check your network path to huggingface.co.`,
             });
         }
         await rename(partPath, env.embeddingModelPath);
 
         const written = (await stat(env.embeddingModelPath)).size;
-        s.stop(`Downloaded ${(written / 1024 / 1024).toFixed(1)} MB`);
+        s.stop(embedded ? `Installed ${(written / 1024 / 1024).toFixed(1)} MB (bundled model)` : `Downloaded ${(written / 1024 / 1024).toFixed(1)} MB`);
         return ok(undefined);
     } catch (cause) {
         // Best-effort cleanup; a `.part` leftover is harmless (never mistaken
@@ -115,7 +172,7 @@ export async function downloadModel(): Promise<Result<void, EmbeddingSetupError>
         await unlink(partPath).catch(() => {});
         return err({
             type: "download_failed",
-            message: `Download failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            message: `Model acquisition failed: ${cause instanceof Error ? cause.message : String(cause)}`,
             cause,
         });
     }
@@ -171,9 +228,9 @@ export async function verifyModel(modelPath: string): Promise<Result<void, Embed
 /**
  * Interactive embedding setup, run as part of `inflexa setup`. Prompts the user
  * to pick an embedding mode via a clack `select` picker (local / api-key / off),
- * then for `local`: materializes the sidecar runtime + downloads the GGUF,
- * verifies it through the sidecar, and records `embedding.mode = "local"` +
- * `embedding.modelPath` in config.
+ * then for `local`: materializes the sidecar runtime + acquires the GGUF (embedded
+ * asset in the compiled binary, download from source), verifies it through the
+ * sidecar, and records `embedding.mode = "local"` + `embedding.modelPath` in config.
  *
  * Non-interactive shells (no TTY, or `interactive === false`) skip the prompt
  * entirely without hanging — `mode` stays whatever it was. A preselected `mode`
@@ -244,7 +301,7 @@ function warnOnModeSwitch(current: "local" | "api-key" | "off", next: "local" | 
     );
 }
 
-/** The local-embeddings opt-in branch: materialize runtime, download model, verify through the sidecar, write config. */
+/** The local-embeddings opt-in branch: materialize runtime, acquire model, verify through the sidecar, write config. */
 async function runLocalSetup(config: ReturnType<typeof readConfig>): Promise<Result<void, EmbeddingSetupError>> {
     warnOnModeSwitch(config.embedding.mode, "local");
     log.message("Setting up local embeddings (bge-small-en-v1.5 via the pinned llama-server runtime, no API key needed)");
@@ -266,8 +323,8 @@ async function runLocalSetup(config: ReturnType<typeof readConfig>): Promise<Res
     }
     runtimeSpinner.stop("Local embedding runtime ready");
 
-    const downloadResult = await downloadModel();
-    if (downloadResult.isErr()) return downloadResult;
+    const acquireResult = await acquireModel();
+    if (acquireResult.isErr()) return acquireResult;
 
     const verifyResult = await verifyModel(env.embeddingModelPath);
     if (verifyResult.isErr()) return verifyResult;
@@ -289,11 +346,16 @@ async function runLocalSetup(config: ReturnType<typeof readConfig>): Promise<Res
  * chosen mode string; clack handles cancel (Ctrl-C / Esc) by aborting.
  */
 async function promptEmbeddingMode(): Promise<"local" | "api-key" | "off"> {
-    // Local mode works identically in the compiled binary and from source (the runtime
-    // is a downloaded/embedded sidecar, not a native addon), so all three modes are
-    // offered in every install context — no context gates the offering.
+    // Local mode works identically in the compiled binary and from source (both the runtime AND the
+    // model are downloaded/embedded assets, not native addons), so all three modes are offered in
+    // every install context — no context gates the offering.
     const chosen = await select("Embedding mode", [
-        { value: "local", label: "Local (downloads a ~36 MB model + runtime, no API key)" },
+        {
+            value: "local",
+            label: isCompiledBinary()
+                ? "Local (installs the bundled ~36 MB model + runtime, no API key or network)"
+                : "Local (downloads a ~36 MB model + runtime, no API key)",
+        },
         { value: "api-key", label: "API key (direct to an OpenAI-compatible endpoint)" },
         { value: "off", label: "Off / skip" },
     ]);
@@ -306,7 +368,8 @@ async function promptEmbeddingMode(): Promise<"local" | "api-key" | "off"> {
  *
  * 1. The GGUF must exist — a missing model means setup never ran (or was undone),
  *    so the remediation is `inflexa setup --embeddings local`, which succeeds in
- *    every install context.
+ *    every install context — and in a compiled binary succeeds offline, since both
+ *    the model and the runtime are build-time embedded assets.
  * 2. The pinned runtime must be materialized. When it already is, this is a cheap
  *    directory-existence check and no acquisition work happens. When it is NOT,
  *    the gate materializes it right here rather than returning ok: deferring to
@@ -327,7 +390,7 @@ export async function ensureEmbedderReady(): Promise<Result<void, EmbeddingSetup
     if (!(await Bun.file(env.embeddingModelPath).exists())) {
         return err({
             type: "not_configured",
-            message: `Local embedding model not found at ${env.embeddingModelPath}. Run \`inflexa setup --embeddings local\` to download it.`,
+            message: `Local embedding model not found at ${env.embeddingModelPath}. Run \`inflexa setup --embeddings local\` to install it.`,
         });
     }
 
@@ -342,4 +405,22 @@ export async function ensureEmbedderReady(): Promise<Result<void, EmbeddingSetup
         });
     }
     return ok(undefined);
+}
+
+/**
+ * TEST ONLY. Force the embedded-model asset path so a unit test can exercise the embedded-copy
+ * acquisition branch without a real compiled binary, or `null` to restore the real
+ * `__INFLEXA_COMPILED__`-gated resolution. Production code never calls it.
+ */
+export function __setEmbeddedModelForTest(path: string | null): void {
+    embeddedModelOverride = path;
+}
+
+/**
+ * TEST ONLY. Force the model pin (url + sha256) so a unit test can drive {@link acquireModel} against
+ * a fixture source and checksum, or `null` to restore the vendored constants. Production code never
+ * calls it.
+ */
+export function __setModelPinForTest(pin: { readonly url: string; readonly sha256: string } | null): void {
+    modelPinOverride = pin;
 }
