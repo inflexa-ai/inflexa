@@ -279,7 +279,7 @@ describe("synthesizeRun", () => {
         }
     });
 
-    it("surfaces the validation-rejection count on a blocker skip (progress + warn)", async () => {
+    it("skips on a blocker that follows a rejected submission, writing nothing", async () => {
         const bad = validSynthesisPayload() as { findings: { stepId: string }[] };
         bad.findings[0]!.stepId = "UNKNOWN";
         const provider = scriptedProvider((i) => {
@@ -302,13 +302,11 @@ describe("synthesizeRun", () => {
             });
 
             expect(result.synthesisStatus).toBe("skipped_blocker");
-            // The skip progress carries the attempt count on the existing wire field.
+            // A rejected submission latches nothing: the blocker still ends the run as a skip.
             const skip = records.find((r) => r.phase === "skipped");
-            expect(skip?.extra.validationAttempts).toBe(1);
-            // The loud-skip warn carries the count + issue paths as structured fields.
+            expect(skip?.extra.reason).toBe("cannot reconcile references");
             const warn = h.logs.find((r) => r.level === "warn");
-            expect(warn?.fields).toMatchObject({ runId: RUN_ID, validationRejections: 1 });
-            expect((warn?.fields.rejectedIssuePaths as string[]).length).toBeGreaterThan(0);
+            expect(warn?.fields).toMatchObject({ runId: RUN_ID, reason: "cannot reconcile references" });
         } finally {
             await h.cleanup();
         }

@@ -285,7 +285,6 @@ export const SynthesisProgressPartSchema = z.object({
     phase: SynthesisPhaseSchema,
     activity: z.string(),
     delegationCount: z.number().int().nonnegative().optional(),
-    validationAttempts: z.number().int().nonnegative().optional(),
     reason: z.string().optional(),
     error: z.string().optional(),
 });

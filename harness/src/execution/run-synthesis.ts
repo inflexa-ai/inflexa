@@ -92,26 +92,6 @@ interface OutcomeHolder {
     outcome: SynthesizerOutcome | null;
 }
 
-/**
- * Mutable cell the submit tool writes on every rejection from its semantic
- * re-validation — the stepId/theme-ref/PMID checks the arg schema cannot express.
- * The arg schema itself is enforced at the agent-loop boundary — which repairs a
- * markup-wrapped argument and re-validates it in full before dispatch — so what
- * arrives here always parses, and only the semantic checks can reject it. A
- * rejection is not terminal: submission is last-valid-wins, so a rejected call
- * leaves any recorded outcome intact and the model may fix the cited paths and
- * submit again. This therefore measures how hard the model had to work against the
- * semantic checks, not whether it eventually succeeded. Read after the loop to
- * diagnose a blocker's cause: zero here points to LLM misjudgment — it gave up
- * without the checks ever pushing back — and repeated rejections to a defensive
- * give-up against those checks. The deduped `issuePaths` name which fields the
- * model could not satisfy.
- */
-interface RejectionTelemetry {
-    rejections: number;
-    readonly issuePaths: Set<string>;
-}
-
 // ── Validation ──────────────────────────────────────────────────────
 
 function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath = "synthesis"): ValidationIssue[] {
@@ -365,7 +345,7 @@ function buildValidateTool(ctx: InnerToolContext): Tool {
     });
 }
 
-function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext, telemetry: RejectionTelemetry): Tool {
+function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext): Tool {
     return defineTool({
         id: "submit_synthesis",
         description:
@@ -382,11 +362,9 @@ function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext, telemetry
         execute: async (input): Promise<Result<SubmitSynthesisOutput, ToolError>> => {
             const result = fullyValidate(input.synthesis, ctx);
             if (!result.valid) {
-                // A rejection is not terminal — the model may fix the cited paths and
-                // submit again — so this counts attempts against the semantic checks,
-                // not a failure of the run.
-                telemetry.rejections += 1;
-                for (const issue of result.issues) telemetry.issuePaths.add(issue.path);
+                // A rejection is not terminal — submission is last-valid-wins, so this
+                // leaves any already-recorded outcome intact and the model may fix the
+                // cited paths and submit again.
                 return ok({ accepted: false as const, issues: result.issues });
             }
             holder.outcome = { kind: "submitted", synthesis: result.synthesis };
@@ -419,20 +397,17 @@ export function __buildInnerToolsForTest(args: { knownStepIds: ReadonlySet<strin
     submit: Tool;
     blocker: Tool;
     holder: OutcomeHolder;
-    telemetry: RejectionTelemetry;
 } {
     const holder: OutcomeHolder = { outcome: null };
-    const telemetry: RejectionTelemetry = { rejections: 0, issuePaths: new Set() };
     const ctx: InnerToolContext = {
         knownStepIds: args.knownStepIds,
         runId: args.runId,
     };
     return {
         validate: buildValidateTool(ctx),
-        submit: buildSubmitTool(holder, ctx, telemetry),
+        submit: buildSubmitTool(holder, ctx),
         blocker: buildBlockerTool(holder),
         holder,
-        telemetry,
     };
 }
 
@@ -456,9 +431,7 @@ export interface GenerateRunSynthesisInput {
     readonly emit?: EmitFn;
 }
 
-export type GenerateRunSynthesisResult =
-    | { kind: "synthesis"; synthesis: RunSynthesis; validationRejections: number }
-    | { kind: "skipped"; reason: string; validationRejections: number; rejectedIssuePaths: readonly string[] };
+export type GenerateRunSynthesisResult = { kind: "synthesis"; synthesis: RunSynthesis } | { kind: "skipped"; reason: string };
 
 /**
  * Drive the synthesizer agent loop to a terminal outcome — either a
@@ -472,7 +445,6 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
 
     const knownStepIds = new Set(input.summaries.map((s) => s.stepId));
     const holder: OutcomeHolder = { outcome: null };
-    const telemetry: RejectionTelemetry = { rejections: 0, issuePaths: new Set() };
     const innerCtx: InnerToolContext = { knownStepIds, runId: input.runId };
     const reviewer = createLiteratureReviewerTool({
         provider: input.provider,
@@ -481,7 +453,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
     });
 
     const validateTool = buildValidateTool(innerCtx);
-    const submitTool = buildSubmitTool(holder, innerCtx, telemetry);
+    const submitTool = buildSubmitTool(holder, innerCtx);
     const blockerTool = buildBlockerTool(holder);
     const tools: readonly Tool[] = [validateTool, submitTool, blockerTool, reviewer];
 
@@ -516,15 +488,10 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
 
     const outcome = holder.outcome;
     if (outcome?.kind === "submitted") {
-        return { kind: "synthesis", synthesis: outcome.synthesis, validationRejections: telemetry.rejections };
+        return { kind: "synthesis", synthesis: outcome.synthesis };
     }
     if (outcome?.kind === "blocker") {
-        return {
-            kind: "skipped",
-            reason: outcome.reason,
-            validationRejections: telemetry.rejections,
-            rejectedIssuePaths: [...telemetry.issuePaths].sort(),
-        };
+        return { kind: "skipped", reason: outcome.reason };
     }
     if (signal.aborted) {
         throw new Error("Run synthesis was cancelled.");

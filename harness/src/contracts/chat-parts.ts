@@ -307,8 +307,6 @@ export interface SynthesisProgressPart {
     activity: string;
     /** Number of literature-reviewer delegations started so far. */
     delegationCount?: number;
-    /** Number of times the synthesizer's submit_synthesis call was rejected. */
-    validationAttempts?: number;
     /** Agent-provided reason — set when phase === "skipped". */
     reason?: string;
     /** Error message — set when phase === "failed". */
