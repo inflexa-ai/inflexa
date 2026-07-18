@@ -112,6 +112,12 @@ export const BiologicalThemeSchema = z.object({
     narrative: z.string().describe("How these findings connect into a coherent biological story — 3-5 sentences connecting them, not restating them."),
 });
 
+export const KeyReferenceSchema = z.object({
+    pmid: z.string().describe("Numeric PubMed ID. Must already appear in at least one finding's references[]."),
+    citation: z.string().describe('Short citation for the paper, e.g. "Smith 2020".'),
+    description: z.string().describe("What the paper establishes and why it is key to this run."),
+});
+
 export const RunSynthesisSchema = z.object({
     runId: z.string().describe("The run being synthesized. Must equal the runId given in the prompt."),
     overview: z
@@ -143,13 +149,7 @@ export const RunSynthesisSchema = z.object({
             "Concrete methodological and translational caveats — not generic disclaimers. " + "Each names what it affects and why it matters. Target 3-6.",
         ),
     keyReferences: z
-        .array(
-            z.object({
-                pmid: z.string().describe("Numeric PubMed ID. Must already appear in at least one finding's references[]."),
-                citation: z.string().describe('Short citation for the paper, e.g. "Smith 2020".'),
-                description: z.string().describe("What the paper establishes and why it is key to this run."),
-            }),
-        )
+        .array(KeyReferenceSchema)
         .describe(
             "The 5-10 most important papers across all findings. Prioritize those that directly validate, contradict, or extend the findings — do not pad with background citations.",
         ),
@@ -159,3 +159,4 @@ export type RunSynthesis = z.infer<typeof RunSynthesisSchema>;
 export type SynthesizedFinding = z.infer<typeof SynthesizedFindingSchema>;
 export type BiologicalTheme = z.infer<typeof BiologicalThemeSchema>;
 export type LiteratureReference = z.infer<typeof LiteratureReferenceSchema>;
+export type KeyReference = z.infer<typeof KeyReferenceSchema>;
