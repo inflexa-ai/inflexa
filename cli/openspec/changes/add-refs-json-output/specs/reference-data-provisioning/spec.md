@@ -2,7 +2,7 @@
 
 ### Requirement: Reference inspection and verification have a machine-readable JSON mode
 
-`inflexa refs list --json` SHALL emit on stdout a single JSON document carrying the store-level facts (the public store path, whether it exists, and unmanaged top-level content) and, for every canonical catalog dataset in catalog order, its identity and provenance fields (id, catalog version, title, description, source URL, license, group, recommended), its local install state (the same closed state set the human listing shows), the installed version and install timestamp when a valid receipt exists (keys absent otherwise, never `null`), and its artifacts with their upstream URLs. The document SHALL be self-contained: artifact URLs are always present, and `--urls` SHALL have no effect on it. The shape SHALL be a CLI-owned projection constructed field-by-field — never a serialization of the harness catalog or receipt types — and SHALL be exported from the refs module as a typed value so in-process consumers use the same shape the flag prints.
+`inflexa refs list --json` SHALL emit on stdout a single JSON document carrying the store-level facts (the public store path, whether it exists, and unmanaged top-level content) and, for every canonical catalog dataset in catalog order, its identity and provenance fields (id, catalog version, title, description, source URL, license, group, recommended), its local install state (the same closed state set the human listing shows), the installed version and install timestamp when the dataset's files are actually present from a completed install — the `installed` and `update_available` states — (keys absent otherwise, never `null`), and its artifacts with their upstream URLs. A `partial` dataset's receipt SHALL NOT be surfaced as install facts, so key presence can never contradict `state` or misrepresent a damaged install as usable. The document SHALL be self-contained: artifact URLs are always present, and `--urls` SHALL have no effect on it. The shape SHALL be a CLI-owned projection constructed field-by-field — never a serialization of the harness catalog or receipt types — and SHALL be exported from the refs module as a typed value so in-process consumers use the same shape the flag prints.
 
 `inflexa refs verify --json` SHALL emit on stdout a single JSON document wrapping the per-dataset verification results: dataset id, the active receipt version when one is valid (key absent otherwise), the overall dataset state, and per-file states.
 
@@ -27,6 +27,11 @@ Both JSON modes SHALL be byte-stable — the same store state SHALL produce byte
 
 - **WHEN** an active managed file has been modified and `inflexa refs verify --json` runs
 - **THEN** stdout is exactly one JSON document naming the affected dataset and file states, the command exits non-zero, and no advisory repair hint is printed
+
+#### Scenario: A damaged install is not surfaced as install facts
+
+- **WHEN** `inflexa refs list --json` runs against a dataset whose receipt is valid but whose installed files are incomplete
+- **THEN** that dataset carries `"state": "partial"` and no installed-version or install-timestamp keys
 
 #### Scenario: --urls does not change the JSON document
 
