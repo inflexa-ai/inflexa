@@ -2,7 +2,7 @@ import { jsonSchema, tool as aiTool, type FinishReason, type ToolSet, type ToolC
 import type { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
-import { hintForZodIssue } from "../lib/zod-issues.js";
+import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 import { classifyProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../providers/prompt-cache.js";
 import { resultStep } from "./run-step.js";
@@ -234,12 +234,22 @@ async function dispatchTool(
     }
 
     const parsed = tool.inputSchema.safeParse(tu.input);
-    if (!parsed.success) {
-        return errorResult(tu, `input validation failed: ${formatZodIssues(parsed.error, tu.input)}`);
-    }
+    if (parsed.success) return execute(tu, tool, parsed.data, ctx, isFatalLoopError);
 
+    // A complete JSON argument can arrive as a string behind function-call
+    // markup or a code fence. Repair only makes the schema reachable — the
+    // repaired value is validated in full, and the tool's own semantic checks
+    // still run, so nothing here weakens validation.
+    const repairedInput = repairToolInput(tu.input, parsed.error);
+    const repaired = repairedInput === undefined ? undefined : tool.inputSchema.safeParse(repairedInput);
+    if (repaired?.success === true) return execute(tu, tool, repaired.data, ctx, isFatalLoopError);
+
+    return errorResult(tu, `input validation failed: ${formatZodIssues(parsed.error, tu.input)}`);
+}
+
+async function execute(tu: ToolCallPart, tool: Tool, input: unknown, ctx: ToolContext, isFatalLoopError: (err: unknown) => boolean): Promise<ToolResultPart> {
     try {
-        const output = await tool.execute(parsed.data, ctx);
+        const output = await tool.execute(input, ctx);
         if (output.isErr()) return errorResult(tu, toolErrorContent(output.error));
         return successResult(tu, output.value);
     } catch (err) {

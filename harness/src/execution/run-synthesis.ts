@@ -86,15 +86,17 @@ interface OutcomeHolder {
 /**
  * Mutable cell the submit tool writes on every rejection from its semantic
  * re-validation — the stepId/theme-ref/PMID checks the arg schema cannot express.
- * A schema-malformed payload is rejected at the agent-loop boundary before the
- * tool runs, so it never reaches here. A rejection is not terminal: submission is
- * last-valid-wins, so a rejected call leaves any recorded outcome intact and the
- * model may fix the cited paths and submit again. This therefore measures how hard
- * the model had to work against the semantic checks, not whether it eventually
- * succeeded. Read after the loop to diagnose a blocker's cause: zero here points to
- * LLM misjudgment — it gave up without the checks ever pushing back — and repeated
- * rejections to a defensive give-up against those checks. The deduped `issuePaths`
- * name which fields the model could not satisfy.
+ * The arg schema itself is enforced at the agent-loop boundary — which repairs a
+ * markup-wrapped argument and re-validates it in full before dispatch — so what
+ * arrives here always parses, and only the semantic checks can reject it. A
+ * rejection is not terminal: submission is last-valid-wins, so a rejected call
+ * leaves any recorded outcome intact and the model may fix the cited paths and
+ * submit again. This therefore measures how hard the model had to work against the
+ * semantic checks, not whether it eventually succeeded. Read after the loop to
+ * diagnose a blocker's cause: zero here points to LLM misjudgment — it gave up
+ * without the checks ever pushing back — and repeated rejections to a defensive
+ * give-up against those checks. The deduped `issuePaths` name which fields the
+ * model could not satisfy.
  */
 interface RejectionTelemetry {
     rejections: number;
