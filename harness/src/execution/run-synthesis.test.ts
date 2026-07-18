@@ -452,6 +452,31 @@ describe("generateRunSynthesis — validation-rejection telemetry", () => {
             expect(result.validationRejections).toBe(0);
         }
     });
+
+    it("counts a repair cycle on a produced synthesis (rejection then success)", async () => {
+        const bad = validSynthesisPayload() as { findings: { stepId: string }[] };
+        bad.findings[0]!.stepId = "T9S9";
+        const provider = scriptedProvider((i) => {
+            if (i === 0) return makeMessage([toolUseBlock("tu-bad", "submit_synthesis", { synthesis: bad })], "tool_use");
+            if (i === 1) return makeMessage([toolUseBlock("tu-ok", "submit_synthesis", { synthesis: validSynthesisPayload() })], "tool_use");
+            return makeMessage([textBlock("done")], "end_turn");
+        });
+
+        const result = await generateRunSynthesis({
+            provider,
+            session: makeRunSession(),
+            model: "claude-test",
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            summaries,
+            planNarrative: "n/a",
+            runId: RUN_ID,
+        });
+
+        expect(result.kind).toBe("synthesis");
+        if (result.kind === "synthesis") {
+            expect(result.validationRejections).toBe(1);
+        }
+    });
 });
 
 describe("blocker discipline copy", () => {
