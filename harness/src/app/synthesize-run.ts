@@ -59,7 +59,6 @@ export interface SynthesizeRunDeps {
 /** Optional fields for a progress update, mirroring the wire part. */
 export interface SynthesisProgressExtra {
     readonly delegationCount?: number;
-    readonly validationAttempts?: number;
     readonly reason?: string;
     readonly error?: string;
 }
@@ -125,12 +124,9 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
             logger.warn("synthesis skipped — synthesizer reported a blocker", {
                 runId,
                 reason: result.reason,
-                validationRejections: result.validationRejections,
-                rejectedIssuePaths: result.rejectedIssuePaths,
             });
             await onProgress("skipped", "Synthesis skipped — run did not produce synthesizable content", {
                 reason: result.reason,
-                validationAttempts: result.validationRejections,
             });
             return { findings: [], synthesisStatus: "skipped_blocker", synthesisReason: result.reason };
         }
