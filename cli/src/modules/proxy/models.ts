@@ -148,6 +148,16 @@ export function __resetModelCacheForTest(): void {
  * order applies to the whole list. Recency (never lexicographic id order) is the primary sort: ascending
  * byte order would rank dated legacy ids (`claude-3-5-…`) first and deterministically elect a stale
  * model. The election walk and setup's model list both consume the ranked ids.
+ *
+ * Load-bearing on WHY the blind first-family scan is correct: the cliproxy `/models` this consumes is
+ * already scoped by the proxy to the AUTHENTICATED account's provider — verified live, an Anthropic proxy
+ * lists only claude ids, never the gpt/gemini/qwen/… families its GitHub registry also carries. So the
+ * FIRST matching family IS the account's family; `MODEL_PREFERENCE` is not a cross-provider filter (it
+ * only breaks the rare tie of several credentials loaded into one proxy at once — and a wrong-family
+ * election there is caught loudly by boot's provider-family guard, {@link modelMatchesProvider} in
+ * `harness/runtime.ts`, as `model_provider_mismatch`, never served as a silent 404). This is why setup's
+ * `modelMatchesProvider` post-filter is a belt-and-braces no-op in practice, not the thing that selects
+ * the family.
  */
 export function rankModelCandidates(models: ModelCandidate[]): string[] {
     const family = MODEL_PREFERENCE.find((fam) => models.some((m) => m.id.toLowerCase().includes(fam)));
