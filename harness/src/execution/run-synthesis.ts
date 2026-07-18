@@ -78,10 +78,14 @@ interface OutcomeHolder {
 }
 
 /**
- * Mutable cell the submit tool writes on every validation rejection. Read after
- * the loop to diagnose a blocker's cause: zero rejections points to LLM
- * misjudgment, repeated rejections to a defensive give-up. The deduped
- * `issuePaths` name which fields the model could not satisfy.
+ * Mutable cell the submit tool writes on every rejection from its semantic
+ * re-validation — the stepId/theme-ref/PMID checks the arg schema cannot express.
+ * A schema-malformed payload is rejected at the agent-loop boundary before the
+ * tool runs, so it never reaches here; this counts the semantic-check give-up
+ * that this synthesizer is prone to. Read after the loop to diagnose a blocker's
+ * cause: zero here points to LLM misjudgment, repeated rejections to a defensive
+ * give-up against the semantic checks. The deduped `issuePaths` name which fields
+ * the model could not satisfy.
  */
 interface RejectionTelemetry {
     rejections: number;
@@ -211,8 +215,9 @@ function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext, telemetry
             }
             const result = fullyValidate(input.synthesis, ctx);
             if (!result.valid) {
-                // Count only genuine validation rejections (the terminal guard above
-                // is not one) so the recorded count reflects submission attempts.
+                // Count each rejection reaching the tool (the terminal guard above
+                // is not one; a schema-malformed payload is rejected upstream by the
+                // loop before execute and never gets here).
                 telemetry.rejections += 1;
                 for (const issue of result.issues) telemetry.issuePaths.add(issue.path);
                 return ok({ accepted: false as const, issues: result.issues });
