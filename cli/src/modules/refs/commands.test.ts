@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { REFERENCE_DATA_CATALOG_VERSION, UnknownReferenceDatasetError, type ReferenceDataCatalog } from "@inflexa-ai/harness";
 import { err, ok } from "neverthrow";
 
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { downloadReferences, formatReferenceBytes, parseReferenceIds, runReferenceSetup } from "./commands.ts";
+import { downloadReferences, formatReferenceBytes, parseReferenceIds, runReferenceSetup, runRefsList, runRefsVerify } from "./commands.ts";
 import { referenceStorePaths, type ReferenceCatalogSource } from "./store.ts";
 
 function sha(bytes: string): string {
@@ -71,6 +71,35 @@ function seedIntactInstall(): void {
             artifacts: [{ path: "file", bytes: 5, sha256: sha("alpha") }],
         }),
     );
+}
+
+/**
+ * Run `fn` with stdout (console.log) and stderr (console.error) captured as strings, modeling the
+ * trailing newline the real streams add per call so byte-stability can be asserted on the exact bytes.
+ * Restores both and clears process.exitCode so a captured failure code never leaks to sibling tests.
+ */
+async function capture(fn: () => Promise<void>): Promise<{ stdout: string; stderr: string; exitCode: typeof process.exitCode }> {
+    const origLog = console.log;
+    const origError = console.error;
+    const origExitCode = process.exitCode;
+    let stdout = "";
+    let stderr = "";
+    console.log = (msg?: unknown) => {
+        stdout += `${String(msg)}\n`;
+    };
+    console.error = (msg?: unknown) => {
+        stderr += `${String(msg)}\n`;
+    };
+    try {
+        await fn();
+        return { stdout, stderr, exitCode: process.exitCode };
+    } finally {
+        console.log = origLog;
+        console.error = origError;
+        // Bun ignores an `undefined` assignment (Node treats it as a reset), so a captured failure code
+        // must be cleared with an explicit 0 — otherwise it fails the whole single-process `bun test` run.
+        process.exitCode = origExitCode ?? 0;
+    }
 }
 
 afterEach(() => {
@@ -144,5 +173,161 @@ describe("reference command policy", () => {
         const result = await runReferenceSetup({ interactive: false, ids: ["unknown"], yes: true });
         expect(result._unsafeUnwrapErr().type).toBe("unknown_dataset");
         expect(await Bun.file(`${env.refsDir}/managed`).exists()).toBe(false);
+    });
+});
+
+describe("reference json output", () => {
+    test("list --json emits every catalog dataset in catalog order with per-dataset install state", async () => {
+        seedIntactInstall();
+        // `extra` before `demo` proves the document follows catalog order, not install state; only `demo`
+        // is seeded on disk, so `extra` must report as missing with no installed-version keys.
+        const twoDatasetCatalog: ReferenceDataCatalog = {
+            version: REFERENCE_DATA_CATALOG_VERSION,
+            datasets: [
+                {
+                    id: "extra",
+                    version: "9",
+                    title: "Extra",
+                    description: "Second",
+                    sourceUrl: "https://example.test/extra",
+                    license: { identifier: "MIT", url: "https://example.test/mit" },
+                    recommendation: { group: "extras", recommended: false },
+                    artifacts: [{ path: "x.txt", url: "https://upstream.test/x.txt" }],
+                },
+                {
+                    id: "demo",
+                    version: "1",
+                    title: "Demo",
+                    description: "Fixture",
+                    sourceUrl: "https://example.test/source",
+                    license: { identifier: "CC0-1.0" },
+                    recommendation: { group: "testing", recommended: true },
+                    artifacts: [FILE_ARTIFACT],
+                },
+            ],
+        };
+        const twoDatasetSource: ReferenceCatalogSource = {
+            catalog: twoDatasetCatalog,
+            // The list path reads only `catalog`; a stub resolver satisfies the seam shape without being called.
+            resolveInstallPlan: () => ok({ catalogVersion: twoDatasetCatalog.version, datasets: [] }),
+        };
+
+        const { stdout, stderr, exitCode } = await capture(() => runRefsList({ json: true, source: twoDatasetSource }));
+        expect(stderr).toBe("");
+        expect(exitCode ?? 0).toBe(0);
+        const document = JSON.parse(stdout);
+        expect(document.datasets.map((entry: { id: string }) => entry.id)).toEqual(["extra", "demo"]);
+        const [extra, demo] = document.datasets;
+        expect(extra.state).toBe("missing");
+        expect(extra).not.toHaveProperty("installedVersion");
+        expect(extra).not.toHaveProperty("installedAt");
+        expect(extra.artifacts).toEqual([{ path: "x.txt", url: "https://upstream.test/x.txt" }]);
+        expect(demo.state).toBe("installed");
+        expect(demo.installedVersion).toBe("1");
+        expect(demo.installedAt).toBe("2026-07-14T12:00:00.000Z");
+        expect(demo.artifacts).toEqual([{ path: "file", url: "https://upstream.test/file" }]);
+    });
+
+    test("list --json is a byte-stable document whose full text pins the shape and key order", async () => {
+        seedIntactInstall();
+        // The full expected bytes — every key in the documented order, license.url and install facts
+        // present/absent exactly as the store state dictates. Only the machine-specific root varies.
+        const expected =
+            `{\n` +
+            `  "root": ${JSON.stringify(env.refsDir)},\n` +
+            `  "exists": true,\n` +
+            `  "datasets": [\n` +
+            `    {\n` +
+            `      "id": "demo",\n` +
+            `      "version": "1",\n` +
+            `      "title": "Demo",\n` +
+            `      "description": "Fixture",\n` +
+            `      "sourceUrl": "https://example.test/source",\n` +
+            `      "license": {\n` +
+            `        "identifier": "CC0-1.0"\n` +
+            `      },\n` +
+            `      "group": "testing",\n` +
+            `      "recommended": true,\n` +
+            `      "state": "installed",\n` +
+            `      "installedVersion": "1",\n` +
+            `      "installedAt": "2026-07-14T12:00:00.000Z",\n` +
+            `      "artifacts": [\n` +
+            `        {\n` +
+            `          "path": "file",\n` +
+            `          "url": "https://upstream.test/file"\n` +
+            `        }\n` +
+            `      ]\n` +
+            `    }\n` +
+            `  ],\n` +
+            `  "userContent": []\n` +
+            `}`;
+        const { stdout, stderr, exitCode } = await capture(() => runRefsList({ json: true, source: singleFileSource }));
+        expect(stdout).toBe(`${expected}\n`);
+        expect(stderr).toBe("");
+        expect(exitCode ?? 0).toBe(0);
+    });
+
+    test("list --json --urls is byte-identical to --json alone", async () => {
+        seedIntactInstall();
+        const plain = await capture(() => runRefsList({ json: true, source: singleFileSource }));
+        const withUrls = await capture(() => runRefsList({ json: true, urls: true, source: singleFileSource }));
+        expect(withUrls.stdout).toBe(plain.stdout);
+        expect(plain.stdout.length).toBeGreaterThan(0);
+    });
+
+    test("list --json before the store exists is byte-stable and creates nothing", async () => {
+        assertTestSandbox(env.refsDir);
+        const first = await capture(() => runRefsList({ json: true, source: singleFileSource }));
+        const second = await capture(() => runRefsList({ json: true, source: singleFileSource }));
+        expect(first.stdout).toBe(second.stdout);
+        expect(first.stderr).toBe("");
+        expect(JSON.parse(first.stdout).exists).toBe(false);
+        // Passive inspection must never materialize the store.
+        expect(await Bun.file(env.refsDir).exists()).toBe(false);
+    });
+
+    test("list --json inspection failure keeps stdout empty and reports prose on stderr", async () => {
+        assertTestSandbox(env.refsDir);
+        // A store root that is a plain file, not a directory, is a genuine inspection failure.
+        mkdirSync(dirname(env.refsDir), { recursive: true });
+        writeFileSync(env.refsDir, "not a directory");
+        const { stdout, stderr, exitCode } = await capture(() => runRefsList({ json: true, source: singleFileSource }));
+        expect(stdout).toBe("");
+        expect(stderr).toContain("Reference-data inspection failed");
+        expect(exitCode).toBe(1);
+    });
+
+    test("verify --json inspection failure keeps stdout empty and reports prose on stderr", async () => {
+        assertTestSandbox(env.refsDir);
+        mkdirSync(dirname(env.refsDir), { recursive: true });
+        writeFileSync(env.refsDir, "not a directory");
+        const { stdout, stderr, exitCode } = await capture(() => runRefsVerify([], { json: true, source: singleFileSource }));
+        expect(stdout).toBe("");
+        expect(stderr).toContain("Reference-data verification failed");
+        expect(exitCode).toBe(1);
+    });
+
+    test("verify --json reports damage in the document and the exit code, with no repair hint", async () => {
+        seedIntactInstall();
+        // Same-size, different-bytes overwrite: the size still matches the receipt, the digest does not,
+        // so verification finds the file modified rather than missing.
+        writeFileSync(join(referenceStorePaths(env.refsDir).managed, "demo", "1", "file"), "ALPHA");
+        const { stdout, stderr, exitCode } = await capture(() => runRefsVerify([], { json: true, source: singleFileSource }));
+        expect(exitCode).toBe(1);
+        // The damaged states live in the document, so stderr stays reserved for genuine failures.
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+            datasets: [{ datasetId: "demo", version: "1", state: "modified", files: [{ path: "file", state: "modified" }] }],
+        });
+    });
+
+    test("verify --json on an intact store reports valid states and exits zero", async () => {
+        seedIntactInstall();
+        const { stdout, stderr, exitCode } = await capture(() => runRefsVerify([], { json: true, source: singleFileSource }));
+        expect(exitCode ?? 0).toBe(0);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+            datasets: [{ datasetId: "demo", version: "1", state: "valid", files: [{ path: "file", state: "valid" }] }],
+        });
     });
 });

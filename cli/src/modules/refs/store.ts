@@ -86,6 +86,152 @@ export type ReferenceVerification = {
     readonly state: "valid" | "missing" | "invalid_receipt" | "modified";
 };
 
+/** One artifact's install-relative path and upstream https URL, as carried by the list document. */
+export type ReferenceListArtifact = {
+    /** Dataset-relative destination below the install path. */
+    readonly path: string;
+    /** Third-party https URL the artifact is fetched from. */
+    readonly url: string;
+};
+
+/** License identity in the list document; `url` is present only when the catalog entry declares one. */
+export type ReferenceListLicense = {
+    /** License identifier (e.g. an SPDX id) declared by the catalog entry. */
+    readonly identifier: string;
+    /** License text URL; key absent when the catalog entry declares none. */
+    readonly url?: string;
+};
+
+/**
+ * One catalog dataset projected for the list document: its catalog identity and provenance (with the
+ * harness `recommendation` nesting flattened to `group`/`recommended`), the cheap local state, and —
+ * only when a valid receipt exists — the installed version and install timestamp. Optional install
+ * facts are omitted keys, never `null`.
+ */
+export type ReferenceListDataset = {
+    /** Stable catalog id. */
+    readonly id: string;
+    /** Catalog (target) version. */
+    readonly version: string;
+    /** Human-facing title. */
+    readonly title: string;
+    /** Human-facing description. */
+    readonly description: string;
+    /** Upstream provenance page. */
+    readonly sourceUrl: string;
+    /** License identity. */
+    readonly license: ReferenceListLicense;
+    /** Recommendation group, flattened out of the catalog's `recommendation` nesting. */
+    readonly group: string;
+    /** Whether the catalog recommends this dataset, flattened out of `recommendation`. */
+    readonly recommended: boolean;
+    /** Cheap local install state — the same closed set the human listing shows. */
+    readonly state: ReferenceDatasetState;
+    /** Active receipt's dataset version; key absent when no valid receipt exists. */
+    readonly installedVersion?: string;
+    /** Active receipt's activation timestamp (ISO 8601); key absent when no valid receipt exists. */
+    readonly installedAt?: string;
+    /** Every artifact and its upstream URL — always present, independent of `--urls`. */
+    readonly artifacts: readonly ReferenceListArtifact[];
+};
+
+/**
+ * The `refs list --json` wire shape, and the in-process surface a host-side planner imports directly.
+ * A CLI-owned projection built field-by-field from a `ReferenceStoreInspection` — deliberately NOT a
+ * serialization of the harness catalog/receipt types, so a harness release cannot silently mutate the
+ * shape the CLI documents as stable. Key order is pinned by explicit literal construction; dataset
+ * order is catalog order.
+ */
+export type ReferenceListDocument = {
+    /** Store path the command inspected. */
+    readonly root: string;
+    /** Whether that store root exists on disk. */
+    readonly exists: boolean;
+    /** Every canonical catalog dataset, in catalog order. */
+    readonly datasets: readonly ReferenceListDataset[];
+    /** Unmanaged top-level entries the installer never adopts. */
+    readonly userContent: readonly string[];
+};
+
+/**
+ * Project a passive store inspection into the list document. Pure — copies every field by name,
+ * flattens `recommendation` to `group`/`recommended`, and emits `installedVersion`/`installedAt` only
+ * when a valid receipt is present (omitted keys, never `null`). Mints nothing at render time: the
+ * install timestamp is read from the receipt, so the same store state serializes byte-identically.
+ */
+export function buildReferenceListDocument(inspection: ReferenceStoreInspection, root: string): ReferenceListDocument {
+    return {
+        root,
+        exists: inspection.exists,
+        datasets: inspection.datasets.map((item): ReferenceListDataset => {
+            const dataset = item.dataset;
+            return {
+                id: dataset.id,
+                version: dataset.version,
+                title: dataset.title,
+                description: dataset.description,
+                sourceUrl: dataset.sourceUrl,
+                license: {
+                    identifier: dataset.license.identifier,
+                    ...(dataset.license.url === undefined ? {} : { url: dataset.license.url }),
+                },
+                group: dataset.recommendation.group,
+                recommended: dataset.recommendation.recommended,
+                state: item.state,
+                ...(item.receipt === undefined ? {} : { installedVersion: item.receipt.datasetVersion, installedAt: item.receipt.activatedAt }),
+                artifacts: dataset.artifacts.map((artifact) => ({ path: artifact.path, url: artifact.url })),
+            };
+        }),
+        userContent: inspection.userContent,
+    };
+}
+
+/** One file's verification result as carried by the verify document. */
+export type ReferenceVerifyFile = {
+    /** Dataset-relative path. */
+    readonly path: string;
+    /** File verification outcome. */
+    readonly state: ReferenceFileVerification["state"];
+};
+
+/** One dataset's verification result in the verify document; `version` is absent when no valid receipt names one. */
+export type ReferenceVerifyDataset = {
+    /** Stable catalog id. */
+    readonly datasetId: string;
+    /** Active receipt version; key absent when the receipt is missing or invalid. */
+    readonly version?: string;
+    /** Overall dataset verification state. */
+    readonly state: ReferenceVerification["state"];
+    /** Per-file verification results. */
+    readonly files: readonly ReferenceVerifyFile[];
+};
+
+/**
+ * The `refs verify --json` wire shape: an object wrapping the per-dataset results — symmetric with the
+ * list document and extensible with new keys without a breaking reshape, unlike a bare array. A
+ * CLI-owned projection built field-by-field; key order pinned by explicit literal construction.
+ */
+export type ReferenceVerifyDocument = {
+    /** Per-dataset verification results, in the order verification produced them. */
+    readonly datasets: readonly ReferenceVerifyDataset[];
+};
+
+/**
+ * Project verification results into the verify document. Pure — copies every field by name and emits
+ * `version` only when the result carries one (omitted key, never `null`), so the same store state
+ * serializes byte-identically.
+ */
+export function buildReferenceVerifyDocument(verifications: readonly ReferenceVerification[]): ReferenceVerifyDocument {
+    return {
+        datasets: verifications.map((verification): ReferenceVerifyDataset => ({
+            datasetId: verification.datasetId,
+            ...(verification.version === undefined ? {} : { version: verification.version }),
+            state: verification.state,
+            files: verification.files.map((file) => ({ path: file.path, state: file.state })),
+        })),
+    };
+}
+
 type UnknownDatasetError = {
     /** Stable discriminator. */
     readonly type: "unknown_dataset";

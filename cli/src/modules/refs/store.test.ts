@@ -9,12 +9,16 @@ import { REFERENCE_DATA_CATALOG_VERSION, UnknownReferenceDatasetError, type Refe
 import { err, ok } from "neverthrow";
 
 import {
+    buildReferenceListDocument,
+    buildReferenceVerifyDocument,
     inspectReferenceStore,
     installReferenceDatasets,
     referenceDownloadEstimate,
     referenceStorePaths,
     verifyReferenceDatasets,
     type ReferenceCatalogSource,
+    type ReferenceStoreInspection,
+    type ReferenceVerification,
 } from "./store.ts";
 
 const roots: string[] = [];
@@ -509,5 +513,120 @@ describe("installer-owned path safety", () => {
         const inspected = await inspectReferenceStore(path, fixture);
         expect(inspected._unsafeUnwrap().datasets[0]).toMatchObject({ state: "invalid_receipt" });
         expect(readFileSync(secret, "utf8")).toBe("user content the installer must never adopt");
+    });
+});
+
+describe("projection documents", () => {
+    // Two datasets in catalog order: the first installed (a valid receipt present), the second missing
+    // (no receipt) — so the same fixture exercises both the present-facts and absent-keys branches.
+    const inspection: ReferenceStoreInspection = {
+        exists: true,
+        datasets: [
+            {
+                dataset: {
+                    id: "alpha",
+                    version: "2026.07",
+                    title: "Alpha reference",
+                    description: "First fixture",
+                    sourceUrl: "https://example.test/alpha",
+                    license: { identifier: "CC0-1.0", url: "https://example.test/license" },
+                    recommendation: { group: "testing", recommended: true },
+                    artifacts: [{ path: "a.txt", url: "https://upstream.test/a.txt" }],
+                },
+                state: "installed",
+                receipt: {
+                    version: 1,
+                    datasetId: "alpha",
+                    datasetVersion: "2026.07",
+                    activatedAt: "2026-07-14T12:00:00.000Z",
+                    artifacts: [{ path: "a.txt", bytes: 5, sha256: sha("alpha") }],
+                },
+            },
+            {
+                dataset: {
+                    id: "beta",
+                    version: "2026.01",
+                    title: "Beta reference",
+                    description: "Second fixture",
+                    sourceUrl: "https://example.test/beta",
+                    license: { identifier: "MIT" },
+                    recommendation: { group: "extras", recommended: false },
+                    artifacts: [{ path: "b.txt", url: "https://upstream.test/b.txt" }],
+                },
+                state: "missing",
+            },
+        ],
+        userContent: ["user/mine.fa"],
+    };
+
+    test("list builder copies fields by name, flattens recommendation, and preserves catalog order", () => {
+        expect(buildReferenceListDocument(inspection, "/store/root")).toStrictEqual({
+            root: "/store/root",
+            exists: true,
+            datasets: [
+                {
+                    id: "alpha",
+                    version: "2026.07",
+                    title: "Alpha reference",
+                    description: "First fixture",
+                    sourceUrl: "https://example.test/alpha",
+                    license: { identifier: "CC0-1.0", url: "https://example.test/license" },
+                    group: "testing",
+                    recommended: true,
+                    state: "installed",
+                    installedVersion: "2026.07",
+                    installedAt: "2026-07-14T12:00:00.000Z",
+                    artifacts: [{ path: "a.txt", url: "https://upstream.test/a.txt" }],
+                },
+                {
+                    id: "beta",
+                    version: "2026.01",
+                    title: "Beta reference",
+                    description: "Second fixture",
+                    sourceUrl: "https://example.test/beta",
+                    license: { identifier: "MIT" },
+                    group: "extras",
+                    recommended: false,
+                    state: "missing",
+                    artifacts: [{ path: "b.txt", url: "https://upstream.test/b.txt" }],
+                },
+            ],
+            userContent: ["user/mine.fa"],
+        });
+    });
+
+    test("list builder omits install facts and the license url as absent keys, never null", () => {
+        const document = buildReferenceListDocument(inspection, "/store/root");
+        const missing = document.datasets[1];
+        expect(missing).not.toHaveProperty("installedVersion");
+        expect(missing).not.toHaveProperty("installedAt");
+        expect(missing?.license).not.toHaveProperty("url");
+    });
+
+    test("list document key order is pinned and serialization is byte-stable across builds", () => {
+        const first = JSON.stringify(buildReferenceListDocument(inspection, "/store/root"), null, 2);
+        const second = JSON.stringify(buildReferenceListDocument(inspection, "/store/root"), null, 2);
+        expect(first).toBe(second);
+        // The optional install facts sit between `state` and `artifacts`, in that order — the documented
+        // shape, pinned by explicit literal construction rather than object-spread happenstance.
+        expect(first.indexOf('"state"')).toBeLessThan(first.indexOf('"installedVersion"'));
+        expect(first.indexOf('"installedVersion"')).toBeLessThan(first.indexOf('"installedAt"'));
+        expect(first.indexOf('"installedAt"')).toBeLessThan(first.indexOf('"artifacts"'));
+    });
+
+    test("verify builder wraps results, copies file states, and omits an absent version", () => {
+        const verifications: readonly ReferenceVerification[] = [
+            { datasetId: "alpha", version: "2026.07", state: "valid", files: [{ path: "a.txt", state: "valid" }] },
+            { datasetId: "beta", state: "missing", files: [] },
+        ];
+        const document = buildReferenceVerifyDocument(verifications);
+        expect(document).toStrictEqual({
+            datasets: [
+                { datasetId: "alpha", version: "2026.07", state: "valid", files: [{ path: "a.txt", state: "valid" }] },
+                { datasetId: "beta", state: "missing", files: [] },
+            ],
+        });
+        expect(document.datasets[1]).not.toHaveProperty("version");
+        expect(JSON.stringify(document, null, 2)).toBe(JSON.stringify(buildReferenceVerifyDocument(verifications), null, 2));
     });
 });
