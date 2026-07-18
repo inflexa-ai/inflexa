@@ -379,9 +379,10 @@ const refs = cli.command("refs").description("Manage reference data mounted read
 refs.command("list")
     .description("List catalog options, links, sizes, and local state")
     .option("--urls", "Also print the exact upstream download URL of every file")
-    .action(async (options: { urls?: boolean }) => {
+    .option("--json", "Emit a machine-readable JSON document instead of prose (artifact URLs always included; --urls has no effect)")
+    .action(async (options: { urls?: boolean; json?: boolean }) => {
         const { runRefsList } = await import("../modules/refs/commands.ts");
-        await runRefsList({ urls: options.urls ?? false });
+        await runRefsList({ urls: options.urls ?? false, json: options.json ?? false });
     });
 
 refs.command("download")
@@ -397,9 +398,10 @@ refs.command("download")
 refs.command("verify")
     .description("Verify active managed datasets without changing them")
     .argument("[ids...]", "Catalog dataset ids (all installed datasets when omitted)")
-    .action(async (ids: string[]) => {
+    .option("--json", "Emit a machine-readable JSON document instead of prose")
+    .action(async (ids: string[], options: { json?: boolean }) => {
         const { runRefsVerify } = await import("../modules/refs/commands.ts");
-        await runRefsVerify(ids);
+        await runRefsVerify(ids, { json: options.json ?? false });
     });
 
 refs.command("path")

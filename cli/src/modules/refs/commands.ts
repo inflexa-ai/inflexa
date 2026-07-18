@@ -5,6 +5,8 @@ import { err, ok, type Result } from "neverthrow";
 import { confirm } from "../../lib/cli.ts";
 import { env } from "../../lib/env.ts";
 import {
+    buildReferenceListDocument,
+    buildReferenceVerifyDocument,
     ensureReferenceStore,
     inspectReferenceStore,
     installReferenceDatasets,
@@ -179,10 +181,26 @@ export function runRefsPath(): void {
     console.log(env.refsDir);
 }
 
-/** `inflexa refs list` — render canonical options and recoverable local state. Pass `urls` to also
- * print the exact upstream download URL of every artifact, so the source is inspectable before consent. */
-export async function runRefsList(options: { readonly urls?: boolean } = {}): Promise<void> {
-    const result = await inspectReferenceStore(env.refsDir);
+/**
+ * `inflexa refs list` — render canonical options and recoverable local state. Pass `urls` to also
+ * print the exact upstream download URL of every artifact, so the source is inspectable before consent.
+ * Pass `json` for the machine-readable document instead of prose; `urls` has no effect on it (artifact
+ * URLs are always in the JSON). `source` is a catalog seam for offline tests, mirroring the download path.
+ */
+export async function runRefsList(options: { readonly urls?: boolean; readonly json?: boolean; readonly source?: ReferenceCatalogSource } = {}): Promise<void> {
+    const result = await inspectReferenceStore(env.refsDir, options.source?.catalog);
+    if (options.json) {
+        // Stdout purity: exactly one document on success (console.log supplies the trailing newline),
+        // nothing on failure — the same prose the human mode prints goes to stderr with a non-zero exit.
+        result.match(
+            (inspection) => console.log(JSON.stringify(buildReferenceListDocument(inspection, env.refsDir), null, 2)),
+            (error) => {
+                console.error(`Reference-data inspection failed: ${renderError(error)}`);
+                process.exitCode = 1;
+            },
+        );
+        return;
+    }
     result.match(
         (inspection) => {
             if (inspection.datasets.length === 0) console.log("No catalog reference datasets are published by this harness version yet.");
@@ -242,11 +260,18 @@ export async function runRefsDownload(ids: readonly string[], options: { readonl
     );
 }
 
-/** `inflexa refs verify` command action. */
-export async function runRefsVerify(ids: readonly string[]): Promise<void> {
+/**
+ * `inflexa refs verify` command action. Pass `json` for the machine-readable document instead of prose.
+ * `source` is a catalog/plan seam for offline tests that must reach both the no-ids selection inspection
+ * and the verification itself, mirroring the download path.
+ */
+export async function runRefsVerify(
+    ids: readonly string[],
+    options: { readonly json?: boolean; readonly source?: ReferenceCatalogSource } = {},
+): Promise<void> {
     let selected = ids;
     if (selected.length === 0) {
-        const inspection = await inspectReferenceStore(env.refsDir);
+        const inspection = await inspectReferenceStore(env.refsDir, options.source?.catalog);
         if (inspection.isErr()) {
             console.error(`Reference-data verification failed: ${renderError(inspection.error)}`);
             process.exitCode = 1;
@@ -254,7 +279,22 @@ export async function runRefsVerify(ids: readonly string[]): Promise<void> {
         }
         selected = inspection.value.datasets.filter((item) => item.receipt !== undefined || item.state === "invalid_receipt").map((item) => item.dataset.id);
     }
-    const result = await verifyReferenceDatasets(env.refsDir, selected);
+    const result = await verifyReferenceDatasets(env.refsDir, selected, options.source);
+    if (options.json) {
+        // The document already carries the damaged states, so a non-zero exit is enough to flag damage —
+        // the human mode's "Re-download to repair" hint is suppressed to keep stderr for genuine failures.
+        result.match(
+            (verified) => {
+                console.log(JSON.stringify(buildReferenceVerifyDocument(verified), null, 2));
+                if (verified.some((dataset) => dataset.state !== "valid")) process.exitCode = 1;
+            },
+            (error) => {
+                console.error(`Reference-data verification failed: ${renderError(error)}`);
+                process.exitCode = 1;
+            },
+        );
+        return;
+    }
     result.match(
         (verified) => {
             if (verified.length === 0) console.log("No installed catalog reference datasets to verify.");
