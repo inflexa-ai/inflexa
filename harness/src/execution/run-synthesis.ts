@@ -77,6 +77,17 @@ interface OutcomeHolder {
     outcome: SynthesizerOutcome | null;
 }
 
+/**
+ * Mutable cell the submit tool writes on every validation rejection. Read after
+ * the loop to diagnose a blocker's cause: zero rejections points to LLM
+ * misjudgment, repeated rejections to a defensive give-up. The deduped
+ * `issuePaths` name which fields the model could not satisfy.
+ */
+interface RejectionTelemetry {
+    rejections: number;
+    readonly issuePaths: Set<string>;
+}
+
 // ── Validation ──────────────────────────────────────────────────────
 
 function zodIssuesToValidationIssues(error: z.ZodError, rootPath = "synthesis"): ValidationIssue[] {
@@ -173,7 +184,7 @@ function fullyValidate(candidate: unknown, ctx: InnerToolContext): { valid: true
 
 // ── Inner tools ─────────────────────────────────────────────────────
 
-function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext): Tool {
+function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext, telemetry: RejectionTelemetry): Tool {
     return defineTool({
         id: "submit_synthesis",
         description:
@@ -200,6 +211,10 @@ function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext): Tool {
             }
             const result = fullyValidate(input.synthesis, ctx);
             if (!result.valid) {
+                // Count only genuine validation rejections (the terminal guard above
+                // is not one) so the recorded count reflects submission attempts.
+                telemetry.rejections += 1;
+                for (const issue of result.issues) telemetry.issuePaths.add(issue.path);
                 return ok({ accepted: false as const, issues: result.issues });
             }
             holder.outcome = { kind: "submitted", synthesis: result.synthesis };
@@ -214,11 +229,12 @@ function buildBlockerTool(holder: OutcomeHolder): Tool {
             if (holder.outcome === null) holder.outcome = outcome;
         },
         blockedWhen:
-            "Ends run synthesis with no synthesis written. Use it when the run " +
-            "produced no synthesizable content (all step summaries empty, " +
-            "contradictory to the point of incoherence, or no findings worth " +
-            "surfacing) — not as an escape from a synthesis you could fix and " +
-            "submit.",
+            "Ends run synthesis with no synthesis written. Use it ONLY when the " +
+            "run produced no synthesizable content — every step summary is empty, " +
+            "or the summaries are contradictory to the point of incoherence. A run " +
+            "with non-empty summaries but no individually notable findings is NOT a " +
+            "blocker: submit a synthesis with an empty findings[] instead. Never " +
+            "use it as an escape from a synthesis you could fix and submit.",
     });
 }
 
@@ -230,16 +246,19 @@ export function __buildInnerToolsForTest(args: { knownStepIds: ReadonlySet<strin
     submit: Tool;
     blocker: Tool;
     holder: OutcomeHolder;
+    telemetry: RejectionTelemetry;
 } {
     const holder: OutcomeHolder = { outcome: null };
+    const telemetry: RejectionTelemetry = { rejections: 0, issuePaths: new Set() };
     const ctx: InnerToolContext = {
         knownStepIds: args.knownStepIds,
         runId: args.runId,
     };
     return {
-        submit: buildSubmitTool(holder, ctx),
+        submit: buildSubmitTool(holder, ctx, telemetry),
         blocker: buildBlockerTool(holder),
         holder,
+        telemetry,
     };
 }
 
@@ -263,7 +282,9 @@ export interface GenerateRunSynthesisInput {
     readonly emit?: EmitFn;
 }
 
-export type GenerateRunSynthesisResult = { kind: "synthesis"; synthesis: RunSynthesis } | { kind: "skipped"; reason: string };
+export type GenerateRunSynthesisResult =
+    | { kind: "synthesis"; synthesis: RunSynthesis; validationRejections: number }
+    | { kind: "skipped"; reason: string; validationRejections: number; rejectedIssuePaths: readonly string[] };
 
 /**
  * Drive the synthesizer agent loop to a terminal outcome — either a
@@ -277,6 +298,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
 
     const knownStepIds = new Set(input.summaries.map((s) => s.stepId));
     const holder: OutcomeHolder = { outcome: null };
+    const telemetry: RejectionTelemetry = { rejections: 0, issuePaths: new Set() };
     const innerCtx: InnerToolContext = { knownStepIds, runId: input.runId };
     const reviewer = createLiteratureReviewerTool({
         provider: input.provider,
@@ -284,7 +306,7 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         bioKeys: input.bioKeys,
     });
 
-    const submitTool = buildSubmitTool(holder, innerCtx);
+    const submitTool = buildSubmitTool(holder, innerCtx, telemetry);
     const blockerTool = buildBlockerTool(holder);
     const tools: readonly Tool[] = [submitTool, blockerTool, reviewer];
 
@@ -319,10 +341,15 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
 
     const outcome = holder.outcome;
     if (outcome?.kind === "submitted") {
-        return { kind: "synthesis", synthesis: outcome.synthesis };
+        return { kind: "synthesis", synthesis: outcome.synthesis, validationRejections: telemetry.rejections };
     }
     if (outcome?.kind === "blocker") {
-        return { kind: "skipped", reason: outcome.reason };
+        return {
+            kind: "skipped",
+            reason: outcome.reason,
+            validationRejections: telemetry.rejections,
+            rejectedIssuePaths: [...telemetry.issuePaths].sort(),
+        };
     }
     if (signal.aborted) {
         throw new Error("Run synthesis was cancelled.");

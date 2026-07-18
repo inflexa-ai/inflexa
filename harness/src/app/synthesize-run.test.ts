@@ -279,6 +279,41 @@ describe("synthesizeRun", () => {
         }
     });
 
+    it("surfaces the validation-rejection count on a blocker skip (progress + warn)", async () => {
+        const bad = validSynthesisPayload() as { findings: { stepId: string }[] };
+        bad.findings[0]!.stepId = "UNKNOWN";
+        const provider = scriptedProvider((i) => {
+            if (i === 0) return makeMessage([toolUseBlock("tu-0", "submit_synthesis", { synthesis: bad })], "tool_use");
+            if (i === 1) return makeMessage([toolUseBlock("tu-b", "report_blocker", { reason: "cannot reconcile references" })], "tool_use");
+            return makeMessage([textBlock("done")], "end_turn");
+        });
+        const h = await makeHarness(provider, { withSummary: true });
+        const records: { phase: string; extra: Record<string, unknown> }[] = [];
+        try {
+            const result = await synthesizeRun(h.deps, {
+                analysisId: ANALYSIS_ID,
+                runId: RUN_ID,
+                completedSteps: [STEP_ID],
+                session: makeRunSession(),
+                emit: () => {},
+                onProgress: (phase, _activity, extra = {}) => {
+                    records.push({ phase, extra });
+                },
+            });
+
+            expect(result.synthesisStatus).toBe("skipped_blocker");
+            // The skip progress carries the attempt count on the existing wire field.
+            const skip = records.find((r) => r.phase === "skipped");
+            expect(skip?.extra.validationAttempts).toBe(1);
+            // The loud-skip warn carries the count + issue paths as structured fields.
+            const warn = h.logs.find((r) => r.level === "warn");
+            expect(warn?.fields).toMatchObject({ runId: RUN_ID, validationRejections: 1 });
+            expect((warn?.fields.rejectedIssuePaths as string[]).length).toBeGreaterThan(0);
+        } finally {
+            await h.cleanup();
+        }
+    });
+
     it("reports failed and re-throws when synthesis cannot reach a terminal tool (D10)", async () => {
         // Plain prose only — the synthesizer never calls a terminal tool, so
         // generateRunSynthesis throws after the corrective re-prompt.

@@ -68,9 +68,11 @@ specific fields per issue path and call again, OR switch to
 \`report_blocker\` if the synthesis cannot be made valid).
 
 ### report_blocker (terminal — cannot produce a synthesis)
-Call when the run produced no synthesizable content (all summaries
-empty, contradictory to the point of incoherence, or no findings worth
-surfacing). Pass a short reason. STOP after calling.
+Call ONLY when the run produced no synthesizable content — every summary is
+empty, or the summaries are contradictory to the point of incoherence.
+"No findings worth surfacing" is NOT a blocker: with non-empty summaries you
+can always submit a synthesis (overview + conclusions) with an empty
+\`findings[]\`. Pass a short reason. STOP after calling.
 
 ## Canonical Flow
 
@@ -89,6 +91,12 @@ surfacing). Pass a short reason. STOP after calling.
 The \`submit_synthesis\` arg schema defines every field, its enum values,
 and its size expectations — read it, and follow it. This section is the
 craft the schema cannot carry.
+
+**An empty \`findings[]\` is a valid submission.** \`findings\` is SELECTIVE,
+not required — a run whose summaries yield nothing individually notable is
+still synthesized: write the \`overview\` and \`conclusions\` from the
+summaries and submit with \`findings: []\`. "Nothing worth a finding" is a
+reason to submit a lean synthesis, never a reason to \`report_blocker\`.
 
 **\`conclusions\` is the "Discussion" of the synthesis** — the part the
 reader will actually want to read. Be opinionated and interpretive, not
@@ -181,6 +189,9 @@ Example:
   predictive requires evidence of treatment x marker interaction,
   prognostic only requires association with outcome.
 - Force findings into themes. If findings don't converge, return fewer (or zero) themes.
+- **Call \`report_blocker\` because no finding seems worth surfacing.** With
+  non-empty summaries, submit a synthesis with an empty \`findings[]\` instead —
+  a blocker is only for empty or incoherent summaries.
 - Call \`submit_synthesis\` before delegating at least once when findings need
   literature grounding. (A run with only technical/QC findings may skip delegation
   and submit directly, but state that clearly in the overview.)

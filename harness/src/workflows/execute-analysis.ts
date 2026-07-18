@@ -467,6 +467,7 @@ export function synthesizeFindings(args: {
     };
     return synthesizeRun(
         {
+            logger: deps.logger,
             pool: deps.pool,
             provider: deps.provider,
             embedding: deps.embedding,

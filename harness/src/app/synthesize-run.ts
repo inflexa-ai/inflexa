@@ -122,8 +122,16 @@ export async function synthesizeRun(deps: SynthesizeRunDeps, params: SynthesizeR
 
         if (result.kind === "skipped") {
             const logger = (deps.logger ?? createNoopLogger()).named("synthesize-run");
-            logger.warn("synthesis skipped — synthesizer reported a blocker", { runId, reason: result.reason });
-            await onProgress("skipped", "Synthesis skipped — run did not produce synthesizable content", { reason: result.reason });
+            logger.warn("synthesis skipped — synthesizer reported a blocker", {
+                runId,
+                reason: result.reason,
+                validationRejections: result.validationRejections,
+                rejectedIssuePaths: result.rejectedIssuePaths,
+            });
+            await onProgress("skipped", "Synthesis skipped — run did not produce synthesizable content", {
+                reason: result.reason,
+                validationAttempts: result.validationRejections,
+            });
             return { findings: [], synthesisStatus: "skipped_blocker", synthesisReason: result.reason };
         }
 
