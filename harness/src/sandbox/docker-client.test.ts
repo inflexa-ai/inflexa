@@ -7,6 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,12 +28,18 @@ async function writeCompleteStore(root: string, version: string): Promise<void> 
     await writeFile(join(vdir, "meta.json"), JSON.stringify({ version, arch: "linux-amd64", tracks: [] }));
     await symlink(version, join(root, "current"));
 }
+// The ref store has no harness-known interior — the Docker client re-checks only that
+// `refStorePath` is, at createSandbox time, a real (non-symlink) directory, so a bare
+// temp dir already models a usable store.
+let refsRoot: string;
 beforeEach(async () => {
     libRoot = await mkdtemp(join(tmpdir(), "harness-libstore-"));
     await writeCompleteStore(libRoot, "2026.07.04-abc");
+    refsRoot = await mkdtemp(join(tmpdir(), "harness-refstore-"));
 });
 afterEach(async () => {
     await rm(libRoot, { recursive: true, force: true });
+    await rm(refsRoot, { recursive: true, force: true });
 });
 
 interface CreatedContainer {
@@ -254,7 +261,7 @@ describe("docker createSandbox — transport modes", () => {
             cortexBaseUrl: "https://x",
             resolveWorkspaceRoot: (id) => join("/sessions", id),
             libStorePath: libRoot,
-            refStorePath: "/host/refs",
+            refStorePath: refsRoot,
             docker,
             fetch: okFetch,
             registerSandbox: async (meta, ref) => {
@@ -274,11 +281,12 @@ describe("docker createSandbox — transport modes", () => {
         expect(env.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
 
         expect(sandbox.workingDir).toBe("/an-1/runs/run-1/step-a");
+        // A present ref-store directory is bound read-only at /mnt/refs (existing behavior).
         expect(sandbox.binds).toEqual([
             "/sessions/an-1:/an-1:ro",
             "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw",
             `${libRoot}:/mnt/libs:ro`,
-            "/host/refs:/mnt/refs:ro",
+            `${refsRoot}:/mnt/refs:ro`,
         ]);
         expect(registered).toEqual([{ runId: "run-1", stepId: "step-a", sandboxId: ref.sandboxId }]);
     });
@@ -492,6 +500,81 @@ describe("docker createSandbox — mounts and platform", () => {
         (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
 
         expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
+    });
+});
+
+describe("docker createSandbox — ref store re-check", () => {
+    test("skips the /mnt/refs mount, creates no directory, and logs nothing when the configured store is missing at create time", async () => {
+        const { docker, created } = stubDocker();
+        // refsRoot exists; the configured path under it does not — the normal cold state.
+        const missing = join(refsRoot, "not-installed-yet");
+        const logger = createCapturingLogger();
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            refStorePath: missing,
+            docker,
+            fetch: okFetch,
+            logger,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/refs"))).toBe(false);
+        // The harness must never materialize the bind source: a real bind would make Docker
+        // auto-create a root-owned dir here, bricking a later reference download.
+        expect(existsSync(missing)).toBe(false);
+        // A missing ref store is the cold state, not a degradation — unlike libs, it warns nothing.
+        expect(logger.records.filter((r) => r.level === "warn")).toHaveLength(0);
+    });
+
+    test("mounts a store created after the ops were built — a mid-session install without a restart", async () => {
+        const { docker, created } = stubDocker();
+        // Absent when the ops are constructed; a reference download creates it before the create.
+        const installedLater = join(refsRoot, "installed-mid-session");
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            refStorePath: installedLater,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        await mkdir(installedLater, { recursive: true });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        expect(sandboxOf(created)!.binds).toContain(`${installedLater}:/mnt/refs:ro`);
+    });
+
+    test("skips the /mnt/refs mount when the configured path is a symlink, even to a real directory", async () => {
+        const { docker, created } = stubDocker();
+        // The bind authority must itself be the store directory, not an indirection that
+        // could later be repointed — so a symlink is rejected though it resolves to a dir.
+        const target = join(refsRoot, "real-store");
+        const link = join(refsRoot, "store-link");
+        await mkdir(target, { recursive: true });
+        await symlink(target, link);
+
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            refStorePath: link,
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        expect(sandboxOf(created)!.binds.some((b) => b.includes("/mnt/refs"))).toBe(false);
     });
 });
 

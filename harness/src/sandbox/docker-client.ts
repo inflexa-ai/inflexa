@@ -29,7 +29,7 @@
  * effective capabilities.
  */
 
-import { existsSync, statSync } from "node:fs";
+import { existsSync, lstatSync, statSync } from "node:fs";
 import { join } from "node:path";
 import Docker from "dockerode";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
@@ -80,7 +80,12 @@ export interface DockerClientConfig {
     resolveWorkspaceRoot: ResolveWorkspaceRoot;
     /** Host lib store; bind-mounted read-only at `/mnt/libs` when set. */
     libStorePath?: string;
-    /** Host ref store; bind-mounted read-only at `/mnt/refs` when set. */
+    /**
+     * Host ref store; bind-mounted read-only at `/mnt/refs`. Embedders pass the
+     * configured store location unconditionally — existence is (re-)checked at each
+     * sandbox creation, so a store installed mid-session is mounted into subsequent
+     * sandboxes without a runtime restart.
+     */
     refStorePath?: string;
     /**
      * Force the container platform (e.g. `linux/amd64`). Set by hosts that mount
@@ -127,6 +132,30 @@ function libStoreUsable(libStorePath: string): boolean {
         return false;
     }
     return existsSync(join(current, "packages.txt")) && existsSync(join(current, "meta.json"));
+}
+
+/**
+ * Whether `refStorePath` is, right now, a real directory fit to be a bind authority.
+ * Deliberately shallow — it checks existence-as-a-directory only, never the store's
+ * interior: the harness knows nothing of the ref store's layout, and dataset
+ * completeness/receipts are the embedder's concern, so (unlike `libStoreUsable`, which
+ * validates harness-known `current` layout) there is nothing here to validate beyond
+ * "a directory is present."
+ *
+ * `lstatSync` (not `statSync`) does NOT follow symlinks, so a symlinked path is rejected
+ * even when it resolves to a directory: the bind authority must itself be the store
+ * directory, not an indirection that may later point elsewhere.
+ *
+ * Binding a missing source makes Docker auto-create a root-owned directory at the path —
+ * the same hazard `libStoreUsable` documents — which would also brick the embedder's
+ * later store install (its store tool cannot write into a root-owned dir).
+ */
+function refStoreUsable(refStorePath: string): boolean {
+    try {
+        return lstatSync(refStorePath).isDirectory();
+    } catch {
+        return false;
+    }
 }
 
 async function pollHealth(fetchImpl: typeof fetch, url: string, timeoutMs: number): Promise<void> {
@@ -261,9 +290,17 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         );
                     }
 
+                    // Re-checked here too, so a ref store installed after boot is mounted into
+                    // the next sandbox. Unlike libs, a missing ref store is NOT warned: a missing
+                    // lib store is a degradation (it was configured and working, then broke),
+                    // whereas a missing ref store is the normal cold state — the user simply has
+                    // not installed reference data yet — and warning on every create would be
+                    // noise. A store that appears mid-session is picked up by the next create.
+                    const refsMounted = !!config.refStorePath && refStoreUsable(config.refStorePath);
+
                     const plan = buildMountPlan(meta, {
                         libs: libsMounted,
-                        refs: !!config.refStorePath,
+                        refs: refsMounted,
                     });
 
                     const hostTreePath = config.resolveWorkspaceRoot(meta.analysisId);
@@ -275,7 +312,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         `${hostTreePath}:${plan.readonlyTreePath}:ro`,
                         ...(plan.writableStepPath ? [`${hostStepPath}:${plan.writableStepPath}:rw`] : []),
                         ...(libsMounted && config.libStorePath ? [`${config.libStorePath}:${plan.libsPath}:ro`] : []),
-                        ...(config.refStorePath ? [`${config.refStorePath}:${plan.refsPath}:ro`] : []),
+                        ...(refsMounted && config.refStorePath ? [`${config.refStorePath}:${plan.refsPath}:ro`] : []),
                     ];
 
                     const createFailed = (status: number | undefined, cause: unknown): SandboxError => ({

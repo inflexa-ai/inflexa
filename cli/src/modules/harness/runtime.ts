@@ -1,4 +1,4 @@
-import { existsSync, lstatSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { ok, err, type Result } from "neverthrow";
 import {
     bootHarness,
@@ -109,30 +109,6 @@ function pinoAsHarnessLogger(pino: pinoLib.Logger, names: readonly string[] = []
         named: (name) => pinoAsHarnessLogger(pino, [...names, name]),
         errorFields: (err) => ({ err }),
     };
-}
-
-/**
- * Return the reference-store bind source only when it already exists. This existence gate is
- * deliberately pure/injectable so runtime boot never asks Docker to create a missing host path.
- */
-export function existingRefStorePath(path: string, isDirectory: (candidate: string) => boolean = existingDirectory): string | undefined {
-    return isDirectory(path) ? path : undefined;
-}
-
-/** Build the optional sandbox-client reference mount fragment, omitting a missing source entirely. */
-export function existingRefStoreConfig(path: string, isDirectory: (candidate: string) => boolean = existingDirectory): { readonly refStorePath?: string } {
-    const refStorePath = existingRefStorePath(path, isDirectory);
-    return refStorePath === undefined ? {} : { refStorePath };
-}
-
-function existingDirectory(path: string): boolean {
-    try {
-        // Reject symlinks as bind authorities: the configured path should itself be the deliberately
-        // created public store, not an indirection that may later move outside user expectations.
-        return lstatSync(path).isDirectory();
-    } catch {
-        return false;
-    }
 }
 
 // The embedded-harness composition root. Boots lazily on the first profile
@@ -797,7 +773,13 @@ async function bootHarnessRuntimeOnce(
             // pull time). Managed still mounts the tarballs via its PVC — that
             // lives in infra/harness config, not here.
             image: cfg.sandboxImage,
-            ...existingRefStoreConfig(env.refsDir),
+            // Pass the configured store location unconditionally: the sandbox backend
+            // re-checks this path's existence at every sandbox creation and mounts it
+            // only when it is a real directory then. So a store installed mid-session
+            // (e.g. a reference download during a chat) reaches the next sandbox with no
+            // restart. A boot-time existence gate here would freeze the cold-start state
+            // for the whole process lifetime and defeat that re-check.
+            refStorePath: env.refsDir,
             resourceLimits: cfg.resourcePolicy.perStep,
             resolveWorkspaceRoot,
             // The docker backend's diagnostics (lib-store degradation, recovery
