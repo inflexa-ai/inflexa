@@ -6,6 +6,7 @@ export type {
     RunCardPart,
     FileReferenceEntry,
     FileReferencePart,
+    AskPart,
     RunStartedPart,
     StepStatus,
     DagStepState,

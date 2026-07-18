@@ -7,8 +7,9 @@
  * `defineTool(...)`; a dependency-bearing tool is a factory closure that
  * captures its deps and calls `defineTool`.
  *
- * `ToolContext` carries exactly the four request-scoped values every tool
- * may need — no pool, no sandbox, no logger. The error contract: an expected
+ * `ToolContext` carries only request-scoped values every tool may need
+ * (`session`, `signal`, `emit`, `runStep`, `ask`) — no pool, no sandbox, no
+ * logger. The error contract: an expected
  * outcome ("not found", "no results") stays in the ok channel as a data
  * variant (`ok({ found: false })`); an unexpected failure is an `err(ToolError)`
  * or a throw. The loop (`dispatchTool`) owns the `is_error` envelope — it maps
@@ -20,6 +21,7 @@ import { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
 import type { EmitFn, RunStep } from "../loop/types.js";
+import type { AskApproval, AskRequest } from "./approval/contract.js";
 
 export type { EmitFn };
 
@@ -46,9 +48,9 @@ export function isToolError(value: unknown): value is ToolError {
 
 /**
  * The request-scoped values passed to every tool's `execute`. No injected
- * dependencies (see the harness-durable-runtime spec) — `session`, `signal`, `emit`, plus the `runStep`
- * durability seam (`passthroughStep` in chat, `DBOS.runStep` in workflows)
- * a tool uses to wrap its own durable work.
+ * dependencies (see the harness-durable-runtime spec) — `session`, `signal`, `emit`, the `runStep`
+ * durability seam (`passthroughStep` in chat, `DBOS.runStep` in workflows) a
+ * tool uses to wrap its own durable work, and the `ask` user-approval seam.
  */
 export interface ToolContext {
     readonly session: AgentSession;
@@ -59,6 +61,14 @@ export interface ToolContext {
      * under the tool's own step name, so a tool just passes a short local label.
      */
     readonly runStep: RunStep;
+    /**
+     * Pause for an explicit user decision on a concrete action. Resolves with the
+     * approval (`once`/`always`) or throws `AskRejectedError` on denial. Resolves
+     * to a deny-by-default realization when the embedder wires none, so a tool
+     * that calls it in a non-interactive context is denied rather than left
+     * waiting on a surface that cannot answer.
+     */
+    readonly ask: (request: AskRequest) => Promise<AskApproval>;
 }
 
 /**

@@ -249,6 +249,45 @@ CREATE TABLE IF NOT EXISTS cortex_working_memory (
   data        JSONB NOT NULL,
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Tool-approval ask ledger — the single source of truth for approval state, one
+-- row per ctx.ask invocation. ctx.ask inserts a 'pending' row and polls it to a
+-- terminal status. The outward answer() writes the decision. reply holds the
+-- recorded AskReply (NULL while pending). Analysis-scoped audit of every
+-- approval-gated action, including grant auto-approvals (recorded 'resolved'
+-- with no prompt shown). A pending row a dead process orphans is swept to
+-- 'expired' at boot.
+CREATE TABLE IF NOT EXISTS cortex_asks (
+  id           TEXT PRIMARY KEY,
+  analysis_id  TEXT NOT NULL,
+  thread_id    TEXT,
+  title        TEXT NOT NULL,
+  command      TEXT NOT NULL,
+  detail       TEXT,
+  status       TEXT NOT NULL,
+  reply        JSONB,
+  created_at   TEXT NOT NULL,
+  resolved_at  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_cortex_asks_analysis
+  ON cortex_asks(analysis_id);
+
+-- Backs the pending() enumeration and the boot sweep. Partial so it stays
+-- compact against the far larger terminal-row mass.
+CREATE INDEX IF NOT EXISTS idx_cortex_asks_pending
+  ON cortex_asks(status) WHERE status = 'pending';
+
+-- Standing approval grants behind an 'always' reply — keyed by the analysis and
+-- the exact command string the user approved, so a later matching ask
+-- auto-approves without pausing. Lives for the analysis lifecycle, surviving
+-- process restarts, and never applies to another analysis.
+CREATE TABLE IF NOT EXISTS cortex_ask_grants (
+  analysis_id  TEXT NOT NULL,
+  command      TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  PRIMARY KEY (analysis_id, command)
+);
 `;
 
 /**

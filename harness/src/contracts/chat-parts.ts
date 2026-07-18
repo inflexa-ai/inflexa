@@ -2,9 +2,10 @@
  * Cortex chat data parts — custom parts emitted via writer.write() / writer.custom()
  * that flow through the chat stream and are rendered by the frontend.
  *
- * 15 part types across four categories:
+ * Categories:
  *   Presentation:    data-presentation (agent-synthesized content),
  *                    data-plan (plan by id), data-file-reference (files by path)
+ *   Approval:        data-ask (a tool's pending user-approval prompt)
  *   Run lifecycle:   run-started, dag-state, run-completed, run-failed, run-synthesis,
  *                    synthesis-progress
  *   Per-step live:   step-activity, step-file-tree
@@ -76,6 +77,26 @@ export interface FileReferencePart {
     id: string;
     title?: string;
     files: FileReferenceEntry[];
+}
+
+// ── Ask (user approval, reconciling) ────────────────────────────────
+
+/**
+ * A tool's pending request for an explicit user decision. Re-emitted under the
+ * same `id` when the ask reaches a terminal status, so reconciling readers fold
+ * pending → outcome latest-wins.
+ */
+export interface AskPart {
+    type: "data-ask";
+    /** The ask's ledger uuidv7 id — what a surface passes back to `answer`. */
+    id: string;
+    /** Human-facing headline for the pending approval. */
+    title: string;
+    /** The exact command or operation being approved — what the user sees granted. */
+    command: string;
+    /** Optional additional detail a surface may render. */
+    detail?: string;
+    status: "pending" | "resolved" | "rejected" | "aborted" | "expired";
 }
 
 // ── Run Started ─────────────────────────────────────────────────────
@@ -365,6 +386,7 @@ export type CortexChatPart =
     | PlanPart
     | RunCardPart
     | FileReferencePart
+    | AskPart
     | RunStartedPart
     | DagStatePart
     | StepActivityPart
