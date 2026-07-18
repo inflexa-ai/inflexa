@@ -330,4 +330,21 @@ describe("reference json output", () => {
             datasets: [{ datasetId: "demo", version: "1", state: "valid", files: [{ path: "file", state: "valid" }] }],
         });
     });
+
+    test("verify --json surfaces a verification failure on stderr with an empty stdout", async () => {
+        // Explicit ids skip the no-ids selection guard and reach `verifyReferenceDatasets`; the fixture
+        // source rejects any id but "demo", so this exercises the JSON branch's own err handler.
+        const { stdout, stderr, exitCode } = await capture(() => runRefsVerify(["unknown"], { json: true, source: singleFileSource }));
+        expect(stdout).toBe("");
+        expect(stderr).toContain("Reference-data verification failed");
+        expect(exitCode).toBe(1);
+    });
+
+    test("verify --json is byte-stable across two runs of an intact store", async () => {
+        seedIntactInstall();
+        const first = await capture(() => runRefsVerify([], { json: true, source: singleFileSource }));
+        const second = await capture(() => runRefsVerify([], { json: true, source: singleFileSource }));
+        expect(second.stdout).toBe(first.stdout);
+        expect(first.stdout.length).toBeGreaterThan(0);
+    });
 });

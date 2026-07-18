@@ -105,8 +105,11 @@ export type ReferenceListLicense = {
 /**
  * One catalog dataset projected for the list document: its catalog identity and provenance (with the
  * harness `recommendation` nesting flattened to `group`/`recommended`), the cheap local state, and —
- * only when a valid receipt exists — the installed version and install timestamp. Optional install
- * facts are omitted keys, never `null`.
+ * only when the dataset's files are present from a completed install (`state` is `installed` or
+ * `update_available`) — the installed version and install timestamp. A `partial` dataset carries a
+ * receipt but is not usable, so its receipt is deliberately not surfaced: key presence must never
+ * contradict `state`, which stays the authoritative signal. Optional install facts are omitted keys,
+ * never `null`.
  */
 export type ReferenceListDataset = {
     /** Stable catalog id. */
@@ -127,9 +130,9 @@ export type ReferenceListDataset = {
     readonly recommended: boolean;
     /** Cheap local install state — the same closed set the human listing shows. */
     readonly state: ReferenceDatasetState;
-    /** Active receipt's dataset version; key absent when no valid receipt exists. */
+    /** Active receipt's dataset version; key present only in a usable state (`installed`/`update_available`) so key presence never reads as usable when `state` says damaged. */
     readonly installedVersion?: string;
-    /** Active receipt's activation timestamp (ISO 8601); key absent when no valid receipt exists. */
+    /** Active receipt's activation timestamp (ISO 8601); key present only in a usable state (`installed`/`update_available`), mirroring `installedVersion`. */
     readonly installedAt?: string;
     /** Every artifact and its upstream URL — always present, independent of `--urls`. */
     readonly artifacts: readonly ReferenceListArtifact[];
@@ -156,8 +159,11 @@ export type ReferenceListDocument = {
 /**
  * Project a passive store inspection into the list document. Pure — copies every field by name,
  * flattens `recommendation` to `group`/`recommended`, and emits `installedVersion`/`installedAt` only
- * when a valid receipt is present (omitted keys, never `null`). Mints nothing at render time: the
- * install timestamp is read from the receipt, so the same store state serializes byte-identically.
+ * when the files are present from a completed install — `state` is `installed` or `update_available`
+ * (omitted keys, never `null`). A `partial` dataset also carries a receipt, but its install is not
+ * usable, so its receipt is withheld here so a consumer reading key presence as "usable" cannot
+ * misread damage; `state` remains the authoritative signal. Mints nothing at render time: the install
+ * timestamp is read from the receipt, so the same store state serializes byte-identically.
  */
 export function buildReferenceListDocument(inspection: ReferenceStoreInspection, root: string): ReferenceListDocument {
     return {
@@ -178,7 +184,13 @@ export function buildReferenceListDocument(inspection: ReferenceStoreInspection,
                 group: dataset.recommendation.group,
                 recommended: dataset.recommendation.recommended,
                 state: item.state,
-                ...(item.receipt === undefined ? {} : { installedVersion: item.receipt.datasetVersion, installedAt: item.receipt.activatedAt }),
+                // Surface install facts only for a usable install. A `partial` dataset also carries a
+                // receipt, but its files are incomplete/damaged, so emitting a version there would let a
+                // consumer that reads key presence as "usable" contradict `state`. The `receipt` guard
+                // stays so TypeScript narrows the optional receipt without an assertion.
+                ...(item.receipt !== undefined && (item.state === "installed" || item.state === "update_available")
+                    ? { installedVersion: item.receipt.datasetVersion, installedAt: item.receipt.activatedAt }
+                    : {}),
                 artifacts: dataset.artifacts.map((artifact) => ({ path: artifact.path, url: artifact.url })),
             };
         }),

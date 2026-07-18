@@ -603,6 +603,42 @@ describe("projection documents", () => {
         expect(missing?.license).not.toHaveProperty("url");
     });
 
+    test("list builder withholds install facts for a partial install even though it carries a receipt", () => {
+        // `inspectReferenceStore` produces `partial` both with and without a receipt; a valid-receipt
+        // partial (files incomplete) must not report install facts, or key presence would read as usable
+        // while `state` says otherwise. `state` stays the authoritative signal.
+        const partial: ReferenceStoreInspection = {
+            exists: true,
+            datasets: [
+                {
+                    dataset: {
+                        id: "gamma",
+                        version: "2026.07",
+                        title: "Gamma reference",
+                        description: "Damaged fixture",
+                        sourceUrl: "https://example.test/gamma",
+                        license: { identifier: "CC0-1.0" },
+                        recommendation: { group: "testing", recommended: true },
+                        artifacts: [{ path: "g.txt", url: "https://upstream.test/g.txt" }],
+                    },
+                    state: "partial",
+                    receipt: {
+                        version: 1,
+                        datasetId: "gamma",
+                        datasetVersion: "2026.07",
+                        activatedAt: "2026-07-14T12:00:00.000Z",
+                        artifacts: [{ path: "g.txt", bytes: 5, sha256: sha("gamma") }],
+                    },
+                },
+            ],
+            userContent: [],
+        };
+        const entry = buildReferenceListDocument(partial, "/store/root").datasets[0];
+        expect(entry?.state).toBe("partial");
+        expect(entry).not.toHaveProperty("installedVersion");
+        expect(entry).not.toHaveProperty("installedAt");
+    });
+
     test("list document key order is pinned and serialization is byte-stable across builds", () => {
         const first = JSON.stringify(buildReferenceListDocument(inspection, "/store/root"), null, 2);
         const second = JSON.stringify(buildReferenceListDocument(inspection, "/store/root"), null, 2);

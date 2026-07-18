@@ -20,8 +20,13 @@
 - [x] 4.3 Failure purity: inspection/verification failure in JSON mode → empty stdout, prose on stderr, exit code 1.
 - [x] 4.4 JSON verify: damaged file → document names dataset/file states, exit code 1, no repair hint on stderr; intact store → document with valid states, exit code 0.
 
-## 5. Verification
+## 5. Review follow-ups
 
-- [x] 5.1 `bun run typecheck`, `bun run lint`, `bun test` green; `bun run format:file` on the changed `src/` files.
-- [x] 5.2 `bun scripts/gen_docs.ts` succeeds (option descriptions satisfy the docs-gen gate) — run as a plain subprocess, never under `bun test`.
-- [x] 5.3 Acceptance against issue #152 "Done when": `inflexa refs list --json` emits per-dataset install state in the documented shape; human output of `refs list`/`refs verify` is unchanged (diff a before/after capture).
+- [x] 5.1 Gate the list document's `installedVersion`/`installedAt` on the usable states (`installed`/`update_available`) instead of bare receipt presence, so a `partial` dataset with a valid-but-incomplete receipt surfaces no install facts; update the projection JSDoc and add a partial-with-receipt list-document test.
+- [x] 5.2 Cover the JSON verify error branch with ids supplied (unknown id → empty stdout, prose stderr, exit 1) and pin verify-mode byte-stability with a two-run stdout compare.
+
+## 6. Verification
+
+- [x] 6.1 `bun run typecheck`, `bun run lint`, `bun test` green; `bun run format:file` on the changed `src/` files.
+- [x] 6.2 `bun scripts/gen_docs.ts` succeeds (option descriptions satisfy the docs-gen gate) — run as a plain subprocess, never under `bun test`.
+- [x] 6.3 Acceptance against issue #152 "Done when": `inflexa refs list --json` emits per-dataset install state in the documented shape; human output of `refs list`/`refs verify` is unchanged (diff a before/after capture).

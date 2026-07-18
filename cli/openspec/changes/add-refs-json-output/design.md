@@ -47,8 +47,8 @@ The planner (inflexa#155) runs in the CLI process and imports the projection typ
       "group": "…",          // flattened from the catalog's recommendation.group
       "recommended": true,    // flattened from recommendation.recommended
       "state": "missing",    // ReferenceDatasetState — the union verbatim
-      "installedVersion": "…", // receipt.datasetVersion; absent when no valid receipt
-      "installedAt": "…",      // receipt.activatedAt (ISO 8601); absent when no valid receipt
+      "installedVersion": "…", // receipt.datasetVersion; present only in states installed/update_available
+      "installedAt": "…",      // receipt.activatedAt (ISO 8601); same presence rule as installedVersion
       "artifacts": [ { "path": "…", "url": "…" } ]
     }
   ],
@@ -56,7 +56,7 @@ The planner (inflexa#155) runs in the CLI process and imports the projection typ
 }
 ```
 
-`recommendation` is flattened to `group`/`recommended` so the wire shape does not encode the harness's interior nesting. Receipt exposure is deliberately limited to `installedVersion`/`installedAt` — per-file sizes/digests are verify's domain, and the receipt's own schema-version field is an implementation detail. Absent-not-null: optional facts are omitted keys (native `JSON.stringify` behavior), never `null`.
+`recommendation` is flattened to `group`/`recommended` so the wire shape does not encode the harness's interior nesting. Receipt exposure is deliberately limited to `installedVersion`/`installedAt` — per-file sizes/digests are verify's domain, and the receipt's own schema-version field is an implementation detail. The install facts appear only in the usable states (`installed`, `update_available`), not on bare receipt presence: a `partial` dataset can hold a valid receipt whose files are incomplete, and surfacing its receipt would make key presence contradict `state` and let a consumer misread a damaged install as usable. Absent-not-null: optional facts are omitted keys (native `JSON.stringify` behavior), never `null`.
 
 **5. Verify document shape** — an object wrapping the dataset array, not a bare array (extensible, symmetric with list):
 
