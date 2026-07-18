@@ -57,6 +57,7 @@ import type { PreviewPublisher } from "./report/preview-publisher.js";
 import type { ChromeConfig } from "../lib/chrome.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
+import { hintForZodIssue } from "../lib/zod-issues.js";
 
 const REPORT_TOOL_ACCESS_TTL_SECONDS = 3600;
 const PREVIEW_META_FILE = "preview-meta.json";
@@ -511,7 +512,7 @@ type SubmitReportOutput =
       }
     | {
           ok: false;
-          issues: Array<{ path: string; message: string }>;
+          issues: Array<{ path: string; message: string; hint?: string }>;
           hint: string;
       };
 
@@ -550,6 +551,7 @@ export function createReportSubmitTool(deps: SubmitReportDeps): Tool {
                         issues: parsed.error.issues.map((i) => ({
                             path: i.path.join(".") || "(root)",
                             message: i.message,
+                            hint: hintForZodIssue(i, input.report),
                         })),
                         hint: "The `report` brief did not match the schema. Call `plan_report` for the full schema, fix the fields named in `issues`, and resubmit.",
                     });
