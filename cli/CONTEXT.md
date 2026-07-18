@@ -11,7 +11,7 @@ The local-first host for the Inflexa product, and the **embedder** of `@inflexa-
 Code is grouped by feature, not by layer — a module owns its logic, its text command actions, and its logic-local types.
 
 - **`auth/`** — Auth0 device flow + `login` / `logout` / `whoami`. Config seeded from `.env` (`INFLEXA_AUTH0_*`).
-- **`proxy/`** — the CLIProxyAPI model helpers (`models.ts`: client key discovery + default-model ranking); the container lifecycle/provisioning lives in `infra/`.
+- **`proxy/`** — the CLIProxyAPI model helpers (`models.ts`: client key discovery + default-model election — deterministic recency rank walked against the unbilled `count_tokens` accessibility check); the container lifecycle/provisioning lives in `infra/`.
 - **`analysis/`** — analysis lifecycle + the `sessions` command (live launch-identity rows; message history is frozen legacy data).
 - **`anchor/`** — invisible folder-identity markers (`.inflexa/id`) and lazy path reconciliation.
 - **`harness/`** — the harness embedder: boots the harness runtime (DBOS, sandbox, providers) and drives the chat turn, the model-free `run --plan` replay engine, data profiling, and the provenance bridge.

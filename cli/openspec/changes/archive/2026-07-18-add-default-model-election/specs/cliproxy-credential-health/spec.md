@@ -1,26 +1,6 @@
-# cliproxy-credential-health Specification
+# cliproxy-credential-health Specification (delta)
 
-## Purpose
-Detecting a dead provider OAuth credential behind the managed CLIProxyAPI container before it fails work mid-flight: the structural presence check (what counts as a credential on disk), the launch-time live probe that is the sole authority on validity (a dead refresh token leaves no trace in the credential file), and setup's truthful reporting of what it can actually know statically.
-## Requirements
-### Requirement: Credential presence is decided structurally, never by expiry
-
-The cliproxy authenticated-state check SHALL consider only `*.json` entries in the credential dir (`env.cliproxyAuthDir`), SHALL treat a credential whose JSON carries `disabled: true` as not authenticated, and SHALL treat an unreadable or unparseable `*.json` entry as present (the live probe, not the static check, is the authority on validity). The check SHALL NOT gate on the credential's `expired` timestamp: the access token expires every 8 hours by design and the running proxy refreshes it, so a stale `expired` is normal.
-
-#### Scenario: A logs-only auth dir is unauthenticated
-
-- **WHEN** the credential dir contains only a `logs/` subdirectory (the credential JSON was deleted)
-- **THEN** the check reports not authenticated and the interactive login path is offered
-
-#### Scenario: An operator-disabled credential is unauthenticated
-
-- **WHEN** the only credential JSON carries `disabled: true`
-- **THEN** the check reports not authenticated
-
-#### Scenario: A past expired timestamp does not fail the static check
-
-- **WHEN** a credential JSON has `disabled: false` and an `expired` timestamp in the past
-- **THEN** the static check still reports authenticated (the proxy refreshes access tokens; only the live probe may judge validity)
+## MODIFIED Requirements
 
 ### Requirement: The launch gate probes the live credential in cliproxy mode
 
@@ -81,36 +61,7 @@ Because starting a container does not make its server reachable — the engine r
 - **WHEN** nothing answers for the whole retry budget
 - **THEN** launch logs a warning carrying the observed failure and proceeds
 
-### Requirement: A fresh login is made observable to an already-running proxy
-
-The proxy loads credentials only at container start — host-side writes to the mounted auth dir do not reach the running binary's file watcher, and compose-up leaves a running container untouched. Therefore any interactive provider login that completes while a proxy container is already running — setup's authentication step, or the launch gate's missing-credential login — SHALL restart the proxy service so it serves the credential the user just created. When no proxy container is running, no restart SHALL be attempted: the next container start reads the auth dir at boot. A restart failure after a successful login SHALL surface as an actionable error naming the remedy, never proceed silently with a proxy that cannot serve the new credential. (The launch probe's own re-login path already restarts before its re-probe; this requirement extends the same guarantee to logins that run before any probe.)
-
-#### Scenario: Forced re-login reaches the running proxy
-
-- **GIVEN** the compose stack is up and the proxy is serving a dead credential
-- **WHEN** `inflexa setup --provider <name>` completes a sign-in
-- **THEN** the proxy service is restarted before setup exits, and the next chat uses the fresh credential without a relaunch
-
-#### Scenario: Launch-gate login does not demand a second login
-
-- **GIVEN** a proxy container left running with no usable credential (the login was previously skipped)
-- **WHEN** the TUI launches and the missing-credential login completes
-- **THEN** the proxy is restarted before the credential probe runs, the probe reads the fresh credential, and no second login is driven
-
-#### Scenario: No running proxy, no restart
-
-- **WHEN** a login completes while no proxy container is running
-- **THEN** no restart is attempted and the container reads the credential when it next starts
-
-### Requirement: Setup reports credential state truthfully
-
-`inflexa setup`'s already-authenticated branch SHALL state only what it can know statically — that a credential exists — and SHALL name the forced re-login path (`--provider <name>`) as the remedy when provider calls fail authentication. It SHALL NOT assert that the credential is valid.
-
-#### Scenario: Setup after a refresh death does not claim health
-
-- **GIVEN** a present credential whose refresh token has been revoked (statically indistinguishable from a healthy one)
-- **WHEN** `inflexa setup` runs without `--provider`
-- **THEN** the message says a credential exists and names `--provider <name>` re-login as the fix for failing authentication, without claiming the credential works
+## ADDED Requirements
 
 ### Requirement: Launch warns when an explicit model pin has gone stale
 
@@ -139,4 +90,3 @@ sessions are outside this requirement — election already validated the default
 
 - **WHEN** a pinned model's accessibility check times out
 - **THEN** no warning is shown and launch proceeds
-

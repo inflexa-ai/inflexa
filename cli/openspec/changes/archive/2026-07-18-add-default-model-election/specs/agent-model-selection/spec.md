@@ -1,12 +1,7 @@
-# agent-model-selection Specification
+# agent-model-selection Specification (delta)
 
-## Purpose
-Per-agent model selection over the one shared model connection: the `models.agents` config map
-for the two user-facing agents (conversation, sandbox), per-agent resolution and provider
-construction, the Provider-category palette commands with dynamic model listing, and the
-live/scheduled application semantics gated on agent-work idleness. Created by archiving change
-select-seat-models.
-## Requirements
+## MODIFIED Requirements
+
 ### Requirement: Per-agent model configuration over the shared connection
 
 The `models` config block SHALL carry an `agents` map with the two user-facing agents —
@@ -92,74 +87,3 @@ immediately, independent of when the runtime applies it.
 
 - **WHEN** the user commits a model and the `count_tokens` check times out
 - **THEN** the selection persists (inconclusive-accept) exactly as an unvalidated commit would
-
-### Requirement: A switch applies live only when no agent work is in flight
-
-The runtime SHALL track in-flight agent work — analysis runs, data profiling, chat turns, and
-ephemeral workflows. A persisted agent-model selection SHALL apply to the live runtime
-immediately when no agent work is in flight; otherwise it SHALL be recorded as pending and
-applied at the moment the last in-flight work settles. Application SHALL reconstruct the affected
-agent's provider instance and — for the sandbox agent — its provenance emitters (reconstructed
-WITH the new `{provider}/{model}` name, preserving their construction-time-stamping contract).
-
-Every swappable object SHALL reach its consumers as a stable delegating handle injected once at
-composition: the consumer (harness deps bundles, agent assembly, registered workflows) holds ONE
-identity for the runtime's life, and a swap replaces only the cli-owned inner target behind it.
-The application path SHALL NOT mutate any field of an object a consumer holds — correctness MUST
-NOT depend on when or how often the consumer reads its deps fields. This is the contract the chat
-provider's swappable handle already satisfies; the provenance emitters (`artifactRegistry`,
-`emitProvenance`) SHALL satisfy the same one.
-
-In-flight work SHALL complete on — and
-record provenance under — the model that started it; no request observes a mid-flight model
-change, and an in-progress streamed response is NEVER interrupted, truncated, or aborted by a
-switch (whether requested from the palette or applied at settlement). An indeterminate busy state
-SHALL defer, never apply.
-
-#### Scenario: Idle switch applies immediately
-
-- **WHEN** the user switches the chat model with no run, profile, or chat turn in flight
-- **THEN** the next chat turn runs on the new model and its provenance/metadata carry the new
-  `{provider}/{model}` name
-
-#### Scenario: Busy switch is scheduled, then lands at settlement
-
-- **WHEN** the user switches the sandbox model while an analysis run is executing
-- **THEN** the running work continues and records the old model to completion; the selection is
-  persisted and marked pending; when the run (and any other in-flight work) settles, the new
-  provider is constructed and subsequent steps record the new name
-
-#### Scenario: A chat turn defers the swap to the turn boundary, without disturbing the stream
-
-- **WHEN** the user switches the chat model while a chat turn is streaming a response
-- **THEN** the in-flight turn streams to completion on the old model — uninterrupted and
-  untruncated — and the swap lands before the next turn begins
-
-#### Scenario: A consumer that snapshots its deps still observes the swap
-
-- **WHEN** a consumer captures the injected `emitProvenance` (or `artifactRegistry`) reference
-  once at registration, the sandbox model is then switched at idle, and the consumer emits
-  through its captured reference
-- **THEN** the emitted event carries the NEW `{provider}/{model}` name — the swap is effective
-  regardless of the consumer's read discipline, because the captured reference is the stable
-  delegating handle
-
-### Requirement: The TUI surfaces the connection and the active and pending agent models
-
-The TUI SHALL render, from the runtime's boot/status state: the shared connection's identity —
-the configured provider slug and mode (`cliproxy` or `direct`) — and the active model of each
-user-facing agent, and SHALL surface a pending switch as such (selection made, applies when
-agent work settles) until it lands. The boot/status state SHALL carry per-agent resolved models,
-pending selections, and the connection identity.
-
-#### Scenario: Status shows the connection and what each agent runs on
-
-- **WHEN** the runtime is ready on a cliproxy/anthropic connection with distinct agent models
-- **THEN** the user can see the provider (`anthropic`), the mode, and both active models in the
-  TUI status surface without opening config
-
-#### Scenario: Pending switch is visible, not silent
-
-- **WHEN** a switch is scheduled behind a running analysis
-- **THEN** the TUI shows the pending selection and clears the pending state once applied
-
