@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { err, ok, type Result } from "neverthrow";
 
 import "../../extensions/index.ts"; // installs Response.prototype.jsonWith, which listConnectionModels uses
-import type { ChatSetupError } from "../proxy/models.ts";
+import type { ChatSetupError, ModelAccess } from "../proxy/models.ts";
 import type { ResolvedModelConnection } from "./config.ts";
-import { listConnectionModels, type ListModelsSeams } from "./model_listing.ts";
+import { listConnectionModels, validateModelSelection, type ListModelsSeams, type ValidateSelectionSeams } from "./model_listing.ts";
 
 // Drives `listConnectionModels` through injected seams so the per-mode request shaping (cliproxy vs.
 // direct OpenAI-compatible vs. direct Anthropic) and the Result-channel degradations are exercised with
@@ -162,5 +162,174 @@ describe("listConnectionModels — expected failures degrade on the Result chann
         ).toEqual({
             type: "no_models",
         });
+    });
+});
+
+// Drives `validateModelSelection` (the picker's commit-time accessibility check) through injected seams:
+// the cliproxy verdict is DELEGATED to checkModelAccess (asserted, never reimplemented here), the
+// direct-anthropic `count_tokens` request is shaped + mapped in-file, and every can't-decide branch
+// resolves to `inconclusive` so a switch is never blocked by validation. No network, no proxy config.
+
+/** Build validate seams; every effect that a given test does NOT expect throws, so an unwanted call fails loudly. */
+function validateSeamsFor(opts: {
+    connection: ResolvedModelConnection;
+    readProxyKey?: () => Promise<Result<string, ChatSetupError>>;
+    modelApiKey?: string | undefined;
+    checkModelAccess?: (apiKey: string, modelId: string, signal?: AbortSignal) => Promise<ModelAccess>;
+    fetch?: (url: string, init: RequestInit) => Promise<Response>;
+}): ValidateSelectionSeams {
+    return {
+        resolveConnection: () => opts.connection,
+        readProxyKey: opts.readProxyKey ?? (async () => ok("sk-proxy")),
+        readModelApiKey: () => opts.modelApiKey,
+        checkModelAccess:
+            opts.checkModelAccess ??
+            (() => {
+                throw new Error("checkModelAccess must not be called");
+            }),
+        fetch:
+            opts.fetch ??
+            (() => {
+                throw new Error("fetch must not be called");
+            }),
+    };
+}
+
+const DIRECT_ANTHROPIC: ResolvedModelConnection = {
+    mode: "direct",
+    provider: "anthropic",
+    baseURL: "https://api.anthropic.com/v1",
+    protocol: "anthropic",
+    agents: {},
+};
+
+describe("validateModelSelection — per-mode commit validation", () => {
+    test("cliproxy delegates to checkModelAccess with the proxy key and returns its verdict", async () => {
+        const seen: { apiKey: string; modelId: string }[] = [];
+        const result = await validateModelSelection(
+            "claude-opus-4-8",
+            validateSeamsFor({
+                connection: { mode: "cliproxy", provider: "anthropic", agents: {} },
+                checkModelAccess: async (apiKey, modelId) => {
+                    seen.push({ apiKey, modelId });
+                    return "served";
+                },
+            }),
+        );
+        expect(result).toBe("served");
+        expect(seen).toEqual([{ apiKey: "sk-proxy", modelId: "claude-opus-4-8" }]);
+    });
+
+    test("cliproxy with no proxy key is inconclusive and never delegates", async () => {
+        let delegated = 0;
+        const result = await validateModelSelection(
+            "claude-opus-4-8",
+            validateSeamsFor({
+                connection: { mode: "cliproxy", provider: "anthropic", agents: {} },
+                readProxyKey: async () => err({ type: "proxy_key_missing" }),
+                checkModelAccess: async () => {
+                    delegated++;
+                    return "served";
+                },
+            }),
+        );
+        expect(result).toBe("inconclusive");
+        expect(delegated).toBe(0);
+    });
+
+    test("direct-anthropic 200 is served, POSTing count_tokens with the x-api-key + version headers", async () => {
+        const calls: { url: string; init: RequestInit }[] = [];
+        const result = await validateModelSelection(
+            "claude-sonnet-4-5",
+            validateSeamsFor({
+                connection: DIRECT_ANTHROPIC,
+                modelApiKey: "sk-ant",
+                fetch: async (url, init) => {
+                    calls.push({ url, init });
+                    return new Response("{}", { status: 200 });
+                },
+            }),
+        );
+        expect(result).toBe("served");
+        expect(calls[0]?.url).toBe("https://api.anthropic.com/v1/messages/count_tokens");
+        expect(calls[0]?.init.method).toBe("POST");
+        expect(calls[0]?.init.headers).toMatchObject({ "x-api-key": "sk-ant", "anthropic-version": "2023-06-01" });
+    });
+
+    test("direct-anthropic 404 with a not_found_error body is not_found", async () => {
+        const result = await validateModelSelection(
+            "claude-nope",
+            validateSeamsFor({
+                connection: DIRECT_ANTHROPIC,
+                modelApiKey: "sk-ant",
+                fetch: async () => new Response(JSON.stringify({ error: { type: "not_found_error" } }), { status: 404 }),
+            }),
+        );
+        expect(result).toBe("not_found");
+    });
+
+    test("direct-anthropic 404 WITHOUT a not_found_error body is inconclusive (matches checkModelAccess)", async () => {
+        const result = await validateModelSelection(
+            "claude-sonnet-4-5",
+            validateSeamsFor({
+                connection: DIRECT_ANTHROPIC,
+                modelApiKey: "sk-ant",
+                // A proxy/gateway that does not route count_tokens 404s everything — a bare 404 must NOT read
+                // as inaccessible, only `not_found_error` does.
+                fetch: async () => new Response("Not Found", { status: 404 }),
+            }),
+        );
+        expect(result).toBe("inconclusive");
+    });
+
+    test("direct-anthropic whose request throws (timeout/abort) is inconclusive", async () => {
+        const result = await validateModelSelection(
+            "claude-sonnet-4-5",
+            validateSeamsFor({
+                connection: DIRECT_ANTHROPIC,
+                modelApiKey: "sk-ant",
+                fetch: async () => {
+                    throw new Error("The operation timed out");
+                },
+            }),
+        );
+        expect(result).toBe("inconclusive");
+    });
+
+    test("direct openai-compatible is inconclusive without issuing any request", async () => {
+        let fetchCount = 0;
+        const result = await validateModelSelection(
+            "gpt-4o",
+            validateSeamsFor({
+                connection: { mode: "direct", provider: "openai", baseURL: "https://api.example.com/v1", protocol: "openai-compatible", agents: {} },
+                modelApiKey: "sk-direct",
+                fetch: async () => {
+                    fetchCount++;
+                    return new Response("{}");
+                },
+            }),
+        );
+        expect(result).toBe("inconclusive");
+        expect(fetchCount).toBe(0);
+    });
+
+    test("an invalid connection config is inconclusive without touching any validation effect", async () => {
+        let touched = 0;
+        const result = await validateModelSelection(
+            "claude-opus-4-8",
+            validateSeamsFor({
+                connection: { mode: "cliproxy", provider: "anthropic", agents: {}, configError: { issues: "models.agents.sandbox: expected string" } },
+                checkModelAccess: async () => {
+                    touched++;
+                    return "served";
+                },
+                fetch: async () => {
+                    touched++;
+                    return new Response("{}");
+                },
+            }),
+        );
+        expect(result).toBe("inconclusive");
+        expect(touched).toBe(0);
     });
 });

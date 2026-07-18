@@ -15,15 +15,20 @@ import {
     normalizeAdoptedBaseURL,
     parseConnectionMode,
     probeCredentialSource,
+    probeOnce,
     providerKindForSlug,
     recordCliproxyProvider,
     retryWhileUnreachable,
+    selectDefaultModel,
     setup,
+    warnStalePins,
     writeDirectConnection,
     type ProbeAttempt,
 } from "./setup.ts";
 import * as embeddingSetup from "../embedding/setup.ts";
 import * as refsCommands from "../refs/commands.ts";
+import { writeAgentModel, type ResolvedModelConnection } from "../harness/config.ts";
+import { __resetModelCacheForTest, type ModelAccess } from "../proxy/models.ts";
 import { readConfig } from "../../lib/config.ts";
 import * as container from "../../lib/container.ts";
 import { env, type ProviderEnvSnapshot } from "../../lib/env.ts";
@@ -603,5 +608,240 @@ describe("setup() — preselected embeddings run ahead of the runtime gate", () 
         // Called exactly once — the preselected step ahead of the gate; the in-flow site is guarded and skipped.
         expect(embedSpy).toHaveBeenCalledTimes(1);
         expect(embedSpy.mock.calls[0]).toEqual([process.stdin.isTTY, "local"]);
+    });
+});
+
+/** Write a setup-shaped proxy config carrying `key`, so `readApiKey` (which reads a REAL file) resolves. */
+function writeProxyKey(key: string): void {
+    assertTestSandbox(env.cliproxyConfigPath);
+    mkdirSync(dirname(env.cliproxyConfigPath), { recursive: true });
+    writeFileSync(env.cliproxyConfigPath, ["api-keys:", `  - "${key}"`, "port: 8317", ""].join("\n"));
+}
+
+// The election lives INSIDE resolveModelId, so the launch probe inherits it with no adaptation: a
+// top-ranked candidate the credential cannot serve is walked past BEFORE the completion probe runs, so
+// the probe verifies a model the credential can actually use. Global-fetch pattern (from models.test.ts)
+// because the real /models → count_tokens → /messages path is under test.
+describe("probeOnce — the election feeds the probe a servable model", () => {
+    const realFetch = globalThis.fetch;
+
+    beforeEach(() => {
+        __resetModelCacheForTest();
+        writeProxyKey("sk-probe");
+    });
+    afterEach(() => {
+        globalThis.fetch = realFetch;
+        __resetModelCacheForTest();
+        assertTestSandbox(env.cliproxyConfigPath);
+        rmSync(env.cliproxyConfigPath, { force: true });
+    });
+
+    test("an inaccessible top candidate is walked past, so the completion probe reads ok — not 'not verifiable'", async () => {
+        // /models advertises two claude ids (newest ranks first by recency); the newest 404s the
+        // count_tokens check, so the election walks to the older served one and the /messages completion 200s.
+        globalThis.fetch = (async (url: string, init?: RequestInit) => {
+            const target = String(url);
+            if (target.endsWith("/messages/count_tokens")) {
+                const model = JSON.parse(String(init?.body)).model;
+                return model === "claude-new"
+                    ? new Response(JSON.stringify({ error: { type: "not_found_error" } }), { status: 404 })
+                    : new Response("{}", { status: 200 });
+            }
+            if (target.endsWith("/messages")) return new Response("{}", { status: 200 });
+            return new Response(
+                JSON.stringify({
+                    data: [
+                        { id: "claude-new", created: 200 },
+                        { id: "claude-old", created: 100 },
+                    ],
+                }),
+            );
+        }) as unknown as typeof fetch;
+
+        expect(await probeOnce()).toEqual({ kind: "ok" });
+    });
+});
+
+// The launch gate's stale-pin warning: warn — NEVER block — when an explicitly-pinned model no longer
+// serves. Driven through injected seams (no proxy, container, or real config). `warnStalePins` returns
+// void, so it structurally cannot gate the launch it runs after; the assertions below only pin which
+// pins are checked and which warn.
+describe("warnStalePins", () => {
+    function cliproxy(agents: ResolvedModelConnection["agents"] = {}, provider = "anthropic"): ResolvedModelConnection {
+        return { mode: "cliproxy", provider, agents };
+    }
+
+    function run(connection: ResolvedModelConnection, modelPin: string | null, verdict: (id: string) => ModelAccess) {
+        const checked: string[] = [];
+        const warnings: string[] = [];
+        const done = warnStalePins({
+            connection,
+            modelPin,
+            check: async (id) => {
+                checked.push(id);
+                return verdict(id);
+            },
+            warn: (m) => warnings.push(m),
+        });
+        return { checked, warnings, done };
+    }
+
+    test("a not_found pin warns, naming the model and the agent that resolves to it", async () => {
+        const r = run(cliproxy({ conversation: "claude-stale" }), null, () => "not_found");
+        await r.done;
+        expect(r.checked).toEqual(["claude-stale"]);
+        expect(r.warnings).toHaveLength(1);
+        expect(r.warnings[0]).toContain("claude-stale");
+        expect(r.warnings[0]).toContain("conversation");
+    });
+
+    test("a served pin is silent", async () => {
+        const r = run(cliproxy({ conversation: "claude-ok" }), null, () => "served");
+        await r.done;
+        expect(r.checked).toEqual(["claude-ok"]);
+        expect(r.warnings).toEqual([]);
+    });
+
+    test("an inconclusive check is silent — only a definite verdict interrupts launch output", async () => {
+        const r = run(cliproxy({ conversation: "claude-maybe" }), null, () => "inconclusive");
+        await r.done;
+        expect(r.checked).toEqual(["claude-maybe"]);
+        expect(r.warnings).toEqual([]);
+    });
+
+    test("no pins → nothing is checked (auto-resolved sessions are untouched — election already validated)", async () => {
+        const r = run(cliproxy({}), null, () => "not_found");
+        await r.done;
+        expect(r.checked).toEqual([]);
+        expect(r.warnings).toEqual([]);
+    });
+
+    test("a non-anthropic connection is never checked (count_tokens is anthropic-protocol only)", async () => {
+        const r = run(cliproxy({ conversation: "gpt-4o" }, "openai"), null, () => "not_found");
+        await r.done;
+        expect(r.checked).toEqual([]);
+    });
+
+    test("direct mode is never checked (a user's own endpoint is not ours to spend on validation)", async () => {
+        const conn: ResolvedModelConnection = {
+            mode: "direct",
+            provider: "anthropic",
+            baseURL: "http://localhost:1",
+            protocol: "anthropic",
+            agents: { conversation: "claude-x" },
+        };
+        const r = run(conn, null, () => "not_found");
+        await r.done;
+        expect(r.checked).toEqual([]);
+    });
+
+    test("a harness.model pin covers BOTH agents in one check and one warning", async () => {
+        const r = run(cliproxy({}), "claude-both", () => "not_found");
+        await r.done;
+        expect(r.checked).toEqual(["claude-both"]); // one distinct id, checked once
+        expect(r.warnings).toHaveLength(1);
+        expect(r.warnings[0]).toContain("both agents");
+    });
+
+    test("an agent override redirects one agent, splitting harness.model into two distinct pins", async () => {
+        // conversation → its override (claude-conv); sandbox → the harness.model fallback (claude-both).
+        const r = run(cliproxy({ conversation: "claude-conv" }), "claude-both", () => "not_found");
+        await r.done;
+        expect(new Set(r.checked)).toEqual(new Set(["claude-conv", "claude-both"]));
+        expect(r.warnings).toHaveLength(2);
+    });
+});
+
+// The interactive setup default-model step, driven through injected seams (no clack, proxy, or TTY).
+// Writes land in the sandboxed config; each test starts and ends from a clean config.
+describe("selectDefaultModel", () => {
+    beforeEach(() => {
+        assertTestSandbox(env.configPath);
+        rmSync(env.configPath, { force: true });
+    });
+    afterEach(() => {
+        assertTestSandbox(env.configPath);
+        rmSync(env.configPath, { force: true });
+    });
+
+    const writeBoth = (id: string) => writeAgentModel("conversation", id).andThen(() => writeAgentModel("sandbox", id));
+
+    function deps(over: Partial<Parameters<typeof selectDefaultModel>[0]>): Parameters<typeof selectDefaultModel>[0] {
+        return {
+            isInteractive: () => true,
+            elect: async () => "claude-elected",
+            candidates: async () => ["claude-a"],
+            check: async () => "served",
+            prompt: async () => ({ auto: true }),
+            writeBoth,
+            warn: () => {},
+            ...over,
+        };
+    }
+
+    /** Read back the persisted per-agent overrides; `models` is `unknown` in lib/config.ts (validated elsewhere). */
+    function persistedAgents(): Record<string, string> | undefined {
+        return (readConfig().models as { agents?: Record<string, string> } | undefined)?.agents;
+    }
+
+    test("accepting Auto writes nothing — the default stays adaptive", async () => {
+        await selectDefaultModel(deps({ prompt: async () => ({ auto: true }) }));
+        expect(readConfig().models).toBeUndefined();
+    });
+
+    test("an explicit pick pins BOTH user-facing agents to the chosen id", async () => {
+        await selectDefaultModel(deps({ candidates: async () => ["claude-pick"], prompt: async () => ({ auto: false, modelId: "claude-pick" }) }));
+        expect(persistedAgents()).toEqual({ conversation: "claude-pick", sandbox: "claude-pick" });
+    });
+
+    test("the offered list hides a not_found model but keeps an inconclusive one", async () => {
+        let offered: string[] = [];
+        await selectDefaultModel(
+            deps({
+                candidates: async () => ["claude-404", "claude-maybe"],
+                check: async (id) => (id === "claude-404" ? "not_found" : "inconclusive"),
+                prompt: async (_elected, models) => {
+                    offered = models;
+                    return { auto: true };
+                },
+            }),
+        );
+        expect(offered).toEqual(["claude-maybe"]);
+    });
+
+    test("a non-TTY skips the step entirely — no election, no prompt, no write", async () => {
+        let elected = false;
+        let prompted = false;
+        await selectDefaultModel(
+            deps({
+                isInteractive: () => false,
+                elect: async () => {
+                    elected = true;
+                    return "claude-x";
+                },
+                prompt: async () => {
+                    prompted = true;
+                    return { auto: true };
+                },
+            }),
+        );
+        expect(elected).toBe(false);
+        expect(prompted).toBe(false);
+        expect(readConfig().models).toBeUndefined();
+    });
+
+    test("a failed election (proxy down) skips gracefully — no prompt, no write", async () => {
+        let prompted = false;
+        await selectDefaultModel(
+            deps({
+                elect: async () => null,
+                prompt: async () => {
+                    prompted = true;
+                    return { auto: true };
+                },
+            }),
+        );
+        expect(prompted).toBe(false);
+        expect(readConfig().models).toBeUndefined();
     });
 });

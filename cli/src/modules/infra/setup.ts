@@ -11,8 +11,25 @@ import { firstReadyRuntime, runtimeIds, runtimes, ContainerRuntimeError, type Co
 import { anthropicAuthTokenSet, detectProviderEnv, env, providerApiKeyVar, resolveModelApiKey, type ProviderEnvSnapshot } from "../../lib/env.ts";
 import { createCredentialSource, credentialErrorMessage, type CredentialScheme } from "../../lib/credential.ts";
 import { select, promptText } from "../../lib/cli.ts";
-import { detectedMachine, resolveHarnessConfig, resolveModelConnection } from "../harness/config.ts";
-import { readApiKey, resolveModelId, type ChatSetupError } from "../proxy/models.ts";
+import {
+    AGENT_NAMES,
+    detectedMachine,
+    resolveHarnessConfig,
+    resolveModelConnection,
+    writeAgentModel,
+    type AgentName,
+    type ResolvedModelConnection,
+} from "../harness/config.ts";
+import {
+    checkModelAccess,
+    listModelCandidates,
+    modelMatchesProvider,
+    rankModelCandidates,
+    readApiKey,
+    resolveModelId,
+    type ChatSetupError,
+    type ModelAccess,
+} from "../proxy/models.ts";
 import { type PostgresConnection } from "./postgres_types.ts";
 import {
     writeComposeFile,
@@ -349,6 +366,14 @@ export async function setup(options: SetupOptions): Promise<void> {
             pgConn = resolvePostgresConfig();
         }
 
+        // --- default chat model ---
+        // Cliproxy only, and only after the compose step above started the proxy, so the live `/models`
+        // list and the accessibility sweep can answer. Nothing here WAITS on the proxy's port bind (the
+        // readiness wait above is Postgres's own) — a proxy still binding just makes the step skip
+        // gracefully, which is fine because it is optional and must never fail setup. Offers a
+        // preselected Auto default plus the account's accessible models.
+        await runDefaultModelSetup(mode);
+
         // --- analysis resource allowance ---
         // Collects the machine budget for the harness's resource policy — the
         // total share of this host analyses may use; per-step ceilings are
@@ -441,6 +466,129 @@ async function runSandboxImageSetup(): Promise<void> {
                 ? log.info(error.message)
                 : log.warn(`Sandbox image install failed: ${error.message}\n  You can retry later with \`inflexa sandbox pull\`.`),
     );
+}
+
+// --- default-model selection (setup) ---------------------------------------
+//
+// After the CLIProxy login, interactive setup offers a default chat model: a preselected Auto row
+// (labeled with the currently elected id) followed by the account's accessible models. Auto writes
+// nothing — the default stays adaptive `model: null` resolution, which keeps electing the newest served
+// model across launches. An explicit pick pins BOTH user-facing agents (per-agent divergence stays a
+// picker power feature). Every id is discovered live from the proxy — none is ever hardcoded — so a
+// proxy that is down or not yet answering simply skips the step: an optional convenience must not add a
+// new way for setup to fail.
+
+/**
+ * How many accessibility checks the setup sweep runs at once. Small and fixed: it overlaps the
+ * round-trips without firing the whole list at the upstream simultaneously (the design's bounded-sweep
+ * requirement). No dependency — a hand-rolled worker pool over the ranked list.
+ */
+const SETUP_SWEEP_CONCURRENCY = 4;
+
+/**
+ * Filter a ranked id list to the ones the account can serve. ONLY a definite `not_found` hides a model;
+ * an `inconclusive` check keeps it listed (the check failed, not the model) — the spec's "hide only
+ * definitely inaccessible models". The fixed-size worker pool writes each verdict at its id's index, so
+ * the surviving ids are read back in the original rank order.
+ */
+async function sweepAccessibleModels(check: (modelId: string) => Promise<ModelAccess>, ranked: string[]): Promise<string[]> {
+    const verdicts = new Array<ModelAccess>(ranked.length);
+    let next = 0;
+    async function worker(): Promise<void> {
+        for (let i = next++; i < ranked.length; i = next++) {
+            verdicts[i] = await check(ranked[i]!);
+        }
+    }
+    await Promise.all(Array.from({ length: Math.min(SETUP_SWEEP_CONCURRENCY, ranked.length) }, worker));
+    return ranked.filter((_, i) => verdicts[i] !== "not_found");
+}
+
+/** The setup select's outcome: accept the adaptive Auto default, or pin a specific id. */
+type DefaultModelChoice = { auto: true } | { auto: false; modelId: string };
+
+/**
+ * The seams {@link selectDefaultModel} drives, injectable so the TTY gate, the accessibility sweep, and
+ * the Auto-vs-pin write policy are unit-testable without clack, a proxy, or a TTY. Production assembly:
+ * {@link runDefaultModelSetup}.
+ */
+type DefaultModelDeps = {
+    isInteractive: () => boolean;
+    /** The cached election's id, for the Auto label; `null` when election failed (proxy down) → skip. */
+    elect: () => Promise<string | null>;
+    /** The ranked, connection-family candidate ids to sweep; empty (no listing) → skip. */
+    candidates: () => Promise<string[]>;
+    /** One model's accessibility check, bounded like every probe round-trip. */
+    check: (modelId: string) => Promise<ModelAccess>;
+    /** Present Auto (preselected, labeled with `electedId`) atop `models`; returns the user's choice. */
+    prompt: (electedId: string, models: string[]) => Promise<DefaultModelChoice>;
+    /** Persist the chosen id to BOTH user-facing agents. */
+    writeBoth: (modelId: string) => Result<void, ConfigError>;
+    warn: (message: string) => void;
+};
+
+/**
+ * The interactive default-model step. A non-TTY skips entirely (writes nothing — Auto semantics). A
+ * failed election or an empty candidate list (a down/unreachable proxy) skips gracefully rather than
+ * turning an optional step into a failure. Accepting Auto writes nothing (the default stays adaptive
+ * `model: null` resolution). An explicit pick persists to BOTH agents; a write failure only warns —
+ * setup's real work is already done.
+ */
+export async function selectDefaultModel(deps: DefaultModelDeps): Promise<void> {
+    if (!deps.isInteractive()) return;
+    const electedId = await deps.elect();
+    if (electedId === null) return;
+    const ranked = await deps.candidates();
+    if (ranked.length === 0) return;
+    const models = await sweepAccessibleModels(deps.check, ranked);
+    const choice = await deps.prompt(electedId, models);
+    if (choice.auto) return;
+    deps.writeBoth(choice.modelId).match(
+        () => {},
+        (e) => deps.warn(`Could not save the model selection: ${e.type}`),
+    );
+}
+
+/** The Auto row's sentinel value — a non-id token so it can never collide with a real model id. */
+const AUTO_MODEL_SENTINEL = "__auto__";
+
+/**
+ * Production assembly of {@link selectDefaultModel} for the cliproxy setup path. Every model id is
+ * discovered live: the Auto label from the cached election ({@link resolveModelId}), the offered pool
+ * from the raw `/models` list ({@link listModelCandidates}) ranked and filtered to the connection family
+ * (in practice the rank already yields the winning family's pool). A missing proxy key or an unreachable
+ * proxy resolves to a skip (the seams return `null`/`[]`), so a down proxy never fails setup. Cliproxy
+ * only — a direct connection has no owned proxy to elect against. The select matches the surrounding
+ * setup prompts (`select` from lib/cli.ts), so a cancel aborts the command exactly as they do.
+ */
+async function runDefaultModelSetup(mode: ConnectionMode): Promise<void> {
+    if (mode !== "cliproxy") return;
+    const key = await readApiKey();
+    if (key.isErr()) return;
+    const apiKey = key.value;
+    const provider = resolveModelConnection().provider;
+    await selectDefaultModel({
+        isInteractive: () => Boolean(process.stdin.isTTY),
+        elect: async () =>
+            (await resolveModelId(apiKey)).match(
+                (id) => id,
+                () => null,
+            ),
+        candidates: async () =>
+            (await listModelCandidates(apiKey)).match(
+                (list) => rankModelCandidates(list).filter((id) => modelMatchesProvider(provider, id)),
+                () => [],
+            ),
+        check: (modelId) => checkModelAccess(apiKey, modelId, AbortSignal.timeout(PROBE_TIMEOUT_MS)),
+        prompt: async (electedId, models) => {
+            const chosen = await select("Default chat model", [
+                { value: AUTO_MODEL_SENTINEL, label: `Auto — recommended: ${electedId}` },
+                ...models.map((id) => ({ value: id, label: id })),
+            ]);
+            return chosen === AUTO_MODEL_SENTINEL ? { auto: true } : { auto: false, modelId: chosen };
+        },
+        writeBoth: (modelId) => writeAgentModel("conversation", modelId).andThen(() => writeAgentModel("sandbox", modelId)),
+        warn: (message) => log.warn(message),
+    });
 }
 
 /**
@@ -1497,9 +1645,12 @@ export async function ensureLiveCredential(deps: LiveCredentialDeps): Promise<Re
 /**
  * One full probe attempt: resolve the inputs from the provisioned config and the proxy's own model
  * list, then ask. Both round-trips are bounded, so {@link retryWhileUnreachable}'s budget bounds the
- * whole loop — an unbounded one would hand a wedged proxy the launch indefinitely.
+ * whole loop — an unbounded one would hand a wedged proxy the launch indefinitely. The election lives
+ * inside {@link resolveModelId}, so this inherits it with no adaptation: a top-ranked candidate the
+ * credential cannot serve is walked past there, and this probes a model already known to be servable.
+ * Exported for its integration test.
  */
-async function probeOnce(): Promise<ProbeAttempt> {
+export async function probeOnce(): Promise<ProbeAttempt> {
     const key = await readApiKey();
     if (key.isErr()) return { kind: "unobservable", detail: key.error.type };
     const model = await resolveModelId(key.value, AbortSignal.timeout(PROBE_TIMEOUT_MS));
@@ -1528,6 +1679,88 @@ async function verifyCredentialAtLaunch(rt: ContainerRuntime): Promise<Result<vo
         // Printed, not logged: this lands in the normal-stdio launch phase right before the login
         // takes the terminal, beside ensureProxyReady's own fresh-login notice.
         announce: (message) => console.log(`\n  ${message}`),
+        warn: (message) => log.warn(message),
+    });
+}
+
+// --- stale explicit-pin warning --------------------------------------------
+//
+// The credential probe above validates only the AUTO default (election walks it against the live
+// credential). An EXPLICIT pin — `models.agents.*`, or the both-agents `harness.model` fallback — is
+// what chat actually runs on, yet the probe never touches it: it resolves the auto default, not the
+// per-agent id. So a pin that has gone stale (the account no longer serves it) sails past launch and
+// only fails mid-chat. This gate closes that gap: it names the stale pin at launch, where stdio is
+// still normal, without ever blocking the launch or rewriting the user's config.
+
+/**
+ * The seams {@link warnStalePins} drives, injectable so the pin→agent grouping and the verdict→warning
+ * policy are unit-testable without a proxy, a container, or a real config. Production assembly:
+ * {@link warnStalePinsAtLaunch}.
+ */
+type StalePinDeps = {
+    /** The resolved connection — its `mode`/`provider` gate the check and its `agents` carry the per-agent pins. */
+    connection: ResolvedModelConnection;
+    /** The both-agents fallback pin (`harness.model`, i.e. `cfg.model`); `null` when unset. */
+    modelPin: string | null;
+    /** One model's accessibility check, bounded like every probe round-trip. */
+    check: (modelId: string) => Promise<ModelAccess>;
+    warn: (message: string) => void;
+};
+
+/**
+ * Warn — never block — when an explicitly-pinned model has gone stale. Applies ONLY in cliproxy mode on
+ * an anthropic-family connection (the `count_tokens` route is Anthropic-protocol, and a direct or
+ * non-anthropic endpoint is not ours to spend on validation — the same gate the launch probe uses) and
+ * ONLY when at least one explicit pin exists; an auto-resolved session (no pins) is untouched, because
+ * the election already validated its default. Each DISTINCT pinned id is checked exactly once, and only a
+ * definite `not_found` warns — `served`/`inconclusive` stay silent (a flaky check must not interrupt the
+ * launch output). Returns nothing on every path: this can only add a line, never a failure.
+ */
+export async function warnStalePins(deps: StalePinDeps): Promise<void> {
+    if (deps.connection.mode !== "cliproxy" || deps.connection.provider !== "anthropic") return;
+
+    // Each agent's EFFECTIVE explicit pin is its own `models.agents` override, else the both-agents
+    // `harness.model` fallback; an agent with neither is auto-resolved and skipped. Grouping by the
+    // resolved id means a `harness.model` pin shared by both agents is one round-trip and one warning
+    // naming both, while an agent override that redirects one of them splits into its own distinct pin.
+    const byId = new Map<string, AgentName[]>();
+    for (const agent of AGENT_NAMES) {
+        const pin = deps.connection.agents[agent] ?? deps.modelPin ?? undefined;
+        if (pin === undefined) continue;
+        byId.set(pin, [...(byId.get(pin) ?? []), agent]);
+    }
+    if (byId.size === 0) return;
+
+    for (const [modelId, agents] of byId) {
+        if ((await deps.check(modelId)) !== "not_found") continue;
+        deps.warn(stalePinWarning(modelId, agents));
+    }
+}
+
+/**
+ * The launch warning for one stale pin: the pinned id, which agent(s) resolve to it (both when a shared
+ * `harness.model` pin covers the whole set, else the specific agent), and the two repick remedies.
+ */
+function stalePinWarning(modelId: string, agents: AgentName[]): string {
+    const who = agents.length === AGENT_NAMES.length ? "both agents" : `the ${agents.join(" and ")} agent`;
+    return (
+        `The pinned model "${modelId}" (${who}) is no longer served by your account.\n` +
+        "  Repick it with the model-switch commands in the command palette, or re-run `inflexa setup`."
+    );
+}
+
+/**
+ * Production assembly of {@link warnStalePins}: read the proxy client key, then bound each accessibility
+ * check with the same per-round-trip timeout the probe uses. A missing key needs no warning — the probe
+ * above already surfaced it as `unobservable`, and there is nothing to check against.
+ */
+async function warnStalePinsAtLaunch(): Promise<void> {
+    const key = await readApiKey();
+    if (key.isErr()) return;
+    await warnStalePins({
+        connection: resolveModelConnection(),
+        modelPin: resolveHarnessConfig().model,
+        check: (modelId) => checkModelAccess(key.value, modelId, AbortSignal.timeout(PROBE_TIMEOUT_MS)),
         warn: (message) => log.warn(message),
     });
 }
@@ -1627,6 +1860,11 @@ export async function ensureProxyReady(mode: "cliproxy" | "direct"): Promise<Res
         }
         const live = await verifyCredentialAtLaunch(rt);
         if (live.isErr()) return err(live.error);
+
+        // The probe validated only the AUTO default; the pins chat actually runs on are checked here,
+        // after the credential is confirmed live and the proxy is answering (so count_tokens reads a real
+        // verdict, not a cold-boot silence). Warn-only — it never gates the launch it just cleared.
+        await warnStalePinsAtLaunch();
     }
 
     // Embedding readiness gate: if the user previously opted into local mode,

@@ -1,4 +1,4 @@
-import { Show, type JSX } from "solid-js";
+import { createSignal, Show, type JSX } from "solid-js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 // Type-only — erased at compile time, so it does NOT pull tsprov/verify into the TUI's startup path.
@@ -40,7 +40,8 @@ import {
     matchAnalysis,
 } from "../modules/analysis/analysis.ts";
 import { writeAgentModel, type AgentName } from "../modules/harness/config.ts";
-import { listConnectionModels } from "../modules/harness/model_listing.ts";
+import { listConnectionModels, validateModelSelection } from "../modules/harness/model_listing.ts";
+import type { ModelAccess } from "../modules/proxy/models.ts";
 import { currentAgentModels, requestAgentModelChange } from "../modules/harness/agent_switch.ts";
 import { resolveInputPath } from "../modules/analysis/input.ts";
 import { resolveContext, describeContext } from "../modules/analysis/context.ts";
@@ -207,11 +208,43 @@ function applyAgentSelection(agent: AgentName, model: string): void {
 }
 
 /**
- * The agent-parameterized model picker: a {@link SelectDialog} over the
- * connection's live models with the agent's CURRENT model marked, degrading to a {@link PromptDialog}
- * free-text entry when listing failed (`models === null`). Purely presentational — the command
- * resolves the listing and wires `onSubmit` (persist + apply) and `onCancel` (close) — so it renders as an
- * inert design-gallery/test exhibit unchanged.
+ * The commit decision for a validated model pick — PURE, so the "reject in-dialog vs persist" rule is
+ * unit-testable without a live dialog. A definite `not_found` keeps the picker open with an inline error
+ * naming the model and the account-accessibility cause (design D6); `served` and `inconclusive` both
+ * persist (inconclusive-accept: an absent/flaky validation route never blocks a switch — spec).
+ */
+export function modelCommitDecision(model: string, access: ModelAccess): { persist: true } | { persist: false; error: string } {
+    if (access === "not_found") return { persist: false, error: `This account cannot serve ${model}. Pick another model, or check your credential.` };
+    return { persist: true };
+}
+
+/**
+ * Orchestrate one commit attempt: validate `model`, then either persist it or surface the inline error,
+ * per {@link modelCommitDecision}. Extracted from {@link ModelPickerDialog} so the full validate→decide
+ * flow is testable headlessly with injected effects; the dialog supplies only the effects and owns the
+ * busy/error rendering around this call.
+ */
+export async function runModelCommit(
+    model: string,
+    effects: { validate: (model: string) => Promise<ModelAccess>; persist: (model: string) => void; reportError: (message: string) => void },
+): Promise<void> {
+    const decision = modelCommitDecision(model, await effects.validate(model));
+    if (decision.persist) effects.persist(model);
+    else effects.reportError(decision.error);
+}
+
+/**
+ * The agent-parameterized model picker: a {@link SelectDialog} over the connection's live models with the
+ * agent's CURRENT model marked, degrading to a {@link PromptDialog} free-text entry when listing failed
+ * (`models === null`). A committed pick (listed OR free-text) is accessibility-validated (design D6)
+ * before it persists — while checking, the picker shows a busy {@link PromptDialog}; a definite
+ * `not_found` keeps it open with an inline error naming the model; `served`/`inconclusive` persist + close.
+ *
+ * The busy and inline-error affordances are PromptDialog's ONLY — {@link SelectDialog} has neither — so
+ * the validation phase renders as a PromptDialog regardless of which surface the pick came from. A listed
+ * pick therefore CONVERGES onto that same prompt (id pre-filled) rather than growing a bespoke list busy/
+ * error state, which the design-gallery rule forbids inventing. The picking-phase surfaces are unchanged,
+ * so the inert design-gallery/test exhibits render exactly as before (`validate` is never reached at rest).
  */
 export function ModelPickerDialog(props: {
     agent: AgentName;
@@ -219,39 +252,91 @@ export function ModelPickerDialog(props: {
     models: readonly string[] | null;
     /** The agent's currently-running model, marked `current` in the list and pre-filled in the free-text field. */
     current: string;
-    /** Persist + apply the chosen/typed model. */
-    onSubmit: (model: string) => void;
+    /** Accessibility-validate a committed id before persisting (design D6); the picker renders the busy/error phases around it. */
+    validate: (model: string) => Promise<ModelAccess>;
+    /** Persist + apply an accepted model, then close. */
+    onCommit: (model: string) => void;
     /** Close without changing anything (esc, click-outside, ctrl+c). */
     onCancel: () => void;
 }): JSX.Element {
     // A thunk so the fixed-per-mount `props.agent` read lands inside JSX (a tracked scope), satisfying
     // solid/reactivity without destructuring or a disable.
     const title = (): string => (props.agent === "conversation" ? "Switch chat model" : "Switch sandbox model");
+
+    // The picker's own sub-phase. `picking` shows the list/free-text surface; a commit moves it to
+    // `checking` (busy prompt) and then either persists+closes or lands on `error` (stays open, names the
+    // model). `pending`/`errorText` seed EMPTY (not from props) — they are only ever READ in the
+    // checking/error PromptDialog, which renders only after `commit()` has set them, so no props leak in.
+    const [phase, setPhase] = createSignal<"picking" | "checking" | "error">("picking");
+    const [pending, setPending] = createSignal("");
+    const [errorText, setErrorText] = createSignal("");
+
+    function commit(raw: string): void {
+        const id = raw.trim();
+        if (!id) {
+            notify({ kind: "warn", text: "A model id is required." });
+            return;
+        }
+        setPending(id);
+        setErrorText("");
+        setPhase("checking");
+        void runModelCommit(id, {
+            validate: props.validate,
+            persist: (accepted) => {
+                // Drop out of `checking` BEFORE onCommit closes: the busy close-guard vetoes even a
+                // programmatic commit close (dialog_host `dialogClose`), and PromptDialog's guard reads
+                // `busy` (= phase === "checking") LIVE — so clearing the phase first lets the close through.
+                setPhase("picking");
+                props.onCommit(accepted);
+            },
+            reportError: (message) => {
+                setErrorText(message);
+                setPhase("error");
+            },
+        });
+    }
+
     return (
         <Show
-            when={props.models}
-            keyed
+            when={phase() === "picking"}
             fallback={
                 <PromptDialog
                     title={title()}
-                    value={props.current}
+                    value={pending()}
                     placeholder="Enter a model id"
-                    description={() => <text fg={theme().fgMuted}>Could not list the connection's models — enter a model id manually.</text>}
+                    busy={phase() === "checking"}
+                    busyText={`Checking ${pending()}${GLYPHS.ellipsis}`}
+                    description={phase() === "error" ? () => <text fg={theme().error}>{errorText()}</text> : undefined}
                     onCancel={props.onCancel}
-                    onSubmit={props.onSubmit}
+                    onSubmit={commit}
                 />
             }
         >
-            {(models: readonly string[]) => (
-                <SelectDialog
-                    title={title()}
-                    placeholder={`Search models${GLYPHS.ellipsis}`}
-                    items={models.map((id) => ({ value: id, title: id, hint: id === props.current ? "current" : undefined }))}
-                    emptyText="No models listed by the connection"
-                    onCancel={props.onCancel}
-                    onSelect={props.onSubmit}
-                />
-            )}
+            <Show
+                when={props.models}
+                keyed
+                fallback={
+                    <PromptDialog
+                        title={title()}
+                        value={props.current}
+                        placeholder="Enter a model id"
+                        description={() => <text fg={theme().fgMuted}>Could not list the connection's models — enter a model id manually.</text>}
+                        onCancel={props.onCancel}
+                        onSubmit={commit}
+                    />
+                }
+            >
+                {(models: readonly string[]) => (
+                    <SelectDialog
+                        title={title()}
+                        placeholder={`Search models${GLYPHS.ellipsis}`}
+                        items={models.map((id) => ({ value: id, title: id, hint: id === props.current ? "current" : undefined }))}
+                        emptyText="No models listed by the connection"
+                        onCancel={props.onCancel}
+                        onSelect={commit}
+                    />
+                )}
+            </Show>
         </Show>
     );
 }
@@ -277,14 +362,10 @@ async function openModelPicker(ctx: Workspace, agent: AgentName): Promise<void> 
             agent={agent}
             models={models}
             current={current}
-            onSubmit={(model) => {
+            validate={(model) => validateModelSelection(model)}
+            onCommit={(model) => {
                 ctx.closeDialog();
-                const id = model.trim();
-                if (!id) {
-                    notify({ kind: "warn", text: "A model id is required." });
-                    return;
-                }
-                applyAgentSelection(agent, id);
+                applyAgentSelection(agent, model);
             }}
             onCancel={() => ctx.closeDialog()}
         />
