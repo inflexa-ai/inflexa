@@ -31,6 +31,7 @@ import {
     persistSynthesis,
 } from "./run-synthesis.js";
 import type { ToolContext } from "../tools/define-tool.js";
+import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
 
 const RUN_ID = "run-001";
 
@@ -338,6 +339,132 @@ describe("generateRunSynthesis — happy path", () => {
                 runId: RUN_ID,
             }),
         ).rejects.toThrow(/no step summaries/);
+    });
+});
+
+describe("submit_synthesis validation-rejection telemetry", () => {
+    it("counts each validation rejection and captures the issue paths", async () => {
+        const { submit, telemetry } = __buildInnerToolsForTest({
+            knownStepIds: new Set(["T1S1"]),
+            runId: RUN_ID,
+        });
+        const bad = validSynthesisPayload() as { findings: { stepId: string }[] };
+        bad.findings[0]!.stepId = "T9S9";
+
+        await submit.execute({ synthesis: bad }, makeToolCtx());
+        await submit.execute({ synthesis: bad }, makeToolCtx());
+
+        expect(telemetry.rejections).toBe(2);
+        expect([...telemetry.issuePaths].some((p) => p.includes("stepId"))).toBe(true);
+    });
+
+    it("does not count the post-success guard rejection", async () => {
+        const { submit, telemetry } = __buildInnerToolsForTest({
+            knownStepIds: new Set(["T1S1"]),
+            runId: RUN_ID,
+        });
+        // First call accepted; second call is the "already recorded" guard, not a
+        // validation rejection — it must not inflate the count.
+        await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
+        await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
+
+        expect(telemetry.rejections).toBe(0);
+        expect(telemetry.issuePaths.size).toBe(0);
+    });
+});
+
+describe("generateRunSynthesis — validation-rejection telemetry", () => {
+    const summaries = [{ stepId: "T1S1", agentId: "bulk-transcriptomics-agent", markdown: "## results" }];
+
+    it("threads the rejection count and issue paths onto a blocker skip", async () => {
+        const bad = validSynthesisPayload() as { findings: { stepId: string }[] };
+        bad.findings[0]!.stepId = "T9S9";
+        const provider = scriptedProvider((i) => {
+            if (i === 0 || i === 1) {
+                return makeMessage([toolUseBlock(`tu-${i}`, "submit_synthesis", { synthesis: bad })], "tool_use");
+            }
+            if (i === 2) {
+                return makeMessage([toolUseBlock("tu-b", "report_blocker", { reason: "cannot reconcile references" })], "tool_use");
+            }
+            return makeMessage([textBlock("done")], "end_turn");
+        });
+
+        const result = await generateRunSynthesis({
+            provider,
+            session: makeRunSession(),
+            model: "claude-test",
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            summaries,
+            planNarrative: "n/a",
+            runId: RUN_ID,
+        });
+
+        expect(result.kind).toBe("skipped");
+        if (result.kind === "skipped") {
+            expect(result.validationRejections).toBe(2);
+            expect(result.rejectedIssuePaths.some((p) => p.includes("stepId"))).toBe(true);
+        }
+    });
+
+    it("reports zero rejections for a clean blocker (misjudgment signal)", async () => {
+        const provider = scriptedProvider((i) =>
+            i === 0
+                ? makeMessage([toolUseBlock("tu-b", "report_blocker", { reason: "nothing to synthesize" })], "tool_use")
+                : makeMessage([textBlock("done")], "end_turn"),
+        );
+
+        const result = await generateRunSynthesis({
+            provider,
+            session: makeRunSession(),
+            model: "claude-test",
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            summaries,
+            planNarrative: "n/a",
+            runId: RUN_ID,
+        });
+
+        expect(result.kind).toBe("skipped");
+        if (result.kind === "skipped") {
+            expect(result.validationRejections).toBe(0);
+            expect(result.rejectedIssuePaths).toEqual([]);
+        }
+    });
+
+    it("reports zero rejections on a first-try produced synthesis", async () => {
+        const provider = scriptedProvider((i) =>
+            i === 0
+                ? makeMessage([toolUseBlock("tu-1", "submit_synthesis", { synthesis: validSynthesisPayload() })], "tool_use")
+                : makeMessage([textBlock("done")], "end_turn"),
+        );
+
+        const result = await generateRunSynthesis({
+            provider,
+            session: makeRunSession(),
+            model: "claude-test",
+            bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
+            summaries,
+            planNarrative: "n/a",
+            runId: RUN_ID,
+        });
+
+        expect(result.kind).toBe("synthesis");
+        if (result.kind === "synthesis") {
+            expect(result.validationRejections).toBe(0);
+        }
+    });
+});
+
+describe("blocker discipline copy", () => {
+    it("scopes the blocker tool description to empty/incoherent inputs, not 'no findings worth surfacing'", () => {
+        const { blocker } = __buildInnerToolsForTest({ knownStepIds: new Set(["T1S1"]), runId: RUN_ID });
+        expect(blocker.description.toLowerCase()).not.toContain("worth surfacing");
+        expect(blocker.description).toContain("empty findings[]");
+        expect(blocker.description.toLowerCase()).toMatch(/incoheren/);
+    });
+
+    it("synthesizer prompt states an empty findings[] is a valid submission and not a blocker", () => {
+        expect(synthesisAgentPrompt).toContain("is a valid submission");
+        expect(synthesisAgentPrompt).toContain("NOT a blocker");
     });
 });
 
