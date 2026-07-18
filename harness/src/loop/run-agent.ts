@@ -2,6 +2,7 @@ import { jsonSchema, tool as aiTool, type FinishReason, type ToolSet, type ToolC
 import type { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
+import { hintForZodIssue } from "../lib/zod-issues.js";
 import { classifyProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../providers/prompt-cache.js";
 import { resultStep } from "./run-step.js";
@@ -234,7 +235,7 @@ async function dispatchTool(
 
     const parsed = tool.inputSchema.safeParse(tu.input);
     if (!parsed.success) {
-        return errorResult(tu, `input validation failed: ${formatZodIssues(parsed.error)}`);
+        return errorResult(tu, `input validation failed: ${formatZodIssues(parsed.error, tu.input)}`);
     }
 
     try {
@@ -292,11 +293,12 @@ export function finalText(messages: readonly LoopMessage[]): string {
         .join("");
 }
 
-function formatZodIssues(error: z.ZodError): string {
+function formatZodIssues(error: z.ZodError, input: unknown): string {
     return error.issues
         .map((issue) => {
             const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
-            return `${path}: ${issue.message}`;
+            const hint = hintForZodIssue(issue, input);
+            return hint === undefined ? `${path}: ${issue.message}` : `${path}: ${issue.message} — ${hint}`;
         })
         .join("; ");
 }

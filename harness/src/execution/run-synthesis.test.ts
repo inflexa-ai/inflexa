@@ -2,9 +2,10 @@
  * Unit tests for the harness-native run synthesizer.
  *
  * Covers three layers:
- *   1. Inner-tool validation — `submit_synthesis` accepts a valid payload,
- *      rejects schema + semantic violations, and idempotently captures the
- *      outcome.
+ *   1. Inner-tool validation — `validate_synthesis` reports issues without
+ *      recording anything, and `submit_synthesis` accepts a valid payload,
+ *      rejects schema + semantic violations, and captures the outcome
+ *      last-valid-wins.
  *   2. Happy path through `generateRunSynthesis` — the synthesizer agent
  *      reaches a `submit_synthesis(accepted: true)` via the scripted provider
  *      and the function returns the validated synthesis.
@@ -160,18 +161,115 @@ describe("submit_synthesis inner tool", () => {
         expect(result.issues.some((i) => i.path.includes("pmid"))).toBe(true);
     });
 
-    it("rejects a second call after success", async () => {
+    it("does not clobber a recorded outcome when a later submission is invalid", async () => {
         const { submit, holder } = __buildInnerToolsForTest({
             knownStepIds: new Set(["T1S1"]),
             runId: RUN_ID,
         });
         await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
-        const second = (await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap() as {
+
+        const bad = validSynthesisPayload() as { findings: { stepId: string }[]; overview: string };
+        bad.findings[0]!.stepId = "T9S9";
+        bad.overview = "clobbered";
+
+        const second = (await submit.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
             accepted: false;
-            issues: { message: string }[];
+            issues: { code: string }[];
         };
+
         expect(second.accepted).toBe(false);
-        expect(second.issues[0]!.message).toMatch(/already been recorded/);
+        expect(second.issues.some((i) => i.code === "semantic")).toBe(true);
+        expect(holder.outcome?.kind).toBe("submitted");
+        if (holder.outcome?.kind === "submitted") {
+            expect(holder.outcome.synthesis.overview).toBe((validSynthesisPayload() as { overview: string }).overview);
+        }
+    });
+
+    it("overwrites an earlier outcome when a later submission is valid", async () => {
+        const { submit, holder } = __buildInnerToolsForTest({
+            knownStepIds: new Set(["T1S1"]),
+            runId: RUN_ID,
+        });
+        await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
+
+        const revised = validSynthesisPayload() as { overview: string };
+        revised.overview = "The revised, real synthesis of the run.";
+
+        const second = (await submit.execute({ synthesis: revised }, makeToolCtx()))._unsafeUnwrap() as { accepted: true };
+
+        expect(second.accepted).toBe(true);
+        expect(holder.outcome?.kind).toBe("submitted");
+        if (holder.outcome?.kind === "submitted") {
+            expect(holder.outcome.synthesis.overview).toBe("The revised, real synthesis of the run.");
+        }
+    });
+
+    it("overwrites a recorded blocker outcome", async () => {
+        const { submit, blocker, holder } = __buildInnerToolsForTest({
+            knownStepIds: new Set(["T1S1"]),
+            runId: RUN_ID,
+        });
+        await blocker.execute({ reason: "nothing to synthesize" }, makeToolCtx());
+        expect(holder.outcome?.kind).toBe("blocker");
+
+        const result = (await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap() as { accepted: true };
+
+        expect(result.accepted).toBe(true);
+        expect(holder.outcome?.kind).toBe("submitted");
+    });
+});
+
+describe("validate_synthesis inner tool", () => {
+    it("accepts a valid candidate without recording an outcome", async () => {
+        const { validate, holder } = __buildInnerToolsForTest({
+            knownStepIds: new Set(["T1S1"]),
+            runId: RUN_ID,
+        });
+
+        const result = (await validate.execute({ synthesis: validSynthesisPayload() }, makeToolCtx()))._unsafeUnwrap() as {
+            valid: true;
+            issues: unknown[];
+        };
+
+        expect(result.valid).toBe(true);
+        expect(result.issues).toHaveLength(0);
+        expect(holder.outcome).toBeNull();
+    });
+
+    it("reports schema issues on a malformed candidate instead of rejecting it", async () => {
+        const { validate, holder } = __buildInnerToolsForTest({
+            knownStepIds: new Set(["T1S1"]),
+            runId: RUN_ID,
+        });
+
+        const result = (await validate.execute({ synthesis: { overview: 42, findings: "not an array" } }, makeToolCtx()))._unsafeUnwrap() as {
+            valid: false;
+            issues: { path: string; code: string }[];
+        };
+
+        expect(result.valid).toBe(false);
+        expect(result.issues.length).toBeGreaterThan(0);
+        expect(result.issues.every((i) => i.code === "schema")).toBe(true);
+        expect(holder.outcome).toBeNull();
+    });
+
+    it("reports semantic issues and leaves a recorded outcome untouched", async () => {
+        const { validate, submit, holder } = __buildInnerToolsForTest({
+            knownStepIds: new Set(["T1S1"]),
+            runId: RUN_ID,
+        });
+        await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
+
+        const bad = validSynthesisPayload() as { findings: { stepId: string }[] };
+        bad.findings[0]!.stepId = "T9S9";
+
+        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
+            valid: false;
+            issues: { code: string }[];
+        };
+
+        expect(result.valid).toBe(false);
+        expect(result.issues.some((i) => i.code === "semantic")).toBe(true);
         expect(holder.outcome?.kind).toBe("submitted");
     });
 });
@@ -188,6 +286,18 @@ describe("report_blocker inner tool", () => {
         if (holder.outcome?.kind === "blocker") {
             expect(holder.outcome.reason).toBe("no synthesizable content");
         }
+    });
+
+    it("does not overwrite a recorded synthesis", async () => {
+        const { submit, blocker, holder } = __buildInnerToolsForTest({
+            knownStepIds: new Set(["T1S1"]),
+            runId: RUN_ID,
+        });
+        await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
+
+        await blocker.execute({ reason: "changed my mind" }, makeToolCtx());
+
+        expect(holder.outcome?.kind).toBe("submitted");
     });
 });
 
@@ -358,18 +468,27 @@ describe("submit_synthesis validation-rejection telemetry", () => {
         expect([...telemetry.issuePaths].some((p) => p.includes("stepId"))).toBe(true);
     });
 
-    it("does not count the post-success guard rejection", async () => {
-        const { submit, telemetry } = __buildInnerToolsForTest({
+    it("does not count a successful resubmission that supersedes an earlier one", async () => {
+        const { submit, telemetry, holder } = __buildInnerToolsForTest({
             knownStepIds: new Set(["T1S1"]),
             runId: RUN_ID,
         });
-        // First call accepted; second call is the "already recorded" guard, not a
-        // validation rejection — it must not inflate the count.
-        await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
-        await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
+        // Both calls are accepted — the second supersedes the first (last-valid-wins).
+        // Nothing was rejected, so the counter stays at zero.
+        const revised = validSynthesisPayload() as { overview: string };
+        revised.overview = "The revised, real synthesis of the run.";
 
+        await submit.execute({ synthesis: validSynthesisPayload() }, makeToolCtx());
+        const second = (await submit.execute({ synthesis: revised }, makeToolCtx()))._unsafeUnwrap() as { accepted: true };
+
+        expect(second.accepted).toBe(true);
         expect(telemetry.rejections).toBe(0);
         expect(telemetry.issuePaths.size).toBe(0);
+        // The recorded outcome is the second payload, not the first.
+        expect(holder.outcome?.kind).toBe("submitted");
+        if (holder.outcome?.kind === "submitted") {
+            expect(holder.outcome.synthesis.overview).toBe("The revised, real synthesis of the run.");
+        }
     });
 });
 

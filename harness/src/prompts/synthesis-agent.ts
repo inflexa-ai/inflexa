@@ -61,11 +61,22 @@ Typical usage: 1-3 delegations per run. Multiple small focused briefs
 beat one giant one. You may delegate again after an initial pass if a
 theme becomes apparent and needs its own evidence sweep.
 
+### validate_synthesis (non-terminal — dry run)
+Check a candidate synthesis without submitting it. Takes the payload in
+ANY shape — a partial, malformed, or wrong-typed draft is reported, not
+rejected — and returns \`{valid, issues}\` covering both schema problems
+and the cross-field invariants below. Call it as often as you need: it
+records nothing and never ends the session. Use it before every
+\`submit_synthesis\` so you spend your terminal call on a payload you
+already know is clean.
+
 ### submit_synthesis (terminal — success path)
 Persist the synthesis. Re-validates the payload; returns either
 \`{accepted: true}\` (DONE — stop) or \`{accepted: false, issues}\` (fix
 specific fields per issue path and call again, OR switch to
-\`report_blocker\` if the synthesis cannot be made valid).
+\`report_blocker\` if the synthesis cannot be made valid). A rejected
+submission leaves an already-accepted synthesis untouched; a later
+accepted submission supersedes the earlier one.
 
 ### report_blocker (terminal — cannot produce a synthesis)
 Call ONLY when the run produced no synthesizable content — every summary is
@@ -83,8 +94,11 @@ can always submit a synthesis (overview + conclusions) with an empty
    targeting novel findings, contradictions, and themes that need
    literature grounding.
 3. Draft the synthesis payload with an interpretive focus.
-4. Call \`submit_synthesis\`. If rejected, fix the cited issue paths
-   and call again. If unfixable, call \`report_blocker\`.
+4. Call \`validate_synthesis\` on the draft. Fix the cited issue paths
+   and re-validate until it comes back \`{valid: true}\`.
+5. Call \`submit_synthesis\` with the validated payload. If it is still
+   rejected, fix the cited issue paths and call again. If unfixable,
+   call \`report_blocker\`.
 
 ## Writing the Synthesis
 
@@ -123,7 +137,7 @@ why it matters:
 - "Target druggability not assessed — pathway importance does not imply
   tractability."
 
-## Cross-Field Invariants (enforced at submit_synthesis)
+## Cross-Field Invariants (reported by validate_synthesis, enforced at submit_synthesis)
 
 - \`finding.stepId\` must match a stepId present in the input summaries.
 - Every \`theme.findings[]\` entry must reference a finding that exists
@@ -197,6 +211,12 @@ Example:
   and submit directly, but state that clearly in the overview.)
 - Reference stepIds that aren't in the summaries, or theme-findings that
   aren't in \`findings[]\`.
-- Call \`submit_synthesis\` twice after \`accepted: true\`. Stop immediately.
+- Keep calling \`submit_synthesis\` after \`accepted: true\`. It is not an
+  error — a later accepted submission simply supersedes the earlier one —
+  but the synthesis is already recorded, so stop immediately.
+- Use \`submit_synthesis\` as a validation probe. Probing is what
+  \`validate_synthesis\` is for; submit only what you already validated.
+- Submit a placeholder or stub payload to "see what happens". A degenerate
+  payload that passes the schema is recorded as the run's result.
 - End the session without a terminal tool call. That is a failure mode.
 `;

@@ -1,9 +1,14 @@
 /**
  * Run synthesizer — a single-shot agent loop driven through `runAgent`:
  *
+ *   - `validate_synthesis` — non-terminal: dry-run schema + semantic validation
+ *                            of a candidate in any shape. Never records.
  *   - `submit_synthesis`  — terminal: schema + semantic validation, captures
- *                            the outcome. Re-callable on rejection.
+ *                            the outcome. Re-callable; a later valid submission
+ *                            supersedes an earlier outcome (last-valid-wins).
  *   - `report_blocker`    — terminal: the run produced nothing synthesizable.
+ *                            Only records when no outcome exists yet, so a
+ *                            blocker can never clobber a real synthesis.
  *   - `literature_reviewer` — research sub-agent exposed as a tool. The tool
  *                            re-uses `createLiteratureReviewerTool`; the
  *                            sub-agent loop's brief is the only context handed
@@ -25,6 +30,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { writeFileWithinRoot } from "../lib/fs-helpers.js";
+import { hintForZodIssue } from "../lib/zod-issues.js";
 
 import { RunSynthesisSchema, type RunSynthesis } from "../schemas/run-synthesis.js";
 import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
@@ -81,11 +87,14 @@ interface OutcomeHolder {
  * Mutable cell the submit tool writes on every rejection from its semantic
  * re-validation — the stepId/theme-ref/PMID checks the arg schema cannot express.
  * A schema-malformed payload is rejected at the agent-loop boundary before the
- * tool runs, so it never reaches here; this counts the semantic-check give-up
- * that this synthesizer is prone to. Read after the loop to diagnose a blocker's
- * cause: zero here points to LLM misjudgment, repeated rejections to a defensive
- * give-up against the semantic checks. The deduped `issuePaths` name which fields
- * the model could not satisfy.
+ * tool runs, so it never reaches here. A rejection is not terminal: submission is
+ * last-valid-wins, so a rejected call leaves any recorded outcome intact and the
+ * model may fix the cited paths and submit again. This therefore measures how hard
+ * the model had to work against the semantic checks, not whether it eventually
+ * succeeded. Read after the loop to diagnose a blocker's cause: zero here points to
+ * LLM misjudgment — it gave up without the checks ever pushing back — and repeated
+ * rejections to a defensive give-up against those checks. The deduped `issuePaths`
+ * name which fields the model could not satisfy.
  */
 interface RejectionTelemetry {
     rejections: number;
@@ -94,11 +103,12 @@ interface RejectionTelemetry {
 
 // ── Validation ──────────────────────────────────────────────────────
 
-function zodIssuesToValidationIssues(error: z.ZodError, rootPath = "synthesis"): ValidationIssue[] {
+function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath = "synthesis"): ValidationIssue[] {
     return error.issues.map((i) => ({
         path: [rootPath, ...i.path.map((p) => String(p))].join("."),
         code: "schema" as const,
         message: i.message,
+        hint: hintForZodIssue(i, input),
     }));
 }
 
@@ -177,7 +187,7 @@ function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): Validati
 function fullyValidate(candidate: unknown, ctx: InnerToolContext): { valid: true; synthesis: RunSynthesis } | { valid: false; issues: ValidationIssue[] } {
     const parsed = RunSynthesisSchema.safeParse(candidate);
     if (!parsed.success) {
-        return { valid: false, issues: zodIssuesToValidationIssues(parsed.error) };
+        return { valid: false, issues: zodIssuesToValidationIssues(parsed.error, candidate) };
     }
     const semanticIssues = semanticCheck(parsed.data, ctx);
     if (semanticIssues.length > 0) {
@@ -187,6 +197,35 @@ function fullyValidate(candidate: unknown, ctx: InnerToolContext): { valid: true
 }
 
 // ── Inner tools ─────────────────────────────────────────────────────
+
+function buildValidateTool(ctx: InnerToolContext): Tool {
+    return defineTool({
+        id: "validate_synthesis",
+        description:
+            "Dry-run a candidate synthesis and get back everything that is wrong " +
+            "with it. Takes the synthesis in ANY shape: a malformed, partial, or " +
+            "wrong-typed candidate is REPORTED, not rejected. Returns " +
+            "{valid, issues[]} covering both schema problems (missing / " +
+            "wrong-typed fields) and the semantic checks a schema cannot express " +
+            "(unknown stepId refs, theme→finding refs, keyReferences PMIDs not " +
+            "cited by any finding, non-numeric PMIDs). The authoritative " +
+            "field-by-field synthesis schema is the arg schema of " +
+            "submit_synthesis — this tool deliberately does not restate it. " +
+            "Non-terminal: call as often as needed to iterate toward a clean " +
+            "synthesis, then submit_synthesis.",
+        // Deliberately permissive: a structurally-invalid candidate must reach
+        // `execute` so the model gets a structured {valid:false, issues} result —
+        // including semantic issues — instead of a bare Zod rejection at the loop's
+        // input boundary. `execute` re-parses against RunSynthesisSchema itself.
+        inputSchema: z.object({
+            synthesis: z.unknown().describe("The candidate synthesis, in any shape. Field-by-field schema: see submit_synthesis."),
+        }),
+        execute: async (input) => {
+            const result = fullyValidate(input.synthesis, ctx);
+            return ok(result.valid ? { valid: true as const, issues: [] as ValidationIssue[] } : { valid: false as const, issues: result.issues });
+        },
+    });
+}
 
 function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext, telemetry: RejectionTelemetry): Tool {
     return defineTool({
@@ -198,26 +237,16 @@ function buildSubmitTool(holder: OutcomeHolder, ctx: InnerToolContext, telemetry
             "success returns {accepted: true} — STOP after this. On rejection " +
             "returns {accepted: false, issues} — fix the specific fields at each " +
             "issue path and call again, or switch to report_blocker if the " +
-            "synthesis cannot be made valid.",
+            "synthesis cannot be made valid. A rejected submission leaves any " +
+            "already-accepted synthesis untouched; a later accepted submission " +
+            "supersedes an earlier one.",
         inputSchema: z.object({ synthesis: RunSynthesisSchema }),
         execute: async (input): Promise<Result<SubmitSynthesisOutput, ToolError>> => {
-            if (holder.outcome !== null) {
-                return ok({
-                    accepted: false as const,
-                    issues: [
-                        {
-                            path: "synthesis",
-                            code: "semantic" as const,
-                            message: "A terminal outcome has already been recorded; submit_synthesis " + "can only be called once per invocation.",
-                        },
-                    ],
-                });
-            }
             const result = fullyValidate(input.synthesis, ctx);
             if (!result.valid) {
-                // Count each rejection reaching the tool (the terminal guard above
-                // is not one; a schema-malformed payload is rejected upstream by the
-                // loop before execute and never gets here).
+                // A rejection is not terminal — the model may fix the cited paths and
+                // submit again — so this counts attempts against the semantic checks,
+                // not a failure of the run.
                 telemetry.rejections += 1;
                 for (const issue of result.issues) telemetry.issuePaths.add(issue.path);
                 return ok({ accepted: false as const, issues: result.issues });
@@ -248,6 +277,7 @@ function buildBlockerTool(holder: OutcomeHolder): Tool {
  * validation + outcome capture without driving the whole agent loop.
  */
 export function __buildInnerToolsForTest(args: { knownStepIds: ReadonlySet<string>; runId: string }): {
+    validate: Tool;
     submit: Tool;
     blocker: Tool;
     holder: OutcomeHolder;
@@ -260,6 +290,7 @@ export function __buildInnerToolsForTest(args: { knownStepIds: ReadonlySet<strin
         runId: args.runId,
     };
     return {
+        validate: buildValidateTool(ctx),
         submit: buildSubmitTool(holder, ctx, telemetry),
         blocker: buildBlockerTool(holder),
         holder,
@@ -311,9 +342,10 @@ export async function generateRunSynthesis(input: GenerateRunSynthesisInput): Pr
         bioKeys: input.bioKeys,
     });
 
+    const validateTool = buildValidateTool(innerCtx);
     const submitTool = buildSubmitTool(holder, innerCtx, telemetry);
     const blockerTool = buildBlockerTool(holder);
-    const tools: readonly Tool[] = [submitTool, blockerTool, reviewer];
+    const tools: readonly Tool[] = [validateTool, submitTool, blockerTool, reviewer];
 
     const agent: AgentDefinition = {
         id: AGENT_ID,

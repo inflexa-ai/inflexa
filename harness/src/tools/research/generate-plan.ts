@@ -47,6 +47,7 @@ import { hydratePlanSteps, PlannerPlanSchema, type PlannerPlan, type PlanningAge
 import { validatePlan } from "../../schemas/validate-plan.js";
 import { AnalysisPlanSchema } from "../../schemas/workflow-state.js";
 import { unwrapOrThrow } from "../../lib/result.js";
+import { hintForZodIssue } from "../../lib/zod-issues.js";
 import { insertPlan, loadDataProfileStatus, loadPlan, type DataProfileResult, type DataProfileStatus } from "../../state/index.js";
 
 // ── Tool-level config ──────────────────────────────────────────────
@@ -285,11 +286,12 @@ async function persistPlan(plan: PlannerPlan, ctx: PersistContext, pool: Pool): 
 
 // ── Validation ──────────────────────────────────────────────────────
 
-function zodIssuesToValidationIssues(error: z.ZodError, rootPath = "plan"): ValidationIssue[] {
+function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath = "plan"): ValidationIssue[] {
     return error.issues.map((i) => ({
         path: [rootPath, ...i.path.map((p) => String(p))].join("."),
         code: "schema" as const,
         message: i.message,
+        hint: hintForZodIssue(i, input),
     }));
 }
 
@@ -300,7 +302,7 @@ function zodIssuesToValidationIssues(error: z.ZodError, rootPath = "plan"): Vali
 function fullyValidate(candidate: unknown, resourcePolicy?: ResourcePolicy): { valid: true; plan: PlannerPlan } | { valid: false; issues: ValidationIssue[] } {
     const parsed = PlannerPlanSchema.safeParse(candidate);
     if (!parsed.success) {
-        return { valid: false, issues: zodIssuesToValidationIssues(parsed.error) };
+        return { valid: false, issues: zodIssuesToValidationIssues(parsed.error, candidate) };
     }
 
     // Semantic checks operate on the AnalysisPlan shape — PlannerPlan omits
