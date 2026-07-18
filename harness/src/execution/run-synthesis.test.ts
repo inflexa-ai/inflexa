@@ -244,12 +244,144 @@ describe("validate_synthesis inner tool", () => {
 
         const result = (await validate.execute({ synthesis: { overview: 42, findings: "not an array" } }, makeToolCtx()))._unsafeUnwrap() as {
             valid: false;
-            issues: { path: string; code: string }[];
+            issues: { path: string; code: string; message: string }[];
         };
 
         expect(result.valid).toBe(false);
         expect(result.issues.length).toBeGreaterThan(0);
-        expect(result.issues.every((i) => i.code === "schema")).toBe(true);
+        // Nothing in this candidate is salvageable, so every field-level issue is
+        // a schema issue; the only semantic entry is the deferred-checks notice.
+        expect(result.issues.filter((i) => i.path !== "synthesis").every((i) => i.code === "schema")).toBe(true);
+        expect(result.issues.some((i) => i.path === "synthesis" && i.message.includes("INCOMPLETE"))).toBe(true);
+        expect(holder.outcome).toBeNull();
+    });
+
+    it("reports a schema issue and a semantic PMID issue in one pass", async () => {
+        const { validate, holder } = __buildInnerToolsForTest({
+            knownStepIds: new Set(["T1S1"]),
+            runId: RUN_ID,
+        });
+
+        const bad = validSynthesisPayload() as {
+            conclusions?: string;
+            findings: { references: { pmid: string }[] }[];
+        };
+        delete bad.conclusions;
+        bad.findings[0]!.references[0]!.pmid = "PMC123";
+
+        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
+            valid: false;
+            issues: { path: string; code: string; message: string }[];
+        };
+
+        expect(result.valid).toBe(false);
+        expect(result.issues.some((i) => i.code === "schema" && i.path === "synthesis.conclusions")).toBe(true);
+        expect(result.issues.some((i) => i.code === "semantic" && i.path === "synthesis.findings[0].references[0].pmid")).toBe(true);
+        // keyReferences[0].pmid is no longer cited by any finding either.
+        expect(result.issues.some((i) => i.code === "semantic" && i.path === "synthesis.keyReferences[0].pmid")).toBe(true);
+        // Every check's inputs survived — nothing was deferred.
+        expect(result.issues.some((i) => i.message.includes("INCOMPLETE"))).toBe(false);
+        // Structure before content.
+        const codes = result.issues.map((i) => i.code);
+        const lastSchema = codes.lastIndexOf("schema");
+        const firstSemantic = codes.indexOf("semantic");
+        expect(lastSchema).toBeLessThan(firstSemantic);
+        expect(holder.outcome).toBeNull();
+    });
+
+    it("reports a schema issue and an unknown stepId in one pass", async () => {
+        const { validate } = __buildInnerToolsForTest({
+            knownStepIds: new Set(["T1S1"]),
+            runId: RUN_ID,
+        });
+
+        const bad = validSynthesisPayload() as {
+            overview?: string;
+            findings: { stepId: string }[];
+        };
+        delete bad.overview;
+        bad.findings[0]!.stepId = "T9S9";
+
+        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
+            valid: false;
+            issues: { path: string; code: string; message: string }[];
+        };
+
+        expect(result.valid).toBe(false);
+        expect(result.issues.some((i) => i.code === "schema" && i.path === "synthesis.overview")).toBe(true);
+        const stepIdIssue = result.issues.find((i) => i.path === "synthesis.findings[0].stepId");
+        expect(stepIdIssue?.code).toBe("semantic");
+        expect(stepIdIssue?.message).toContain("T9S9");
+        // The theme still references the finding by its old stepId — also caught.
+        expect(result.issues.some((i) => i.path === "synthesis.themes[0].findings[0]")).toBe(true);
+        expect(result.issues.some((i) => i.message.includes("INCOMPLETE"))).toBe(false);
+    });
+
+    it("names the deferred checks when findings cannot be salvaged", async () => {
+        const { validate } = __buildInnerToolsForTest({
+            knownStepIds: new Set(["T1S1"]),
+            runId: RUN_ID,
+        });
+
+        const bad = validSynthesisPayload() as { findings: unknown; keyReferences: { pmid: string }[] };
+        bad.findings = [{ stepId: 7 }];
+        bad.keyReferences[0]!.pmid = "PMC999";
+
+        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
+            valid: false;
+            issues: { path: string; code: string; message: string }[];
+        };
+
+        expect(result.valid).toBe(false);
+        expect(result.issues.some((i) => i.code === "schema" && i.path.startsWith("synthesis.findings."))).toBe(true);
+        // runId + keyReferences PMID format still parsed on their own, so their
+        // checks ran: the malformed PMID is reported.
+        expect(result.issues.some((i) => i.code === "semantic" && i.path === "synthesis.keyReferences[0].pmid")).toBe(true);
+
+        const notice = result.issues.find((i) => i.path === "synthesis" && i.message.includes("INCOMPLETE"));
+        expect(notice).toBeDefined();
+        expect(notice?.code).toBe("semantic");
+        expect(notice?.message).toContain("finding stepIds");
+        expect(notice?.message).toContain("theme references");
+        expect(notice?.message).toContain("cited by some finding");
+        expect(notice?.message).toContain("finding reference PMIDs are numeric");
+        // runId and the keyReferences PMID-format check were NOT deferred.
+        expect(notice?.message).not.toContain("runId matches the run");
+        expect(notice?.message).not.toContain("keyReferences PMIDs are numeric");
+        expect(notice?.hint).toBeDefined();
+    });
+
+    it("reports every semantic issue on a schema-valid candidate, unchanged", async () => {
+        const { validate, holder } = __buildInnerToolsForTest({
+            knownStepIds: new Set(["T1S1"]),
+            runId: RUN_ID,
+        });
+
+        const bad = validSynthesisPayload() as {
+            runId: string;
+            findings: { stepId: string; references: { pmid: string }[] }[];
+            keyReferences: { pmid: string }[];
+        };
+        bad.runId = "run-999";
+        bad.findings[0]!.stepId = "T9S9";
+        bad.findings[0]!.references[0]!.pmid = "PMC1";
+        bad.keyReferences[0]!.pmid = "PMC2";
+
+        const result = (await validate.execute({ synthesis: bad }, makeToolCtx()))._unsafeUnwrap() as {
+            valid: false;
+            issues: { path: string; code: string }[];
+        };
+
+        expect(result.valid).toBe(false);
+        expect(result.issues.every((i) => i.code === "semantic")).toBe(true);
+        expect(result.issues.map((i) => i.path)).toEqual([
+            "synthesis.runId",
+            "synthesis.findings[0].stepId",
+            "synthesis.themes[0].findings[0]",
+            "synthesis.keyReferences[0].pmid",
+            "synthesis.findings[0].references[0].pmid",
+            "synthesis.keyReferences[0].pmid",
+        ]);
         expect(holder.outcome).toBeNull();
     });
 

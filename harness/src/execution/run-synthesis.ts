@@ -32,7 +32,16 @@ import { z } from "zod";
 import { writeFileWithinRoot } from "../lib/fs-helpers.js";
 import { hintForZodIssue } from "../lib/zod-issues.js";
 
-import { RunSynthesisSchema, type RunSynthesis } from "../schemas/run-synthesis.js";
+import {
+    BiologicalThemeSchema,
+    KeyReferenceSchema,
+    RunSynthesisSchema,
+    SynthesizedFindingSchema,
+    type BiologicalTheme,
+    type KeyReference,
+    type RunSynthesis,
+    type SynthesizedFinding,
+} from "../schemas/run-synthesis.js";
 import { synthesisAgentPrompt } from "../prompts/synthesis-agent.js";
 import { composeSystemPrompt } from "../agents/system-prompt.js";
 import type { StepSummary } from "../schemas/step-summary.js";
@@ -114,18 +123,31 @@ function zodIssuesToValidationIssues(error: z.ZodError, input: unknown, rootPath
     }));
 }
 
-function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): ValidationIssue[] {
-    const issues: ValidationIssue[] = [];
+const PMID_PATTERN = /^\d+$/;
 
-    if (synthesis.runId !== ctx.runId) {
-        issues.push({
+// ── Semantic checks ─────────────────────────────────────────────────
+//
+// Each check takes only the fields it reads, never the whole synthesis. That is
+// what lets a candidate which failed whole-payload schema validation still be
+// checked: whichever fields parsed on their own get their checks run, and only
+// the checks whose inputs are genuinely missing are deferred. `semanticCheck`
+// composes them for the schema-valid path — it is the one definition of "all
+// semantic checks, in report order".
+
+function checkRunId(runId: string, ctx: InnerToolContext): ValidationIssue[] {
+    if (runId === ctx.runId) return [];
+    return [
+        {
             path: "synthesis.runId",
             code: "semantic",
             message: `runId must be "${ctx.runId}"`,
-        });
-    }
+        },
+    ];
+}
 
-    for (const [i, f] of synthesis.findings.entries()) {
+function checkFindingStepIds(findings: readonly SynthesizedFinding[], ctx: InnerToolContext): ValidationIssue[] {
+    const issues: ValidationIssue[] = [];
+    for (const [i, f] of findings.entries()) {
         if (!ctx.knownStepIds.has(f.stepId)) {
             issues.push({
                 path: `synthesis.findings[${i}].stepId`,
@@ -135,9 +157,13 @@ function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): Validati
             });
         }
     }
+    return issues;
+}
 
-    const findingKeys = new Set(synthesis.findings.map((f) => `${f.stepId}::${f.title}`));
-    for (const [ti, t] of synthesis.themes.entries()) {
+function checkThemeReferences(themes: readonly BiologicalTheme[], findings: readonly SynthesizedFinding[]): ValidationIssue[] {
+    const issues: ValidationIssue[] = [];
+    const findingKeys = new Set(findings.map((f) => `${f.stepId}::${f.title}`));
+    for (const [ti, t] of themes.entries()) {
         for (const [fi, ref] of t.findings.entries()) {
             if (!findingKeys.has(`${ref.stepId}::${ref.title}`)) {
                 issues.push({
@@ -148,9 +174,13 @@ function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): Validati
             }
         }
     }
+    return issues;
+}
 
-    const citedPmids = new Set(synthesis.findings.flatMap((f) => f.references.map((r) => r.pmid)));
-    for (const [i, r] of synthesis.keyReferences.entries()) {
+function checkKeyReferencesCited(keyReferences: readonly KeyReference[], findings: readonly SynthesizedFinding[]): ValidationIssue[] {
+    const issues: ValidationIssue[] = [];
+    const citedPmids = new Set(findings.flatMap((f) => f.references.map((r) => r.pmid)));
+    for (const [i, r] of keyReferences.entries()) {
         if (!citedPmids.has(r.pmid)) {
             issues.push({
                 path: `synthesis.keyReferences[${i}].pmid`,
@@ -160,11 +190,14 @@ function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): Validati
             });
         }
     }
+    return issues;
+}
 
-    const pmidRe = /^\d+$/;
-    for (const [fi, f] of synthesis.findings.entries()) {
+function checkFindingPmidFormat(findings: readonly SynthesizedFinding[]): ValidationIssue[] {
+    const issues: ValidationIssue[] = [];
+    for (const [fi, f] of findings.entries()) {
         for (const [ri, r] of f.references.entries()) {
-            if (!pmidRe.test(r.pmid)) {
+            if (!PMID_PATTERN.test(r.pmid)) {
                 issues.push({
                     path: `synthesis.findings[${fi}].references[${ri}].pmid`,
                     code: "semantic",
@@ -173,8 +206,13 @@ function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): Validati
             }
         }
     }
-    for (const [i, r] of synthesis.keyReferences.entries()) {
-        if (!pmidRe.test(r.pmid)) {
+    return issues;
+}
+
+function checkKeyReferencePmidFormat(keyReferences: readonly KeyReference[]): ValidationIssue[] {
+    const issues: ValidationIssue[] = [];
+    for (const [i, r] of keyReferences.entries()) {
+        if (!PMID_PATTERN.test(r.pmid)) {
             issues.push({
                 path: `synthesis.keyReferences[${i}].pmid`,
                 code: "semantic",
@@ -182,14 +220,109 @@ function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): Validati
             });
         }
     }
-
     return issues;
 }
 
+function semanticCheck(synthesis: RunSynthesis, ctx: InnerToolContext): ValidationIssue[] {
+    return [
+        ...checkRunId(synthesis.runId, ctx),
+        ...checkFindingStepIds(synthesis.findings, ctx),
+        ...checkThemeReferences(synthesis.themes, synthesis.findings),
+        ...checkKeyReferencesCited(synthesis.keyReferences, synthesis.findings),
+        ...checkFindingPmidFormat(synthesis.findings),
+        ...checkKeyReferencePmidFormat(synthesis.keyReferences),
+    ];
+}
+
+// ── Salvage ─────────────────────────────────────────────────────────
+
+/**
+ * The semantic-check inputs that survived on their own when the whole payload
+ * did not. A field is `undefined` when it is absent or does not satisfy its own
+ * sub-schema — never a guess or a stand-in.
+ */
+interface SalvagedInputs {
+    readonly runId?: string;
+    readonly findings?: readonly SynthesizedFinding[];
+    readonly themes?: readonly BiologicalTheme[];
+    readonly keyReferences?: readonly KeyReference[];
+}
+
+function salvageInputs(candidate: unknown): SalvagedInputs {
+    const record: Record<string, unknown> = typeof candidate === "object" && candidate !== null ? (candidate as Record<string, unknown>) : {};
+
+    const runId = z.string().safeParse(record.runId);
+    const findings = z.array(SynthesizedFindingSchema).safeParse(record.findings);
+    const themes = z.array(BiologicalThemeSchema).safeParse(record.themes);
+    const keyReferences = z.array(KeyReferenceSchema).safeParse(record.keyReferences);
+
+    return {
+        runId: runId.success ? runId.data : undefined,
+        findings: findings.success ? findings.data : undefined,
+        themes: themes.success ? themes.data : undefined,
+        keyReferences: keyReferences.success ? keyReferences.data : undefined,
+    };
+}
+
+/**
+ * A short issue list must never read as "everything else is fine". When the
+ * payload failed schema validation and some checks could not run, the deferred
+ * ones are named back to the model as an issue of their own.
+ */
+function deferredChecksNotice(deferred: readonly string[]): ValidationIssue {
+    return {
+        path: "synthesis",
+        code: "semantic",
+        message:
+            `This issue list is INCOMPLETE: ${deferred.length} semantic check(s) could not run because the fields ` +
+            `they read did not survive schema validation — ${deferred.join("; ")}.`,
+        hint: "Fix the schema issues above and call validate_synthesis again; the deferred checks will run then and may report further problems.",
+    };
+}
+
+/**
+ * Semantic checks over a candidate that failed `RunSynthesisSchema`. Every check
+ * whose own inputs parsed is run; the rest are reported as deferred.
+ */
+function salvagedSemanticCheck(candidate: unknown, ctx: InnerToolContext): ValidationIssue[] {
+    const { runId, findings, themes, keyReferences } = salvageInputs(candidate);
+    const issues: ValidationIssue[] = [];
+    const deferred: string[] = [];
+
+    if (runId !== undefined) issues.push(...checkRunId(runId, ctx));
+    else deferred.push("runId matches the run");
+
+    if (findings !== undefined) issues.push(...checkFindingStepIds(findings, ctx));
+    else deferred.push("finding stepIds are present in the input summaries");
+
+    if (themes !== undefined && findings !== undefined) issues.push(...checkThemeReferences(themes, findings));
+    else deferred.push("theme references resolve to entries in findings[]");
+
+    if (keyReferences !== undefined && findings !== undefined) issues.push(...checkKeyReferencesCited(keyReferences, findings));
+    else deferred.push("keyReferences PMIDs are cited by some finding");
+
+    if (findings !== undefined) issues.push(...checkFindingPmidFormat(findings));
+    else deferred.push("finding reference PMIDs are numeric");
+
+    if (keyReferences !== undefined) issues.push(...checkKeyReferencePmidFormat(keyReferences));
+    else deferred.push("keyReferences PMIDs are numeric");
+
+    if (deferred.length > 0) issues.push(deferredChecksNotice(deferred));
+    return issues;
+}
+
+/**
+ * Validate a candidate in one pass. A schema failure no longer hides the
+ * semantic problems behind it: structure issues come first, then every semantic
+ * check whose inputs survived, then an explicit note of what was deferred.
+ */
 function fullyValidate(candidate: unknown, ctx: InnerToolContext): { valid: true; synthesis: RunSynthesis } | { valid: false; issues: ValidationIssue[] } {
     const parsed = RunSynthesisSchema.safeParse(candidate);
     if (!parsed.success) {
-        return { valid: false, issues: zodIssuesToValidationIssues(parsed.error, candidate) };
+        return {
+            valid: false,
+            issues: [...zodIssuesToValidationIssues(parsed.error, candidate), ...salvagedSemanticCheck(candidate, ctx)],
+        };
     }
     const semanticIssues = semanticCheck(parsed.data, ctx);
     if (semanticIssues.length > 0) {
@@ -210,7 +343,10 @@ function buildValidateTool(ctx: InnerToolContext): Tool {
             "{valid, issues[]} covering both schema problems (missing / " +
             "wrong-typed fields) and the semantic checks a schema cannot express " +
             "(unknown stepId refs, theme→finding refs, keyReferences PMIDs not " +
-            "cited by any finding, non-numeric PMIDs). The authoritative " +
+            "cited by any finding, non-numeric PMIDs) in a SINGLE pass — a " +
+            "schema problem does not hide the semantic problems behind it. If a " +
+            "field is too malformed for a semantic check to read, that check is " +
+            "reported as deferred rather than silently skipped. The authoritative " +
             "field-by-field synthesis schema is the arg schema of " +
             "submit_synthesis — this tool deliberately does not restate it. " +
             "Non-terminal: call as often as needed to iterate toward a clean " +
