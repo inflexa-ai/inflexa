@@ -62,10 +62,10 @@ a `logger.warn` through the injected `Logger` (namespace `synthesize-run`),
 carrying `runId` and the skip reason as structured fields. A skip is an anomaly
 worth an operator's attention — it SHALL NOT be silent in logs. The `produced`
 path SHALL NOT warn. A `skipped_blocker` warn SHALL additionally carry the count
-of `submit_synthesis` rejections that preceded the blocker and a summary of the
-rejected validation issue paths, so an operator can distinguish a blocker reached
-by misjudgment (zero rejections) from one reached by defensive give-up (repeated
-rejections). Identifiers, counts, and issue-path summaries ride as structured
+of `submit_synthesis` semantic-re-validation rejections that preceded the blocker
+and a summary of the rejected issue paths, so an operator can distinguish a
+blocker reached by misjudgment (zero rejections) from one reached by defensive
+give-up (repeated rejections). Identifiers, counts, and issue-path summaries ride as structured
 fields, never interpolated into the message text.
 
 #### Scenario: A blocker skip warns with the reason and attempt telemetry
@@ -81,8 +81,11 @@ fields, never interpolated into the message text.
 ### Requirement: Validation-rejection telemetry is captured and surfaced
 
 `generateRunSynthesis` SHALL count how many `submit_synthesis` calls were
-rejected by validation during its loop and SHALL capture the rejected validation
-issue paths. It SHALL carry the rejection count (and, for a skip, the captured
+rejected by its semantic re-validation during its loop — the checks the arg
+schema cannot express (stepId refs, theme→finding refs, keyReferences cited,
+numeric PMIDs) — and SHALL capture the rejected issue paths. A schema-malformed
+payload is rejected at the agent-loop boundary before the tool runs and is not
+counted. It SHALL carry the rejection count (and, for a skip, the captured
 issue paths) on its resolved result for every non-throwing terminal
 (`produced`, `skipped`). `synthesizeRun` SHALL populate the `validationAttempts`
 field on the `skipped` progress emission (`onProgress("skipped", …)`) from that
