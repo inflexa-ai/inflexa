@@ -21,6 +21,7 @@ export const PART_REGISTRY: Record<CortexChatPartType, PartDescriptor> = {
     "data-plan": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
     "data-run-card": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
     "data-file-reference": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: false },
+    "data-ask": { emitter: "conversation", consumer: "conversation", transient: false, reconciling: true },
     "data-run-started": { emitter: "workflow", consumer: "sidebar", transient: true, reconciling: false },
     "data-dag-state": { emitter: "workflow", consumer: "sidebar", transient: false, reconciling: true },
     "data-step-activity": { emitter: "workflow", consumer: "sidebar", transient: true, reconciling: true },

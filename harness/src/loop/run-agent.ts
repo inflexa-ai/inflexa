@@ -7,12 +7,13 @@ import { classifyProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../providers/prompt-cache.js";
 import { resultStep } from "./run-step.js";
 import type { AgentChat, ChatRequest, PromptCachePolicy } from "../providers/types.js";
+import { AskRejectedError, UnavailableAsk, type AskApproval, type AskRequest } from "../tools/approval/contract.js";
 import { isToolError, type Tool, type ToolContext } from "../tools/define-tool.js";
 import { addChatUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
 import type { AgentDefinition, EmitFn, EventSource, LoopMessage, RunStep } from "./types.js";
 
 export interface AgentFinish {
-    readonly reason: FinishReason | "max_iterations";
+    readonly reason: FinishReason | "max_iterations" | "denied";
     readonly cappedOut: boolean;
     readonly truncationRecoveries: number;
 }
@@ -41,6 +42,16 @@ export interface RunAgentOptions {
     readonly provider: AgentChat;
     readonly signal: AbortSignal;
     readonly emit: EmitFn;
+    /**
+     * Per-turn user-approval seam threaded into every tool's `ToolContext` as
+     * `ctx.ask`. A conversation tool calls it to pause for an explicit user
+     * decision; the caller (the turn) wires the realization that surfaces the
+     * prompt and returns the reply. Omitted on non-interactive paths (workflow
+     * contexts, headless embedders): approval then resolves to the shipped
+     * deny-by-default `UnavailableAsk`, so a tool that asks where nothing can
+     * answer is denied rather than left waiting on a surface that never responds.
+     */
+    readonly ask?: (request: AskRequest) => Promise<AskApproval>;
     readonly runStep: RunStep;
     readonly formatStepName?: StepNameFormatter;
     readonly isFatalLoopError?: (err: unknown) => boolean;
@@ -82,11 +93,18 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         ]),
     );
 
+    // Approval resolves once to the caller's seam, or the deny-by-default one
+    // when it wires none: a tool that pauses for a user decision where no
+    // interactive surface is present is denied rather than left waiting on an
+    // answer that cannot come.
+    const unavailableAsk = new UnavailableAsk();
+    const ask = opts.ask ?? ((request: AskRequest) => unavailableAsk.ask(request));
     const toolCtx = (tu: ToolCallPart): ToolContext => ({
         session,
         signal,
         emit,
         runStep: (name, fn) => runStep(`${formatStepName.tool(tu.toolName, tu.toolCallId)}:${name}`, fn),
+        ask,
     });
 
     let iterations = 0;
@@ -97,6 +115,17 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
     // byte-identical to be read back.
     const providerOptions = promptCacheProviderOptions(opts.promptCache ?? DEFAULT_PROMPT_CACHE);
     const usage: AgentRunUsage = {};
+
+    // The user said no. A subsequent model call would only let the agent argue
+    // with the decision, or spend a call acknowledging it; the denial tool result
+    // is itself what the surface renders, so the turn ends the moment a denial
+    // lands in a dispatch round — after the concurrent siblings in that same round
+    // have completed and been appended. Mirrors the clean-stop terminal path.
+    const stopOnDenial = async (i: number): Promise<RunAgentResult> => {
+        await emit({ type: "iteration", source, index: i, final: true });
+        recordAgentRun({ agentId: agent.id, iterations, cappedOut: false, usage });
+        return { messages, finish: { reason: "denied", cappedOut: false, truncationRecoveries } };
+    };
 
     for (let i = 0; i < agent.maxIterations; i++) {
         iterations = i + 1;
@@ -136,6 +165,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             }
             results.push(errorResult(trailing, TRUNCATED_TOOL_USE_ERROR));
             messages.push({ role: "tool", content: results });
+            if (hasDenial(results)) return stopOnDenial(i);
             continue;
         }
 
@@ -161,6 +191,7 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             });
         }
         messages.push({ role: "tool", content: results });
+        if (hasDenial(results)) return stopOnDenial(i);
     }
 
     // Cache defeater (known; not fixed here). Emptying the tool set changes the
@@ -254,6 +285,7 @@ async function execute(tu: ToolCallPart, tool: Tool, input: unknown, ctx: ToolCo
         return successResult(tu, output.value);
     } catch (err) {
         if (isFatalLoopError(err)) throw err;
+        if (isAskRejected(err)) return deniedResult(tu, err.feedback);
         return errorResult(tu, toolErrorContent(err));
     }
 }
@@ -289,8 +321,36 @@ function errorResult(toolCall: ToolCallPart, content: string): ToolResultPart {
     };
 }
 
+function isAskRejected(err: unknown): err is AskRejectedError {
+    // Name-based fallback recognizes a rejection thrown from a different module
+    // realm, where `instanceof` against this file's class reference would miss it.
+    return err instanceof AskRejectedError || (err instanceof Error && err.name === "AskRejectedError");
+}
+
+/**
+ * Map a rejected approval to a model-visible `execution-denied` tool result. The
+ * prose is the model's only account of the denial; `isErrorOutput` already
+ * treats `execution-denied` as an error result.
+ */
+function deniedResult(toolCall: ToolCallPart, feedback: string | undefined): ToolResultPart {
+    const reason =
+        feedback === undefined || feedback.length === 0
+            ? "The user rejected this action."
+            : `The user rejected this action with the following feedback: ${feedback}`;
+    return {
+        type: "tool-result",
+        toolCallId: toolCall.toolCallId,
+        toolName: toolCall.toolName,
+        output: { type: "execution-denied", reason },
+    };
+}
+
 function isErrorOutput(result: ToolResultPart): boolean {
     return result.output.type === "error-text" || result.output.type === "error-json" || result.output.type === "execution-denied";
+}
+
+function hasDenial(results: readonly ToolResultPart[]): boolean {
+    return results.some((r) => r.output.type === "execution-denied");
 }
 
 export function finalText(messages: readonly LoopMessage[]): string {

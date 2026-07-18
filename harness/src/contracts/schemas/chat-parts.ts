@@ -91,6 +91,19 @@ export const FileReferencePartSchema = z.object({
     files: z.array(FileReferenceEntrySchema).min(1).max(10),
 });
 
+// ── Ask (user approval) ─────────────────────────────────────────────
+
+export const AskStatusSchema = z.enum(["pending", "resolved", "rejected", "aborted", "expired"]);
+
+export const AskPartSchema = z.object({
+    type: z.literal("data-ask"),
+    id: z.string(),
+    title: z.string(),
+    command: z.string(),
+    detail: z.string().optional(),
+    status: AskStatusSchema,
+});
+
 // ── Run Started ─────────────────────────────────────────────────────
 
 export const RunStartedPartSchema = z.object({
@@ -328,6 +341,7 @@ export const CortexChatPartSchema = z.discriminatedUnion("type", [
     PlanPartSchema,
     RunCardPartSchema,
     FileReferencePartSchema,
+    AskPartSchema,
     RunStartedPartSchema,
     DagStatePartSchema,
     StepActivityPartSchema,

@@ -4,6 +4,7 @@ import { err, ok } from "neverthrow";
 import { z } from "zod";
 
 import { makeSession } from "../providers/__fixtures__/session.js";
+import { AskRejectedError } from "../tools/approval/contract.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
 import { makeMessage, scriptedProvider, type ScriptedProvider, textBlock, thinkingBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
 import { runAgent, type RunAgentOptions } from "./run-agent.js";
@@ -454,6 +455,87 @@ describe("runAgent — finish signal", () => {
 
         expect(finish.cappedOut).toBe(true);
         expect(finish.reason).toBe("max_iterations");
+    });
+});
+
+// ── Approval denial: deny-default + turn hard-stop ──────────────────
+
+/** A tool that pauses on `ctx.ask` before its guarded action. */
+function guardedTool(): Tool {
+    return defineTool({
+        id: "guarded",
+        description: "Requests approval before acting.",
+        inputSchema: z.object({}),
+        execute: async (_input, ctx) => {
+            await ctx.ask({ title: "Guarded action", command: "delete everything" });
+            return ok({ ran: true });
+        },
+    });
+}
+
+function deniedReason(result: ToolResultPart): string {
+    expect(result.output.type).toBe("execution-denied");
+    return (result.output as { type: "execution-denied"; reason: string }).reason;
+}
+
+describe("runAgent — approval denial", () => {
+    it("denies by default when no ask realization is wired and marks the finish denied", async () => {
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "guarded", {})], "tool_use")]);
+
+        const { messages, finish } = await runAgent(agentDef([guardedTool()]), GO, makeSession(), opts(provider));
+
+        const result = toolResultParts(messages[2])[0]!;
+        expect(result.output.type).toBe("execution-denied");
+        expect(finish.reason).toBe("denied");
+        // The hard-stop makes no subsequent model call.
+        expect(provider.calls).toHaveLength(1);
+    });
+
+    it("hard-stops the turn on denial while a concurrent sibling's result is still appended", async () => {
+        const plain = defineTool({
+            id: "plain",
+            description: "An ordinary tool.",
+            inputSchema: z.object({}),
+            execute: async () => ok({ b: true }),
+        });
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-A", "guarded", {}), toolUseBlock("tu-B", "plain", {})], "tool_use")]);
+
+        const { messages, finish } = await runAgent(
+            agentDef([guardedTool(), plain]),
+            GO,
+            makeSession(),
+            opts(provider, {
+                ask: async () => {
+                    throw new AskRejectedError("nope");
+                },
+            }),
+        );
+
+        const results = toolResultParts(messages[2]);
+        const denied = results.find((r) => r.toolCallId === "tu-A")!;
+        const sibling = results.find((r) => r.toolCallId === "tu-B")!;
+
+        // The sibling ran to completion and its result rides alongside the denial.
+        expect(isErrorResult(sibling)).toBe(false);
+        expect(outputValue(sibling)).toEqual({ b: true });
+        // The denial carries the user's feedback prose.
+        expect(deniedReason(denied)).toContain("nope");
+        expect(finish.reason).toBe("denied");
+        // No second model call — the denial is the turn's final content.
+        expect(provider.calls).toHaveLength(1);
+    });
+
+    it("does not terminate the turn when the approval returns once", async () => {
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "guarded", {})], "tool_use"), makeMessage([textBlock("done")], "end_turn")]);
+
+        const { messages, finish } = await runAgent(agentDef([guardedTool()]), GO, makeSession(), opts(provider, { ask: async () => ({ kind: "once" }) }));
+
+        const result = toolResultParts(messages[2])[0]!;
+        expect(isErrorResult(result)).toBe(false);
+        expect(outputValue(result)).toEqual({ ran: true });
+        expect(finish.reason).toBe("stop");
+        // The loop continued to a normal terminal reply — a second model call.
+        expect(provider.calls).toHaveLength(2);
     });
 });
 

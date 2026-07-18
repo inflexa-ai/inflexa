@@ -51,6 +51,16 @@ export type { RunLauncher, LaunchOptions, LaunchRunOptions, LaunchOutcome } from
 export { defineTool, isToolError } from "./tools/define-tool.js";
 export type { Tool, ToolDefinition, ToolContext, ToolError } from "./tools/define-tool.js";
 
+// Seam: tool approval (`ctx.ask`). `createAskGateway` realizes the `Ask` seam
+// over the injected `Pool` and carries the outward `answer`/`pending` API plus
+// the boot-time `sweepExpired`; `UnavailableAsk` is the shipped deny-by-default
+// realization for an unwired or non-interactive host. The `AskRequest`/`AskReply`
+// contract and the `AskRejectedError` denial throw come from the seam contract.
+export { createAskGateway } from "./tools/approval/gateway.js";
+export type { AskGateway, AskGatewayDeps, AskContext, AnswerOutcome, PendingAsk } from "./tools/approval/gateway.js";
+export { UnavailableAsk, AskRejectedError } from "./tools/approval/contract.js";
+export type { Ask, AskRequest, AskReply, AskApproval } from "./tools/approval/contract.js";
+
 // Agent loop.
 export { runAgent, finalText } from "./loop/run-agent.js";
 export type { RunAgentOptions, RunAgentResult, AgentFinish } from "./loop/run-agent.js";
@@ -322,13 +332,7 @@ export {
     referenceArtifactKey,
     resolveReferenceInstallPlan,
 } from "./reference-data/catalog.js";
-export type {
-    ReferenceArtifact,
-    ReferenceDataCatalog,
-    ReferenceDataset,
-    ReferenceInstallPlan,
-    ReferenceInstallPlanDataset,
-} from "./reference-data/catalog.js";
+export type { ReferenceArtifact, ReferenceDataCatalog, ReferenceDataset, ReferenceInstallPlan, ReferenceInstallPlanDataset } from "./reference-data/catalog.js";
 export { REFERENCE_INSTALL_RECEIPT_VERSION, ReferenceInstallReceiptSchema, parseReferenceInstallReceipt } from "./reference-data/receipt.js";
 export type { ReferenceInstallReceipt, ReferenceReceiptArtifact } from "./reference-data/receipt.js";
 // Backs `WatchdogDeps.queryActiveSandboxes` when the embedder wires the watchdog.
