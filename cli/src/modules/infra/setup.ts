@@ -513,9 +513,7 @@ type DefaultModelChoice = { auto: true } | { auto: false; modelId: string };
  */
 type DefaultModelDeps = {
     isInteractive: () => boolean;
-    /** The cached election's id, for the Auto label; `null` when election failed (proxy down) → skip. */
-    elect: () => Promise<string | null>;
-    /** The ranked, connection-family candidate ids to sweep; empty (no listing) → skip. */
+    /** The ranked, connection-family candidate ids to sweep; empty (no listing / down proxy) → skip. */
     candidates: () => Promise<string[]>;
     /** One model's accessibility check, bounded like every probe round-trip. */
     check: (modelId: string) => Promise<ModelAccess>;
@@ -527,19 +525,26 @@ type DefaultModelDeps = {
 };
 
 /**
- * The interactive default-model step. A non-TTY skips entirely (writes nothing — Auto semantics). A
- * failed election or an empty candidate list (a down/unreachable proxy) skips gracefully rather than
- * turning an optional step into a failure. Accepting Auto writes nothing (the default stays adaptive
- * `model: null` resolution). An explicit pick persists to BOTH agents; a write failure only warns —
- * setup's real work is already done.
+ * The interactive default-model step. A non-TTY skips entirely (writes nothing — Auto semantics). An
+ * empty candidate list (a down/unreachable proxy) or a sweep that rules out EVERY candidate skips
+ * gracefully rather than turning an optional step into a failure or recommending a model the account
+ * cannot serve. The Auto label is the first accessible candidate in rank order — the SAME id the launch
+ * election resolves (both walk the ranked list past `not_found` to the first servable) — read straight
+ * from the sweep, so the recommendation and the offered list can never disagree, and so setup makes ONE
+ * `/models` pass rather than a separate election round-trip whose per-process cache this setup process
+ * (which exits before any chat launch) would only discard. Accepting Auto writes nothing (the default
+ * stays adaptive `model: null` resolution). An explicit pick persists to BOTH agents; a write failure
+ * only warns — setup's real work is already done.
  */
 export async function selectDefaultModel(deps: DefaultModelDeps): Promise<void> {
     if (!deps.isInteractive()) return;
-    const electedId = await deps.elect();
-    if (electedId === null) return;
     const ranked = await deps.candidates();
     if (ranked.length === 0) return;
     const models = await sweepAccessibleModels(deps.check, ranked);
+    // Every candidate answered `not_found` — no servable model to recommend, so skip rather than preselect
+    // a known-inaccessible id. This guard also makes `models[0]` provably present for the Auto label.
+    if (models.length === 0) return;
+    const electedId = models[0]!;
     const choice = await deps.prompt(electedId, models);
     if (choice.auto) return;
     deps.writeBoth(choice.modelId).match(
@@ -553,12 +558,13 @@ const AUTO_MODEL_SENTINEL = "__auto__";
 
 /**
  * Production assembly of {@link selectDefaultModel} for the cliproxy setup path. Every model id is
- * discovered live: the Auto label from the cached election ({@link resolveModelId}), the offered pool
- * from the raw `/models` list ({@link listModelCandidates}) ranked and filtered to the connection family
- * (in practice the rank already yields the winning family's pool). A missing proxy key or an unreachable
- * proxy resolves to a skip (the seams return `null`/`[]`), so a down proxy never fails setup. Cliproxy
- * only — a direct connection has no owned proxy to elect against. The select matches the surrounding
- * setup prompts (`select` from lib/cli.ts), so a cancel aborts the command exactly as they do.
+ * discovered live from the raw `/models` list ({@link listModelCandidates}), ranked and filtered to the
+ * connection family (in practice the rank already yields the winning family's pool); the sweep then both
+ * offers and recommends from it. A missing proxy key or an unreachable/hung proxy resolves to a skip (the
+ * key read short-circuits, and the bounded `candidates` fetch throws → `[]`), so a down proxy never fails
+ * OR wedges setup. Cliproxy only — a direct connection has no owned proxy to elect against. The select
+ * matches the surrounding setup prompts (`select` from lib/cli.ts), so a cancel aborts the command
+ * exactly as they do.
  */
 async function runDefaultModelSetup(mode: ConnectionMode): Promise<void> {
     if (mode !== "cliproxy") return;
@@ -568,13 +574,11 @@ async function runDefaultModelSetup(mode: ConnectionMode): Promise<void> {
     const provider = resolveModelConnection().provider;
     await selectDefaultModel({
         isInteractive: () => Boolean(process.stdin.isTTY),
-        elect: async () =>
-            (await resolveModelId(apiKey)).match(
-                (id) => id,
-                () => null,
-            ),
+        // Bounded like every probe round-trip: this runs right after compose-up WITHOUT waiting on the
+        // proxy's port bind, so a proxy that accepts the connection then never answers must not hang
+        // setup — the timeout throws, which the Result maps to `[]` (skip), the same as a refused proxy.
         candidates: async () =>
-            (await listModelCandidates(apiKey)).match(
+            (await listModelCandidates(apiKey, AbortSignal.timeout(PROBE_TIMEOUT_MS))).match(
                 (list) => rankModelCandidates(list).filter((id) => modelMatchesProvider(provider, id)),
                 () => [],
             ),
@@ -1738,11 +1742,13 @@ export async function warnStalePins(deps: StalePinDeps): Promise<void> {
 }
 
 /**
- * The launch warning for one stale pin: the pinned id, which agent(s) resolve to it (both when a shared
- * `harness.model` pin covers the whole set, else the specific agent), and the two repick remedies.
+ * The launch warning for one stale pin: the pinned id, which agent(s) resolve to it, and the two repick
+ * remedies. The agents are named explicitly and pluralized from the list's own length, so the phrasing
+ * stays correct whether one agent is pinned or several share a `harness.model` fallback — with no coupling
+ * to how many user-facing agents exist.
  */
 function stalePinWarning(modelId: string, agents: AgentName[]): string {
-    const who = agents.length === AGENT_NAMES.length ? "both agents" : `the ${agents.join(" and ")} agent`;
+    const who = `the ${agents.join(" and ")} agent${agents.length > 1 ? "s" : ""}`;
     return (
         `The pinned model "${modelId}" (${who}) is no longer served by your account.\n` +
         "  Repick it with the model-switch commands in the command palette, or re-run `inflexa setup`."

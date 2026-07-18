@@ -740,7 +740,9 @@ describe("warnStalePins", () => {
         await r.done;
         expect(r.checked).toEqual(["claude-both"]); // one distinct id, checked once
         expect(r.warnings).toHaveLength(1);
-        expect(r.warnings[0]).toContain("both agents");
+        // The warning names every agent that resolves to the shared pin (not a hardcoded count word).
+        expect(r.warnings[0]).toContain("conversation");
+        expect(r.warnings[0]).toContain("sandbox");
     });
 
     test("an agent override redirects one agent, splitting harness.model into two distinct pins", async () => {
@@ -769,7 +771,6 @@ describe("selectDefaultModel", () => {
     function deps(over: Partial<Parameters<typeof selectDefaultModel>[0]>): Parameters<typeof selectDefaultModel>[0] {
         return {
             isInteractive: () => true,
-            elect: async () => "claude-elected",
             candidates: async () => ["claude-a"],
             check: async () => "served",
             prompt: async () => ({ auto: true }),
@@ -809,15 +810,46 @@ describe("selectDefaultModel", () => {
         expect(offered).toEqual(["claude-maybe"]);
     });
 
-    test("a non-TTY skips the step entirely — no election, no prompt, no write", async () => {
-        let elected = false;
+    test("the Auto recommendation is the first accessible candidate in rank order, past a not_found", async () => {
+        let recommended = "";
+        await selectDefaultModel(
+            deps({
+                candidates: async () => ["claude-404", "claude-newest", "claude-older"],
+                check: async (id) => (id === "claude-404" ? "not_found" : "served"),
+                prompt: async (electedId) => {
+                    recommended = electedId;
+                    return { auto: true };
+                },
+            }),
+        );
+        expect(recommended).toBe("claude-newest");
+    });
+
+    test("every candidate not_found → skip: nothing to recommend, no prompt, no write", async () => {
+        let prompted = false;
+        await selectDefaultModel(
+            deps({
+                candidates: async () => ["claude-404a", "claude-404b"],
+                check: async () => "not_found",
+                prompt: async () => {
+                    prompted = true;
+                    return { auto: true };
+                },
+            }),
+        );
+        expect(prompted).toBe(false);
+        expect(readConfig().models).toBeUndefined();
+    });
+
+    test("a non-TTY skips the step entirely — no listing, no prompt, no write", async () => {
+        let listed = false;
         let prompted = false;
         await selectDefaultModel(
             deps({
                 isInteractive: () => false,
-                elect: async () => {
-                    elected = true;
-                    return "claude-x";
+                candidates: async () => {
+                    listed = true;
+                    return ["claude-x"];
                 },
                 prompt: async () => {
                     prompted = true;
@@ -825,16 +857,16 @@ describe("selectDefaultModel", () => {
                 },
             }),
         );
-        expect(elected).toBe(false);
+        expect(listed).toBe(false);
         expect(prompted).toBe(false);
         expect(readConfig().models).toBeUndefined();
     });
 
-    test("a failed election (proxy down) skips gracefully — no prompt, no write", async () => {
+    test("a down/unreachable proxy (no candidates) skips gracefully — no prompt, no write", async () => {
         let prompted = false;
         await selectDefaultModel(
             deps({
-                elect: async () => null,
+                candidates: async () => [],
                 prompt: async () => {
                     prompted = true;
                     return { auto: true };
