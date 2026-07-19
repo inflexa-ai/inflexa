@@ -10,25 +10,24 @@
 // variant `ensurePostgresReadyOrExit()`.
 
 /**
- * Fixed image — PG 18 + pgvector bundled. Matches the harness's own
- * testcontainer convention (harness/AGENTS.md: `pgvector/pgvector:pg18`).
- * Not user-overridable; power users edit the compose file directly.
+ * Fixed image — PG 18 + pgvector bundled — pinned by version tag AND manifest digest, so a republished
+ * tag cannot silently change the substrate under an unchanged install (the digest wins when both are
+ * present). The `0.8.5-pg18` tag stays on PG major 18, so it is data-compatible with any prior `pg18`
+ * data dir — existing clusters load unchanged. Not user-overridable; power users edit the compose file
+ * directly. To bump: change the tag and digest together, keeping the same PG major for data compatibility.
  */
-export const DEFAULT_IMAGE = "pgvector/pgvector:pg18";
+export const DEFAULT_IMAGE = "pgvector/pgvector:0.8.5-pg18@sha256:12a379b47ad65289572ea0756efc11b7c241a6662833e8af7038cd3b73d647e0";
 
-/**
- * Default host-published port. Off the standard 5432 (clashes with a user's
- * system PG) and 5433 (claimed by the harness testcontainer). Rhymes with the
- * proxy's owned port 8317.
- */
-export const DEFAULT_PORT = 8432;
+// The default host-published Postgres port is channel-aware and lives in lib/env.ts (`env.postgresPort`,
+// from `stackPorts`): production 8432, dev 8433. It is NOT a constant here, so config.json never freezes a
+// non-channel-aware default — resolvePostgresConfig (lib/config.ts) fills it from env.
 
 /** Default database, user, and password — local-only, user-overridable via config. */
 export const DEFAULT_DATABASE = "inflexa";
 export const DEFAULT_USER = "inflexa";
 export const DEFAULT_PASSWORD = "inflexa";
 
-/** In-container Postgres port — the image listens here; we publish {@link DEFAULT_PORT} over it. */
+/** In-container Postgres port — the image listens here; we publish the channel-aware `env.postgresPort` over it. */
 export const CONTAINER_PG_PORT = 5432;
 
 /**

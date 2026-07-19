@@ -12,6 +12,7 @@ import {
     detectCredentialHelperFrom,
     detectedAdoptable,
     ensureLiveCredential,
+    explicitPostgresFields,
     hasProviderCredential,
     normalizeAdoptedBaseURL,
     parseConnectionMode,
@@ -26,6 +27,7 @@ import {
     writeDirectConnection,
     type ProbeAttempt,
 } from "./setup.ts";
+import { type PostgresConnection } from "./postgres_types.ts";
 import * as embeddingSetup from "../embedding/setup.ts";
 import * as refsCommands from "../refs/commands.ts";
 import { writeAgentModel, type ResolvedModelConnection } from "../harness/config.ts";
@@ -341,6 +343,43 @@ describe("connection config writes", () => {
         expect(connection.auth).toEqual({ kind: "env", var: "ANTHROPIC_AUTH_TOKEN", scheme: "bearer" });
         // Only the variable NAME is stored — never a resolved token value.
         expect(JSON.stringify(connection)).not.toContain("sk-ant");
+    });
+});
+
+// The persist-only-explicit rule for the Postgres prompt: config.json is shared by both build channels,
+// so only a value that DIFFERS from its (channel-aware) default is persisted, and the block is rebuilt
+// fresh each run — an accepted default writes nothing, and a re-accept heals a default an earlier run
+// froze. Tested via the pure helper (the prompt itself is a clack TTY flow); the default port is passed
+// in exactly as promptPostgresConfig passes env.postgresPort.
+describe("explicitPostgresFields — persist-only-explicit", () => {
+    // The all-defaults connection for a given default port — what a fully-accepted prompt yields.
+    function defaults(port: number): PostgresConnection {
+        return { host: "localhost", port, database: "inflexa", user: "inflexa", password: "inflexa" };
+    }
+
+    test("all defaults persist nothing — an empty block the caller drops entirely", () => {
+        const port = env.postgresPort;
+        expect(explicitPostgresFields(defaults(port), port)).toEqual({});
+    });
+
+    test("a single custom field persists alone; accepted defaults (including the port) do not", () => {
+        const port = env.postgresPort;
+        const conn = { ...defaults(port), password: "s3cret" };
+        expect(explicitPostgresFields(conn, port)).toEqual({ password: "s3cret" });
+    });
+
+    test("a custom user, host, and non-default port each persist", () => {
+        const port = env.postgresPort;
+        const conn: PostgresConnection = { host: "db.internal", port: 6000, database: "inflexa", user: "alice", password: "inflexa" };
+        expect(explicitPostgresFields(conn, port)).toEqual({ host: "db.internal", port: 6000, user: "alice" });
+    });
+
+    test("a port EQUAL to the channel default drops (healing a frozen pin); a differing port persists", () => {
+        const port = env.postgresPort;
+        // Re-accepting the prompt when a stale pin equalled the default rebuilds an empty port field.
+        expect(explicitPostgresFields(defaults(port), port).port).toBeUndefined();
+        // A genuinely custom port is kept.
+        expect(explicitPostgresFields({ ...defaults(port), port: port + 1 }, port).port).toBe(port + 1);
     });
 });
 

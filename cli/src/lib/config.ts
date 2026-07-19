@@ -6,7 +6,7 @@ import { z } from "zod";
 import { DEFAULT_THEME_ID, themeIds } from "./design_system.ts";
 import { ContainerRuntimeError, ensureReady, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime } from "./container.ts";
 import { env } from "./env.ts";
-import { DEFAULT_DATABASE, DEFAULT_PASSWORD, DEFAULT_PORT, DEFAULT_USER, type PostgresConnection } from "../modules/infra/postgres_types.ts";
+import { DEFAULT_DATABASE, DEFAULT_PASSWORD, DEFAULT_USER, type PostgresConnection } from "../modules/infra/postgres_types.ts";
 
 const configSchema = z.object({
     telemetry: z.boolean(),
@@ -312,14 +312,17 @@ export function resolveConnectionMode(): "cliproxy" | "direct" {
  * per-field with the defaults from modules/infra/postgres_types.ts. The result is a
  * fully-populated {@link PostgresConnection} — no `undefined` fields — the
  * harness-wiring change will hand to `createPool` as a `PoolConfig`. Missing or
- * corrupt config yields all-defaults (mode docker, image pgvector/pgvector:pg18,
- * db/user/password inflexa, port 8432), so a fresh install never blocks boot.
+ * corrupt config yields all-defaults (db/user/password inflexa, host localhost, port
+ * the channel-aware `env.postgresPort`), so a fresh install never blocks boot. A
+ * config.json `postgres.port` still wins — the per-field override contract is unchanged;
+ * only the DEFAULT it falls back to is now channel-aware, so each build channel resolves
+ * its own sibling port when nothing is persisted.
  */
 export function resolvePostgresConfig(): PostgresConnection {
     const pg = readConfig().postgres;
     return {
         host: pg?.host ?? "localhost",
-        port: pg?.port ?? DEFAULT_PORT,
+        port: pg?.port ?? env.postgresPort,
         database: pg?.database ?? DEFAULT_DATABASE,
         user: pg?.user ?? DEFAULT_USER,
         password: pg?.password ?? DEFAULT_PASSWORD,

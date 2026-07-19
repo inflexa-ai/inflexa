@@ -6,11 +6,11 @@ import {
     DEFAULT_DATABASE,
     DEFAULT_IMAGE,
     DEFAULT_PASSWORD,
-    DEFAULT_PORT,
     DEFAULT_USER,
     type PostgresError,
 } from "./postgres_types.ts";
 import { resolvePostgresConfig } from "../../lib/config.ts";
+import { env } from "../../lib/env.ts";
 import { generateComposeFile, POSTGRES_CONTAINER_NAME, PROXY_CONTAINER_NAME } from "./compose.ts";
 
 describe("postgres constants", () => {
@@ -18,14 +18,13 @@ describe("postgres constants", () => {
         expect(POSTGRES_CONTAINER_NAME).toContain("postgres");
     });
 
-    test("default image is pgvector/pgvector:pg18", () => {
-        expect(DEFAULT_IMAGE).toBe("pgvector/pgvector:pg18");
-    });
-
-    test("default port is 8432 (off standard 5432 and harness testcontainer 5433)", () => {
-        expect(DEFAULT_PORT).toBe(8432);
-        expect(DEFAULT_PORT).not.toBe(5432);
-        expect(DEFAULT_PORT).not.toBe(5433);
+    test("default image is pgvector pinned by tag AND digest, never a floating tag", () => {
+        expect(DEFAULT_IMAGE).toBe("pgvector/pgvector:0.8.5-pg18@sha256:12a379b47ad65289572ea0756efc11b7c241a6662833e8af7038cd3b73d647e0");
+        // Same PG major (18) as the prior floating `pg18` tag, so existing data dirs load unchanged.
+        expect(DEFAULT_IMAGE).toContain("pg18");
+        // A digest pin makes a republished tag inert; a bare/floating tag is the regression this guards.
+        expect(DEFAULT_IMAGE).toContain("@sha256:");
+        expect(DEFAULT_IMAGE).not.toContain(":latest");
     });
 
     test("default credentials are inflexa/inflexa/inflexa", () => {
@@ -47,7 +46,9 @@ describe("resolvePostgresConfig", () => {
     test("returns all defaults when no config file exists (test environment)", () => {
         const conn = resolvePostgresConfig();
         expect(conn.host).toBe("localhost");
-        expect(conn.port).toBe(DEFAULT_PORT);
+        // The port default is now channel-aware: with nothing persisted it falls to env.postgresPort
+        // (8433 in a dev/test process, 8432 in a production build), never a fixed constant.
+        expect(conn.port).toBe(env.postgresPort);
         expect(conn.database).toBe(DEFAULT_DATABASE);
         expect(conn.user).toBe(DEFAULT_USER);
         expect(conn.password).toBe(DEFAULT_PASSWORD);
@@ -139,6 +140,30 @@ describe("compose file generation", () => {
         const conn = resolvePostgresConfig();
         expect(generateComposeFile(conn, "cliproxy")).toContain(`image: ${DEFAULT_IMAGE}`);
         expect(generateComposeFile(conn, "direct")).toContain(`image: ${DEFAULT_IMAGE}`);
+    });
+
+    test("both service images carry a tag AND a digest — neither floats — in every mode", () => {
+        const conn = resolvePostgresConfig();
+        const cliproxy = generateComposeFile(conn, "cliproxy");
+        // The proxy image is pinned by tag+digest and present only in cliproxy mode.
+        expect(cliproxy).toContain("image: eceasy/cli-proxy-api:v7.2.90@sha256:");
+        expect(cliproxy).toContain("image: pgvector/pgvector:0.8.5-pg18@sha256:");
+        // No floating tag in either mode.
+        expect(cliproxy).not.toContain(":latest");
+        expect(generateComposeFile(conn, "direct")).not.toContain(":latest");
+    });
+
+    test("compose ports and mounts derive from env, not hardcoded literals", () => {
+        const conn = resolvePostgresConfig();
+        const yaml = generateComposeFile(conn, "cliproxy");
+        // Postgres publishes the resolved (channel-aware) host port over the in-container 5432.
+        expect(yaml).toContain(`"127.0.0.1:${conn.port}:${CONTAINER_PG_PORT}"`);
+        expect(conn.port).toBe(env.postgresPort);
+        // The proxy publishes and the mounts bind the env-derived (channel-aware) paths/port.
+        expect(yaml).toContain(`"127.0.0.1:${env.cliproxyPort}:${env.cliproxyPort}"`);
+        expect(yaml).toContain(`"${env.cliproxyConfigPath}:`);
+        expect(yaml).toContain(`"${env.cliproxyAuthDir}:`);
+        expect(yaml).toContain(`"${env.postgresDataDir}:${CONTAINER_DATA_PATH}"`);
     });
 
     test("cliproxy mode gives both services restart: unless-stopped; direct only Postgres", () => {
