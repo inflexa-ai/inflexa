@@ -50,8 +50,12 @@ const MODEL_FAMILIES = [
 const MODEL_PREFERENCE = MODEL_FAMILIES.map((f) => f.family);
 let cachedModelId: string | null = null;
 
-/** Setup failures surfaced before streaming begins — the proxy key is missing, unreachable, or reports no models. */
-export type ChatSetupError = { type: "proxy_key_missing" } | { type: "proxy_unreachable"; detail: string } | { type: "no_models" };
+/**
+ * Setup failures surfaced before streaming begins — the proxy key is missing, unreachable, reports no
+ * models, or is `cooling_down` (a served 503 whose `auth_unavailable` body means every loaded credential
+ * is temporarily blocked after upstream errors and recovers on its own, distinct from an outage).
+ */
+export type ChatSetupError = { type: "proxy_key_missing" } | { type: "proxy_unreachable"; detail: string } | { type: "no_models" } | { type: "cooling_down" };
 
 /** The proxy requires the client API key we generated into its config at setup. */
 export async function readApiKey(): Promise<Result<string, ChatSetupError>> {
@@ -95,8 +99,11 @@ export async function resolveModelId(apiKey: string, signal?: AbortSignal): Prom
  * lives in one place. The error semantics are exactly the ones the election carried inline before, so its
  * callers are unaffected: a fetch throw (dead endpoint or aborted `signal`) or a non-200 bridges into
  * `proxy_unreachable`, and an empty or schema-mismatched body (`jsonWith` yields null, never a throw) into
- * `no_models`. `signal` bounds the round-trip for callers that cannot wait on a proxy that accepts the
- * connection and then never answers (the launch probe); it is optional for the lazy chat path.
+ * `no_models`. The one addition is `cooling_down`: a served 503 whose body carries the proxy's
+ * `auth_unavailable` marker ({@link isProxyCooldown}) is a temporary all-credential block, not an outage,
+ * so the launch gate can report it as its own recover-on-its-own notice. `signal` bounds the round-trip
+ * for callers that cannot wait on a proxy that accepts the connection and then never answers (the launch
+ * probe); it is optional for the lazy chat path.
  */
 export async function listModelCandidates(apiKey: string, signal?: AbortSignal): Promise<Result<ModelCandidate[], ChatSetupError>> {
     let res: Response;
@@ -106,6 +113,11 @@ export async function listModelCandidates(apiKey: string, signal?: AbortSignal):
     } catch (cause) {
         return err({ type: "proxy_unreachable", detail: cause instanceof Error ? cause.message : String(cause) });
     }
+    // A 503 carrying the proxy's `auth_unavailable` cooldown marker is a temporary all-credential block
+    // that recovers on its own — a distinct condition from an outage, surfaced as its own error so the
+    // launch gate reports it honestly instead of as a generic unreachable. Any other 503 (or an
+    // unrecognized body) falls through to the status-quo `proxy_unreachable` below.
+    if (res.status === 503 && (await isProxyCooldown(res))) return err({ type: "cooling_down" });
     if (!res.ok) return err({ type: "proxy_unreachable", detail: `HTTP ${res.status}` });
     const models = await res.jsonWith(modelsSchema);
     if (!models || models.data.length === 0) return err({ type: "no_models" });
@@ -179,6 +191,29 @@ function byRecencyThenId(a: ModelCandidate, b: ModelCandidate): number {
 
 /** The 404 body the proxy forwards for a model the credential cannot serve; `error.type` is the discriminator. */
 const countTokensErrorSchema = z.object({ error: z.object({ type: z.string() }) });
+
+/**
+ * The proxy's cooldown 503 body, anthropic-shaped like every proxy error body: the discriminator is the
+ * `auth_unavailable` prefix on `error.message` (verified against the fork — `auth_unavailable: no auth
+ * available (providers=…, model=…)`). Only `error.message` is read; the surrounding `type` fields vary.
+ */
+const cooldownErrorSchema = z.object({ error: z.object({ message: z.string() }) });
+
+/**
+ * Whether `res` is the proxy's cooldown 503 — a served 503 whose body carries the `auth_unavailable`
+ * marker, meaning every loaded credential is temporarily blocked after upstream errors (the proxy's own
+ * cooldown) and will recover on its own while the on-disk credential stays valid. Reads the body via
+ * `jsonWith` (null on any shape mismatch, never a throw), so any 503 that is NOT this shape answers false
+ * and stays on the caller's generic path. The launch gate couples to this single stable token exactly the
+ * way {@link checkModelAccess} couples to `count_tokens`'s `not_found_error` — a fork wire discriminator,
+ * degrading to the generic path on mismatch rather than misreporting. The caller MUST have confirmed the
+ * status is 503 first: this consumes the response body, so it is only sound on a response the caller is
+ * done inspecting otherwise.
+ */
+export async function isProxyCooldown(res: Response): Promise<boolean> {
+    const body = await res.jsonWith(cooldownErrorSchema);
+    return body?.error.message.startsWith("auth_unavailable") ?? false;
+}
 
 /**
  * The accessibility verdict for one model, three-valued by design — all three are EXPECTED outcomes, not

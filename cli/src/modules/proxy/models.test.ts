@@ -289,6 +289,23 @@ describe("resolveModelId", () => {
         expect((await resolveModelId("sk-test"))._unsafeUnwrapErr()).toEqual({ type: "proxy_unreachable", detail: "HTTP 401" });
     });
 
+    test("a 503 carrying the proxy's auth_unavailable marker → cooling_down (a distinct condition, not a generic unreachable)", async () => {
+        stubFetch(() =>
+            Promise.resolve(
+                new Response(
+                    JSON.stringify({ type: "error", error: { type: "api_error", message: "auth_unavailable: no auth available (providers=claude)" } }),
+                    { status: 503 },
+                ),
+            ),
+        );
+        expect((await resolveModelId("sk-test"))._unsafeUnwrapErr()).toEqual({ type: "cooling_down" });
+    });
+
+    test("a 503 whose body carries no recognized marker stays proxy_unreachable (status quo)", async () => {
+        stubFetch(() => Promise.resolve(new Response("boom", { status: 503 })));
+        expect((await resolveModelId("sk-test"))._unsafeUnwrapErr()).toEqual({ type: "proxy_unreachable", detail: "HTTP 503" });
+    });
+
     test("an empty model list → no_models", async () => {
         stubFetch(() => Promise.resolve(modelsResponse([])));
         expect((await resolveModelId("sk-test"))._unsafeUnwrapErr()).toEqual({ type: "no_models" });

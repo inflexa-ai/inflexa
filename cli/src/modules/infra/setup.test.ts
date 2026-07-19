@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { ok, err } from "neverthrow";
 import {
     adoptedConnection,
+    askProxy,
     classifyModelResolution,
     credentialHelperDetected,
     detectCredentialHelperFrom,
@@ -396,16 +397,25 @@ describe("providerKindForSlug", () => {
 });
 
 // The launch-gate policy matrix, driven through injected seams — no terminal, container runtime, or
-// clack involved. `probes` is consumed in order so each call observes the scripted next outcome.
+// clack involved. `probes` is consumed in order so each call observes the scripted next outcome. The
+// re-login is now a confirmable prompt (confirmRelogin), recorded as "confirm" so accept/decline are
+// pinned; the four non-verdict outcomes (unobservable, cooling_down, client_key_drift, empty_at_deadline)
+// must all warn-and-proceed and NEVER reach "relogin".
 describe("ensureLiveCredential", () => {
-    type Probe = { kind: "ok" } | { kind: "unauthorized" } | { kind: "unobservable"; detail: string };
+    type Probe = Awaited<ReturnType<Parameters<typeof ensureLiveCredential>[0]["probe"]>>;
 
-    function scripted(probes: Probe[], over: Partial<Parameters<typeof ensureLiveCredential>[0]> = {}) {
+    // `confirmResult` decides accept (true) vs decline (false) while ALWAYS recording the "confirm" step,
+    // so the decline path is scripted without overriding the seam (a bare override would drop the record).
+    function scripted(probes: Probe[], over: Partial<Parameters<typeof ensureLiveCredential>[0]> = {}, confirmResult = true) {
         const calls: string[] = [];
         const deps: Parameters<typeof ensureLiveCredential>[0] = {
             probe: async () => {
                 calls.push("probe");
                 return probes.shift() ?? { kind: "ok" };
+            },
+            confirmRelogin: async () => {
+                calls.push("confirm");
+                return confirmResult;
             },
             relogin: async () => {
                 calls.push("relogin");
@@ -439,6 +449,26 @@ describe("ensureLiveCredential", () => {
         expect(calls).toEqual(["probe", "warn"]);
     });
 
+    test("a cooldown warns and proceeds without ever offering a login (a healthy credential must not be churned)", async () => {
+        const { deps, calls } = scripted([{ kind: "cooling_down" }]);
+        expect((await ensureLiveCredential(deps)).isOk()).toBe(true);
+        expect(calls).toEqual(["probe", "warn"]);
+    });
+
+    test("an empty-at-deadline (ambiguous) warns naming both causes and proceeds — never a login", async () => {
+        const { deps, calls } = scripted([{ kind: "empty_at_deadline" }]);
+        expect((await ensureLiveCredential(deps)).isOk()).toBe(true);
+        expect(calls).toEqual(["probe", "warn"]);
+    });
+
+    test("a client-key drift warns naming inflexa setup and proceeds — a re-login cannot fix it", async () => {
+        const warnings: string[] = [];
+        const { deps, calls } = scripted([{ kind: "client_key_drift" }], { warn: (m) => warnings.push(m) });
+        expect((await ensureLiveCredential(deps)).isOk()).toBe(true);
+        expect(calls).toEqual(["probe"]); // warn is redirected to `warnings`, so it is absent from calls
+        expect(warnings[0]).toContain("inflexa setup");
+    });
+
     test("a 401 on a non-TTY fails actionably naming the forced re-login command", async () => {
         const { deps, calls } = scripted([{ kind: "unauthorized" }], { isInteractive: () => false });
         const result = await ensureLiveCredential(deps);
@@ -447,17 +477,23 @@ describe("ensureLiveCredential", () => {
         expect(calls).toEqual(["probe"]);
     });
 
-    test("a 401 on a TTY drives re-login, restarts the proxy BEFORE re-probing, then proceeds", async () => {
+    test("a 401 on a TTY OFFERS the login, and accepting drives re-login → restart → re-probe, then proceeds", async () => {
         const { deps, calls } = scripted([{ kind: "unauthorized" }, { kind: "ok" }]);
         expect((await ensureLiveCredential(deps)).isOk()).toBe(true);
-        expect(calls).toEqual(["probe", "relogin", "restart", "probe"]);
+        expect(calls).toEqual(["probe", "confirm", "relogin", "restart", "probe"]);
+    });
+
+    test("declining the offered re-login warns and proceeds — no login, no restart, no re-probe", async () => {
+        const { deps, calls } = scripted([{ kind: "unauthorized" }], {}, false);
+        expect((await ensureLiveCredential(deps)).isOk()).toBe(true);
+        expect(calls).toEqual(["probe", "confirm", "warn"]);
     });
 
     test("an incomplete re-login fails without restarting or re-probing", async () => {
         const { deps, calls } = scripted([{ kind: "unauthorized" }], { relogin: async () => false });
         const result = await ensureLiveCredential(deps);
         expect(result.isErr() ? result.error.message : "").toContain("didn't complete");
-        expect(calls).toEqual(["probe"]);
+        expect(calls).toEqual(["probe", "confirm"]);
     });
 
     test("a failed proxy restart fails rather than re-probing a proxy that never saw the fresh login", async () => {
@@ -466,33 +502,43 @@ describe("ensureLiveCredential", () => {
         });
         const result = await ensureLiveCredential(deps);
         expect(result.isErr() ? result.error.message : "").toContain("restart");
-        expect(calls).toEqual(["probe", "relogin"]);
+        expect(calls).toEqual(["probe", "confirm", "relogin"]);
     });
 
     test("a second 401 after re-login fails hard naming both remaining causes", async () => {
         const { deps, calls } = scripted([{ kind: "unauthorized" }, { kind: "unauthorized" }]);
         const result = await ensureLiveCredential(deps);
         expect(result.isErr() ? result.error.message : "").toContain("Still unauthorized");
-        expect(calls).toEqual(["probe", "relogin", "restart", "probe"]);
+        expect(calls).toEqual(["probe", "confirm", "relogin", "restart", "probe"]);
     });
 
     test("an unobservable re-probe after re-login warns and proceeds", async () => {
         const { deps, calls } = scripted([{ kind: "unauthorized" }, { kind: "unobservable", detail: "HTTP 502" }]);
         expect((await ensureLiveCredential(deps)).isOk()).toBe(true);
-        expect(calls).toEqual(["probe", "relogin", "restart", "probe", "warn"]);
+        expect(calls).toEqual(["probe", "confirm", "relogin", "restart", "probe", "warn"]);
+    });
+
+    test("an ambiguous re-probe after re-login warns and proceeds — the post-bounce empty window is never a hard fail", async () => {
+        const { deps, calls } = scripted([{ kind: "unauthorized" }, { kind: "empty_at_deadline" }]);
+        expect((await ensureLiveCredential(deps)).isOk()).toBe(true);
+        expect(calls).toEqual(["probe", "confirm", "relogin", "restart", "probe", "warn"]);
     });
 });
 
-// How a raw attempt becomes a verdict the policy above can act on. These are the two seams where a
-// misread turns the launch gate into a no-op: a boot race read as an outage, or an outage read as a
-// rejection.
+// How a raw attempt becomes a verdict the policy above can act on. These are the seams where a misread
+// used to turn the launch gate into a spurious re-login: an answering-but-cold-boot empty list read as a
+// dead credential, and a client-key-middleware 401 read as a provider rejection.
 describe("classifyModelResolution", () => {
-    test("an empty model list is a credential verdict — the proxy answered, and it has nothing to serve with", () => {
-        expect(classifyModelResolution({ type: "no_models" })).toEqual({ kind: "unauthorized" });
+    test("an empty model list is NOT a verdict — it is `not_ready`, waited out for the auth-registration window", () => {
+        expect(classifyModelResolution({ type: "no_models" })).toEqual({ kind: "not_ready" });
     });
 
-    test("a 401 from /models is the credential verdict, not an outage", () => {
-        expect(classifyModelResolution({ type: "proxy_unreachable", detail: "HTTP 401" })).toEqual({ kind: "unauthorized" });
+    test("a 401 from /models is a client-key drift (middleware-only), never a provider-credential verdict", () => {
+        expect(classifyModelResolution({ type: "proxy_unreachable", detail: "HTTP 401" })).toEqual({ kind: "client_key_drift" });
+    });
+
+    test("a cooldown from model resolution stays a cooldown, not an outage", () => {
+        expect(classifyModelResolution({ type: "cooling_down" })).toEqual({ kind: "cooling_down" });
     });
 
     test("a served status that is not 401 is unobservable — a fault, but not one about the credential", () => {
@@ -552,6 +598,75 @@ describe("retryWhileUnreachable", () => {
         });
         expect(result).toEqual({ kind: "unauthorized" });
         expect(tries).toBe(1);
+    });
+
+    test("a not_ready (answering, auth not yet registered) is retried like silence until the list populates, then returns that verdict", async () => {
+        // The cold-boot window: an empty list, then the registered proxy's real verdict. Interleave an
+        // unreachable try to prove both "keep waiting" kinds retry under the one budget.
+        const outcomes: ProbeAttempt[] = [
+            { kind: "not_ready" },
+            { kind: "unreachable", detail: "ECONNREFUSED" },
+            { kind: "not_ready" },
+            { kind: "unauthorized" },
+        ];
+        let tries = 0;
+        const result = await retryWhileUnreachable(
+            async () => {
+                tries++;
+                return outcomes.shift() ?? { kind: "ok" };
+            },
+            1_000,
+            1,
+        );
+        expect(result).toEqual({ kind: "unauthorized" });
+        expect(tries).toBe(4);
+    });
+
+    test("a list still empty at the deadline is the ambiguous empty_at_deadline — never a login, and distinct from an outage's unobservable", async () => {
+        const result = await retryWhileUnreachable(async () => ({ kind: "not_ready" }), 5, 1);
+        expect(result).toEqual({ kind: "empty_at_deadline" });
+    });
+});
+
+// askProxy's 503 discrimination: a served 503 carrying the proxy's `auth_unavailable` cooldown body is a
+// distinct `cooling_down` outcome (never a login), while any other 503 (or an unparseable body) stays on
+// the generic unobservable path. Global-fetch stub — askProxy issues a real /messages POST.
+describe("askProxy — 503 cooldown discrimination", () => {
+    const realFetch = globalThis.fetch;
+    afterEach(() => {
+        globalThis.fetch = realFetch;
+    });
+
+    function stubStatus(status: number, body: string): void {
+        globalThis.fetch = (async () => new Response(body, { status })) as unknown as typeof fetch;
+    }
+
+    test("a 503 carrying the proxy's auth_unavailable marker is `cooling_down`", async () => {
+        stubStatus(
+            503,
+            JSON.stringify({
+                type: "error",
+                error: { type: "api_error", message: "auth_unavailable: no auth available (providers=claude, model=claude-x); check credentials" },
+            }),
+        );
+        expect(await askProxy("sk-x", "claude-x")).toEqual({ kind: "cooling_down" });
+    });
+
+    test("a 503 whose body carries no recognized marker stays unobservable — the generic warn-and-proceed path", async () => {
+        stubStatus(503, JSON.stringify({ type: "error", error: { type: "api_error", message: "upstream temporarily unavailable" } }));
+        expect(await askProxy("sk-x", "claude-x")).toEqual({ kind: "unobservable", detail: "HTTP 503" });
+    });
+
+    test("a 503 with a non-JSON body degrades to unobservable, never a throw", async () => {
+        stubStatus(503, "Service Unavailable");
+        expect(await askProxy("sk-x", "claude-x")).toEqual({ kind: "unobservable", detail: "HTTP 503" });
+    });
+
+    test("a 200 completion is ok; a 401 is the definite unauthorized verdict", async () => {
+        stubStatus(200, "{}");
+        expect(await askProxy("sk-x", "claude-x")).toEqual({ kind: "ok" });
+        stubStatus(401, "nope");
+        expect(await askProxy("sk-x", "claude-x")).toEqual({ kind: "unauthorized" });
     });
 });
 

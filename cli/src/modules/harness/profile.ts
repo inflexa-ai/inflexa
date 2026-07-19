@@ -114,6 +114,10 @@ export function describeBootError(e: HarnessBootError): string {
                 `Export one (e.g. \`export ${e.providerVar}=…\`) — the key is read from the environment only, never from ${env.configPath}.`,
             ].join("\n");
         case "model_unresolved":
+            // `cooling_down` is a temporary all-credential block the proxy recovers from on its own —
+            // rendering it as "unreachable" would send the user chasing a container that is fine.
+            if (e.cause.type === "cooling_down")
+                return "The proxy is briefly refusing your provider credential after upstream errors (it recovers on its own) — wait a moment and retry.";
             return e.cause.type === "no_models"
                 ? "The proxy lists no models — authenticate a provider via `inflexa setup`, or set `harness.model` in config.json."
                 : `The proxy is unreachable (${e.cause.type === "proxy_unreachable" ? e.cause.detail : e.cause.type}) — is the container running? Try \`inflexa setup\`.`;
