@@ -1774,6 +1774,7 @@ async function verifyCredentialAtLaunch(rt: ContainerRuntime): Promise<Result<vo
             if (outcome.kind === "ok") s.stop("Provider login verified");
             else if (outcome.kind === "unauthorized") s.stop("Provider login expired or revoked");
             else if (outcome.kind === "cooling_down") s.stop("Provider credential cooling down");
+            else if (outcome.kind === "client_key_drift") s.stop("Proxy client key mismatch");
             else s.stop("Provider login not verifiable");
             return outcome;
         },
