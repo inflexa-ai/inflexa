@@ -209,6 +209,12 @@ export type AskCardPart = {
     detail?: string;
     /** Latest known status; a terminal re-emit overwrites `pending` in place. */
     status: AskCardStatus;
+    /**
+     * The reject feedback the user typed, echoed by the answering surface at answer time — the ledger
+     * and the model-facing denial carry it independently; this field is presentation only. Only ever set
+     * alongside a `rejected` status, and never reconstructed on reload (the card is a live-turn visual).
+     */
+    feedback?: string;
 };
 
 /**
