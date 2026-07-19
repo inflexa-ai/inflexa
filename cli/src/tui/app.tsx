@@ -315,14 +315,27 @@ export function App(props: AppProps) {
         );
     }
 
-    // Focus choreography for the docked prompt: when an ask becomes active, move focus to the prompt's
-    // box so its target-gated keys engage and the composer is blurred (gating submits during the busy
-    // turn); when the queue drains, restore focus to the composer. The renderable is not focusable
-    // synchronously — the established queueMicrotask ref pattern. Restoring to the textarea on drain
-    // matches App's other focus moves; a queued second ask re-runs this to keep the (fresh) prompt focused.
+    // Focus choreography for the docked prompt, gated on a change of HEAD-ASK IDENTITY — never on queue
+    // length. When a new head ask appears, move focus to the prompt's box so its target-gated keys
+    // engage and the composer is blurred (gating submits during the busy turn); when the queue drains,
+    // restore focus to the composer. The identity gate is load-bearing: `activeAsk()` also tracks the
+    // queue length, so an enqueue BEHIND the head re-runs this effect — but the head prompt may hold a
+    // focused feedback input mid-edit (in feedback mode its layer binds only esc), and refocusing the
+    // outer box would blur that input and silently drop keystrokes. `focusedAskId` remembers the ask we
+    // last focused, so a length change with an unchanged head is inert. The renderable is not focusable
+    // synchronously — the established queueMicrotask ref pattern.
+    let focusedAskId: string | null = null;
     createEffect(() => {
-        if (activeAsk()) queueMicrotask(() => promptRef?.focus());
-        else queueMicrotask(() => textareaRef?.focus());
+        const head = activeAsk();
+        if (head) {
+            if (head.askId !== focusedAskId) {
+                focusedAskId = head.askId;
+                queueMicrotask(() => promptRef?.focus());
+            }
+        } else if (focusedAskId !== null) {
+            focusedAskId = null;
+            queueMicrotask(() => textareaRef?.focus());
+        }
     });
 
     // Per-palette selection highlight. Dark themes keep OpenTUI's native highlight (each cell's fg becomes
