@@ -138,12 +138,15 @@ export function isDevelopmentBuild(channel: string | undefined): boolean {
 }
 
 /**
- * The two host ports the container stack publishes, and the four host-side mount/compose paths it binds —
- * split into pure helpers so the whole stack identity derives from ONE channel signal
- * ({@link isDevelopmentBuild} over the baked build channel, never NODE_ENV), the same signal
- * `compose.ts` names its containers/networks from. Exported (rather than folded into `env`) because the
- * frozen `env` reads the channel once at import and cannot be re-driven inside a test process — the
- * file's established testability pattern (see {@link isDevelopmentBuild}).
+ * The host ports the stack binds and the four host-side mount/compose paths it binds — split into pure
+ * helpers so the whole stack identity derives from ONE channel signal ({@link isDevelopmentBuild} over the
+ * baked build channel, never NODE_ENV), the same signal `compose.ts` names its containers/networks from.
+ * Two of the three ports are published by the containers (proxy, Postgres); the third — the DBOS `admin`
+ * port — is bound by the harness runtime's in-process admin HTTP server (modules/harness/runtime.ts), not a
+ * container, yet lives in this same table because this helper is the SINGLE place a channel's owned
+ * host-port allocation is decided, so cross-channel collision avoidance is provable in one spot. Exported
+ * (rather than folded into `env`) because the frozen `env` reads the channel once at import and cannot be
+ * re-driven inside a test process — the file's established testability pattern (see {@link isDevelopmentBuild}).
  *
  * WHY the entire stack — not just container names — must fork by channel: on a dual-build machine (every
  * developer runs `bun run dev` beside an installed binary) the two stacks share exactly these resources,
@@ -159,19 +162,31 @@ export function isDevelopmentBuild(channel: string | undefined): boolean {
  *     reads or writes the production one.
  *
  * Production values are byte-identical to their historical form, so an installed binary is untouched; dev
- * gets fixed sibling ports (proxy 8318, postgres 8433 — 5433 is avoided, the harness testcontainer claims
- * it) and sibling paths (`cliproxy-dev/`, `postgres-dev/`, `docker-compose.dev.yml`).
+ * gets fixed sibling ports (proxy 8318, postgres 8434, admin 8435) and sibling paths (`cliproxy-dev/`,
+ * `postgres-dev/`, `docker-compose.dev.yml`). Dev Postgres deliberately avoids 8433 — the PRODUCTION DBOS
+ * admin server binds it, so a dev Postgres there would EADDRINUSE the first harness boot on a dual-build
+ * machine — plus 5432 (system PG) and 5433 (the harness testcontainer). Run together, the full bound-port
+ * set is six distinct listeners: prod {8317, 8432, 8433} ∪ dev {8318, 8434, 8435}.
  */
 export type StackPorts = {
     /** Host port the CLIProxyAPI container publishes (also the URL the chat backend connects to). */
     readonly cliproxy: number;
     /** Default host port the Postgres container publishes — the channel-aware default for `postgres.port`. */
     readonly postgres: number;
+    /**
+     * Default host port the harness's DBOS admin HTTP server binds — modules/harness/runtime.ts hands it to
+     * `DBOS.setConfig({ adminPort })` before `DBOS.launch()`, which opens a live host listener there. It is
+     * the channel-aware default for `harness.adminPort`; a config.json override still wins. It lives in this
+     * table beside the two container ports — even though the runtime, not a container, binds it — because
+     * this helper is the single place a channel's owned host-port allocation is decided, so a dev and an
+     * installed prod runtime are provably never contending for a bind.
+     */
+    readonly admin: number;
 };
 
-/** Channel-aware host ports for the stack — dev siblings (8318/8433) off the production pair (8317/8432). See {@link StackPorts}. */
+/** Channel-aware host ports for the stack — dev siblings (8318/8434/8435) off the production trio (8317/8432/8433). See {@link StackPorts}. */
 export function stackPorts(channel: string | undefined): StackPorts {
-    return isDevelopmentBuild(channel) ? { cliproxy: 8318, postgres: 8433 } : { cliproxy: 8317, postgres: 8432 };
+    return isDevelopmentBuild(channel) ? { cliproxy: 8318, postgres: 8434, admin: 8435 } : { cliproxy: 8317, postgres: 8432, admin: 8433 };
 }
 
 /** The four host-side stack paths that must not be shared across build channels. See {@link stackPaths}. */
@@ -282,6 +297,13 @@ export const env = Object.freeze({
     cliproxyBaseUrl: `http://localhost:${stack.cliproxy}`, // human-facing, no /v1
     cliproxyApiUrl: `http://localhost:${stack.cliproxy}/v1`, // chat backend endpoint
     postgresPort: stack.postgres,
+    /**
+     * Default host port the harness runtime's DBOS admin HTTP server binds — the channel-aware default for
+     * `harness.adminPort` (modules/harness/config.ts). Excluded from envDoc/--help below like the other
+     * derived ports: we own the bind and a config.json override supersedes it, so it is not a user-facing
+     * env path. See {@link stackPorts} for the port-family and cross-channel collision-avoidance rationale.
+     */
+    adminPort: stack.admin,
     /**
      * The build-baked identity of the embedded skills/templates archive — a short hash over the
      * archived file set (see scripts/build.ts), naming the {@link env.contentDir} subdirectory the
@@ -406,7 +428,10 @@ export type EnvDocEntry = { kind: "path"; label: string; description: string; ba
 
 /** Rendered into the Paths/Environment sections of --help (src/cli/index.ts). */
 export const envDoc: Readonly<
-    Record<Exclude<keyof typeof env, "cliproxyPort" | "cliproxyBaseUrl" | "cliproxyApiUrl" | "postgresPort" | "isDevelopment" | "contentHash">, EnvDocEntry>
+    Record<
+        Exclude<keyof typeof env, "cliproxyPort" | "cliproxyBaseUrl" | "cliproxyApiUrl" | "postgresPort" | "adminPort" | "isDevelopment" | "contentHash">,
+        EnvDocEntry
+    >
 > = Object.freeze({
     dbPath: { kind: "path", label: "database", description: "saved sessions (SQLite)", baseVar: dataVar },
     logDir: { kind: "path", label: "logs", description: "log files, rotated daily, 7-day retention", baseVar: dataVar },

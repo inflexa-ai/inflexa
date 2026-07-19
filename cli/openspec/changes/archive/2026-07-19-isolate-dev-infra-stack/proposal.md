@@ -4,7 +4,7 @@ Dev and production builds namespace their container/network names (`inflexa-dev-
 
 ## What Changes
 
-- The entire stack identity becomes environment-aware: dev gets its own host ports (proxy 8318, postgres default 8433), compose file, CLIProxyAPI config + credential dir, and Postgres data dir. Production paths and ports are byte-for-byte unchanged. One-time dev cost: sign in once into the new dev credential dir; dev Postgres starts fresh.
+- The entire stack identity becomes environment-aware: dev gets its own host ports (proxy 8318, postgres default 8434, harness DBOS admin 8435), compose file, CLIProxyAPI config + credential dir, and Postgres data dir. Production paths and ports are byte-for-byte unchanged. One-time dev cost: sign in once into the new dev credential dir; dev Postgres starts fresh.
 - Both images are pinned by version tag AND manifest digest: `eceasy/cli-proxy-api:v7.2.90@sha256:6aa1ffb6…` and `pgvector/pgvector:0.8.5-pg18@sha256:12a379b4…` (current latest as of 2026-07-19). Bumps become deliberate one-line diffs; a republished tag cannot slip through the digest.
 - The launch-gate calibration points (the `auth_unavailable` 503 body, the `/v1/models` registration window and client-key-only 401, the `count_tokens` `not_found_error` body) are re-verified against v7.2.90 — they were verified on v7.2.77 — as part of this change, and the pin site documents that re-verification as the bump procedure.
 - Setup persists only explicit Postgres choices: a prompted value equal to its (channel-aware) default writes nothing to `config.json`, and a re-run that accepts defaults heals a previously frozen one. Explicitly customized values keep winning, per the existing per-field override contract.

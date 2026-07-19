@@ -162,12 +162,6 @@ function resolvePolicy(cfg: z.infer<typeof harnessConfigSchema> | undefined): Re
     };
 }
 
-/**
- * In the port family of the owned services (proxy 8317, postgres 8432) rather
- * than DBOS's usual 3001, which collides with common dev servers.
- */
-const DEFAULT_ADMIN_PORT = 8433;
-
 /** All-defaults resolved config, used when the `harness` key is absent or when it failed validation. */
 function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, configError?: { issues: string }): ResolvedHarnessConfig {
     const resourcePolicy = resolvePolicy(cfg);
@@ -182,7 +176,11 @@ function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, conf
         },
         sandboxImage: cfg?.sandboxImage ?? DEFAULT_SANDBOX_IMAGE,
         resourcePolicy,
-        adminPort: cfg?.adminPort ?? DEFAULT_ADMIN_PORT,
+        // The default is channel-aware (env.adminPort, from stackPorts) so a dev harness runtime and an
+        // installed prod harness runtime resolve to different admin ports and never contend for the admin
+        // HTTP bind on a dual-build machine. The port-family choice and the cross-channel collision-avoidance
+        // rationale live at stackPorts in lib/env.ts; a config.json `harness.adminPort` still wins here.
+        adminPort: cfg?.adminPort ?? env.adminPort,
         skillsDir: cfg?.skillsDir ?? (env.isDevelopment ? devSkillsDir : releaseContentDir("skills")),
         templatesDir: cfg?.templatesDir ?? (env.isDevelopment ? devTemplatesDir : releaseContentDir("templates")),
         configError,

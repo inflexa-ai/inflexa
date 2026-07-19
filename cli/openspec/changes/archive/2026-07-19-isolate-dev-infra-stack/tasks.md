@@ -1,6 +1,6 @@
 ## 1. Environment (`cli/src/lib/env.ts`)
 
-- [x] 1.1 Add pure exported `stackPorts(channel)` (prod 8317/8432, dev 8318/8433) and `stackPaths(dataDirBase, channel)` (prod paths byte-identical to today; dev siblings `cliproxy-dev/`, `postgres-dev/`, `docker-compose.dev.yml`) beside `isDevelopmentBuild`; the frozen `env` derives each once from `bakedEnv.buildChannel`, and `cliproxyBaseUrl`/`cliproxyApiUrl` interpolate the derived port
+- [x] 1.1 Add pure exported `stackPorts(channel)` (proxy/postgres/admin — prod 8317/8432/8433, dev 8318/8434/8435) and `stackPaths(dataDirBase, channel)` (prod paths byte-identical to today; dev siblings `cliproxy-dev/`, `postgres-dev/`, `docker-compose.dev.yml`) beside `isDevelopmentBuild`; the frozen `env` derives each once from `bakedEnv.buildChannel`, and `cliproxyBaseUrl`/`cliproxyApiUrl` interpolate the derived port
 - [x] 1.2 Document the WHY at the helpers (stack-collision surface; the OAuth rotation hazard of a shared credential dir)
 
 ## 2. Compose (`cli/src/modules/infra/compose.ts`)
@@ -25,4 +25,4 @@
 ## 6. Verify
 
 - [x] 6.1 `bun run format:file` on touched files; `bun run typecheck` (own files clean), `bun run lint`, full `bun test` green
-- [x] 6.2 Live: dev compose regenerates at the new dev path with 8318/8433 and dev mounts; the production compose file on disk is untouched
+- [x] 6.2 Live: dev compose regenerates at the new dev path with 8318/8434 and dev mounts; the production compose file on disk is untouched

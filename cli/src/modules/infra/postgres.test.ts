@@ -46,8 +46,8 @@ describe("resolvePostgresConfig", () => {
     test("returns all defaults when no config file exists (test environment)", () => {
         const conn = resolvePostgresConfig();
         expect(conn.host).toBe("localhost");
-        // The port default is now channel-aware: with nothing persisted it falls to env.postgresPort
-        // (8433 in a dev/test process, 8432 in a production build), never a fixed constant.
+        // The port default is channel-aware: with nothing persisted it falls to env.postgresPort
+        // (8434 in a dev/test process, 8432 in a production build), never a fixed constant.
         expect(conn.port).toBe(env.postgresPort);
         expect(conn.database).toBe(DEFAULT_DATABASE);
         expect(conn.user).toBe(DEFAULT_USER);

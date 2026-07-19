@@ -19,7 +19,7 @@
 export const DEFAULT_IMAGE = "pgvector/pgvector:0.8.5-pg18@sha256:12a379b47ad65289572ea0756efc11b7c241a6662833e8af7038cd3b73d647e0";
 
 // The default host-published Postgres port is channel-aware and lives in lib/env.ts (`env.postgresPort`,
-// from `stackPorts`): production 8432, dev 8433. It is NOT a constant here, so config.json never freezes a
+// from `stackPorts`): production 8432, dev 8434. It is NOT a constant here, so config.json never freezes a
 // non-channel-aware default — resolvePostgresConfig (lib/config.ts) fills it from env.
 
 /** Default database, user, and password — local-only, user-overridable via config. */

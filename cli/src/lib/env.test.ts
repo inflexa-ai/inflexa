@@ -75,14 +75,16 @@ describe("devCommandsActive", () => {
 // isDevelopmentBuild is split out. Production values are pinned to their historical literals so a prod
 // install is provably untouched; dev gets fixed siblings that must never collide with them.
 describe("stackPorts", () => {
-    test("production → the historical proxy 8317 / postgres 8432 pair", () => {
-        expect(stackPorts("production")).toEqual({ cliproxy: 8317, postgres: 8432 });
+    test("production → the historical proxy 8317 / postgres 8432 / admin 8433 trio", () => {
+        // 8433 is the DBOS admin default's historical value, so a prod install sees no change to any of the
+        // three host ports it binds.
+        expect(stackPorts("production")).toEqual({ cliproxy: 8317, postgres: 8432, admin: 8433 });
     });
 
-    test("dev (unset or any non-production channel) → sibling proxy 8318 / postgres 8433", () => {
-        expect(stackPorts(undefined)).toEqual({ cliproxy: 8318, postgres: 8433 });
-        expect(stackPorts("development")).toEqual({ cliproxy: 8318, postgres: 8433 });
-        expect(stackPorts("beta")).toEqual({ cliproxy: 8318, postgres: 8433 });
+    test("dev (unset or any non-production channel) → siblings proxy 8318 / postgres 8434 / admin 8435", () => {
+        expect(stackPorts(undefined)).toEqual({ cliproxy: 8318, postgres: 8434, admin: 8435 });
+        expect(stackPorts("development")).toEqual({ cliproxy: 8318, postgres: 8434, admin: 8435 });
+        expect(stackPorts("beta")).toEqual({ cliproxy: 8318, postgres: 8434, admin: 8435 });
     });
 
     test("dev postgres port avoids 5433 (the harness testcontainer) and 5432 (system PG)", () => {
@@ -90,11 +92,27 @@ describe("stackPorts", () => {
         expect(stackPorts(undefined).postgres).not.toBe(5432);
     });
 
-    test("every dev port differs from its production sibling, so the two stacks never contend for a bind", () => {
+    test("dev postgres avoids 8433 — the production DBOS admin bind (the EADDRINUSE regression this guards)", () => {
+        // Dev Postgres must not claim 8433 because the PRODUCTION harness runtime's DBOS admin HTTP
+        // server binds it (modules/harness/config.ts resolves the prod default from stackPorts), so on a
+        // dual-build machine whichever process bound second would fail with EADDRINUSE at first harness
+        // boot / container start. Dev postgres therefore avoids the prod admin port specifically, not just
+        // its own channel's siblings.
+        expect(stackPorts(undefined).postgres).not.toBe(stackPorts("production").admin);
+        expect(stackPorts(undefined).postgres).not.toBe(8433);
+    });
+
+    test("no host listener is shared between a dev and a prod runtime — the union of all six ports is disjoint", () => {
+        // Three ports per channel (proxy, postgres, admin). When both channels run at once every host
+        // listener must be distinct, so the union has size 6 — a single shared entry would re-open a bind
+        // collision between a dev and an installed prod stack/runtime.
         const prod = stackPorts("production");
         const dev = stackPorts("development");
         expect(dev.cliproxy).not.toBe(prod.cliproxy);
         expect(dev.postgres).not.toBe(prod.postgres);
+        expect(dev.admin).not.toBe(prod.admin);
+        const all = [prod.cliproxy, prod.postgres, prod.admin, dev.cliproxy, dev.postgres, dev.admin];
+        expect(new Set(all).size).toBe(6);
     });
 });
 
