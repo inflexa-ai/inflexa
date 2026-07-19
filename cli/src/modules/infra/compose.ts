@@ -17,7 +17,20 @@ import { formatInfraStateError, writeProxyConfig, type InfraStateError } from ".
 // which abstract `docker` vs `podman`. The compose subcommand (`docker compose`
 // / `podman compose`) is a plugin of the same binary.
 
-const PROXY_IMAGE = "eceasy/cli-proxy-api:latest";
+// Pinned by version tag AND manifest digest (`<name>:<tag>@sha256:…`): the tag names the semantics a
+// reviewer checks release notes against, the digest makes a republished tag inert (the engine resolves by
+// digest when both are present). NEVER a floating tag (`latest`): the launch gate's credential
+// classifications are calibrated against verified proxy behavior, and an upstream push must not change that
+// behavior under an unchanged install. This tag CALIBRATES four launch-gate classification points — the
+// `auth_unavailable` 503 body shape, the `/v1/models` empty-until-registration boot window, the
+// client-key-only 401 on `/v1/models`, and the `count_tokens` `not_found_error` body — established on
+// v7.2.77 and re-verified on v7.2.90. BUMP PROCEDURE: change the tag AND the digest together, then
+// re-verify those four calibration points against a live container of the new tag (they degrade to
+// warn-and-proceed on mismatch by design, but a silent shape change would erode the gate's precision).
+// Exported because the one-shot OAuth-login container (setup.ts) must run the SAME pinned build: the
+// login writes the credential file the serving proxy loads, so a version skew between the two could
+// mint a shape the pinned server does not expect.
+export const PROXY_IMAGE = "eceasy/cli-proxy-api:v7.2.90@sha256:6aa1ffb6616bff0b35d76cff89761ee7d54704d33d0c0c4f5ce7f3bffa9d73d2";
 const PROXY_CONFIG_PATH = "/CLIProxyAPI/config.yaml";
 const PROXY_AUTH_DIR = "/root/.cli-proxy-api";
 

@@ -12,6 +12,8 @@ import {
     modelConnectionEnvDoc,
     providerApiKeyVar,
     resolveModelApiKey,
+    stackPaths,
+    stackPorts,
 } from "./env.ts";
 
 // The truth table behind env.isDevelopment: a build is development unless the baked channel is exactly
@@ -65,6 +67,66 @@ describe("devCommandsActive", () => {
         expect(devCommandsActive("production", "0")).toBe(false);
         expect(devCommandsActive("production", "")).toBe(false);
         expect(devCommandsActive("production", "true")).toBe(false);
+    });
+});
+
+// The channel-aware stack identity. We test the pure helpers (not `env.*`) because `env` freezes its
+// bakedEnv.buildChannel read at import and cannot be re-driven in a test process — the same reason
+// isDevelopmentBuild is split out. Production values are pinned to their historical literals so a prod
+// install is provably untouched; dev gets fixed siblings that must never collide with them.
+describe("stackPorts", () => {
+    test("production → the historical proxy 8317 / postgres 8432 pair", () => {
+        expect(stackPorts("production")).toEqual({ cliproxy: 8317, postgres: 8432 });
+    });
+
+    test("dev (unset or any non-production channel) → sibling proxy 8318 / postgres 8433", () => {
+        expect(stackPorts(undefined)).toEqual({ cliproxy: 8318, postgres: 8433 });
+        expect(stackPorts("development")).toEqual({ cliproxy: 8318, postgres: 8433 });
+        expect(stackPorts("beta")).toEqual({ cliproxy: 8318, postgres: 8433 });
+    });
+
+    test("dev postgres port avoids 5433 (the harness testcontainer) and 5432 (system PG)", () => {
+        expect(stackPorts(undefined).postgres).not.toBe(5433);
+        expect(stackPorts(undefined).postgres).not.toBe(5432);
+    });
+
+    test("every dev port differs from its production sibling, so the two stacks never contend for a bind", () => {
+        const prod = stackPorts("production");
+        const dev = stackPorts("development");
+        expect(dev.cliproxy).not.toBe(prod.cliproxy);
+        expect(dev.postgres).not.toBe(prod.postgres);
+    });
+});
+
+describe("stackPaths", () => {
+    const base = "/data";
+
+    test("production paths are byte-identical to their historical form", () => {
+        expect(stackPaths(base, "production")).toEqual({
+            cliproxyConfigPath: join(base, "inflexa", "cliproxy", "config.yaml"),
+            cliproxyAuthDir: join(base, "inflexa", "cliproxy", "auth"),
+            postgresDataDir: join(base, "inflexa", "postgres"),
+            composeFilePath: join(base, "inflexa", "docker-compose.yml"),
+        });
+    });
+
+    test("dev paths are the sibling variants (cliproxy-dev/, postgres-dev/, docker-compose.dev.yml)", () => {
+        expect(stackPaths(base, undefined)).toEqual({
+            cliproxyConfigPath: join(base, "inflexa", "cliproxy-dev", "config.yaml"),
+            cliproxyAuthDir: join(base, "inflexa", "cliproxy-dev", "auth"),
+            postgresDataDir: join(base, "inflexa", "postgres-dev"),
+            composeFilePath: join(base, "inflexa", "docker-compose.dev.yml"),
+        });
+    });
+
+    test("no stack path is shared across channels — the whole mount/compose surface is disjoint", () => {
+        const prod = Object.values(stackPaths(base, "production"));
+        const dev = Object.values(stackPaths(base, "development"));
+        // Every prod path is absent from the dev set (and vice versa), and the union is 8 distinct paths:
+        // a single shared entry would re-open a collision (shared PGDATA, one build rewriting the other's
+        // compose file, or — worst — a shared proxy credential dir the OAuth rotation would corrupt).
+        for (const p of prod) expect(dev).not.toContain(p);
+        expect(new Set([...prod, ...dev]).size).toBe(8);
     });
 });
 

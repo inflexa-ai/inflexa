@@ -31,7 +31,7 @@ import {
     type ChatSetupError,
     type ModelAccess,
 } from "../proxy/models.ts";
-import { type PostgresConnection } from "./postgres_types.ts";
+import { DEFAULT_DATABASE, DEFAULT_PASSWORD, DEFAULT_USER, type PostgresConnection } from "./postgres_types.ts";
 import {
     writeComposeFile,
     composeUp,
@@ -40,6 +40,7 @@ import {
     composeAvailable,
     composeProxyRunning,
     composeRestartProxy,
+    PROXY_IMAGE,
     type ConnectionMode,
 } from "./compose.ts";
 import { formatInfraStateError, writeProxyConfig } from "./proxy_config.ts";
@@ -597,9 +598,41 @@ async function runDefaultModelSetup(mode: ConnectionMode): Promise<void> {
 }
 
 /**
+ * The persist-only-explicit filter: keep ONLY the prompted fields that differ from their default (host
+ * `localhost`, database/user/password constants, port = the channel-aware `defaultPort`), building the
+ * block FRESH from `conn` — never spread over the previous config block.
+ *
+ * WHY rebuild-fresh, and WHY the port default is a parameter: `config.json` is shared by BOTH build
+ * channels, so persisting a value the user merely ACCEPTED freezes it and overrides the OTHER channel's
+ * sibling default — re-creating exactly the port collision the channel-aware defaults remove. Filtering to
+ * explicit differences means an accepted default is written as nothing; and because the block is rebuilt
+ * from scratch each run (not merged over the old one), a setup re-run that re-accepts the prompt is what
+ * HEALS a default an earlier run froze — the stale `postgres.port` simply isn't carried forward. An
+ * all-defaults result is an empty object, so the caller drops the `postgres` key entirely. The default
+ * port is passed in (not read here) for the same frozen-`env` testability reason as {@link stackPaths}.
+ *
+ * Trade-off accepted: a user who explicitly TYPES the value equal to the default loses the pin — a no-op
+ * on their own channel, and indistinguishable from the freeze bug being healed.
+ */
+export function explicitPostgresFields(conn: PostgresConnection, defaultPort: number): Partial<PostgresConnection> {
+    const explicit: Partial<PostgresConnection> = {};
+    if (conn.host !== "localhost") explicit.host = conn.host;
+    if (conn.port !== defaultPort) explicit.port = conn.port;
+    if (conn.database !== DEFAULT_DATABASE) explicit.database = conn.database;
+    if (conn.user !== DEFAULT_USER) explicit.user = conn.user;
+    if (conn.password !== DEFAULT_PASSWORD) explicit.password = conn.password;
+    return explicit;
+}
+
+/**
  * Prompt for Postgres username, password, and port via @clack/prompts.
  * On non-interactive terminals, uses existing config values or defaults silently.
  * Empty input keeps the current value (the default is shown in the placeholder).
+ *
+ * Persists ONLY explicit choices (see {@link explicitPostgresFields}): a prompted value equal to its
+ * channel-aware default writes nothing, and an all-defaults run removes the `postgres` block entirely so
+ * each channel keeps resolving its own defaults. The returned connection is the full resolution used to
+ * generate THIS run's compose file, independent of what was persisted.
  */
 async function promptPostgresConfig(): Promise<PostgresConnection> {
     const existing = resolvePostgresConfig();
@@ -638,7 +671,11 @@ async function promptPostgresConfig(): Promise<PostgresConnection> {
     };
 
     const config = readConfig();
-    writeConfig({ ...config, postgres: conn }).match(
+    // Rebuild the persisted block fresh from the prompt, keeping only explicit choices. An empty result
+    // (all defaults) writes `postgres: undefined`, which JSON.stringify drops — healing any frozen default.
+    const explicit = explicitPostgresFields(conn, env.postgresPort);
+    const postgres = Object.keys(explicit).length === 0 ? undefined : explicit;
+    writeConfig({ ...config, postgres }).match(
         () => {},
         (e) => log.warn(`Failed to save postgres config: ${e.type}`),
     );
@@ -1210,7 +1247,9 @@ export function recordCliproxyProvider(kind: Provider): Result<void, ConfigError
 
 // --- proxy runtime ---------------------------------------------------------
 
-const IMAGE = "eceasy/cli-proxy-api:latest";
+// The login container runs the same pinned image as the compose proxy service (see PROXY_IMAGE's
+// comment in compose.ts for the pin rationale and bump procedure).
+const IMAGE = PROXY_IMAGE;
 
 /**
  * The image runs `./CLIProxyAPI` from WORKDIR /CLIProxyAPI (see upstream

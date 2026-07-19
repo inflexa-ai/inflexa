@@ -70,22 +70,6 @@ function configDir(): string {
 }
 
 /**
- * CLIProxyAPI listens on this fixed port inside the container we manage
- * (src/modules/infra/setup.ts publishes it) and the chat backend connects to it.
- * We own the container, so the endpoint is intentionally NOT user-overridable — it is
- * not read from process.env. If we ever let users choose the port, derive the
- * URLs from it right here.
- */
-const cliproxyPort = 8317;
-
-/**
- * Default host-published port for the inflexa-postgres container. Off the standard
- * 5432 (clashes with a user's system PG) and 5433 (claimed by the harness testcontainer).
- * Rhymes with the proxy's owned port 8317. User-overridable via config.json.
- */
-const postgresPort = 8432;
-
-/**
  * Internal configuration baked into release binaries: `bun run build` inlines
  * each value via --define, so the compiled executable never consults the
  * runtime environment for them — end users cannot override them, and they are
@@ -153,6 +137,77 @@ export function isDevelopmentBuild(channel: string | undefined): boolean {
     return channel !== "production";
 }
 
+/**
+ * The two host ports the container stack publishes, and the four host-side mount/compose paths it binds —
+ * split into pure helpers so the whole stack identity derives from ONE channel signal
+ * ({@link isDevelopmentBuild} over the baked build channel, never NODE_ENV), the same signal
+ * `compose.ts` names its containers/networks from. Exported (rather than folded into `env`) because the
+ * frozen `env` reads the channel once at import and cannot be re-driven inside a test process — the
+ * file's established testability pattern (see {@link isDevelopmentBuild}).
+ *
+ * WHY the entire stack — not just container names — must fork by channel: on a dual-build machine (every
+ * developer runs `bun run dev` beside an installed binary) the two stacks share exactly these resources,
+ * and each shared one is a collision:
+ *   - a HOST PORT bind — the loser's container sits dead in `Created` while the winner holds the port;
+ *   - the COMPOSE FILE — every entry point regenerates it from the running channel's config, so one build
+ *     silently rewrites the file the other executes (cross-regeneration);
+ *   - the POSTGRES DATA DIR — one shared PGDATA means two engines racing the same on-disk cluster;
+ *   - and most dangerously the CLIProxyAPI CREDENTIAL DIR — two independently-refreshing proxies pointed
+ *     at ONE rotating OAuth refresh-token credential corrupt it: each rotation invalidates the other's
+ *     copy, tripping provider reuse-detection and killing the grant (the forced-relogin symptom the
+ *     launch gate was built to remove). Dev therefore signs in once into its OWN credential dir and never
+ *     reads or writes the production one.
+ *
+ * Production values are byte-identical to their historical form, so an installed binary is untouched; dev
+ * gets fixed sibling ports (proxy 8318, postgres 8433 — 5433 is avoided, the harness testcontainer claims
+ * it) and sibling paths (`cliproxy-dev/`, `postgres-dev/`, `docker-compose.dev.yml`).
+ */
+export type StackPorts = {
+    /** Host port the CLIProxyAPI container publishes (also the URL the chat backend connects to). */
+    readonly cliproxy: number;
+    /** Default host port the Postgres container publishes — the channel-aware default for `postgres.port`. */
+    readonly postgres: number;
+};
+
+/** Channel-aware host ports for the stack — dev siblings (8318/8433) off the production pair (8317/8432). See {@link StackPorts}. */
+export function stackPorts(channel: string | undefined): StackPorts {
+    return isDevelopmentBuild(channel) ? { cliproxy: 8318, postgres: 8433 } : { cliproxy: 8317, postgres: 8432 };
+}
+
+/** The four host-side stack paths that must not be shared across build channels. See {@link stackPaths}. */
+export type StackPaths = {
+    /** CLIProxyAPI config file, bind-mounted into the proxy container. */
+    readonly cliproxyConfigPath: string;
+    /** CLIProxyAPI provider-credential dir, bind-mounted into the proxy container. */
+    readonly cliproxyAuthDir: string;
+    /** Postgres data dir, bind-mounted into the Postgres container. */
+    readonly postgresDataDir: string;
+    /** Generated Docker Compose file orchestrating the stack. */
+    readonly composeFilePath: string;
+};
+
+/**
+ * Channel-aware stack paths under `<dataDirBase>/inflexa/…`. Dev derives sibling names so a dev stack
+ * never shares a mount source or compose file with an installed production stack (see {@link StackPorts}
+ * for the collision surface). Production names are byte-identical to their pre-change form.
+ */
+export function stackPaths(dataDirBase: string, channel: string | undefined): StackPaths {
+    const dev = isDevelopmentBuild(channel);
+    const proxyDir = dev ? "cliproxy-dev" : "cliproxy";
+    const postgresDir = dev ? "postgres-dev" : "postgres";
+    const composeFile = dev ? "docker-compose.dev.yml" : "docker-compose.yml";
+    return {
+        cliproxyConfigPath: join(dataDirBase, "inflexa", proxyDir, "config.yaml"),
+        cliproxyAuthDir: join(dataDirBase, "inflexa", proxyDir, "auth"),
+        postgresDataDir: join(dataDirBase, "inflexa", postgresDir),
+        composeFilePath: join(dataDirBase, "inflexa", composeFile),
+    };
+}
+
+// The stack's ports and paths, each derived ONCE from the baked channel for the frozen env below.
+const stack = stackPorts(bakedEnv.buildChannel);
+const stackDirs = stackPaths(dataDir(), bakedEnv.buildChannel);
+
 export const env = Object.freeze({
     dbPath: join(dataDir(), "inflexa", "agent.db"),
     logDir: join(dataDir(), "inflexa", "logs"),
@@ -199,33 +254,34 @@ export const env = Object.freeze({
      * state we own, so they live under our data dir and are bind-mounted into the
      * container.
      */
-    cliproxyConfigPath: join(dataDir(), "inflexa", "cliproxy", "config.yaml"),
-    cliproxyAuthDir: join(dataDir(), "inflexa", "cliproxy", "auth"),
+    cliproxyConfigPath: stackDirs.cliproxyConfigPath,
+    cliproxyAuthDir: stackDirs.cliproxyAuthDir,
     /**
      * Postgres data directory — bind-mounted into the inflexa-postgres container at
      * `/var/lib/postgresql` (the PG 18+ parent mount) so DB state persists across CLI restarts. See
      * src/modules/infra/postgres.ts.
      */
-    postgresDataDir: join(dataDir(), "inflexa", "postgres"),
+    postgresDataDir: stackDirs.postgresDataDir,
     /**
      * Docker Compose file — generated by `inflexa setup` to orchestrate both the
      * proxy and Postgres containers on a shared network. Regenerated on every setup
      * run; the launch-time gate generates it if missing.
      */
-    composeFilePath: join(dataDir(), "inflexa", "docker-compose.yml"),
+    composeFilePath: stackDirs.composeFilePath,
     configPath: join(configDir(), "inflexa", "config.json"),
     authPath: join(configDir(), "inflexa", "auth.json"),
     provKeyPath: join(configDir(), "inflexa", "prov_key.json"),
     logLevel: process.env[logLevelVar],
     otelEndpoint: process.env[otelEndpointVar],
     /**
-     * CLIProxyAPI networking — internal constants, deliberately excluded from
-     * envDoc/--help (see the Exclude on envDoc below).
+     * CLIProxyAPI networking — channel-aware ports from {@link stackPorts}, deliberately excluded from
+     * envDoc/--help (see the Exclude on envDoc below). We own the container, so the endpoint is NOT
+     * user-overridable; the URLs interpolate the derived port so a channel switch moves all three together.
      */
-    cliproxyPort,
-    cliproxyBaseUrl: `http://localhost:${cliproxyPort}`, // human-facing, no /v1
-    cliproxyApiUrl: `http://localhost:${cliproxyPort}/v1`, // chat backend endpoint
-    postgresPort,
+    cliproxyPort: stack.cliproxy,
+    cliproxyBaseUrl: `http://localhost:${stack.cliproxy}`, // human-facing, no /v1
+    cliproxyApiUrl: `http://localhost:${stack.cliproxy}/v1`, // chat backend endpoint
+    postgresPort: stack.postgres,
     /**
      * The build-baked identity of the embedded skills/templates archive — a short hash over the
      * archived file set (see scripts/build.ts), naming the {@link env.contentDir} subdirectory the
