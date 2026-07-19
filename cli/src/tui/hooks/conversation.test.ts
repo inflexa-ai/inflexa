@@ -13,6 +13,7 @@ import {
     loadMessages,
     type LoadSeams,
     messages,
+    noteAskFeedback,
     resetHotState,
     send,
     streamPartId,
@@ -491,6 +492,38 @@ describe("send() handles data-ask parts: reconcile-by-id + the pending-asks stor
         const cards = askCards();
         expect(cards[0]?.title).toBe("orig");
         expect(cards[0]?.command).toBe("inflexa refs list");
+    });
+
+    // The answer-side feedback echo (noteAskFeedback) and the gateway's terminal re-emit
+    // (reconcileAskCard) race: neither ordering is guaranteed at runtime, and both write the same card.
+    // These two cases pin that they CONVERGE — noteAskFeedback spreads + adds `feedback`, reconcile
+    // spreads + overrides only `status`, so whichever lands second preserves the other's write.
+    test("feedback survives the terminal re-emit — noteAskFeedback THEN reconcile", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "rm -rf out", status: "pending" } });
+            noteAskFeedback("ask-1", "archive, don't delete");
+            void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "rm -rf out", status: "rejected" } });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        const cards = askCards();
+        expect(cards.length).toBe(1);
+        expect(cards[0]?.status).toBe("rejected");
+        expect(cards[0]?.feedback).toBe("archive, don't delete");
+    });
+
+    test("feedback survives the terminal re-emit — reconcile THEN noteAskFeedback", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "rm -rf out", status: "pending" } });
+            void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "rm -rf out", status: "rejected" } });
+            noteAskFeedback("ask-1", "archive, don't delete");
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        const cards = askCards();
+        expect(cards.length).toBe(1);
+        expect(cards[0]?.status).toBe("rejected");
+        expect(cards[0]?.feedback).toBe("archive, don't delete");
     });
 });
 

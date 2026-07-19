@@ -267,6 +267,31 @@ function reconcileAskCard(ask: ReturnType<typeof readAskPart>): void {
     );
 }
 
+/**
+ * Echo the user's typed reject feedback onto the live ask card so the transcript shows what they said.
+ * The ledger and the model-facing denial carry the feedback on their own; this write is presentation
+ * only. It SPREADS the existing part and adds `feedback`, so whatever status a terminal re-emit
+ * ({@link reconcileAskCard}) already folded in survives — and, symmetrically, that reconcile spreads the
+ * existing part and overrides only `status`, so a `feedback` already noted survives it. The two writes
+ * therefore converge on the same card regardless of which lands first: the gateway's terminal re-emit
+ * (the poll's `data-ask`) and this answer-side echo race, and both are order-independent by construction.
+ * A no-op when no card matches — e.g. the pending card was dropped by a mid-turn reset.
+ */
+export function noteAskFeedback(askId: string, feedback: string): void {
+    const id = currentAssistantId;
+    if (!id) return;
+    setMessages(
+        produce((msgs) => {
+            const msg = msgs.find((m) => m.id === id);
+            if (!msg) return;
+            const idx = msg.parts.findIndex((p) => p.type === "ask-card" && p.askId === askId);
+            // The findIndex predicate already matched `type === "ask-card"`, so the part at idx is an
+            // AskCardPart; the cast only restates that for the spread. Fresh object so Solid reconciles.
+            if (idx !== -1) msg.parts[idx] = { ...(msg.parts[idx] as AskCardPart), feedback };
+        }),
+    );
+}
+
 /** The harness `EmitFn` event union — one event the agent loop, provider, or a tool streams. */
 type EmitEventArg = Parameters<EmitFn>[0];
 

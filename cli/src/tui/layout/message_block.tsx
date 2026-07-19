@@ -10,7 +10,7 @@ import { PlanCardBlock } from "../components/plan_card_block.tsx";
 import { RunCardBlock } from "../components/run_card_block.tsx";
 import { PresentationBlock } from "../components/presentation_block.tsx";
 import { OpenableCardBlock, type OpenableRowView } from "../components/openable_card_block.tsx";
-import { Bold, Fg } from "../components/emphasis.tsx";
+import { Bold, Fg, Italic } from "../components/emphasis.tsx";
 import { entryDegraded, resolveEntryPath } from "../../modules/harness/artifact_open.ts";
 import { openArtifact, openArtifactFolder } from "../hooks/artifacts.ts";
 import type { AskCardPart, OpenableCardPart, Part } from "../../types/session.ts";
@@ -218,6 +218,18 @@ function AskCard(props: { part: AskCardPart }) {
                 {(detail: Accessor<string>): JSX.Element => (
                     <text paddingLeft={space.md}>
                         <Fg role="fgSubtle">{detail()}</Fg>
+                    </text>
+                )}
+            </Show>
+            {/* The user's own typed reject feedback, echoed onto the card by the answering surface — quoted
+            muted so it reads as their words, not the tool's. Only a rejection carries feedback. */}
+            <Show when={props.part.status === "rejected" && props.part.feedback}>
+                {(feedback: Accessor<string>): JSX.Element => (
+                    <text paddingLeft={space.md}>
+                        <Fg role="fgMuted">feedback: </Fg>
+                        <Fg role="fgSubtle">
+                            <Italic>{feedback()}</Italic>
+                        </Fg>
                     </text>
                 )}
             </Show>

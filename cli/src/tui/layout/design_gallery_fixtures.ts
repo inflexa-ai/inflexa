@@ -271,6 +271,7 @@ export const mockAskCards: AskCardPart[] = [
         title: "Delete output directory",
         command: "rm -rf runs/run-abc/output",
         status: "rejected",
+        feedback: "don't delete outputs — archive them instead",
     },
     {
         id: "mock-ask-aborted",

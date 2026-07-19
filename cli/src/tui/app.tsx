@@ -291,6 +291,11 @@ export function App(props: AppProps) {
                 setAnswerBusy(false);
                 switch (outcome) {
                     case "applied":
+                        // Echo the user's own typed reject feedback onto the transcript card. The gateway
+                        // already carried it to the ledger and the model-facing denial; this is the only
+                        // path that surfaces it to the user. Order-safe vs the gateway's terminal re-emit:
+                        // noteAskFeedback and reconcileAskCard both spread the same card, so they converge.
+                        if (reply.kind === "reject" && reply.feedback) conversation.noteAskFeedback(askId, reply.feedback);
                         settleAsk(askId);
                         return;
                     case "not_found":
