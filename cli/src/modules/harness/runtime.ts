@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { ok, err, type Result } from "neverthrow";
 import {
     bootHarness,
+    createAskGateway,
     createConfiguredAiSdkProvider,
     createDbosRunLauncher,
     createLocalRunAuthorizer,
@@ -19,6 +20,7 @@ import {
     type AgentDefinition,
     type AgentSession,
     type AiSdkProviderConfig,
+    type AskGateway,
     type ChatProvider,
     type ConversationAssemblyDeps,
     type CoreWorkflowDeps,
@@ -170,6 +172,13 @@ export type HarnessRuntime = {
     readonly sandbox: AgentBackend;
     /** App pool over the provisioned Postgres — shared with the harness ledger queries. */
     readonly pool: Pool;
+    /**
+     * The process-singleton tool-approval gateway over {@link HarnessRuntime.pool}.
+     * On the handle so a TUI surface answers and enumerates pending asks through the
+     * one realization boot constructed — never a second gateway built ad hoc from
+     * the pool.
+     */
+    readonly askGateway: AskGateway;
     /** Ready-to-use deps for `triggerDataProfile`. */
     readonly triggerDeps: DataProfileTriggerDeps;
     /** Ready-to-use deps for the analysis-run trigger flow. */
@@ -332,6 +341,15 @@ export type BootSeams = {
      * completes before launch — which `beforeLaunch` guarantees.
      */
     readonly sweepEphemeral: typeof sweepEphemeralWorkflows;
+    /**
+     * Expire asks orphaned by a prior process, run inside `bootHarness`'s
+     * `beforeLaunch` hook after state init has created the ask ledger — so a
+     * crash-abandoned pending row is marked expired before any new turn can pend
+     * one. A seam, like {@link BootSeams.sweepEphemeral}, purely so the offline boot
+     * test drives `beforeLaunch` with no live ledger; the real pass is one
+     * {@link AskGateway.sweepExpired} query.
+     */
+    readonly sweepAsks: (gateway: AskGateway) => Promise<number>;
     /** Register the orphaned-container reaper scheduled workflow. */
     readonly registerReaper: (deps: RegisterReaperDeps) => void;
     /** Register the dead-sandbox liveness watchdog scheduled workflow. */
@@ -352,6 +370,7 @@ const realSeams: BootSeams = {
     resolveEmbedding: () => resolveEmbedder(readConfig()),
     boot: bootHarness,
     sweepEphemeral: sweepEphemeralWorkflows,
+    sweepAsks: (gateway) => gateway.sweepExpired(),
     registerReaper: registerSandboxReaper,
     registerWatchdog,
     registerNotificationSweep,
@@ -811,6 +830,10 @@ async function bootHarnessRuntimeOnce(
         // trigger (`runTriggerDeps`) — same reasoning as the shared authorizer: a
         // single seam realization drives every durable-run launch on this analysis.
         const runLauncher = createDbosRunLauncher();
+        // One ask gateway over the app pool — the process-singleton tool-approval
+        // realization a TUI surface answers and enumerates asks through; its expiry
+        // sweep runs in `beforeLaunch` below, once state init has created the ledger.
+        const askGateway = createAskGateway({ pool });
 
         // ONE holder of the sandbox agent's provenance emitters, stamped WITH the boot `{provider}/{model}`
         // name and injected as STABLE delegating handles into the run-engine deps bundles below. The
@@ -915,11 +938,14 @@ async function bootHarnessRuntimeOnce(
         //      step makes a prior crash's row re-dispatchable by launch-time
         //      recovery; the only race-free cancel point is a direct system-DB
         //      UPDATE that lands before launch — which `beforeLaunch` guarantees.
-        //   2. Install the live-switch controller. Its run-bus subscription must be
+        //   2. Expire asks orphaned by a prior process. State init (which `bootHarness`
+        //      runs before this hook) has created the ledger, so a crash-abandoned
+        //      pending row is marked expired before any new turn can pend one.
+        //   3. Install the live-switch controller. Its run-bus subscription must be
         //      attached when launch-time recovery re-emits `run_started` for
         //      reclaimed runs, or the gauge would miss them and let a switch land
         //      mid-recovery.
-        //   3. Register the sandbox-hygiene crons (reaper tears down orphaned
+        //   4. Register the sandbox-hygiene crons (reaper tears down orphaned
         //      containers, watchdog converts a dead sandbox into a step failure,
         //      sweep clears stale notification rows) — the embedder's duty, acting
         //      only on rows/containers the harness created.
@@ -927,6 +953,7 @@ async function bootHarnessRuntimeOnce(
         // `Pool | null` local whose narrowing this deferred closure does not preserve.
         const beforeLaunch = async (): Promise<void> => {
             await seams.sweepEphemeral({ pool: composition.pool, logger, executorId: "local" });
+            await seams.sweepAsks(askGateway);
             installAgentSwitch({
                 swappable: { conversation: conversationProvider, sandbox: sandboxProvider },
                 rebuildProvider: buildProvider,
@@ -984,6 +1011,7 @@ async function bootHarnessRuntimeOnce(
             conversation: conversationBackend,
             sandbox: sandboxBackend,
             pool,
+            askGateway,
             triggerDeps: { pool, runAuthorizer, workflow: core.workflows.dataProfile },
             runTriggerDeps: { pool, executeAnalysis: core.workflows.executeAnalysis, runLauncher, runAuthorizer, budget: cfg.resourcePolicy.budget },
             conversationAgent: core.conversationAgent,

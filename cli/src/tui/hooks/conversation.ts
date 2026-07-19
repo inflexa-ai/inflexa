@@ -17,15 +17,16 @@ import { describeCause, findAuthCause } from "../../lib/cause.ts";
 import { resolveModelConnection } from "../../modules/harness/config.ts";
 import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setup.ts";
 import { workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
-import { isSubAgentEvent, readPlanCard, readRunCard } from "../../modules/harness/chat_printer.ts";
+import { isSubAgentEvent, readAskPart, readPlanCard, readRunCard } from "../../modules/harness/chat_printer.ts";
 import { readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "../../modules/harness/artifact_open.ts";
 import { buildChatSession, runChatTurn, type TurnOutcome } from "../../modules/harness/turn.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { leaderSeq, sequenceLabel } from "../keymap.ts";
 import { harnessRuntime } from "./boot.ts";
+import { clearAsks, pushAsk, settleAsk } from "./asks.ts";
 import { notify } from "./notice.ts";
 import { setChatStatus } from "./status.ts";
-import type { OpenableCardPart, OpenableEntry, Part, PlanCardPart, PresentationPart, TextPart, ToolCallPart } from "../../types/session.ts";
+import type { AskCardPart, OpenableCardPart, OpenableEntry, Part, PlanCardPart, PresentationPart, TextPart, ToolCallPart } from "../../types/session.ts";
 
 // The chat's hot state — the message list, the in-flight streaming buffer, and the last error —
 // held here (not inside `app.tsx`) so the holder of the state is decoupled from its renderer, the
@@ -232,6 +233,40 @@ function updateToolPart(toolUseId: string, name: string, status: "ok" | "error",
     );
 }
 
+/**
+ * Fold a terminal `data-ask` re-emission onto the live transcript: overwrite the existing ask card's
+ * status in place (same `askId` — the part re-emits `pending` → a terminal status under one id, so this
+ * is latest-wins with no duplicate), or append a fresh terminal card when none exists. The append path
+ * covers an answer-side re-emission that arrives with no prior `pending` (e.g. the pending card was
+ * dropped when the store reset mid-turn). A fresh object so Solid reconciles the status edit.
+ */
+function reconcileAskCard(ask: ReturnType<typeof readAskPart>): void {
+    const id = currentAssistantId;
+    if (!id) return;
+    setMessages(
+        produce((msgs) => {
+            const msg = msgs.find((m) => m.id === id);
+            if (!msg) return;
+            const idx = msg.parts.findIndex((p) => p.type === "ask-card" && p.askId === ask.askId);
+            if (idx !== -1) {
+                // The findIndex predicate already matched `type === "ask-card"`, so the part at idx is an
+                // AskCardPart; the cast only restates that for the spread. Fresh object so Solid reconciles.
+                msg.parts[idx] = { ...(msg.parts[idx] as AskCardPart), status: ask.status };
+            } else {
+                msg.parts.push({
+                    id: randomUUIDv7(),
+                    type: "ask-card",
+                    askId: ask.askId,
+                    title: ask.title,
+                    command: ask.command,
+                    ...(ask.detail !== undefined ? { detail: ask.detail } : {}),
+                    status: ask.status,
+                });
+            }
+        }),
+    );
+}
+
 /** The harness `EmitFn` event union — one event the agent loop, provider, or a tool streams. */
 type EmitEventArg = Parameters<EmitFn>[0];
 
@@ -343,6 +378,27 @@ function renderDataPart(type: `data-${string}`, data: unknown): void {
         case "data-report-preview-failed":
             appendPart(reportPreviewFailedPart(data, currentAnalysisId ?? ""));
             return;
+        case "data-ask": {
+            // The ask part reconciles under one id: `pending` opens the card and docks the prompt; a
+            // terminal re-emission folds latest-wins onto the same card and drains the queue entry.
+            const ask = readAskPart(data);
+            if (ask.status === "pending") {
+                appendPart({
+                    id: randomUUIDv7(),
+                    type: "ask-card",
+                    askId: ask.askId,
+                    title: ask.title,
+                    command: ask.command,
+                    ...(ask.detail !== undefined ? { detail: ask.detail } : {}),
+                    status: "pending",
+                });
+                pushAsk({ askId: ask.askId, title: ask.title, command: ask.command, ...(ask.detail !== undefined ? { detail: ask.detail } : {}) });
+            } else {
+                reconcileAskCard(ask);
+                settleAsk(ask.askId);
+            }
+            return;
+        }
         default:
             // Observe an unknown conversation part as a one-line tagged mention — never swallowed.
             appendPart({
@@ -530,6 +586,10 @@ export function turnFailureMessage(cause: unknown): string {
  * `prepare_failed`/`thread_gone` bail before the loop, so they pop the empty assistant bubble instead.
  */
 function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number): void {
+    // The turn is settling: drop any still-pending asks so the docked prompt can never outlive its
+    // turn. Each terminal re-emit already settled its own entry during the turn; this is the final
+    // sweep for the abort/failure path where a terminal re-emission may never arrive.
+    clearAsks();
     switch (outcome.kind) {
         case "ok":
             // An empty buffer means no delta arrived since the last seal, so the FINAL assistant
@@ -813,6 +873,8 @@ export function resetHotState(): void {
     currentSessionId = null;
     currentAnalysisId = null;
     openTools.clear();
+    // Drop any pending asks so a swap/abort mid-decision never leaves a stale docked prompt.
+    clearAsks();
     setStreamPartId(null);
     setStreamText("");
     setErrorMsg(null);
@@ -911,6 +973,11 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
         session,
         emit: emitForTurn,
         signal: myTurn.signal,
+        // Bind the ask seam to THIS turn's scope: a `ctx.ask` tool pauses on the runtime gateway
+        // carrying the turn's analysis/thread, its abort signal, and its guarded emit sink, so the
+        // gateway's `data-ask` emissions and its poll ride the same signal and sink as every other
+        // turn event (a swap/reset that supersedes the turn drops them at `emitForTurn`).
+        ask: (req) => runtime.askGateway.ask(req, { analysisId: opts.analysisId, threadId: opts.sessionId, signal: myTurn.signal, emit: emitForTurn }),
         analysisId: opts.analysisId,
         // The pg thread binds 1:1 to the session, so a plan launched here stamps its run.
         threadId: opts.sessionId,

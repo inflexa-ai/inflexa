@@ -186,6 +186,31 @@ export type OpenableCardPart = {
     folderPath?: string;
 };
 
+/** The status an ask card can carry: `pending`, then exactly one terminal outcome (latest-wins on re-emit). */
+export type AskCardStatus = "pending" | "resolved" | "rejected" | "aborted" | "expired";
+
+/**
+ * A tool's pending approval, surfaced as a transcript card and RECONCILED by ask id: the harness
+ * re-emits the same ask under one id as it moves `pending` → a terminal status, and the live adapter
+ * overwrites this card's `status` in place (latest-wins) rather than appending a duplicate. Lean card
+ * shape — no `sessionId`/`messageId` ceremony — carrying only the primitive fields copied at receipt
+ * via `readAskPart`, so nothing mutable from the in-process emit stream reaches the store.
+ */
+export type AskCardPart = {
+    id: string;
+    type: "ask-card";
+    /** The ask's ledger id — the reconcile key, and what a surface passes back to answer the ask. */
+    askId: string;
+    /** Human-facing headline for the approval. */
+    title: string;
+    /** The exact command / operation being approved — what the user sees granted. */
+    command: string;
+    /** Optional extra context a surface may render beside the command. */
+    detail?: string;
+    /** Latest known status; a terminal re-emit overwrites `pending` in place. */
+    status: AskCardStatus;
+};
+
 /**
  * MOCK part: a file edit. Not produced by the live engine and not persisted —
  * drives the "diff / file edit" stream state from fixtures.
@@ -209,11 +234,12 @@ export type FileEditPart = {
 /**
  * A message part. `TextPart` is the only kind persisted to SQLite; `tool-call`,
  * `plan-card`, `run-card`, `presentation`, and `openable-card` are produced live by
- * the harness emit adapter (and reconstructed on transcript reload); `thinking`/
- * `file-edit` remain MOCK (fixture-driven) so the gallery can render every
- * design-system state. Discriminated on `type`.
+ * the harness emit adapter (and reconstructed on transcript reload); `ask-card` is
+ * produced live only (a live-turn-only visual, never reconstructed on reload — the
+ * ledger is its durable record); `thinking`/`file-edit` remain MOCK (fixture-driven)
+ * so the gallery can render every design-system state. Discriminated on `type`.
  */
-export type Part = TextPart | ThinkingPart | ToolCallPart | FileEditPart | PlanCardPart | RunCardPart | PresentationPart | OpenableCardPart;
+export type Part = TextPart | ThinkingPart | ToolCallPart | FileEditPart | PlanCardPart | RunCardPart | PresentationPart | OpenableCardPart | AskCardPart;
 
 export type StoredMessage = {
     info: Message;

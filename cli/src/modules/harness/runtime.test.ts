@@ -176,6 +176,12 @@ function recordingSeams(calls: string[]): BootSeams {
         sweepEphemeral: async () => {
             calls.push("sweepEphemeral");
         },
+        // The ask-expiry sweep is a seam for the same reason `sweepEphemeral` is:
+        // it lets `beforeLaunch` run offline with no live ask ledger to query.
+        sweepAsks: async () => {
+            calls.push("sweepAsks");
+            return 0;
+        },
         registerReaper: () => {
             calls.push("registerReaper");
         },
@@ -234,6 +240,7 @@ describe("bootHarnessRuntime", () => {
             "postgres",
             "boot",
             "sweepEphemeral",
+            "sweepAsks",
             "registerReaper",
             "registerWatchdog",
             "registerNotificationSweep",

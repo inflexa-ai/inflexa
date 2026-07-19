@@ -10,7 +10,7 @@
 
 import type { CortexRunRow, DataProfileStatus, StepExecutionRow } from "@inflexa-ai/harness";
 
-import type { TextPart, ThinkingPart, ToolCallPart, FileEditPart, PlanCardPart, PlanCardStepView, RunCardPart } from "../../types/session.ts";
+import type { AskCardPart, TextPart, ThinkingPart, ToolCallPart, FileEditPart, PlanCardPart, PlanCardStepView, RunCardPart } from "../../types/session.ts";
 
 /** A run step's lifecycle state (mirrors `RunStepView.state`). */
 export type StepState = "done" | "running" | "failed" | "queued";
@@ -203,6 +203,92 @@ export const mockRunCard: RunCardPart = {
     title: "Differential expression across conditions",
     stepCount: 3,
 };
+
+/**
+ * MOCK: the primitive fields the docked approval prompt renders — the exhibit supplies the
+ * approve/reject callbacks. The feedback surface (reject → optional feedback input) carries no
+ * title/command of its own; the gallery reaches it by seeding the widget's `initialMode="feedback"`
+ * with these same fields filling the required props.
+ */
+export type AskPromptFixture = {
+    /** Short headline naming what needs approval. */
+    title: string;
+    /** The exact action awaiting approval, shown verbatim. */
+    command: string;
+    /** Optional secondary context line under the command. */
+    detail?: string;
+    /** Further asks waiting behind this one; drives the `+N more` hint (0 hides it). */
+    queuedCount: number;
+};
+
+/** MOCK ask-prompt states pinning the docked approval prompt's choice-mode surface. */
+export const mockAskPrompts = {
+    basic: {
+        title: "Approve shell command",
+        command: "Rscript scripts/deseq2.R --cores 8",
+        queuedCount: 0,
+    },
+    withDetail: {
+        title: "Fetch external dataset",
+        command: "curl -O https://ftp.ncbi.nlm.nih.gov/geo/GSE78220_series_matrix.txt.gz",
+        detail: "downloads ~40 MB into the analysis sandbox before profiling",
+        queuedCount: 0,
+    },
+    queued: {
+        title: "Install R package",
+        command: "install.packages('fgsea')",
+        queuedCount: 2,
+    },
+} satisfies Record<string, AskPromptFixture>;
+
+/**
+ * MOCK: a reconciled ask card in each of the five statuses the transcript renders — `pending` plus its
+ * four terminal outcomes (`resolved`/`rejected`/`aborted`/`expired`). A live-turn-only visual; these
+ * exist only so the gallery can show every ask-card state without a live approval round-trip.
+ */
+export const mockAskCards: AskCardPart[] = [
+    {
+        id: "mock-ask-pending",
+        type: "ask-card",
+        askId: "mock-askid-pending",
+        title: "Approve shell command",
+        command: "Rscript scripts/deseq2.R --cores 8",
+        detail: "runs in the analysis sandbox",
+        status: "pending",
+    },
+    {
+        id: "mock-ask-resolved",
+        type: "ask-card",
+        askId: "mock-askid-resolved",
+        title: "Install R package",
+        command: "install.packages('fgsea')",
+        status: "resolved",
+    },
+    {
+        id: "mock-ask-rejected",
+        type: "ask-card",
+        askId: "mock-askid-rejected",
+        title: "Delete output directory",
+        command: "rm -rf runs/run-abc/output",
+        status: "rejected",
+    },
+    {
+        id: "mock-ask-aborted",
+        type: "ask-card",
+        askId: "mock-askid-aborted",
+        title: "Fetch external dataset",
+        command: "curl -O https://ftp.ncbi.nlm.nih.gov/geo/GSE78220_series_matrix.txt.gz",
+        status: "aborted",
+    },
+    {
+        id: "mock-ask-expired",
+        type: "ask-card",
+        askId: "mock-askid-expired",
+        title: "Write outside workspace",
+        command: "cp report.html ~/Desktop/",
+        status: "expired",
+    },
+];
 
 /** MOCK sample: a live run with a mix of step states. */
 export const mockRun: Run = {

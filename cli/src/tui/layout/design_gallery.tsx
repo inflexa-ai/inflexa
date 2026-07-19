@@ -26,6 +26,7 @@ import { ErrorBlock } from "../components/error_block.tsx";
 import { PresentationBlock } from "../components/presentation_block.tsx";
 import { OpenableCardBlock } from "../components/openable_card_block.tsx";
 import { PlanCardBlock } from "../components/plan_card_block.tsx";
+import { AskPrompt } from "../components/ask_prompt.tsx";
 import { MessageBlock } from "./message_block.tsx";
 import { Bold, Italic, Underline, Dim, Reverse, Fg } from "../components/emphasis.tsx";
 import { TextArea } from "../components/text_area.tsx";
@@ -48,6 +49,8 @@ import {
     mockPlanGraphExhibits,
     mockPlanStepDetail,
     mockRunCard,
+    mockAskPrompts,
+    mockAskCards,
     mockCortexRuns,
     mockRunSteps,
     mockDataProfile,
@@ -492,6 +495,52 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         rows={[{ icon: "report", name: "Report preview v2 failed", caption: "render timed out after 60s", path: null, degraded: true }]}
                         onOpen={noop}
                     />
+                </State>
+                <State n="21" label="approval prompt & ask cards — docked ctx.ask surface + reconciled transcript cards">
+                    {/* The docked AskPrompt as it sits above the chat bar. Rendered INERT: no onFocusReady
+                        handle is passed, so no host ever focuses the box; its y/a/n key layer is gated on
+                        that box's own focus target (and on MODE_BASE, suspended under this dialog), so it can
+                        never win the keymap or swallow a keystroke from the gallery pane. Callbacks are
+                        no-ops. The feedback surface (reject → optional feedback input) is seeded directly via
+                        initialMode below, with inert threading its embedded input's autoFocus off so it too
+                        stays out of the gallery's focus. */}
+                    <text fg={theme().fgMuted}>choice mode — title + command, bare y/a/n keys (focus-gated, inert here):</text>
+                    <AskPrompt
+                        title={mockAskPrompts.basic.title}
+                        command={mockAskPrompts.basic.command}
+                        queuedCount={mockAskPrompts.basic.queuedCount}
+                        onApprove={noop}
+                        onReject={noop}
+                    />
+                    <text fg={theme().fgMuted}>with detail — a secondary context line under the command:</text>
+                    <AskPrompt
+                        title={mockAskPrompts.withDetail.title}
+                        command={mockAskPrompts.withDetail.command}
+                        detail={mockAskPrompts.withDetail.detail}
+                        queuedCount={mockAskPrompts.withDetail.queuedCount}
+                        onApprove={noop}
+                        onReject={noop}
+                    />
+                    <text fg={theme().fgMuted}>stacked queue — the `+N more` hint when asks wait behind the head:</text>
+                    <AskPrompt
+                        title={mockAskPrompts.queued.title}
+                        command={mockAskPrompts.queued.command}
+                        queuedCount={mockAskPrompts.queued.queuedCount}
+                        onApprove={noop}
+                        onReject={noop}
+                    />
+                    <text fg={theme().fgMuted}>feedback mode — reject opens an optional feedback input (seeded via initialMode, inert here):</text>
+                    <AskPrompt
+                        title={mockAskPrompts.basic.title}
+                        command={mockAskPrompts.basic.command}
+                        queuedCount={mockAskPrompts.basic.queuedCount}
+                        initialMode="feedback"
+                        inert
+                        onApprove={noop}
+                        onReject={noop}
+                    />
+                    <text fg={theme().fgMuted}>transcript ask cards — pending then each terminal status (reconciled in place by ask id):</text>
+                    <MessageBlock index={1} role="assistant" parts={mockAskCards} streamPartId={noStreamId} streamText={noStreamText} />
                 </State>
             </ScrollPane>
         </DialogPanel>

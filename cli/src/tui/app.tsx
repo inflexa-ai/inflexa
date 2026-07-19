@@ -1,7 +1,9 @@
-import { createSignal, Show } from "solid-js";
-import type { CliRenderer, Renderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core";
+import { ResultAsync } from "neverthrow";
+import { createEffect, createSignal, Show } from "solid-js";
+import type { BoxRenderable, CliRenderer, Renderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer, useTerminalDimensions } from "@opentui/solid";
-import { causeDetailLines } from "../lib/cause.ts";
+import type { AskReply } from "@inflexa-ai/harness";
+import { causeDetailLines, describeCause } from "../lib/cause.ts";
 import { GLYPHS, size, zIndex } from "../lib/design_system.ts";
 import { contractHome } from "../lib/paths.ts";
 import { shutdown } from "../lib/shutdown.ts";
@@ -10,6 +12,7 @@ import { theme, themeVariant, noticeColor, type Notice } from "./theme.ts";
 import { chatStatus } from "./hooks/status.ts";
 import { bootState, harnessRuntime, watchAgentModels } from "./hooks/boot.ts";
 import * as conversation from "./hooks/conversation.ts";
+import { activeAsk, queuedCount, settleAsk, type PendingAsk } from "./hooks/asks.ts";
 import { currentNotice, notify } from "./hooks/notice.ts";
 import { openArtifact } from "./hooks/artifacts.ts";
 import { profileSnapshot, watchSidebarData, profileDetailLines } from "./hooks/sidebar_live.ts";
@@ -21,6 +24,7 @@ import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, le
 import { StatusBar } from "./layout/status_bar.tsx";
 import { Chat } from "./components/chat.tsx";
 import { BootIndicator } from "./components/boot_indicator.tsx";
+import { AskPrompt } from "./components/ask_prompt.tsx";
 import { ChatBar } from "./layout/chat_bar.tsx";
 import { Sidebar } from "./layout/sidebar.tsx";
 import { WhichKey } from "./layout/which_key.tsx";
@@ -67,9 +71,14 @@ export function App(props: AppProps) {
 
     // INSERT vs NORMAL is pure focus: the textarea holds focus in INSERT (the default); esc moves
     // focus to the stream's ScrollPane (NORMAL — its focus-gated scroll keys go live). Focus is
-    // ALWAYS on one of the two widgets, so the dialog host's save/restore never sees a null focus.
+    // ALWAYS on one of these widgets, so the dialog host's save/restore never sees a null focus. A
+    // docked ask prompt is a third, transient focus holder while an ask pends (the effect below moves
+    // focus to it on ask-active and restores the textarea on drain).
     let textareaRef: TextareaRenderable | null = null;
     let scrollPaneRef: ScrollBoxRenderable | null = null;
+    // The docked approval prompt's focusable box, handed back via its onFocusReady. Null while no ask
+    // is pending (the prompt is unmounted).
+    let promptRef: BoxRenderable | null = null;
 
     // Quit cleanly: destroy() restores the terminal (mouse tracking, alternate screen, cooked mode)
     // before exit — process.exit() alone skips OpenTUI's cleanup and leaves the shell broken.
@@ -262,6 +271,60 @@ export function App(props: AppProps) {
         openArtifact(latest.analysisId, latest.entry);
     }
 
+    // True while an answer is in flight, passed to the prompt as `busy`: its action keys go inert and
+    // the feedback input dims, so a second keypress cannot double-answer before the gateway resolves.
+    const [answerBusy, setAnswerBusy] = createSignal(false);
+
+    // Answer the head ask through the runtime gateway. `applied` drains the entry (the gateway's
+    // terminal re-emit also reconciles the transcript card); a stale outcome (`not_found` /
+    // `already_terminal`) still drains it with a notice — the ledger has already moved past this ask
+    // and holding the prompt open would wedge the queue. A thrown answer (e.g. Postgres unreachable)
+    // leaves the entry in place: the write failed, the ask may still be answerable, so the user can
+    // retry rather than lose the decision. Bridged through ResultAsync so the harness throw becomes a
+    // handled branch (neverthrow-first) rather than a bare try/catch.
+    function answerAsk(askId: string, reply: AskReply): void {
+        const gateway = harnessRuntime()?.askGateway;
+        if (!gateway) return;
+        setAnswerBusy(true);
+        void ResultAsync.fromPromise(gateway.answer(askId, reply), (e): unknown => e).match(
+            (outcome) => {
+                setAnswerBusy(false);
+                switch (outcome) {
+                    case "applied":
+                        settleAsk(askId);
+                        return;
+                    case "not_found":
+                        notify({ kind: "info", text: "That approval is no longer pending." });
+                        settleAsk(askId);
+                        return;
+                    case "already_terminal":
+                        notify({ kind: "info", text: "That approval was already answered." });
+                        settleAsk(askId);
+                        return;
+                    default: {
+                        const _exhaustive: never = outcome;
+                        throw new Error(`unhandled answer outcome: ${JSON.stringify(_exhaustive)}`);
+                    }
+                }
+            },
+            (cause) => {
+                // Leave the entry queued — the write failed, so the ask may still be answerable.
+                setAnswerBusy(false);
+                notify({ kind: "error", text: `Could not answer the approval: ${describeCause(cause)}` });
+            },
+        );
+    }
+
+    // Focus choreography for the docked prompt: when an ask becomes active, move focus to the prompt's
+    // box so its target-gated keys engage and the composer is blurred (gating submits during the busy
+    // turn); when the queue drains, restore focus to the composer. The renderable is not focusable
+    // synchronously — the established queueMicrotask ref pattern. Restoring to the textarea on drain
+    // matches App's other focus moves; a queued second ask re-runs this to keep the (fresh) prompt focused.
+    createEffect(() => {
+        if (activeAsk()) queueMicrotask(() => promptRef?.focus());
+        else queueMicrotask(() => textareaRef?.focus());
+    });
+
     // Per-palette selection highlight. Dark themes keep OpenTUI's native highlight (each cell's fg becomes
     // its selection bg) — vivid against their bright syntax; light themes invert into mush, so there we
     // flatten the bg to `bgActive` and leave the fg alone (each token keeps its syntax color). Applied on
@@ -448,6 +511,27 @@ export function App(props: AppProps) {
                             <box width="100%" flexShrink={0} backgroundColor={theme().bg} paddingLeft={1} paddingRight={1}>
                                 <BootIndicator message={bootFailureMessage()} />
                             </box>
+                        </Show>
+
+                        {/* Docked approval prompt — mounted only while an ask is pending, directly below the
+                        Chat stream's flexGrow scrollbox. AskPrompt paints its own full-width flexShrink={0}
+                        background row (the 1-cell scrollbox-bleed rule), so it opaquely reclaims its rows. It
+                        docks here, never as a modal over the transcript, so the user can see what they are
+                        approving. `keyed` mounts a FRESH prompt per head ask (choice/feedback mode resets and
+                        the focus target is re-handed) as the queue advances. */}
+                        <Show when={activeAsk()} keyed>
+                            {(ask: PendingAsk) => (
+                                <AskPrompt
+                                    title={ask.title}
+                                    command={ask.command}
+                                    detail={ask.detail}
+                                    queuedCount={queuedCount()}
+                                    busy={answerBusy()}
+                                    onApprove={(kind: "once" | "always") => answerAsk(ask.askId, { kind })}
+                                    onReject={(feedback?: string) => answerAsk(ask.askId, { kind: "reject", ...(feedback ? { feedback } : {}) })}
+                                    onFocusReady={(r: BoxRenderable) => (promptRef = r)}
+                                />
+                            )}
                         </Show>
 
                         {/* Input area — gated (submits refused, gate shown in the affordance) until boot is ready.

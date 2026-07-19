@@ -4,7 +4,7 @@ import type { EmitFn, EventSource } from "@inflexa-ai/harness";
 
 import { materializeTarget, readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "./artifact_open.ts";
 import { planToDag } from "./plan_dag.ts";
-import type { OpenableEntry, OpenTarget, PlanCardStepView, PresentationBody } from "../../types/session.ts";
+import type { AskCardStatus, OpenableEntry, OpenTarget, PlanCardStepView, PresentationBody } from "../../types/session.ts";
 
 // The `inflexa chat` emit sink — renders one in-process `EmitFn` stream to a
 // plain-text terminal. It is deliberately coarse: this
@@ -166,6 +166,31 @@ export function readRunCard(data: unknown): { runId: string; title: string; step
     };
 }
 
+/** The recognized ask statuses, as a runtime set for the reader's narrow. Typed `AskCardStatus[]` so an entry can only be a valid status. */
+const ASK_STATUSES: readonly AskCardStatus[] = ["pending", "resolved", "rejected", "aborted", "expired"];
+
+/**
+ * Read an ask part's render fields off the `unknown` `data` payload (the harness's `AskPart`:
+ * `{id, title, command, detail?, status}`). Narrows defensively and copies every field it keeps —
+ * no reference to `data` survives the call. An unrecognized or missing `status` maps to `expired`,
+ * the SAFE TERMINAL: never `pending`, so a malformed re-emission can never resurrect a live prompt
+ * or wedge the pending-asks queue. `id` becomes `askId` (the reconcile/answer key) to keep it distinct
+ * from a card part's own fresh id. Exported so the TUI adapter extracts ask fields with this exact reader.
+ */
+export function readAskPart(data: unknown): { askId: string; title: string; command: string; detail?: string; status: AskCardStatus } {
+    // `data` is external/loop-owned; cast to a loose record and read-and-coerce every field.
+    const d = (data ?? {}) as Record<string, unknown>;
+    const status: AskCardStatus =
+        typeof d.status === "string" && (ASK_STATUSES as readonly string[]).includes(d.status) ? (d.status as AskCardStatus) : "expired";
+    return {
+        askId: typeof d.id === "string" ? d.id : "",
+        title: typeof d.title === "string" ? d.title : "",
+        command: typeof d.command === "string" ? d.command : "",
+        ...(typeof d.detail === "string" ? { detail: d.detail } : {}),
+        status,
+    };
+}
+
 /** Build an OSC 8 hyperlink whose VISIBLE text is `text` and whose target is `uri` — degrades to plain `text` on terminals without link support. */
 function hyperlink(uri: string, text: string): string {
     return `\x1b]8;;${uri}\x07${text}\x1b]8;;\x07`;
@@ -292,6 +317,13 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
             case "data-report-preview-failed": {
                 const view = readReportPreviewFailed(data);
                 sink.out(`\n  [report] ${view.entry.name}: ${view.entry.caption ?? "failed"}\n`);
+                return;
+            }
+            case "data-ask": {
+                // The REPL is a write-only sink with no mid-turn input path, so it cannot answer an ask —
+                // the harness denies it by default. Still observe the approval and its outcome, one line.
+                const ask = readAskPart(data);
+                sink.out(`\n  [approval] ${ask.command} — ${ask.status}\n`);
                 return;
             }
             default:
