@@ -189,6 +189,25 @@ export function stackPorts(channel: string | undefined): StackPorts {
     return isDevelopmentBuild(channel) ? { cliproxy: 8318, postgres: 8434, admin: 8435 } : { cliproxy: 8317, postgres: 8432, admin: 8433 };
 }
 
+/**
+ * The Postgres host ports RESERVED as channel defaults — production 8432 and dev 8434, the two values
+ * {@link stackPorts} hands out. NEITHER may ever live in `config.json` as an explicit choice: the file is
+ * shared by both build channels, so pinning either channel's sibling default there overrides the OTHER
+ * channel's default and re-creates the very stack collision the channel-aware defaults remove — and a pin
+ * cannot be healed from the channel whose default it does not equal (that channel reads it back as a real
+ * choice). So a port equal to a reserved value is treated as "no choice" on BOTH sides of the boundary:
+ * `explicitPostgresFields` (setup.ts) never persists it, and `resolvePostgresConfig` (config.ts) never
+ * honors it — falling back to THIS channel's sibling default, which self-heals a pin an older build froze,
+ * on the first resolve, from either channel. Any OTHER value is a genuine user choice that deliberately
+ * applies to both channels per the per-field override contract.
+ */
+export const reservedPostgresPorts: readonly number[] = [stackPorts("production").postgres, stackPorts("development").postgres];
+
+/** True when `port` is one of the {@link reservedPostgresPorts} channel defaults — never persisted or honored as an explicit choice. */
+export function isReservedPostgresPort(port: number): boolean {
+    return reservedPostgresPorts.includes(port);
+}
+
 /** The four host-side stack paths that must not be shared across build channels. See {@link stackPaths}. */
 export type StackPaths = {
     /** CLIProxyAPI config file, bind-mounted into the proxy container. */

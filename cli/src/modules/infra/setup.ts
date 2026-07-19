@@ -8,7 +8,15 @@ import { type Result, ok, err } from "neverthrow";
 import { z } from "zod";
 import { ensureRuntime, readConfig, resolvePostgresConfig, selectedRuntime, writeConfig, type ConfigError, type ModelAuthConfig } from "../../lib/config.ts";
 import { firstReadyRuntime, runtimeIds, runtimes, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
-import { anthropicAuthTokenSet, detectProviderEnv, env, providerApiKeyVar, resolveModelApiKey, type ProviderEnvSnapshot } from "../../lib/env.ts";
+import {
+    anthropicAuthTokenSet,
+    detectProviderEnv,
+    env,
+    isReservedPostgresPort,
+    providerApiKeyVar,
+    resolveModelApiKey,
+    type ProviderEnvSnapshot,
+} from "../../lib/env.ts";
 import { createCredentialSource, credentialErrorMessage, type CredentialScheme } from "../../lib/credential.ts";
 import { select, promptText, confirm } from "../../lib/cli.ts";
 import {
@@ -31,7 +39,7 @@ import {
     type ChatSetupError,
     type ModelAccess,
 } from "../proxy/models.ts";
-import { DEFAULT_DATABASE, DEFAULT_PASSWORD, DEFAULT_USER, type PostgresConnection } from "./postgres_types.ts";
+import { DEFAULT_DATABASE, DEFAULT_HOST, DEFAULT_PASSWORD, DEFAULT_USER, type PostgresConnection } from "./postgres_types.ts";
 import {
     writeComposeFile,
     composeUp,
@@ -599,25 +607,31 @@ async function runDefaultModelSetup(mode: ConnectionMode): Promise<void> {
 
 /**
  * The persist-only-explicit filter: keep ONLY the prompted fields that differ from their default (host
- * `localhost`, database/user/password constants, port = the channel-aware `defaultPort`), building the
- * block FRESH from `conn` — never spread over the previous config block.
+ * {@link DEFAULT_HOST}, database/user/password constants, port = any {@link isReservedPostgresPort reserved
+ * channel default}), building the block FRESH from `conn` — never spread over the previous config block.
  *
- * WHY rebuild-fresh, and WHY the port default is a parameter: `config.json` is shared by BOTH build
- * channels, so persisting a value the user merely ACCEPTED freezes it and overrides the OTHER channel's
- * sibling default — re-creating exactly the port collision the channel-aware defaults remove. Filtering to
- * explicit differences means an accepted default is written as nothing; and because the block is rebuilt
- * from scratch each run (not merged over the old one), a setup re-run that re-accepts the prompt is what
- * HEALS a default an earlier run froze — the stale `postgres.port` simply isn't carried forward. An
- * all-defaults result is an empty object, so the caller drops the `postgres` key entirely. The default
- * port is passed in (not read here) for the same frozen-`env` testability reason as {@link stackPaths}.
+ * WHY rebuild-fresh: `config.json` is shared by BOTH build channels, so persisting a value the user merely
+ * ACCEPTED freezes it and overrides the OTHER channel's sibling default — re-creating exactly the port
+ * collision the channel-aware defaults remove. Filtering to explicit differences means an accepted default
+ * is written as nothing; and because the block is rebuilt from scratch each run (not merged over the old
+ * one), a setup re-run that re-accepts the prompt is what HEALS a default an earlier run froze — the stale
+ * `postgres.port` simply isn't carried forward. An all-defaults result is an empty object, so the caller
+ * drops the `postgres` key entirely.
  *
- * Trade-off accepted: a user who explicitly TYPES the value equal to the default loses the pin — a no-op
- * on their own channel, and indistinguishable from the freeze bug being healed.
+ * WHY the port test is `isReservedPostgresPort`, not "equals THIS channel's default": both 8432 (prod) and
+ * 8434 (dev) are reserved, so a value equal to EITHER is dropped regardless of which channel runs setup.
+ * Dropping only the running channel's default would let setup on one channel re-persist the other channel's
+ * default as if it were a real choice — the exact freeze this filter exists to prevent. Reserved-ness is a
+ * pure function of the two channel defaults (no `env` read), so no default-port parameter is threaded here.
+ *
+ * Trade-off accepted: a user who explicitly TYPES a value equal to a channel default loses the pin — a
+ * no-op on their own channel (it resolves to that default anyway), and never a value we'd let the other
+ * channel adopt, since that is the collision case.
  */
-export function explicitPostgresFields(conn: PostgresConnection, defaultPort: number): Partial<PostgresConnection> {
+export function explicitPostgresFields(conn: PostgresConnection): Partial<PostgresConnection> {
     const explicit: Partial<PostgresConnection> = {};
-    if (conn.host !== "localhost") explicit.host = conn.host;
-    if (conn.port !== defaultPort) explicit.port = conn.port;
+    if (conn.host !== DEFAULT_HOST) explicit.host = conn.host;
+    if (!isReservedPostgresPort(conn.port)) explicit.port = conn.port;
     if (conn.database !== DEFAULT_DATABASE) explicit.database = conn.database;
     if (conn.user !== DEFAULT_USER) explicit.user = conn.user;
     if (conn.password !== DEFAULT_PASSWORD) explicit.password = conn.password;
@@ -672,8 +686,9 @@ async function promptPostgresConfig(): Promise<PostgresConnection> {
 
     const config = readConfig();
     // Rebuild the persisted block fresh from the prompt, keeping only explicit choices. An empty result
-    // (all defaults) writes `postgres: undefined`, which JSON.stringify drops — healing any frozen default.
-    const explicit = explicitPostgresFields(conn, env.postgresPort);
+    // (all defaults) writes `postgres: undefined`, which JSON.stringify drops — healing a frozen default on
+    // whichever channel runs setup, since a reserved port is never carried forward.
+    const explicit = explicitPostgresFields(conn);
     const postgres = Object.keys(explicit).length === 0 ? undefined : explicit;
     writeConfig({ ...config, postgres }).match(
         () => {},

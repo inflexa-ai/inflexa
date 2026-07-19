@@ -347,10 +347,10 @@ describe("connection config writes", () => {
 });
 
 // The persist-only-explicit rule for the Postgres prompt: config.json is shared by both build channels,
-// so only a value that DIFFERS from its (channel-aware) default is persisted, and the block is rebuilt
-// fresh each run — an accepted default writes nothing, and a re-accept heals a default an earlier run
-// froze. Tested via the pure helper (the prompt itself is a clack TTY flow); the default port is passed
-// in exactly as promptPostgresConfig passes env.postgresPort.
+// so only a value that DIFFERS from its default is persisted, and the block is rebuilt fresh each run — an
+// accepted default writes nothing, and a re-accept heals a default an earlier run froze. The port test is
+// reserved-ness (8432 AND 8434), not "equals this channel's default", so setup on either channel drops
+// either channel's default. Tested via the pure helper (the prompt itself is a clack TTY flow).
 describe("explicitPostgresFields — persist-only-explicit", () => {
     // The all-defaults connection for a given default port — what a fully-accepted prompt yields.
     function defaults(port: number): PostgresConnection {
@@ -358,28 +358,32 @@ describe("explicitPostgresFields — persist-only-explicit", () => {
     }
 
     test("all defaults persist nothing — an empty block the caller drops entirely", () => {
-        const port = env.postgresPort;
-        expect(explicitPostgresFields(defaults(port), port)).toEqual({});
+        expect(explicitPostgresFields(defaults(env.postgresPort))).toEqual({});
     });
 
     test("a single custom field persists alone; accepted defaults (including the port) do not", () => {
-        const port = env.postgresPort;
-        const conn = { ...defaults(port), password: "s3cret" };
-        expect(explicitPostgresFields(conn, port)).toEqual({ password: "s3cret" });
+        const conn = { ...defaults(env.postgresPort), password: "s3cret" };
+        expect(explicitPostgresFields(conn)).toEqual({ password: "s3cret" });
     });
 
     test("a custom user, host, and non-default port each persist", () => {
-        const port = env.postgresPort;
         const conn: PostgresConnection = { host: "db.internal", port: 6000, database: "inflexa", user: "alice", password: "inflexa" };
-        expect(explicitPostgresFields(conn, port)).toEqual({ host: "db.internal", port: 6000, user: "alice" });
+        expect(explicitPostgresFields(conn)).toEqual({ host: "db.internal", port: 6000, user: "alice" });
     });
 
-    test("a port EQUAL to the channel default drops (healing a frozen pin); a differing port persists", () => {
-        const port = env.postgresPort;
+    test("this channel's default port drops (healing a frozen pin); a genuinely custom port persists", () => {
         // Re-accepting the prompt when a stale pin equalled the default rebuilds an empty port field.
-        expect(explicitPostgresFields(defaults(port), port).port).toBeUndefined();
-        // A genuinely custom port is kept.
-        expect(explicitPostgresFields({ ...defaults(port), port: port + 1 }, port).port).toBe(port + 1);
+        expect(explicitPostgresFields(defaults(env.postgresPort)).port).toBeUndefined();
+        // A value that is not a channel default is a real choice, kept.
+        expect(explicitPostgresFields({ ...defaults(env.postgresPort), port: 6000 }).port).toBe(6000);
+    });
+
+    test("the OTHER channel's default port also drops — a reserved value is never persisted from either channel", () => {
+        // 8432 (prod default) and 8434 (dev default) are BOTH reserved. Persisting either from any channel
+        // would pin one channel's default into the shared config.json and override the other's — the freeze
+        // this filter prevents. So each is dropped regardless of which channel's process runs the filter.
+        expect(explicitPostgresFields({ ...defaults(env.postgresPort), port: 8432 }).port).toBeUndefined();
+        expect(explicitPostgresFields({ ...defaults(env.postgresPort), port: 8434 }).port).toBeUndefined();
     });
 });
 

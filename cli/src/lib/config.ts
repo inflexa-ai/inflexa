@@ -5,8 +5,8 @@ import { z } from "zod";
 
 import { DEFAULT_THEME_ID, themeIds } from "./design_system.ts";
 import { ContainerRuntimeError, ensureReady, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime } from "./container.ts";
-import { env } from "./env.ts";
-import { DEFAULT_DATABASE, DEFAULT_PASSWORD, DEFAULT_USER, type PostgresConnection } from "../modules/infra/postgres_types.ts";
+import { env, isReservedPostgresPort } from "./env.ts";
+import { DEFAULT_DATABASE, DEFAULT_HOST, DEFAULT_PASSWORD, DEFAULT_USER, type PostgresConnection } from "../modules/infra/postgres_types.ts";
 
 const configSchema = z.object({
     telemetry: z.boolean(),
@@ -317,12 +317,20 @@ export function resolveConnectionMode(): "cliproxy" | "direct" {
  * config.json `postgres.port` still wins — the per-field override contract is unchanged;
  * only the DEFAULT it falls back to is now channel-aware, so each build channel resolves
  * its own sibling port when nothing is persisted.
+ *
+ * The one exception: a persisted port equal to a RESERVED channel default (prod 8432 / dev 8434) is NOT
+ * honored — it is the freeze bug (older builds pinned the accepted default into the channel-shared
+ * config.json), and honoring it would let one channel's default override the other's and re-open the stack
+ * collision. Ignoring it falls back to THIS channel's sibling default, which self-heals an already-frozen
+ * pin on the first resolve, from EITHER channel (a dev developer no longer needs the prod binary to heal).
+ * See {@link isReservedPostgresPort}.
  */
 export function resolvePostgresConfig(): PostgresConnection {
     const pg = readConfig().postgres;
+    const port = pg?.port !== undefined && !isReservedPostgresPort(pg.port) ? pg.port : env.postgresPort;
     return {
-        host: pg?.host ?? "localhost",
-        port: pg?.port ?? env.postgresPort,
+        host: pg?.host ?? DEFAULT_HOST,
+        port,
         database: pg?.database ?? DEFAULT_DATABASE,
         user: pg?.user ?? DEFAULT_USER,
         password: pg?.password ?? DEFAULT_PASSWORD,

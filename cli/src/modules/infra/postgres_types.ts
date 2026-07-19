@@ -22,6 +22,9 @@ export const DEFAULT_IMAGE = "pgvector/pgvector:0.8.5-pg18@sha256:12a379b47ad652
 // from `stackPorts`): production 8432, dev 8434. It is NOT a constant here, so config.json never freezes a
 // non-channel-aware default — resolvePostgresConfig (lib/config.ts) fills it from env.
 
+/** Default host — the loopback the container publishes to; the one source both the resolver and the persist-only-explicit filter compare against. User-overridable via config. */
+export const DEFAULT_HOST = "localhost";
+
 /** Default database, user, and password — local-only, user-overridable via config. */
 export const DEFAULT_DATABASE = "inflexa";
 export const DEFAULT_USER = "inflexa";
