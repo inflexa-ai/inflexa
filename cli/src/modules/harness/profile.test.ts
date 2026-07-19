@@ -36,4 +36,11 @@ describe("describeBootError", () => {
             "Could not resolve the Podman sandbox-engine socket — the Podman machine is not running.\n  Start it with `podman machine start`, then re-run.";
         expect(describeBootError({ type: "sandbox_engine_unresolved", message })).toBe(message);
     });
+
+    // A `cooling_down` cause must read as the self-recovering all-credential block it is, NOT as the
+    // generic "proxy is unreachable" the other `model_unresolved` causes render — otherwise the user
+    // chases a container that is fine.
+    test("model_unresolved cooling_down explains the proxy recovers on its own", () => {
+        expect(describeBootError({ type: "model_unresolved", cause: { type: "cooling_down" } })).toContain("recovers on its own");
+    });
 });

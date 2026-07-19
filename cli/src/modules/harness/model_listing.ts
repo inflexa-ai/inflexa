@@ -118,6 +118,10 @@ export async function listConnectionModels(seams: ListModelsSeams = realSeams): 
     } catch (cause) {
         return err({ type: "unreachable", detail: cause instanceof Error ? cause.message : String(cause) });
     }
+    // TODO(extend): a 503 carrying the proxy's `auth_unavailable` cooldown marker (see `isProxyCooldown`
+    // in ../proxy/models.ts, used by `listModelCandidates`) is folded into the generic `unreachable` here,
+    // so this surface reports a self-recovering cooldown as an outage; extend `ModelListingError` with a
+    // distinct cooldown kind when this listing surface needs the honest message.
     if (!res.ok) return err({ type: "unreachable", detail: `HTTP ${res.status}` });
     const models = await res.jsonWith(modelsSchema);
     if (!models || models.data.length === 0) return err({ type: "no_models" });
