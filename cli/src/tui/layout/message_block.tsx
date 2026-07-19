@@ -2,7 +2,7 @@ import { For, Show } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 
 import { syntaxStyle, theme } from "../theme.ts";
-import { space, GLYPHS, MARKERS } from "../../lib/design_system.ts";
+import { space, GLYPHS, MARKERS, type ThemeColors } from "../../lib/design_system.ts";
 import { ThinkingBlock } from "../components/thinking_block.tsx";
 import { ToolBlock } from "../components/tool_block.tsx";
 import { DiffBlock } from "../components/diff_block.tsx";
@@ -13,7 +13,7 @@ import { OpenableCardBlock, type OpenableRowView } from "../components/openable_
 import { Bold, Fg } from "../components/emphasis.tsx";
 import { entryDegraded, resolveEntryPath } from "../../modules/harness/artifact_open.ts";
 import { openArtifact, openArtifactFolder } from "../hooks/artifacts.ts";
-import type { OpenableCardPart, Part } from "../../types/session.ts";
+import type { AskCardPart, OpenableCardPart, Part } from "../../types/session.ts";
 
 /** A chat turn's author. */
 export type MessageRole = "user" | "assistant";
@@ -105,6 +105,8 @@ export function MessageBlock(props: MessageBlockProps) {
                         return <PresentationBlock title={part.title} body={part.body} />;
                     case "openable-card":
                         return <OpenableCard part={part} />;
+                    case "ask-card":
+                        return <AskCard part={part} />;
                     default: {
                         // Exhaustive: a new Part kind without a case fails the build here.
                         const _exhaustive: never = part;
@@ -165,5 +167,60 @@ function OpenableCard(props: { part: OpenableCardPart }) {
             }}
             onOpenFolder={props.part.folderPath ? openFolder : undefined}
         />
+    );
+}
+
+/**
+ * Map an ask card's status to its gutter marker: a busy half-circle while pending, then a settled
+ * outcome glyph in the matching status color (approved → success check, rejected → error cross, and a
+ * hollow no-decision dot for a turn that aborted or an ask that expired). The status word carries the
+ * exact meaning; the marker gives it an at-a-glance color.
+ */
+function askMarker(status: AskCardPart["status"]): { glyph: string; role: keyof ThemeColors } {
+    switch (status) {
+        case "pending":
+            return { glyph: GLYPHS.circleHalf, role: "warning" };
+        case "resolved":
+            return { glyph: GLYPHS.check, role: "success" };
+        case "rejected":
+            return { glyph: GLYPHS.cross, role: "error" };
+        case "aborted":
+        case "expired":
+            return { glyph: GLYPHS.circleHollow, role: "fgMuted" };
+        default: {
+            // Exhaustive: a new ask status without a marker fails the build here.
+            const _exhaustive: never = status;
+            return _exhaustive;
+        }
+    }
+}
+
+/**
+ * The ask-card block: a status-colored marker with the approval headline and its status word, the exact
+ * command being approved on the line below, and an optional detail line. It renders the primitive fields
+ * the reconciling {@link AskCardPart} carries (copied at receipt) — a live-turn-only visual, never
+ * reconstructed on reload. Co-located with {@link MessageBlock}, its only caller.
+ */
+function AskCard(props: { part: AskCardPart }) {
+    const marker = (): { glyph: string; role: keyof ThemeColors } => askMarker(props.part.status);
+    const heading = (): string => props.part.title || props.part.command;
+    return (
+        <box flexDirection="column" paddingBottom={space.sm}>
+            <text>
+                <Fg role={marker().role}>{`${marker().glyph} `}</Fg>
+                <Fg role="fg">{heading()}</Fg>
+                <Fg role="fgMuted">{` ${GLYPHS.middot} ${props.part.status}`}</Fg>
+            </text>
+            <text paddingLeft={space.md}>
+                <Fg role="fgMuted">{props.part.command}</Fg>
+            </text>
+            <Show when={props.part.detail}>
+                {(detail: Accessor<string>): JSX.Element => (
+                    <text paddingLeft={space.md}>
+                        <Fg role="fgSubtle">{detail()}</Fg>
+                    </text>
+                )}
+            </Show>
+        </box>
     );
 }

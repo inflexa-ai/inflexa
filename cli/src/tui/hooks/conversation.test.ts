@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { okAsync, ResultAsync } from "neverthrow";
-import type { MessagePage } from "@inflexa-ai/harness";
+import type { AskContext, AskRequest, MessagePage } from "@inflexa-ai/harness";
 
 import {
     applyEmitEvent,
@@ -22,10 +22,11 @@ import {
 } from "./conversation.ts";
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
+import { activeAsk, queuedCount } from "./asks.ts";
 import { chatStatus } from "./status.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { RunChatTurnArgs, TurnOutcome } from "../../modules/harness/turn.ts";
-import type { Part, PlanCardPart, RunCardPart, ToolCallPart } from "../../types/session.ts";
+import type { AskCardPart, Part, PlanCardPart, RunCardPart, ToolCallPart } from "../../types/session.ts";
 
 // The conversation state is a module singleton (one chat screen at a time), so reset it between
 // cases. resetHotState() clears messages/stream/error/adapter state and returns status to idle.
@@ -381,10 +382,170 @@ describe("send() drives the adapter + engine", () => {
     });
 });
 
+describe("send() handles data-ask parts: reconcile-by-id + the pending-asks store", () => {
+    const TOP = { agentId: "tui-chat", callPath: ["tui-chat"] };
+
+    /** Every ask-card part on the assistant message, in mounted order. */
+    function askCards(): AskCardPart[] {
+        return (messages[1]?.parts ?? []).filter((p): p is AskCardPart => p.type === "ask-card");
+    }
+
+    test("pending then resolved under one id reconciles to ONE card with the updated status", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "Run refs", command: "inflexa refs list", status: "pending" } });
+            void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "Run refs", command: "inflexa refs list", status: "resolved" } });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        const cards = askCards();
+        expect(cards.length).toBe(1);
+        expect(cards[0]?.askId).toBe("ask-1");
+        expect(cards[0]?.command).toBe("inflexa refs list");
+        expect(cards[0]?.status).toBe("resolved");
+    });
+
+    test("a pending ask pushes the store as the head; its terminal re-emit settles it", async () => {
+        const seen: { active: string | null; queued: number }[] = [];
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "c", status: "pending" } });
+            seen.push({ active: activeAsk()?.askId ?? null, queued: queuedCount() });
+            void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "c", status: "resolved" } });
+            seen.push({ active: activeAsk()?.askId ?? null, queued: queuedCount() });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        // Mid-turn: the pending push made ask-1 the head; the terminal re-emit drained it.
+        expect(seen[0]).toEqual({ active: "ask-1", queued: 0 });
+        expect(seen[1]).toEqual({ active: null, queued: 0 });
+    });
+
+    test("two concurrent pending asks queue FIFO; the head answers first", async () => {
+        const seen: { active: string | null; queued: number }[] = [];
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t1", command: "c1", status: "pending" } });
+            void emit({ type: "data-ask", source: TOP, data: { id: "ask-2", title: "t2", command: "c2", status: "pending" } });
+            seen.push({ active: activeAsk()?.askId ?? null, queued: queuedCount() });
+            void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t1", command: "c1", status: "resolved" } });
+            seen.push({ active: activeAsk()?.askId ?? null, queued: queuedCount() });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        expect(seen[0]).toEqual({ active: "ask-1", queued: 1 });
+        expect(seen[1]).toEqual({ active: "ask-2", queued: 0 });
+        // Both cards remain in the transcript; ask-1 reconciled to resolved, ask-2 stays pending.
+        const cards = askCards();
+        expect(cards.map((c) => `${c.askId}:${c.status}`)).toEqual(["ask-1:resolved", "ask-2:pending"]);
+    });
+
+    test("a terminal-only re-emit with no prior pending appends one settled card (append-if-missing)", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            void emit({ type: "data-ask", source: TOP, data: { id: "ask-9", title: "t", command: "c", status: "rejected" } });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        const cards = askCards();
+        expect(cards.length).toBe(1);
+        expect(cards[0]?.askId).toBe("ask-9");
+        expect(cards[0]?.status).toBe("rejected");
+        // A terminal-only emission never docks a prompt.
+        expect(activeAsk()).toBeNull();
+    });
+
+    test("turn teardown clears the pending store — an abort leaves no stale docked prompt", async () => {
+        const seams = fakeSeams({ kind: "aborted" }, (emit) => {
+            // A pending ask that never receives its terminal re-emit (the turn aborts first).
+            void emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "t", command: "c", status: "pending" } });
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        expect(activeAsk()).toBeNull();
+        expect(queuedCount()).toBe(0);
+    });
+
+    test("a malformed data-ask never pushes a pending entry — a bad status is terminal, not pending", async () => {
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            // No id, no status → readAskPart yields askId "" and status "expired" (terminal): it settles
+            // (a no-op) and never pushes, so the docked prompt store stays empty.
+            void emit({ type: "data-ask", source: TOP, data: { title: 5, command: null } } as never);
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        expect(activeAsk()).toBeNull();
+        expect(queuedCount()).toBe(0);
+        // It still surfaces as a (terminal) card rather than being swallowed.
+        const cards = askCards();
+        expect(cards.length).toBe(1);
+        expect(cards[0]?.status).toBe("expired");
+    });
+
+    test("copy-on-receive: mutating the emitted ask data after emit does not corrupt the card", async () => {
+        let askData: Record<string, unknown> = {};
+        const seams = fakeSeams({ kind: "ok", fallbackText: "" }, (emit) => {
+            askData = { id: "ask-1", title: "orig", command: "inflexa refs list", status: "pending" };
+            void emit({ type: "data-ask", source: TOP, data: askData });
+            askData.title = "MUTATED";
+            askData.command = "MUTATED";
+        });
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        const cards = askCards();
+        expect(cards[0]?.title).toBe("orig");
+        expect(cards[0]?.command).toBe("inflexa refs list");
+    });
+});
+
 describe("applyEmitEvent outside a turn", () => {
     test("appends nothing when no assistant turn is active (defensive no-op)", () => {
         applyEmitEvent({ type: "tool-started", source: { agentId: "tui-chat", callPath: ["tui-chat"] }, toolUseId: "t1", name: "x", input: {} });
         expect(messages.length).toBe(0);
+    });
+});
+
+describe("send() binds the ask seam to the turn scope", () => {
+    test("passes an `ask` bound to the runtime gateway with the turn's analysis/thread, signal, and emit", async () => {
+        const calls: { request: AskRequest; ctx: AskContext }[] = [];
+        // A runtime whose gateway records what `ask` was invoked with, so the binding's scope is observable.
+        const runtime = {
+            pool: {},
+            conversation: { provider: { capabilities: { toolCalling: true } } },
+            conversationAgent: {},
+            askGateway: {
+                ask: async (request: AskRequest, ctx: AskContext) => {
+                    calls.push({ request, ctx });
+                    return { kind: "once" as const };
+                },
+            },
+        } as unknown as HarnessRuntime;
+
+        // A `last()` getter (not a plain captured var) so the read below is not narrowed back to its
+        // `null` initializer — control flow cannot see the closure assign it — mirroring `fakeSeams`.
+        const seams: SendSeams & { last: () => RunChatTurnArgs | null } = (() => {
+            let captured: RunChatTurnArgs | null = null;
+            return {
+                runtime: () => runtime,
+                runChatTurn: async (args: RunChatTurnArgs): Promise<TurnOutcome> => {
+                    captured = args;
+                    return { kind: "ok", fallbackText: "" };
+                },
+                last: () => captured,
+            };
+        })();
+        await send({ sessionId: SID, analysisId: AID, userText: "run it" }, seams);
+
+        // `send` binds the closure; the fake engine never invokes it, so drive it here to observe the
+        // scope the gateway receives.
+        const askFn = seams.last()?.ask;
+        expect(askFn).toBeInstanceOf(Function);
+        // Asserted a Function on the line above, so the bound closure is present.
+        const approval = await askFn!({ title: "Run refs", command: "inflexa refs list" });
+        expect(approval).toEqual({ kind: "once" });
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0]?.request).toEqual({ title: "Run refs", command: "inflexa refs list" });
+        expect(calls[0]?.ctx.analysisId).toBe(AID);
+        expect(calls[0]?.ctx.threadId).toBe(SID);
+        expect(calls[0]?.ctx.signal).toBeInstanceOf(AbortSignal);
+        expect(typeof calls[0]?.ctx.emit).toBe("function");
     });
 });
 

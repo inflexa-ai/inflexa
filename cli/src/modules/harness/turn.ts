@@ -8,6 +8,8 @@ import {
     type AgentChat,
     type AgentDefinition,
     type AgentSession,
+    type AskApproval,
+    type AskRequest,
     type DbError,
     type EmitFn,
     type ModelMessage,
@@ -78,6 +80,15 @@ export type RunChatTurnArgs = {
     readonly emit: EmitFn;
     /** Turn-scoped cancellation — the caller aborts it; on abort the engine persists `[userMessage]`. */
     readonly signal: AbortSignal;
+    /**
+     * The per-turn user-approval binding a `ctx.ask` tool pauses on. The caller
+     * binds the gateway to this turn's scope (analysis/thread, abort signal, event
+     * sink) so the gateway's `data-ask` emissions ride the same guarded sink and
+     * signal as every other turn event. Omitted → the harness resolves approval to
+     * its deny-by-default realization, which is how the REPL stays a write-only sink
+     * with no mid-turn input path.
+     */
+    readonly ask?: (request: AskRequest) => Promise<AskApproval>;
     /** The resolved analysis this turn is scoped to (ownership check + context load). */
     readonly analysisId: string;
     /** The conversation thread this turn appends to. */
@@ -139,7 +150,7 @@ type RunPhase = { readonly kind: "ok"; readonly fallbackText: string } | { reado
  * console here — presentation is entirely the transport's concern.
  */
 export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = realTurnSeams): Promise<TurnOutcome> {
-    const { pool, conversationAgent, chat, history, session, emit, signal, analysisId, threadId, userInput } = args;
+    const { pool, conversationAgent, chat, history, session, emit, signal, analysisId, threadId, userInput, ask } = args;
 
     // Bracket the whole turn as in-flight agent work: an agent switch requested
     // mid-turn defers to the turn boundary, and the `finally` settling this token lands a pending switch
@@ -167,7 +178,7 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
         const userMessage = prepared.userMessage;
 
         const run = await ResultAsync.fromPromise(
-            seams.run(conversationAgent, initial, session, { provider: chat, signal, emit, runStep: passthroughStep }),
+            seams.run(conversationAgent, initial, session, { provider: chat, signal, emit, runStep: passthroughStep, ...(ask ? { ask } : {}) }),
             (e): unknown => e,
         ).match(
             (result): { readonly phase: RunPhase; readonly toPersist: ModelMessage[] } => ({

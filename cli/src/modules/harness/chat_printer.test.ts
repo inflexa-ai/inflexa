@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { EmitFn, EventSource } from "@inflexa-ai/harness";
 
-import { createChatPrinter, isSubAgentEvent, readPlanCard, readRunCard, type ChatSink, type PrinterOptions } from "./chat_printer.ts";
+import { createChatPrinter, isSubAgentEvent, readAskPart, readPlanCard, readRunCard, type ChatSink, type PrinterOptions } from "./chat_printer.ts";
 
 /**
  * A recording sink + printer. `out()` accumulates conversation output; `errs`
@@ -149,6 +149,14 @@ describe("createChatPrinter", () => {
         const h = harness();
         h.emit({ type: "data-report-preview-failed", source: TOP, data: { id: "x", previewId: "p", version: 3, reason: "render timed out" } });
         expect(h.out()).toContain("render timed out");
+    });
+
+    test("data-ask prints a one-line approval mention naming the command and status, not the raw tag", () => {
+        const h = harness();
+        h.emit({ type: "data-ask", source: TOP, data: { id: "ask-1", title: "Run inflexa refs", command: "inflexa refs list", status: "pending" } });
+        const out = h.out();
+        expect(out).toContain("[approval] inflexa refs list — pending");
+        expect(out).not.toContain("[part:data-ask]");
     });
 
     test("copy-on-receive: mutating a part after emit does not change output", () => {
@@ -371,5 +379,51 @@ describe("readRunCard", () => {
 
     test("coerces missing/mistyped fields to empty/zero rather than throwing", () => {
         expect(readRunCard({ runId: 7 })).toEqual({ runId: "", title: "", stepCount: 0 });
+    });
+});
+
+describe("readAskPart", () => {
+    test("extracts askId (from id), title, command, detail, and a recognized status", () => {
+        expect(
+            readAskPart({ id: "ask-1", title: "Run inflexa refs", command: "inflexa refs list", detail: "reads local reference data", status: "pending" }),
+        ).toEqual({
+            askId: "ask-1",
+            title: "Run inflexa refs",
+            command: "inflexa refs list",
+            detail: "reads local reference data",
+            status: "pending",
+        });
+    });
+
+    test("omits detail when absent and reads a terminal status", () => {
+        expect(readAskPart({ id: "ask-2", title: "t", command: "c", status: "resolved" })).toEqual({
+            askId: "ask-2",
+            title: "t",
+            command: "c",
+            status: "resolved",
+        });
+    });
+
+    test("coerces missing/mistyped fields to empty and a MISSING status to expired — never pending", () => {
+        // A malformed payload must not resurrect a prompt: the status floor is a terminal value.
+        expect(readAskPart({ id: 7, command: {} })).toEqual({ askId: "", title: "", command: "", status: "expired" });
+    });
+
+    test("an UNRECOGNIZED status string maps to expired, the safe terminal", () => {
+        expect(readAskPart({ id: "ask-3", title: "t", command: "c", status: "granted" })).toEqual({
+            askId: "ask-3",
+            title: "t",
+            command: "c",
+            status: "expired",
+        });
+    });
+
+    test("copy-on-receive: mutating the source data after read does not change the result", () => {
+        const data: { id: string; title: string; command: string; status: string } = { id: "ask-4", title: "orig", command: "c", status: "pending" };
+        const read = readAskPart(data);
+        data.title = "MUTATED";
+        data.command = "MUTATED";
+        expect(read.title).toBe("orig");
+        expect(read.command).toBe("c");
     });
 });
