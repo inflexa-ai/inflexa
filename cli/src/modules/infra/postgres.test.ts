@@ -1,4 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 import {
     CONTAINER_DATA_PATH,
@@ -11,6 +13,7 @@ import {
 } from "./postgres_types.ts";
 import { resolvePostgresConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
+import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { generateComposeFile, POSTGRES_CONTAINER_NAME, PROXY_CONTAINER_NAME } from "./compose.ts";
 
 describe("postgres constants", () => {
@@ -60,6 +63,43 @@ describe("resolvePostgresConfig", () => {
             expect(value).toBeDefined();
             expect(value).not.toBeUndefined();
         }
+    });
+});
+
+// A persisted port equal to a RESERVED channel default (prod 8432 / dev 8434) is the freeze bug older
+// builds wrote into the channel-shared config.json — resolve must IGNORE it and fall back to this channel's
+// sibling default, so an existing frozen pin self-heals from EITHER channel (the dev developer no longer
+// needs to run the prod binary). A genuinely custom port is still honored. Writes land in the sandboxed
+// config; each test starts and ends from a clean config so the "no config file exists" test above is unaffected.
+describe("resolvePostgresConfig — reserved-port healing", () => {
+    function writePersistedPort(port: number): void {
+        assertTestSandbox(env.configPath);
+        mkdirSync(dirname(env.configPath), { recursive: true });
+        writeFileSync(env.configPath, JSON.stringify({ telemetry: false, postgres: { port } }));
+    }
+
+    beforeEach(() => {
+        assertTestSandbox(env.configPath);
+        rmSync(env.configPath, { force: true });
+    });
+    afterEach(() => {
+        assertTestSandbox(env.configPath);
+        rmSync(env.configPath, { force: true });
+    });
+
+    test("a frozen production default (8432) is ignored and resolves to this channel's default", () => {
+        writePersistedPort(8432);
+        expect(resolvePostgresConfig().port).toBe(env.postgresPort);
+    });
+
+    test("a frozen dev default (8434) is ignored and resolves to this channel's default", () => {
+        writePersistedPort(8434);
+        expect(resolvePostgresConfig().port).toBe(env.postgresPort);
+    });
+
+    test("a genuinely custom persisted port is honored", () => {
+        writePersistedPort(6000);
+        expect(resolvePostgresConfig().port).toBe(6000);
     });
 });
 
