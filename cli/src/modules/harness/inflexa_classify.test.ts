@@ -25,17 +25,33 @@ describe("classifyInflexaArgv — introspection", () => {
 });
 
 describe("classifyInflexaArgv — action", () => {
-    test("a real leaf command resolves to its argv + path + grantKey", async () => {
+    test("a real leaf command resolves to its argv + path + grantKey + policy + setOptions", async () => {
         const argv = ["refs", "download", "reactome-pathways", "--yes"];
         const result = await classifyInflexaArgv(argv);
-        expect(result).toEqual({ kind: "action", argv, path: ["inflexa", "refs", "download"], grantKey: "inflexa refs download" });
+        expect(result).toEqual({
+            kind: "action",
+            argv,
+            path: ["inflexa", "refs", "download"],
+            grantKey: "inflexa refs download",
+            policy: { kind: "approval" },
+            // `--yes` is explicitly set; the positional dataset id contributes nothing.
+            setOptions: ["yes"],
+        });
     });
 
     test("a post-`--` `--help` is an operand, so the argv is an action, NOT introspection", async () => {
         const argv = ["refs", "download", "reactome-pathways", "--", "--help"];
         const result = await classifyInflexaArgv(argv);
         // The injection defense: `--help` after `--` never reaches the help path; it hits the action.
-        expect(result).toEqual({ kind: "action", argv, path: ["inflexa", "refs", "download"], grantKey: "inflexa refs download" });
+        // The post-`--` `--help` is an operand, never the option, so setOptions stays empty.
+        expect(result).toEqual({
+            kind: "action",
+            argv,
+            path: ["inflexa", "refs", "download"],
+            grantKey: "inflexa refs download",
+            policy: { kind: "approval" },
+            setOptions: [],
+        });
     });
 
     test("different arguments of the same command collapse to one grantKey", async () => {
@@ -46,9 +62,14 @@ describe("classifyInflexaArgv — action", () => {
         expect(wikipathways.grantKey).toBe("inflexa refs download");
     });
 
-    test("bare `inflexa` (empty argv) is the root action, keyed on the root name alone", async () => {
+    test("bare `inflexa` (empty argv) is the root action, keyed on the root name alone, carrying the root's blocked policy", async () => {
         const result = await classifyInflexaArgv([]);
-        expect(result).toEqual({ kind: "action", argv: [], path: ["inflexa"], grantKey: "inflexa" });
+        if (result.kind !== "action") throw new Error("expected action");
+        expect(result.path).toEqual(["inflexa"]);
+        expect(result.grantKey).toBe("inflexa");
+        // The root is a blocked TUI launcher; the reason string is pinned at its registration site, not here.
+        expect(result.policy?.kind).toBe("blocked");
+        expect(result.setOptions).toEqual([]);
     });
 
     test("a flag-only root invocation is the root action too, not just literally-bare argv", async () => {
@@ -95,6 +116,8 @@ describe("classifyInflexaArgv — defensive tokenization", () => {
             argv: ["refs", "download", "reactome-pathways", "--yes"],
             path: ["inflexa", "refs", "download"],
             grantKey: "inflexa refs download",
+            policy: { kind: "approval" },
+            setOptions: ["yes"],
         });
     });
 
@@ -104,5 +127,64 @@ describe("classifyInflexaArgv — defensive tokenization", () => {
     test("a single spaced operand tokenizes and lands as malformed, not an action", async () => {
         const result = await classifyInflexaArgv(["My File.txt"]);
         expect(result.kind).toBe("malformed");
+    });
+});
+
+// The registration-declared policy and the explicitly-set option names ride the action verdict, so the
+// tool can run the policy cascade off one parse. `setOptions` uses commander's canonical attributeName,
+// keyed on the option-value SOURCE (never an argv string match): a defaulted or unmentioned option is
+// not "set", and `--opt=val` / `--no-x` collapse to the same canonical name their long form yields.
+describe("classifyInflexaArgv — policy + setOptions", () => {
+    test("a blocked-registered command's verdict carries its blocked policy", async () => {
+        const result = await classifyInflexaArgv(["config"]);
+        if (result.kind !== "action") throw new Error("expected action");
+        expect(result.policy?.kind).toBe("blocked");
+    });
+
+    test("an approval command's verdict carries the approval policy", async () => {
+        const result = await classifyInflexaArgv(["refs", "download", "reactome-pathways", "--yes"]);
+        if (result.kind !== "action") throw new Error("expected action");
+        expect(result.policy).toEqual({ kind: "approval" });
+    });
+
+    test("an auto command's verdict carries the auto policy and its safeFlags", async () => {
+        const result = await classifyInflexaArgv(["refs", "list", "--json"]);
+        if (result.kind !== "action") throw new Error("expected action");
+        expect(result.policy).toEqual({ kind: "auto", safeFlags: ["urls", "json"] });
+        expect(result.setOptions).toEqual(["json"]);
+    });
+
+    test("`--opt=val` collapses to the same canonical name as `--opt val`", async () => {
+        // No command in the registry declares a short form, so the `--opt=val` form stands in for the
+        // canonicalization path: both forms resolve through the option's attributeName, never the argv text.
+        const attached = await classifyInflexaArgv(["prov", "lineage", "ana", "somefile", "--format=json"]);
+        const spaced = await classifyInflexaArgv(["prov", "lineage", "ana", "somefile", "--format", "json"]);
+        if (attached.kind !== "action" || spaced.kind !== "action") throw new Error("expected actions");
+        expect(attached.setOptions).toEqual(["format"]);
+        expect(spaced.setOptions).toEqual(["format"]);
+    });
+
+    test("a `--no-x` negation collapses to the option's canonical name", async () => {
+        // `--no-auth` sets the `auth` attribute to false (source `cli`), so it reports as the canonical
+        // `auth`, not `no-auth`. setup is blocked, but the verdict still carries the parsed option names.
+        const result = await classifyInflexaArgv(["setup", "--no-auth"]);
+        if (result.kind !== "action") throw new Error("expected action");
+        expect(result.setOptions).toContain("auth");
+    });
+
+    test("a defaulted option is NOT reported as set", async () => {
+        // `prov lineage --format` defaults to "tree"; not mentioning it leaves source "default", which
+        // does not count as set — so an out-of-set default never escalates an auto invocation.
+        const result = await classifyInflexaArgv(["prov", "lineage", "ana", "somefile"]);
+        if (result.kind !== "action") throw new Error("expected action");
+        expect(result.setOptions).not.toContain("format");
+        expect(result.setOptions).toEqual([]);
+    });
+
+    test("post-`--` operands contribute nothing to setOptions", async () => {
+        // Everything after `--` is an operand (a variadic id here), never parsed as the `--yes` option.
+        const result = await classifyInflexaArgv(["refs", "download", "some-id", "--", "--yes"]);
+        if (result.kind !== "action") throw new Error("expected action");
+        expect(result.setOptions).toEqual([]);
     });
 });

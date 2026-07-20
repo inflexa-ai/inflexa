@@ -60,6 +60,29 @@ const neverthrow = {
     },
 };
 
+// The `no-restricted-syntax` selectors shared by every file. Held in a const because ESLint flat config
+// REPLACES (not merges) a rule's options when a later scoped block redeclares the same rule key — the
+// registry-scoped block below re-lists these plus its own `.action(` ban, and spreading the same const in
+// both keeps them from drifting apart.
+const sharedRestrictedSyntax = [
+    {
+        selector: "CallExpression[callee.property.name='forEach']",
+        message: "`.forEach` is banned — use a `for` / `for...of` loop instead.",
+    },
+    {
+        // NODE_ENV is not a source of truth in this codebase: our build mode is the baked
+        // `INFLEXA_BUILD_CHANNEL`, read via `env.isDevelopment` / `devCommandsEnabled`. NODE_ENV is
+        // only the deps' compile-mode axis, and scripts/build.ts --defines it FROM the channel so the
+        // two can't diverge. Banning direct reads (env.ts included) keeps that coupling the single
+        // authority. scripts/build.ts sets it via a `define["process.env.NODE_ENV"]` string key — an
+        // object property, not this `process.env.NODE_ENV` member expression — so it is unaffected.
+        // ONE sanctioned exception, disabled inline in env.ts: the test-sandbox guard, which asks
+        // "is this a `bun test` process?" — a question the channel cannot answer and NODE_ENV can.
+        selector: "MemberExpression[object.object.name='process'][object.property.name='env'][property.name='NODE_ENV']",
+        message: "Don't read `process.env.NODE_ENV` — use `env.isDevelopment` / `devCommandsEnabled` (baked from INFLEXA_BUILD_CHANNEL). See src/lib/env.ts.",
+    },
+];
+
 export default defineConfig([
     {
         ignores: ["eslint.config.js"],
@@ -81,25 +104,7 @@ export default defineConfig([
             ],
             "@typescript-eslint/no-floating-promises": "error",
             "@typescript-eslint/no-misused-promises": "error",
-            "no-restricted-syntax": [
-                "error",
-                {
-                    selector: "CallExpression[callee.property.name='forEach']",
-                    message: "`.forEach` is banned — use a `for` / `for...of` loop instead.",
-                },
-                {
-                    // NODE_ENV is not a source of truth in this codebase: our build mode is the baked
-                    // `INFLEXA_BUILD_CHANNEL`, read via `env.isDevelopment` / `devCommandsEnabled`. NODE_ENV is
-                    // only the deps' compile-mode axis, and scripts/build.ts --defines it FROM the channel so the
-                    // two can't diverge. Banning direct reads (env.ts included) keeps that coupling the single
-                    // authority. scripts/build.ts sets it via a `define["process.env.NODE_ENV"]` string key — an
-                    // object property, not this `process.env.NODE_ENV` member expression — so it is unaffected.
-                    // ONE sanctioned exception, disabled inline in env.ts: the test-sandbox guard, which asks
-                    // "is this a `bun test` process?" — a question the channel cannot answer and NODE_ENV can.
-                    selector: "MemberExpression[object.object.name='process'][object.property.name='env'][property.name='NODE_ENV']",
-                    message: "Don't read `process.env.NODE_ENV` — use `env.isDevelopment` / `devCommandsEnabled` (baked from INFLEXA_BUILD_CHANNEL). See src/lib/env.ts.",
-                },
-            ],
+            "no-restricted-syntax": ["error", ...sharedRestrictedSyntax],
         },
     },
     tseslint.configs.recommended,
@@ -168,6 +173,26 @@ export default defineConfig([
                     object: "process",
                     property: "env",
                     message: "Read environment variables through the frozen `env` object in src/lib/env.ts.",
+                },
+            ],
+        },
+    },
+    {
+        // The command registry is the ONE place agent policy is declared, so a bare `command.action(fn)`
+        // there would register an action with no policy — the exact split-brain this capability removes.
+        // Force every registration through `registerAction`, whose required policy parameter makes an
+        // unclassified command a compile error. Scoped to index.ts only: `registerAction` itself (in
+        // agent_policy.ts) legitimately calls `command.action(handler)`, and unrelated `.action(` method
+        // names elsewhere must not be caught. This block re-lists the shared bans because a scoped
+        // `no-restricted-syntax` replaces rather than extends the base rule (see sharedRestrictedSyntax).
+        files: ["src/cli/index.ts"],
+        rules: {
+            "no-restricted-syntax": [
+                "error",
+                ...sharedRestrictedSyntax,
+                {
+                    selector: "CallExpression[callee.property.name='action']",
+                    message: "Don't call commander's `.action()` directly in the registry — use `registerAction(command, policy, handler)` from ./agent_policy.ts so every action command declares an AgentPolicy.",
                 },
             ],
         },
