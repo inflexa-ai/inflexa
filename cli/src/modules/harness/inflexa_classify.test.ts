@@ -80,4 +80,12 @@ describe("classifyInflexaArgv — defensive tokenization", () => {
         const result = await classifyInflexaArgv(["refs download reactome-pathways --yes"]);
         expect(result).toEqual({ kind: "action", path: ["inflexa", "refs", "download"], grantKey: "inflexa refs download" });
     });
+
+    // The accepted ambiguity in toEffectiveArgv: one spaced element could be a lone
+    // operand rather than a packed command. This pins that the worst case is a
+    // malformed verdict (the root takes no positional) — never a wrong spawn.
+    test("a single spaced operand tokenizes and lands as malformed, not an action", async () => {
+        const result = await classifyInflexaArgv(["My File.txt"]);
+        expect(result.kind).toBe("malformed");
+    });
 });

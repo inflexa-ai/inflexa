@@ -4,6 +4,7 @@ import type { ScrollBoxRenderable } from "@opentui/core";
 import { homedir } from "node:os";
 import { basename } from "node:path";
 
+import { requireInteractiveTerminal } from "../lib/cli.ts";
 import { readConfig, resolvePostgresConfig, writeConfig, type Config } from "../lib/config.ts";
 import { env, isReservedPostgresPort } from "../lib/env.ts";
 import { GLYPHS, themes, themeIds } from "../lib/design_system.ts";
@@ -771,6 +772,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
 }
 
 export async function launchConfig() {
+    requireInteractiveTerminal("inflexa config");
     // Seed the active theme from persisted config before the renderer reads it.
     setTheme(readConfig().theme);
 

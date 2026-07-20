@@ -1,10 +1,10 @@
 import { AskRejectedError, UnavailableAsk, type AgentSession, type AskApproval, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
 import { describe, expect, test } from "bun:test";
 
-import { createRunInflexaTool, resolveInvocation, type RunSubprocess, type SubprocessResult } from "./inflexa_tool.ts";
+import { createRunInflexaTool, resolveInvocation, spawnInflexa, type RunSubprocess, type SubprocessResult } from "./inflexa_tool.ts";
 
-// A canned subprocess outcome; overridden per-test for the timeout/truncation cases.
-const OK_RESULT: SubprocessResult = { exitCode: 0, stdout: "hello", stderr: "", timedOut: false };
+// A canned subprocess outcome; overridden per-test for the timeout/cancel/truncation cases.
+const OK_RESULT: SubprocessResult = { exitCode: 0, stdout: "hello", stderr: "", endedBy: "exit" };
 
 /** A `RunSubprocess` that records every `cmd` it is handed and returns a fixed result — no real process. */
 function recordingSubprocess(result: SubprocessResult = OK_RESULT): { fn: RunSubprocess; calls: (readonly string[])[] } {
@@ -130,7 +130,7 @@ describe("run_inflexa — execute", () => {
 
     test("oversized output is truncated with a marker", async () => {
         const huge = "a".repeat(70_000);
-        const sub = recordingSubprocess({ exitCode: 0, stdout: huge, stderr: "", timedOut: false });
+        const sub = recordingSubprocess({ exitCode: 0, stdout: huge, stderr: "", endedBy: "exit" });
         const tool = makeTool(sub.fn);
 
         const result = (await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn)))._unsafeUnwrap();
@@ -141,33 +141,39 @@ describe("run_inflexa — execute", () => {
         expect(result.stdout.endsWith("…[truncated]")).toBe(true);
     });
 
-    test("a timed-out subprocess reports timed_out", async () => {
-        const sub = recordingSubprocess({ exitCode: 1, stdout: "", stderr: "", timedOut: true });
+    test("a timed-out subprocess reports timed_out with the partial output it produced", async () => {
+        const sub = recordingSubprocess({ exitCode: 143, stdout: "downloaded 3 of 7 files", stderr: "", endedBy: "timeout" });
         const tool = makeTool(sub.fn);
 
         const result = (await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn)))._unsafeUnwrap();
 
         expect(result.status).toBe("timed_out");
+        if (result.status !== "timed_out") throw new Error("expected timed_out");
+        expect(result.stdout).toBe("downloaded 3 of 7 files");
     });
 
-    test("bare inflexa is blocked — never asks, never spawns", async () => {
+    test("a turn-cancelled subprocess reports cancelled, not a completed run", async () => {
+        const sub = recordingSubprocess({ exitCode: 143, stdout: "partial", stderr: "", endedBy: "cancel" });
+        const tool = makeTool(sub.fn);
+
+        const result = (await tool.execute({ argv: ["--help"] }, makeCtx(recordingAsk({ kind: "once" }).fn)))._unsafeUnwrap();
+
+        expect(result.status).toBe("cancelled");
+    });
+
+    // The TUI launchers: refused outright, before any approval prompt. `new` and
+    // `resume` matter most — `new` would create an analysis before hanging.
+    test.each([
+        ["bare inflexa", [] as string[]],
+        ["inflexa config", ["config"]],
+        ["inflexa new", ["new", "myanalysis"]],
+        ["inflexa resume", ["resume", "some-analysis"]],
+    ])("%s is blocked — never asks, never spawns", async (_label, argv) => {
         const sub = recordingSubprocess();
         const ask = recordingAsk({ kind: "once" });
         const tool = makeTool(sub.fn);
 
-        const result = (await tool.execute({ argv: [] }, makeCtx(ask.fn)))._unsafeUnwrap();
-
-        expect(ask.calls.length).toBe(0);
-        expect(sub.calls.length).toBe(0);
-        expect(result.status).toBe("blocked");
-    });
-
-    test("inflexa config is blocked — never asks, never spawns", async () => {
-        const sub = recordingSubprocess();
-        const ask = recordingAsk({ kind: "once" });
-        const tool = makeTool(sub.fn);
-
-        const result = (await tool.execute({ argv: ["config"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+        const result = (await tool.execute({ argv }, makeCtx(ask.fn)))._unsafeUnwrap();
 
         expect(ask.calls.length).toBe(0);
         expect(sub.calls.length).toBe(0);
@@ -186,5 +192,62 @@ describe("run_inflexa — execute", () => {
         expect(ask.calls.length).toBe(0);
         expect(sub.calls.length).toBe(1);
         expect(result.status).toBe("ran");
+    });
+});
+
+// Real processes (bun -e children), because the bounds under test — pipe
+// backpressure, EOF held open by a grandchild, a trapped SIGTERM — only exist
+// against a live OS process. Graces are shrunk so the suite stays fast.
+describe("spawnInflexa — process bounds", () => {
+    const bun = process.execPath;
+    const live = (): AbortSignal => new AbortController().signal;
+
+    test("runaway output is capped at the source, not buffered whole", async () => {
+        const r = await spawnInflexa([bun, "-e", 'process.stdout.write("a".repeat(200000));'], live(), { timeoutMs: 10_000, flushGraceMs: 200 });
+
+        expect(r.endedBy).toBe("exit");
+        expect(r.exitCode).toBe(0);
+        expect(r.stdout.endsWith("…[truncated]")).toBe(true);
+        expect(r.stdout.length).toBeLessThan(70_000);
+    });
+
+    test("a grandchild holding the pipes open does not stall past the child's exit", async () => {
+        // The child hands its pipes to a 6s `sleep` and exits at once; EOF never
+        // arrives until that grandchild dies. The flush grace must return us long
+        // before then, with the child's own output intact.
+        const script =
+            'Bun.spawn({ cmd: ["sleep", "6"], stdout: "inherit", stderr: "inherit" }); process.stdout.write("parent-done"); setTimeout(() => process.exit(0), 100);';
+        const started = performance.now();
+        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 10_000, flushGraceMs: 300 });
+        const elapsed = performance.now() - started;
+
+        expect(r.endedBy).toBe("exit");
+        expect(r.exitCode).toBe(0);
+        expect(r.stdout).toContain("parent-done");
+        expect(elapsed).toBeLessThan(3_000);
+    });
+
+    test("a SIGTERM-trapping child is SIGKILLed, so the deadline is a real bound", async () => {
+        const script = 'process.on("SIGTERM", () => {}); process.stdout.write("trapped"); setTimeout(() => {}, 30000);';
+        const started = performance.now();
+        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 300, flushGraceMs: 200, killGraceMs: 400 });
+        const elapsed = performance.now() - started;
+
+        expect(r.endedBy).toBe("timeout");
+        // The partial output written before the deadline still comes back.
+        expect(r.stdout).toBe("trapped");
+        expect(elapsed).toBeLessThan(4_000);
+    });
+
+    test("the caller's abort reports cancel, not timeout and not a plain exit", async () => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), 100);
+        const r = await spawnInflexa([bun, "-e", "setTimeout(() => {}, 30000);"], controller.signal, {
+            timeoutMs: 10_000,
+            flushGraceMs: 200,
+            killGraceMs: 400,
+        });
+
+        expect(r.endedBy).toBe("cancel");
     });
 });

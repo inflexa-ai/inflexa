@@ -179,10 +179,10 @@ describe("createAskGateway — answer and pending contract", () => {
 describe("createAskGateway — standing grants", () => {
     const GRANTED: AskRequest = { title: "Deploy", command: "git push --force", detail: undefined };
 
-    async function grantCount(analysisId: string, command: string): Promise<number> {
+    async function grantCount(analysisId: string, grantKey: string): Promise<number> {
         const res = await pool.query({
-            text: `SELECT count(*)::int AS n FROM cortex_ask_grants WHERE analysis_id = $1 AND command = $2`,
-            values: [analysisId, command],
+            text: `SELECT count(*)::int AS n FROM cortex_ask_grants WHERE analysis_id = $1 AND grant_key = $2`,
+            values: [analysisId, grantKey],
         });
         return (res.rows[0] as { n: number }).n;
     }

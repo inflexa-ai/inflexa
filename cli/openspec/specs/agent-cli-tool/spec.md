@@ -41,7 +41,9 @@ The tool SHALL classify each argv before running it. An argv that classification
 
 ### Requirement: Interactive TUI-launcher commands are blocked from the agent
 
-A small set of commands open an interactive terminal UI — bare `inflexa` and `inflexa config` — and cannot function as a captured subprocess: with `stdin` ignored and `stdout`/`stderr` piped, there is no terminal to drive, so the child renders into a non-TTY pipe and hangs. The tool SHALL refuse such a command outright — it returns a blocked result to the model WITHOUT prompting for approval and WITHOUT spawning. This is a denylist of structurally-unrunnable commands, keyed on the resolved subcommand path, NOT an allowlist: every other action remains approval-gated. A blocked command's introspection (its `--help`) SHALL remain allowed, since it runs no UI.
+The commands that exist only to open an interactive terminal UI — bare `inflexa`, `inflexa config`, `inflexa new`, `inflexa resume`, and the dev-channel `inflexa chat` — cannot function as a captured subprocess: with `stdin` ignored and `stdout`/`stderr` piped, there is no terminal to drive. The tool SHALL refuse such a command outright — it returns a blocked result to the model WITHOUT prompting for approval and WITHOUT spawning. This is a denylist of structurally-unrunnable commands, keyed on the resolved subcommand path, NOT an allowlist: every other action remains approval-gated. A blocked command's introspection (its `--help`) SHALL remain allowed, since it runs no UI.
+
+The denylist is the courtesy layer, not the safety boundary: every TUI launcher SHALL itself refuse a non-interactive stdin at entry, before doing any other work — so a TUI command missing from the denylist exits non-zero with a clear message instead of hanging, and a launcher that creates state before its first frame (`inflexa new` creates the analysis during target resolution) refuses before any state exists.
 
 #### Scenario: Bare inflexa is refused
 
@@ -53,10 +55,25 @@ A small set of commands open an interactive terminal UI — bare `inflexa` and `
 - **WHEN** the tool is invoked with `["config"]` (which opens the interactive settings UI)
 - **THEN** it returns a blocked result to the model without prompting and without spawning
 
+#### Scenario: inflexa new is refused before it can create an analysis
+
+- **WHEN** the tool is invoked with `["new", "myanalysis"]` (which creates an analysis and opens its chat TUI)
+- **THEN** it returns a blocked result to the model without prompting and without spawning
+
+#### Scenario: inflexa resume is refused
+
+- **WHEN** the tool is invoked with `["resume", "some-analysis"]` (which reopens an analysis's chat TUI)
+- **THEN** it returns a blocked result to the model without prompting and without spawning
+
 #### Scenario: A blocked command's help is still allowed
 
 - **WHEN** the tool is invoked with `["config", "--help"]`
 - **THEN** it classifies as introspection and runs, returning the help text without prompting
+
+#### Scenario: A TUI launcher invoked headless fails fast instead of hanging
+
+- **WHEN** a TUI-launching command runs with a non-interactive stdin (a pipe, a script, or a captured subprocess)
+- **THEN** the launcher exits non-zero with a clear message before creating any state or rendering any frame
 
 ### Requirement: Classification is the commander parse, not a string heuristic
 
@@ -89,7 +106,7 @@ The approval request SHALL display the exact argv as its `command`, and SHALL se
 
 ### Requirement: Subprocess hygiene keeps the CLI a captured black box
 
-The tool SHALL spawn the CLI with an argv array (never through a shell), `stdin` ignored, and `stdout`/`stderr` captured rather than inherited, so subprocess output never reaches the TUI alternate screen. The spawn SHALL be bounded by a timeout that terminates a child that does not exit, so an argv that resolves to an interactive or long-running command cannot wedge the chat turn. Captured output returned to the model SHALL be bounded so a large output does not overflow the turn.
+The tool SHALL spawn the CLI with an argv array (never through a shell), `stdin` ignored, and `stdout`/`stderr` captured rather than inherited, so subprocess output never reaches the TUI alternate screen. The spawn SHALL be bounded by a timeout that terminates a child that does not exit, escalating to an untrappable kill after a grace so a child that traps the first signal cannot outlive the deadline. Captured output SHALL be bounded at capture time — the stream is drained past the cap but not retained — so a runaway child can neither overflow the turn nor balloon the host process's memory, and neither pipe backpressure nor a grandchild holding the pipes open past the child's exit stalls the tool. A timeout result SHALL carry the (bounded) output produced before the deadline. A run ended by the turn's own abort SHALL be reported as cancelled — distinct from both a timeout and a completed run.
 
 #### Scenario: An interactive command declines rather than hangs
 
@@ -98,8 +115,18 @@ The tool SHALL spawn the CLI with an argv array (never through a shell), `stdin`
 
 #### Scenario: A hung child is terminated
 
-- **WHEN** a spawned child does not exit within the timeout
-- **THEN** the tool terminates it and returns a timeout result to the model
+- **WHEN** a spawned child does not exit within the timeout — even one that traps the termination signal
+- **THEN** the tool kills it and returns a timeout result carrying the output captured before the deadline
+
+#### Scenario: A grandchild cannot stall the capture
+
+- **WHEN** the spawned child exits but a process it spawned still holds the inherited pipes open
+- **THEN** the tool returns shortly after the child's exit with the output captured so far, rather than waiting for the grandchild
+
+#### Scenario: A cancelled turn is not reported as a completed run
+
+- **WHEN** the turn's abort signal fires while the child is running
+- **THEN** the child is terminated and the tool reports a cancelled result, not an exit code or a timeout
 
 ### Requirement: Invocation resolves dev vs release from the build channel
 

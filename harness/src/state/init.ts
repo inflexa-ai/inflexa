@@ -284,15 +284,15 @@ CREATE INDEX IF NOT EXISTS idx_cortex_asks_pending
   ON cortex_asks(status) WHERE status = 'pending';
 
 -- Standing approval grants behind an 'always' reply — keyed by the analysis and
--- the ask's grant key, so a later matching ask auto-approves without pausing. The
--- command column holds that grant-key value: the displayed command unless the tool
--- supplied a broader grant key. Lives for the analysis lifecycle, surviving process
--- restarts, and never applies to another analysis.
+-- the ask's grant key (the displayed command when the tool supplied no broader
+-- key), so a later matching ask auto-approves without pausing. Lives for the
+-- analysis lifecycle, surviving process restarts, and never applies to another
+-- analysis.
 CREATE TABLE IF NOT EXISTS cortex_ask_grants (
   analysis_id  TEXT NOT NULL,
-  command      TEXT NOT NULL,
+  grant_key    TEXT NOT NULL,
   created_at   TEXT NOT NULL,
-  PRIMARY KEY (analysis_id, command)
+  PRIMARY KEY (analysis_id, grant_key)
 );
 `;
 
@@ -430,6 +430,21 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
                 // orphaned legacy pending rows are swept to 'expired' before any answer
                 // reads it, so no existing row is left needing a value.
                 "ALTER TABLE cortex_asks ADD COLUMN IF NOT EXISTS grant_key TEXT",
+                // The grants table's key column is named for what it stores. A table
+                // created when the column was `command` is renamed in place — its
+                // values carry over unchanged, because a grant recorded without a
+                // grant key is keyed on its exact command. Guarded via
+                // information_schema (Postgres has no RENAME COLUMN IF EXISTS) and
+                // scoped to current_schema() so parallel test schemas in the same
+                // database never trigger each other's rename.
+                `DO $$ BEGIN
+                  IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = current_schema() AND table_name = 'cortex_ask_grants' AND column_name = 'command'
+                  ) THEN
+                    ALTER TABLE cortex_ask_grants RENAME COLUMN command TO grant_key;
+                  END IF;
+                END $$`,
             ];
             for (const sql of addMigrations) {
                 await client.query(sql);
