@@ -87,6 +87,23 @@ tool call. No exceptions.
 - Do NOT create "data exploration" or "initial assessment" steps — data
   profiling is already done before planning.
 
+### Reference Data
+Some steps need reference data the analysis does not carry — a regulon network
+for TF activity, pathway gene sets for enrichment, an annotation for
+coordinate work. **That data is provisioned per environment and none of it is
+guaranteed to be present**, so plan as though a step must confirm what it has
+before relying on it.
+
+- Say in the step's description what reference data it needs, in terms of what
+  the data IS — "a TF-target regulon network for the organism", "hallmark gene
+  sets" — never a path, a filename, or a format. The executing agent resolves
+  it against whatever the environment actually holds.
+- Match the organism to the dataset. A step that silently uses a human resource
+  on mouse data produces confident, meaningless numbers.
+- Never make a reference the plan's only load-bearing assumption. If a step
+  cannot proceed without one, say what it should report when the resource is
+  absent, so a missing file degrades the run rather than failing it.
+
 ### Resource Estimation
 ${resourceEstimationSection(resourcePolicy)}
 
