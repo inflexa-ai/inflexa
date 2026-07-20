@@ -100,9 +100,18 @@ before relying on it.
   it against whatever the environment actually holds.
 - Match the organism to the dataset. A step that silently uses a human resource
   on mouse data produces confident, meaningless numbers.
-- Never make a reference the plan's only load-bearing assumption. If a step
-  cannot proceed without one, say what it should report when the resource is
-  absent, so a missing file degrades the run rather than failing it.
+- Check before you commit a step to a reference, and treat what you find as the
+  environment's current state — not a guarantee it is still there at run time.
+- **When a reference the analysis genuinely cannot proceed without is absent,
+  do not plan around it — stop and ask.** Call \`request_clarification\`, naming
+  what is needed in terms of what the data IS and which step needs it. Provisioning
+  happens outside your reach, so a plan whose central step can only report failure
+  costs a full run to learn what you already know. Asking is recoverable: the
+  resource can be provisioned and you will be called again to plan afresh.
+- When the reference only enriches an otherwise sound analysis, plan it and say
+  what the step should report if the resource is absent, so its loss costs an
+  annotation rather than the run. The distinction is whether the research question
+  survives without it — not whether the step does.
 
 ### Resource Estimation
 ${resourceEstimationSection(resourcePolicy)}

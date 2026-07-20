@@ -229,35 +229,44 @@ describe("generatePlan loop-driving tool", () => {
     // The planner has no sandbox, so reference discovery is only attachable because it
     // reads the store host-side. A plan should be able to name what this install holds
     // rather than assuming, which is the whole reason the tool is offered here.
+    //
+    // `provider.calls[i].messages` is ONE array the loop mutates in place, so every
+    // recorded call aliases the final transcript — assert against the whole exchange,
+    // never a positional index into a snapshot that does not exist.
+    function refsProbe(): ScriptedProvider {
+        return scriptedProvider((callIndex) => {
+            if (callIndex === 0) return makeMessage([toolUseBlock("t1", "list_available_refs", { query: "regulon" })], "tool_use");
+            if (callIndex === 1) return makeMessage([toolUseBlock("t2", "report_blocker", { reason: "probe only" })], "tool_use");
+            // Without a terminal end_turn the loop keeps requesting tools until it hits
+            // its iteration cap — the blocker records an outcome, it does not stop the loop.
+            return makeMessage([textBlock("Reported.")], "end_turn");
+        });
+    }
+
+    /** The whole planner transcript, as one searchable string. */
+    function transcript(provider: ScriptedProvider): string {
+        return JSON.stringify(provider.calls[0]?.messages ?? []);
+    }
+
     it("gives the planner reference discovery over the host store, with no sandbox", async () => {
         const root = await mkdtemp(join(tmpdir(), "planner-refs-"));
         await mkdir(join(root, "managed", "collectri-human", "2.0"), { recursive: true });
         await writeFile(join(root, "managed", "collectri-human", "2.0", "CollecTRI_regulons.csv"), "source,target");
 
-        let observed: unknown;
-        const provider = scriptedProvider((callIndex) =>
-            callIndex === 0
-                ? makeMessage([toolUseBlock("t1", "list_available_refs", { query: "regulon" })], "tool_use")
-                : makeMessage([toolUseBlock("t2", "report_blocker", { reason: "probe only" })], "tool_use"),
-        );
-        const tool = createGeneratePlanTool({ provider, pool, model: "claude-test", refStorePath: root });
-        await tool.execute(INPUT, toolContext());
+        const provider = refsProbe();
+        await createGeneratePlanTool({ provider, pool, model: "claude-test", refStorePath: root }).execute(INPUT, toolContext());
 
-        // The second call carries the first call's tool result — the inventory the planner saw.
-        const followUp = provider.calls[1]!.messages.at(-1);
-        observed = JSON.stringify(followUp);
-        expect(observed).toContain("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
+        expect(Object.keys(provider.calls[0]!.tools)).toContain("list_available_refs");
+        expect(transcript(provider)).toContain("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
+        // The planner sees the same meaning-bearing labels a sandbox agent does.
+        expect(transcript(provider)).toContain("regulon");
     });
 
     it("reports no reference store to the planner when none is configured", async () => {
-        const provider = scriptedProvider((callIndex) =>
-            callIndex === 0
-                ? makeMessage([toolUseBlock("t1", "list_available_refs", {})], "tool_use")
-                : makeMessage([toolUseBlock("t2", "report_blocker", { reason: "probe only" })], "tool_use"),
-        );
+        const provider = refsProbe();
         await toolFor(provider).execute(INPUT, toolContext());
 
-        expect(JSON.stringify(provider.calls[1]!.messages.at(-1))).toContain("No reference store is provisioned");
+        expect(transcript(provider)).toContain("No reference store is provisioned");
     });
 
     it("surfaces request_clarification as a clarification outcome", async () => {

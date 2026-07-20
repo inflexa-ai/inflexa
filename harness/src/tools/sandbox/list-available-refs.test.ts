@@ -133,6 +133,34 @@ describe("list_available_refs", () => {
         expect(byOrganism.entries.map((entry) => entry.metadata?.datasetId)).toEqual(["msigdb-hallmark-mouse"]);
     });
 
+    // The defect this pins: a dataset's labels are joined onto its artifact deep under
+    // `managed/{id}/{version}/`, so a root listing sees only the `managed` DIRECTORY,
+    // which carries none. Searching by meaning from the root — the tool's advertised
+    // primary workflow, and the whole point of describing artifacts — found nothing.
+    it("finds a file by meaning from the store root, not just from its own directory", async () => {
+        const root = await makeStore("root-search");
+        await stageManaged(root, "collectri-human", "2.0", "CollecTRI_regulons.csv", "source,target");
+        await writeReceipt(root, "collectri-human", "2.0", [{ path: "CollecTRI_regulons.csv", bytes: 13 }]);
+
+        // No `path` — the caller does not know the layout, which is the premise.
+        const result = (await createTool(root).execute({ query: "regulon" }, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(result.entries).toHaveLength(1);
+        expect(result.entries[0]!.path).toBe("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
+        expect(result.entries[0]!.metadata).toMatchObject({ organism: "human", format: "csv" });
+    });
+
+    // Browsing must stay a directory summary — a recursive dump of every file is what
+    // the bounding exists to prevent.
+    it("browses one level when no query is given, summarizing directories", async () => {
+        const root = await makeStore("browse");
+        await stageManaged(root, "collectri-human", "2.0", "CollecTRI_regulons.csv", "source,target");
+
+        const result = (await createTool(root).execute({}, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(result.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/managed", kind: "directory", fileCount: 1 })]);
+    });
+
     it("ignores invalid and stale metadata without hiding observed files", async () => {
         const root = await makeStore("stale");
         await mkdir(join(root, "user"), { recursive: true });
