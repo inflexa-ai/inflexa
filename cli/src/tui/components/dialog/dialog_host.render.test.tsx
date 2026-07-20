@@ -164,6 +164,53 @@ describe("dialog host state machine (rendered, real keyboard bus)", () => {
         }
     });
 
+    test("prompt validate: a rejected submit keeps the dialog open with an inline error; editing clears it and a valid submit lands the value", async () => {
+        const setup = await testRender(() => <Harness />, { width: 80, height: 20 });
+        const settle = makeSettle(setup);
+        const submissions: string[] = [];
+        const frame = () =>
+            setup
+                .captureCharFrame()
+                .split("\n")
+                .map((l) => l.trimEnd())
+                .join("\n");
+        try {
+            await settle();
+            dialogPush(() => (
+                <PromptDialog
+                    title="embedding.apiKey"
+                    validate={(v) => (v.trim() === "" ? "An API key is required." : undefined)}
+                    onSubmit={(v) => {
+                        submissions.push(v);
+                        dialogClose();
+                    }}
+                    onCancel={() => {}}
+                />
+            ));
+            await settle();
+
+            // Empty submit is rejected in-dialog: it stays open, onSubmit never fires, the error is shown.
+            setup.mockInput.pressEnter();
+            await settle();
+            expect(dialogIsOpen()).toBe(true);
+            expect(submissions).toEqual([]);
+            expect(frame()).toContain("An API key is required.");
+
+            // Editing the field clears the inline error (per-keystroke), so a corrected value drops it.
+            await setup.mockInput.typeText("sk-abc");
+            await settle();
+            expect(frame()).not.toContain("An API key is required.");
+
+            // The now-valid submit closes the dialog and lands the validated value.
+            setup.mockInput.pressEnter();
+            await settle();
+            expect(dialogIsOpen()).toBe(false);
+            expect(submissions).toEqual(["sk-abc"]);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
     test("stacking: covered dialog keeps its state and focus, its keys go inert, reveal restores both", async () => {
         const setup = await testRender(() => <Harness />, { width: 80, height: 24 });
         const settle = makeSettle(setup);
