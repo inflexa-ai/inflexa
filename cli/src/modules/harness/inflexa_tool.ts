@@ -29,14 +29,30 @@ const MAX_OUTPUT_CHARS = 60_000;
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 /**
+ * Commands the agent may not run at all — not even with approval. These open an
+ * interactive terminal UI, which cannot function as a captured subprocess: with
+ * stdin ignored and stdout/stderr piped there is no terminal to drive, so the
+ * child renders into a non-TTY pipe and hangs until the timeout. Keyed by the
+ * classifier's resolved subcommand path (its `grantKey`); the value is the reason
+ * handed back to the model. Checked BEFORE `ctx.ask`, because a command that can
+ * never usefully run is not a decision to put to the user.
+ */
+const BLOCKED_COMMANDS: ReadonlyMap<string, string> = new Map([
+    ["inflexa", "Bare `inflexa` opens the interactive terminal UI, which cannot run as a captured subprocess. It is not available to you."],
+    ["inflexa config", "`inflexa config` opens the interactive settings UI, which cannot run as a captured subprocess. It is not available to you."],
+]);
+
+/**
  * The outcome the model sees, as data on the ok channel — every expected result
  * is a variant here, never a thrown error (a denied `ctx.ask` is the one throw,
- * and it is the harness loop's to map). `invalid` is a rejected argv; `ran` is a
+ * and it is the harness loop's to map). `invalid` is a rejected argv; `blocked`
+ * is a command the agent may not run (an interactive TUI launcher); `ran` is a
  * completed process (any exit code — a non-zero exit is a real answer, not a tool
  * failure); `timed_out` is a process abandoned at the deadline.
  */
 export type RunInflexaResult =
     | { readonly status: "invalid"; readonly message: string }
+    | { readonly status: "blocked"; readonly message: string }
     | { readonly status: "ran"; readonly exitCode: number; readonly stdout: string; readonly stderr: string }
     | { readonly status: "timed_out" };
 
@@ -73,16 +89,14 @@ function truncateOutput(text: string): string {
  * `lib/container.ts`'s `capture`). A spawn that fails to launch is an unexpected
  * fault — it throws, and the loop's dispatch maps it to an error tool result.
  */
-function spawnInflexa(cmd: readonly string[], signal: AbortSignal, timeoutMs: number): Promise<SubprocessResult> {
+async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, timeoutMs: number): Promise<SubprocessResult> {
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const combined = AbortSignal.any([signal, timeoutSignal]);
     // `[...cmd]` copies the readonly argv into the mutable array `Bun.spawn` expects.
     const proc = Bun.spawn({ cmd: [...cmd], stdin: "ignore", stdout: "pipe", stderr: "pipe", signal: combined });
-    return Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]).then(async ([stdout, stderr]) => {
-        const exitCode = await proc.exited;
-        // Only the deadline signal marks a timeout; a caller-signal abort leaves it false (a cancel, not a timeout).
-        return { exitCode, stdout, stderr, timedOut: timeoutSignal.aborted };
-    });
+    const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    const exitCode = await proc.exited;
+    return { exitCode, stdout, stderr, timedOut: timeoutSignal.aborted };
 }
 
 /** Construction deps for {@link createRunInflexaTool}; every field defaults to the real host value, overridable in tests. */
@@ -132,6 +146,11 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             if (c.kind === "malformed") return ok({ status: "invalid", message: c.message });
 
             if (c.kind === "action") {
+                // A blocked command (an interactive TUI launcher) can never run as a captured
+                // subprocess — refuse it here rather than prompting for something that would hang.
+                const blockedReason = BLOCKED_COMMANDS.get(c.grantKey);
+                if (blockedReason !== undefined) return ok({ status: "blocked", message: blockedReason });
+
                 const request: AskRequest = {
                     title: "Run inflexa command",
                     // The EXACT argv that will run — what the user approves is precisely what executes, nothing hidden.
