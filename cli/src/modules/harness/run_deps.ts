@@ -257,6 +257,8 @@ export function buildEphemeralDeps(comp: RunEngineComposition): CoreWorkflowDeps
         resolveWorkspaceRoot: comp.resolveWorkspaceRoot,
         model: comp.sandbox.model,
         bioKeys: comp.bioKeys,
+        refStorePath: comp.refStorePath,
+        ...(comp.packagesFile ? { packagesFile: comp.packagesFile } : {}),
     };
 }
 

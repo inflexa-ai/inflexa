@@ -909,6 +909,8 @@ async function bootHarnessRuntimeOnce(
                 bioKeys: cfg.bioKeys,
                 embedding,
                 skillsDir: cfg.skillsDir,
+                refStorePath: env.refsDir,
+                ...(packagesFile ? { packagesFile } : {}),
             },
             ephemeral: buildEphemeralDeps(composition),
         };

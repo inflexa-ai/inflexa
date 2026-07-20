@@ -87,6 +87,12 @@ export interface EphemeralDeps {
      * inject its extracted copy, or the executor reads the inventory as unknown.
      */
     readonly packagesFile?: string;
+    /**
+     * Host path of the reference store. Omit only when none is provisioned: the
+     * executor carries reference discovery, and without this it reports an installed
+     * store as absent.
+     */
+    readonly refStorePath?: string;
 }
 
 /**
@@ -197,6 +203,7 @@ export async function runEphemeralBody(input: EphemeralWorkflowInput, deps: Ephe
             model: deps.model,
             bioKeys: deps.bioKeys,
             ...(deps.packagesFile ? { packagesFile: deps.packagesFile } : {}),
+            ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
             step: {
                 sandbox,
                 workspaceRoot,

@@ -82,6 +82,7 @@ import {
 } from "../tools/workspace/index.js";
 import { showUserTool } from "../tools/display/index.js";
 import { createUpdateWorkingMemoryTool } from "../tools/memory/index.js";
+import { createListAvailableRefsTool } from "../tools/sandbox/list-available-refs.js";
 import { createExecutePlanTool } from "../tools/execute-plan.js";
 import { createRunEphemeralTool } from "../tools/run-ephemeral.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
@@ -224,6 +225,12 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         checkSafetyPanelTool,
         // EPA CompTox (toxcast / hazard / chemical / exposure behind one dataset).
         chemDb.comptox,
+        // What reference data this install actually holds. The conversation agent is
+        // where provisioning is decided — an embedder may give it a way to install more,
+        // and a host that does asks the user to approve the download. Deciding that
+        // blind is how a user gets asked to download something already installed, or
+        // told nothing is missing when it is; this is the only tool that can tell.
+        createListAvailableRefsTool({ ...(refStorePath ? { refStorePath } : {}) }),
         // Execution.
         createInspectRunTool(pool),
         // The dataset's own record. No file backs it — the DB row is the only copy.
