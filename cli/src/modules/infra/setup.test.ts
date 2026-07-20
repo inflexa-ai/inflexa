@@ -135,30 +135,32 @@ describe("ecosystem env adoption — detection → non-secret connection", () =>
 });
 
 // The credential-helper detection is a pure shape over its raw signals, so the offer logic and the
-// "managed helper is never auto-executed" guarantee are testable without touching the filesystem or env.
+// "managed helper is never executed without explicit confirmation" guarantee are testable without
+// touching the filesystem or env.
 describe("credential-helper detection", () => {
     test("a user-level apiKeyHelper is detected and carried as a pre-fillable command", () => {
-        const d = detectCredentialHelperFrom("/opt/mint-token", false, false);
+        const d = detectCredentialHelperFrom("/opt/mint-token", null, false);
         expect(credentialHelperDetected(d)).toBe(true);
         expect(d.userHelperCommand).toBe("/opt/mint-token");
     });
 
     test("ANTHROPIC_AUTH_TOKEN alone is a detected signal (env-bearer offerable)", () => {
-        const d = detectCredentialHelperFrom(null, false, true);
+        const d = detectCredentialHelperFrom(null, null, true);
         expect(credentialHelperDetected(d)).toBe(true);
         expect(d.authTokenEnvSet).toBe(true);
     });
 
-    test("an org-managed helper alone is detected but carries NO command to pre-fill or auto-execute", () => {
-        const d = detectCredentialHelperFrom(null, true, false);
+    test("an org-managed helper alone is detected, carried as its own explicit choice — never merged into the user path", () => {
+        const d = detectCredentialHelperFrom(null, "company-code token", false);
         expect(credentialHelperDetected(d)).toBe(true);
-        expect(d.managedHelperPresent).toBe(true);
-        // The user must supply/confirm the command — the managed helper is never lifted into a runnable command.
+        expect(d.managedHelperCommand).toBe("company-code token");
+        // Kept apart from the user's own helper: the offer labels it as the organization's, and the
+        // command is only ever run after the user selects it and confirms it in the editable prompt.
         expect(d.userHelperCommand).toBeNull();
     });
 
     test("no signals → nothing detected", () => {
-        expect(credentialHelperDetected(detectCredentialHelperFrom(null, false, false))).toBe(false);
+        expect(credentialHelperDetected(detectCredentialHelperFrom(null, null, false))).toBe(false);
     });
 });
 
