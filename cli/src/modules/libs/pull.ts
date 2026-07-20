@@ -21,6 +21,7 @@ import { confirm } from "../../lib/cli.ts";
 import { ensureRuntime, readConfig, selectedRuntime, writeConfig } from "../../lib/config.ts";
 import { capture, firstReadyRuntime, inherit, runtimeIds, runtimes, type ContainerRuntime } from "../../lib/container.ts";
 import { DEFAULT_SANDBOX_IMAGE, SANDBOX_VARIANTS, VARIANT_DESCRIPTIONS, VARIANT_LABELS, variantImage, variantOfImage, type SandboxVariant } from "./images.ts";
+import { resolvePackagesFile } from "./packages.ts";
 
 /** Flags accepted by `inflexa sandbox pull` (and reused by setup). */
 export type PullOptions = {
@@ -167,6 +168,12 @@ export async function sandboxPull(opts: PullOptions = {}): Promise<Result<PullOu
 
     const configured = configureSandboxImage(image);
     if (configured.isErr()) return err(configured.error);
+    // Cache the image's package inventory while the image is definitely present. A
+    // failure here is not a failed pull: the harness reports the package set as
+    // unknown and the run proceeds, so it must not turn a good pull into an error.
+    if ((await resolvePackagesFile(rt, image)) === null && !opts.quiet) {
+        log.warn(`${image} carries no package inventory — agents will be told the installed set is unknown.`);
+    }
     return ok({ type: "pulled", variant, image });
 }
 

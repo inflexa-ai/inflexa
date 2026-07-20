@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
 
-import { parsePackagesFile, queryPackages } from "./list-available-packages.js";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { makeToolContext } from "../__fixtures__/tool-context.js";
+import { createListAvailablePackagesTool, parsePackagesFile, queryPackages } from "./list-available-packages.js";
 
 // A faithful slice of `/mnt/libs/current/packages.txt`: the two `#` advisory
 // lines the producers emit, then `## <Section>` headings each followed by one
@@ -114,5 +119,65 @@ describe("queryPackages — listing", () => {
         expect(result.total).toBe(0);
         expect(result.hasMore).toBe(false);
         expect(result.content).toContain("No packages match");
+    });
+});
+
+// The tool's own read path had no coverage, which is how it stayed broken on hosts
+// that never mount the store at the sandbox's path: the read fails, the result is a
+// data variant rather than an error, and nothing surfaces it.
+describe("list_available_packages — reading the inventory", () => {
+    it("reads the injected host path rather than assuming the container's", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "packages-"));
+        const packagesFile = join(dir, "packages.txt");
+        await writeFile(packagesFile, PACKAGES_TXT);
+
+        const result = (
+            await createListAvailablePackagesTool({ packagesFile }).execute({ names: ["Seurat", "nonesuch"] }, makeToolContext().ctx)
+        )._unsafeUnwrap() as { available: true; checked: { requested: string; present: boolean }[] };
+
+        expect(result.available).toBe(true);
+        expect(result.checked).toEqual([
+            { requested: "Seurat", present: true, name: "Seurat", section: "R (CRAN)" },
+            { requested: "nonesuch", present: false },
+        ]);
+    });
+
+    // Naming packages in this state is worse than silence: the agent cannot verify any
+    // of them, and a generous guess is exactly what produces a confident bad import.
+    it("reports the package set as UNKNOWN when the inventory cannot be read, naming no packages", async () => {
+        const missing = join(tmpdir(), "packages-does-not-exist-xyz", "packages.txt");
+        const result = (await createListAvailablePackagesTool({ packagesFile: missing }).execute({}, makeToolContext().ctx))._unsafeUnwrap() as {
+            available: false;
+            content: string;
+        };
+
+        expect(result.available).toBe(false);
+        expect(result.content).toContain("UNKNOWN");
+        expect(result.content).toMatch(/probe/i);
+        for (const name of ["numpy", "pandas", "scanpy", "DESeq2"]) expect(result.content).not.toContain(name);
+    });
+});
+
+// The shipped store is ~270 packages. A default that truncates it renders a partial
+// list that reads as complete, which is how an agent concludes a package is absent
+// when it was only unrendered. The default must return a real-sized store whole.
+describe("queryPackages — a real-sized store is not truncated by default", () => {
+    it("returns every package with hasMore=false at a catalog-scale size", () => {
+        const sections = parsePackagesFile(
+            [
+                "## Python (pip)",
+                Array.from({ length: 180 }, (_, i) => `pkg-python-${i}`).join(", "),
+                "## R (CRAN)",
+                Array.from({ length: 120 }, (_, i) => `pkg-r-${i}`).join(", "),
+            ].join("\n"),
+        );
+
+        const result = queryPackages(sections, {}) as { available: true; total: number; returned: number; hasMore: boolean; content: string };
+
+        expect(result.total).toBe(300);
+        expect(result.returned).toBe(300);
+        expect(result.hasMore).toBe(false);
+        expect(result.content).not.toContain("not shown");
+        expect(result.content).toContain("pkg-r-119");
     });
 });

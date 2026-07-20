@@ -153,6 +153,10 @@ jobs:
             --build-arg "BASE_IMAGE=$BASE_IMAGE" \
             -t "${IMAGE_PYTHON}:${VERSION}-${ARCH}" \
             .
+          # Stamp the inventory on BEFORE the push: a host that never bind-mounts the
+          # store reads the label, so an unlabelled published image is one whose agents
+          # cannot tell what is installed.
+          bash scripts/lib-store-label-packages.sh "${IMAGE_PYTHON}:${VERSION}-${ARCH}"
           docker push "${IMAGE_PYTHON}:${VERSION}-${ARCH}"
 
       - name: "Build + push: sandbox-python-r"
@@ -169,6 +173,10 @@ jobs:
             --secret id=github_token,env=GITHUB_TOKEN \
             -t "${IMAGE_PYTHON_R}:${VERSION}-${ARCH}" \
             .
+          # Re-stamp rather than inherit: python-r is built FROM sandbox-python and
+          # would otherwise carry its base's label, advertising an inventory missing
+          # every R track this image adds.
+          bash scripts/lib-store-label-packages.sh "${IMAGE_PYTHON_R}:${VERSION}-${ARCH}"
           docker push "${IMAGE_PYTHON_R}:${VERSION}-${ARCH}"
 
       # Extract the per-track tarballs from the HIGHEST image that built for this

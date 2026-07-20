@@ -62,6 +62,7 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
         sandboxEmitters: createSwappableSandboxEmitters(`${modelProvider}/${sandboxModel}`),
         skillsDir: "/tmp/skills",
         refStorePath: "/tmp/refs",
+        packagesFile: null,
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
     };
 }
