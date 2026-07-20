@@ -218,11 +218,11 @@ def score_genetic_evidence(gene, gwas_results=None,
     gene : str
         Gene symbol.
     gwas_results : list of dict, optional
-        GWAS associations from searchGwasCatalog.
+        GWAS Catalog associations, each with a "pValue" key.
     disgenet_results : list of dict, optional
-        Gene-disease associations from searchDisgenet.
+        Gene-disease associations, each with a "score" key.
     opentargets_results : dict, optional
-        Target info from searchOpenTargets.
+        Open Targets target record with a "geneticAssociationScore" key.
 
     Returns
     -------
@@ -424,7 +424,21 @@ def plot_evidence_heatmap(candidate_df, top_n=20):
   connectivity scores.
 - **Network proximity depends on network quality**: PPI networks have
   known biases (study bias toward well-characterized proteins). Flag
-  this limitation.
+  this limitation. No PPI network is provisioned as reference data and
+  none can be downloaded — it must already be in the workspace.
+- **`nx.all_pairs_shortest_path_length` is O(V²) in memory**: as written
+  above it materialises the full distance dictionary, which on a
+  genome-scale PPI network (~20k nodes) is hundreds of millions of
+  entries and will exhaust memory. It is also recomputed on every call,
+  so scoring a drug panel repeats the same all-pairs BFS per drug.
+  Compute distances once outside the loop, and for large graphs use
+  per-source `nx.single_source_shortest_path_length` seeded from the
+  disease genes only.
+- **Connectivity scoring needs perturbation signatures, not target
+  sets**: `connectivity_score_prerank` above scores whatever gene sets
+  it is handed. Passing drug-*target* sets measures target enrichment
+  in the disease ranking — a legitimate analysis, but it is not CMap
+  connectivity and must not be labelled as one.
 - **Drug stage matters**: An approved drug with connectivity evidence
   is far more actionable than a preclinical compound. Always report
   development stage.

@@ -77,8 +77,8 @@ When receiving input data, detect the format before processing:
 ## Key Cross-Cutting Methods
 
 - **Differential analysis**: PyDESeq2 (bulk counts), limma via rpy2 (microarray/intensity), pseudobulk + PyDESeq2 (single-cell). Longitudinal: dream (variancePartition, R via rpy2)
-- **Pathway enrichment**: decoupler with MSigDB, PROGENy, Reactome, GO; gseapy for GSEA/ORA
-- **TF activity**: decoupler with CollecTRI regulons
+- **Pathway enrichment**: decoupler with gene sets or pathway weights from the reference store; gseapy for GSEA/ORA
+- **TF activity**: decoupler with a TF-target regulon network from the reference store
 - **Cell-cell communication**: LIANA+
 - **GRN inference**: pySCENIC / SCENIC+
 - **Trajectory**: scVelo, CellRank, Palantir
@@ -86,6 +86,31 @@ When receiving input data, detect the format before processing:
 - **Batch correction**: scVI (complex), Harmony (moderate), ComBat (bulk)
 
 See `references/general-principles.md` for complete details.
+
+## Reference Data
+
+Gene sets, regulons, pathway weights, and annotation resources are provisioned
+as an optional reference store. **Never assume a particular dataset is present
+and never hardcode a path to one.** Query the available references for what you
+need, described by what the data *is* (e.g. "TF-target regulon network",
+"hallmark gene sets"), and read the returned entry's stated format and column
+layout before choosing a reader. Rules that hold regardless of which datasets
+are installed:
+
+- The store is **read-only**, and the sandbox has **no network access** — a
+  missing dataset cannot be downloaded or installed at runtime.
+- If what you need is not there, report the gap and proceed with what is
+  available. Do not invent a path, and do not silently fall back to a
+  different organism's data.
+- Match the reader to the declared format, not to the file extension:
+  - `.gmt` gene sets are **ragged** (variable-length rows) — parse them
+    line-by-line, splitting on tabs. `pandas.read_csv` cannot read a GMT.
+  - `.rda` / `.rds` are R serialized objects — load them through rpy2 (or in
+    native R), never with a pandas reader.
+  - `.csv` / `.tsv` tables load with pandas; check whether the file has a
+    header, and whether it is gzipped or zipped, before reading.
+  - Multi-species files must be filtered to the organism under analysis
+    before use — a human network silently runs over mouse counts.
 
 ## Gene Annotation (R via rpy2)
 

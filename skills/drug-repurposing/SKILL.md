@@ -23,19 +23,28 @@ Choose the repurposing strategy based on available data:
    - See `references/repurposing-methods.md` for connectivity scoring
      with gseapy.prerank and permutation testing.
    - **Input**: ranked gene list from DE analysis
-     (sign(log2FC) * -log10(pvalue)).
+     (sign(log2FC) * -log10(pvalue)), **plus** a set of drug
+     perturbation profiles.
+   - **Reference-data caveat**: no drug-perturbation signature
+     dataset (LINCS L1000, CMap build, or equivalent) is provisioned,
+     and the sandbox has no network access to fetch one. Search the
+     workspace for staged perturbation data before planning this
+     strategy. If none is present, say so and switch to a
+     target-, network-, or genetics-based strategy — do not invent a
+     signature path, and do not substitute drug-target gene sets for
+     perturbation profiles and still call the output a connectivity
+     score.
    - **Output**: ranked drugs by connectivity score with FDR.
 
 2. **Target-based repurposing** (have: validated target gene list)
    - Map disease-relevant targets to known drugs via ChEMBL, DrugBank,
      and Open Targets.
    - Workflow:
-     a. `searchTargets` — resolve gene symbols to target ChEMBL IDs.
-     b. `searchCompounds` with searchType "target" — find compounds
-        with bioactivity against each target.
-     c. `getDrugInfo` — check approval status and existing indications.
-     d. `getMechanism` — verify mechanism of action is relevant.
-     e. If `searchDrugbank` available: get additional indication,
+     a. Resolve gene symbols to ChEMBL target identifiers.
+     b. Find compounds with bioactivity against each of those targets.
+     c. Check approval status and existing indications for each drug.
+     d. Verify the mechanism of action is relevant to the disease.
+     e. Where DrugBank lookup is available, add indication,
         interaction, and pharmacology data.
    - Prioritize: approved drugs > Phase 3 > Phase 2 > Phase 1 >
      preclinical.
@@ -48,6 +57,12 @@ Choose the repurposing strategy based on available data:
    - See `references/repurposing-methods.md` for network proximity
      scoring.
    - **Input**: disease gene set + drug-target mapping + PPI network.
+   - **Reference-data caveat**: no PPI network is provisioned as
+     reference data, and it cannot be downloaded from the sandbox.
+     The network must already be staged in the workspace. If it is
+     not, report the gap rather than constructing a placeholder
+     network — proximity z-scores from an invented graph are
+     meaningless.
    - **Output**: drugs ranked by proximity z-score.
    - Closer proximity = more likely to modulate disease biology.
 
@@ -56,22 +71,22 @@ Choose the repurposing strategy based on available data:
    - Drugs targeting genes with genetic evidence for a disease have
      higher clinical success rates.
    - Workflow:
-     a. `searchGwasCatalog` — find genetic associations for the
+     a. Search the GWAS Catalog for genetic associations with the
         disease trait.
-     b. `searchDisgenet` (if available) — get gene-disease association
-        scores.
-     c. Map GWAS genes to druggable targets via `searchOpenTargets`
-        (check tractability).
-     d. Find existing drugs for those targets via ChEMBL/DrugBank.
+     b. Where DisGeNET lookup is available, add gene-disease
+        association scores.
+     c. Map the implicated genes to druggable targets via Open Targets,
+        checking tractability.
+     d. Find existing drugs for those targets in ChEMBL/DrugBank.
    - Prioritize targets with both genetic evidence AND existing drugs.
 
 5. **Clinical evidence mining** (validation layer)
    - For any candidate, check real-world evidence:
-     a. `searchClinicalTrials` — is the drug already being tested for
-        this indication?
-     b. `searchFaers` — are there safety signals specific to the
-        proposed patient population?
-     c. `searchPubMed` — is there published evidence for the
+     a. Search clinical-trial registries — is the drug already being
+        tested for this indication?
+     b. Query FAERS adverse-event reports — are there safety signals
+        specific to the proposed patient population?
+     c. Search the published literature — is there evidence for the
         drug-disease combination?
    - Report existing clinical evidence alongside computational
      predictions.

@@ -20,12 +20,29 @@ assume:
 |-|-|-|
 | TF activity | A TF-target regulon network for your organism | CollecTRI; or DoRothEA filtered to confidence A-C |
 | Pathway activity | Pathway responsive-gene weights for your organism | PROGENy (14 pathways) |
-| Gene set scoring | A gene-set collection for your organism | MSigDB (hallmark, canonical pathways, GO, oncogenic/immunologic/cell-type signatures) |
+| Gene set scoring | A gene-set collection for your organism | MSigDB hallmark; Reactome; WikiPathways — these are published as GMT |
 
 Then read it with the reader its format actually calls for — these circulate as
 CSV, TSV, GMT, and R `.rda` depending on the source, and a wrong-format read fails
 immediately. Match the organism too: a human regulon set over mouse counts runs
 happily and returns meaningless activities.
+
+Pathway-weight and regulon files are frequently distributed as R `.rda` (this is
+how PROGENy and DoRothEA are published), which pandas cannot open — those need
+rpy2. Check the format the inventory reports and pick the reader from it:
+
+```python
+import pandas as pd
+import rpy2.robjects as ro
+from rpy2.robjects import pandas2ri
+
+
+def read_rda_frame(path: str) -> pd.DataFrame:
+    """Load the data frame an R .rda holds (PROGENy, DoRothEA) into pandas."""
+    names = list(ro.r["load"](path))  # load() returns the names it created
+    with (ro.default_converter + pandas2ri.converter).context():
+        return ro.conversion.get_conversion().rpy2py(ro.r[names[0]])
+```
 
 ### CollecTRI (Transcription Factors)
 
@@ -33,6 +50,7 @@ happily and returns meaningless activities.
 import pandas as pd
 
 # `regulon_path` is a path you resolved from the reference inventory, not a literal.
+# CollecTRI is CSV; if you resolved DoRothEA instead, it is .rda — use read_rda_frame.
 collectri = pd.read_csv(regulon_path)
 # Long format: source (TF), target (gene symbol), weight (+1 activation / -1 repression)
 #     source  target  weight
@@ -44,8 +62,10 @@ collectri = pd.read_csv(regulon_path)
 
 ```python
 # `pathway_path` resolved from the reference inventory.
-progeny = pd.read_csv(pathway_path)
-# Long format: source (pathway), target (gene symbol), weight (signed float)
+# PROGENy is published as .rda — read_csv on it fails outright.
+progeny = read_rda_frame(pathway_path)
+# Columns as shipped: gene, weight, p.value, pathway. Rename to the long format
+# every method consumes — source (pathway), target (gene symbol), weight (signed float).
 # 14 pathways: Androgen, EGFR, Estrogen, Hypoxia, JAK-STAT, MAPK,
 # NFkB, p53, PI3K, TGFb, TNFa, Trail, VEGF, WNT
 ```
@@ -53,12 +73,22 @@ progeny = pd.read_csv(pathway_path)
 ### MSigDB Gene Sets
 
 ```python
-# `geneset_path` resolved from the reference inventory. Collections are named
-# (hallmark, canonical pathways, GO BP/CC/MF, oncogenic, immunologic, cell-type)
-# — ask for the collection by name, not by filename.
-msigdb_hallmark = pd.read_csv(geneset_path)
-# Long format: gene_set / description / gene_symbol, or GMT if the inventory
-# reports a GMT — GMT is what gseapy and fgsea want, so check before converting.
+# `geneset_path` resolved from the reference inventory — ask for the collection
+# by name, not by filename. Gene-set collections ship as GMT, whose lines are
+# ragged (a set per line, members to the end), so pandas cannot read one: parse
+# it, or hand the path straight to a tool that takes GMT (gseapy, fgsea).
+def read_gmt(path: str) -> pd.DataFrame:
+    """Flatten a GMT into decoupler's long source/target format."""
+    rows = []
+    with open(path) as handle:
+        for line in handle:
+            name, _description, *genes = line.rstrip("\n").split("\t")
+            rows.extend({"source": name, "target": gene} for gene in genes if gene)
+    return pd.DataFrame(rows)
+
+
+msigdb_hallmark = read_gmt(geneset_path)
+# Unweighted: gsea/ora/aucell need only source + target, no weight column.
 ```
 
 ### Normalising Column Names
@@ -205,7 +235,7 @@ sc.pl.matrixplot(acts, var_names=["STAT1", "MYC", "GATA1"], groupby="cell_type")
 import decoupler as dc
 
 # 1. Load PROGENy pathways (NOT dc.op.progeny — no network)
-progeny = pd.read_csv(pathway_path)  # resolved + normalised per Prior Knowledge Resources
+progeny = read_rda_frame(pathway_path)  # PROGENy is .rda; see Prior Knowledge Resources
 
 # 2. Score pathways
 dc.mt.ulm(data=adata, net=progeny)

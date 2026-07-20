@@ -32,7 +32,8 @@ spectra = list(load_from_mzml("experiment.mzML"))
 ```python
 from matchms.importing import load_from_msp
 
-spectra = list(load_from_msp("library.msp"))
+# `library_msp_path` is a path you resolved — see Spectral Library Matching Workflow.
+spectra = list(load_from_msp(library_msp_path))
 ```
 
 ### From JSON (matchms Format)
@@ -212,6 +213,10 @@ score = mod_cosine.pair(reference, query)
 
 ## Spectral Library Matching Workflow
 
+**Resolve the reference library before you write this script, and check it exists.** No spectral library — MassBank, HMDB, GNPS, MoNA, or any other — is currently in the reference inventory, and there is no network egress to fetch one. Ask for the library by what it is, never by a path or filename: reference data is provisioned per-environment, so the directory and the filename vary and neither is yours to assume.
+
+If no library is available, **report that plainly and stop the annotation step there** — hand back the preprocessed query spectra and the feature table with m/z, RT, and adduct/isotope annotation, which are complete and useful without compound identifications. Do not invent a library path, do not substitute an unrelated spectrum collection, and do not silently skip matching and present formula guesses as identifications.
+
 ```python
 from matchms.importing import load_from_mgf, load_from_msp
 from matchms.filtering import default_filters, normalize_intensities, \
@@ -219,8 +224,10 @@ from matchms.filtering import default_filters, normalize_intensities, \
 from matchms.similarity import ModifiedCosine
 from matchms import calculate_scores
 
-# 1. Load library and query spectra
-library = list(load_from_msp("reference_library.msp"))
+# 1. Load library and query spectra.
+# `library_msp_path` is the absolute path you resolved for the reference library
+# (see the note above); `unknown_features.mgf` is a file you produced this step.
+library = list(load_from_msp(library_msp_path))
 queries = list(load_from_mgf("unknown_features.mgf"))
 
 # 2. Preprocess both sets

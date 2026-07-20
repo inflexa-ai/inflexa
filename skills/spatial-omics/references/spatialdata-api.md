@@ -180,7 +180,7 @@ from spatialdata_io import xenium, visium_hd
 ### 10x Visium HD
 
 ```python
-sdata = spatialdata_io.visium_hd(
+sdata = visium_hd(
     path="path/to/visium_hd_output/",
     dataset_id="sample_1",
     filtered_counts_file=True,
@@ -212,10 +212,10 @@ sdata = xenium(
 ### Other Supported Technologies
 
 ```python
-from spatialdata_io import merfish, cosmx, stereoseq
+from spatialdata_io import merscope, cosmx, stereoseq
 
-# MERFISH (Vizgen)
-sdata = merfish("path/to/merfish_output/")
+# MERFISH (Vizgen MERSCOPE) — the reader is `merscope`; there is no `merfish` reader
+sdata = merscope("path/to/merscope_output/")
 
 # CosMx (Nanostring)
 sdata = cosmx("path/to/cosmx_output/")

@@ -2,6 +2,8 @@
 
 Python wrapper around the BEDTools command-line suite. Provides a pythonic interface for genomic interval manipulation with seamless pandas integration.
 
+**Filenames in these examples are placeholders.** `peaks.bed` stands for a file you produced in this step; `genes.gtf` / `genes.bed` stand for reference annotation you must **resolve before you write the script**, asking for it by what it *is* rather than by a path — reference data is provisioned per-environment, so the directory, the filename, and the genome build all vary and none are yours to assume. Pass the resolved absolute path. A genome GTF/BED annotation and a chromosome-sizes file are **not currently in the reference inventory**: if you look and they are not there, report it and proceed with the interval operations that need no annotation, rather than inventing a path or skipping the step silently.
+
 ## BedTool Construction
 
 ```python
@@ -126,20 +128,23 @@ merged = peaks.sort().merge(c=5, o="mean")
 ```python
 # Genome file: tab-delimited file with chrom\tsize
 # e.g. chr1\t248956422\nchr2\t242193529
-genome = pybedtools.chromsizes("hg38")
-# Or use a file: genome = "hg38.genome"
+#
+# NOT usable here: pybedtools.chromsizes("hg38") fetches chromosome sizes from
+# UCSC over the network, and there is no egress — the call fails outright.
+# Build the genome file from your own data instead (see Genome File Requirements),
+# and pass its resolved path as `g=`.
 
 # Extend 500bp in both directions
-extended = peaks.slop(b=500, g="hg38.genome")
+extended = peaks.slop(b=500, g=genome_file)
 
 # Extend asymmetrically
-extended = peaks.slop(l=1000, r=500, g="hg38.genome")
+extended = peaks.slop(l=1000, r=500, g=genome_file)
 
 # Extend by percentage of interval size
-extended = peaks.slop(l=0.5, r=0.5, g="hg38.genome", pct=True)
+extended = peaks.slop(l=0.5, r=0.5, g=genome_file, pct=True)
 
 # Strand-aware extension (l = upstream, r = downstream)
-extended = peaks.slop(l=2000, r=0, g="hg38.genome", s=True)
+extended = peaks.slop(l=2000, r=0, g=genome_file, s=True)
 ```
 
 ## Window (Nearby Intervals)
@@ -166,8 +171,10 @@ sorted_peaks = peaks.sort(chrThenSizeA=True)  # by chrom then size ascending
 coverage = genes.coverage(reads)
 # Appends columns: count, bases_covered, feature_length, fraction_covered
 
-# Genome coverage histogram
-genomecov = pybedtools.BedTool("reads.bam").genome_coverage(genome="hg38", bg=True)
+# Genome coverage histogram.
+# `genome="hg38"` resolves chromosome sizes over the network and fails here —
+# pass `g=<resolved genome file path>` instead (see Genome File Requirements).
+genomecov = pybedtools.BedTool("reads.bam").genome_coverage(g=genome_file, bg=True)
 # bedGraph-format output: chrom, start, end, coverage
 ```
 
@@ -204,7 +211,7 @@ peaks.intersect(genes, u=True).sort().merge().saveas("merged_peaks_in_genes.bed"
 # pybedtools supports method chaining for complex operations
 result = (
     peaks
-    .slop(b=500, g="hg38.genome")
+    .slop(b=500, g=genome_file)
     .intersect(genes, u=True)
     .sort()
     .merge(d=100)
@@ -214,26 +221,28 @@ result = (
 
 ## Genome File Requirements
 
-Many operations require a genome file (chromosome sizes). Ways to provide it:
+Many operations require a genome file (chromosome sizes). **`pybedtools.chromsizes("hg38")` is not usable here** — it queries UCSC over the network and there is no egress. Derive the genome file from data you already have:
 
 ```python
-# Use built-in genome
-genome = pybedtools.chromsizes("hg38")
-
-# From a file (tab-delimited: chrom\tsize)
-# chr1  248956422
-# chr2  242193529
-
-# Generate from a BAM header
+# PREFERRED: generate from a BAM header. Your aligned reads already carry the
+# exact chromosome names and lengths of the build they were mapped to, so this
+# is both offline and guaranteed to match your intervals.
 import pysam
 bam = pysam.AlignmentFile("sample.bam", "rb")
-with open("genome.txt", "w") as f:
+with open("output/genome.txt", "w") as f:
     for item in bam.header["SQ"]:
         f.write(f"{item['SN']}\t{item['LN']}\n")
 
-# Generate from a FASTA index
-# cut -f1,2 ref.fa.fai > genome.txt
+genome_file = "output/genome.txt"
+
+# Alternative: from a FASTA index, if you have a FASTA and its .fai.
+#   cut -f1,2 <resolved>.fai > output/genome.txt
+# The only genome FASTA in the reference inventory is a PGx-scoped GRCh38 bundle
+# shipped as a .tar; the store is read-only, so it must be extracted into your
+# working directory before anything can read it or its index.
 ```
+
+If you have neither a BAM nor a FASTA index, say so and skip the operations that require a genome file — do not invent a chromosome-sizes path.
 
 ## Temporary File Management
 
@@ -241,8 +250,11 @@ with open("genome.txt", "w") as f:
 # pybedtools creates temp files automatically. Clean them up when done.
 pybedtools.cleanup()
 
-# Set temp directory (important in containers with limited /tmp)
-pybedtools.set_tempdir("/path/to/tmp")
+# Set temp directory (important in containers with limited /tmp).
+# Point it inside your working directory — that is the one place you may write.
+import os
+os.makedirs("tmp", exist_ok=True)
+pybedtools.set_tempdir("tmp")
 
 # Delete all temp files on exit
 import atexit
@@ -252,10 +264,10 @@ atexit.register(pybedtools.cleanup)
 ## Gotchas
 
 - **Input must be sorted** for `merge()`, `complement()`, `genomecov()`, and `cluster()`. Always call `.sort()` first.
-- **Genome file required** for `slop()`, `flank()`, `complement()`, `genomecov()`, and `random()`. Without it you get cryptic errors.
+- **Genome file required** for `slop()`, `flank()`, `complement()`, `genomecov()`, and `random()`. Without it you get cryptic errors. Build one from your BAM header (see Genome File Requirements) — the built-in `pybedtools.chromsizes()` lookup needs network egress and always fails here.
 - **Coordinate system**: BED is 0-based half-open. GFF/GTF is 1-based inclusive. pybedtools handles this internally but be aware when converting to/from pandas.
 - **Temp files accumulate**: pybedtools creates temporary files for each operation. Call `pybedtools.cleanup()` periodically or register it with `atexit`.
 - **to_dataframe() column naming**: Default column names depend on the number of columns. For non-standard BED files, always pass explicit `names=`.
 - **BAM input**: Some methods accept BAM files directly (e.g., `intersect`, `coverage`). BAM files must be sorted and indexed.
-- **Large files**: For very large files (>10M intervals), operations may be slow. Consider using `bedtools` CLI directly via `execute_command` for better performance, or pre-filter data.
+- **Large files**: For very large files (>10M intervals), operations may be slow. Consider shelling out to the `bedtools` CLI directly for better performance, or pre-filter data.
 - **from_dataframe column order**: The DataFrame must have columns in BED order (chrom, start, end, ...). Column names don't matter; position does.

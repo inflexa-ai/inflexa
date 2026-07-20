@@ -83,6 +83,8 @@ dmr_results <- dmrcate(
 
 Converts DMR results to a GRanges object with genomic coordinates, statistics, and gene annotations.
 
+**This call fetches over the network and fails here.** `extractRanges()` resolves its gene annotation from the `DMRcatedata` package via ExperimentHub, which reaches Bioconductor's servers; there is no egress and no runtime install, so it errors on first use unless ExperimentHub is pointed at an already-populated local cache and opened with `localHub = TRUE` (same pattern as the methylclock reference). If no such cache is available, report it, and deliver the DMR table from `dmrcate()` — coordinates and statistics are complete without the gene overlay. Do not invent a cache path and do not drop the annotation step silently.
+
 ```r
 dmr_ranges <- extractRanges(
   dmr_results,

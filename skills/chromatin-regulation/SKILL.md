@@ -173,7 +173,7 @@ Fragment files (10x CellRanger-ATAC or custom)
 
 - **rtracklayer**: Read/write BED, BigWig, GFF in R. Use `import()` / `export()` for format conversion and signal extraction.
 
-### CLI tools (run via execute_command)
+### CLI tools (run as shell commands)
 
 - **bowtie2**: Short read alignment. Used for ChIP-seq, ATAC-seq, and CUT&Tag alignment.
 - **picard**: MarkDuplicates (essential for ChIP-seq, but do NOT use for CUT&Tag — natural duplicates from tagmentation), CollectInsertSizeMetrics.

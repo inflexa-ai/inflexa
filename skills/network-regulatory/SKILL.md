@@ -34,7 +34,10 @@ Choose the method based on your data type and analytical goal:
    - Faster than pySCENIC, preferred when regulon discovery is not the goal.
 
 5. **Protein-protein interaction network**
-   - Query **STRING** database API (confidence >= 700) or **OmniPath** for curated interactions.
+   - The **STRING** and **OmniPath** web APIs are unreachable — egress is blocked, so
+     every query fails. A PPI network has to come from an interaction file resolved
+     from the reference data available to you; if none is provisioned, say so and
+     scope the analysis to what is, rather than substituting another network.
    - Build graph with **NetworkX** or **igraph** for analysis.
    - Filter edges by confidence/evidence type before analysis.
 
@@ -73,7 +76,7 @@ Choose the method based on your data type and analytical goal:
 - **WGCNA on >5000 genes without filtering**: Memory explosion and loss of biological signal in noise. Always pre-filter by variance or differential expression.
 - **Correlation on raw/normalized counts**: Log-transform first. Pearson correlation on count data is dominated by high-count genes.
 - **Not filtering low-variance genes**: Genes with near-zero variance contribute noise, not signal. Apply a variance threshold before network construction.
-- **PPI network without confidence filtering**: STRING returns all interactions including low-confidence predictions. Filter to combined_score >= 700 (high confidence).
+- **PPI network without confidence filtering**: interaction files carry all interactions including low-confidence predictions. Filter on the confidence/evidence column (STRING-style scores: combined_score >= 700) after loading the file — the filtering the web API would have done server-side has to happen locally.
 - **Reporting hubs without biological validation**: Hub status from network topology alone is insufficient. Cross-reference with known TFs, pathway databases, or literature.
 - **Using Pearson correlation for non-linear relationships**: Consider Spearman rank correlation or mutual information for non-linear co-expression patterns.
 - **Ignoring batch effects in co-expression**: Batch-driven correlation creates spurious modules. Correct batch effects before network construction.

@@ -54,11 +54,13 @@ Vendor output (concentrations or peak areas)
 
 ```
 Feature table with MS2 spectra
-  → Spectral matching: matchms against MassBank/HMDB/GNPS reference library
-    → If no match: SIRIUS (molecular formula prediction + CSI:FingerID structure)
+  → Spectral matching: matchms against a resolved reference spectral library
+    → If no match: SIRIUS (molecular formula prediction)
       → If still ambiguous: MetFrag (in silico fragmentation ranking)
 ```
 
+- **No spectral library is currently in the reference inventory** (MassBank, HMDB, GNPS, MoNA — none of them), and there is no network egress to fetch one. Resolve a library by what it is before planning annotation. If none is available, report that spectral annotation cannot be run and deliver the feature table with m/z, RT, adduct and isotope annotation, which is complete and useful without compound IDs. Do not invent a library path and do not silently downgrade to formula guesses presented as identifications.
+- SIRIUS and MetFrag are separate binaries and are not guaranteed to be staged — probe for them before planning on them. **CSI:FingerID is a network service and always fails here**; SIRIUS can still do offline formula prediction, but structure elucidation via CSI:FingerID is unavailable.
 - matchms handles spectral similarity scoring (cosine, modified cosine, entropy).
 - Always report annotation confidence levels (MSI levels 1-4).
 - Check adduct annotations: [M+H]+, [M+Na]+, [M-H]-, [M+FA-H]- are common.
@@ -74,7 +76,7 @@ Normalized, log2-transformed feature matrix
       → Volcano plot (fold change vs -log10 p-value)
 ```
 
-- Use limma (R in R) for robust moderated statistics when sample sizes are small.
+- Use limma (R) for robust moderated statistics when sample sizes are small.
 - PLS-DA MUST include permutation testing (n >= 1000) to validate model significance.
 
 ### 6. Lipidomics Specifics
@@ -86,9 +88,11 @@ Normalized, log2-transformed feature matrix
 
 ### 7. Pathway Mapping
 
-- KEGG metabolic pathways: map annotated metabolites to KEGG compound IDs, run enrichment.
-- MetaboAnalyst-style enrichment: hypergeometric test on metabolite sets (SMPDB, KEGG modules).
-- For integrated views, overlay metabolomics onto KEGG pathway maps with fold-change coloring.
+**Pathway mapping needs metabolite-set reference data that is not provisioned here.** KEGG compound mapping, SMPDB/KEGG-module metabolite sets, and KEGG pathway-map rendering all resolve over the network, which is blocked — and no metabolite-set collection is in the reference inventory (the catalogued pathway sets are gene-based: Reactome, WikiPathways, MSigDB hallmark). Check what is available before planning this step; if nothing is, report it and stop at the annotated, statistically-tested feature table rather than inventing a mapping.
+
+- KEGG metabolic pathways: map annotated metabolites to KEGG compound IDs, run enrichment — only if a KEGG compound mapping is available locally.
+- MetaboAnalyst-style enrichment: hypergeometric test on metabolite sets (SMPDB, KEGG modules), given a resolved metabolite-set file.
+- For integrated views, overlay metabolomics onto KEGG pathway maps with fold-change coloring. The KEGG map-rendering API is a network call and fails here; plot your own summary instead.
 
 ## Anti-Patterns
 
@@ -110,8 +114,8 @@ Normalized, log2-transformed feature matrix
 
 ## Additional Available Packages
 
-- **CAMERA** (R in R): Adduct and isotope annotation after XCMS peak detection. `xsAnnotate()`, `findIsotopes()`, `findAdducts()`. Run after xcms feature detection.
-- **MSnbase** (R in R): MS data classes — `readMSData()` for reading mzML. Foundation package that xcms depends on.
+- **CAMERA** (R): Adduct and isotope annotation after XCMS peak detection. `xsAnnotate()`, `findIsotopes()`, `findAdducts()`. Run after xcms feature detection.
+- **MSnbase** (R): MS data classes — `readMSData()` for reading mzML. Foundation package that xcms depends on.
 - **Spectra** (R Bioconductor): Modern replacement for MSnbase data backends. Use `Spectra()` constructor, `filterMsLevel()`, `peaksData()`.
 - **spectrum-utils** (Python): MS spectrum visualization — mirror plots, annotated spectra. Use for quality inspection of spectral matches.
 - **ms-deisotope** (Python): Deisotoping and charge state deconvolution for high-resolution MS data.

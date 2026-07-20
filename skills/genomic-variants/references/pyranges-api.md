@@ -2,6 +2,8 @@
 
 Python library for fast genomic interval manipulation built on pandas DataFrames. Coordinates are 0-based, half-open (start included, end excluded).
 
+**Filenames in these examples are placeholders.** `peaks.bed` stands for a file you produced in this step. `genes.gtf` / `annotations.gff3` / `genes.bed` stand for a **gene annotation you must resolve before writing the script**, asking for it by what it is rather than by a path — reference data is provisioned per-environment, so the directory, the filename, and the genome build all vary and none are yours to assume. Pass the resolved absolute path. A genome GTF/GFF/BED annotation is **not currently in the reference inventory**: if you look and it is not there, report that annotation-dependent steps (promoter definition, nearest-gene assignment, gene-body overlap) cannot be run, and deliver the interval results that need no annotation. Never invent a path and never skip the step silently.
+
 ## Construction
 
 ```python
@@ -123,18 +125,27 @@ extended = peaks.extend(100)       # add 100 bp on each side
 # extend directionally (strand-aware)
 extended = peaks.extend({"5": 500, "3": 200})
 
-# Resize: set all intervals to a fixed width, anchored at midpoint
-resized = peaks.extend(0)  # use slack/extend patterns
+# Resize: set all intervals to a fixed width, anchored at midpoint.
+# There is no single resize() call — recompute the coordinates on the frame.
+WIDTH = 500
+df = peaks.df.copy()
+midpoint = (df["Start"] + df["End"]) // 2
+df["Start"] = (midpoint - WIDTH // 2).clip(lower=0)
+df["End"] = df["Start"] + WIDTH
+resized = pr.PyRanges(df)
 ```
 
 ## Genome Arithmetic
 
 ```python
-# tile: split genome into fixed-width bins
-tiles = pr.tile_genome({"chr1": 248956422, "chr2": 242193529}, tile_size=10000)
+# tile_genome: split a whole genome into fixed-width, non-overlapping bins.
+# The chromosome-sizes dict is illustrative — derive real sizes from your BAM
+# header or VCF contig lines rather than hardcoding a build's lengths.
+tiles = pr.tile_genome(chrom_sizes, tile_size=10000)
 
-# window: sliding windows
-windows = pr.tile_genome({"chr1": 248956422}, tile_size=1000)
+# Split an existing interval set into chunks:
+windowed = peaks.window(1000)   # cut each interval into 1000 bp pieces
+tiled = peaks.tile(1000)        # snap each interval onto a fixed 1000 bp grid
 ```
 
 ## Conversion

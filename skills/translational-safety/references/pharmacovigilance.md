@@ -143,9 +143,9 @@ def detect_signals_from_faers(drug_events, total_drug_reports,
     Parameters
     ----------
     drug_events : list of dict
-        From searchFaers output: [{reaction, count}, ...].
+        From the FAERS search results: [{reaction, count}, ...].
     total_drug_reports : int
-        Total reports for this drug (from searchFaers totalReports).
+        Total reports for this drug (the search's totalReports).
     total_all_reports : int
         Total reports in FAERS database (approximate: ~20M for
         recent years; use the FAERS dashboard for current counts).
@@ -220,7 +220,7 @@ def detect_ddi_signal(drug_a_events, drug_b_events, combo_events,
     Parameters
     ----------
     drug_a_events, drug_b_events, combo_events : list of dict
-        [{reaction, count}, ...] from searchFaers for each.
+        [{reaction, count}, ...] from the FAERS search for each.
     total_a, total_b, total_combo : int
         Total report counts for each query.
     total_all : int
@@ -317,7 +317,7 @@ def plot_signal_forest(signal_df, top_n=20, measure="prr"):
 
 ## Gotchas
 
-- **FAERS denominator**: The searchFaers tool returns event counts
+- **FAERS denominator**: A FAERS search returns event counts
   for a specific drug, not the full 2x2 table. You need total FAERS
   report counts and background event rates to compute PRR/ROR.
   Approximate total FAERS: ~20M reports (cumulative). For precise

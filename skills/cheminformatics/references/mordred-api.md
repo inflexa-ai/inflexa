@@ -5,6 +5,7 @@ Python library for molecular descriptor calculation. Computes 1800+ 2D and 3D mo
 ## Core Imports
 
 ```python
+import mordred
 from mordred import Calculator, descriptors
 from rdkit import Chem
 import pandas as pd

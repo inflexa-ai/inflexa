@@ -164,8 +164,9 @@ def derive_pk_params(time, concentration, dose, dose_unit="mg"):
 
     auc_0_inf = auc_extrapolated(auc_0_last, c_last, lambda_z)
 
-    # CL/F = Dose / AUC(0-inf)  [volume/time]
-    cl_f = dose / auc_0_inf * 1000 if np.isfinite(auc_0_inf) else np.nan
+    # CL/F = Dose / AUC(0-inf). dose is mg, AUC is ng*h/mL, so the ratio is
+    # (1e6 ng)/(ng*h/mL) = 1e6 mL/h -- scale by 1e6, not 1e3, for mL/h.
+    cl_f = dose / auc_0_inf * 1e6 if np.isfinite(auc_0_inf) else np.nan
     # Vd/F = CL/F / λz  [volume]
     vd_f = cl_f / lambda_z if lambda_z > 0 else np.nan
 

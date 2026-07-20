@@ -227,7 +227,7 @@ mdata.write('processed_multiome.h5mu')
 
 ## Gotchas
 
-- `mu.tl.mofa()` requires `mofapy2` installed as a dependency. Install with `pip install mofapy2`.
+- `mu.tl.mofa()` requires `mofapy2` as a dependency. It cannot be installed at run time — egress is blocked, so `pip install mofapy2` fails. Confirm it is already staged before planning a MOFA step.
 - `use_var='highly_variable'` requires a boolean column named `highly_variable` in each modality's `.var`. Run `sc.pp.highly_variable_genes()` first.
 - `use_obs='intersection'` uses only cells present in all modalities. With `'union'`, missing modality values are imputed as NaN.
 - `outfile` is required to save the MOFA model for later inspection. Without it, the model object is discarded after factor extraction.

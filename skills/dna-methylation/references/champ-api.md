@@ -274,6 +274,8 @@ block_results <- myBlock$Block
 
 Perform gene set enrichment on DMP results. Uses the gometh/gsameth approach from missMethyl to account for probe-number bias.
 
+**KEGG enrichment fails here.** `gometh` retrieves KEGG pathway membership from the KEGG REST API, and there is no network egress — so the KEGG half of this call errors out. GO enrichment works, because `missMethyl` gets GO terms from locally installed `org.*` annotation packages. Restrict to GO (`collection = "GO"`), or run the probe-bias-aware enrichment against a gene-set collection you resolved from the reference inventory (Reactome, WikiPathways, and MSigDB hallmark GMTs are catalogued) via `gsameth()`. If neither is available, report it rather than presenting an empty or partial enrichment as a result.
+
 ```r
 myGSEA <- champ.GSEA(
   beta = myNorm,

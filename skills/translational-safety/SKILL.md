@@ -116,7 +116,7 @@ When evaluating drug metabolism risk from omics data:
 
 ### Pharmacogenomic Variant Impact
 
-Use `searchPharmgkb` to check for known gene-drug interactions. Flag
+Look up known gene-drug interactions in PharmGKB. Flag
 these metabolizer phenotypes:
 - **Poor metabolizer (PM)**: reduced enzyme activity → drug accumulation → toxicity risk
 - **Ultrarapid metabolizer (UM)**: increased activity → subtherapeutic levels or excess active metabolite (codeine → morphine toxicity in CYP2D6 UM)
@@ -140,7 +140,7 @@ the specific liability concern.
 
 No predictive hERG model is available in the sandbox. Instead:
 - Flag compounds with `ALogP > 3.5` AND `basic nitrogen` — known hERG liability correlates
-- Check ChEMBL for existing hERG bioactivity data: `getBioactivity(chemblId, targetChemblId: "CHEMBL240")` where CHEMBL240 is hERG
+- Check ChEMBL for existing hERG bioactivity data, querying the compound against target CHEMBL240 (hERG)
 - Report: "hERG liability not computationally assessed; experimental
   patch-clamp assay recommended for compounds entering lead optimization"
 
@@ -191,7 +191,7 @@ c = no-drug+event, d = no-drug+no-event.
 
 ### Signal Detection Workflow
 
-1. Query `searchFaers` for the drug of interest.
+1. Query FAERS adverse-event reports for the drug of interest.
 2. For each adverse event, compute PRR and ROR from FAERS counts.
 3. Apply signal threshold: PRR > 2 AND N >= 3 AND chi-squared > 4.
 4. Rank signals by PRR magnitude and report count.

@@ -276,8 +276,9 @@ taxa <- assignTaxonomy(seqtab.nochim, unite_train_path,
 ### Bootstrap Confidence
 
 ```r
-# Retrieve bootstrap values (not returned by default)
-taxa_with_boot <- assignTaxonomy(seqtab.nochim, refFasta,
+# Retrieve bootstrap values (not returned by default).
+# `silva_train_path` is a path you resolved — see Reference Databases above.
+taxa_with_boot <- assignTaxonomy(seqtab.nochim, silva_train_path,
                                   multithread = TRUE, outputBootstraps = TRUE)
 # taxa_with_boot$tax — taxonomy assignments
 # taxa_with_boot$boot — bootstrap confidence values (0-100)
@@ -467,6 +468,13 @@ seqtab.nochim <- removeBimeraDenovo(seqtab, method = "consensus", multithread = 
 # and stop here — the ASV table is still complete.
 taxa <- assignTaxonomy(seqtab.nochim, unite_train_path,
                        multithread = TRUE, tryRC = TRUE)
+
+# --- Track Reads ---
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out[keep, ], sapply(dadaFs, getN), sapply(dadaRs, getN),
+               sapply(merged, getN), rowSums(seqtab.nochim))
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sample_names[keep]
 
 # --- Export ---
 write.csv(track, "output/read_tracking.csv")
