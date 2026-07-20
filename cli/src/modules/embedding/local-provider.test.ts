@@ -162,6 +162,13 @@ afterEach(() => {
 });
 
 describe("createLocalEmbeddingProvider (sidecar lifecycle)", () => {
+    test("advertises the built-in 384 width by default, and a custom width when given one", () => {
+        // The advertised `dimensions` is what the harness sizes each per-analysis index to, so a custom
+        // GGUF of another width must be reflected here (not silently pinned to bge-small's 384).
+        expect(createLocalEmbeddingProvider({ modelPath: "/model.gguf" }).dimensions).toBe(384);
+        expect(createLocalEmbeddingProvider({ modelPath: "/model.gguf", dimensions: 768 }).dimensions).toBe(768);
+    });
+
     test("empty input resolves to ok([]) without launching the sidecar", async () => {
         let launches = 0;
         __setSidecarLauncherForTest(() => {

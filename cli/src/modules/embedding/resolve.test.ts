@@ -31,6 +31,14 @@ describe("resolveEmbedder", () => {
         expect(provider!.dimensions).toBe(384);
     });
 
+    test("local mode passes a configured dimensions through to the provider (a user's own GGUF width)", () => {
+        const provider = resolveEmbedder(baseConfig({ mode: "local", modelPath: "/some/model.gguf", dimensions: 768 })).match(
+            (p) => p,
+            () => null,
+        );
+        expect(provider!.dimensions).toBe(768);
+    });
+
     test("local mode without modelPath → err local_model_missing", () => {
         const outcome = resolveEmbedder(baseConfig({ mode: "local" })).match(
             () => "ok" as const,

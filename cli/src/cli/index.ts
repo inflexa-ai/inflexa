@@ -337,7 +337,7 @@ cli.command("setup")
     .option("--no-start", "Set up only; don't start the proxy or Postgres containers")
     .option("--no-postgres", "Skip the Postgres provisioning step")
     .option("--force", "Re-pull images even if they are already cached")
-    .option("--embeddings <mode>", "Configure embeddings non-interactively: local|api-key|off")
+    .option("--embeddings <mode>", "Configure embeddings non-interactively: local (built-in bge-small model)|api-key|off")
     .option("--refs <ids>", "Download comma-separated reference dataset ids")
     .option("--yes", "Confirm explicitly selected reference downloads")
     .action(

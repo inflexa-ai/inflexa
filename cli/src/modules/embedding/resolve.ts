@@ -25,8 +25,17 @@ import { createLocalEmbeddingProvider } from "./local-provider.ts";
  * Where `api-key` mode connects when `embedding.baseURL` is unset. OpenAI's own
  * endpoint, because the mode's model default (`text-embedding-3-small`, via the
  * harness provider) is an OpenAI model — the two defaults only make sense together.
+ * Exported so the config UI can seed its base-URL prompt from the same value it resolves against.
  */
-const DEFAULT_API_BASE_URL = "https://api.openai.com/v1";
+export const DEFAULT_API_BASE_URL = "https://api.openai.com/v1";
+
+/**
+ * The width `api-key` mode ends up at when `embedding.dimensions` is unset — mirrors the harness
+ * provider's own default for `text-embedding-3-small`. Not consulted by {@link resolveEmbedder} (it
+ * passes `dimensions` through and lets the harness apply its default); it exists so the config UI can
+ * SUGGEST the same number it would otherwise get, instead of prompting against a blank.
+ */
+export const DEFAULT_API_EMBEDDING_DIMENSIONS = 1536;
 
 export type EmbeddingResolveError =
     | { readonly type: "embeddings_not_configured"; readonly message: string }
@@ -58,7 +67,10 @@ export function resolveEmbedder(config: Config): Result<EmbeddingProvider, Embed
                 message: "Local embedding mode is set but no model path is configured. Run `inflexa setup --embeddings local`.",
             });
         }
-        return ok(createLocalEmbeddingProvider({ modelPath }));
+        // `dimensions` is set only for a custom GGUF (setup measures and records its real width); the
+        // built-in bge-small records none and the provider defaults to 384. Passing it through is what
+        // lets a user's own local model of a different width size the index correctly.
+        return ok(createLocalEmbeddingProvider({ modelPath, dimensions: config.embedding.dimensions }));
     }
 
     // `api-key`: connect directly to the configured OpenAI-compatible endpoint.
