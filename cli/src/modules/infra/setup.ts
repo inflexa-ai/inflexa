@@ -233,22 +233,24 @@ export async function setup(options: SetupOptions): Promise<void> {
             // is a one-time setup read (never a runtime binding); only the non-secret fields are copied.
             const snap = detectProviderEnv();
             const adoptable = detectedAdoptable(snap);
+            // Detected BEFORE the endpoint prompt (a cheap read-only probe): a credential-helper setup
+            // often carries the gateway ENDPOINT too (the settings `env.ANTHROPIC_BASE_URL`, or a
+            // key-less shell export), and the endpoint question comes first — so the detection must
+            // already be in hand for promptDirectConnection to offer that URL as a pre-fill.
+            const detection = detectCredentialHelper();
 
             let direct: DirectConnectionInput;
             if (process.stdin.isTTY) {
-                direct = await promptDirectConnection(snap, adoptable);
+                direct = await promptDirectConnection(snap, adoptable, detection);
                 // A detected credential-helper setup can supply a refreshing token (a helper command or an
                 // env bearer) in place of a static key. Offer it opt-in — the command/scheme need
                 // confirmation, and an org-managed helper must never be auto-executed. Only for an
                 // anthropic-wire connection: the detection signals (Claude Code's `apiKeyHelper`,
                 // `ANTHROPIC_AUTH_TOKEN`) are Anthropic-specific, so minting one to probe against an
                 // unrelated openai-compatible endpoint would be a confusing, wrong offer.
-                if (effectiveProtocol(direct) === "anthropic") {
-                    const detection = detectCredentialHelper();
-                    if (credentialHelperDetected(detection)) {
-                        const auth = await offerCredentialSource(direct, detection);
-                        if (auth !== null) direct = { ...direct, auth };
-                    }
+                if (effectiveProtocol(direct) === "anthropic" && credentialHelperDetected(detection)) {
+                    const auth = await offerCredentialSource(direct, detection);
+                    if (auth !== null) direct = { ...direct, auth };
                 }
             } else if (adoptable.length > 0) {
                 // Non-interactive self-configure: adopt the detected env with no prompts, applying the
@@ -915,18 +917,69 @@ export function adoptedConnection(which: AdoptableProvider, snap: ProviderEnvSna
 }
 
 /**
- * Collect a direct connection interactively. When a conventional provider env is detected, offer its
- * normalized connection as an editable pre-fill the user confirms (both-present ⇒ prompt which to adopt);
- * declining — or no detection at all — falls through to the manual endpoint/provider/protocol prompts.
- * Only `{ provider, baseURL, protocol }` are ever produced; the key is never read here.
+ * Collect a direct connection interactively, most-configured source first: a key-bearing provider env
+ * (the classic adoption), then a credential-helper GATEWAY (endpoint from the Claude settings `env`
+ * block or a key-less shell `ANTHROPIC_BASE_URL` — see {@link detectedGatewayURL}), then the manual
+ * endpoint/provider/protocol prompts. Declining any offer falls through to the next. Only
+ * `{ provider, baseURL, protocol }` are ever produced; the key is never read here.
  */
-async function promptDirectConnection(snap: ProviderEnvSnapshot, adoptable: AdoptableProvider[]): Promise<DirectConnectionInput> {
+async function promptDirectConnection(
+    snap: ProviderEnvSnapshot,
+    adoptable: AdoptableProvider[],
+    detection: CredentialHelperDetection,
+): Promise<DirectConnectionInput> {
     if (adoptable.length > 0) {
         const offered = await offerAdoption(snap, adoptable);
         if (offered !== null) return offered;
-        // Declined the offer → fall through to today's manual entry.
+        // Declined the offer → fall through to the gateway offer / manual entry.
+    }
+    const gatewayURL = detectedGatewayURL(detection, snap);
+    if (gatewayURL !== null) {
+        const offered = await offerGatewayAdoption(gatewayURL);
+        if (offered !== null) return offered;
     }
     return promptManualDirectConnection();
+}
+
+/**
+ * The gateway endpoint a credential-helper setup implies, or `null` when there is nothing to offer.
+ * Requires a credential signal: a bare `ANTHROPIC_BASE_URL` with no helper and no auth token is not a
+ * usable connection (there is nothing to authenticate with), and offering it would dead-end at boot.
+ * Precedence mirrors the helper itself: the Claude settings files (managed first — the org pinned it
+ * beside the helper command) over a shell export. Pure, so the offer decision is unit-testable.
+ */
+export function detectedGatewayURL(detection: CredentialHelperDetection, snap: ProviderEnvSnapshot): string | null {
+    if (!credentialHelperDetected(detection)) return null;
+    return detection.settingsBaseURL ?? snap.anthropicBaseURL ?? null;
+}
+
+/**
+ * Offer the credential-helper gateway endpoint as an editable pre-fill, mirroring {@link offerAdoption}'s
+ * confirm step: the raw URL is normalized to the `/v1`-terminated root (Claude Code's
+ * `ANTHROPIC_BASE_URL` is a bare root by convention) but shown for the user to confirm or edit — a
+ * gateway path like `/anthropic` is genuinely ambiguous, so this is a best guess, never a silent write.
+ * Returns the confirmed anthropic-wire connection, or `null` when the user chooses manual entry.
+ */
+async function offerGatewayAdoption(gatewayURL: string): Promise<DirectConnectionInput | null> {
+    const chosen = await select(`Detected an Anthropic gateway endpoint in your Claude settings (${gatewayURL}) — use it?`, [
+        { value: "adopt", label: "Use this gateway (recommended)" },
+        { value: "_manual", label: "Enter the connection manually instead" },
+    ]);
+    if (chosen === "_manual") return null;
+
+    const prefill = normalizeAdoptedBaseURL("anthropic", gatewayURL);
+    const baseURL = await promptText("Model endpoint URL — the /v1-terminated root (confirm the pre-fill, or edit)", {
+        defaultValue: prefill,
+        placeholder: prefill,
+        validate: (v) => {
+            const s = v.trim();
+            if (s === "") return undefined; // empty submit keeps the pre-filled default
+            if (!URL.canParse(s)) return "Must be a valid URL, including the scheme (e.g. https://…).";
+            return undefined;
+        },
+    });
+    const confirmedURL = baseURL.trim() === "" ? prefill : baseURL.trim();
+    return { provider: "anthropic", baseURL: confirmedURL, protocol: "anthropic" };
 }
 
 /**
@@ -1066,6 +1119,14 @@ export type CredentialHelperDetection = {
     readonly managedHelperCommand: string | null;
     /** `ANTHROPIC_AUTH_TOKEN` is set — the env-bearer source is offerable. */
     readonly authTokenEnvSet: boolean;
+    /**
+     * The `env.ANTHROPIC_BASE_URL` from the same Claude settings files (managed first, then the user's
+     * own), or `null`. This is where an org pins its GATEWAY endpoint beside the helper command — Claude
+     * Code applies the settings `env` block internally, so it never reaches the shell environment and
+     * the process-env adoption path cannot see it. A URL is configuration, not a credential: it is
+     * offered as an editable pre-fill with no confirm-before-use ceremony beyond the offer itself.
+     */
+    readonly settingsBaseURL: string | null;
 };
 
 /** True when ANY credential-helper signal was detected, so setup should offer the credential-source path. */
@@ -1082,8 +1143,9 @@ export function detectCredentialHelperFrom(
     userHelperCommand: string | null,
     managedHelperCommand: string | null,
     authTokenEnvSet: boolean,
+    settingsBaseURL: string | null = null,
 ): CredentialHelperDetection {
-    return { userHelperCommand, managedHelperCommand, authTokenEnvSet };
+    return { userHelperCommand, managedHelperCommand, authTokenEnvSet, settingsBaseURL };
 }
 
 /** The user's OWN Claude Code settings — an `apiKeyHelper` here is theirs, so setup may pre-fill it as an editable default. */
@@ -1111,20 +1173,34 @@ function managedClaudeSettingsPaths(): string[] {
     return ["/etc/claude-code/managed-settings.json"];
 }
 
+/** The two setup-relevant facts a Claude Code settings file can carry — both `null` when absent. */
+type ClaudeSettingsRead = {
+    readonly helper: string | null;
+    readonly baseURL: string | null;
+};
+
 /**
- * Read a Claude Code settings file's `apiKeyHelper` command, or `null` when the file is absent / unreadable
- * / carries no helper. Boundary-wrapped: a missing file is the common case, not an error — a settings file
- * usually does not exist, so `readFileSync` throwing ENOENT resolves to `null`.
+ * Read a Claude Code settings file's `apiKeyHelper` command and `env.ANTHROPIC_BASE_URL` (the gateway
+ * endpoint an org pins beside the helper), each `null` when the file is absent / unreadable / lacks the
+ * field. Boundary-wrapped: a missing file is the common case, not an error — a settings file usually
+ * does not exist, so `readFileSync` throwing ENOENT resolves to the all-null read.
  */
-function readApiKeyHelper(path: string): string | null {
+function readClaudeSettings(path: string): ClaudeSettingsRead {
+    const none: ClaudeSettingsRead = { helper: null, baseURL: null };
     try {
         const parsed: unknown = JSON.parse(readFileSync(path, "utf8")); // on-disk settings — shape-narrowed below
-        if (typeof parsed !== "object" || parsed === null) return null;
-        // Narrowed to a non-null object above, so a Record view for the single field read is sound.
-        const helper = (parsed as Record<string, unknown>).apiKeyHelper;
-        return typeof helper === "string" && helper.trim() !== "" ? helper.trim() : null;
+        if (typeof parsed !== "object" || parsed === null) return none;
+        // Narrowed to a non-null object above, so a Record view for the field reads is sound.
+        const record = parsed as Record<string, unknown>;
+        const helper = record.apiKeyHelper;
+        const envBlock = record.env;
+        const baseURL = typeof envBlock === "object" && envBlock !== null ? (envBlock as Record<string, unknown>).ANTHROPIC_BASE_URL : undefined;
+        return {
+            helper: typeof helper === "string" && helper.trim() !== "" ? helper.trim() : null,
+            baseURL: typeof baseURL === "string" && baseURL.trim() !== "" ? baseURL.trim() : null,
+        };
     } catch {
-        return null;
+        return none;
     }
 }
 
@@ -1135,9 +1211,18 @@ function readApiKeyHelper(path: string): string | null {
  * settings-file signal already subsumes it — no fragile `claude` subprocess is spawned.
  */
 function detectCredentialHelper(): CredentialHelperDetection {
-    // First managed location that yields a helper wins — the paths are ordered most-authoritative first.
-    const managed = managedClaudeSettingsPaths().reduce<string | null>((found, path) => found ?? readApiKeyHelper(path), null);
-    return detectCredentialHelperFrom(readApiKeyHelper(userClaudeSettingsPath()), managed, anthropicAuthTokenSet());
+    // Per FIELD, the first managed location that yields a value wins (paths are ordered
+    // most-authoritative first) — a rollout may split the helper and the gateway URL across the
+    // system/user twins, and keying both on whichever file carried the helper would drop the URL.
+    let managedHelper: string | null = null;
+    let managedBaseURL: string | null = null;
+    for (const path of managedClaudeSettingsPaths()) {
+        const read = readClaudeSettings(path);
+        managedHelper = managedHelper ?? read.helper;
+        managedBaseURL = managedBaseURL ?? read.baseURL;
+    }
+    const user = readClaudeSettings(userClaudeSettingsPath());
+    return detectCredentialHelperFrom(user.helper, managedHelper, anthropicAuthTokenSet(), managedBaseURL ?? user.baseURL);
 }
 
 /** The wire protocol a direct connection speaks, resolving the "infer from provider" default the way `resolveModelConnection` does — the probe needs it to add the anthropic version header. */
