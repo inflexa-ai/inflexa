@@ -29,17 +29,51 @@ const MAX_OUTPUT_CHARS = 60_000;
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 /**
- * Commands the agent may not run at all — not even with approval. These open an
- * interactive terminal UI, which cannot function as a captured subprocess: with
- * stdin ignored and stdout/stderr piped there is no terminal to drive, so the
- * child renders into a non-TTY pipe and hangs until the timeout. Keyed by the
- * classifier's resolved subcommand path (its `grantKey`); the value is the reason
- * handed back to the model. Checked BEFORE `ctx.ask`, because a command that can
- * never usefully run is not a decision to put to the user.
+ * How long after the child exits its pipes may keep flowing before capture stops.
+ * The pipes can outlive the child: a grandchild that inherited them (say, a
+ * compose helper the CLI spawned and left running) holds EOF off indefinitely,
+ * and waiting for it would wedge the tool long after the child itself finished.
+ * One second is ample for an exited child's buffered output to flush.
+ */
+const FLUSH_GRACE_MS = 1_000;
+
+/**
+ * How long after the abort kill (SIGTERM) to wait before escalating to SIGKILL.
+ * SIGTERM is trappable, so without the escalation a child that ignores it would
+ * hold `exited` open forever and the timeout would bound nothing.
+ */
+const KILL_GRACE_MS = 2_000;
+
+/**
+ * Commands the agent may not run at all — not even with approval. These exist
+ * only to open an interactive terminal UI, which cannot function as a captured
+ * subprocess; their launchers refuse a non-TTY stdin at entry, so an approved
+ * spawn would just burn the user's approval on an immediate error. Refusing here,
+ * BEFORE `ctx.ask`, keeps a command that can never usefully run from ever
+ * becoming a decision to put to the user. Keyed by the classifier's resolved
+ * subcommand path (its `grantKey`); the value is the reason handed to the model.
+ *
+ * This map is the courtesy layer, not the safety boundary: the launchers' own
+ * TTY guard (`requireInteractiveTerminal`, lib/cli.ts) is the structural
+ * backstop, so a future TUI command missing from this map exits non-zero with a
+ * clear message instead of hanging.
  */
 const BLOCKED_COMMANDS: ReadonlyMap<string, string> = new Map([
     ["inflexa", "Bare `inflexa` opens the interactive terminal UI, which cannot run as a captured subprocess. It is not available to you."],
     ["inflexa config", "`inflexa config` opens the interactive settings UI, which cannot run as a captured subprocess. It is not available to you."],
+    [
+        "inflexa new",
+        "`inflexa new` creates an analysis and opens its interactive chat UI, which cannot run as a captured subprocess. " +
+            "It is not available to you — ask the user to run it themselves.",
+    ],
+    [
+        "inflexa resume",
+        "`inflexa resume` opens an analysis's interactive chat UI, which cannot run as a captured subprocess. " +
+            "It is not available to you — ask the user to run it themselves.",
+    ],
+    // Dev-channel registry only: a release build has no `chat` command, so on a
+    // release binary this argv parses as malformed before the map is consulted.
+    ["inflexa chat", "`inflexa chat` opens an interactive prompt loop, which cannot run as a captured subprocess. It is not available to you."],
 ]);
 
 /**
@@ -48,16 +82,25 @@ const BLOCKED_COMMANDS: ReadonlyMap<string, string> = new Map([
  * and it is the harness loop's to map). `invalid` is a rejected argv; `blocked`
  * is a command the agent may not run (an interactive TUI launcher); `ran` is a
  * completed process (any exit code — a non-zero exit is a real answer, not a tool
- * failure); `timed_out` is a process abandoned at the deadline.
+ * failure); `timed_out` is a process abandoned at the deadline, carrying whatever
+ * output it produced first (a partial download log still tells the model how far
+ * it got); `cancelled` is the turn's own abort — bare, because the turn that
+ * would read it is already being torn down.
  */
 export type RunInflexaResult =
     | { readonly status: "invalid"; readonly message: string }
     | { readonly status: "blocked"; readonly message: string }
     | { readonly status: "ran"; readonly exitCode: number; readonly stdout: string; readonly stderr: string }
-    | { readonly status: "timed_out" };
+    | { readonly status: "timed_out"; readonly stdout: string; readonly stderr: string }
+    | { readonly status: "cancelled" };
 
-/** Captured result of one `inflexa` subprocess. `timedOut` distinguishes a deadline kill from a real exit. */
-export type SubprocessResult = { readonly exitCode: number; readonly stdout: string; readonly stderr: string; readonly timedOut: boolean };
+/**
+ * Captured result of one `inflexa` subprocess. `endedBy` names what ended it: a
+ * real `exit`, the tool's `timeout` deadline, or the turn's `cancel`. `exitCode`
+ * is always numeric — Bun resolves `exited` to 128+signal for a signal death —
+ * but it is only meaningful for `exit`.
+ */
+export type SubprocessResult = { readonly exitCode: number; readonly stdout: string; readonly stderr: string; readonly endedBy: "exit" | "timeout" | "cancel" };
 
 /** The subprocess seam — injectable so tests assert on the composed argv without spawning a real process. */
 export type RunSubprocess = (cmd: readonly string[], signal: AbortSignal) => Promise<SubprocessResult>;
@@ -80,23 +123,92 @@ function truncateOutput(text: string): string {
 }
 
 /**
- * The real subprocess wrapper: spawn `cmd`, capture stdout/stderr, and bound the
- * run by `timeoutMs`. The timeout and the caller's `signal` (chat disconnect) are
- * merged — either aborts the child — but only the timeout's firing is reported as
- * `timedOut`, so a user-cancelled run is not mislabelled a timeout.
+ * Accumulate a subprocess stream up to `cap` characters while ALWAYS draining to
+ * the end: past the cap, chunks are still read and dropped rather than left in
+ * the pipe, so a chatty child never blocks on backpressure while the capture
+ * stays memory-bounded (buffering a multi-hundred-MB stream just to slice 60k
+ * off the front is the failure this exists to prevent).
+ */
+function collectCapped(stream: ReadableStream<Uint8Array>, cap: number): { done: Promise<void>; cancel: () => void; text: () => string } {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    let truncated = false;
+    const done = (async () => {
+        try {
+            for (;;) {
+                const { done: eof, value } = await reader.read();
+                if (eof) return;
+                if (truncated) continue;
+                const chunk = decoder.decode(value, { stream: true });
+                if (text.length + chunk.length > cap) {
+                    text += chunk.slice(0, cap - text.length);
+                    truncated = true;
+                } else {
+                    text += chunk;
+                }
+            }
+        } catch {
+            // A stream error (broken pipe after a kill) is an expected end of
+            // capture, not a fault: what was read stands as the result.
+        }
+    })();
+    return {
+        done,
+        /** Stop reading (a pending read settles as done) — for a pipe a grandchild still holds open. */
+        cancel: (): void => void reader.cancel().catch(() => {}),
+        text: (): string => (truncated ? text + "…[truncated]" : text),
+    };
+}
+
+/** Injectable process bounds for {@link spawnInflexa}; graces default to the real values, shrinkable in tests. */
+export interface SpawnBounds {
+    readonly timeoutMs: number;
+    readonly flushGraceMs?: number;
+    readonly killGraceMs?: number;
+}
+
+/**
+ * The real subprocess wrapper: spawn `cmd`, capture stdout/stderr memory-bounded,
+ * and bound the run by `timeoutMs`. The timeout and the caller's `signal` (chat
+ * disconnect / turn abort) are merged — either aborts the child — and `endedBy`
+ * reports which one fired (timeout wins a tie: the deadline elapsed either way),
+ * so a user cancel is never mislabelled a timeout or a completed run.
  *
  * Not wrapped in a Result: this is the throwing-boundary seam itself (mirrors
  * `lib/container.ts`'s `capture`). A spawn that fails to launch is an unexpected
  * fault — it throws, and the loop's dispatch maps it to an error tool result.
  */
-async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, timeoutMs: number): Promise<SubprocessResult> {
+export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, bounds: SpawnBounds): Promise<SubprocessResult> {
+    const { timeoutMs, flushGraceMs = FLUSH_GRACE_MS, killGraceMs = KILL_GRACE_MS } = bounds;
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const combined = AbortSignal.any([signal, timeoutSignal]);
     // `[...cmd]` copies the readonly argv into the mutable array `Bun.spawn` expects.
     const proc = Bun.spawn({ cmd: [...cmd], stdin: "ignore", stdout: "pipe", stderr: "pipe", signal: combined });
-    const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+
+    // The abort kill is SIGTERM, which a child can trap and outlive; escalate to
+    // SIGKILL after a grace so the deadline is a real bound, not a suggestion.
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
+    const escalate = (): void => {
+        killTimer = setTimeout(() => proc.kill("SIGKILL"), killGraceMs);
+    };
+    if (combined.aborted) escalate();
+    else combined.addEventListener("abort", escalate, { once: true });
+
+    const stdout = collectCapped(proc.stdout, MAX_OUTPUT_CHARS);
+    const stderr = collectCapped(proc.stderr, MAX_OUTPUT_CHARS);
     const exitCode = await proc.exited;
-    return { exitCode, stdout, stderr, timedOut: timeoutSignal.aborted };
+    if (killTimer !== null) clearTimeout(killTimer);
+
+    // The child is gone, but its pipes may not be: give buffered output a short
+    // flush window, then stop reading and take what arrived — a grandchild that
+    // inherited the pipes must not stall the tool past the child's own exit.
+    await Promise.race([Promise.all([stdout.done, stderr.done]), Bun.sleep(flushGraceMs)]);
+    stdout.cancel();
+    stderr.cancel();
+
+    const endedBy = timeoutSignal.aborted ? "timeout" : signal.aborted ? "cancel" : "exit";
+    return { exitCode, stdout: stdout.text(), stderr: stderr.text(), endedBy };
 }
 
 /** Construction deps for {@link createRunInflexaTool}; every field defaults to the real host value, overridable in tests. */
@@ -119,7 +231,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
     // This module lives at src/modules/harness/, so the CLI source entry is two levels up.
     const scriptPath = deps.scriptPath ?? join(import.meta.dir, "../../index.ts");
     const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const runSubprocess: RunSubprocess = deps.runSubprocess ?? ((cmd, signal) => spawnInflexa(cmd, signal, timeoutMs));
+    const runSubprocess: RunSubprocess = deps.runSubprocess ?? ((cmd, signal) => spawnInflexa(cmd, signal, { timeoutMs }));
 
     return defineTool({
         id: "run_inflexa",
@@ -140,6 +252,11 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
         }),
         execute: async (input, ctx): Promise<Result<RunInflexaResult, ToolError>> => {
             const args = toEffectiveArgv(input.argv);
+            // The classification parses THIS process's commander tree; the spawned
+            // child rebuilds its own. The two agree because the dev-command gate
+            // derives from the baked build channel plus env the child inherits
+            // (INFLEXA_BUILD_CHANNEL / INFLEXA_DEV — see lib/env.ts), so the
+            // approved classification describes exactly what will run.
             const c = await classifyInflexaArgv(args);
 
             // A rejected argv never reaches a process or a prompt — report it and let the model correct itself.
@@ -147,7 +264,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
 
             if (c.kind === "action") {
                 // A blocked command (an interactive TUI launcher) can never run as a captured
-                // subprocess — refuse it here rather than prompting for something that would hang.
+                // subprocess — refuse it here rather than prompting for something doomed to fail.
                 const blockedReason = BLOCKED_COMMANDS.get(c.grantKey);
                 if (blockedReason !== undefined) return ok({ status: "blocked", message: blockedReason });
 
@@ -171,7 +288,10 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             // Introspection and an approved action both reach here and run the same way.
             const cmd = resolveInvocation(args, { isDevelopment, execPath, scriptPath });
             const r = await runSubprocess(cmd, ctx.signal);
-            if (r.timedOut) return ok({ status: "timed_out" });
+            // truncateOutput re-bounds here because the seam is injectable: the real
+            // spawn already caps at source, but the contract must hold for any seam.
+            if (r.endedBy === "timeout") return ok({ status: "timed_out", stdout: truncateOutput(r.stdout), stderr: truncateOutput(r.stderr) });
+            if (r.endedBy === "cancel") return ok({ status: "cancelled" });
             return ok({ status: "ran", exitCode: r.exitCode, stdout: truncateOutput(r.stdout), stderr: truncateOutput(r.stderr) });
         },
     });

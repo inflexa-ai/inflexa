@@ -75,6 +75,12 @@ function tokenizeArgvString(input: string): string[] {
  * so the tool that spawns `inflexa` derives its displayed/spawned argv from the
  * SAME normalization the classifier verdicts on — one tokenization source, no
  * chance of the shown command diverging from the classified one.
+ *
+ * Accepted ambiguity: a single element that is one spaced operand (a lone quoted
+ * filename) is indistinguishable from a packed command and gets tokenized too.
+ * Tolerable because a lone operand is never a runnable `inflexa` argv — the root
+ * command takes no positional — so the worst case is a malformed verdict handed
+ * back to the model, never a wrong spawn.
  */
 export function toEffectiveArgv(argv: string[]): string[] {
     // `argv[0]!` is sound: the `argv.length === 1` guard proves index 0 exists.

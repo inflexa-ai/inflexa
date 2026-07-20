@@ -5,7 +5,7 @@ import { warmGrammars } from "./grammars/register.ts";
 import { ensureProxyReadyOrExit } from "../modules/infra/setup.ts";
 import { resolveNewTarget, resolveResumeTarget, resolveDefaultTarget, type ChatTarget } from "../modules/analysis/launch.ts";
 import { acquireInstanceLock } from "../lib/lock.ts";
-import { fail } from "../lib/cli.ts";
+import { fail, requireInteractiveTerminal } from "../lib/cli.ts";
 import type { ContextFlags } from "../modules/analysis/context.ts";
 import { readConfig } from "../lib/config.ts";
 import { shutdown } from "../lib/shutdown.ts";
@@ -87,16 +87,21 @@ async function renderChat(target: ChatTarget): Promise<void> {
 
 /** `inflexa new [name] [paths...]` — create an analysis (anchor = cwd) and open its chat. */
 export async function launchNew(opts: { name?: string; paths: string[]; project?: string }): Promise<void> {
+    // Before target resolution, not inside renderChat: resolveNewTarget CREATES the
+    // analysis, and a headless run must refuse before any state exists (no-litter).
+    requireInteractiveTerminal("inflexa new");
     await renderChat(await resolveNewTarget(opts));
 }
 
 /** `inflexa resume <id|name>` — reopen an analysis's chat. */
 export async function launchResume(ref: IdOrName): Promise<void> {
+    requireInteractiveTerminal("inflexa resume");
     await renderChat(resolveResumeTarget(ref));
 }
 
 /** Bare `inflexa [--analysis <x>|--project <p>]`: resolve context, then open/pick/start (or do nothing). */
 export async function launchDefault(flags: ContextFlags): Promise<void> {
+    requireInteractiveTerminal("inflexa");
     const target = await resolveDefaultTarget(flags);
     if (target) await renderChat(target);
 }

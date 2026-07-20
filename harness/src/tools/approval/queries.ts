@@ -92,12 +92,12 @@ export function insertGrantedAsk(querier: Querier, row: AskRow, resolvedAt: stri
     });
 }
 
-/** Does a standing grant cover `(analysisId, command)` in this analysis? */
-export function selectGrant(querier: Querier, analysisId: string, command: string): ResultAsync<boolean, DbError> {
+/** Does a standing grant cover `(analysisId, grantKey)` in this analysis? */
+export function selectGrant(querier: Querier, analysisId: string, grantKey: string): ResultAsync<boolean, DbError> {
     return tryQuery("asks.selectGrant", async () => {
         const result = await querier.query({
-            text: `SELECT 1 FROM cortex_ask_grants WHERE analysis_id = $1 AND command = $2`,
-            values: [analysisId, command],
+            text: `SELECT 1 FROM cortex_ask_grants WHERE analysis_id = $1 AND grant_key = $2`,
+            values: [analysisId, grantKey],
         });
         return (result.rowCount ?? 0) > 0;
     });
@@ -176,20 +176,21 @@ export function answerAsk(pool: Pool, id: string, reply: AskReply, now: string):
             client.query({
                 text: `UPDATE cortex_asks SET status = $1, reply = $2::jsonb, resolved_at = $3
                   WHERE id = $4 AND status = 'pending'
-                  RETURNING analysis_id, grant_key`,
+                  RETURNING analysis_id, COALESCE(grant_key, command) AS grant_key`,
                 values: [status, JSON.stringify(reply), now, id],
             }),
         ).andThen((updated) => {
             if ((updated.rowCount ?? 0) === 0) return discriminateMiss(client, id);
             if (reply.kind !== "always") return okAsync<AnswerOutcome, DbError>("applied");
-            // The grant keys on the ask's grant key, which the insert wrote as the
-            // command when the tool supplied none. `cortex_ask_grants.command` is that
-            // key column — its name predates grant keys; the value is the grant key.
+            // The cast's non-null `grant_key` is sound without any boot-order
+            // caveat: every insert writes grant_key (command when the tool supplied
+            // none), and the COALESCE above covers any pending row that predates
+            // the column — `command` is NOT NULL, so the key can never be null.
             const granted = updated.rows[0] as { analysis_id: string; grant_key: string };
             return tryMutation("asks.answer:grant", async () => {
                 await client.query({
-                    text: `INSERT INTO cortex_ask_grants (analysis_id, command, created_at)
-                      VALUES ($1, $2, $3) ON CONFLICT (analysis_id, command) DO NOTHING`,
+                    text: `INSERT INTO cortex_ask_grants (analysis_id, grant_key, created_at)
+                      VALUES ($1, $2, $3) ON CONFLICT (analysis_id, grant_key) DO NOTHING`,
                     values: [granted.analysis_id, granted.grant_key, now],
                 });
             }).map<AnswerOutcome>(() => "applied");

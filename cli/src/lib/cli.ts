@@ -43,6 +43,21 @@ export function dieOn(message: string): (error: { type: string; cause?: unknown 
 }
 
 /**
+ * PRE-FLIGHT bail-out unless stdin is an interactive terminal. Every opentui
+ * launcher calls this before doing ANY other work: the TUI renders into the
+ * alternate screen and cannot function on a pipe, so a headless invocation (a
+ * script, CI, or the agent's `run_inflexa` subprocess, whose stdin is ignored by
+ * design) must exit with a clear error instead of painting into a pipe nobody is
+ * reading. Guarding at the launcher entry — not inside the render shim — matters
+ * because a launcher may create state before its first frame (`inflexa new`
+ * creates the analysis during target resolution); failing later would leave that
+ * state behind with nothing to show for it.
+ */
+export function requireInteractiveTerminal(surface: string): void {
+    if (!process.stdin.isTTY) fail(`${surface} opens an interactive terminal UI, which needs a TTY — run it from an interactive shell.`);
+}
+
+/**
  * Interactive y/N confirmation for the text commands. On a TTY it is a clack prompt; with a
  * non-interactive stdin (pipe / heredoc / CI) it falls back to a line read so a scripted
  * `echo y | inflexa …` is still honored. Returns false on No, on cancel (Ctrl-C / Esc), and on
