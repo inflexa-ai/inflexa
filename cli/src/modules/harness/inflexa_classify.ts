@@ -14,10 +14,15 @@ import { buildProgram } from "../../cli/index.ts";
  * - `malformed` — the argv does not parse to a runnable command (unknown
  *   command/option, missing/excess argument, invalid value, …). `message` is
  *   commander's own explanation, trimmed.
+ *
+ * The runnable verdicts carry `argv`: the normalized word argv the verdict
+ * describes, and the ONLY argv a caller may display or spawn. Normalization
+ * (packed-string tokenization) happens exactly once, inside the classifier —
+ * so the command a user approves can never diverge from the one that runs.
  */
 export type Classification =
-    | { readonly kind: "introspection" }
-    | { readonly kind: "action"; readonly path: readonly string[]; readonly grantKey: string }
+    | { readonly kind: "introspection"; readonly argv: readonly string[] }
+    | { readonly kind: "action"; readonly argv: readonly string[]; readonly path: readonly string[]; readonly grantKey: string }
     | { readonly kind: "malformed"; readonly message: string };
 
 /**
@@ -70,11 +75,11 @@ function tokenizeArgvString(input: string): string[] {
  * split and passes through verbatim (its elements may legitimately contain
  * spaces — e.g. a filename — and must NOT be re-split).
  *
- * Idempotent: a tokenized result is multi-element, so feeding this function's own
- * output back in takes the pass-through branch and returns it unchanged. Exported
- * so the tool that spawns `inflexa` derives its displayed/spawned argv from the
- * SAME normalization the classifier verdicts on — one tokenization source, no
- * chance of the shown command diverging from the classified one.
+ * NOT idempotent — tokenizing `['"refs download"']` yields `["refs download"]`,
+ * a single element that still carries whitespace and would tokenize again — which
+ * is why it stays private: the classifier applies it exactly once and hands the
+ * result back in its verdict's `argv`, so no second caller can re-normalize and
+ * diverge from what was classified.
  *
  * Accepted ambiguity: a single element that is one spaced operand (a lone quoted
  * filename) is indistinguishable from a packed command and gets tokenized too.
@@ -82,7 +87,7 @@ function tokenizeArgvString(input: string): string[] {
  * command takes no positional — so the worst case is a malformed verdict handed
  * back to the model, never a wrong spawn.
  */
-export function toEffectiveArgv(argv: string[]): string[] {
+function toEffectiveArgv(argv: string[]): string[] {
     // `argv[0]!` is sound: the `argv.length === 1` guard proves index 0 exists.
     return argv.length === 1 && /\s/.test(argv[0]!) ? tokenizeArgvString(argv[0]!) : argv;
 }
@@ -171,10 +176,10 @@ export async function classifyInflexaArgv(argv: string[]): Promise<Classificatio
                 cursor = cursor.parent;
             }
             path.reverse();
-            return { kind: "action", path, grantKey: path.join(" ") };
+            return { kind: "action", argv: args, path, grantKey: path.join(" ") };
         }
         if (e instanceof CommanderError) {
-            if (INTROSPECTION_CODES.has(e.code)) return { kind: "introspection" };
+            if (INTROSPECTION_CODES.has(e.code)) return { kind: "introspection", argv: args };
             return { kind: "malformed", message: e.message.trim() };
         }
         // An unexpected throw (neither our signal nor a commander error) is not an
@@ -188,5 +193,5 @@ export async function classifyInflexaArgv(argv: string[]): Promise<Classificatio
     // parseAsync resolved with no throw: a parent group (e.g. bare `refs`) printed
     // its own help and ran no action. That is introspection — it described itself
     // and did nothing to the user's data.
-    return { kind: "introspection" };
+    return { kind: "introspection", argv: args };
 }

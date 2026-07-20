@@ -20,9 +20,9 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { env } from "../../lib/env.ts";
-import { classifyInflexaArgv, toEffectiveArgv } from "./inflexa_classify.ts";
+import { classifyInflexaArgv } from "./inflexa_classify.ts";
 
-/** Cap on each captured stream so one runaway command cannot overflow the turn's context. */
+/** Combined cap on a run's captured output (stdout and stderr together), so one runaway command cannot overflow the turn's context. */
 const MAX_OUTPUT_CHARS = 60_000;
 
 /** Default wall-clock bound on a single `inflexa` invocation before it is abandoned. */
@@ -45,21 +45,34 @@ const FLUSH_GRACE_MS = 1_000;
 const KILL_GRACE_MS = 2_000;
 
 /**
- * Commands the agent may not run at all — not even with approval. These exist
- * only to open an interactive terminal UI, which cannot function as a captured
- * subprocess; their launchers refuse a non-TTY stdin at entry, so an approved
- * spawn would just burn the user's approval on an immediate error. Refusing here,
- * BEFORE `ctx.ask`, keeps a command that can never usefully run from ever
- * becoming a decision to put to the user. Keyed by the classifier's resolved
- * subcommand path (its `grantKey`); the value is the reason handed to the model.
+ * Commands the agent may not run at all — not even with approval. Keyed by the
+ * classifier's resolved subcommand path (its `grantKey`); the value is the
+ * reason handed to the model. Two families:
  *
- * This map is the courtesy layer, not the safety boundary: the launchers' own
- * TTY guard (`requireInteractiveTerminal`, lib/cli.ts) is the structural
- * backstop, so a future TUI command missing from this map exits non-zero with a
- * clear message instead of hanging.
+ * - TUI launchers (the root, `config`, `new`, `resume`, `chat`): they exist only
+ *   to open an interactive terminal UI, which cannot function as a captured
+ *   subprocess; an approved spawn would just burn the user's approval on an
+ *   immediate error. For these the map is the courtesy layer, not the safety
+ *   boundary — the launchers' own TTY guard (`requireInteractiveTerminal`,
+ *   lib/cli.ts) is the structural backstop, so a future TUI command missing
+ *   from this map exits non-zero with a clear message instead of hanging.
+ * - Infrastructure lifecycle (`up`, `down`, `setup`): they mutate the very
+ *   containers this conversation runs on — `down` stops the Postgres the
+ *   harness session is connected to — so even an informed approval could sever
+ *   the session mid-turn. These run fine headless, so for this family the map
+ *   IS the gate: a new lifecycle command must be added here.
+ *
+ * Refusing here, BEFORE `ctx.ask`, keeps a command that must never run from
+ * ever becoming a decision to put to the user.
  */
 const BLOCKED_COMMANDS: ReadonlyMap<string, string> = new Map([
-    ["inflexa", "Bare `inflexa` opens the interactive terminal UI, which cannot run as a captured subprocess. It is not available to you."],
+    // The root action fires for flag-only invocations too (`--analysis x`), so
+    // the reason must not say "bare" — the agent may have passed flags.
+    [
+        "inflexa",
+        "`inflexa` without a subcommand (with or without flags like --analysis) opens the interactive chat UI, " +
+            "which cannot run as a captured subprocess. It is not available to you.",
+    ],
     ["inflexa config", "`inflexa config` opens the interactive settings UI, which cannot run as a captured subprocess. It is not available to you."],
     [
         "inflexa new",
@@ -74,13 +87,29 @@ const BLOCKED_COMMANDS: ReadonlyMap<string, string> = new Map([
     // Dev-channel registry only: a release build has no `chat` command, so on a
     // release binary this argv parses as malformed before the map is consulted.
     ["inflexa chat", "`inflexa chat` opens an interactive prompt loop, which cannot run as a captured subprocess. It is not available to you."],
+    [
+        "inflexa up",
+        "`inflexa up` manages the infrastructure containers this conversation depends on. " +
+            "It is not available to you — ask the user to run it from their own shell.",
+    ],
+    [
+        "inflexa down",
+        "`inflexa down` stops the infrastructure containers — including the database this conversation is running on — " +
+            "and would sever the session. It is not available to you — ask the user to run it from their own shell.",
+    ],
+    [
+        "inflexa setup",
+        "`inflexa setup` provisions and authenticates the infrastructure this conversation depends on. " +
+            "It is not available to you — ask the user to run it from their own shell.",
+    ],
 ]);
 
 /**
  * The outcome the model sees, as data on the ok channel — every expected result
  * is a variant here, never a thrown error (a denied `ctx.ask` is the one throw,
  * and it is the harness loop's to map). `invalid` is a rejected argv; `blocked`
- * is a command the agent may not run (an interactive TUI launcher); `ran` is a
+ * is a command the agent may not run (a TUI launcher or an
+ * infrastructure-lifecycle command); `ran` is a
  * completed process (any exit code — a non-zero exit is a real answer, not a tool
  * failure); `timed_out` is a process abandoned at the deadline, carrying whatever
  * output it produced first (a partial download log still tells the model how far
@@ -117,19 +146,45 @@ export function resolveInvocation(argv: readonly string[], opts: { isDevelopment
     return opts.isDevelopment ? [opts.execPath, opts.scriptPath, ...argv] : [opts.execPath, ...argv];
 }
 
-/** Truncate a captured stream to {@link MAX_OUTPUT_CHARS}, marking the cut so the model knows output was dropped. */
+/**
+ * Re-bound one captured stream to {@link MAX_OUTPUT_CHARS}, marking the cut so
+ * the model knows output was dropped. The real spawn budgets both streams
+ * jointly at capture time; this per-stream backstop exists because the
+ * subprocess seam is injectable and the bound must hold for any seam.
+ */
 function truncateOutput(text: string): string {
     return text.length <= MAX_OUTPUT_CHARS ? text : text.slice(0, MAX_OUTPUT_CHARS) + "…[truncated]";
 }
 
 /**
- * Accumulate a subprocess stream up to `cap` characters while ALWAYS draining to
- * the end: past the cap, chunks are still read and dropped rather than left in
- * the pipe, so a chatty child never blocks on backpressure while the capture
- * stays memory-bounded (buffering a multi-hundred-MB stream just to slice 60k
- * off the front is the failure this exists to prevent).
+ * Render one argv element for the approval prompt. An element carrying
+ * whitespace or a quote is wrapped in quotes — an unquoted join would show
+ * `refs download my file` for a three-element argv whose one operand is
+ * "my file", and the user would approve word boundaries that are not the ones
+ * spawning. Display-only: the spawn receives the raw array (no shell), so this
+ * must be faithful to a reader, not a correct shell escaper; an element carrying
+ * BOTH quote kinds is unrepresentable in the tokenizer's grammar and is simply
+ * double-quoted.
  */
-function collectCapped(stream: ReadableStream<Uint8Array>, cap: number): { done: Promise<void>; cancel: () => void; text: () => string } {
+function displayArgvElement(element: string): string {
+    if (!/[\s"']/.test(element)) return element;
+    return element.includes('"') ? `'${element}'` : `"${element}"`;
+}
+
+/**
+ * Accumulate a subprocess stream while ALWAYS draining to the end: past the
+ * budget, chunks are still read and dropped rather than left in the pipe, so a
+ * chatty child never blocks on backpressure while the capture stays
+ * memory-bounded (buffering a multi-hundred-MB stream just to slice 60k off the
+ * front is the failure this exists to prevent).
+ *
+ * `budget` is SHARED, mutable state: both collectors of one spawn draw from the
+ * same remaining-character pool, so the cap bounds the run's combined output —
+ * what the turn's context pays for — not each stream separately. First-arrived
+ * output wins the budget; sound without locking because each decrement is
+ * synchronous between `await`s on a single thread.
+ */
+function collectCapped(stream: ReadableStream<Uint8Array>, budget: { remaining: number }): { done: Promise<void>; cancel: () => void; text: () => string } {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let text = "";
@@ -141,11 +196,13 @@ function collectCapped(stream: ReadableStream<Uint8Array>, cap: number): { done:
                 if (eof) return;
                 if (truncated) continue;
                 const chunk = decoder.decode(value, { stream: true });
-                if (text.length + chunk.length > cap) {
-                    text += chunk.slice(0, cap - text.length);
-                    truncated = true;
-                } else {
+                if (chunk.length <= budget.remaining) {
                     text += chunk;
+                    budget.remaining -= chunk.length;
+                } else {
+                    text += chunk.slice(0, budget.remaining);
+                    budget.remaining = 0;
+                    truncated = true;
                 }
             }
         } catch {
@@ -195,10 +252,17 @@ export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, 
     if (combined.aborted) escalate();
     else combined.addEventListener("abort", escalate, { once: true });
 
-    const stdout = collectCapped(proc.stdout, MAX_OUTPUT_CHARS);
-    const stderr = collectCapped(proc.stderr, MAX_OUTPUT_CHARS);
+    // One pool across both streams: the cap is per RUN — the model-facing bound —
+    // not per stream, so a stderr-only failure can still use the whole budget.
+    const budget = { remaining: MAX_OUTPUT_CHARS };
+    const stdout = collectCapped(proc.stdout, budget);
+    const stderr = collectCapped(proc.stderr, budget);
     const exitCode = await proc.exited;
     if (killTimer !== null) clearTimeout(killTimer);
+    // The child is reaped; a LATER abort of the caller's long-lived turn signal
+    // must not schedule a stray SIGKILL timer against it. No-op when the abort
+    // already fired (`once` removed the listener) — the timer was cleared above.
+    combined.removeEventListener("abort", escalate);
 
     // The child is gone, but its pipes may not be: give buffered output a short
     // flush window, then stop reading and take what arrived — a grandchild that
@@ -241,7 +305,8 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             'command: start from ["--help"] to see the top-level commands, then drill in with ' +
             '["<subcommand>", "--help"] to learn a subcommand\'s arguments and options before you invoke it. ' +
             "Help and version lookups run right away; a command that would actually do something pauses for the " +
-            "user's approval first, and the captured stdout, stderr, and exit code come back to you.",
+            "user's approval first, and the captured stdout, stderr, and exit code come back to you. The interactive " +
+            "UI launchers and the infrastructure lifecycle commands (up, down, setup) are not available through this tool.",
         inputSchema: z.object({
             argv: z
                 .array(z.string())
@@ -251,27 +316,32 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
                 ),
         }),
         execute: async (input, ctx): Promise<Result<RunInflexaResult, ToolError>> => {
-            const args = toEffectiveArgv(input.argv);
             // The classification parses THIS process's commander tree; the spawned
             // child rebuilds its own. The two agree because the dev-command gate
             // derives from the baked build channel plus env the child inherits
             // (INFLEXA_BUILD_CHANNEL / INFLEXA_DEV — see lib/env.ts), so the
-            // approved classification describes exactly what will run.
-            const c = await classifyInflexaArgv(args);
+            // approved classification describes exactly what will run. `c.argv` is
+            // the classifier-normalized argv its verdict describes — the ONLY argv
+            // this tool may display or spawn, so the command the user approves is
+            // exactly the one that runs.
+            const c = await classifyInflexaArgv(input.argv);
 
             // A rejected argv never reaches a process or a prompt — report it and let the model correct itself.
             if (c.kind === "malformed") return ok({ status: "invalid", message: c.message });
 
             if (c.kind === "action") {
-                // A blocked command (an interactive TUI launcher) can never run as a captured
-                // subprocess — refuse it here rather than prompting for something doomed to fail.
+                // A blocked command (a TUI launcher or an infra lifecycle command) must
+                // never run — refuse it here rather than prompting for something that
+                // is not the user's decision to make mid-conversation.
                 const blockedReason = BLOCKED_COMMANDS.get(c.grantKey);
                 if (blockedReason !== undefined) return ok({ status: "blocked", message: blockedReason });
 
                 const request: AskRequest = {
                     title: "Run inflexa command",
-                    // The EXACT argv that will run — what the user approves is precisely what executes, nothing hidden.
-                    command: ["inflexa", ...args].join(" "),
+                    // The EXACT argv that will run — what the user approves is precisely what
+                    // executes, nothing hidden. Spaced elements render quoted so the word
+                    // boundaries the user reads are the word boundaries that spawn.
+                    command: ["inflexa", ...c.argv.map(displayArgvElement)].join(" "),
                     detail: 'Approving "always" lets this inflexa subcommand run again in this analysis without asking each time.',
                     // Trade-off accepted here: the standing grant keys on the bare subcommand PATH, not this exact
                     // argv, so an "always" on a benign `inflexa X` also blesses a later, more dangerous flag variant
@@ -286,7 +356,7 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             }
 
             // Introspection and an approved action both reach here and run the same way.
-            const cmd = resolveInvocation(args, { isDevelopment, execPath, scriptPath });
+            const cmd = resolveInvocation(c.argv, { isDevelopment, execPath, scriptPath });
             const r = await runSubprocess(cmd, ctx.signal);
             // truncateOutput re-bounds here because the seam is injectable: the real
             // spawn already caps at source, but the contract must hold for any seam.

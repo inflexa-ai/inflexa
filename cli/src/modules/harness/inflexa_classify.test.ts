@@ -25,28 +25,38 @@ describe("classifyInflexaArgv — introspection", () => {
 });
 
 describe("classifyInflexaArgv — action", () => {
-    test("a real leaf command resolves to its path + grantKey", async () => {
-        const result = await classifyInflexaArgv(["refs", "download", "reactome-pathways", "--yes"]);
-        expect(result).toEqual({ kind: "action", path: ["inflexa", "refs", "download"], grantKey: "inflexa refs download" });
+    test("a real leaf command resolves to its argv + path + grantKey", async () => {
+        const argv = ["refs", "download", "reactome-pathways", "--yes"];
+        const result = await classifyInflexaArgv(argv);
+        expect(result).toEqual({ kind: "action", argv, path: ["inflexa", "refs", "download"], grantKey: "inflexa refs download" });
     });
 
     test("a post-`--` `--help` is an operand, so the argv is an action, NOT introspection", async () => {
-        const result = await classifyInflexaArgv(["refs", "download", "reactome-pathways", "--", "--help"]);
+        const argv = ["refs", "download", "reactome-pathways", "--", "--help"];
+        const result = await classifyInflexaArgv(argv);
         // The injection defense: `--help` after `--` never reaches the help path; it hits the action.
-        expect(result).toEqual({ kind: "action", path: ["inflexa", "refs", "download"], grantKey: "inflexa refs download" });
+        expect(result).toEqual({ kind: "action", argv, path: ["inflexa", "refs", "download"], grantKey: "inflexa refs download" });
     });
 
     test("different arguments of the same command collapse to one grantKey", async () => {
         const reactome = await classifyInflexaArgv(["refs", "download", "reactome-pathways", "--yes"]);
         const wikipathways = await classifyInflexaArgv(["refs", "download", "wikipathways-human", "--yes"]);
-        expect(reactome).toEqual(wikipathways);
-        if (wikipathways.kind !== "action") throw new Error("expected action");
+        if (reactome.kind !== "action" || wikipathways.kind !== "action") throw new Error("expected actions");
+        expect(reactome.grantKey).toBe(wikipathways.grantKey);
         expect(wikipathways.grantKey).toBe("inflexa refs download");
     });
 
     test("bare `inflexa` (empty argv) is the root action, keyed on the root name alone", async () => {
         const result = await classifyInflexaArgv([]);
-        expect(result).toEqual({ kind: "action", path: ["inflexa"], grantKey: "inflexa" });
+        expect(result).toEqual({ kind: "action", argv: [], path: ["inflexa"], grantKey: "inflexa" });
+    });
+
+    test("a flag-only root invocation is the root action too, not just literally-bare argv", async () => {
+        // Pins why the blocked-root message must not say "bare": `--analysis x`
+        // carries flags yet still resolves to the root TUI launcher.
+        const result = await classifyInflexaArgv(["--analysis", "x"]);
+        if (result.kind !== "action") throw new Error("expected action");
+        expect(result.grantKey).toBe("inflexa");
     });
 });
 
@@ -76,9 +86,16 @@ describe("classifyInflexaArgv — malformed", () => {
 });
 
 describe("classifyInflexaArgv — defensive tokenization", () => {
-    test("a single packed command string is split quote-awarely and classified like split argv", async () => {
+    test("a single packed command string is split quote-awarely, and the verdict carries the tokenized argv", async () => {
         const result = await classifyInflexaArgv(["refs download reactome-pathways --yes"]);
-        expect(result).toEqual({ kind: "action", path: ["inflexa", "refs", "download"], grantKey: "inflexa refs download" });
+        // The verdict's argv IS the tokenized form — the single normalization a
+        // caller may spawn; re-deriving it from the input would diverge.
+        expect(result).toEqual({
+            kind: "action",
+            argv: ["refs", "download", "reactome-pathways", "--yes"],
+            path: ["inflexa", "refs", "download"],
+            grantKey: "inflexa refs download",
+        });
     });
 
     // The accepted ambiguity in toEffectiveArgv: one spaced element could be a lone
