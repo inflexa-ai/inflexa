@@ -4,6 +4,7 @@ import { AskRejectedError, UnavailableAsk, type AgentSession, type AskApproval, 
 import { describe, expect, test } from "bun:test";
 
 import type { AgentPolicy } from "../../cli/agent_policy.ts";
+import { reportAgentPolicies } from "../../test_support/agent_policy_report.ts";
 import { createRunInflexaTool, decideAction, resolveInvocation, spawnInflexa, type RunSubprocess, type SubprocessResult } from "./inflexa_tool.ts";
 
 // A canned subprocess outcome; overridden per-test for the timeout/cancel/truncation cases.
@@ -300,6 +301,38 @@ describe("run_inflexa — execute", () => {
 // they are exercised at `decideAction`, the pure seam `execute` runs. These pin the two invariants the
 // black-box tests above cannot: an unknown flag escalates auto→ask (never runs free), and a policy-less
 // action fails closed to blocked (never silently approvable).
+// The description is what the agent knows about this tool, and it is DERIVED from the
+// registry so it cannot drift out of sync with what the tool will actually let it run.
+// The invariant worth holding is coverage: a command the agent may invoke, or is barred
+// from invoking, has to appear — a registered command missing from its own tool's
+// description is a capability the agent will never discover, or one it wastes a turn on.
+describe("run_inflexa — the described surface tracks the registry", () => {
+    test("every policy-stamped command appears, grouped by what it costs the user", () => {
+        const { description } = createRunInflexaTool();
+        for (const row of reportAgentPolicies()) {
+            // `reportAgentPolicies` walks from the root, whose own grantKey is the bare
+            // program name and carries no policy of its own to describe.
+            if (row.grantKey === "inflexa") continue;
+            const path = row.grantKey.replace(/^inflexa /, "");
+            expect(description).toContain(`\`${path}\``);
+        }
+    });
+
+    test("a read-only command and an approval-gated one land in different groups", () => {
+        const { description } = createRunInflexaTool();
+        const free = description.indexOf("Read-only, and normally run without interrupting the user");
+        const gated = description.indexOf("Always stop for the user's approval first");
+        const blocked = description.indexOf("Not available through this tool at all");
+        expect(free).toBeGreaterThan(-1);
+        expect(gated).toBeGreaterThan(free);
+        expect(blocked).toBeGreaterThan(gated);
+        // `refs list` only reads the store; `refs download` fetches and writes. The agent
+        // reporting reference data as unobtainable is exactly the failure this prevents.
+        expect(description.slice(free, gated)).toContain("`refs list`");
+        expect(description.slice(gated, blocked)).toContain("`refs download`");
+    });
+});
+
 describe("decideAction — policy cascade", () => {
     test("no policy fails closed to blocked with a developer-facing message", () => {
         const decision = decideAction(undefined, "inflexa mystery", []);
