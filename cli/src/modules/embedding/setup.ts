@@ -26,7 +26,7 @@ import { err, ok, type Result } from "neverthrow";
 import type { AgentSession } from "@inflexa-ai/harness";
 
 import { readConfig, writeConfig } from "../../lib/config.ts";
-import { select } from "../../lib/cli.ts";
+import { promptText, select } from "../../lib/cli.ts";
 import { env } from "../../lib/env.ts";
 import { isCompiledBinary } from "../../lib/install_context.ts";
 import { ensureLlamaServer, materializedLlamaServer } from "./llama_runtime.ts";
@@ -182,19 +182,22 @@ export async function acquireModel(): Promise<Result<void, EmbeddingSetupError>>
 }
 
 /**
- * Verify the model end-to-end through the sidecar: spawn `llama-server` against
- * the downloaded GGUF, embed a probe text, and assert the vector width is 384.
- * This is the identical path the hot loop uses, so a "works in dev, dead in the
- * binary" divergence cannot hide here — verification proves the real runtime, not
- * a separate load path. Catches a truncated/corrupt file or a wrong-model
- * download now, so the hot path never hits a startup failure. A start/probe error
- * is `verify_failed`; a wrong dimension is `dimension_mismatch` (so the caller can
- * distinguish "the file is broken" from "the file is the wrong model").
+ * Verify the model end-to-end through the sidecar: spawn `llama-server` against the GGUF, embed a probe
+ * text, and MEASURE the vector width it emits (llama-server returns the model's native width — it ignores
+ * any requested `dimensions` — which is exactly what lets this detect a wrong model). This is the identical
+ * path the hot loop uses, so a "works in dev, dead in the binary" divergence cannot hide here. Catches a
+ * truncated/corrupt file or a wrong-model GGUF now, so the hot path never hits a startup failure. Returns
+ * the measured width on success. A start/probe error is `verify_failed`.
+ *
+ * `expectedDim` gates the width check: pass it for the BUILT-IN model (384) so a corrupt/wrong bundled GGUF
+ * is caught as `dimension_mismatch`; omit it for a user's OWN GGUF, whose width is unknown ahead of time —
+ * whatever it emits (any positive width) is accepted and returned so the caller can record it as the index
+ * width. A zero-width probe is always `verify_failed` (an unusable model, whatever the mode).
  *
  * The sidecar is torn down immediately after the probe rather than left running
  * for the process lifetime — setup only needs the one probe.
  */
-export async function verifyModel(modelPath: string): Promise<Result<void, EmbeddingSetupError>> {
+export async function verifyModel(modelPath: string, expectedDim?: number): Promise<Result<number, EmbeddingSetupError>> {
     const s = clackSpinner();
     s.start("Verifying model (spawn runtime + embed probe)");
 
@@ -215,30 +218,37 @@ export async function verifyModel(modelPath: string): Promise<Result<void, Embed
         s.error("Verification failed");
         return err({ type: "verify_failed", message: `Model verification failed: ${outcome.message}` });
     }
-    if (outcome.dim !== LOCAL_EMBEDDING_DIMENSIONS) {
+    if (outcome.dim <= 0) {
+        s.error("Verification failed");
+        return err({ type: "verify_failed", message: "Model produced empty vectors — the GGUF is not a usable embedding model." });
+    }
+    if (expectedDim !== undefined && outcome.dim !== expectedDim) {
         s.error("Dimension mismatch");
         return err({
             type: "dimension_mismatch",
-            message: `Model produced ${outcome.dim}-dim vectors, expected ${LOCAL_EMBEDDING_DIMENSIONS}. The GGUF may be the wrong model.`,
-            expected: LOCAL_EMBEDDING_DIMENSIONS,
+            message: `Model produced ${outcome.dim}-dim vectors, expected ${expectedDim}. The GGUF may be the wrong model.`,
+            expected: expectedDim,
             actual: outcome.dim,
         });
     }
-    s.stop(`Verified: ${LOCAL_EMBEDDING_DIMENSIONS}-dim vectors`);
-    return ok(undefined);
+    s.stop(`Verified: ${outcome.dim}-dim vectors`);
+    return ok(outcome.dim);
 }
 
 /**
- * Interactive embedding setup, run as part of `inflexa setup`. Prompts the user
- * to pick an embedding mode via a clack `select` picker (local / api-key / off),
- * then for `local`: materializes the sidecar runtime + acquires the GGUF (embedded
- * asset in the compiled binary, download from source), verifies it through the
- * sidecar, and records `embedding.mode = "local"` + `embedding.modelPath` in config.
+ * Interactive embedding setup, run as part of `inflexa setup`. Prompts the user to pick an embedding
+ * backend via a clack `select` picker — the built-in bge-small model, a path to their OWN local GGUF,
+ * a remote API-key endpoint, or off:
+ * - built-in → materialize the sidecar runtime + acquire the pinned GGUF (embedded asset in the compiled
+ *   binary, download from source), verify it (asserting the 384-dim width), and record `mode = "local"`
+ *   + `modelPath = env.embeddingModelPath`.
+ * - your own GGUF → prompt for a path, verify it (measuring whatever width it emits), and record
+ *   `mode = "local"` + that `modelPath` + the measured `dimensions` (so the index is sized to it).
  *
- * Non-interactive shells (no TTY, or `interactive === false`) skip the prompt
- * entirely without hanging — `mode` stays whatever it was. A preselected `mode`
- * (from `--embeddings`) overrides the prompt and runs the matching branch
- * non-interactively.
+ * Non-interactive shells (no TTY, or `interactive === false`) skip the prompt entirely without hanging —
+ * `mode` stays whatever it was. A preselected `mode` (from `--embeddings`) overrides the prompt and runs
+ * the matching branch non-interactively; `--embeddings local` is the built-in model (a custom path needs
+ * an interactive prompt for the path, so it has no flag form).
  */
 export async function runEmbeddingSetup(interactive: boolean, preselected?: "local" | "api-key" | "off"): Promise<Result<void, EmbeddingSetupError>> {
     const config = readConfig();
@@ -250,11 +260,11 @@ export async function runEmbeddingSetup(interactive: boolean, preselected?: "loc
             warnOnModeSwitch(config.embedding.mode, "api-key");
             // API-key mode setup is deferred; only local setup is implemented
             // here. Decline cleanly rather than half-doing it.
-            log.warn("API-key embedding mode is selected but not yet configured by setup. Set `embedding.apiKey` in config manually.");
+            log.warn("API-key embedding mode is selected but not yet configured by setup. Set it via `inflexa config`, or `embedding.apiKey` in config.json.");
             return ok(undefined);
         }
-        // preselected === "local"
-        return runLocalSetup(config);
+        // preselected === "local" → the built-in model (custom paths are interactive-only).
+        return runBuiltinLocalSetup(config);
     }
 
     // Already configured (mode is no longer the default `off`): don't re-prompt
@@ -272,11 +282,12 @@ export async function runEmbeddingSetup(interactive: boolean, preselected?: "loc
     }
     if (choice === "api-key") {
         warnOnModeSwitch(config.embedding.mode, "api-key");
-        log.warn("API-key embedding mode is not yet configured by setup. Set `embedding.apiKey` in config manually.");
+        log.warn("API-key embedding mode is not yet configured by setup. Set it via `inflexa config`, or `embedding.apiKey` in config.json.");
         return ok(undefined);
     }
-    // choice === "local"
-    return runLocalSetup(config);
+    if (choice === "custom") return runCustomLocalSetup(config);
+    // choice === "builtin"
+    return runBuiltinLocalSetup(config);
 }
 
 /**
@@ -304,15 +315,14 @@ function warnOnModeSwitch(current: "local" | "api-key" | "off", next: "local" | 
     );
 }
 
-/** The local-embeddings opt-in branch: materialize runtime, acquire model, verify through the sidecar, write config. */
-async function runLocalSetup(config: ReturnType<typeof readConfig>): Promise<Result<void, EmbeddingSetupError>> {
-    warnOnModeSwitch(config.embedding.mode, "local");
-    log.message("Setting up local embeddings (bge-small-en-v1.5 via the pinned llama-server runtime, no API key needed)");
-
-    // Materialize the runtime first, under its own spinner, so the one-time first-run
-    // cost is narrated rather than a silent stall: macOS pays a ~10s OS scan of the
-    // fresh binaries the first time they run, and paying it here (not mid-analysis) is
-    // the whole point of setup-time verification. Idempotent — a subsequent spawn reuses it.
+/**
+ * Materialize the pinned `llama-server` runtime under a narrated spinner. Shared by both local branches
+ * (built-in and custom GGUF). Under its own spinner so the one-time first-run cost is narrated rather than
+ * a silent stall: macOS pays a ~10s OS scan of the fresh binaries the first time they run, and paying it
+ * here (not mid-analysis) is the whole point of setup-time verification. Idempotent — a subsequent spawn
+ * reuses it.
+ */
+async function materializeEmbeddingRuntime(): Promise<Result<void, EmbeddingSetupError>> {
     const runtimeSpinner = clackSpinner();
     runtimeSpinner.start("Preparing the local embedding runtime (llama-server)");
     const runtime = await ensureLlamaServer();
@@ -325,44 +335,99 @@ async function runLocalSetup(config: ReturnType<typeof readConfig>): Promise<Res
         });
     }
     runtimeSpinner.stop("Local embedding runtime ready");
+    return ok(undefined);
+}
+
+/** The built-in-model branch: materialize runtime, acquire the pinned bge-small, verify at 384, write config. */
+async function runBuiltinLocalSetup(config: ReturnType<typeof readConfig>): Promise<Result<void, EmbeddingSetupError>> {
+    warnOnModeSwitch(config.embedding.mode, "local");
+    log.message("Setting up the built-in embedding model (bge-small-en-v1.5, 384-dim, via the pinned llama-server runtime — no API key needed)");
+
+    const runtime = await materializeEmbeddingRuntime();
+    if (runtime.isErr()) return runtime;
 
     const acquireResult = await acquireModel();
     if (acquireResult.isErr()) return acquireResult;
 
-    const verifyResult = await verifyModel(env.embeddingModelPath);
-    if (verifyResult.isErr()) return verifyResult;
+    // Assert the 384 width: the bundled model is SHA-256-pinned, so any other width here means a corrupt
+    // or wrong asset, not a legitimate model choice.
+    const verifyResult = await verifyModel(env.embeddingModelPath, LOCAL_EMBEDDING_DIMENSIONS);
+    if (verifyResult.isErr()) return err(verifyResult.error);
 
-    // Write the config choice. `writeConfig` is sync; mapErr translates its
-    // ConfigError into an EmbeddingSetupError, and map records the success
-    // side-effect. Both consume the Result so the must-use-result rule is satisfied.
+    // Write the config choice. No `dimensions` — the built-in is always 384, which the provider defaults to,
+    // so recording it would be redundant. `writeConfig` is sync; mapErr translates its ConfigError, map
+    // records the success side-effect. Both consume the Result so the must-use-result rule is satisfied.
     return writeConfig({ ...config, embedding: { mode: "local", modelPath: env.embeddingModelPath } })
         .mapErr((e): EmbeddingSetupError => ({ type: "verify_failed", message: `Verification passed but config could not be written: ${e.type}` }))
         .map(() => {
-            log.success("Local embeddings configured. `embedding.mode` is now `local`.");
+            log.success("Local embeddings configured (built-in model). `embedding.mode` is now `local`.");
             return undefined;
         });
 }
 
 /**
- * Embedding mode picker via clack `select`. Offers all three modes so the user
- * can choose `api-key` interactively (not just local-vs-skip). Returns the
- * chosen mode string; clack handles cancel (Ctrl-C / Esc) by aborting.
+ * The "your own GGUF" branch: prompt for a local model path, verify it emits a usable width through the
+ * sidecar, and record that path + width. No acquisition — the file is the user's, so nothing is copied or
+ * downloaded; only verification runs. The measured width is persisted as `embedding.dimensions` (unless it
+ * equals the built-in 384, where the provider default already applies), so the harness sizes each analysis
+ * index to exactly what this model emits.
  */
-async function promptEmbeddingMode(): Promise<"local" | "api-key" | "off"> {
-    // Local mode works identically in the compiled binary and from source (both the runtime AND the
-    // model are downloaded/embedded assets, not native addons), so all three modes are offered in
-    // every install context — no context gates the offering.
-    const chosen = await select("Embedding mode", [
+async function runCustomLocalSetup(config: ReturnType<typeof readConfig>): Promise<Result<void, EmbeddingSetupError>> {
+    warnOnModeSwitch(config.embedding.mode, "local");
+
+    // TTY-only prompt (this branch is reached only interactively). promptText hard-exits on cancel, exactly
+    // like the mode picker above, so a cancelled path prompt aborts setup rather than half-configuring.
+    const entered = await promptText("Path to your GGUF embedding model", {
+        placeholder: "/path/to/model.gguf",
+        validate: (v) => (v.trim() === "" ? "Enter a path to a .gguf file." : undefined),
+    });
+    const modelPath = entered.trim();
+    if (!(await Bun.file(modelPath).exists())) {
+        return err({ type: "acquire_failed", message: `No file at ${modelPath}. Provide the path to a local GGUF embedding model.` });
+    }
+
+    log.message(`Setting up local embeddings from your model at ${modelPath}`);
+
+    const runtime = await materializeEmbeddingRuntime();
+    if (runtime.isErr()) return runtime;
+
+    // No expectedDim: accept whatever width this model emits and size the index to it.
+    const verifyResult = await verifyModel(modelPath);
+    if (verifyResult.isErr()) return err(verifyResult.error);
+    const dimensions = verifyResult.value;
+
+    // Record dimensions only when it differs from the built-in default (which the provider already applies),
+    // keeping config minimal — a 384-dim custom model persists just its path.
+    const embedding = { mode: "local" as const, modelPath, ...(dimensions === LOCAL_EMBEDDING_DIMENSIONS ? {} : { dimensions }) };
+    return writeConfig({ ...config, embedding })
+        .mapErr((e): EmbeddingSetupError => ({ type: "verify_failed", message: `Verification passed but config could not be written: ${e.type}` }))
+        .map(() => {
+            log.success(`Local embeddings configured from your model (${dimensions}-dim). \`embedding.mode\` is now \`local\`.`);
+            return undefined;
+        });
+}
+
+/**
+ * Embedding backend picker via clack `select`. Splits the former single "local" option into two distinct
+ * choices — the built-in bundled model vs the user's own GGUF — so the built-in is framed as what it is (no
+ * "download" claim in a compiled binary, where it is embedded) and a user with a local model can point at
+ * it. Returns the chosen value; clack handles cancel (Ctrl-C / Esc) by aborting. All choices work in every
+ * install context (both the runtime and the built-in model are embedded/downloaded assets, not native
+ * addons), so nothing gates the offering.
+ */
+async function promptEmbeddingMode(): Promise<"builtin" | "custom" | "api-key" | "off"> {
+    const chosen = await select("Embedding backend", [
         {
-            value: "local",
+            value: "builtin",
             label: isCompiledBinary()
-                ? "Local (installs the bundled ~36 MB model + runtime, no API key or network)"
-                : "Local (downloads a ~36 MB model + runtime, no API key)",
+                ? "Built-in model — bge-small-en-v1.5 (384-dim, ~36 MB, bundled; no API key or network)"
+                : "Built-in model — bge-small-en-v1.5 (384-dim, ~36 MB, downloaded once; no API key)",
         },
-        { value: "api-key", label: "API key (direct to an OpenAI-compatible endpoint)" },
+        { value: "custom", label: "Your own local model — a path to a GGUF you already have (llama-server compatible)" },
+        { value: "api-key", label: "API key — a remote OpenAI-compatible embeddings endpoint" },
         { value: "off", label: "Off / skip" },
     ]);
-    return chosen as "local" | "api-key" | "off";
+    return chosen as "builtin" | "custom" | "api-key" | "off";
 }
 
 /**
@@ -387,13 +452,17 @@ async function promptEmbeddingMode(): Promise<"local" | "api-key" | "off"> {
  * return `ok`.
  */
 export async function ensureEmbedderReady(): Promise<Result<void, EmbeddingSetupError>> {
-    const { mode } = readConfig().embedding;
+    const { mode, modelPath: configuredPath } = readConfig().embedding;
     if (mode !== "local") return ok(undefined);
 
-    if (!(await Bun.file(env.embeddingModelPath).exists())) {
+    // Gate on the CONFIGURED model path, not the built-in location: a custom GGUF lives at the user's own
+    // path, and checking `env.embeddingModelPath` would spuriously fail when that path isn't the built-in
+    // one. Fall back to the built-in location only when nothing is recorded (a legacy/hand-edited config).
+    const modelPath = configuredPath ?? env.embeddingModelPath;
+    if (!(await Bun.file(modelPath).exists())) {
         return err({
             type: "not_configured",
-            message: `Local embedding model not found at ${env.embeddingModelPath}. Run \`inflexa setup --embeddings local\` to install it.`,
+            message: `Local embedding model not found at ${modelPath}. Run \`inflexa setup\` to configure a model, or point \`embedding.modelPath\` at your GGUF.`,
         });
     }
 

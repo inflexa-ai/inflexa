@@ -98,15 +98,46 @@ describe("ensureEmbedderReady", () => {
         expect(result.isOk()).toBe(true);
     });
 
-    test("local mode + model missing → err not_configured, directing to `inflexa setup --embeddings local`", async () => {
+    test("local mode + model missing → err not_configured, directing to `inflexa setup` and naming the path", async () => {
         writeConfigWith({ mode: "local", modelPath: env.embeddingModelPath });
         const result = await ensureEmbedderReady();
         expect(result.isErr()).toBe(true);
         const e = result._unsafeUnwrapErr();
         expect(e.type).toBe("not_configured");
-        // The remediation succeeds in every install context now (local mode works from
-        // the compiled binary too), so there is no compiled-context switch-modes branch.
-        expect(e.message).toContain("inflexa setup --embeddings local");
+        // Remediation names the setup command and the config field (works in every install context now),
+        // and the missing path so the user sees exactly what the gate looked for.
+        expect(e.message).toContain("inflexa setup");
+        expect(e.message).toContain(env.embeddingModelPath);
+    });
+
+    test("local mode with a custom modelPath gates on THAT path, not the built-in location", async () => {
+        // A custom GGUF living somewhere other than env.embeddingModelPath — the built-in location is left
+        // absent on purpose, so a gate that (wrongly) checked it instead would fail this.
+        const customDir = mkdtempSync(join(tmpdir(), "inflexa-custom-model-"));
+        const customPath = join(customDir, "my-model.gguf");
+        writeFileSync(customPath, "fake-gguf");
+        writeConfigWith({ mode: "local", modelPath: customPath, dimensions: 512 });
+        expect(existsSync(env.embeddingModelPath)).toBe(false);
+        // Pre-materialize the runtime so the gate returns on the model-present + runtime-present short-circuit.
+        __setLlamaPinForTest(pinWith("0".repeat(64)));
+        mkdirSync(join(env.llamaServerDir, TEST_TAG), { recursive: true });
+        writeFileSync(join(env.llamaServerDir, TEST_TAG, "llama-server"), "#!/bin/sh\n");
+
+        const result = await ensureEmbedderReady();
+
+        expect(result.isOk()).toBe(true);
+        rmSync(customDir, { recursive: true, force: true });
+    });
+
+    test("local mode with a custom modelPath that is absent → not_configured naming that path", async () => {
+        const customPath = join(tmpdir(), "inflexa-absent-model-fixture.gguf");
+        rmSync(customPath, { force: true });
+        writeConfigWith({ mode: "local", modelPath: customPath });
+        const result = await ensureEmbedderReady();
+        expect(result.isErr()).toBe(true);
+        const e = result._unsafeUnwrapErr();
+        expect(e.type).toBe("not_configured");
+        expect(e.message).toContain(customPath);
     });
 
     test("local mode + model present + runtime materialized → ok with zero acquisition work", async () => {

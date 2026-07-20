@@ -53,13 +53,20 @@ import { ensureLlamaServer } from "./llama_runtime.ts";
 export interface LocalEmbeddingProviderDeps {
     /** Absolute path to the GGUF model file (typically `env.embeddingModelPath`). */
     readonly modelPath: string;
+    /**
+     * Vector width the model at `modelPath` emits. Omitted for the built-in bge-small (falls back to
+     * {@link LOCAL_EMBEDDING_DIMENSIONS}); set to a custom GGUF's own width — which setup measures through
+     * the sidecar probe and records in `embedding.dimensions`. One value drives BOTH the sidecar request
+     * width and the advertised `provider.dimensions`, so the harness sizes the index to exactly what the
+     * model emits and the two can never disagree.
+     */
+    readonly dimensions?: number;
 }
 
 /**
- * Vector width `bge-small-en-v1.5` emits. Advertised on the provider
- * (`EmbeddingProvider.dimensions`) so the harness sizes each per-analysis
- * pgvector index to it, and used by setup's post-download verification
- * (`setup.ts`) to detect a wrong-model GGUF.
+ * Default vector width — `bge-small-en-v1.5`'s. The built-in model always emits this, so it is the
+ * fallback when {@link LocalEmbeddingProviderDeps.dimensions} is unset AND the width setup asserts for the
+ * built-in model (to catch a wrong/corrupt GGUF). A custom GGUF of another width overrides it per-config.
  */
 export const LOCAL_EMBEDDING_DIMENSIONS = 384;
 
@@ -979,7 +986,7 @@ function ensureLoopbackProxyBypass(): void {
  * the epoch) makes the resolving launch reap its own process and cache nothing, and a
  * superseded sidecar's crash never clobbers its replacement's cache.
  */
-function ensureReady(modelPath: string): Promise<Result<ReadySidecar, ProviderError>> {
+function ensureReady(modelPath: string, dimensions: number): Promise<Result<ReadySidecar, ProviderError>> {
     if (ready === null) {
         // Must precede the launch: the health poll inside it and the harness client's
         // later POSTs are both loopback fetches an ambient corporate proxy would
@@ -1028,7 +1035,7 @@ function ensureReady(modelPath: string): Promise<Result<ReadySidecar, ProviderEr
                     baseURL: handle.baseURL,
                     token: handle.key,
                     model: LOCAL_EMBEDDING_MODEL,
-                    dimensions: LOCAL_EMBEDDING_DIMENSIONS,
+                    dimensions,
                     resolveBilling: createNoopBillingResolver(),
                 });
                 return ok({ handle, provider });
@@ -1075,13 +1082,16 @@ export async function stopLocalSidecarAndWait(): Promise<void> {
  * free — the sidecar is spawned lazily on the first non-empty `embed()`.
  */
 export function createLocalEmbeddingProvider(deps: LocalEmbeddingProviderDeps): EmbeddingProvider {
+    // One width for both the sidecar request param AND the advertised provider.dimensions the harness
+    // sizes the index to — defaulting to the built-in bge-small width when the config records none.
+    const dimensions = deps.dimensions ?? LOCAL_EMBEDDING_DIMENSIONS;
     function embed(texts: readonly string[], session: AgentSession): ResultAsync<number[][], ProviderError> {
         // Empty input is a no-op: don't spawn the sidecar just to return nothing.
         // Matches the harness `createEmbeddingProvider` shortcut.
         if (texts.length === 0) return okAsync([]);
 
         return new ResultAsync(
-            ensureReady(deps.modelPath).then((rs) =>
+            ensureReady(deps.modelPath, dimensions).then((rs) =>
                 rs.match(
                     // The token-exact fit measures against the sidecar's own tokenizer, so
                     // it runs AFTER readiness against the ready handle; the fitted texts
@@ -1094,7 +1104,7 @@ export function createLocalEmbeddingProvider(deps: LocalEmbeddingProviderDeps): 
         );
     }
 
-    return { embed, dimensions: LOCAL_EMBEDDING_DIMENSIONS };
+    return { embed, dimensions };
 }
 
 /**

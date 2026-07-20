@@ -776,7 +776,9 @@ function printNextSteps(options: SetupOptions, conn: PostgresConnection, mode: C
     } else if (!options.postgres) {
         lines.push("Postgres provisioning skipped (--no-postgres).");
     }
-    lines.push("Embeddings: run `inflexa setup --embeddings local` (in-process) or `--embeddings api-key`.");
+    lines.push(
+        "Embeddings: run `inflexa setup` and pick a backend — the built-in model, your own GGUF, or an api-key endpoint — or edit it later in `inflexa config`.",
+    );
     if (!options.start) {
         lines.push("Containers start automatically on next `inflexa` run.");
     }
