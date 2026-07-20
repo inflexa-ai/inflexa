@@ -61,7 +61,7 @@ function catalog(files: readonly Fixture[] = ARTIFACTS): ReferenceDataCatalog {
                 license: { identifier: "CC0-1.0", url: "https://example.test/license" },
                 recommendation: { group: "testing", recommended: true },
                 // The catalog pins nothing but the https URL: no size, no digest, no integrity class.
-                artifacts: files.map((file) => ({ path: file.path, url: url(file.path) })),
+                artifacts: files.map((file) => ({ path: file.path, url: url(file.path), format: "txt", contents: "test fixture artifact" })),
             },
         ],
     };
@@ -276,7 +276,7 @@ describe("mutable upstream installation", () => {
         const files: readonly Fixture[] = [{ path: "gene_info.gz", body: "mutable-bytes" }];
         const fixture = catalog(files);
         // The catalog carries only the https URL — no size or digest — for an upstream that rebuilds in place.
-        expect(fixture.datasets[0]?.artifacts[0]).toEqual({ path: "gene_info.gz", url: url("gene_info.gz") });
+        expect(fixture.datasets[0]?.artifacts[0]).toEqual({ path: "gene_info.gz", url: url("gene_info.gz"), format: "txt", contents: "test fixture artifact" });
 
         const installed = await installReferenceDatasets(["demo"], {
             root: path,
@@ -531,7 +531,7 @@ describe("projection documents", () => {
                     sourceUrl: "https://example.test/alpha",
                     license: { identifier: "CC0-1.0", url: "https://example.test/license" },
                     recommendation: { group: "testing", recommended: true },
-                    artifacts: [{ path: "a.txt", url: "https://upstream.test/a.txt" }],
+                    artifacts: [{ path: "a.txt", url: "https://upstream.test/a.txt", format: "txt", contents: "test fixture artifact" }],
                 },
                 state: "installed",
                 receipt: {
@@ -551,7 +551,7 @@ describe("projection documents", () => {
                     sourceUrl: "https://example.test/beta",
                     license: { identifier: "MIT" },
                     recommendation: { group: "extras", recommended: false },
-                    artifacts: [{ path: "b.txt", url: "https://upstream.test/b.txt" }],
+                    artifacts: [{ path: "b.txt", url: "https://upstream.test/b.txt", format: "txt", contents: "test fixture artifact" }],
                 },
                 state: "missing",
             },
@@ -619,7 +619,7 @@ describe("projection documents", () => {
                         sourceUrl: "https://example.test/gamma",
                         license: { identifier: "CC0-1.0" },
                         recommendation: { group: "testing", recommended: true },
-                        artifacts: [{ path: "g.txt", url: "https://upstream.test/g.txt" }],
+                        artifacts: [{ path: "g.txt", url: "https://upstream.test/g.txt", format: "txt", contents: "test fixture artifact" }],
                     },
                     state: "partial",
                     receipt: {

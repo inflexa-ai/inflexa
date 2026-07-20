@@ -69,6 +69,13 @@ function fakeIngress(calls: string[]): ExecIngress {
 // path runs fully offline.
 function recordingSeams(calls: string[]): BootSeams {
     return {
+        // Offline stub: the real seam shells out to the container runtime to read the
+        // image's inventory label. Null is the honest offline answer — the harness then
+        // reports the installed package set as unknown rather than guessing.
+        resolvePackages: async () => {
+            calls.push("resolvePackages");
+            return null;
+        },
         resolveSandboxEngine: async () => {
             calls.push("resolveSandboxEngine");
             // Default to a docker pin (today's behavior): no socket, no step-tree loosening.
@@ -238,6 +245,9 @@ describe("bootHarnessRuntime", () => {
             "probeEmbedding",
             "resolveSandboxEngine",
             "postgres",
+            // The package-inventory probe spawns a container-runtime command, so it sits
+            // AFTER the prereq gates: a boot about to fail on Postgres never pays for it.
+            "resolvePackages",
             "boot",
             "sweepEphemeral",
             "sweepAsks",

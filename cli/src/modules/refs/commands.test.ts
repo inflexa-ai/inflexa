@@ -37,8 +37,8 @@ function catalog(artifacts: ReferenceDataCatalog["datasets"][number]["artifacts"
     };
 }
 
-const FILE_ARTIFACT = { path: "file", url: "https://upstream.test/file" } as const;
-const MUTABLE_ARTIFACT = { path: "mutable", url: "https://upstream.test/mutable" } as const;
+const FILE_ARTIFACT = { path: "file", url: "https://upstream.test/file", format: "txt", contents: "test fixture artifact" } as const;
+const MUTABLE_ARTIFACT = { path: "mutable", url: "https://upstream.test/mutable", format: "txt", contents: "test fixture artifact" } as const;
 
 function source(value: ReferenceDataCatalog): ReferenceCatalogSource {
     return {
@@ -192,7 +192,7 @@ describe("reference json output", () => {
                     sourceUrl: "https://example.test/extra",
                     license: { identifier: "MIT", url: "https://example.test/mit" },
                     recommendation: { group: "extras", recommended: false },
-                    artifacts: [{ path: "x.txt", url: "https://upstream.test/x.txt" }],
+                    artifacts: [{ path: "x.txt", url: "https://upstream.test/x.txt", format: "txt", contents: "test fixture artifact" }],
                 },
                 {
                     id: "demo",
