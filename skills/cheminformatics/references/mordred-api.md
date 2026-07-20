@@ -12,13 +12,13 @@ import pandas as pd
 import numpy as np
 ```
 
-**Check this import first.** mordred 1.2.0 (the last PyPI release, 2018) does
-`from numpy import product` in `MolecularDistanceEdge`, and `numpy.product` was
-removed in NumPy 2. Under NumPy 2 the `from mordred import Calculator,
-descriptors` line above raises `ImportError: cannot import name 'product' from
-'numpy'` before any descriptor is computed. If that happens, mordred is
-unusable in the environment -- say so and fall back to RDKit descriptors rather
-than trying to downgrade NumPy, which would break the rest of the stack.
+The import is `mordred` either way: the maintained distribution is the
+community fork, which keeps the original module name. Upstream mordred's last
+release (1.2.0, 2018) still calls `np.float`, removed in NumPy 1.24, so it
+raises `AttributeError: module 'numpy' has no attribute 'float'` on import
+under any current NumPy. If you see that, the unmaintained package is installed
+rather than the fork — report it and fall back to RDKit descriptors. Do not
+downgrade NumPy; that breaks the rest of the stack.
 
 ## Calculator Setup
 
@@ -244,4 +244,4 @@ print(f"R2: {r2_score(y_test, y_pred):.3f}")
 - The `Calculator` object is reusable. Create once, apply to many molecules.
 - Mordred requires RDKit molecules. Always convert SMILES to mol objects first.
 - `calc.pandas([])` does **not** raise -- it returns an empty DataFrame with the full descriptor columns, shape `(0, n_descriptors)`. Guard on `df.empty` rather than expecting an exception.
-- mordred 1.2.0 imports `numpy.product`, which was removed in NumPy 2. If you hit `ImportError: cannot import name 'product' from 'numpy'`, the environment has NumPy 2 and mordred cannot be used; report it rather than working around it.
+- An `AttributeError` for `numpy.float` on `import mordred` means the unmaintained upstream package is installed rather than the community fork; it cannot be used with a current NumPy. Report it and fall back to RDKit descriptors rather than working around it.

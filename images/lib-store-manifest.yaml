@@ -365,7 +365,11 @@ python:
       # Cheminformatics
       - rdkit
       - datamol
-      - mordred
+      # mordredcommunity, not mordred: upstream mordred 1.2.0 is unmaintained and
+      # still calls `np.float`, removed in NumPy 1.24, so importing it fails on any
+      # current NumPy. The community fork carries the same `mordred` module name,
+      # so imports are unchanged.
+      - mordredcommunity
       - deepchem[jax]
 
       # Reporting / export
