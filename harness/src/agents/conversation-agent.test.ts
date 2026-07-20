@@ -50,7 +50,16 @@ describe("createConversationAgent", () => {
         expect(agent.id).toBe(CONVERSATION_AGENT_ID);
         expect(agent.model).toBe("anthropic/claude-opus-4-7");
         expect(agent.maxIterations).toBe(50);
-        expect(agent.tools.length).toBe(35);
+        expect(agent.tools.length).toBe(36);
+    });
+
+    // Provisioning is decided in conversation: an embedder may give this agent a way to
+    // install reference data (the cli's `run_inflexa` can drive `refs download`, gated on
+    // the user approving it). Whatever asks for that download has to be able to see what
+    // is already installed first, or it asks for data the user already has — or misses
+    // that something is absent.
+    test("carries reference discovery, so provisioning is never decided blind", () => {
+        expect(buildAgent().tools.map((tool) => tool.id)).toContain("list_available_refs");
     });
 
     test("the system prompt is static SOUL composition", () => {

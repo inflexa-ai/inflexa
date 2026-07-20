@@ -96,6 +96,12 @@ export interface DataProfileDeps {
      * inject its extracted copy, or the profiler reads the inventory as unknown.
      */
     readonly packagesFile?: string;
+    /**
+     * Host path of the reference store. Omit only when none is provisioned: the
+     * profiler carries reference discovery, and without this it reports an installed
+     * store as absent.
+     */
+    readonly refStorePath?: string;
 }
 
 /**
@@ -320,6 +326,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 model: deps.model,
                 skillsDir: deps.skillsDir,
                 ...(deps.packagesFile ? { packagesFile: deps.packagesFile } : {}),
+                ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}),
                 bioKeys: deps.bioKeys,
                 step: {
                     sandbox,
