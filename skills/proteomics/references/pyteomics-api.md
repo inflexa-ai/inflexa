@@ -160,8 +160,7 @@ water_mass = mass.calculate_mass(formula="H2O")
 comp = mass.Composition(sequence="PEPTIDE")
 neutral_mass = comp.mass()
 
-# Theoretical isotope distribution
-from pyteomics import isotope
+# Theoretical isotope distribution (mass is already imported above)
 isotope_dist = mass.isotopic_composition_abundance(
     formula="C50H71N13O12"
 )

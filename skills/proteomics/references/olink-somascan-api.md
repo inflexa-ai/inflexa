@@ -99,10 +99,19 @@ with localconverter(converter):
 # Remove samples with QC warnings
 qc_pass = olink_long[olink_long["QC_Warning"] != "Warning"]
 
-# Remove assays with high CV in controls
+# Remove assays with high variability in controls.
+# NPX is already log2-scale, so std/mean is NOT a CV — the mean can sit near or
+# below zero and the ratio becomes meaningless or sign-flipped. Either use the
+# SD of NPX directly (a log2-scale dispersion measure), or linearize first.
 ctrl = olink_long[olink_long["SampleID"].str.contains("CTRL")]
-cv_by_assay = ctrl.groupby("OlinkID")["NPX"].agg(lambda x: x.std() / x.mean())
-reliable_assays = cv_by_assay[cv_by_assay < 0.2].index
+
+sd_by_assay = ctrl.groupby("OlinkID")["NPX"].std()
+reliable_assays = sd_by_assay[sd_by_assay < 0.2].index   # < 0.2 log2 units
+
+# Equivalent on the linear scale, if you want a true CV:
+# cv_by_assay = ctrl.groupby("OlinkID")["NPX"].agg(
+#     lambda x: (2 ** x).std() / (2 ** x).mean()
+# )
 ```
 
 ### Create AnnData from Olink
@@ -153,6 +162,7 @@ def read_adat(path):
     return df
 
 # Using SomaDataIO via rpy2 (recommended)
+base = importr("base")
 somadata = importr("SomaDataIO")
 with localconverter(converter):
     adat = somadata.read_adat("sample_data.adat")

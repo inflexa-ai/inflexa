@@ -10,8 +10,15 @@ import pysam
 # BAM file (binary, requires index .bai)
 bam = pysam.AlignmentFile("sample.bam", "rb")
 
-# CRAM file (requires reference FASTA)
-cram = pysam.AlignmentFile("sample.cram", "rc", reference_filename="ref.fa")
+# CRAM file (requires the reference FASTA the CRAM was compressed against).
+# `reference_fasta` is a path you resolved — ask for the genome by what it is,
+# never by a hardcoded name. The only genome FASTA in the reference inventory is
+# a PGx-scoped GRCh38 bundle shipped as a .tar: the store is read-only, so it
+# must be extracted into your working directory before pysam can open it, and it
+# is only correct if your CRAM was aligned to that same build. If no matching
+# reference is available, report that CRAM cannot be decoded and say what must
+# be provisioned — do not invent a path or silently fall through to BAM handling.
+cram = pysam.AlignmentFile("sample.cram", "rc", reference_filename=reference_fasta)
 
 # SAM file (text, no index needed)
 sam = pysam.AlignmentFile("sample.sam", "r")

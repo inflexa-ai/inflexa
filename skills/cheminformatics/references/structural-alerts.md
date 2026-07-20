@@ -138,6 +138,13 @@ def screen_by_catalog(smiles_list):
         "ZINC": FilterCatalogParams.FilterCatalogs.ZINC,
     }
 
+    # Build each catalog ONCE -- construction compiles hundreds of SMARTS.
+    catalogs = {}
+    for name, cat_enum in catalog_names.items():
+        params = FilterCatalogParams()
+        params.AddCatalog(cat_enum)
+        catalogs[name] = FilterCatalog(params)
+
     results = []
     for smi in smiles_list:
         mol = Chem.MolFromSmiles(smi)
@@ -145,10 +152,7 @@ def screen_by_catalog(smiles_list):
             continue
 
         row = {"SMILES": smi}
-        for name, cat_enum in catalog_names.items():
-            params = FilterCatalogParams()
-            params.AddCatalog(cat_enum)
-            cat = FilterCatalog(params)
+        for name, cat in catalogs.items():
             entry = cat.GetFirstMatch(mol)
             row[f"{name}_flagged"] = entry is not None
             row[f"{name}_alert"] = entry.GetDescription() if entry else None
@@ -258,6 +262,6 @@ print(f"Ro5 pass: {n_ro5_pass}/{n_valid} ({n_ro5_pass/n_valid*100:.1f}%)")
 
 - `GetFirstMatch()` returns `None` when clean, a `FilterCatalogEntry` when flagged. Do NOT compare with `False` -- use `is not None`.
 - `GetMatches()` returns all matching filters. A single molecule can match multiple alerts from the same or different catalogs.
-- `FilterCatalog` construction is lightweight. Creating separate catalogs per filter set is fine for readability.
+- `FilterCatalog` construction compiles several hundred SMARTS patterns and is NOT cheap. Build each catalog ONCE, outside the per-molecule loop, and reuse it. Rebuilding per molecule recompiles the full PAINS/Brenk pattern set on every row and dominates runtime on any real library.
 - Alert descriptions are strings like `"quinone_A(370)"`. These are the filter names from the original PAINS publications. Report them as-is for traceability.
 - PAINS filters were published in three tiers (A, B, C). Class A filters have the strongest evidence of interference. If triaging a large library, prioritize Class A flags.

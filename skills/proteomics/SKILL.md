@@ -87,8 +87,13 @@ Phosphoproteomics workflow:
 │   └── MaxQuant: Phospho (STY)Sites table
 ├── Normalization: Normalize to total proteome if available (correct for protein abundance changes)
 ├── DE: limma on log2 site-level intensities
-├── Kinase activity: decoupler with PhosphoSitePlus or Omnipath kinase-substrate networks
-│   └── dc.mt.ulm(adata, net=ksn) where ksn = kinase-substrate network
+├── Kinase activity: decoupler with a kinase-substrate network you resolved
+│   ├── dc.mt.ulm(adata, net=ksn) where ksn = kinase-substrate network
+│   └── NOTE: no kinase-substrate network is in the reference inventory, and
+│       every decoupler built-in fetcher (dc.op.*) reaches the network, which
+│       is blocked — so Omnipath/PhosphoSitePlus retrieval fails outright.
+│       If none is available, report it and deliver site-level DE without
+│       kinase activity; never invent a path or substitute a TF regulon.
 └── Critical: Do NOT roll up phospho-sites to protein level — this loses site-specific information
 ```
 

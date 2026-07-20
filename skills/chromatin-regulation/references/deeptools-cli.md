@@ -1,6 +1,10 @@
 # deeptools CLI Reference
 
-Command-line suite for processing and visualizing high-throughput sequencing data (ChIP-seq, ATAC-seq, RNA-seq). All commands are run via `execute_command`.
+Command-line suite for processing and visualizing high-throughput sequencing data (ChIP-seq, ATAC-seq, RNA-seq). All commands below are shell commands.
+
+**Verify the binaries before you build a pipeline around them.** deeptools is not guaranteed to be staged in this environment, and there is no network egress, so it cannot be installed at runtime. Probe first (`bamCoverage --version`, `computeMatrix --version`) and, if it is missing, say so plainly and fall back to a route that is available (pyBigWig for signal extraction, a counted matrix plotted with matplotlib) rather than emitting commands that will not run.
+
+**Reference tracks are resolved, never named.** A blacklist region set, a gene-annotation BED, and a chromosome-sizes file are all provisioned per-environment; the directory, the filename, and the genome build vary and none are yours to assume. Ask for the *track* by what it is, and pass the resolved absolute path. An ENCODE blacklist BED and a genome GTF/BED are **not currently in the reference inventory** — if you look and they are not there, report it, run the step without blacklist filtering (noting the caveat in your output), and never invent a path or silently drop the option.
 
 ## bamCoverage -- Generate BigWig from BAM
 
@@ -27,15 +31,21 @@ bamCoverage -b sample.bam -o sample_rpgc.bw \
     --normalizeUsing RPGC \
     --effectiveGenomeSize 2913022398  # hg38
 
-# Common options
+# Common options.
+#   --binSize            resolution in bp (default 50)
+#   --smoothLength       smooth over N bp window
+#   --extendReads        extend reads to fragment length
+#   --ignoreDuplicates   skip PCR duplicates
+#   --minMappingQuality  MAPQ filter
+#   --blackListFileName  path you resolved; drop the flag if no blacklist is available
 bamCoverage -b sample.bam -o sample.bw \
     --normalizeUsing CPM \
-    --binSize 10 \                 # resolution in bp (default 50)
-    --smoothLength 60 \            # smooth over N bp window
-    --extendReads 200 \            # extend reads to fragment length
-    --ignoreDuplicates \           # skip PCR duplicates
-    --minMappingQuality 30 \       # MAPQ filter
-    --blackListFileName blacklist.bed \
+    --binSize 10 \
+    --smoothLength 60 \
+    --extendReads 200 \
+    --ignoreDuplicates \
+    --minMappingQuality 30 \
+    --blackListFileName "$BLACKLIST_BED" \
     --numberOfProcessors 8
 ```
 

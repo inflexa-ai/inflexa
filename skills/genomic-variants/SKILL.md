@@ -89,7 +89,7 @@ Genotype data (VCF or PLINK format)
           → SAIGE (case-control imbalance, saddlepoint approximation)
 ```
 
-- PLINK2 is the default tool for GWAS QC and association. Use the `--glm` command.
+- PLINK2 is the default tool for GWAS QC and association. Use the `--glm` command. **Verify `plink2` is on PATH before building a pipeline around it** — it is not guaranteed to be staged, and with no egress it cannot be installed at runtime. If it is absent, report that and fall back to cyvcf2/`bcftools` for VCF-level QC and statsmodels for association on an extracted genotype matrix.
 - ALWAYS include PCA covariates to adjust for population structure. Omitting this produces inflated results.
 - Check genomic inflation factor (lambda_GC); values >1.05 suggest residual confounding.
 - Use cyvcf2 for programmatic VCF parsing in Python.
@@ -105,7 +105,8 @@ VCF with called variants
 ```
 
 - VEP is preferred for its plugin ecosystem and comprehensive consequence prediction.
-- Always annotate with gnomAD allele frequencies for rare variant filtering.
+- Annotate with gnomAD allele frequencies for rare variant filtering **when they are available**.
+- **The annotation and training resources this section names are not in the reference inventory** — no ClinVar, no gnomAD, no dbSNP, no HapMap/1000G training sets, no genome FASTA beyond a PGx-scoped GRCh38 bundle. There is no network egress, so VEP/SnpEff caches and plugin data cannot be fetched at runtime either. Resolve what you need by what it is, up front. If it is absent: say so plainly, deliver the annotation-independent results (call sets, quality metrics, cohort allele frequencies computed from your own AC/AN), and state what must be provisioned. Never invent a resource path, never substitute a different database unannounced, and never quietly drop a filtering step whose reference is missing — an unfiltered call set reported as filtered is the worst outcome here.
 
 ### 7. Variant Filtering
 
@@ -156,7 +157,7 @@ Rare variant analysis
 - **GenomicAlignments**: Work with aligned reads as GRanges. Use `readGAlignments()`.
 - **VariantAnnotation**: Read/write/filter VCF in R. Use `readVcf()`, `info()`, `geno()`. Complements cyvcf2 for R-based workflows.
 
-### CLI tools (run via execute_command)
+### CLI tools (run as shell commands)
 
 - **samtools**: view, sort, index, flagstat, idxstats, depth, mpileup.
 - **bcftools**: view, filter, query, stats, norm, merge, annotate, consensus.

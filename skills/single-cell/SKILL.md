@@ -119,9 +119,10 @@ Resolve a TF-target regulon network for your organism (CollecTRI, or DoRothEA
   confidence A-C) from the reference data available to you — never dc.op.collectri()
   (no network egress). Formats vary; read it the way the inventory reports.
 collectri = pd.read_csv(regulon_path)   # regulon_path resolved, not a literal
+  → CollecTRI is CSV; DoRothEA ships as R .rda and needs rpy2, not pandas
   → normalise columns to source / target / weight; targets are HGNC (human) / MGI (mouse)
-dc.mt.ulm(adata, net=collectri)
-Results in adata.obsm["ulm_estimate"], adata.obsm["ulm_pvals"]
+dc.mt.ulm(data=adata, net=collectri)
+Results in adata.obsm["score_ulm"], adata.obsm["padj_ulm"]
 ```
 
 ---

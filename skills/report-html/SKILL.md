@@ -7,7 +7,7 @@ tags: [report, html, jinja2, tailwind, echarts, visualization, light-theme, infl
 
 # HTML Report Builder
 
-Author Jinja2 templates that extend the Inflexa base layout. The renderer resolves `base.html.j2` and `components/*.html.j2` from the templates dir; you only write `report.html.j2`. For the full token reference (colors, type scale, spacing, textures), call `skill_read` on `references/design-system.md`.
+Author Jinja2 templates that extend the Inflexa base layout. The renderer resolves `base.html.j2` and `components/*.html.j2` from the templates dir; you only write `report.html.j2`. For the full token reference (colors, type scale, spacing, textures), read `references/design-system.md`.
 
 ## Design Identity
 

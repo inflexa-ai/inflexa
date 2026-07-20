@@ -14,7 +14,7 @@ clinical response evaluation in Phase 1/2 trial-adjacent contexts.
 
 ### RECIST 1.1 (Response Evaluation Criteria in Solid Tumors)
 
-**Reference:** `skill_read("references/clinical-response-criteria.md")` for full RECIST 1.1 tables, overall response derivation matrix, `recist_classify_target()`, `best_overall_response()`, and iRECIST pseudoprogression rules.
+**Reference:** `references/clinical-response-criteria.md` — read it for full RECIST 1.1 tables, overall response derivation matrix, `recist_classify_target()`, `best_overall_response()`, and iRECIST pseudoprogression rules.
 
 | Category | Abbreviation | Definition |
 |----------|-------------|------------|
@@ -36,14 +36,14 @@ assessment). For IO trials, always check if iRECIST was used.
 
 ### Non-Compartmental Analysis (NCA)
 
-**Reference:** `skill_read("references/nca-analysis.md")` for complete NCA functions (`auc_linear_trapezoidal`, `auc_log_linear_trapezoidal`, `auc_extrapolated`, `terminal_half_life`, `derive_pk_params`), concentration-time plots, and quality checks.
+**Reference:** `references/nca-analysis.md` — read it for complete NCA functions (`auc_linear_trapezoidal`, `auc_log_linear_trapezoidal`, `auc_extrapolated`, `terminal_half_life`, `derive_pk_params`), concentration-time plots, and quality checks.
 
 Always report: Cmax, Tmax, AUC(0-last), AUC(0-inf), t1/2, CL/F, Vd/F.
 Plot: concentration-time profile (linear and semi-log scale).
 
 ### Population PK Covariates
 
-**Reference:** `skill_read("references/population-pk.md")` for statsmodels MixedLM syntax, random effects specification, `forward_selection()`, `backward_elimination()`, standard PK covariates table, allometric scaling, and diagnostic plots.
+**Reference:** `references/population-pk.md` — read it for statsmodels MixedLM syntax, random effects specification, `forward_selection()`, `backward_elimination()`, standard PK covariates table, allometric scaling, and diagnostic plots.
 
 When patient demographic/clinical data is available alongside PK data:
 - Test covariates: age, weight, sex, renal function (eGFR), hepatic
@@ -55,13 +55,13 @@ When patient demographic/clinical data is available alongside PK data:
 
 ### Efficacy Exposure-Response
 
-**Reference:** `skill_read("references/dose-exposure-response.md")` for `four_param_logistic()` fitting, `exposure_response_binary()`, `safety_exposure_response()` (time-to-AE by exposure quartile), and `identify_therapeutic_window()`.
+**Reference:** `references/dose-exposure-response.md` — read it for `four_param_logistic()` fitting, `exposure_response_binary()`, `safety_exposure_response()` (time-to-AE by exposure quartile), and `identify_therapeutic_window()`.
 
 Link drug exposure (AUC, Cmax, Cmin) to efficacy outcomes. Use logistic regression for binary response vs exposure, and derive EC50 (exposure at 50% response probability) from the fitted model.
 
 ### Safety Exposure-Response
 
-**Reference:** `skill_read("references/lifelines-pkpd.md")` for `safety_exposure_response()` with KM + log-rank, `cox_exposure_safety()` for multivariate hazard models, and at-risk table formatting.
+**Reference:** `references/lifelines-pkpd.md` — read it for `safety_exposure_response()` with KM + log-rank, `cox_exposure_safety()` for multivariate hazard models, and at-risk table formatting.
 
 Link exposure to adverse event probability:
 - Logistic regression: P(AE grade >= 3) ~ AUC_ss
@@ -102,7 +102,7 @@ Standard clinical trial visualizations. See PD biomarker tracking reference for 
 
 ## Pharmacodynamic Biomarker Tracking
 
-**Reference:** `skill_read("references/pd-biomarker-tracking.md")` for complete PD assessment functions (`compute_pd_change`, `classify_pd_response`, `plot_pd_timecourse`, `plot_pd_by_dose`), hysteresis diagnosis, PD-exposure mixed-effects modeling, and waterfall plots.
+**Reference:** `references/pd-biomarker-tracking.md` — read it for complete PD assessment functions (`compute_pd_change`, `classify_pd_response`, `plot_pd_timecourse`, `plot_pd_by_dose`), hysteresis diagnosis, PD-exposure mixed-effects modeling, and waterfall plots.
 
 ### Longitudinal PD Marker Assessment
 
@@ -153,7 +153,7 @@ to account for repeated measures. Always report whether the PD-exposure relation
 ## References
 
 Detailed API references, ready-to-use functions, and domain-specific
-gotchas. Read via `skill_read("references/<filename>")`.
+gotchas. Read the reference file itself before writing code in that area.
 
 | Reference | File | Contents |
 |-----------|------|----------|

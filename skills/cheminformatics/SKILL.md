@@ -40,7 +40,7 @@ Choose the method based on your input data and analytical goal:
 5. **ADMET Prediction**
    - Computed descriptors: rdkit (basic) + mordred (1800+ 2D/3D descriptors) for comprehensive molecular characterization.
    - Rule-based assessment: Lipinski Ro5, Veber rules, PAINS alerts -- fast, interpretable, no training data needed.
-   - Learned models: DeepChem pretrained models or custom models trained on MoleculeNet ADMET benchmarks (Tox21, BBBP, ClinTox, SIDER).
+   - Learned models: train on labelled data already in the workspace. DeepChem's pretrained weights and its MoleculeNet benchmark loaders (Tox21, BBBP, ClinTox, SIDER) both fetch over the network and are unavailable in the sandbox — see `references/deepchem-api.md`.
 
 6. **Structure Processing**
    - Format conversion: `dm.from_sdf()` / `dm.to_sdf()` for SDF, `Chem.MolFromSmiles()` / `Chem.MolToSmiles()` for SMILES.
@@ -50,25 +50,32 @@ Choose the method based on your input data and analytical goal:
 
 ## Compound Acquisition
 
-When compound data is not already in the workspace, use database tools to acquire it:
+When compound data is not already in the workspace, acquire it through the
+compound-database lookup capabilities available to the agent. Nothing in the
+sandbox can reach these databases directly — egress is blocked — so acquisition
+happens through the conversation layer's lookup tools, and the retrieved data is
+written into the workspace before any sandbox analysis reads it.
 
-**ChEMBL** (curated drug-like bioactives, ~2.4M compounds):
-- `searchTargets` → resolve gene symbols to target ChEMBL IDs
-- `searchCompounds` → find compounds by target, name, or SMILES
-- `getBioactivity` → IC50/EC50/Ki for compound-target pairs
-- `getMechanism` → mechanism of action
-- `getDrugInfo` → approved drugs by indication
+**ChEMBL** (curated drug-like bioactives) — ask for:
+- resolution of gene symbols to ChEMBL target identifiers
+- compounds by target, name, or SMILES
+- bioactivity measurements (IC50/EC50/Ki) for compound-target pairs
+- mechanism of action for a drug
+- approved drugs by indication
 
-**PubChem** (broad coverage, 110M+ compounds):
-- `searchPubchemCompound` → resolve any compound by name, SMILES, InChI, InChIKey, or CID; returns identity + computed properties
-- `getPubchemCrossRefs` → bridge PubChem CID to ChEMBL, DrugBank, KEGG, PDB identifiers
-- `getPubchemAssays` → HTS screening results (active/inactive/inconclusive)
+**PubChem** (broad coverage, far larger and far less curated) — ask for:
+- compound identity and computed properties by name, SMILES, InChI, InChIKey, or CID
+- cross-references bridging a PubChem CID to ChEMBL, DrugBank, KEGG, and PDB identifiers
+- HTS assay screening results (active/inactive/inconclusive)
 
 **Recommended workflow for unknown compounds:**
 1. Try ChEMBL first if the query is target-based or drug-related
 2. Fall back to PubChem for compounds not in ChEMBL
-3. Use `getPubchemCrossRefs` to bridge PubChem CID → ChEMBL ID, then query ChEMBL for curated activity data
-4. Use `getPubchemAssays` for broader screening data when ChEMBL has no bioactivity
+3. Bridge a PubChem CID to a ChEMBL ID via cross-references, then query ChEMBL for curated activity data
+4. Use PubChem assay data for broader screening evidence when ChEMBL has no bioactivity
+
+If a lookup returns nothing, report the gap — never fabricate structures,
+identifiers, or activity values to fill it.
 
 ## Druglikeness Rules Reference
 
@@ -168,7 +175,7 @@ CMap-style analysis code.
 ### Workflow
 
 1. **Generate query signature** — from differential expression analysis, take the top N up-regulated and top N down-regulated genes (typically N = 100-500). Use gene symbols as identifiers.
-2. **Build reference profiles** — from ChEMBL compound perturbation data or workspace perturbation experiments. Each reference is a vector of signed fold-changes for the same gene universe.
+2. **Obtain reference profiles** — each reference is a vector of signed fold-changes over the same gene universe. **There is no bundled drug-perturbation reference dataset**: no LINCS L1000 / CMap signature matrix is provisioned, and ChEMBL carries bioactivity, not transcriptomic perturbation profiles. Reference profiles must therefore come from perturbation experiments already staged in the workspace. Search the workspace for them first; if none exist, report that CMap-style scoring cannot be run and say what would be needed. Never invent a reference path and never substitute drug-target gene lists for perturbation signatures — scoring target sets against a disease ranking is target enrichment, not connectivity, and must not be reported as a connectivity score.
 3. **Score all references** — use `gseapy.prerank` (preferred) or KS-based connectivity scoring from the reference.
 4. **Assess significance** — permutation-based FDR from gseapy, or empirical p-value from 1000 label permutations.
 5. **Interpret results**:

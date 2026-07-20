@@ -324,7 +324,10 @@ def diagnose_hysteresis(conc, effect):
     conc = np.asarray(conc, dtype=float)
     effect = np.asarray(effect, dtype=float)
 
-    signed_area = integrate.trapezoid(effect, conc)
+    # Shoelace/Green's theorem: the closed integral of y*dx is NEGATIVE for a
+    # counter-clockwise loop and POSITIVE for a clockwise one. Negate so that
+    # positive signed_area means counter-clockwise.
+    signed_area = -integrate.trapezoid(effect, conc)
 
     if abs(signed_area) < 0.01 * np.ptp(conc) * np.ptp(effect):
         direction = "none"

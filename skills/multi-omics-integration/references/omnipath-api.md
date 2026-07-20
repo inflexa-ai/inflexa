@@ -4,7 +4,7 @@ OmniPath is a comprehensive database of molecular interactions (PPI, TF-target, 
 
 ## Resource Loading
 
-**The OmniPath web service is not reachable.** There is no network egress, and the service itself (omnipathdb.org) is currently returning 502 — so a retry, a proxy attempt, or a longer timeout will not help. Every `omnipath.interactions.*.get()` and every `dc.op.*()` call in this reference is documentation of an API you cannot call here; each section below states what to load from a file instead.
+**The OmniPath web service is not reachable.** There is no network egress, so a retry, a proxy attempt, or a longer timeout will not help. Every `omnipath.interactions.*.get()` and every `dc.op.*()` call in this reference is documentation of an API you cannot call here; each section below states what to load from a file instead.
 
 **Resolve the file before you write the script.** Ask for the *dataset* by what it is, not by a path — reference data is provisioned per-environment, so the directory, the filename, and the format all vary and none of them are yours to assume:
 
@@ -18,12 +18,28 @@ Then read it with the reader its format actually calls for — these circulate a
 
 **Be honest when a dataset is absent.** General OmniPath interaction data (PPI, kinase-substrate, ligand-receptor) is not currently part of the reference data available to you. If you resolve it and it is not there, say so and proceed with what the analysis can support — do not silently substitute a different network, and do not fabricate edges.
 
+Regulon and pathway-weight files are frequently distributed as R `.rda` (this is
+how PROGENy and DoRothEA are published), which pandas cannot open — those need
+rpy2. Check the format the inventory reports and pick the reader from it:
+
 ```python
 import pandas as pd
+import rpy2.robjects as ro
+from rpy2.robjects import pandas2ri
+
+
+def read_rda_frame(path: str) -> pd.DataFrame:
+    """Load the data frame an R .rda holds (PROGENy, DoRothEA) into pandas."""
+    names = list(ro.r["load"](path))  # load() returns the names it created
+    with (ro.default_converter + pandas2ri.converter).context():
+        return ro.conversion.get_conversion().rpy2py(ro.r[names[0]])
+
 
 # `regulon_path` and `pathway_path` are paths you resolved, not literals to copy.
+# CollecTRI is CSV; if you resolved DoRothEA instead, it is .rda — use read_rda_frame.
 collectri = pd.read_csv(regulon_path)
-progeny = pd.read_csv(pathway_path)
+# PROGENy is published as .rda — read_csv on it fails outright.
+progeny = read_rda_frame(pathway_path)
 ```
 
 ### Network DataFrame Format
@@ -165,7 +181,7 @@ acts_mlm, pvals_mlm = dc.run_mlm(
 )
 
 # Pathway activity with PROGENy
-progeny = pd.read_csv(pathway_path)  # resolved + normalised per Resource Loading
+progeny = read_rda_frame(pathway_path)  # PROGENy is .rda; see Resource Loading
 pathway_acts, pathway_pvals = dc.run_mlm(
     mat=expression_df,
     net=progeny
@@ -243,7 +259,7 @@ for tf in top_tfs:
 subgraph = G.subgraph(tf_neighbors | set(top_tfs)).copy()
 
 # 4. Pathway activities
-progeny = pd.read_csv(pathway_path)  # resolved + normalised per Resource Loading
+progeny = read_rda_frame(pathway_path)  # PROGENy is .rda; see Resource Loading
 pathway_acts, _ = dc.run_mlm(mat=expression_df, net=progeny)
 
 print(f"Network: {subgraph.number_of_nodes()} nodes, {subgraph.number_of_edges()} edges")
@@ -252,10 +268,10 @@ print(f"Active pathways:\n{pathway_acts.mean(axis=0).sort_values(ascending=False
 
 ## Gotchas
 
-- **No network access**: every `omnipath.interactions.*.get()` and every `dc.op.*()` call queries omnipathdb.org. There is no egress, and the service is additionally returning 502 — these calls cannot be made to work here. Load from a resolved file instead. `omnipath`'s built-in caching does not help: an empty cache still needs the first request.
+- **No network access**: every `omnipath.interactions.*.get()` and every `dc.op.*()` call queries omnipathdb.org. There is no egress, so these calls cannot be made to work here. Load from a resolved file instead. `omnipath`'s built-in caching does not help: an empty cache still needs the first request.
 - **Never assume a format**: resolved networks circulate as CSV, TSV, and R `.rda` depending on the source. Use the reader the inventory reports for the file; do not default to one.
 - **Be honest about absence**: general OmniPath interaction data is not currently in the reference data available to you. If it does not resolve, say so and scope the analysis down — do not substitute a different network and present it as OmniPath.
-- Install both `omnipath` and `decoupler` packages: `pip install omnipath decoupler`. The `omnipath` package is still useful for its column semantics even though its fetchers are unusable here.
+- **No runtime installs**: `pip install omnipath decoupler` cannot work — package installs need the network too. Confirm what is already staged before importing. The `omnipath` package, if present, is still useful for its column semantics even though its fetchers are unusable here.
 - Prefer CollecTRI over DoRothEA for TF regulons — DoRothEA is superseded. If only DoRothEA is available, filter to confidence A-C and rename `tf`/`mor` to `source`/`weight`.
 - For `dc.run_ulm()` / `dc.run_mlm()`, the expression matrix must have genes as columns and samples as rows.
 - Gene symbols must match between expression data and network. OmniPath uses HGNC symbols for human, MGI for mouse — and the network's organism must match the data's, or the run silently returns meaningless scores.

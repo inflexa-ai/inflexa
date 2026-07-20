@@ -221,8 +221,10 @@ ro.r('pathways <- gmtPathways(gmt_path)')
 pathways = ro.r("pathways")
 
 # Sanity check once stats_vec is assigned: expect a healthy overlap, not a handful
-ro.r('cat(length(pathways), "sets;",
-          length(intersect(unlist(pathways), names(stats_vec))), "genes matched\n")')
+ro.r('''
+cat(length(pathways), "sets;",
+    length(intersect(unlist(pathways), names(stats_vec))), "genes matched\n")
+''')
 ```
 
 ### msigdbr R package (requires network — WILL FAIL here)

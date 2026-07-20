@@ -199,7 +199,9 @@ def score_signatures_decoupler(adata, signatures_dict,
     Returns
     -------
     AnnData
-        Updated with signature scores in .obsm["signature_scores"].
+        Updated in place: decoupler writes the scores and p-values into
+        .obsm (keyed per method, e.g. "ulm_estimate" / "ulm_pvals").
+        Check the keys after the call rather than assuming a name.
     """
     import decoupler as dc
 
@@ -345,9 +347,9 @@ def compute_repertoire_diversity(clonotype_counts):
 
     sorted_counts = np.sort(counts)[::-1]
     cumulative = np.cumsum(sorted_counts) / total
-    gini = 1 - 2 * np.sum(
+    gini = (n_clonotypes + 1) / n_clonotypes - 2 * np.sum(
         (np.arange(1, n_clonotypes + 1) * sorted_counts),
-    ) / (n_clonotypes * total) + (n_clonotypes + 1) / n_clonotypes
+    ) / (n_clonotypes * total)
 
     top1_fraction = sorted_counts[0] / total
     top10_fraction = sorted_counts[:10].sum() / total if n_clonotypes >= 10 else 1.0

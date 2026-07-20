@@ -24,11 +24,27 @@ Never call `dc.op.progeny()`, `dc.op.collectri()`, `dc.op.ksn_omnipath()`, `dc.g
 
 Then read it with the reader its format actually calls for — these circulate as CSV, TSV, and R `.rda` depending on the source, and a wrong-format read fails immediately. Match the organism too: a human regulon set over mouse counts runs happily and returns meaningless activities. A kinase-substrate network is the least commonly provisioned of the three: confirm one is in the inventory before planning a kinase-activity step, rather than discovering its absence mid-script.
 
+Pathway-weight and regulon files are frequently distributed as R `.rda` (this is
+how PROGENy and DoRothEA are published), which pandas cannot open — those need
+rpy2. Check the format the inventory reports and pick the reader from it:
+
 ```python
 import pandas as pd
+import rpy2.robjects as ro
+from rpy2.robjects import pandas2ri
+
+
+def read_rda_frame(path: str) -> pd.DataFrame:
+    """Load the data frame an R .rda holds (PROGENy, DoRothEA) into pandas."""
+    names = list(ro.r["load"](path))  # load() returns the names it created
+    with (ro.default_converter + pandas2ri.converter).context():
+        return ro.conversion.get_conversion().rpy2py(ro.r[names[0]])
+
 
 # `pathway_path` and `regulon_path` are paths you resolved, not literals to copy.
-progeny = pd.read_csv(pathway_path)
+# PROGENy is published as .rda — read_csv on it fails outright.
+progeny = read_rda_frame(pathway_path)
+# CollecTRI is CSV; if you resolved DoRothEA instead, it is .rda — use read_rda_frame.
 collectri = pd.read_csv(regulon_path)
 ```
 
@@ -134,7 +150,7 @@ consensus_acts = pd.concat(
 
 ```python
 # Load PROGENy network
-progeny = pd.read_csv(pathway_path)  # resolved + normalised per Resource Loading
+progeny = read_rda_frame(pathway_path)  # PROGENy is .rda; see Resource Loading
 # 14 pathways: Androgen, EGFR, Estrogen, Hypoxia, JAK-STAT, MAPK,
 #              NFkB, p53, PI3K, TGFb, TNFa, Trail, VEGF, WNT
 
@@ -238,7 +254,7 @@ import pandas as pd
 expr = pd.read_csv("vst_counts.csv", index_col=0)
 
 # Pathway activity
-progeny = pd.read_csv(pathway_path)  # resolved + normalised per Resource Loading
+progeny = read_rda_frame(pathway_path)  # PROGENy is .rda; see Resource Loading
 pw_acts, pw_pvals = dc.mt.ulm(data=expr, net=progeny)
 
 # TF activity

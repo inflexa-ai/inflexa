@@ -81,7 +81,7 @@ Input data?
 
 - **xCell2** (AlmogAngel/xCell2): Cell type deconvolution from bulk expression data. Estimates 64+ cell type scores from bulk RNA-seq. Use when sample-level cell type composition is needed without single-cell data.
 
-### CLI tools (run via execute_command)
+### CLI tools (run as shell commands in the sandbox)
 
 - **STAR**: Splice-aware RNA-seq aligner. Use for alignment from FASTQ to BAM.
 - **subread** (featureCounts): Read counting from BAM to gene-level counts.

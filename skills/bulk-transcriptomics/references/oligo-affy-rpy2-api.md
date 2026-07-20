@@ -48,7 +48,9 @@ oligo supports all Affymetrix array types including Gene ST, Exon ST, and HTA ar
 ```python
 import os
 
-cel_dir = "/path/to/cel/files"
+# Point this at the directory holding the run's CEL files, discovered from the
+# step's own inputs. Never hardcode an absolute path.
+cel_dir = os.environ.get("CEL_DIR") or "."
 
 # List all CEL files
 cel_files = ro.r(f'list.celfiles("{cel_dir}", full.names=TRUE, listGzipped=TRUE)')
@@ -232,5 +234,6 @@ adata.var["gene_symbol"] = gene_map.reindex(adata.var_names)["SYMBOL"].values
 - `mas5calls` is only available in the affy package for 3' IVT arrays. For newer arrays, use expression-level filtering instead.
 - CEL file names often become sample names. Rename via `phenoData` at read time or post-hoc via `sampleNames()`.
 - Annotation packages must match the exact array platform. Check with `ro.r("annotation")(raw_data)`.
+- The platform annotation and `pd.*` design packages (`hgu133plus2.db`, `pd.hugene.1.0.st.v1`, …) are ordinarily installed on demand from Bioconductor. **The sandbox has no network access**, so `importr` on a package that is not already staged fails and cannot be fixed by installing it. Check what is available before planning the annotation step; if the package for this array is absent, emit probeset-level results and report that symbol mapping could not be done — do not fabricate a probeset-to-symbol mapping.
 - `listGzipped=TRUE` in `list.celfiles` allows reading compressed `.CEL.gz` files directly.
 - When converting to AnnData, remember the orientation flip: R is genes-as-rows; AnnData is samples-as-rows.

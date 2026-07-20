@@ -101,5 +101,5 @@ After enrichment, collapse redundant terms to improve interpretability:
 | `references/gseapy-api.md` | gseapy API: prerank, enrich, ssgsea |
 | `references/decoupler-enrichment-api.md` | decoupler run_ulm, run_mlm with PROGENy |
 | `references/fgsea-rpy2-api.md` | fgsea via rpy2: GSEA and pathway collapse |
-| `references/clusterprofiler-rpy2-api.md` | clusterProfiler via rpy2: enrichGO, enrichKEGG |
+| `references/clusterprofiler-rpy2-api.md` | clusterProfiler via rpy2: enrichGO, gseGO (KEGG entry points fail — no network) |
 | `references/gsva-rpy2-api.md` | GSVA via rpy2: per-sample gene set variation |

@@ -2,6 +2,14 @@
 
 R clusterProfiler called from Python via rpy2. Universal interface for GO, KEGG, and custom gene set enrichment (ORA and GSEA). Includes multi-group comparison via compareCluster and rich visualization functions.
 
+**The KEGG entry points do not work here.** `enrichKEGG()`, `gseKEGG()`, and
+`compareCluster(fun = "enrichKEGG")` fetch pathway data from the KEGG REST API at
+run time, and there is no network egress — every one of them fails outright.
+KEGG gene sets are not staged either, because their license forbids
+redistribution. The KEGG sections below are kept so you can recognise the calls
+and avoid them; use `enrichGO()`/`gseGO()`, or Reactome/WikiPathways gene sets,
+for canonical pathway coverage instead.
+
 ## rpy2 Setup Boilerplate
 
 ```python
@@ -79,7 +87,7 @@ clusterprofiler.enrichGO(
 )
 ```
 
-## enrichKEGG() — KEGG Over-Representation Analysis
+## enrichKEGG() — KEGG Over-Representation Analysis (requires network — WILL FAIL here)
 
 ```python
 # KEGG requires Entrez IDs (numeric gene IDs)
@@ -140,7 +148,7 @@ gsego_df = r_to_pd(base.as_data_frame(gsego))
 #          rank, leading_edge, core_enrichment
 ```
 
-## gseKEGG() — KEGG GSEA
+## gseKEGG() — KEGG GSEA (requires network — WILL FAIL here)
 
 ```python
 # Requires Entrez IDs as names in the ranked vector
@@ -283,7 +291,7 @@ ggsave("gsea_running.png", p, width=10, height=8, dpi=150)
 - `geneList` for GSEA functions (`gseGO`, `gseKEGG`) must be a NAMED numeric vector, SORTED in decreasing order. Unsorted input gives wrong results.
 - `OrgDb` for human is `"org.Hs.eg.db"`, mouse is `"org.Mm.eg.db"`, rat is `"org.Rn.eg.db"`. The package must be installed.
 - `keyType` must match the ID type in your gene list. Common options: `"ENTREZID"`, `"SYMBOL"`, `"ENSEMBL"`. Check with `columns(org.Hs.eg.db)`.
-- `enrichKEGG()` queries the KEGG REST API online. It requires internet access and can fail if the API is down. Set `use_internal_data=TRUE` for an offline (but potentially outdated) version.
+- `enrichKEGG()` and `gseKEGG()` query the KEGG REST API online and fail here — egress is blocked. `use_internal_data=TRUE` is not a way around it: that path needs the `KEGG.db` annotation package, which is not staged either. There is no working KEGG route in this environment; use GO or a resolved Reactome/WikiPathways GMT.
 - `emapplot()` requires `pairwise_termsim()` to be called first on the enrichment result. Without it, you get an error about missing similarity data.
 - `readable=TRUE` in `enrichGO()` converts Entrez IDs to symbols in the `geneID` column. It only works for `enrichGO`, not `enrichKEGG`.
 - `compareCluster()` `fun` parameter accepts a function name as a string (`"enrichGO"`) or the function itself (`enrichGO`). Additional parameters for the enrichment function are passed as `...` arguments.

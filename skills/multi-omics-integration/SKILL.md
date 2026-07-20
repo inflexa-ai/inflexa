@@ -31,8 +31,12 @@ Choose the method based on your analytical question and data characteristics:
 
 ### 3. Network-based: Find cross-omics interactions
 
-- Use **OmniPath** for prior knowledge: kinase-substrate, TF-target, ligand-receptor, enzyme-metabolite.
-- Build a custom cross-omics network using OmniPath edges + data-driven correlations.
+- Prior knowledge (kinase-substrate, TF-target, ligand-receptor, enzyme-metabolite) must come
+  from an interaction file resolved from the reference data available to you. The **OmniPath**
+  web service is unreachable — egress is blocked, so `omnipath.interactions.*.get()` and every
+  `dc.op.*()` loader fail. General interaction data is often not provisioned at all; if it does
+  not resolve, report that and scope the analysis to the networks that are available.
+- Build a custom cross-omics network from those edges + data-driven correlations.
 - Analyze with **NetworkX** or **igraph**: community detection, centrality, shortest paths.
 - Appropriate when you want to model regulatory or signaling relationships between modalities.
 
@@ -46,10 +50,12 @@ Choose the method based on your analytical question and data characteristics:
 ### 5. Causal/mechanistic modeling
 
 - **CARNIVAL** (R via rpy2): Infers signaling topology from TF/pathway activity scores and prior knowledge network.
-  - Requires: activity scores (from decoupler), prior knowledge (OmniPath), perturbation context.
+  - Requires: activity scores (from decoupler), a prior-knowledge network, perturbation context.
 - **COSMOS** (R via rpy2): Extends CARNIVAL to bridge signaling and metabolism.
-  - Requires: TF activities, metabolite abundances, prior knowledge (OmniPath + metabolic networks).
+  - Requires: TF activities, metabolite abundances, a prior-knowledge network plus metabolic networks.
 - These methods are computationally intensive and require careful prior knowledge curation.
+- Both hinge on a prior-knowledge network that cannot be fetched at run time. Confirm one
+  resolves from the reference data available to you *before* planning either step.
 
 ## Integration Paradigm Selection
 

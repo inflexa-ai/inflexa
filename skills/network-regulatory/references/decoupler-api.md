@@ -23,12 +23,28 @@ Never call `dc.op.collectri()`, `dc.op.progeny()`, `dc.get_progeny()`, or any ot
 
 Then read it with the reader its format actually calls for — these circulate as CSV, TSV, and R `.rda` depending on the source, and a wrong-format read fails immediately. Match the organism too: a human regulon set over mouse counts runs happily and returns meaningless activities.
 
+Regulon and pathway-weight files are frequently distributed as R `.rda` (this is
+how PROGENy and DoRothEA are published), which pandas cannot open — those need
+rpy2. Check the format the inventory reports and pick the reader from it:
+
 ```python
 import pandas as pd
+import rpy2.robjects as ro
+from rpy2.robjects import pandas2ri
+
+
+def read_rda_frame(path: str) -> pd.DataFrame:
+    """Load the data frame an R .rda holds (PROGENy, DoRothEA) into pandas."""
+    names = list(ro.r["load"](path))  # load() returns the names it created
+    with (ro.default_converter + pandas2ri.converter).context():
+        return ro.conversion.get_conversion().rpy2py(ro.r[names[0]])
+
 
 # `regulon_path` and `pathway_path` are paths you resolved, not literals to copy.
+# CollecTRI is CSV; if you resolved DoRothEA instead, it is .rda — use read_rda_frame.
 collectri = pd.read_csv(regulon_path)
-progeny = pd.read_csv(pathway_path)
+# PROGENy is published as .rda — read_csv on it fails outright.
+progeny = read_rda_frame(pathway_path)
 ```
 
 ### Network DataFrame Format
@@ -241,7 +257,7 @@ import decoupler as dc
 import pandas as pd
 
 # Load PROGENy network
-progeny = pd.read_csv(pathway_path)  # resolved + normalised per Resource Loading
+progeny = read_rda_frame(pathway_path)  # PROGENy is .rda; see Resource Loading
 
 # Compute per-cell pathway activities
 dc.mt.mlm(data=adata, net=progeny)
@@ -271,7 +287,7 @@ import decoupler as dc
 import pandas as pd
 
 # Load PROGENy network
-progeny = pd.read_csv(pathway_path)  # resolved + normalised per Resource Loading
+progeny = read_rda_frame(pathway_path)  # PROGENy is .rda; see Resource Loading
 
 # Expression matrix: samples as rows, genes as columns
 expr = pd.read_csv("vst_counts.csv", index_col=0)
@@ -322,7 +338,7 @@ from scipy import stats as scipy_stats
 
 # Load networks
 collectri = pd.read_csv(regulon_path)  # resolved + normalised per Resource Loading
-progeny = pd.read_csv(pathway_path)  # resolved + normalised per Resource Loading
+progeny = read_rda_frame(pathway_path)  # PROGENy is .rda; see Resource Loading
 
 # Compute both on the same expression data
 expr = pd.read_csv("vst_counts.csv", index_col=0)

@@ -1,6 +1,8 @@
 # PLINK2 CLI Reference
 
-Command-line toolset for whole-genome association analysis. PLINK2 is the successor to PLINK 1.9 with better performance and additional features. Commands are executed via `execute_command`.
+Command-line toolset for whole-genome association analysis. PLINK2 is the successor to PLINK 1.9 with better performance and additional features. Commands below are shell commands.
+
+**Verify `plink2` is on PATH before planning a pipeline around it.** It is not guaranteed to be staged in this environment, and with no network egress it cannot be installed at runtime. Probe once (`command -v plink2 && plink2 --version`) before writing the pipeline. If it is absent, report that plainly and either fall back to a route that exists (cyvcf2 or `bcftools` for VCF-level QC, filtering, and allele-frequency work; statsmodels for association testing on an extracted genotype matrix) or state that GWAS cannot be run here — do not emit a script full of commands that will not execute.
 
 ## File Formats
 

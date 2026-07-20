@@ -89,7 +89,7 @@ sq.pl.co_occurrence(
 
 ## Spatial Autocorrelation: sq.gr.spatial_autocorr
 
-Measures spatial autocorrelation of continuous variables (gene expression). Supports Moran's I (global clustering) and Geary's C (local dissimilarity).
+Measures spatial autocorrelation of continuous variables (gene expression). Supports Moran's I and Geary's C — both are global statistics; Geary's C is built on squared pairwise differences, so it responds more strongly to short-range variation.
 
 ```python
 # Moran's I (default) — values near 1 = strong spatial clustering
@@ -117,7 +117,7 @@ sq.gr.spatial_autocorr(adata, mode="geary")
 ### Moran's I vs Geary's C
 
 - **Moran's I**: Global measure. Range [-1, 1]. I > 0 = positive autocorrelation (clustering). I ~ 0 = random. I < 0 = dispersed.
-- **Geary's C**: Local measure. Range [0, 2]. C < 1 = positive autocorrelation. C ~ 1 = random. C > 1 = negative autocorrelation.
+- **Geary's C**: Global measure, but weighted by squared differences between neighbours, so it is more sensitive to short-range variation than Moran's I. Range [0, 2]. C < 1 = positive autocorrelation. C ~ 1 = random. C > 1 = negative autocorrelation.
 
 ## Ligand-Receptor Interaction: sq.gr.ligrec
 

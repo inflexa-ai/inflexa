@@ -108,8 +108,13 @@ dba_obj = diffbind.dba_contrast(
 dba_obj = diffbind.dba_analyze(
     dba_obj,
     method=diffbind.DBA_DESEQ2,    # DBA_DESEQ2 (default) or DBA_EDGER
-    bBlacklist=True,                 # apply blacklist filtering
-    bGreylist=True,                  # apply greylist filtering
+    # bBlacklist / bGreylist default to TRUE. Both need reference data that is
+    # NOT in the inventory here (an ENCODE blacklist region set; GreyListChIP
+    # plus genome annotation), and DiffBind fetches them over the network, which
+    # is blocked — so leaving them on fails the analyze step. Turn them off,
+    # and say in your output that peaks were not blacklist-filtered.
+    bBlacklist=False,
+    bGreylist=False,
 )
 
 # Using edgeR instead
@@ -221,5 +226,5 @@ report_df.to_csv("diffbind_results.csv", index=False)
 - **DiffBind v3 changes**: DiffBind v3+ changed the default analysis engine and normalization. The `dba.normalize()` function is new in v3. Check your installed version.
 - **Contrast direction**: Positive fold change means enriched in group1 (first group in contrast). The naming depends on the order specified in `dba.contrast()`.
 - **Memory**: dba.count() loads all BAM reads overlapping peaks into memory. For large datasets (many samples or broad peaks), this can require substantial RAM.
-- **Blacklists**: DiffBind can automatically filter ENCODE blacklist regions if the `GreyListChIP` package and appropriate genome annotation are installed.
+- **Blacklists are not available here**: `dba.analyze()` defaults `bBlacklist`/`bGreylist` to TRUE, and DiffBind resolves the ENCODE blacklist and the greylist genome annotation over the network. There is no egress and no runtime install, so the defaults fail the step outright. Pass `bBlacklist=False, bGreylist=False`, and record in your output that differential peaks were not blacklist-filtered — do not point the parameter at an invented path, and do not drop the caveat.
 - **minOverlap in dba.count**: Controls the consensus peak set. `minOverlap=2` means a peak must be called in at least 2 samples. Increase for stricter consensus.

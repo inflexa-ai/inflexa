@@ -97,6 +97,13 @@ dataset = loader.create_dataset("compounds.csv")
 
 ### MoleculeNet Benchmarks
 
+**These loaders will fail in the sandbox.** Every `dc.molnet.load_*` call
+downloads its dataset on first use, and sandbox egress is blocked at the
+firewall — the call raises a network error rather than returning data. Use them
+only against a pre-staged local copy; otherwise build the dataset from workspace
+files with `CSVLoader` or `NumpyDataset`. The signatures below are for reference
+when a local copy exists.
+
 ```python
 # Delaney (aqueous solubility) -- regression
 tasks, datasets, transformers = dc.molnet.load_delaney(
@@ -127,7 +134,8 @@ train, valid, test = datasets
 
 - `splitter="scaffold"` performs Bemis-Murcko scaffold split -- more realistic than random for molecular data. Use for final evaluation.
 - `transformers` returned by `load_*` may include normalization. Apply inverse transform for interpretable predictions.
-- MoleculeNet datasets are downloaded on first use. In sandbox environments without internet, load data from local files using `NumpyDataset` or `CSVLoader`.
+- MoleculeNet datasets are downloaded on first use, so `dc.molnet.load_*` fails outright in the sandbox (egress is blocked). Load data from workspace files with `CSVLoader` or `NumpyDataset` instead, and report the limitation rather than retrying the download.
+- DeepChem pretrained model weights are likewise fetched over the network and are unavailable in the sandbox. Train from workspace data instead.
 
 ## Models
 

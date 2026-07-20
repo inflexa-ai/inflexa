@@ -2,6 +2,8 @@
 
 Central data structure for microbiome analysis in R: stores OTU/ASV tables, taxonomy, sample metadata, and phylogenetic trees in a single object.
 
+**Filenames below are placeholders.** `feature-table.biom`, `tree.nwk`, `rep-seqs.fasta` and the like stand for your step's inputs — either files you produced upstream (relative to your working directory) or input data reached by absolute path beneath the read-only analysis root. Do not assume a directory layout; use the paths you were given.
+
 ## Setup
 
 ```r

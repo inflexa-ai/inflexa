@@ -108,7 +108,7 @@ fp = dm.to_fp(mol, fp_type="morgan", n_bits=2048, radius=2)
 # Other fingerprint types
 fp_rdkit = dm.to_fp(mol, fp_type="rdkit", n_bits=2048)
 fp_topological = dm.to_fp(mol, fp_type="topological", n_bits=2048)
-fp_maccs = dm.to_fp(mol, fp_type="maccs")  # 166-bit MACCS keys
+fp_maccs = dm.to_fp(mol, fp_type="maccs")  # MACCS keys: 167 bits in RDKit (bit 0 unused)
 
 # Batch fingerprinting
 fps = np.array([dm.to_fp(m, fp_type="morgan", n_bits=2048, radius=2)

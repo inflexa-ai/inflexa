@@ -76,14 +76,23 @@ General rule: if the experiment has repeated measures, use dream (R via rpy2) un
 modality-specific tool already handles random effects (e.g., MaAsLin2 for metagenomics).
 
 ### Gene Set / Pathway Enrichment
-- Over-representation analysis (ORA): **decoupler** with MSigDB or custom gene sets
+- Over-representation analysis (ORA): **decoupler** with gene sets from the reference store or custom sets
 - Gene Set Enrichment Analysis (GSEA): **decoupler** (implements fast, run-based methods)
-- Pathway activity scoring: **decoupler** with PROGENy (signaling pathways)
-- Preferred gene set sources: MSigDB (Hallmark, C2, C5), Reactome, GO
+- Pathway activity scoring: **decoupler** with a footprint-based pathway weight matrix (e.g. PROGENy)
+- Query the reference store for what gene set collections are actually installed rather than
+  assuming a particular one. Collections are typically distributed as `.gmt`, which is
+  **ragged** and must be parsed line-by-line — not with `pandas.read_csv`. Pathway weight
+  matrices may be R `.rda` objects, which require rpy2 (or native R), not a pandas reader.
 
 ### Transcription Factor Activity Inference
-- **decoupler** with **CollecTRI** regulons (best-benchmarked TF-target resource)
-- Alternative: DoRothEA regulons (via decoupler), but CollecTRI is preferred for breadth
+- **decoupler** with a curated TF-target regulon network as the prior
+- Query the reference store for the regulon networks that are installed and read the
+  entry's stated format and columns. A CSV regulon loads with pandas; an R `.rda` regulon
+  must be loaded through rpy2. Rename the TF/target/effect columns to
+  `source`/`target`/`weight` for decoupler, and apply any confidence filter the network
+  documents before use.
+- If no regulon network is installed, report that TF-activity inference cannot be run
+  rather than substituting a hand-written gene list.
 
 ### Cell-Cell Communication (single-cell / spatial)
 - **LIANA+** — meta-framework that wraps and benchmarks multiple CCC methods

@@ -37,6 +37,7 @@ Alternative: QIIME2 artifacts
 - DADA2 produces ASVs (amplicon sequence variants) — single-nucleotide resolution, no OTU clustering needed.
 - ALWAYS inspect the error rate learning plots. Poor error models produce unreliable ASVs.
 - SILVA 138.1 is the standard reference for 16S; UNITE for ITS (fungal).
+- **SILVA and UNITE training sets are not currently in the reference inventory.** Resolve them by what they are before planning on them. If they are absent, report that taxonomy assignment cannot be run and hand back the ASV table, sequences, and read tracking — which are complete and useful without it. Do not invent a path, do not substitute a general-purpose sequence database, and do not drop the taxonomy step silently.
 
 ### 2. Shotgun Metagenomics
 
