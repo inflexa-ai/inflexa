@@ -8,7 +8,7 @@ Define the conversation-agent tool that drives the local `inflexa` CLI as an app
 
 ### Requirement: The agent drives the inflexa CLI through one subprocess tool
 
-The system SHALL provide exactly one conversation-agent tool (`run_inflexa`) that takes an argv array, runs the `inflexa` CLI as a subprocess, and returns the exit code and captured stdout/stderr to the model. The tool SHALL NOT be a family of per-command tools and SHALL NOT encode a per-command allowlist; the surface the agent learns is the CLI's own, discovered through `--help`. Input SHALL be an argv `string[]` passed to the subprocess as an argv array (no shell); a single-element input that contains whitespace SHALL be tokenized shell-style into argv before use, so a model that emits one string still runs safely.
+The system SHALL provide exactly one conversation-agent tool (`run_inflexa`) that takes an argv array, runs the `inflexa` CLI as a subprocess, and returns the exit code and captured stdout/stderr to the model. The tool SHALL NOT be a family of per-command tools and SHALL NOT encode a per-command allowlist; the surface the agent learns is the CLI's own, discovered through `--help`. Input SHALL be an argv `string[]` passed to the subprocess as an argv array (no shell); a single-element input that contains whitespace SHALL be tokenized shell-style into argv before use, so a model that emits one string still runs safely. Tokenization SHALL happen exactly once — the argv the classifier verdicts on is the same argv displayed for approval and spawned, so the two can never diverge.
 
 #### Scenario: A command runs and returns its result
 
@@ -75,6 +75,20 @@ The denylist is the courtesy layer, not the safety boundary: every TUI launcher 
 - **WHEN** a TUI-launching command runs with a non-interactive stdin (a pipe, a script, or a captured subprocess)
 - **THEN** the launcher exits non-zero with a clear message before creating any state or rendering any frame
 
+### Requirement: Infrastructure lifecycle commands are blocked from the agent
+
+The commands that manage the infrastructure containers the running conversation itself depends on — `inflexa up`, `inflexa down`, and `inflexa setup` — SHALL be refused outright: a blocked result to the model, WITHOUT prompting for approval and WITHOUT spawning. `inflexa down` stops the Postgres the harness session is connected to, so even an informed approval could sever the session mid-turn; `up` and `setup` mutate or re-provision the same stack. Unlike the TUI launchers, these commands run fine headless, so for this family the denylist IS the gate: a new lifecycle command MUST be added to it. Their introspection (`--help`) SHALL remain allowed, since it touches nothing.
+
+#### Scenario: inflexa down is refused
+
+- **WHEN** the tool is invoked with `["down"]` (which stops the containers, including the session's own database)
+- **THEN** it returns a blocked result to the model without prompting and without spawning
+
+#### Scenario: inflexa up and setup are refused
+
+- **WHEN** the tool is invoked with `["up"]` or `["setup"]`
+- **THEN** it returns a blocked result to the model without prompting and without spawning
+
 ### Requirement: Classification is the commander parse, not a string heuristic
 
 The tool SHALL classify an argv by parsing it against the real commander program tree in-process — built through the `buildProgram()` factory, with a `preAction` hook that fires a classification sentinel the instant an action would run, `exitOverride` set, and help/version output silenced — never by a string match on the argv. Classification SHALL yield exactly one of: introspection (a help/version parse outcome) → auto-allow; a resolved action (the sentinel fires) → approval, carrying the resolved subcommand path; or a parse error (unknown command/option, missing/excess argument) → returned to the model as a tool result WITHOUT spawning and WITHOUT prompting. Because the decision is commander's own parse, an argv that places `--help` after a `--` terminator SHALL classify as an action, not introspection.
@@ -91,7 +105,7 @@ The tool SHALL classify an argv by parsing it against the real commander program
 
 ### Requirement: The standing grant keys on the resolved subcommand path
 
-The approval request SHALL display the exact argv as its `command`, and SHALL set the harness `grantKey` to the resolved subcommand path only (the command names, with no argument or option values) — for example `inflexa refs download`. An `always` reply SHALL therefore auto-approve later invocations that resolve to the same subcommand path in the same analysis, without re-prompting for a different argument. The prompt SHALL make the granted subcommand-path class visible so an `always` is an informed decision.
+The approval request SHALL display the exact argv as its `command` (an element carrying whitespace rendered quoted, so the word boundaries the user reads are the word boundaries that spawn), and SHALL set the harness `grantKey` to the resolved subcommand path only (the command names, with no argument or option values) — for example `inflexa refs download`. An `always` reply SHALL therefore auto-approve later invocations that resolve to the same subcommand path in the same analysis, without re-prompting for a different argument. The prompt SHALL make the granted subcommand-path class visible so an `always` is an informed decision.
 
 #### Scenario: Approving one dataset covers the next on the same subcommand
 
@@ -106,7 +120,7 @@ The approval request SHALL display the exact argv as its `command`, and SHALL se
 
 ### Requirement: Subprocess hygiene keeps the CLI a captured black box
 
-The tool SHALL spawn the CLI with an argv array (never through a shell), `stdin` ignored, and `stdout`/`stderr` captured rather than inherited, so subprocess output never reaches the TUI alternate screen. The spawn SHALL be bounded by a timeout that terminates a child that does not exit, escalating to an untrappable kill after a grace so a child that traps the first signal cannot outlive the deadline. Captured output SHALL be bounded at capture time — the stream is drained past the cap but not retained — so a runaway child can neither overflow the turn nor balloon the host process's memory, and neither pipe backpressure nor a grandchild holding the pipes open past the child's exit stalls the tool. A timeout result SHALL carry the (bounded) output produced before the deadline. A run ended by the turn's own abort SHALL be reported as cancelled — distinct from both a timeout and a completed run.
+The tool SHALL spawn the CLI with an argv array (never through a shell), `stdin` ignored, and `stdout`/`stderr` captured rather than inherited, so subprocess output never reaches the TUI alternate screen. The spawn SHALL be bounded by a timeout that terminates a child that does not exit, escalating to an untrappable kill after a grace so a child that traps the first signal cannot outlive the deadline. Captured output SHALL be bounded at capture time by one budget shared across stdout and stderr (the bound is per run — what the turn's context pays for — not per stream) — the streams are drained past the cap but not retained — so a runaway child can neither overflow the turn nor balloon the host process's memory, and neither pipe backpressure nor a grandchild holding the pipes open past the child's exit stalls the tool. A timeout result SHALL carry the (bounded) output produced before the deadline. A run ended by the turn's own abort SHALL be reported as cancelled — distinct from both a timeout and a completed run.
 
 #### Scenario: An interactive command declines rather than hangs
 

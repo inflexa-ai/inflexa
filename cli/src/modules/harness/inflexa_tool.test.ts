@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import { AskRejectedError, UnavailableAsk, type AgentSession, type AskApproval, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
 import { describe, expect, test } from "bun:test";
 
@@ -91,6 +93,33 @@ describe("run_inflexa — execute", () => {
         expect(result.status).toBe("ran");
     });
 
+    test("a packed single-string argv displays and spawns the SAME tokenized argv", async () => {
+        const sub = recordingSubprocess();
+        const ask = recordingAsk({ kind: "once" });
+        const tool = makeTool(sub.fn);
+
+        const result = (await tool.execute({ argv: ["refs download x --yes"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+
+        // The classifier's verdict argv is the single normalization source: what the
+        // user approves is what spawns — never the still-packed input element.
+        expect(ask.calls[0]?.command).toBe("inflexa refs download x --yes");
+        expect(sub.calls[0]).toEqual(["/bin/bun", "/app/src/index.ts", "refs", "download", "x", "--yes"]);
+        expect(result.status).toBe("ran");
+    });
+
+    test("an argv element carrying whitespace displays quoted and spawns verbatim", async () => {
+        const sub = recordingSubprocess();
+        const ask = recordingAsk({ kind: "once" });
+        const tool = makeTool(sub.fn);
+
+        const result = (await tool.execute({ argv: ["refs", "download", "my file"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+
+        // Quoted for reading: the word boundaries the user approves are the ones that spawn.
+        expect(ask.calls[0]?.command).toBe('inflexa refs download "my file"');
+        expect(sub.calls[0]).toEqual(["/bin/bun", "/app/src/index.ts", "refs", "download", "my file"]);
+        expect(result.status).toBe("ran");
+    });
+
     test("a rejected approval propagates and never spawns", async () => {
         const sub = recordingSubprocess();
         const reject = (_request: AskRequest): Promise<AskApproval> => Promise.reject(new AskRejectedError("no"));
@@ -161,13 +190,18 @@ describe("run_inflexa — execute", () => {
         expect(result.status).toBe("cancelled");
     });
 
-    // The TUI launchers: refused outright, before any approval prompt. `new` and
-    // `resume` matter most — `new` would create an analysis before hanging.
+    // Refused outright, before any approval prompt. The TUI launchers cannot run
+    // captured (`new` would create an analysis before hanging); the infra
+    // lifecycle commands would mutate the containers this conversation runs on.
     test.each([
         ["bare inflexa", [] as string[]],
+        ["flag-only root inflexa", ["--analysis", "x"]],
         ["inflexa config", ["config"]],
         ["inflexa new", ["new", "myanalysis"]],
         ["inflexa resume", ["resume", "some-analysis"]],
+        ["inflexa up", ["up"]],
+        ["inflexa down", ["down"]],
+        ["inflexa setup", ["setup"]],
     ])("%s is blocked — never asks, never spawns", async (_label, argv) => {
         const sub = recordingSubprocess();
         const ask = recordingAsk({ kind: "once" });
@@ -211,6 +245,22 @@ describe("spawnInflexa — process bounds", () => {
         expect(r.stdout.length).toBeLessThan(70_000);
     });
 
+    test("the output cap is one budget across stdout AND stderr, not per stream", async () => {
+        // 40k + 40k exceeds the 60k run budget; per-stream caps would keep all 80k.
+        const script = 'process.stdout.write("a".repeat(40000)); process.stderr.write("b".repeat(40000));';
+        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 10_000, flushGraceMs: 300 });
+
+        expect(r.endedBy).toBe("exit");
+        const marker = "…[truncated]";
+        const kept = r.stdout.length + r.stderr.length - (r.stdout.endsWith(marker) ? marker.length : 0) - (r.stderr.endsWith(marker) ? marker.length : 0);
+        expect(kept).toBeLessThanOrEqual(60_000);
+        expect(r.stdout.endsWith(marker) || r.stderr.endsWith(marker)).toBe(true);
+        // Shared first-come-first-served, not winner-takes-all: 40k per stream never
+        // exhausts the pool alone, so both streams keep real output.
+        expect(r.stdout.length).toBeGreaterThan(0);
+        expect(r.stderr.length).toBeGreaterThan(0);
+    });
+
     test("a grandchild holding the pipes open does not stall past the child's exit", async () => {
         // The child hands its pipes to a 6s `sleep` and exits at once; EOF never
         // arrives until that grandchild dies. The flush grace must return us long
@@ -249,5 +299,39 @@ describe("spawnInflexa — process bounds", () => {
         });
 
         expect(r.endedBy).toBe("cancel");
+    });
+
+    test("a confirm()-gated path declines on the spawn's ignored stdin — EOF is never consent", async () => {
+        // The always-grant trade-off (an `always` on `inflexa X` also covers a later
+        // `inflexa X --destructive`) leans on a cross-module invariant: every
+        // destructive text-command path gates on lib/cli.ts's confirm(), whose
+        // non-TTY branch reads stdin to EOF and treats silence as a decline. The
+        // tool spawns with `stdin: "ignore"`, so that read EOFs at once. Pinned
+        // against a real child running the real confirm(): a future confirm()
+        // change that defaults silence to consent must fail here, not ship a
+        // data-loss path behind a standing grant.
+        const confirmModule = join(import.meta.dir, "../../lib/cli.ts");
+        // Bun.spawn's default child env is a STARTUP SNAPSHOT, so the child
+        // inherits `bun test`'s NODE_ENV but NOT the preload's runtime-stamped
+        // sandbox marker — and lib/cli.ts transitively imports lib/env.ts, whose
+        // data-loss guard refuses exactly that combination. Re-stamp the parent
+        // test's own sandbox inside the child, before the import, so the child
+        // resolves paths in the same sandbox this suite runs in. `Bun.env` (not
+        // `process.env`) is the live env and the sanctioned way to read it here
+        // (the runCli helper forwards the sandbox the same way).
+        const sandboxEnv = {
+            XDG_DATA_HOME: Bun.env.XDG_DATA_HOME,
+            XDG_CONFIG_HOME: Bun.env.XDG_CONFIG_HOME,
+            INFLEXA_TEST_SANDBOX: Bun.env.INFLEXA_TEST_SANDBOX,
+        };
+        const script =
+            `Object.assign(process.env, ${JSON.stringify(sandboxEnv)}); ` +
+            `const { confirm } = await import(${JSON.stringify(confirmModule)}); ` +
+            `process.stdout.write((await confirm("Proceed?")) ? "PROCEEDED" : "DECLINED");`;
+        const r = await spawnInflexa([bun, "-e", script], live(), { timeoutMs: 10_000, flushGraceMs: 300 });
+
+        expect(r.endedBy).toBe("exit");
+        expect(r.exitCode).toBe(0);
+        expect(r.stdout).toBe("DECLINED");
     });
 });
