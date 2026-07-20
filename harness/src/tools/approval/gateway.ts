@@ -74,12 +74,14 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
             title: request.title,
             command: request.command,
             detail: request.detail ?? null,
+            grantKey: request.grantKey ?? null,
             createdAt: now,
         };
 
-        // A standing grant for this exact command short-circuits the prompt: record
-        // the invocation as `resolved` for the audit trail and return without pausing.
-        if (unwrapOrThrow(await selectGrant(pool, ctx.analysisId, request.command))) {
+        // A standing grant for this ask's grant key — the command unless the tool
+        // supplied a broader key — short-circuits the prompt: record the invocation as
+        // `resolved` for the audit trail and return without pausing.
+        if (unwrapOrThrow(await selectGrant(pool, ctx.analysisId, request.grantKey ?? request.command))) {
             unwrapOrThrow(await insertGrantedAsk(pool, row, now));
             return { kind: "always" };
         }

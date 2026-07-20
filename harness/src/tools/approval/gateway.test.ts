@@ -239,6 +239,75 @@ describe("createAskGateway — standing grants", () => {
         expect(await gateway.answer(otherId, { kind: "once" })).toBe("applied");
         expect(await other.promise).toEqual({ kind: "once" });
     });
+
+    // A grant key lets a tool bless a broader class than the one command it displays.
+    const WIDE_KEY = "fs:write";
+    const SHOWN: AskRequest = { title: "Write a file", command: "write_file report/a.txt", grantKey: WIDE_KEY };
+
+    it("keys the grant on grantKey, auto-approving a different command that shares it", async () => {
+        const first = startAsk(SHOWN, "analysis-A");
+        const id = await waitForPendingId("analysis-A");
+        expect(await gateway.answer(id, { kind: "always" })).toBe("applied");
+        expect(await first.promise).toEqual({ kind: "always" });
+
+        // The grant lives under the grant key, not the displayed command.
+        expect(await grantCount("analysis-A", WIDE_KEY)).toBe(1);
+        expect(await grantCount("analysis-A", SHOWN.command)).toBe(0);
+
+        // A later ask with a DIFFERENT command but the SAME grant key short-circuits:
+        // no prompt surfaces and a resolved audit row is still written.
+        const beforeResolved = await countAsks(`WHERE status = 'resolved'`);
+        const parts: AskPartData[] = [];
+        const emit: EmitFn = (event) => {
+            if (event.type === "data-ask") parts.push((event as ChatDataPart).data as AskPartData);
+        };
+        const later: AskRequest = { title: "Write a file", command: "write_file report/b.txt", grantKey: WIDE_KEY };
+        const reply = await gateway.ask(later, { analysisId: "analysis-A", signal: new AbortController().signal, emit });
+
+        expect(reply).toEqual({ kind: "always" });
+        expect(parts).toHaveLength(0);
+        expect(await gateway.pending()).toHaveLength(0);
+        expect(await countAsks(`WHERE status = 'resolved'`)).toBe(beforeResolved + 1);
+
+        // The same grant key in a different analysis pauses as if no grant existed.
+        const crossed = startAsk(later, "analysis-Z");
+        const crossedId = await waitForPendingId("analysis-Z");
+        expect(await gateway.answer(crossedId, { kind: "once" })).toBe("applied");
+        expect(await crossed.promise).toEqual({ kind: "once" });
+    });
+
+    it("keys the grant on command when no grantKey is supplied, and never broader", async () => {
+        // GRANTED carries no grantKey — the pre-grantKey behavior.
+        const first = startAsk(GRANTED, "analysis-A");
+        const id = await waitForPendingId("analysis-A");
+        expect(await gateway.answer(id, { kind: "always" })).toBe("applied");
+        expect(await first.promise).toEqual({ kind: "always" });
+
+        // The grant keys on the command itself.
+        expect(await grantCount("analysis-A", GRANTED.command)).toBe(1);
+
+        // A different command in the same analysis is not covered — the grant is
+        // exactly the command, nothing broader — so it pauses for its own decision.
+        const other = startAsk({ ...GRANTED, command: "git push origin main" }, "analysis-A");
+        const otherId = await waitForPendingId("analysis-A");
+        expect(await gateway.answer(otherId, { kind: "once" })).toBe("applied");
+        expect(await other.promise).toEqual({ kind: "once" });
+    });
+
+    it("emits the command in the data-ask part and never the grant key", async () => {
+        const started = startAsk(SHOWN, "analysis-A");
+        const id = await waitForPendingId("analysis-A");
+        // Settle so teardown never races the drop.
+        expect(await gateway.answer(id, { kind: "once" })).toBe("applied");
+        await started.promise;
+
+        expect(started.parts.length).toBeGreaterThan(0);
+        for (const part of started.parts) {
+            expect(part.command).toBe(SHOWN.command);
+            expect(part).not.toHaveProperty("grantKey");
+            expect(JSON.stringify(part)).not.toContain(WIDE_KEY);
+        }
+    });
 });
 
 // ── 5.4 — turn abort ─────────────────────────────────────────────────
@@ -269,8 +338,8 @@ describe("createAskGateway — sweep", () => {
     it("expires orphaned pending rows and returns the count swept", async () => {
         const now = new Date().toISOString();
         const rows: AskRow[] = [
-            { id: uuidv7(), analysisId: "analysis-A", threadId: null, title: "t1", command: "c1", detail: null, createdAt: now },
-            { id: uuidv7(), analysisId: "analysis-A", threadId: null, title: "t2", command: "c2", detail: null, createdAt: now },
+            { id: uuidv7(), analysisId: "analysis-A", threadId: null, title: "t1", command: "c1", detail: null, grantKey: null, createdAt: now },
+            { id: uuidv7(), analysisId: "analysis-A", threadId: null, title: "t2", command: "c2", detail: null, grantKey: null, createdAt: now },
         ];
         for (const row of rows) {
             (await insertPendingAsk(pool, row))._unsafeUnwrap();
