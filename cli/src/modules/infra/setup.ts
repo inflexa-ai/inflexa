@@ -676,6 +676,18 @@ async function promptPostgresConfig(): Promise<PostgresConnection> {
 
     const port = Number(portStr) || existing.port;
 
+    // A reserved port that is NOT this channel's own default is the OTHER build channel's reserved default
+    // (pressing Enter on the placeholder yields THIS channel's default, which resolves silently). The spec
+    // says a prompted value is used in THIS run's generated compose file regardless of what is persisted, so
+    // we honor it here — but explicitPostgresFields never persists a reserved port, so the next run resolves
+    // back to this channel's default. Warn about the non-persistence rather than rejecting a valid this-run
+    // choice, which would contradict the spec.
+    if (isReservedPostgresPort(port) && port !== env.postgresPort) {
+        log.warn(
+            `Port ${port} is the other build channel's reserved default. It will be used for this run's generated compose file, but is never persisted — the next run resolves back to this channel's default (${env.postgresPort}).`,
+        );
+    }
+
     const conn: PostgresConnection = {
         host: existing.host,
         port,

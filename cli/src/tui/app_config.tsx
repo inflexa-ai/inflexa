@@ -254,6 +254,7 @@ export function ConfigApp(props: { onClose?: () => void }) {
             <PromptDialog
                 title={`postgres.${field}`}
                 value={String(pgDraft()[field])}
+                validate={(value) => validatePgField(field, value)}
                 onSubmit={(value: string) => {
                     dialogClose();
                     setPgField(field, value);
@@ -261,6 +262,26 @@ export function ConfigApp(props: { onClose?: () => void }) {
                 onCancel={() => {}}
             />
         ));
+    }
+
+    /**
+     * In-dialog validation for a postgres field: non-empty everywhere, and for `port` a 1-65535 integer
+     * that is NOT a reserved channel default. Returning a message re-asks in place (see PromptDialog), so
+     * `setPgField` only ever applies a clean value.
+     */
+    function validatePgField(field: PgField, value: string): string | undefined {
+        const trimmed = value.trim();
+        if (field === "port") {
+            const n = Number(trimmed);
+            if (!Number.isInteger(n) || n <= 0 || n > 65535) return `"${trimmed}" is not a valid port number (1-65535).`;
+            // 8432 (prod) / 8434 (dev) are the build channels' reserved default ports. config.json is shared
+            // across channels, so resolvePostgresConfig ignores a reserved port at read time — accepting one
+            // here would silently discard it. Reject it up front and say why.
+            if (isReservedPostgresPort(n))
+                return `${n} is a reserved default port (prod 8432 / dev 8434) that cannot be pinned in config.json — each channel resolves its own default automatically.`;
+            return undefined;
+        }
+        return trimmed === "" ? "Value cannot be empty." : undefined;
     }
 
     // --- embedding: a backend picker plus per-backend follow-up dialogs -------------------------
@@ -298,12 +319,17 @@ export function ConfigApp(props: { onClose?: () => void }) {
         setQuitArmed(false);
     }
 
-    /** Push a single-field text prompt; the value is handed on trimmed by each caller as it needs. */
-    function promptField(title: string, value: string, onSubmit: (value: string) => void): void {
+    /**
+     * Push a single-field text prompt; the value is handed on trimmed by each caller as it needs. An
+     * optional `validate` re-asks IN the dialog on a bad value (see PromptDialog), so `onSubmit` — which
+     * still closes the dialog before running its continuation — only ever fires for a validated value.
+     */
+    function promptField(title: string, value: string, onSubmit: (value: string) => void, validate?: (value: string) => string | undefined): void {
         dialogPush(() => (
             <PromptDialog
                 title={title}
                 value={value}
+                validate={validate}
                 onSubmit={(v: string) => {
                     dialogClose();
                     onSubmit(v);
@@ -323,15 +349,17 @@ export function ConfigApp(props: { onClose?: () => void }) {
         // 768-dim custom-GGUF draft must NOT pre-fill 768 into the api-key prompt (whose default is 1536),
         // and vice versa. A backend switch seeds the TARGET's own default instead.
         const seed = embDraft().mode === targetMode ? (embDraft().dimensions ?? fallback) : fallback;
-        promptField("Vector dimensions", String(seed), (value) => {
-            const trimmed = value.trim();
-            const n = Number(trimmed);
-            if (!Number.isInteger(n) || n <= 0) {
-                setNotice({ kind: "error", text: `"${trimmed}" is not a valid dimension (a positive integer).` });
-                return;
-            }
-            apply(n);
-        });
+        promptField(
+            "Vector dimensions",
+            String(seed),
+            // Validated to a positive integer below, so the continuation always applies a clean width.
+            (value) => apply(Number(value.trim())),
+            (value) => {
+                const trimmed = value.trim();
+                const n = Number(trimmed);
+                return !Number.isInteger(n) || n <= 0 ? `"${trimmed}" is not a valid dimension (a positive integer).` : undefined;
+            },
+        );
     }
 
     /** Browse for a GGUF, then its width. Opens at home: a model the user already has can live anywhere. */
@@ -359,54 +387,56 @@ export function ConfigApp(props: { onClose?: () => void }) {
 
     /** Key → base URL → (fetched model selection, or free-text on a failed listing) → width. */
     function openApiKeyFlow(): void {
-        promptField("embedding.apiKey", embDraft().apiKey ?? "", (rawKey) => {
-            const apiKey = rawKey.trim();
-            if (apiKey === "") {
-                setNotice({ kind: "error", text: "An API key is required for api-key mode." });
-                return;
-            }
-            promptField("embedding.baseURL", embDraft().baseURL ?? DEFAULT_API_BASE_URL, (rawUrl) => {
-                const baseURL = rawUrl.trim() === "" ? DEFAULT_API_BASE_URL : rawUrl.trim();
-                setNotice({ kind: "info", text: `Fetching models from ${baseURL}…` });
-                // Supersede any prior in-flight probe, then bound this one so a hung endpoint aborts.
-                modelFetchController?.abort();
-                const controller = new AbortController();
-                modelFetchController = controller;
-                const timer = setTimeout(() => controller.abort(), MODEL_FETCH_TIMEOUT_MS);
-                void listEmbeddingModels(baseURL, apiKey, controller.signal).then((result) => {
-                    clearTimeout(timer);
-                    // Unmounted, or a newer probe replaced this one → the flow this continuation targets is
-                    // gone; run NOTHING (no setNotice / dialogPush / promptField onto a dead screen). A live
-                    // timeout leaves both checks false, so it falls through to the failure branch below.
-                    if (disposed || modelFetchController !== controller) return;
-                    modelFetchController = null;
-                    result.match(
-                        (ids) => {
-                            setNotice(null);
-                            dialogPush(() => (
-                                <SelectDialog<string>
-                                    title="Embedding model"
-                                    emptyText="No embedding models matched"
-                                    items={ids.map((id) => ({ value: id, title: id }))}
-                                    onSelect={(id: string) => {
-                                        dialogClose();
-                                        finishApiKey(apiKey, baseURL, id);
-                                    }}
-                                    onCancel={() => {}}
-                                />
-                            ));
-                        },
-                        // Every listing failure degrades the same way, so they share one branch: an endpoint
-                        // that is offline, gates /models, times out, or names its models unconventionally is
-                        // still configurable by typing the id.
-                        () => {
-                            setNotice({ kind: "warn", text: "Could not list models from that endpoint — enter the model id manually." });
-                            promptField("embedding.model", embDraft().model ?? "", (model) => finishApiKey(apiKey, baseURL, model.trim()));
-                        },
-                    );
+        promptField(
+            "embedding.apiKey",
+            embDraft().apiKey ?? "",
+            (rawKey) => {
+                // Validated non-empty below, so the continuation always has a real key to carry forward.
+                const apiKey = rawKey.trim();
+                promptField("embedding.baseURL", embDraft().baseURL ?? DEFAULT_API_BASE_URL, (rawUrl) => {
+                    const baseURL = rawUrl.trim() === "" ? DEFAULT_API_BASE_URL : rawUrl.trim();
+                    setNotice({ kind: "info", text: `Fetching models from ${baseURL}…` });
+                    // Supersede any prior in-flight probe, then bound this one so a hung endpoint aborts.
+                    modelFetchController?.abort();
+                    const controller = new AbortController();
+                    modelFetchController = controller;
+                    const timer = setTimeout(() => controller.abort(), MODEL_FETCH_TIMEOUT_MS);
+                    void listEmbeddingModels(baseURL, apiKey, controller.signal).then((result) => {
+                        clearTimeout(timer);
+                        // Unmounted, or a newer probe replaced this one → the flow this continuation targets is
+                        // gone; run NOTHING (no setNotice / dialogPush / promptField onto a dead screen). A live
+                        // timeout leaves both checks false, so it falls through to the failure branch below.
+                        if (disposed || modelFetchController !== controller) return;
+                        modelFetchController = null;
+                        result.match(
+                            (ids) => {
+                                setNotice(null);
+                                dialogPush(() => (
+                                    <SelectDialog<string>
+                                        title="Embedding model"
+                                        emptyText="No embedding models matched"
+                                        items={ids.map((id) => ({ value: id, title: id }))}
+                                        onSelect={(id: string) => {
+                                            dialogClose();
+                                            finishApiKey(apiKey, baseURL, id);
+                                        }}
+                                        onCancel={() => {}}
+                                    />
+                                ));
+                            },
+                            // Every listing failure degrades the same way, so they share one branch: an endpoint
+                            // that is offline, gates /models, times out, or names its models unconventionally is
+                            // still configurable by typing the id.
+                            () => {
+                                setNotice({ kind: "warn", text: "Could not list models from that endpoint — enter the model id manually." });
+                                promptField("embedding.model", embDraft().model ?? "", (model) => finishApiKey(apiKey, baseURL, model.trim()));
+                            },
+                        );
+                    });
                 });
-            });
-        });
+            },
+            (value) => (value.trim() === "" ? "An API key is required for api-key mode." : undefined),
+        );
     }
 
     /** The shared tail of both api-key paths: width, then apply. An empty model defers to the harness default. */
@@ -465,31 +495,12 @@ export function ConfigApp(props: { onClose?: () => void }) {
 
     /* eslint-enable solid/reactivity */
 
+    // Applies a value already cleared by validatePgField: `port` is a valid, non-reserved integer; every
+    // other field is a non-empty trimmed string.
     function setPgField(field: PgField, value: string): void {
         const trimmed = value.trim();
-        if (field === "port") {
-            const n = Number(trimmed);
-            if (!Number.isInteger(n) || n <= 0 || n > 65535) {
-                setNotice({ kind: "error", text: `"${trimmed}" is not a valid port number (1-65535).` });
-                return;
-            }
-            // 8432 (prod) / 8434 (dev) are the build channels' reserved default ports. config.json is shared
-            // across channels, so resolvePostgresConfig ignores a reserved port at read time — accepting one
-            // here would silently discard it. Reject it up front and say why.
-            if (isReservedPostgresPort(n)) {
-                setNotice({
-                    kind: "error",
-                    text: `${n} is a reserved default port (prod 8432 / dev 8434) that cannot be pinned in config.json — each channel resolves its own default automatically.`,
-                });
-                return;
-            }
-            setDraft({ ...draft(), postgres: { ...pgDraft(), port: n } });
-        } else if (trimmed === "") {
-            setNotice({ kind: "error", text: "Value cannot be empty." });
-            return;
-        } else {
-            setDraft({ ...draft(), postgres: { ...pgDraft(), [field]: trimmed } });
-        }
+        const applied = field === "port" ? { port: Number(trimmed) } : { [field]: trimmed };
+        setDraft({ ...draft(), postgres: { ...pgDraft(), ...applied } });
         setNotice(null);
         setQuitArmed(false);
     }

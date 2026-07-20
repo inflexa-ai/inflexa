@@ -3,6 +3,7 @@ import type { JSX } from "solid-js";
 import type { TextareaRenderable } from "@opentui/core";
 
 import { GLYPHS } from "../../../lib/design_system.ts";
+import { theme } from "../../theme.ts";
 import { KEYS, chordLabel } from "../../keymap.ts";
 import { useDialogCancel, useDialogCloseGuard, useDialogEntry } from "./dialog_host.tsx";
 import { DialogPanel } from "./dialog_panel.tsx";
@@ -16,6 +17,10 @@ import { TextInput } from "../text_input.tsx";
  * no INSERT/NORMAL mode word appears (a modal has no reachable NORMAL mode; esc closes the dialog
  * via the host); on renders the multi-line `TextArea` with the submit/newline chords and `height`
  * honored. Both use `chrome="bare"` — the dialog panel border is the sole chrome.
+ *
+ * An optional `validate` gates submit IN the dialog (mirroring lib/cli.ts's `promptText`): a rejected
+ * value keeps the dialog open with an inline error and the typed text intact, so a validating caller's
+ * whole continuation chain survives a typo instead of the dialog closing under a failed check.
  *
  * Esc/cancel is the HOST's: the dialog binds no keys itself. It participates in the close funnel
  * via its entry handle — `onCancel` fires for every non-commit close (esc, click-outside, ctrl+c),
@@ -40,7 +45,13 @@ export function PromptDialog(props: {
     busy?: boolean;
     /** Message shown in the footer while `busy` is true (defaults to "Working…"). */
     busyText?: string;
-    /** Called with the field's plain text when the user submits. */
+    /**
+     * Optional in-dialog validation, mirroring lib/cli.ts's `promptText`: return an error message to
+     * REJECT the submit (shown inline, the dialog stays open with the typed value intact) or `undefined`
+     * to accept. Absent it, every non-busy submit passes straight to `onSubmit`.
+     */
+    validate?: (value: string) => string | undefined;
+    /** Called with the field's plain text when the user submits (only ever a value that passed `validate`). */
     onSubmit: (value: string) => void;
     /** Called when the dialog closes for any non-commit reason (esc, click-outside, ctrl+c). */
     onCancel: () => void;
@@ -52,6 +63,10 @@ export function PromptDialog(props: {
     // Input extends Textarea in opentui, so one ref type covers both primitives.
     let editRef: TextareaRenderable | undefined;
     const [spinFrame, setSpinFrame] = createSignal(0);
+    // A failed `validate` holds its message here so the panel can show it inline; cleared when the
+    // single-line field changes (`onInput`) or on a passing submit, so a corrected value drops the
+    // error without the dialog ever closing.
+    const [validationError, setValidationError] = createSignal<string | null>(null);
 
     useDialogCloseGuard(() => !props.busy);
     useDialogCancel(() => props.onCancel());
@@ -69,6 +84,12 @@ export function PromptDialog(props: {
 
     function submit(text: string): void {
         if (props.busy) return;
+        const message = props.validate?.(text);
+        if (message !== undefined) {
+            setValidationError(message);
+            return;
+        }
+        setValidationError(null);
         props.onSubmit(text);
     }
 
@@ -110,6 +131,7 @@ export function PromptDialog(props: {
                             initialValue={props.value}
                             busy={props.busy}
                             onRef={handleRef}
+                            onInput={() => setValidationError(null)}
                             onSubmit={submit}
                         />
                     }
@@ -124,6 +146,9 @@ export function PromptDialog(props: {
                         onRef={handleRef}
                         onSubmit={submit}
                     />
+                </Show>
+                <Show when={validationError()} keyed>
+                    {(message: string) => <text fg={theme().error}>{message}</text>}
                 </Show>
             </box>
         </DialogPanel>
