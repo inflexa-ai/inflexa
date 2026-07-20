@@ -23,10 +23,12 @@
 import { join } from "node:path";
 
 import { defineTool, type AskRequest, type ToolError } from "@inflexa-ai/harness";
+import type { Command } from "commander";
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { type AgentPolicy } from "../../cli/agent_policy.ts";
+import { type AgentPolicy, getAgentPolicy } from "../../cli/agent_policy.ts";
+import { buildProgram } from "../../cli/index.ts";
 import { env } from "../../lib/env.ts";
 import { classifyInflexaArgv } from "./inflexa_classify.ts";
 
@@ -271,6 +273,42 @@ export async function spawnInflexa(cmd: readonly string[], signal: AbortSignal, 
     return { exitCode, stdout: stdout.text(), stderr: stderr.text(), endedBy };
 }
 
+/**
+ * Render the agent-runnable command surface FROM the registry, for the tool's own description.
+ *
+ * The alternative is prose naming what the CLI covers — a second, hand-kept copy
+ * of the registry that nothing typechecks, so it drifts the first time a command
+ * is added or reclassified and stays wrong until an agent believes it. A stamped
+ * policy is the exact membership test: `registerAction` is the only way to attach
+ * an action handler and it requires a policy, so "carries a policy" IS "an agent
+ * could run this" — which also keeps this on the public `getAgentPolicy` read
+ * rather than the private slot the audit tests must reach for.
+ *
+ * Arguments and options are deliberately left out: they are the bulk of the
+ * surface and the fastest-moving part of it, and `--help` already serves them
+ * accurately on demand. Blocked commands need only their name.
+ */
+function describeCommandSurface(): string {
+    const groups: Record<AgentPolicy["kind"], string[]> = { auto: [], approval: [], blocked: [] };
+    const walk = (command: Command, path: readonly string[]): void => {
+        const policy = getAgentPolicy(command);
+        const name = `\`${path.join(" ")}\``;
+        if (policy !== undefined) groups[policy.kind].push(policy.kind === "blocked" ? name : `${name} (${command.description()})`);
+        for (const child of command.commands) walk(child, [...path, child.name()]);
+    };
+    // A fresh throwaway root, reflecting THIS process's baked build channel exactly as
+    // the classifier's does. Nothing is parsed, so there is no help/error output to silence.
+    for (const child of buildProgram().commands) walk(child, [child.name()]);
+
+    return [
+        groups.auto.length > 0 ? `Read-only, and normally run without interrupting the user: ${groups.auto.join("; ")}.` : "",
+        groups.approval.length > 0 ? `Always stop for the user's approval first: ${groups.approval.join("; ")}.` : "",
+        groups.blocked.length > 0 ? `Not available through this tool at all: ${groups.blocked.join(", ")}.` : "",
+    ]
+        .filter(Boolean)
+        .join(" ");
+}
+
 /** Construction deps for {@link createRunInflexaTool}; every field defaults to the real host value, overridable in tests. */
 export interface RunInflexaToolDeps {
     readonly runSubprocess?: RunSubprocess;
@@ -296,14 +334,16 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
     return defineTool({
         id: "run_inflexa",
         description:
-            "Run the local `inflexa` command-line tool. Pass `argv` as the list of words you would type " +
-            'after `inflexa` on a shell (e.g. ["--help"], or ["--version"]). Drive it like any unfamiliar ' +
-            'command: start from ["--help"] to see the top-level commands, then drill in with ' +
-            '["<subcommand>", "--help"] to learn a subcommand\'s arguments and options before you invoke it. ' +
-            "Help and version lookups run right away, and so do some commands classified as read-only; any other " +
-            "command that would actually do something pauses for the user's approval first, and the captured stdout, " +
-            "stderr, and exit code come back to you. The interactive " +
-            "UI launchers and the infrastructure lifecycle commands (up, down, setup) are not available through this tool.",
+            "Run the local `inflexa` command-line tool — the host's control surface for the environment an analysis runs in. " +
+            'Pass `argv` as the list of words you would type after `inflexa` on a shell (e.g. ["--help"], or ["--version"]). ' +
+            "When the environment is missing something the work needs, look here before telling the user it cannot be had: " +
+            "provisioning you can drive through this tool is a real option, not something out of reach. " +
+            "The commands below are the entire surface available to you, listed without their arguments and options — " +
+            'run ["<subcommand>", "--help"] to learn those before invoking, which is always free and never prompts. ' +
+            "A read-only command can still escalate to an approval when an option outside its known-safe set rides along, " +
+            "so being asked is normal and never a sign the command was the wrong one. " +
+            describeCommandSurface() +
+            " Captured stdout, stderr, and exit code come back to you; a non-zero exit is a real answer about what happened, not a tool failure.",
         inputSchema: z.object({
             argv: z
                 .array(z.string())

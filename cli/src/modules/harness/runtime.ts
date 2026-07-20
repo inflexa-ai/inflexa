@@ -951,6 +951,9 @@ async function bootHarnessRuntimeOnce(
             // Gives the planner reference discovery over the same store the sandbox
             // mounts, so a plan can name what this install actually holds.
             refStorePath: env.refsDir,
+            // Same manifest the sandbox agents read. Without it, answering "is this package
+            // installed?" costs an ephemeral sandbox run — a container spun up to import one name.
+            ...(packagesFile ? { packagesFile } : {}),
             chrome: {},
             // Host-supplied conversation tool: lets the agent drive the local `inflexa` CLI as a subprocess.
             hostTools: [createRunInflexaTool()],
