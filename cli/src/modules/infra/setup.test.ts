@@ -11,6 +11,7 @@ import {
     credentialHelperDetected,
     detectCredentialHelperFrom,
     detectedAdoptable,
+    detectedGatewayURL,
     ensureLiveCredential,
     explicitPostgresFields,
     hasProviderCredential,
@@ -161,6 +162,40 @@ describe("credential-helper detection", () => {
 
     test("no signals → nothing detected", () => {
         expect(credentialHelperDetected(detectCredentialHelperFrom(null, null, false))).toBe(false);
+    });
+
+    test("a settings env.ANTHROPIC_BASE_URL rides the detection beside the helper", () => {
+        const d = detectCredentialHelperFrom(null, "company-code token", false, "https://gw.corp");
+        expect(d.settingsBaseURL).toBe("https://gw.corp");
+    });
+});
+
+// The gateway-endpoint offer is a pure decision over the detection + env snapshot, so the
+// "no credential signal → no offer" guarantee and the settings-over-shell precedence are unit-testable.
+describe("detectedGatewayURL", () => {
+    test("a settings URL beside a helper is offered", () => {
+        const d = detectCredentialHelperFrom(null, "company-code token", false, "https://gw.corp");
+        expect(detectedGatewayURL(d, snapshot())).toBe("https://gw.corp");
+    });
+
+    test("settings URL wins over a shell ANTHROPIC_BASE_URL", () => {
+        const d = detectCredentialHelperFrom("/opt/mint-token", null, false, "https://gw.corp");
+        expect(detectedGatewayURL(d, snapshot({ anthropicBaseURL: "https://other.example" }))).toBe("https://gw.corp");
+    });
+
+    test("a key-less shell ANTHROPIC_BASE_URL is offered when a credential signal exists", () => {
+        const d = detectCredentialHelperFrom(null, null, true);
+        expect(detectedGatewayURL(d, snapshot({ anthropicBaseURL: "https://gw.corp" }))).toBe("https://gw.corp");
+    });
+
+    test("no credential signal → no offer, even with URLs present (nothing could authenticate it)", () => {
+        const d = detectCredentialHelperFrom(null, null, false, "https://gw.corp");
+        expect(detectedGatewayURL(d, snapshot({ anthropicBaseURL: "https://gw.corp" }))).toBeNull();
+    });
+
+    test("credential signals without any URL → no offer", () => {
+        const d = detectCredentialHelperFrom("/opt/mint-token", null, false);
+        expect(detectedGatewayURL(d, snapshot())).toBeNull();
     });
 });
 
