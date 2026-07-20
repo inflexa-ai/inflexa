@@ -4,6 +4,12 @@ Reference-based cell type deconvolution from DNA methylation data. Supports bloo
 
 ## Setup
 
+> **EpiDISH itself runs here.** It is installed, its reference matrices ship inside the package (loaded with `data()`, no download), and `epidish()` works on any beta matrix — so it needs neither array annotation packages nor network access. Of the array tools in this pack, it is the one that is not blocked.
+>
+> **The constraint is upstream.** The `IlluminaHumanMethylation*manifest` / `*anno.*` packages are not staged and there is no egress, so you cannot produce beta values from raw IDATs here (see `minfi-api.md`). EpiDISH needs a beta matrix that already exists — from GEO, a collaborator, or a prior processing step. Confirm you have one before planning deconvolution; if the only input is IDATs, report that the IDAT-to-beta step is blocked by the missing manifest package rather than presenting deconvolution as available.
+>
+> One consequence worth noting: cell fractions come out fine, but the CpG IDs in `celldmc_out$coe` cannot be mapped to genes or genomic positions without the annotation package. Report cell-type-specific DMPs by CpG ID and say the annotation is unavailable.
+
 ```r
 library(EpiDISH)
 library(limma)

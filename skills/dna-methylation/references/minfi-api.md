@@ -4,6 +4,12 @@ Illumina methylation array analysis (450K, EPIC, EPICv2) in R/Bioconductor. Cove
 
 ## Setup
 
+> **The array annotation and manifest packages are not staged here, and the IDAT pipeline below cannot run without them.** `minfi` itself is installed, but every `IlluminaHumanMethylation*manifest` and `IlluminaHumanMethylation*anno.*` package is absent, and there is no network egress to install one. `read.metharray.exp()` needs the *manifest* package to decode probe addresses from the IDATs; `mapToGenome()` and `getAnnotation()` need the *anno* package for coordinates and gene context. Both fail with a package-not-found error at the first call, before any data is read.
+>
+> **Verify before you build**: check that the annotation package for your platform loads. If it does not, report plainly which package is missing and that IDAT processing is blocked — then proceed with whatever the data supports. If a normalized beta or M-value matrix is available from another source, the DMP, deconvolution, clock, and EWAS sections of this pack still apply; results are reported by CpG ID without genomic annotation. Never substitute a different platform's annotation to get past the error.
+>
+> The rest of this reference is correct as written and applies unchanged if these packages are staged.
+
 ```r
 library(minfi)
 library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)  # EPIC v1
@@ -260,6 +266,8 @@ targets <- cbind(targets, cell_counts)
 
 Retrieve probe-level annotation (chromosome, position, gene, CpG island context).
 
+**This whole section depends on an annotation package that is not staged** (see Setup). `getAnnotation()` reads from the `IlluminaHumanMethylation*anno.*` package bound to the object, so it errors out here. Without it, DMP results carry CpG IDs but no `chr`, `pos`, gene symbol, or island context — report them that way and state the omission rather than leaving the columns silently absent.
+
 ```r
 # Get full annotation table
 ann <- getAnnotation(grset)
@@ -290,7 +298,7 @@ sig_dmps$island <- ann[rownames(sig_dmps), "Relation_to_Island"]
 | EPIC v1 | `IlluminaHumanMethylationEPICanno.ilm10b4.hg19` |
 | EPICv2 | `IlluminaHumanMethylationEPICv2anno.20a1.hg38` |
 
-The correct package is usually auto-detected from the RGChannelSet. Verify with `annotation(grset)`.
+The correct package is usually auto-detected from the RGChannelSet. Verify with `annotation(grset)` — but note that auto-detection only names the package it wants; it does not install it. **None of the three are staged here**, and each also has a companion `*manifest` package (`IlluminaHumanMethylationEPICmanifest`, `IlluminaHumanMethylation450kmanifest`, …) required by `read.metharray.exp()` that is equally absent. Confirm availability first; if missing, report the blocker.
 
 ## Saving Results for Downstream Steps
 
@@ -327,4 +335,5 @@ saveRDS(grset, "output/grset_normalized.rds")
 - **Probe filtering is mandatory**: Cross-reactive probes (~30K on EPIC) map to multiple genomic locations and produce false associations. SNP-at-CpG probes reflect genotype, not methylation state. Sex chromosome probes confound mixed-sex analyses. Remove all three categories before analysis. Published filter lists: Chen 2013 (450K), Pidsley 2016 (EPIC), Peters 2024 (EPICv2).
 - **preprocessQuantile and preprocessFunnorm return GenomicRatioSet**: These functions already map to the genome — do not call `mapToGenome()` again. `preprocessNoob` and `preprocessSWAN` return a MethylSet and require `ratioConvert()` + `mapToGenome()`.
 - **Array annotation mismatch**: Using the wrong annotation package silently maps probes to incorrect genomic positions. Verify with `annotation(grset)` and ensure the annotation package matches the array platform.
+- **The annotation and manifest packages are absent in this environment**: no `IlluminaHumanMethylation*anno.*` or `*manifest` package is installed and there is no egress to fetch one, so IDAT loading and genomic mapping cannot run at all. This is a hard stop, not a degradation — check for the package up front, report it as a blocker naming the package and the step, and continue with analyses that do not need it (see Setup).
 - **Sex prediction**: `getSex()` predicts sample sex from X/Y chromosome intensities. Use it as a QC check — mismatches indicate sample swaps. Pass predicted sex to `preprocessFunnorm()` and `preprocessQuantile()` for correct normalization.

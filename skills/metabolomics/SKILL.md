@@ -55,12 +55,14 @@ Vendor output (concentrations or peak areas)
 ```
 Feature table with MS2 spectra
   → Spectral matching: matchms against a resolved reference spectral library
-    → If no match: SIRIUS (molecular formula prediction)
-      → If still ambiguous: MetFrag (in silico fragmentation ranking)
+    → If no match: SIRIUS (molecular formula prediction)         [NOT INSTALLED]
+      → If still ambiguous: MetFrag (in silico fragmentation)    [NOT INSTALLED]
 ```
 
+Only the first step of this tree is runnable here, and only if a library is provided. The two fallback tiers are absent binaries — see the notes below before planning on either.
+
 - **No spectral library is currently in the reference inventory** (MassBank, HMDB, GNPS, MoNA — none of them), and there is no network egress to fetch one. Resolve a library by what it is before planning annotation. If none is available, report that spectral annotation cannot be run and deliver the feature table with m/z, RT, adduct and isotope annotation, which is complete and useful without compound IDs. Do not invent a library path and do not silently downgrade to formula guesses presented as identifications.
-- SIRIUS and MetFrag are separate binaries and are not guaranteed to be staged — probe for them before planning on them. **CSI:FingerID is a network service and always fails here**; SIRIUS can still do offline formula prediction, but structure elucidation via CSI:FingerID is unavailable.
+- **SIRIUS and MetFrag are not installed here** — they are separate Java/CLI binaries, absent from the environment and unobtainable with no egress. Probe (`command -v sirius`) before planning on them and expect nothing; when absent, report the gap rather than describing formula prediction you cannot run. Even with SIRIUS staged, **CSI:FingerID is a network service and always fails here**, so structure elucidation would remain unavailable and only offline formula prediction would work. What *is* installed for this tier of the problem: `matchms` for spectral similarity scoring (given a library), `ms-deisotope` for charge-state deconvolution, and `rdkit`/`mordred` for structure handling once you have a candidate ID from elsewhere.
 - matchms handles spectral similarity scoring (cosine, modified cosine, entropy).
 - Always report annotation confidence levels (MSI levels 1-4).
 - Check adduct annotations: [M+H]+, [M+Na]+, [M-H]-, [M+FA-H]- are common.
@@ -119,7 +121,7 @@ Normalized, log2-transformed feature matrix
 - **Spectra** (R Bioconductor): Modern replacement for MSnbase data backends. Use `Spectra()` constructor, `filterMsLevel()`, `peaksData()`.
 - **spectrum-utils** (Python): MS spectrum visualization — mirror plots, annotated spectra. Use for quality inspection of spectral matches.
 - **ms-deisotope** (Python): Deisotoping and charge state deconvolution for high-resolution MS data.
-- **openms** (system CLI): OpenMS suite — `FeatureFinderMetabo`, `MapAlignerPoseClustering`. Alternative to XCMS for feature detection.
+- **OpenMS** (system CLI): `FeatureFinderMetabo`, `MapAlignerPoseClustering` — nominally an alternative to XCMS for feature detection, but **not installed here** and unobtainable with no egress. Do not plan around it: XCMS is the installed pipeline and is the one to use. If you have a specific reason to want OpenMS, probe first (`command -v FeatureFinderMetabo`) and report its absence rather than emitting commands that cannot run.
 
 ## References
 

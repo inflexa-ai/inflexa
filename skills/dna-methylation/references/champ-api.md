@@ -4,6 +4,12 @@ Integrated analysis pipeline for Illumina methylation arrays (450K, EPIC). Wraps
 
 ## Setup
 
+> **The ChAMP array pipeline cannot run here.** `ChAMP` is installed, but it delegates IDAT loading to `minfi` and probe filtering/annotation to the `IlluminaHumanMethylation*manifest` and `IlluminaHumanMethylation*anno.*` packages — none of which are staged, with no network egress to install them. Every function taking an `arraytype` argument (`champ.load`, `champ.filter`, `champ.norm`, `champ.DMP`, `champ.DMR`, `champ.Block`, `champ.GSEA`) resolves that platform's annotation internally, so `champ.load()` fails at the first call and nothing downstream is reachable.
+>
+> **Verify before you build**: confirm the platform's annotation package loads. If it does not, report the blocker plainly — name the package and say IDAT-based ChAMP analysis is unavailable — and do not attempt a workaround through a different `arraytype`. If a normalized beta matrix already exists from another source, skip ChAMP and work from that matrix directly with `limma` (DMPs), `EpiDISH` (deconvolution), and `methylclock` (clocks), which do not need array annotation.
+>
+> Everything below is technically correct and applies unchanged if these packages are staged.
+
 ```r
 library(ChAMP)
 library(limma)
@@ -339,6 +345,7 @@ dev.off()
 - **champ.DMP() uses limma internally**: It builds a design matrix from `pheno` and runs `lmFit` + `eBayes`. The `compare.group` parameter specifies which two levels to contrast. Without it, all pairwise comparisons are returned.
 - **DMRcate via champ.DMR() is a wrapper**: `champ.DMR(method = "DMRcate")` wraps the DMRcate package with simplified parameters. For full control over `cpg.annotate()`, `dmrcate()`, and `extractRanges()`, use DMRcate directly (see `dmrcate-api.md`).
 - **arraytype must match platform**: Setting `arraytype = "450K"` for EPIC data (or vice versa) silently uses incorrect annotation manifests. Probe filtering, gene mapping, and CpG island assignments will all be wrong.
+- **The annotation manifests `arraytype` selects are not installed here**: whichever value you pass, ChAMP looks for an `IlluminaHumanMethylation*` manifest/anno package that is absent, and there is no egress to fetch it. `champ.load()` therefore errors before reading any IDAT. Check availability first and report it as a blocker; switching `arraytype` does not work around it (see Setup).
 - **Memory with EPIC arrays**: EPIC has ~850K probes. For large studies (>100 samples), normalization and DMP detection may exhaust memory. Process in batches or use a high-memory instance. BMIQ normalization is per-sample and parallelizable (`cores` parameter).
 - **filterXY default**: `filterXY = TRUE` removes sex chromosome probes by default. Set to `FALSE` for sex-differential methylation studies, then handle sex chromosomes explicitly in the analysis.
 - **M-values for statistics**: ChAMP's `champ.DMP()` internally handles the beta-to-M conversion for limma. If running limma manually on ChAMP-normalized betas, convert first: `M <- log2(beta / (1 - beta))`.

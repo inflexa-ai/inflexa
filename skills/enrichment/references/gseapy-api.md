@@ -75,10 +75,12 @@ gene_list = ["BRCA1", "TP53", "EGFR", "MYC", "KRAS", "PTEN"]
 
 # Basic ORA against a resolved GMT
 # `hallmark_gmt_path` was resolved from the reference inventory.
+# gp.enrich() takes no `organism` argument — that belongs to the web-only
+# gp.enrichr(). Passing it here raises TypeError. Match the organism by
+# resolving a gene set file for that organism instead.
 enr = gp.enrich(
     gene_list=gene_list,
     gene_sets=hallmark_gmt_path,
-    organism="human",
     outdir=None,            # None = do not write files to disk
     cutoff=0.05,            # adjusted p-value cutoff for output filtering
 )
@@ -87,7 +89,6 @@ enr = gp.enrich(
 enr = gp.enrich(
     gene_list=gene_list,
     gene_sets=[hallmark_gmt_path, reactome_gmt_path, wikipathways_gmt_path],
-    organism="human",
     outdir=None,
 )
 
@@ -126,7 +127,7 @@ results_df = enr.res2d
 | `P-value` | Raw p-value from Fisher's exact test |
 | `Adjusted P-value` | BH-adjusted p-value |
 | `Odds Ratio` | Odds ratio of enrichment |
-| `Combined Score` | Enrichr combined score: -log(p) * z |
+| `Combined Score` | Enrichr combined score: `log(p) * z`, where p is the Fisher p-value and z the z-score of deviation from expected rank. log(p) is negative and z is negative, so the product is positive and larger = stronger. Do not negate log(p) — that flips the sign and inverts the ranking. |
 | `Genes` | Semicolon-separated gene symbols in the overlap |
 
 ## gp.gsea() — Standard GSEA
@@ -305,8 +306,8 @@ ax.figure.savefig("dotplot.png", dpi=150, bbox_inches="tight")
 - `outdir=None` suppresses file output. If you set a directory, GSEApy writes TSV and plot files. For programmatic use, always set `outdir=None`.
 - Results are in `res2d` (DataFrame), not `results` (which is a dict for GSEA/prerank). Use `res2d` for consistent access across all methods.
 - Any Enrichr library name string fails without network access, and so does `gp.get_library_name()`. There is no offline library cache — resolve a gene set file instead.
-- `organism="human"` is only needed for Enrichr web API calls (`enrich`). For `prerank`/`ssgsea` with local gene sets or GMT files, it is ignored — it does **not** convert identifiers, so resolve a gene set file matching your organism rather than relying on this parameter.
-- The `background` parameter in `gp.enrich()` overrides `organism`. When `background` is provided, the background gene universe is restricted to those genes.
+- `organism=` exists only on `gp.enrichr()`, the Enrichr **web API** call, which cannot run here. `gp.enrich()` — the offline route — has no such parameter and raises TypeError if you pass one. It does **not** convert identifiers either way, so resolve a gene set file matching your organism rather than reaching for this parameter.
+- `background` in `gp.enrich()` sets the gene universe for the Fisher test. Provide it: without it GSEApy falls back to the union of genes across the gene sets, which inflates significance.
 - Column names in results vary slightly between methods. `enrich()` uses `"Adjusted P-value"` while `prerank()` uses `"FDR q-val"`.
 - `prerank()` expects a pre-sorted ranking. If you pass an unsorted Series, results may differ from expected.
 - For custom gene sets as dicts, values must be lists of strings (gene symbols), not sets or tuples.

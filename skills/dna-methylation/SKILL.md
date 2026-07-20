@@ -9,6 +9,25 @@ tags: [methylation, 450k, epic, bisulfite-seq, wgbs, rrbs, dmp, dmr]
 
 Comprehensive guidelines for methylation array processing, bisulfite sequencing analysis, differential methylation, epigenetic clocks, cell type deconvolution, and epigenome-wide association studies.
 
+## Environment Constraint: Array Annotation Is Not Staged
+
+**Read this before planning any array pipeline.** The analysis packages (`minfi`, `ChAMP`, `DMRcate`, `missMethyl`, `EpiDISH`, `methylclock`) are installed, but the Illumina **array manifest and annotation packages they depend on are not** — no `IlluminaHumanMethylation450kanno.*`, `IlluminaHumanMethylationEPICanno.*`, `IlluminaHumanMethylationEPICv2anno.*`, and no matching `*manifest` package. There is also no network egress, so they cannot be installed at runtime, and Bioconductor's `ExperimentHub`/`AnnotationHub` fetches fail even though those client packages are present.
+
+What this means in practice:
+
+| Step | Status |
+|-|-|
+| IDAT → RGChannelSet → normalized betas (`minfi`, `ChAMP`) | **Cannot run.** Requires the manifest package to decode probe addresses. |
+| Genomic mapping / probe annotation (`mapToGenome()`, `getAnnotation()`) | **Cannot run.** Requires the anno package. |
+| Array DMR calling (`DMRcate::cpg.annotate(datatype = "array")`) | **Cannot run.** Resolves probe coordinates from the anno package. |
+| Deconvolution from an existing beta matrix (`EpiDISH`) | **Runs.** Self-contained references, no annotation dependency. |
+| Epigenetic clocks (`methylclock`) | Runs on a beta matrix, but needs clock coefficients — see `references/methylclock-api.md`. |
+| Bisulfite-seq (Bismark → `dmrseq` / `DSS`) | **Runs.** No array annotation involved. |
+
+**How to proceed**: verify the annotation package actually loads before building a pipeline around it. If it does not, say so plainly — name the missing package and the step it blocks — and then do the analysis the data *does* support. A beta or M-value matrix that arrives already processed (from GEO, a collaborator, or an upstream step) still supports DMP testing, deconvolution, clocks, and EWAS modelling; only the probe-to-genome annotation is missing, and results can be reported by CpG ID. Do not silently substitute a different array's annotation, and do not present an unannotated result as though it were annotated.
+
+Everything below stays technically correct and applies as written if these packages are ever staged.
+
 ## Method-Selection Decision Tree
 
 ### 1. Array Data (Illumina 450K / EPIC / EPICv2)
@@ -36,7 +55,7 @@ IDAT files
 ```
 
 - minfi is preferred for flexibility; ChAMP for rapid exploratory analysis.
-- ALWAYS verify the correct array annotation: 450K (`IlluminaHumanMethylation450kanno`) vs EPIC (`IlluminaHumanMethylationEPICanno`) vs EPICv2. Wrong annotation silently produces incorrect results.
+- ALWAYS verify the correct array annotation: 450K (`IlluminaHumanMethylation450kanno`) vs EPIC (`IlluminaHumanMethylationEPICanno`) vs EPICv2. Wrong annotation silently produces incorrect results. **None of these packages are staged here** — confirm the one you need loads before starting, and if it does not, report the blocker rather than falling back to another platform's annotation (see Environment Constraint above).
 
 ### 2. Bisulfite Sequencing (WGBS / RRBS)
 

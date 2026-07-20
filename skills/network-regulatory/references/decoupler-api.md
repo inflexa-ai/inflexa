@@ -12,7 +12,7 @@ import numpy as np
 
 ## Resource Loading
 
-Never call `dc.op.collectri()`, `dc.op.progeny()`, `dc.get_progeny()`, or any other `dc.op.*()` loader: they fetch from the OmniPath web API, and there is no network egress. Load the network from a file already available to you.
+Never call `dc.op.collectri()`, `dc.op.progeny()`, or any other `dc.op.*()` loader: they fetch from the OmniPath web API, and there is no network egress. Load the network from a file already available to you.
 
 **Resolve the file before you write the script.** Ask for the *dataset* by what it is, not by a path — reference data is provisioned per-environment, so the directory, the filename, and the format all vary and none of them are yours to assume:
 

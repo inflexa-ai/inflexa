@@ -249,7 +249,10 @@ def population_pk_diagnostics(pk_data, fit_result, dep_var="np.log(CL)"):
 
     # 4. Random effects distribution
     ax = axes[1, 1]
-    re = pd.Series({k: v.values()[0] for k, v in
+    # random_effects maps group -> pandas Series. `.values` is a numpy
+    # ATTRIBUTE, not a method: `v.values()[0]` raises
+    # "TypeError: 'numpy.ndarray' object is not callable".
+    re = pd.Series({k: v.iloc[0] for k, v in
                      fit_result.random_effects.items()})
     ax.hist(re, bins=20, edgecolor="black", alpha=0.7)
     ax.set_xlabel("Random Intercept")

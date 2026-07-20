@@ -2,6 +2,14 @@
 
 R/Bioconductor package for amplicon sequence variant (ASV) inference from 16S and ITS amplicon sequencing data. Resolves exact biological sequences at single-nucleotide resolution without OTU clustering.
 
+> **dada2 is not in this environment's library store.** `library(dada2)` will fail, and with no network egress it cannot be installed at runtime. **Verify before planning any raw-FASTQ workflow around it**, and expect it to be missing. This reference remains correct for the moment dada2 is staged, but do not build a plan on it without checking first.
+>
+> **The reachable route is to start downstream of ASV inference.** Everything after the ASV table is fully installed — `phyloseq`, `vegan`, `mia`/`miaViz`, `ANCOMBC`, `ALDEx2`, `Maaslin2`, and Python `biom-format` / `scikit-bio`. If you were handed a feature table (BIOM, a QIIME2 export, or a counts CSV) plus taxonomy, the pack's whole analytical arc — diversity, ordination, PERMANOVA, compositional differential abundance — runs normally. Note also that **no SILVA or UNITE training set is in the reference inventory**, so even with dada2 present, taxonomy assignment from raw reads would not be runnable.
+>
+> If you were handed raw FASTQ and dada2 is absent, say so plainly, name what would need to be provisioned (dada2 plus a marker-matched training set, or a pre-computed feature table), and stop — do not emit a pipeline that cannot execute, and do not improvise ASV inference from scratch.
+
+**Input paths below are placeholders.** `fastq_dir`, `metadata_path`, and the training-set variables stand for inputs you were handed — reached by absolute path beneath the read-only analysis root. Do not assume a directory layout and do not hardcode one; use the paths you were given. Output paths (`output/`, `figures/`) are relative to your working directory and are yours to create.
+
 ## Setup
 
 ```r
@@ -331,9 +339,12 @@ write.csv(track, "output/read_tracking.csv")
 library(dada2)
 
 # --- File Discovery ---
-path <- "data/fastq"
-fnFs <- sort(list.files(path, pattern = "_R1_001.fastq.gz", full.names = TRUE))
-fnRs <- sort(list.files(path, pattern = "_R2_001.fastq.gz", full.names = TRUE))
+# `fastq_dir` is the input directory you were given, as an absolute path --
+# not a literal to copy. Confirm the read-pair suffix against the actual
+# filenames; "_R1_001.fastq.gz" is Illumina's default, not a guarantee.
+fnFs <- sort(list.files(fastq_dir, pattern = "_R1_001.fastq.gz", full.names = TRUE))
+fnRs <- sort(list.files(fastq_dir, pattern = "_R2_001.fastq.gz", full.names = TRUE))
+stopifnot(length(fnFs) > 0, length(fnFs) == length(fnRs))
 sample_names <- gsub("_R1_001.fastq.gz", "", basename(fnFs))
 
 # --- Quality Profiles ---
@@ -404,7 +415,11 @@ ps <- phyloseq(
   tax_table(taxa)
 )
 # Add sample metadata
-meta_df <- read.csv("data/metadata.csv", row.names = 1)
+# `metadata_path` is the sample-metadata file you were given.
+meta_df <- read.csv(metadata_path, row.names = 1)
+# Sample metadata must cover every sample in the ASV table.
+stopifnot(all(sample_names(ps) %in% rownames(meta_df)))
+meta_df <- meta_df[sample_names(ps), , drop = FALSE]
 sample_data(ps) <- sample_data(meta_df)
 
 # Add short ASV names for convenience
@@ -422,9 +437,12 @@ saveRDS(ps, "output/phyloseq_object.rds")
 library(dada2)
 
 # --- File Discovery ---
-path <- "data/fastq"
-fnFs <- sort(list.files(path, pattern = "_R1_001.fastq.gz", full.names = TRUE))
-fnRs <- sort(list.files(path, pattern = "_R2_001.fastq.gz", full.names = TRUE))
+# `fastq_dir` is the input directory you were given, as an absolute path --
+# not a literal to copy. Confirm the read-pair suffix against the actual
+# filenames; "_R1_001.fastq.gz" is Illumina's default, not a guarantee.
+fnFs <- sort(list.files(fastq_dir, pattern = "_R1_001.fastq.gz", full.names = TRUE))
+fnRs <- sort(list.files(fastq_dir, pattern = "_R2_001.fastq.gz", full.names = TRUE))
+stopifnot(length(fnFs) > 0, length(fnFs) == length(fnRs))
 sample_names <- gsub("_R1_001.fastq.gz", "", basename(fnFs))
 
 # --- Filter and Trim (NO truncLen for ITS) ---
@@ -506,8 +524,17 @@ seqtab <- makeSequenceTable(dadaFs)
 
 DADA2 does not remove primers. If primers are still in the reads (common for ITS), remove them before `filterAndTrim`.
 
+**`cutadapt` is not installed here**, and no-egress means it cannot be added at runtime. Probe before planning on it (`Sys.which("cutadapt")` from R, or `command -v cutadapt`) and expect nothing back. What to do instead, in order:
+
+1. **Fixed-length primers at the read start (the usual 16S case): use `filterAndTrim(trimLeft = c(nchar(FWD), nchar(REV)))`.** This is dada2's own facility, needs no external tool, and is the standard recommendation when primers sit at a constant offset. It is a complete solution for that case, not a workaround.
+2. **Variable-position primers or read-through (the usual ITS case): there is no installed substitute.** ITS amplicons vary in length, so primers can appear anywhere and the reverse-complement can read through into the far primer — which is exactly why cutadapt is used. `trimLeft` cannot express this. Report the blocker and name what is needed (cutadapt, or reads with primers already removed) rather than applying a fixed trim to ITS data, which silently mangles a fraction of the reads.
+3. **Check whether primers are even present.** Sequencing cores frequently deliver primer-trimmed reads. Count primer occurrences in a few files before assuming trimming is needed — if they are already gone, the whole step disappears.
+
+The block below is retained for the case where cutadapt is staged.
+
 ```r
-# Using cutadapt (external tool, must be installed)
+# Using cutadapt -- external tool, NOT installed in this environment;
+# verify with Sys.which("cutadapt") before running any of this.
 # Forward primer: CTTGGTCATTTAGAGGAAGTAA (ITS1f)
 # Reverse primer: GCTGCGTTCTTCATCGATGC (ITS2)
 

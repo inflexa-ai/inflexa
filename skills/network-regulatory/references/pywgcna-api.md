@@ -300,8 +300,8 @@ MEs = pyWGCNA.MEs
 - `networkType="signed"` distinguishes positive and negative correlations. `"unsigned"` uses absolute correlation. Signed is generally preferred for biological interpretation.
 - The `grey` module contains unassigned genes. It is expected and should be excluded from downstream analysis.
 - `deepSplit` in `cutreeHybrid` controls module granularity: 0 = few large modules, 4 = many small modules. Start with 2 (default).
-- `MEDissThres` controls module merging: lower values merge more aggressively. 0.2 means modules with eigengene correlation > 0.8 are merged.
-- Power table column names use `SFT.R.sq` (not `R.squared`). The selected power has `SFT.R.sq > RsquaredCut` with the lowest mean connectivity.
+- `MEDissThres` is a cut height on eigengene **dissimilarity** (1 - correlation), so *higher* values merge more aggressively. 0.2 means modules with eigengene correlation > 0.8 are merged; raise it to merge more, lower it to keep modules separate.
+- Power table column names use `SFT.R.sq` (not `R.squared`). PyWGCNA picks the **lowest power** that satisfies both `SFT.R.sq > RsquaredCut` and `mean(k) <= MeanCut` — that is the highest mean connectivity among the qualifying powers, not the lowest.
 - If no power achieves `RsquaredCut`, PyWGCNA selects the power with the highest `SFT.R.sq`. This may indicate the data is not well-suited for WGCNA (too few samples, too noisy, or wrong normalization).
 - The `datExpr` attribute is an AnnData-like object. Use `.to_df()` to get the expression DataFrame and `.var` for gene-level metadata.
 - `MEs` (module eigengenes) have column names like `MEblue`, `MEturquoise`. The `ME` prefix is always present.

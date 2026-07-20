@@ -27,8 +27,8 @@ Choose the method based on your input data and analytical goal:
    - Use **GSVA** via `gsva()` (R via rpy2) when downstream analysis expects continuous scores per pathway per sample.
 
 4. **Pathway activity on AnnData (single-cell or bulk)**
-   - Use **decoupler** `run_ulm()` or `run_mlm()` with **PROGENy** model.
-   - Results integrate directly into `adata.obsm` for downstream plotting and clustering.
+   - Use **decoupler** `dc.mt.ulm()` or `dc.mt.mlm()` with the **PROGENy** model.
+   - Results integrate directly into `adata.obsm` (`score_ulm` / `padj_ulm`) for downstream plotting and clustering.
 
 5. **Transcription factor activity inference**
    - Use **decoupler** with **CollecTRI** regulon resource (NOT enrichment databases).
@@ -82,7 +82,7 @@ After enrichment, collapse redundant terms to improve interpretability:
 - **ORA without proper background**: Defaults to whole genome, inflating significance. ALWAYS set `background=` to all expressed/detected genes.
 - **GSEA on an unranked list**: GSEA requires a continuous ranking. If you only have a gene list, use ORA.
 - **Ignoring gene set size limits**: Very small sets (<15) are noisy; very large sets (>500) are uninformative. Filter before running.
-- **Gene ID mismatch**: Verify gene identifiers match the database organism and ID type (symbol vs. Ensembl vs. Entrez). Convert with `gseapy.parser` or `pymart` before enrichment.
+- **Gene ID mismatch**: Verify gene identifiers match the database organism and ID type (symbol vs. Ensembl vs. Entrez). Map offline before enrichment: use the ID-mapping tables in the reference data available to you (NCBI gene info, UniProt ID mapping), or `org.Hs.eg.db` via rpy2 for human. `biomaRt` cannot be used — it queries Ensembl over the network.
 - **Not reporting database version**: Always log which gene set database and release you used, as reported by the reference inventory for the file you resolved.
 - **Treating enrichment as validation**: Enrichment finds statistical associations, not causal mechanisms. Frame results as "consistent with" not "proves".
 - **Running ORA on the full DE list without a threshold**: ORA requires a discrete gene list. Apply a significance cutoff first.
@@ -99,7 +99,7 @@ After enrichment, collapse redundant terms to improve interpretability:
 | File | Purpose |
 |-|-|
 | `references/gseapy-api.md` | gseapy API: prerank, enrich, ssgsea |
-| `references/decoupler-enrichment-api.md` | decoupler run_ulm, run_mlm with PROGENy |
+| `references/decoupler-enrichment-api.md` | decoupler `dc.mt.ulm`, `dc.mt.mlm` with PROGENy |
 | `references/fgsea-rpy2-api.md` | fgsea via rpy2: GSEA and pathway collapse |
 | `references/clusterprofiler-rpy2-api.md` | clusterProfiler via rpy2: enrichGO, gseGO (KEGG entry points fail — no network) |
 | `references/gsva-rpy2-api.md` | GSVA via rpy2: per-sample gene set variation |

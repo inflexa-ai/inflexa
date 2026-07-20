@@ -163,7 +163,11 @@ gr.to_gff3("output.gff3")
 # To GTF file
 gr.to_gtf("output.gtf")
 
-# To BigWig (requires chromsizes)
+# To BigWig. `chromsizes` MUST be passed explicitly: called without it,
+# pyranges tries to look the genome up over the network, and there is no
+# egress here. Build it from data you already have -- e.g. a BAM header via
+# pysam.AlignmentFile(bam).header (SQ records: SN -> LN), or the .fai of
+# your reference FASTA.
 # gr.to_bigwig("output.bw", chromsizes)
 ```
 

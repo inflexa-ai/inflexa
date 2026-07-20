@@ -81,7 +81,8 @@ sce <- prepData(
   md = md,             # data.frame with file_name, sample_id, condition, patient_id
   cofactor = 5,        # numeric — arcsinh cofactor (default 5 for CyTOF)
   transform = TRUE,    # logical — apply arcsinh transformation (default TRUE)
-  FACS = FALSE         # logical — set TRUE for fluorescence data (cofactor = 150)
+  FACS = FALSE         # logical — TRUE keeps non-mass channels for FACS data.
+                       # It does NOT change the cofactor.
 )
 
 # The returned SCE contains:
@@ -90,8 +91,10 @@ sce <- prepData(
 # - rowData: channel_name, marker_name, marker_class
 ```
 
-`cofactor = 5` is the standard for CyTOF. For FACS data, use `FACS = TRUE`
-(which sets cofactor = 150) or set cofactor explicitly.
+`cofactor = 5` is the standard for CyTOF and is the default whether or not
+`FACS = TRUE`. `FACS = TRUE` only controls which channels are retained — it
+does **not** change the cofactor. For fluorescence data pass the cofactor
+yourself, e.g. `cofactor = 150`, alongside `FACS = TRUE`.
 
 ## Preprocessing
 
@@ -247,7 +250,9 @@ plotExprHeatmap(
   features = "type",    # "type", "state", or character vector
   by = "cluster_id",    # column in colData to aggregate by
   k = "meta20",         # metaclustering resolution (e.g., "meta10", "meta20")
-  scale = "last",       # "first" (0-1 per marker), "last" (0-1 per cluster), "never"
+  scale = "last",       # when to scale relative to aggregation:
+                        # "first" = scale expressions, then aggregate;
+                        # "last"  = aggregate, then scale; "never" = no scaling
   bars = TRUE,          # logical — show cluster size bars
   perc = TRUE           # logical — show cluster percentage annotations
 )
@@ -341,13 +346,15 @@ design <- createDesignMatrix(
   cols_design = c("condition", "patient_id")  # include blocking factors
 )
 
-# Create contrast (stimulated vs control)
-contrast <- createContrast(c(0, 1, 0, 0))
-# Vector length must match ncol(design)
-# Set 1 for the coefficient of interest, 0 for others
+# Create contrast (stimulated vs control).
+# The vector length MUST equal ncol(design), which depends on your metadata:
+# intercept + (levels(condition) - 1) + (levels(patient_id) - 1). Do not
+# hardcode it — build it from the design and name the coefficient you want.
+coef_of_interest <- grep("^condition", colnames(design), value = TRUE)[1]
+contrast <- createContrast(as.numeric(colnames(design) == coef_of_interest))
 
 # Verify contrast dimensions
-nrow(contrast) == ncol(design)  # must be TRUE
+stopifnot(nrow(contrast) == ncol(design))
 ```
 
 ### Differential Abundance (DA)

@@ -119,10 +119,15 @@ li.pl.dotplot(
     top_n=20,
 )
 
-# Chord diagram
-li.pl.connectivity(
+# Chord / circle diagram of aggregated interactions between cell types.
+# (li.pl.connectivity is a different function — it plots SPATIAL connectivity
+#  around one spot via idx=, and has no score_key.)
+li.pl.circle_plot(
     adata,
+    uns_key="liana_res",
+    groupby="cell_type",
     score_key="magnitude_rank",
+    inverse_score=True,   # magnitude_rank: lower is stronger
 )
 ```
 
@@ -142,11 +147,13 @@ li.mt.rank_aggregate(
 
 ### Tensor Decomposition (Multi-Context)
 
-```python
-# Tensor decomposition for multi-condition ligand-receptor analysis
-# Decomposes interactions across conditions/samples into factors
+LIANA only *builds* the tensor. The factorization and its plots live in
+`cell2cell`, a separate package — confirm it imports before planning this
+step, and fall back to per-sample `rank_aggregate` comparisons if it does
+not. There is no `li.multi.decompose_tensor()` and no `li.pl.tensor_factor()`.
 
-# Step 1: Build tensor from per-sample LIANA results
+```python
+# Step 1 (liana): build the tensor from per-sample LIANA results
 tensor = li.multi.to_tensor_c2c(
     adata,
     groupby="cell_type",
@@ -155,18 +162,18 @@ tensor = li.multi.to_tensor_c2c(
     how="outer",  # Handle missing values
 )
 
-# Step 2: Decompose
-tensor_res = li.multi.decompose_tensor(
-    tensor,
-    rank=5,         # Number of factors to extract
+# Step 2 (cell2cell): decompose it
+import cell2cell as c2c
+
+tensor.compute_tensor_factorization(
+    rank=5,             # Number of factors to extract
     random_state=42,
 )
 
-# Step 3: Visualize factors
-li.pl.tensor_factor(
-    tensor_res,
-    factor_idx=0,
-    top_n=10,
+# Step 3 (cell2cell): visualize factors
+c2c.plotting.tensor_factors_plot(
+    tensor,
+    order_labels=["Contexts", "Interactions", "Senders", "Receivers"],
 )
 ```
 

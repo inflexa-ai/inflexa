@@ -27,6 +27,10 @@ Assay type?
 │   ├── Joint embedding (default)
 │   │   ├── MultiVI (probabilistic, handles missing modalities, default)
 │   │   └── GLUE (graph-linked embedding, best for regulatory inference)
+│   │       PREREQUISITE: rna.var needs chrom/chromStart/chromEnd, which
+│   │       normally require a GTF — none is available. Check whether the
+│   │       data already carries them; if not, report the blocker and
+│   │       fall back to MultiVI. See references/scglue-api.md.
 │   └── Per-modality analysis → scanpy for RNA, muon.atac for ATAC, then combine
 │
 ├── TEA-seq / DOGMA-seq (RNA + protein + ATAC, 3 modalities)
@@ -73,6 +77,7 @@ Analysis goal?
 │   └── Separate per-modality analysis, then compare
 ├── Regulatory inference (TF → peak → gene)
 │   └── GLUE (preserves feature-level relationships across modalities)
+│       Gated on RNA genomic coordinates being present — see above.
 └── Protein marker quantification
     └── Per-protein analysis from TOTALVI denoised values or DSB-normalized
 ```
@@ -91,8 +96,9 @@ Analysis goal?
 ### Multiome with MultiVI
 
 1. Store RNA and ATAC in MuData: `mdata.mod['rna']`, `mdata.mod['atac']`.
-2. `scvi.model.MULTIVI.setup_mudata(mdata, ...)`.
-3. Train: `model = scvi.model.MULTIVI(mdata); model.train()`.
+2. `scvi.model.MULTIVI.setup_mudata(mdata, ...)` — use `setup_mudata`, not `setup_anndata` (deprecated for MULTIVI since scvi-tools 1.4).
+3. Train: pass the feature-block sizes explicitly so the model knows where RNA ends and ATAC begins:
+   `model = scvi.model.MULTIVI(mdata, n_genes=mdata.mod['rna'].n_vars, n_regions=mdata.mod['atac'].n_vars); model.train()`.
 4. Extract joint latent space for clustering.
 5. Impute missing modalities if cells have only one modality.
 

@@ -45,7 +45,14 @@ def four_param_logistic(x, bottom, top, ec50, hill):
     array
         Predicted response values.
     """
-    return bottom + (top - bottom) / (1 + (ec50 / x) ** hill)
+    x = np.asarray(x, dtype=float)
+    # Algebraically identical to bottom + (top - bottom)/(1 + (ec50/x)**hill),
+    # but finite at x == 0. A placebo / zero-dose arm is a normal arm in a
+    # dose-response study, and the (ec50/x) form divides by zero there.
+    # This form returns `bottom` at x == 0, which is what "response at
+    # zero dose" means. Requires ec50 > 0 (enforced by the fit bounds).
+    x_h = x ** hill
+    return bottom + (top - bottom) * x_h / (x_h + ec50 ** hill)
 
 
 def fit_dose_response(doses, responses, model="4pl"):
@@ -60,10 +67,26 @@ def fit_dose_response(doses, responses, model="4pl"):
     doses = np.asarray(doses, dtype=float)
     responses = np.asarray(responses, dtype=float)
 
-    p0 = [np.min(responses), np.max(responses), np.median(doses), 1.0]
+    lo_dose, hi_dose = np.min(doses), np.max(doses)
+
+    # Orientation-aware start: `bottom` is the response at the LOWEST
+    # dose and `top` at the highest. Seeding them with min/max of the
+    # responses instead flips the curve whenever response decreases
+    # with dose — the normal case for % change from baseline.
+    bottom0 = float(np.mean(responses[doses == lo_dose]))
+    top0 = float(np.mean(responses[doses == hi_dose]))
+
+    positive_doses = doses[doses > 0]
+    ec50_0 = float(np.median(positive_doses)) if positive_doses.size else 1.0
+
+    p0 = [bottom0, top0, ec50_0, 1.0]
+    # bottom/top must stay unbounded. Responses are usually % change
+    # from baseline, so they are negative, and a lower bound of 0 puts
+    # p0 outside the feasible region — curve_fit then raises
+    # "`x0` is infeasible" without ever attempting a fit.
     bounds = (
-        [0, 0, 0, 0.1],
-        [np.inf, np.inf, np.max(doses) * 10, 10],
+        [-np.inf, -np.inf, 1e-12, 0.1],
+        [np.inf, np.inf, hi_dose * 10 if hi_dose > 0 else np.inf, 10.0],
     )
 
     popt, pcov = curve_fit(
@@ -100,8 +123,10 @@ When baseline response is known to be zero:
 
 ```python
 def three_param_logistic(x, top, ec50, hill):
-    """3PL: bottom fixed at 0."""
-    return top / (1 + (ec50 / x) ** hill)
+    """3PL: bottom fixed at 0. Zero-dose-safe form (returns 0 at x=0)."""
+    x = np.asarray(x, dtype=float)
+    x_h = x ** hill
+    return top * x_h / (x_h + ec50 ** hill)
 ```
 
 ### Plotting Dose-Response
@@ -167,7 +192,12 @@ def exposure_response_binary(exposure, response, exposure_name="AUC_ss"):
     X = np.asarray(exposure).reshape(-1, 1)
     y = np.asarray(response)
 
-    model = LogisticRegression(solver="lbfgs", max_iter=1000)
+    # sklearn regularizes by DEFAULT (C=1.0, L2). That shrinks the slope
+    # b1 and so shifts EC50 = -b0/b1 by an amount that depends on the
+    # units of `exposure` — an AUC in ng*h/mL and the same AUC in
+    # ug*h/mL would give different EC50s. An exposure-response fit wants
+    # maximum likelihood, so make it effectively unpenalized.
+    model = LogisticRegression(solver="lbfgs", max_iter=1000, C=1e12)
     model.fit(X, y)
 
     b0 = model.intercept_[0]
@@ -331,6 +361,19 @@ def identify_therapeutic_window(exposure, efficacy_response,
   assumption holds (sigmoidal probability). Check calibration.
 - **curve_fit convergence**: `maxfev=10000` prevents premature
   termination. If it still fails, try different `p0` starting values.
+- **Negative responses are normal**: % change from baseline is negative
+  for an effective drug. Never lower-bound `bottom`/`top` at 0 — the
+  fit dies with "`x0` is infeasible" before it starts, because `p0` is
+  built from the observed responses. Only `ec50` and `hill` get
+  positivity bounds.
+- **Zero-dose arm**: write the Hill equation as
+  `x**h / (x**h + ec50**h)`, not `1 / (1 + (ec50/x)**h)`. The two are
+  algebraically identical but only the first survives `dose == 0`.
+- **Regularization skews EC50**: sklearn's `LogisticRegression`
+  penalizes by default. Since EC50 is recovered as `-intercept/slope`,
+  a shrunken slope moves EC50 — and the size of the shift depends on
+  the units the exposure happens to be in. Pass a huge `C` (or
+  standardize, fit, and back-transform) for exposure-response work.
 - **curve_fit pcov**: If pcov is `inf`, the fit is not reliable — the
   model is over-parameterized or the data is insufficient.
 - **Log-scale dose-response**: Always plot dose/exposure on log scale

@@ -31,18 +31,27 @@ scvi.model.MULTIVI.setup_mudata(
 )
 ```
 
-### With AnnData (Single Object)
+### With AnnData (Single Object) — DEPRECATED
 
-For use when RNA and ATAC are concatenated in a single AnnData.
+`setup_anndata` is deprecated for MULTIVI as of scvi-tools 1.4; prefer `setup_mudata` above. Use this path only for a pre-concatenated single AnnData.
 
 ```python
-# adata.X = concatenated [RNA genes | ATAC peaks]
-# Must specify the boundary between gene and peak features
+# adata.X = concatenated [RNA genes | ATAC peaks], in that order
 
 scvi.model.MULTIVI.setup_anndata(
     adata,
     batch_key="batch",
     layer=None
+)
+
+# setup_anndata does NOT record the gene/peak boundary. On the AnnData path
+# n_genes and n_regions are REQUIRED at construction — they define the split.
+# Omitting them raises: with MuData they can be inferred from summary_stats,
+# with a plain AnnData there is nothing to infer from and setup asserts.
+model = scvi.model.MULTIVI(
+    adata,
+    n_genes=n_rna_features,       # size of the leading RNA block
+    n_regions=n_atac_features     # size of the trailing ATAC block
 )
 ```
 
@@ -244,7 +253,8 @@ The model uses the presence/absence of each modality per cell during training. C
 ## Gotchas
 
 - MultiVI expects **raw integer counts** in `.X` for both RNA and ATAC. Do not pass normalized data.
-- `n_genes` and `n_regions` must exactly match the number of RNA and ATAC features in your data.
+- `n_genes` and `n_regions` must exactly match the number of RNA and ATAC features in your data. Set them **after** all feature filtering/HVG selection — a stale count silently misaligns the gene/peak split and corrupts every downstream output. Pass them explicitly rather than relying on MuData inference.
+- `setup_anndata` is deprecated for MULTIVI (scvi-tools 1.4+); use `setup_mudata` with a MuData object.
 - For MuData, `setup_mudata()` requires the `modalities` dict mapping each data field to its modality name.
 - `get_accessibility_estimates()` returns probabilities (0-1 range), not raw counts.
 - `get_normalized_expression(modality="expression")` — the `modality` parameter selects RNA vs. ATAC output.

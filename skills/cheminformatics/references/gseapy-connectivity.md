@@ -61,6 +61,9 @@ are ranked LOW in drug response) and positive NES for query_down genes.
 ### Connectivity Score from NES
 
 ```python
+NES_SCALE = 3.0  # |NES| beyond this is treated as saturated
+
+
 def nes_connectivity_score(result_df):
     """
     Derive a single connectivity score from gseapy prerank NES values.
@@ -68,17 +71,32 @@ def nes_connectivity_score(result_df):
     Returns score in [-1, 1]:
       Negative = reversal (therapeutic candidate)
       Positive = mimicry
+      np.nan   = not computable (a query half is missing)
+
+    The raw (nes_up - nes_down) / 2 is on the NES scale, which runs to
+    roughly +/-3 -- NOT [-1, 1]. Feeding it to the +/-0.5 and 0.3
+    cutoffs in SKILL.md would call a mediocre |NES| = 1 pair a "strong
+    reversal". Divide by NES_SCALE and clip so the returned number is
+    on the scale the cutoffs are defined for.
     """
     up_row = result_df[result_df["Term"] == "query_up"]
     down_row = result_df[result_df["Term"] == "query_down"]
 
-    nes_up = up_row["NES"].values[0] if len(up_row) > 0 else 0.0
-    nes_down = down_row["NES"].values[0] if len(down_row) > 0 else 0.0
+    # A dropped gene set (too small, or no overlap) must NOT default to
+    # 0.0: np.sign(0) differs from the sign of the surviving half, so
+    # the reversal test passes and a HALF-MAGNITUDE score is returned
+    # off one half of the query. Connectivity needs both halves.
+    if len(up_row) == 0 or len(down_row) == 0:
+        return np.nan
+
+    nes_up = up_row["NES"].values[0]
+    nes_down = down_row["NES"].values[0]
 
     # Reversal: up genes depleted (negative NES) + down genes enriched
     # (positive NES)
     if np.sign(nes_up) != np.sign(nes_down):
-        return (nes_up - nes_down) / 2
+        raw = (nes_up - nes_down) / 2
+        return float(np.clip(raw / NES_SCALE, -1.0, 1.0))
     return 0.0
 ```
 

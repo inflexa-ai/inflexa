@@ -70,12 +70,16 @@ Approach?
 ```
 Deconvolving multi-cell spots into cell type proportions:
 ├── cell2location (default, Bayesian, probabilistic)
-│   ├── Requires matched scRNA-seq reference
+│   ├── Requires a matched scRNA-seq reference — USER-SUPPLIED, none is
+│   │   bundled or downloadable. No reference => report the blocker.
 │   ├── Stage 1: Learn reference signatures (RegressionModel)
 │   ├── Stage 2: Decompose spatial spots (Cell2location model)
 │   └── Returns: adata.obsm with cell type abundance per spot
-├── stereoscope (alternative Bayesian, similar approach)
-└── RCTD (R-based, robust non-negative least squares)
+└── RCTD (R-based, robust non-negative least squares; spacexr via rpy2)
+    Also needs a user-supplied scRNA-seq reference.
+
+Note: stereoscope is NOT available and cannot be installed. Do not
+propose it. Every deconvolution route requires a user-supplied reference.
 ```
 
 ### Spatially Variable Genes
@@ -102,8 +106,9 @@ Spatial niche characterization:
 │   └── sq.gr.co_occurrence(adata, cluster_key="leiden")
 │       Distance-dependent co-occurrence probability
 └── Ligand-receptor in spatial context
-    └── sq.gr.ligrec(adata, cluster_key="leiden")
-        Spatially-constrained ligand-receptor interaction testing
+    └── UNAVAILABLE — sq.gr.ligrec cannot run here (missing package + no
+        network for its interaction database). Report the blocker; do not
+        substitute another analysis silently. See references/squidpy-api.md.
 ```
 
 ## SpatialData Framework

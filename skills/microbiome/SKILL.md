@@ -34,6 +34,7 @@ Alternative: QIIME2 artifacts
     → Convert to phyloseq for R-based analysis or pandas DataFrame for Python
 ```
 
+- **DADA2 is not installed in this environment**, and neither is QIIME2 — `library(dada2)` fails and there is no egress to add it. **Verify before planning a raw-FASTQ workflow.** The reachable entry point is a pre-computed feature table: hand-off as BIOM, a QIIME2 export, or a counts matrix plus taxonomy, from which the rest of this pack (phyloseq, vegan, mia, ANCOM-BC2, ALDEx2, MaAsLin2, biom-format, scikit-bio — all installed) runs normally. If you were given raw reads and no ASV caller, report that and name what must be provisioned; do not improvise ASV inference.
 - DADA2 produces ASVs (amplicon sequence variants) — single-nucleotide resolution, no OTU clustering needed.
 - ALWAYS inspect the error rate learning plots. Poor error models produce unreliable ASVs.
 - SILVA 138.1 is the standard reference for 16S; UNITE for ITS (fungal).
@@ -50,6 +51,7 @@ FASTQ (host-decontaminated, QC'd)
       → Import into phyloseq or pandas for downstream analysis
 ```
 
+- **MetaPhlAn 4 and HUMAnN 3 are not installed here**, and their marker/UniRef databases are not in the reference inventory. Verify before planning; expect to be handed profiler *output* (a MetaPhlAn abundance table, a HUMAnN pathway table) rather than running the profilers yourself. Those tables feed the diversity and differential-abundance sections directly.
 - MetaPhlAn 4 is the preferred taxonomic profiler. It uses clade-specific markers, not read mapping to full genomes.
 - HUMAnN 3 provides pathway-level functional profiles. Use stratified output to see per-species contributions.
 
@@ -146,7 +148,7 @@ Should I rarefy?
 ## Anti-Patterns
 
 - **t-test/Wilcoxon on proportions**: INVALID. Relative abundances are compositional — standard tests produce spurious results. A taxon can appear "significantly different" purely because another taxon changed. Use ANCOM-BC2, ALDEx2, or MaAsLin2.
-- **Standard correlation on relative abundances**: SPURIOUS. Pearson/Spearman correlation on compositional data produces negative bias (spurious negative correlations). Use SparCC or proportionality (propr package) for compositional correlation.
+- **Standard correlation on relative abundances**: SPURIOUS. Pearson/Spearman correlation on compositional data produces negative bias (spurious negative correlations). Use a compositional correlation measure instead. SparCC and the `propr` package are the standard references but **neither is installed here**; the proportionality statistics they implement are short to compute directly — CLR-transform the counts (log of each value over the sample's geometric mean, after a pseudocount or zero-replacement), then take the correlation of the CLR values, or compute rho proportionality as `1 - var(clr_i - clr_j) / (var(clr_i) + var(clr_j))` in numpy. State which measure you used.
 - **DESeq2 on microbiome counts**: INAPPROPRIATE. DESeq2 assumes a negative binomial distribution calibrated for RNA-seq count data. Microbiome data is zero-inflated and compositional — DESeq2 has elevated false positive rates on microbiome data (Nearing et al. 2022, Calgaro et al. 2020).
 - **Rarefaction for differential abundance**: WASTEFUL. Rarefying discards valid sequencing data to equalize library sizes. Modern compositional methods (ANCOM-BC2) handle library size differences properly. Do NOT rarefy before differential testing.
 - **Ignoring taxonomy assignment confidence**: Do NOT report taxa assigned with low bootstrap confidence (<70%). Unreliable assignments propagate errors through all downstream analyses.
@@ -169,13 +171,17 @@ Should I rarefy?
 
 ### CLI Tools
 
-- **kraken2 + bracken**: Taxonomic classification for shotgun metagenomics data. Use kraken2 for read classification, bracken for abundance re-estimation at species/genus level.
-- **kneaddata**: Host decontamination and quality control for shotgun metagenomics FASTQ files. Run before taxonomic/functional profiling.
-- **sra-tools**: NOT available — sandbox has no network access. Data must be pre-downloaded and provided as input files.
+**The raw-read tools this pack names are not installed here** — `kraken2`, `bracken`, `kneaddata`, MetaPhlAn, HUMAnN, PICRUSt2, QIIME2, and `cutadapt` are all absent, and with no egress none can be added at runtime. They describe the canonical upstream pipeline, which normally runs before data reaches you. Probe (`command -v <binary>`) before planning any step that needs one, and report the gap rather than emitting commands that cannot execute.
+
+- **kraken2 + bracken** (absent): taxonomic classification for shotgun data — kraken2 for read classification, bracken for species/genus abundance re-estimation. Also needs a prebuilt index, which is not in the reference inventory either.
+- **kneaddata** (absent): host decontamination and QC for shotgun FASTQ, run before profiling.
+- **sra-tools** (absent): no network access regardless. Data must be provided as input files.
+
+Present and sufficient for everything downstream of a feature table: `samtools`, `bcftools`, `bedtools`, `tabix`.
 
 ## References
 
-- `references/dada2-api.md` — DADA2 amplicon sequence variant inference (16S/ITS pipeline)
+- `references/dada2-api.md` — DADA2 amplicon sequence variant inference (16S/ITS pipeline). **dada2 is absent here**; the file opens with what that means and where to enter the workflow instead
 - `references/phyloseq-api.md` — Phyloseq object creation, manipulation, and diversity
 - `references/vegan-api.md` — vegan: beta diversity (vegdist), NMDS (metaMDS), PERMANOVA (adonis2), dispersion (betadisper)
 - `references/ancombc-api.md` — ANCOM-BC2 compositional differential abundance

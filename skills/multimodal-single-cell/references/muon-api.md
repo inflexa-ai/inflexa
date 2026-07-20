@@ -50,6 +50,7 @@ Builds a joint neighbor graph weighting each modality per cell (Weighted Nearest
 
 ```python
 # Requires per-modality neighbors computed first
+# (X_lsi here has already had component 0 removed — see the ATAC module below)
 sc.pp.neighbors(mdata.mod['rna'], n_neighbors=15, n_pcs=30)
 sc.pp.neighbors(mdata.mod['atac'], use_rep='X_lsi', n_neighbors=15)
 
@@ -65,8 +66,10 @@ For CITE-seq / ADT data. Access via `mu.prot` or `from muon import prot as pt`.
 adt = mdata.mod['adt']  # or mdata.mod['prot']
 
 # CLR normalization (standard for ADT)
-# margin=0: per-cell, margin=1: per-feature (more common)
-mu.prot.pp.clr(adt, margin=1)
+# The kwarg is `axis`, NOT `margin` — `margin=` raises TypeError.
+# axis=0 (default): normalize per-feature, across cells — the standard for ADT
+# axis=1: normalize per-cell, across features
+mu.prot.pp.clr(adt, axis=0)
 
 # DSB normalization (requires empty droplets)
 # mu.prot.pp.dsb(adt, empty_droplets)  # if empty drops available
@@ -84,9 +87,16 @@ ac.pp.tfidf(atac, scale_factor=1e4)
 
 # Latent Semantic Indexing (dimensionality reduction for ATAC)
 ac.tl.lsi(atac, n_comps=50)
-# Result stored in atac.obsm['X_lsi']
-# IMPORTANT: Drop the first LSI component (correlated with sequencing depth)
-# Use components 1..N for downstream: use_rep='X_lsi', n_pcs=49
+# Result stored in atac.obsm['X_lsi'] — ac.tl.lsi RETAINS component 0.
+#
+# IMPORTANT: component 0 correlates with sequencing depth, not biology.
+# `n_pcs=49` does NOT drop it — that keeps components 0..48. To actually
+# exclude it you must slice the representation:
+atac.obsm['X_lsi'] = atac.obsm['X_lsi'][:, 1:]
+atac.varm['LSI'] = atac.varm['LSI'][:, 1:]
+atac.uns['lsi']['stdev'] = atac.uns['lsi']['stdev'][1:]
+# Downstream now uses the depth component-free representation:
+#   sc.pp.neighbors(atac, use_rep='X_lsi', n_neighbors=15)
 
 # Peak annotation: link peaks to genes
 ac.tl.add_peak_annotation_gene_names(
@@ -156,7 +166,7 @@ sc.pp.pca(rna, n_comps=50)
 
 # Protein preprocessing
 adt = mdata.mod['adt']
-mu.prot.pp.clr(adt, margin=1)
+mu.prot.pp.clr(adt, axis=0)
 
 # Sync cells, build joint graph, embed, cluster
 mu.pp.intersect_obs(mdata)
@@ -188,6 +198,10 @@ sc.pp.pca(rna, n_comps=50)
 atac = mdata.mod['atac']
 ac.pp.tfidf(atac, scale_factor=1e4)
 ac.tl.lsi(atac, n_comps=50)
+# Drop LSI component 0 (sequencing depth, not biology)
+atac.obsm['X_lsi'] = atac.obsm['X_lsi'][:, 1:]
+atac.varm['LSI'] = atac.varm['LSI'][:, 1:]
+atac.uns['lsi']['stdev'] = atac.uns['lsi']['stdev'][1:]
 
 mu.pp.intersect_obs(mdata)
 sc.pp.neighbors(rna, n_neighbors=15, n_pcs=30)
@@ -204,7 +218,7 @@ mdata.write("multiome_processed.h5mu")
 ## Gotchas
 
 - `mu.pp.intersect_obs(mdata)` modifies `mdata` in-place. Call it AFTER per-modality QC but BEFORE computing neighbors.
-- MOFA requires the `mofapy2` package. Install via `pip install mofapy2`.
-- The first LSI component from `ac.tl.lsi()` captures sequencing depth, not biology. Exclude it when computing neighbors (start from component 1).
+- MOFA requires the `mofapy2` package, which is **already installed**. Do not attempt `pip install`; there is no network egress, and an install would fail for a package that is already present.
+- The first LSI component from `ac.tl.lsi()` captures sequencing depth, not biology, and `ac.tl.lsi()` does **not** drop it for you. Lowering `n_pcs` does not exclude it either (`n_pcs=49` keeps components 0..48). Slice it off explicitly: `atac.obsm['X_lsi'] = atac.obsm['X_lsi'][:, 1:]` (and the matching `varm['LSI']` / `uns['lsi']['stdev']`) before computing neighbors.
 - `mu.pp.filter_obs()` uses modality-prefixed column names (e.g., `'rna:pct_counts_mt'`), not bare column names.
-- `mu.prot.pp.clr()` with `margin=1` (per-feature) is the standard for ADT normalization. Per-cell (`margin=0`) can over-correct.
+- `mu.prot.pp.clr()` takes `axis=`, not `margin=`. `axis=0` (the default) normalizes per-feature across cells and is the standard for ADT; `axis=1` normalizes per-cell and can over-correct.
