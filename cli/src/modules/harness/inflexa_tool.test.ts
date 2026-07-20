@@ -194,6 +194,13 @@ describe("run_inflexa — execute", () => {
     // Refused outright, before any approval prompt. The TUI launchers cannot run
     // captured (`new` would create an analysis before hanging); the infra
     // lifecycle commands would mutate the containers this conversation runs on.
+    //
+    // This is also the whole proof of spec scenario "A standing grant cannot resurrect a blocked
+    // command" — no DB-grant e2e is built because none is needed. An "always" grant is consulted
+    // ONLY inside ctx.ask (that seam resolves a matching grant to auto-approve), and decideAction
+    // returns `blocked` BEFORE the tool ever reaches ctx.ask. So the `ask.calls.length === 0`
+    // assertion below IS the guarantee: the grant-lookup path is provably unreachable for a blocked
+    // command, which is exactly why a stale grant keyed on its grantKey can never revive it.
     test.each([
         ["bare inflexa", [] as string[]],
         ["flag-only root inflexa", ["--analysis", "x"]],
@@ -268,6 +275,22 @@ describe("run_inflexa — execute", () => {
 
         expect(ask.calls.length).toBe(0);
         expect(sub.calls.length).toBe(1);
+        expect(result.status).toBe("ran");
+    });
+
+    test("an auto command carrying an inherited flag outside safeFlags escalates to the ask path", async () => {
+        const sub = recordingSubprocess();
+        const ask = recordingAsk({ kind: "once" });
+        const tool = makeTool(sub.fn);
+
+        // `ls` is auto with safeFlags ["project"]; `--analysis` is declared only on the root, never on `ls`,
+        // yet the classifier's chain walk counts it as explicitly set. Outside safeFlags, so the auto tier
+        // escalates through ctx.ask rather than free-running — proving the shadowed/inherited detection feeds
+        // the decision. (There is no free spawn: the only spawn here is the tail of the APPROVED ask.)
+        const result = (await tool.execute({ argv: ["ls", "--analysis", "a"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+
+        expect(ask.calls.length).toBe(1);
+        expect(ask.calls[0]?.grantKey).toBe("inflexa ls");
         expect(result.status).toBe("ran");
     });
 });

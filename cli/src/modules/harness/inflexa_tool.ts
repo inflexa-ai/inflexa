@@ -300,8 +300,9 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             'after `inflexa` on a shell (e.g. ["--help"], or ["--version"]). Drive it like any unfamiliar ' +
             'command: start from ["--help"] to see the top-level commands, then drill in with ' +
             '["<subcommand>", "--help"] to learn a subcommand\'s arguments and options before you invoke it. ' +
-            "Help and version lookups run right away; a command that would actually do something pauses for the " +
-            "user's approval first, and the captured stdout, stderr, and exit code come back to you. The interactive " +
+            "Help and version lookups run right away, and so do some commands classified as read-only; any other " +
+            "command that would actually do something pauses for the user's approval first, and the captured stdout, " +
+            "stderr, and exit code come back to you. The interactive " +
             "UI launchers and the infrastructure lifecycle commands (up, down, setup) are not available through this tool.",
         inputSchema: z.object({
             argv: z

@@ -191,16 +191,43 @@ export async function classifyInflexaArgv(argv: string[]): Promise<Classificatio
             }
             path.reverse();
             // Which options the invocation EXPLICITLY set, keyed on commander's canonical
-            // attributeName (so `--json`, `-j`, and `--json=…` all collapse to one name,
-            // and a post-`--` `--json` — an operand, never parsed as the option — is
-            // absent). An option merely defaulted has source "default" and does NOT count:
-            // only a source of `cli`/`env`/`config`/`implied` means the caller set it, so
-            // `src !== undefined && src !== "default"` is exactly "explicitly set". For a
-            // root action the leaf IS the root, and the same walk over its own options holds.
+            // attributeName (so `--json`, `-j`, and `--json=…` all collapse to one name, a
+            // `--no-x` negation reports as `x`, and a post-`--` `--json` — an operand, never
+            // parsed as the option — is absent). An option merely defaulted has source
+            // "default" and does NOT count: only a source of `cli`/`env`/`config`/`implied`
+            // means the caller set it, so `src !== undefined && src !== "default"` is exactly
+            // "explicitly set".
+            //
+            // The names are collected from the WHOLE leaf→root chain (not just `leaf.options`)
+            // and each source is read with the *-WithGlobals reader, because commander's
+            // default parsing has positional options OFF: the ROOT greedily consumes any
+            // option it declares even when placed after the subcommand. That silently hides an
+            // explicitly-set option two ways from a plain `leaf.options` + `getOptionValueSource`
+            // walk:
+            //   - shadowed — `inflexa ls --project x`: both `ls` and the root declare
+            //     `--project`, so the value binds on the ROOT and the leaf's local source is
+            //     `undefined` though the caller set it explicitly;
+            //   - inherited — `inflexa ls --analysis x`: only the root declares `--analysis`,
+            //     so it never appears in `leaf.options` at all.
+            // Walking the chain's declared attributeNames (deduped via the Set — a shadowed
+            // name is ONE attr) and reading each with getOptionValueSourceWithGlobals recovers
+            // both. For a root action the leaf IS the root and the same chain walk holds.
+            //
+            // Accepted conservatism: an inherited flag that is inert on this leaf (the leaf's
+            // action ignores a root-only flag it was handed) still counts as "set" and thus
+            // escalates an `auto` invocation to the prompt. That is deliberate — "flags only
+            // escalate", and a not-known-read-only flag belongs at the prompt — so the worst
+            // case is one avoidable prompt, never a free run of an unvetted flag. The root's
+            // own `--version` also joins the chain set, but can never carry a non-default
+            // source at action time (a real `--version` classifies as introspection before any
+            // action fires), so it never escalates in practice.
+            const declaredAttrs = new Set<string>();
+            for (let node: Command | null = leaf; node !== null; node = node.parent) {
+                for (const option of node.options) declaredAttrs.add(option.attributeName());
+            }
             const setOptions: string[] = [];
-            for (const option of leaf.options) {
-                const attr = option.attributeName();
-                const src = leaf.getOptionValueSource(attr);
+            for (const attr of declaredAttrs) {
+                const src = leaf.getOptionValueSourceWithGlobals(attr);
                 if (src !== undefined && src !== "default") setOptions.push(attr);
             }
             return { kind: "action", argv: args, path, grantKey: path.join(" "), policy: getAgentPolicy(leaf), setOptions };

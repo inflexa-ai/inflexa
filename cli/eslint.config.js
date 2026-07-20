@@ -178,20 +178,33 @@ export default defineConfig([
         },
     },
     {
-        // The command registry is the ONE place agent policy is declared, so a bare `command.action(fn)`
-        // there would register an action with no policy — the exact split-brain this capability removes.
-        // Force every registration through `registerAction`, whose required policy parameter makes an
-        // unclassified command a compile error. Scoped to index.ts only: `registerAction` itself (in
-        // agent_policy.ts) legitimately calls `command.action(handler)`, and unrelated `.action(` method
-        // names elsewhere must not be caught. This block re-lists the shared bans because a scoped
-        // `no-restricted-syntax` replaces rather than extends the base rule (see sharedRestrictedSyntax).
-        files: ["src/cli/index.ts"],
+        // Agent policy is declared ONLY in the command registry, so a bare `command.action(fn)` there would
+        // register an action with no policy — the exact split-brain this capability removes. Force every
+        // registration through `registerAction`, whose required policy parameter makes an unclassified
+        // command a compile error. Scoped to the registry DIRECTORY (`src/cli/**/*.ts`), not just index.ts,
+        // so a future second registry file (e.g. a split-out command group) cannot escape the ban by living
+        // beside index.ts. `agent_policy.ts` is the one exception: `registerAction` itself is the sanctioned
+        // site that legitimately calls `command.action(handler)`. Both the plain member call
+        // (`cmd.action(fn)`) and the computed-member bypass (`cmd["action"](fn)`) are banned; the
+        // aliased-variable form (`const a = cmd.action; a(fn)`) is not reasonably expressible in esquery and
+        // is left to the downstream layers (the required-policy compile error and the tree-walk test). This
+        // block re-lists the shared bans because a scoped `no-restricted-syntax` replaces rather than extends
+        // the base rule (see sharedRestrictedSyntax).
+        files: ["src/cli/**/*.ts"],
+        ignores: ["src/cli/agent_policy.ts"],
         rules: {
             "no-restricted-syntax": [
                 "error",
                 ...sharedRestrictedSyntax,
                 {
                     selector: "CallExpression[callee.property.name='action']",
+                    message: "Don't call commander's `.action()` directly in the registry — use `registerAction(command, policy, handler)` from ./agent_policy.ts so every action command declares an AgentPolicy.",
+                },
+                {
+                    // The computed-member twin of the ban above: `cmd["action"](fn)` reaches the same method
+                    // through a string-literal key, which `callee.property.name` does not see (a Literal node
+                    // carries `.value`, not `.name`), so it needs its own selector.
+                    selector: "CallExpression[callee.type='MemberExpression'][callee.computed=true][callee.property.value='action']",
                     message: "Don't call commander's `.action()` directly in the registry — use `registerAction(command, policy, handler)` from ./agent_policy.ts so every action command declares an AgentPolicy.",
                 },
             ],
