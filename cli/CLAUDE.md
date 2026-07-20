@@ -33,6 +33,14 @@ bun run docs:gen     # Generate the CLI reference package (dist-docs/, untracked
 
 - **Don't extract single-caller helpers or sub-components into separate files.** Keep them in the same file as their caller. A new file is justified only when multiple callers exist — that's when a real reusable pattern emerges.
 
+### Agent command policy — ask, never guess
+
+Every command in the registry (`src/cli/index.ts`) declares an `AgentPolicy` at registration via `registerAction(command, policy, handler)` — this is what decides whether the conversation agent's `run_inflexa` tool may run it (`auto` = prompt-free with a `safeFlags` allowlist, `approval` = the default in-chat prompt, `blocked` = never, with a mandatory reason). The required policy parameter makes an unclassified command a compile error; a lint rule bans raw `.action(` there; and a tree-walk + snapshot test (`agent_policy_tree.test.ts`) pins the whole `{grantKey → kind (+ safeFlags)}` table.
+
+**When adding a command — or adding an option to an `auto` command — ASK the user which classification it gets. Never guess `approval`/`auto`/`blocked` (or which flags are safe) for convenience.** The default is not "whatever compiles": a command that writes anything, however benign, is `approval`, and `auto` requires the user to have verified read-only-ness against the action's implementation. A flag belongs in `safeFlags` only when *every* value it can carry leaves the command read-only (output-shaping like `--json`), and a new option added to an `auto` command is unsafe until the user says otherwise.
+
+**An option that would change a command's effect class (read↔write) must be a new subcommand with its own policy, not a flag** (`run status`, not `run --status`) — this keeps `safeFlags` small and each effect class independently classified.
+
 ## Error handling — neverthrow first
 
 **`Result<T, E>` from `neverthrow` is the default error channel.** Every function that can fail returns `Result` (sync) or `ResultAsync` (async). The `eslint-plugin-neverthrow` `must-use-result` rule is set to `error` — an unconsumed `Result` is a build failure.

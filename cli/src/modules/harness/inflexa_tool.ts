@@ -6,7 +6,14 @@
  *   - malformed argv    → an `invalid` data variant (no spawn, no prompt);
  *   - introspection      → runs immediately (help/version describe the CLI and
  *                          touch no user data), returning its captured output;
- *   - a real action      → pauses on `ctx.ask` for the user's approval, then runs.
+ *   - a real action      → runs the registration-declared {@link AgentPolicy} as
+ *                          a cascade ({@link decideAction}): a `blocked` command
+ *                          is refused with its reason BEFORE any grant/ask lookup
+ *                          (so a stale grant cannot resurrect it); an `auto`
+ *                          command spawns prompt-free when every explicitly-set
+ *                          option is safe-listed, else escalates to the prompt;
+ *                          an `approval` command pauses on `ctx.ask`; a command
+ *                          with no declared policy fails closed as `blocked`.
  *
  * The subprocess is a plain child process — the same way the agent shells out to
  * any other command — so the CLI's own commands stay the single implementation of
@@ -19,6 +26,7 @@ import { defineTool, type AskRequest, type ToolError } from "@inflexa-ai/harness
 import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
+import { type AgentPolicy } from "../../cli/agent_policy.ts";
 import { env } from "../../lib/env.ts";
 import { classifyInflexaArgv } from "./inflexa_classify.ts";
 
@@ -45,71 +53,59 @@ const FLUSH_GRACE_MS = 1_000;
 const KILL_GRACE_MS = 2_000;
 
 /**
- * Commands the agent may not run at all — not even with approval. Keyed by the
- * classifier's resolved subcommand path (its `grantKey`); the value is the
- * reason handed to the model. Two families:
- *
- * - TUI launchers (the root, `config`, `new`, `resume`, `chat`): they exist only
- *   to open an interactive terminal UI, which cannot function as a captured
- *   subprocess; an approved spawn would just burn the user's approval on an
- *   immediate error. For these the map is the courtesy layer, not the safety
- *   boundary — the launchers' own TTY guard (`requireInteractiveTerminal`,
- *   lib/cli.ts) is the structural backstop, so a future TUI command missing
- *   from this map exits non-zero with a clear message instead of hanging.
- * - Infrastructure lifecycle (`up`, `down`, `setup`): they mutate the very
- *   containers this conversation runs on — `down` stops the Postgres the
- *   harness session is connected to — so even an informed approval could sever
- *   the session mid-turn. These run fine headless, so for this family the map
- *   IS the gate: a new lifecycle command must be added here.
- *
- * Refusing here, BEFORE `ctx.ask`, keeps a command that must never run from
- * ever becoming a decision to put to the user.
+ * What the tool should do with a classified `action` verdict, decided purely from
+ * the registration-declared policy — no I/O, so the escalation and fail-closed
+ * branches (unreachable through the real registry, which stamps every command) are
+ * directly unit-testable. `blocked` carries the model-facing message; `ask` means
+ * run the `ctx.ask` approval flow; `spawn` means run with no prompt.
  */
-const BLOCKED_COMMANDS: ReadonlyMap<string, string> = new Map([
-    // The root action fires for flag-only invocations too (`--analysis x`), so
-    // the reason must not say "bare" — the agent may have passed flags.
-    [
-        "inflexa",
-        "`inflexa` without a subcommand (with or without flags like --analysis) opens the interactive chat UI, " +
-            "which cannot run as a captured subprocess. It is not available to you.",
-    ],
-    ["inflexa config", "`inflexa config` opens the interactive settings UI, which cannot run as a captured subprocess. It is not available to you."],
-    [
-        "inflexa new",
-        "`inflexa new` creates an analysis and opens its interactive chat UI, which cannot run as a captured subprocess. " +
-            "It is not available to you — ask the user to run it themselves.",
-    ],
-    [
-        "inflexa resume",
-        "`inflexa resume` opens an analysis's interactive chat UI, which cannot run as a captured subprocess. " +
-            "It is not available to you — ask the user to run it themselves.",
-    ],
-    // Dev-channel registry only: a release build has no `chat` command, so on a
-    // release binary this argv parses as malformed before the map is consulted.
-    ["inflexa chat", "`inflexa chat` opens an interactive prompt loop, which cannot run as a captured subprocess. It is not available to you."],
-    [
-        "inflexa up",
-        "`inflexa up` manages the infrastructure containers this conversation depends on. " +
-            "It is not available to you — ask the user to run it from their own shell.",
-    ],
-    [
-        "inflexa down",
-        "`inflexa down` stops the infrastructure containers — including the database this conversation is running on — " +
-            "and would sever the session. It is not available to you — ask the user to run it from their own shell.",
-    ],
-    [
-        "inflexa setup",
-        "`inflexa setup` provisions and authenticates the infrastructure this conversation depends on. " +
-            "It is not available to you — ask the user to run it from their own shell.",
-    ],
-]);
+export type ActionDecision = { readonly kind: "blocked"; readonly message: string } | { readonly kind: "ask" } | { readonly kind: "spawn" };
+
+/**
+ * Run the policy cascade for a classified action. The order is load-bearing:
+ *
+ * - No policy → `blocked` (fail closed). Reachable only by bypassing every static
+ *   enforcement layer, so the message names it a developer-side gap, not a user
+ *   decision to override.
+ * - `blocked` → refuse with the declared reason. This runs BEFORE any grant/ask
+ *   lookup (the caller consults no grant here), so a command reclassified `blocked`
+ *   wins over a stale "always" grant that still matches its `grantKey`.
+ * - `auto` → `spawn` iff every explicitly-set option is safe-listed; any out-of-set
+ *   option yields `ask`. Policy is the floor and flags only escalate — an unknown
+ *   flag can push an `auto` invocation up to a prompt, never down past a block.
+ * - `approval` → `ask`.
+ */
+export function decideAction(policy: AgentPolicy | undefined, grantKey: string, setOptions: readonly string[]): ActionDecision {
+    if (policy === undefined) {
+        return {
+            kind: "blocked",
+            message:
+                `\`${grantKey}\` is not classified for agent use: it has no agent policy declared. ` +
+                "This is a gap in run_inflexa's command policy (a developer-side omission), not a decision you or the user can approve around — report it rather than retrying.",
+        };
+    }
+    switch (policy.kind) {
+        case "blocked":
+            return { kind: "blocked", message: policy.reason };
+        case "auto":
+            return setOptions.every((opt) => policy.safeFlags.includes(opt)) ? { kind: "spawn" } : { kind: "ask" };
+        case "approval":
+            return { kind: "ask" };
+        default: {
+            // Exhaustive: a new AgentPolicy kind must add a case above, or this fails to compile.
+            const _exhaustive: never = policy;
+            return _exhaustive;
+        }
+    }
+}
 
 /**
  * The outcome the model sees, as data on the ok channel — every expected result
  * is a variant here, never a thrown error (a denied `ctx.ask` is the one throw,
  * and it is the harness loop's to map). `invalid` is a rejected argv; `blocked`
- * is a command the agent may not run (a TUI launcher or an
- * infrastructure-lifecycle command); `ran` is a
+ * is a command the agent may not run — a `blocked` policy (a TUI launcher or an
+ * infrastructure-lifecycle command) or the fail-closed case of a command carrying
+ * no declared policy; `ran` is a
  * completed process (any exit code — a non-zero exit is a real answer, not a tool
  * failure); `timed_out` is a process abandoned at the deadline, carrying whatever
  * output it produced first (a partial download log still tells the model how far
@@ -330,29 +326,34 @@ export function createRunInflexaTool(deps: RunInflexaToolDeps = {}) {
             if (c.kind === "malformed") return ok({ status: "invalid", message: c.message });
 
             if (c.kind === "action") {
-                // A blocked command (a TUI launcher or an infra lifecycle command) must
-                // never run — refuse it here rather than prompting for something that
-                // is not the user's decision to make mid-conversation.
-                const blockedReason = BLOCKED_COMMANDS.get(c.grantKey);
-                if (blockedReason !== undefined) return ok({ status: "blocked", message: blockedReason });
+                // The registration-declared policy is the floor. `decideAction` runs it before any
+                // grant/ask interaction, so a `blocked` command (or an unclassified one, fail-closed)
+                // is refused here rather than prompting for something that is not the user's decision.
+                const decision = decideAction(c.policy, c.grantKey, c.setOptions);
+                if (decision.kind === "blocked") return ok({ status: "blocked", message: decision.message });
 
-                const request: AskRequest = {
-                    title: "Run inflexa command",
-                    // The EXACT argv that will run — what the user approves is precisely what
-                    // executes, nothing hidden. Spaced elements render quoted so the word
-                    // boundaries the user reads are the word boundaries that spawn.
-                    command: ["inflexa", ...c.argv.map(displayArgvElement)].join(" "),
-                    detail: 'Approving "always" lets this inflexa subcommand run again in this analysis without asking each time.',
-                    // Trade-off accepted here: the standing grant keys on the bare subcommand PATH, not this exact
-                    // argv, so an "always" on a benign `inflexa X` also blesses a later, more dangerous flag variant
-                    // (`inflexa X --destructive`) of the same subcommand without a fresh prompt. That is tolerable
-                    // because `command` above always shows the EXACT argv at the moment consent is given — nothing is
-                    // hidden when the user decides; only a silent RE-RUN of the same subcommand is what the grant covers.
-                    grantKey: c.grantKey,
-                };
-                // `ctx.ask` throws `AskRejectedError` on denial. Deliberately NOT caught: the harness loop maps the
-                // throw to an execution-denied tool result and ends the turn, which is exactly the denial behavior.
-                await ctx.ask(request);
+                if (decision.kind === "ask") {
+                    const request: AskRequest = {
+                        title: "Run inflexa command",
+                        // The EXACT argv that will run — what the user approves is precisely what
+                        // executes, nothing hidden. Spaced elements render quoted so the word
+                        // boundaries the user reads are the word boundaries that spawn.
+                        command: ["inflexa", ...c.argv.map(displayArgvElement)].join(" "),
+                        detail: 'Approving "always" lets this inflexa subcommand run again in this analysis without asking each time.',
+                        // Trade-off accepted here: the standing grant keys on the bare subcommand PATH, not this exact
+                        // argv, so an "always" on a benign `inflexa X` also blesses a later, more dangerous flag variant
+                        // (`inflexa X --destructive`) of the same subcommand without a fresh prompt. That is tolerable
+                        // because `command` above always shows the EXACT argv at the moment consent is given — nothing is
+                        // hidden when the user decides; only a silent RE-RUN of the same subcommand is what the grant covers.
+                        grantKey: c.grantKey,
+                    };
+                    // `ctx.ask` throws `AskRejectedError` on denial. Deliberately NOT caught: the harness loop maps the
+                    // throw to an execution-denied tool result and ends the turn, which is exactly the denial behavior.
+                    await ctx.ask(request);
+                }
+                // `decision.kind === "spawn"` (an `auto` run within its safeFlags) and an approved `ask`
+                // both fall through to the shared run path below — an `auto` run leaves no ask-ledger
+                // row, deliberately matching introspection's audit posture.
             }
 
             // Introspection and an approved action both reach here and run the same way.

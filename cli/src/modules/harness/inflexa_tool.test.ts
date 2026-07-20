@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { AskRejectedError, UnavailableAsk, type AgentSession, type AskApproval, type AskRequest, type ToolContext } from "@inflexa-ai/harness";
 import { describe, expect, test } from "bun:test";
 
-import { createRunInflexaTool, resolveInvocation, spawnInflexa, type RunSubprocess, type SubprocessResult } from "./inflexa_tool.ts";
+import type { AgentPolicy } from "../../cli/agent_policy.ts";
+import { createRunInflexaTool, decideAction, resolveInvocation, spawnInflexa, type RunSubprocess, type SubprocessResult } from "./inflexa_tool.ts";
 
 // A canned subprocess outcome; overridden per-test for the timeout/cancel/truncation cases.
 const OK_RESULT: SubprocessResult = { exitCode: 0, stdout: "hello", stderr: "", endedBy: "exit" };
@@ -226,6 +227,83 @@ describe("run_inflexa — execute", () => {
         expect(ask.calls.length).toBe(0);
         expect(sub.calls.length).toBe(1);
         expect(result.status).toBe("ran");
+    });
+
+    // Auto tier (black-box through the real registry). An `auto` invocation whose explicitly-set options
+    // are all safe-listed spawns with NO approval prompt; positionals never enter the decision.
+    test("an auto command with a safe flag runs prompt-free", async () => {
+        const sub = recordingSubprocess();
+        // A spy that fails the test if the tool ever tries to ask — an auto run must not touch the gateway.
+        const ask = recordingAsk({ kind: "once" });
+        const tool = makeTool(sub.fn);
+
+        const result = (await tool.execute({ argv: ["refs", "list", "--json"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+
+        expect(ask.calls.length).toBe(0);
+        expect(sub.calls.length).toBe(1);
+        expect(result.status).toBe("ran");
+    });
+
+    test("an auto command's positional operand does not escalate", async () => {
+        const sub = recordingSubprocess();
+        const ask = recordingAsk({ kind: "once" });
+        const tool = makeTool(sub.fn);
+
+        // `refs verify` is auto with safeFlags [json]; the dataset id is a positional, which plays no part.
+        const result = (await tool.execute({ argv: ["refs", "verify", "reactome-pathways", "--json"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+
+        expect(ask.calls.length).toBe(0);
+        expect(sub.calls.length).toBe(1);
+        expect(result.status).toBe("ran");
+    });
+
+    test("an auto command with only a defaulted option runs prompt-free", async () => {
+        const sub = recordingSubprocess();
+        const ask = recordingAsk({ kind: "once" });
+        const tool = makeTool(sub.fn);
+
+        // `prov lineage --format` defaults to "tree" (unmentioned → source "default" → not "set"), so even
+        // though it is safe-listed anyway, the run stays prompt-free with only positionals supplied.
+        const result = (await tool.execute({ argv: ["prov", "lineage", "ana", "somefile"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+
+        expect(ask.calls.length).toBe(0);
+        expect(sub.calls.length).toBe(1);
+        expect(result.status).toBe("ran");
+    });
+});
+
+// The escalation (out-of-set flag) and fail-closed (no policy) branches are unreachable through the real
+// registry — every command is stamped, and no auto command currently declares an out-of-set option — so
+// they are exercised at `decideAction`, the pure seam `execute` runs. These pin the two invariants the
+// black-box tests above cannot: an unknown flag escalates auto→ask (never runs free), and a policy-less
+// action fails closed to blocked (never silently approvable).
+describe("decideAction — policy cascade", () => {
+    test("no policy fails closed to blocked with a developer-facing message", () => {
+        const decision = decideAction(undefined, "inflexa mystery", []);
+        expect(decision.kind).toBe("blocked");
+        if (decision.kind !== "blocked") throw new Error("expected blocked");
+        expect(decision.message).toContain("not classified for agent use");
+    });
+
+    test("a blocked policy returns its declared reason, before any grant/ask", () => {
+        const policy: AgentPolicy = { kind: "blocked", reason: "nope, this one is off-limits" };
+        expect(decideAction(policy, "inflexa down", [])).toEqual({ kind: "blocked", message: "nope, this one is off-limits" });
+    });
+
+    test("an auto invocation with every set option safe-listed spawns", () => {
+        const policy: AgentPolicy = { kind: "auto", safeFlags: ["json", "urls"] };
+        expect(decideAction(policy, "inflexa refs list", ["json"])).toEqual({ kind: "spawn" });
+        expect(decideAction(policy, "inflexa refs list", [])).toEqual({ kind: "spawn" });
+    });
+
+    test("an auto invocation with an out-of-set option escalates to ask, never blocked", () => {
+        const policy: AgentPolicy = { kind: "auto", safeFlags: ["json"] };
+        expect(decideAction(policy, "inflexa refs list", ["json", "danger"])).toEqual({ kind: "ask" });
+        expect(decideAction(policy, "inflexa refs list", ["danger"])).toEqual({ kind: "ask" });
+    });
+
+    test("an approval policy always asks", () => {
+        expect(decideAction({ kind: "approval" }, "inflexa refs download", ["yes"])).toEqual({ kind: "ask" });
     });
 });
 

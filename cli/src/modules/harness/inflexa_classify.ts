@@ -1,5 +1,6 @@
 import { type Command, CommanderError } from "commander";
 
+import { type AgentPolicy, getAgentPolicy } from "../../cli/agent_policy.ts";
 import { buildProgram } from "../../cli/index.ts";
 
 /**
@@ -10,7 +11,12 @@ import { buildProgram } from "../../cli/index.ts";
  *   to the user's data, so a caller may run it freely.
  * - `action` — the argv resolves to a real leaf command that would execute. The
  *   `grantKey` is the command's full path words joined by spaces (no arguments,
- *   no options), the stable identity a caller keys an approval grant on.
+ *   no options), the stable identity a caller keys an approval grant on. `policy`
+ *   is the {@link AgentPolicy} stamped on the resolved command at registration
+ *   (`undefined` only if a command reached `.action()` without the registration
+ *   helper — the tool then fails closed). `setOptions` names the options the
+ *   invocation EXPLICITLY set, by commander's canonical `attributeName`, so the
+ *   tool can measure them against an `auto` policy's `safeFlags`.
  * - `malformed` — the argv does not parse to a runnable command (unknown
  *   command/option, missing/excess argument, invalid value, …). `message` is
  *   commander's own explanation, trimmed.
@@ -22,7 +28,14 @@ import { buildProgram } from "../../cli/index.ts";
  */
 export type Classification =
     | { readonly kind: "introspection"; readonly argv: readonly string[] }
-    | { readonly kind: "action"; readonly argv: readonly string[]; readonly path: readonly string[]; readonly grantKey: string }
+    | {
+          readonly kind: "action";
+          readonly argv: readonly string[];
+          readonly path: readonly string[];
+          readonly grantKey: string;
+          readonly policy: AgentPolicy | undefined;
+          readonly setOptions: readonly string[];
+      }
     | { readonly kind: "malformed"; readonly message: string };
 
 /**
@@ -169,14 +182,28 @@ export async function classifyInflexaArgv(argv: string[]): Promise<Classificatio
             // (["inflexa", "refs", "download"]). grantKey is that path joined by
             // spaces — arguments and options are deliberately excluded so every
             // invocation of the same command collapses to one stable key.
+            const leaf = e.actionCommand;
             const path: string[] = [];
-            let cursor: Command | null = e.actionCommand;
+            let cursor: Command | null = leaf;
             while (cursor !== null) {
                 path.push(cursor.name());
                 cursor = cursor.parent;
             }
             path.reverse();
-            return { kind: "action", argv: args, path, grantKey: path.join(" ") };
+            // Which options the invocation EXPLICITLY set, keyed on commander's canonical
+            // attributeName (so `--json`, `-j`, and `--json=…` all collapse to one name,
+            // and a post-`--` `--json` — an operand, never parsed as the option — is
+            // absent). An option merely defaulted has source "default" and does NOT count:
+            // only a source of `cli`/`env`/`config`/`implied` means the caller set it, so
+            // `src !== undefined && src !== "default"` is exactly "explicitly set". For a
+            // root action the leaf IS the root, and the same walk over its own options holds.
+            const setOptions: string[] = [];
+            for (const option of leaf.options) {
+                const attr = option.attributeName();
+                const src = leaf.getOptionValueSource(attr);
+                if (src !== undefined && src !== "default") setOptions.push(attr);
+            }
+            return { kind: "action", argv: args, path, grantKey: path.join(" "), policy: getAgentPolicy(leaf), setOptions };
         }
         if (e instanceof CommanderError) {
             if (INTROSPECTION_CODES.has(e.code)) return { kind: "introspection", argv: args };
