@@ -81,6 +81,12 @@ export interface EphemeralDeps {
     readonly bioKeys: BioToolKeys;
     /** Host resource policy — its `ephemeral` spec overrides the default sandbox size. */
     readonly resourcePolicy?: ResourcePolicy;
+    /**
+     * Host path of the library store's `packages.txt`. Omit when the host mounts the
+     * store at the sandbox's own path; a host whose store is baked into the image must
+     * inject its extracted copy, or the executor reads the inventory as unknown.
+     */
+    readonly packagesFile?: string;
 }
 
 /**
@@ -190,6 +196,7 @@ export async function runEphemeralBody(input: EphemeralWorkflowInput, deps: Ephe
             embedding: deps.embedding,
             model: deps.model,
             bioKeys: deps.bioKeys,
+            ...(deps.packagesFile ? { packagesFile: deps.packagesFile } : {}),
             step: {
                 sandbox,
                 workspaceRoot,

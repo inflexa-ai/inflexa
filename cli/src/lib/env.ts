@@ -251,6 +251,13 @@ export const env = Object.freeze({
      */
     refsDir: join(dataDir(), "inflexa", "refs"),
     /**
+     * Cached sandbox-image package inventories, one directory per image ID. NOT a library
+     * store: the packages themselves are baked into the image and never staged here — this
+     * holds only the `packages.txt` extracted from the image's inventory label, so the
+     * harness can read on the host what otherwise exists only inside the container.
+     */
+    libsDir: join(dataDir(), "inflexa", "libs"),
+    /**
      * Materialized skills/templates content: `<dataDir>/inflexa/content/<contentHash>/{skills,templates}`.
      * A peer of `refsDir`/`modelDir` — a runtime asset tree, not config — but sourced from the binary's
      * OWN embedded archive rather than a network download (see modules/harness/content.ts). The
@@ -458,6 +465,12 @@ export const envDoc: Readonly<
         kind: "path",
         label: "references",
         description: "reference data mounted read-only in sandboxes at /mnt/refs",
+        baseVar: dataVar,
+    },
+    libsDir: {
+        kind: "path",
+        label: "package inventories",
+        description: "per-image package lists extracted from the sandbox image's inventory label",
         baseVar: dataVar,
     },
     contentDir: {

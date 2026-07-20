@@ -30,7 +30,7 @@ import { sandboxOrientCorePrompt, sandboxAnalysisStepStandardsPrompt } from "../
 import { composeSystemPrompt } from "../system-prompt.js";
 
 // Sandbox-environment introspection.
-import { createListAvailableRefsTool, listAvailablePackagesTool } from "../../tools/sandbox/index.js";
+import { createListAvailablePackagesTool, createListAvailableRefsTool } from "../../tools/sandbox/index.js";
 
 // Context7 docs (pure leaves).
 import { queryDocsTool, resolveLibraryIdTool } from "../../tools/research/context7-docs.js";
@@ -131,6 +131,12 @@ export interface SandboxAgentDeps {
      * reports the store as unavailable rather than failing.
      */
     readonly refStorePath?: string;
+    /**
+     * Host path of the library store's `packages.txt`. Omit when the host mounts
+     * the store at the sandbox's own path; a host whose store is baked into the
+     * image must inject its extracted copy, or the inventory reads as unknown.
+     */
+    readonly packagesFile?: string;
     /** Per-step coordinates resolved at the workflow body. */
     readonly step: SandboxStepCoords;
     /** API keys for the external bio/chem data sources. */
@@ -166,7 +172,7 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
     const ncbi = createNcbiTools(deps.bioKeys);
     const chemDb = createChemDbTools(deps.bioKeys);
     const registry: Record<SandboxToolName, Tool> = {
-        listAvailablePackages: listAvailablePackagesTool,
+        listAvailablePackages: createListAvailablePackagesTool({ ...(deps.packagesFile ? { packagesFile: deps.packagesFile } : {}) }),
         listAvailableRefs: createListAvailableRefsTool({ ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}) }),
         resolveLibraryId: resolveLibraryIdTool,
         queryDocs: queryDocsTool,

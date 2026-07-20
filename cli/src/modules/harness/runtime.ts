@@ -48,6 +48,7 @@ import { acquireInstanceLock, releaseInstanceLock } from "../../lib/lock.ts";
 import { getLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
+import { resolvePackagesFile } from "../libs/packages.ts";
 import { resolveEmbedder, type EmbeddingResolveError } from "../embedding/resolve.ts";
 import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
@@ -653,6 +654,16 @@ async function bootHarnessRuntimeOnce(
     if (engineResult.isErr()) return err({ type: "sandbox_engine_unresolved", message: engineResult.error.message });
     const { runtime: pinnedRuntime, socketPath: engineSocketPath } = engineResult.value;
 
+    // Extract the image's package inventory onto the host. The cli never bind-mounts the
+    // library store — it is baked into the image — so this cached copy is the ONLY thing
+    // `list_available_packages` can read; without it every agent is told the installed set
+    // is unknown. `ensureSandboxImage` has already pulled through this same pin, so the
+    // image is present. A null result is non-fatal by design and must not block boot.
+    const packagesFile = await resolvePackagesFile(pinnedRuntime, cfg.sandboxImage);
+    if (packagesFile === null) {
+        logger.warn("no sandbox package inventory — agents will be told the installed package set is unknown", { image: cfg.sandboxImage });
+    }
+
     const pgResult = await seams.ensurePostgres();
     if (pgResult.isErr()) return err({ type: "postgres_unavailable", cause: pgResult.error });
     const conn = pgResult.value;
@@ -864,6 +875,7 @@ async function bootHarnessRuntimeOnce(
             sandboxEmitters: emitters,
             skillsDir: cfg.skillsDir,
             refStorePath: env.refsDir,
+            packagesFile,
             bioKeys: cfg.bioKeys,
         };
 

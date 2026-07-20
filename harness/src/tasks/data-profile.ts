@@ -90,6 +90,12 @@ export interface DataProfileDeps {
     readonly embedding: EmbeddingProvider;
     /** Absolute path to the skills tree (one subdirectory per skill). */
     readonly skillsDir: string;
+    /**
+     * Host path of the library store's `packages.txt`. Omit when the host mounts the
+     * store at the sandbox's own path; a host whose store is baked into the image must
+     * inject its extracted copy, or the profiler reads the inventory as unknown.
+     */
+    readonly packagesFile?: string;
 }
 
 /**
@@ -313,6 +319,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
                 embedding: deps.embedding,
                 model: deps.model,
                 skillsDir: deps.skillsDir,
+                ...(deps.packagesFile ? { packagesFile: deps.packagesFile } : {}),
                 bioKeys: deps.bioKeys,
                 step: {
                     sandbox,

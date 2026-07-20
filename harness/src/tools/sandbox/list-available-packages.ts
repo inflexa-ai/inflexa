@@ -2,8 +2,10 @@
  * listAvailablePackages — query the R/Python/CLI/Node packages available in the
  * sandbox.
  *
- * The data source is `/mnt/libs/current/packages.txt`, assembled by the
- * library-store build (see the lib-store-build spec). Its shape is fixed by the
+ * The data source is the store's `packages.txt`, assembled by the library-store
+ * build (see the lib-store-build spec) and read from wherever the HOST can see
+ * it — the container path when the host mounts the same store, an injected path
+ * when it does not. Its shape is fixed by the
  * producers (`scripts/lib-store-common.sh`, `images/sandbox-python/inflexa-libs-refresh`):
  * two `#` advisory lines, then one `## <Section>` heading per language track
  * followed by that track's packages as a single comma-separated line.
@@ -28,13 +30,35 @@ import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
 
-const PACKAGES_FILE = "/mnt/libs/current/packages.txt";
+/**
+ * Where the list lives when the host mounts the library store at the same path
+ * the sandbox does. Hosts that do not — the store is baked into the image and
+ * never bind-mounted — inject their own path instead.
+ */
+const DEFAULT_PACKAGES_FILE = "/mnt/libs/current/packages.txt";
 
-/** Default number of packages a filtered/unfiltered listing returns. */
-const DEFAULT_LIMIT = 100;
+/**
+ * Default cap on a listing — high enough that the real store is never truncated.
+ * The shipped catalog is ~270 packages (~3 KB, well under a thousand tokens), so
+ * a low default bought nothing and cost correctness: a partial listing reads as a
+ * complete one, and an agent concludes a package is absent when it was merely not
+ * rendered. The cap survives only as a backstop for a downstream `FROM` image
+ * that adds a pathological number of packages.
+ */
+const DEFAULT_LIMIT = 2_000;
 
+/**
+ * Naming packages here would be worse than saying nothing: this state means the
+ * list could not be read, so any roll-call is a guess the agent has no way to
+ * check, and an agent told to "assume numpy is available" will import it and
+ * fail at runtime instead of probing first.
+ */
 const UNAVAILABLE_NOTE =
-    "Package list not available. The library store may not be mounted. Assume standard bioinformatics packages (numpy, pandas, scanpy, DESeq2, etc.) are available, but do not attempt to install anything.";
+    "Package list not available — the library store's inventory could not be read, so what is installed is UNKNOWN. " +
+    "Do not assume any package is present, and do not infer one from the analysis you were asked to run. " +
+    "Probe each package you intend to use before relying on it (`python3 -c 'import <pkg>'`, " +
+    'R `requireNamespace("<pkg>", quietly = TRUE)`) and degrade gracefully when it is absent. ' +
+    "Nothing can be installed at runtime.";
 
 /** One language track of the store, in `packages.txt` section order. */
 export interface Section {
@@ -173,37 +197,60 @@ export function queryPackages(sections: readonly Section[], { names, query, lang
     return { available: true, total, returned, hasMore: returned < total, content };
 }
 
-export const listAvailablePackagesTool = defineTool({
-    id: "list_available_packages",
-    description:
-        "Query the R, Python, CLI, and Node packages installed in the sandbox. No packages can be installed at runtime — only what this tool reports is importable. " +
-        "Results are ALWAYS bounded; prefer a targeted query over a full listing. " +
-        '`names`: check specific packages (e.g. ["Seurat", "scanpy"]) — returns present/absent plus the language track for each, case-insensitively; this is the cheapest call and the right one for \'is X available?\'. ' +
-        "`query`: case-insensitive substring filter over package names. " +
-        "`language`: restrict to one track (r | python | cli | node). " +
-        "`limit`: max packages listed (default 100); the response always carries the true `total` and a `hasMore` flag, so truncation is never silent. " +
-        'The package list carries NO version numbers — this tool cannot report a package\'s version. Check a version at runtime instead (e.g. `python -c "import scanpy; print(scanpy.__version__)"`).',
-    inputSchema: z.object({
-        names: z
-            .array(z.string())
-            .max(100)
-            .optional()
-            .describe(
-                "Check these exact package names for presence (case-insensitive). Returns one entry per name: present/absent + the language track it lives in.",
-            ),
-        query: z.string().optional().describe("Case-insensitive substring filter over package names."),
-        language: z.enum(["r", "python", "cli", "node"]).optional().describe("Restrict results to one language track."),
-        limit: z.number().int().min(1).max(2000).optional().describe(`Max packages to list (default ${DEFAULT_LIMIT}). Ignored when \`names\` is given.`),
-    }),
-    execute: async (input): Promise<Result<PackagesResult, ToolError>> => {
-        // A missing library-store mount is an expected environment state — model
-        // it as an `available: false` data variant with a helpful fallback note.
-        let raw: string;
-        try {
-            raw = await readFile(PACKAGES_FILE, "utf-8");
-        } catch {
-            return ok({ available: false, content: UNAVAILABLE_NOTE });
-        }
-        return ok(queryPackages(parsePackagesFile(raw), input));
-    },
-});
+export interface ListAvailablePackagesDeps {
+    /**
+     * Path to the store's `packages.txt` AS THE HOST SEES IT. Defaults to the
+     * container path, which is correct only when the host mounts the same store.
+     * A host that does not — one whose store is baked into the sandbox image and
+     * never bind-mounted — must inject the path to its own extracted copy, or the
+     * read fails and every caller is told the inventory is unknown.
+     */
+    readonly packagesFile?: string;
+}
+
+/** Create the package inventory over a host-readable `packages.txt`. */
+export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps = {}) {
+    const packagesFile = deps.packagesFile ?? DEFAULT_PACKAGES_FILE;
+    return defineTool({
+        id: "list_available_packages",
+        description:
+            "Query the R, Python, CLI, and Node packages installed in the sandbox. No packages can be installed at runtime — only what this tool reports is importable. " +
+            "A full listing is small (a few hundred packages) and is returned whole by default, so a listing you get back is the complete set unless `hasMore` says otherwise. " +
+            '`names`: check specific packages (e.g. ["Seurat", "scanpy"]) — returns present/absent plus the language track for each, case-insensitively; this is the cheapest call and the right one for \'is X available?\'. ' +
+            "`query`: case-insensitive substring filter over package names. " +
+            "`language`: restrict to one track (r | python | cli | node). " +
+            "`limit`: cap the packages listed; the response always carries the true `total` and a `hasMore` flag, so truncation is never silent. " +
+            'The package list carries NO version numbers — this tool cannot report a package\'s version. Check a version at runtime instead (e.g. `python -c "import scanpy; print(scanpy.__version__)"`).',
+        inputSchema: z.object({
+            names: z
+                .array(z.string())
+                .max(100)
+                .optional()
+                .describe(
+                    "Check these exact package names for presence (case-insensitive). Returns one entry per name: present/absent + the language track it lives in.",
+                ),
+            query: z.string().optional().describe("Case-insensitive substring filter over package names."),
+            language: z.enum(["r", "python", "cli", "node"]).optional().describe("Restrict results to one language track."),
+            limit: z
+                .number()
+                .int()
+                .min(1)
+                .max(DEFAULT_LIMIT)
+                .optional()
+                .describe(
+                    `Cap the packages listed. Omit to get the whole set — the store fits well within the ${DEFAULT_LIMIT} ceiling. Ignored when \`names\` is given.`,
+                ),
+        }),
+        execute: async (input): Promise<Result<PackagesResult, ToolError>> => {
+            // An unreadable inventory is an expected environment state — model it as an
+            // `available: false` data variant telling the caller the set is UNKNOWN.
+            let raw: string;
+            try {
+                raw = await readFile(packagesFile, "utf-8");
+            } catch {
+                return ok({ available: false, content: UNAVAILABLE_NOTE });
+            }
+            return ok(queryPackages(parsePackagesFile(raw), input));
+        },
+    });
+}
