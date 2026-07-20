@@ -277,7 +277,29 @@ The bus contract and design rationale live in [Event bus — single bus, typed e
 
 ### Colors
 
-All colors come from `theme` in `src/tui/theme.ts` — the Tokyo Night palette mapped to semantic roles (`bg`, `fg`, `muted`, `accent`, `user`, `assistant`, `success`, `warn`, `error`, …). **Never inline hex in components.**
+All colors come from `theme` in `src/tui/theme.ts` — ten palettes (five dark, then five light; `tokyo-night` is the default) mapped to semantic roles (`bg`, `fg`, `fgMuted`, `fgSubtle`, `border`, `accent`, `user`, `assistant`, `success`, `warning`, `error`, …). **Never inline hex in components.**
+
+**Every `<text>` resolves an explicit foreground.** opentui's text renderable defaults `fg` to opaque white (`RGBA.fromValues(1, 1, 1, 1)`), so a `<text>` that names no color paints `#ffffff`. On the five dark themes that scores 12–18:1 — off-palette (tokyo-night body text should be `#c0caf5`) but legible, which is exactly why the default hides the bug from anyone checking on the dark default. On the five light themes it scores 1.00–1.13:1: invisible. `github-light` (bg `#ffffff`) measures exactly 1.00:1.
+
+Two shapes satisfy the rule; both are correct:
+
+- **`fg` on the element** — `<text fg={theme().fg}>…</text>`. The prop propagates into child spans that don't override it, so a nested `<Bold>` inherits it. A block whose whole line shares one color is better served by the prop than by wrapping each child.
+- **Wrap every information-bearing child** in `<Fg role={…}>` or `<Reverse>` — `<text><Fg role="fg">{heading()}</Fg></text>` (`components/plan_card_block.tsx`). Required once a line mixes colors.
+
+**A bare string literal inside an `fg`-less `<text>` is the defect**, including one sitting beside correctly-wrapped siblings — `<Fg>` colors its own span, never the text next to it:
+
+```tsx
+// WRONG — the glyph is themed, ` DONE` paints #ffffff
+<text><Fg role="accent">{GLYPHS.check}</Fg> DONE</text>
+// RIGHT
+<text fg={theme().fg}><Fg role="accent">{GLYPHS.check}</Fg> DONE</text>
+```
+
+**Contrast floors.** Information-bearing text holds ≥4.5:1 against every background it lands on; non-text and decorative content — borders, progress-meter cells, separator glyphs, the `fgSubtle` tier — holds ≥3:1. The tiers, and which of them the 4.5:1 threshold exempts, are defined on `ThemeColors` in `src/lib/design_system.ts`; use that vocabulary rather than minting new tiers.
+
+**Check every new or changed surface on a light theme**, never only the dark default — white's 12–18:1 on dark is what lets an unresolved foreground pass review. `github-light` is the sharpest case: `bg` is pure `#ffffff`, so an unresolved foreground is fully invisible rather than merely wrong.
+
+**A character-frame assertion cannot prove legibility.** `captureCharFrame()` + `toContain(…)` proves a glyph was emitted; frames carry no color, so an invisible span satisfies them identically to a correct one. Any claim that a surface is *visible* must assert on span color — `captureSpans()` exposes each span's resolved `fg` (`theme_contrast.render.test.tsx`, `diff_contrast.render.test.tsx`). Relatedly, **give fixtures distinct values for fields a frame assertion could confuse**: `openable_card_block.render.test.tsx` asserts `toContain("Volcano plot")` against a fixture where that string is both the card title and the row name, so the assertion passed on the row while the title rendered unpainted.
 
 ### Glyphs
 
@@ -302,6 +324,8 @@ The "Type & emphasis" scale (one typeface, one size; hierarchy by weight, dim, c
 | `<Underline>` | links / paths |
 | `<Reverse>` | selection / cursor row (inverse video) |
 | `<Fg role={…}>` | apply a color — `role` is a `ThemeColors` key, NEVER a hex. The only way to color inline text |
+
+**Only `<Fg>` and `<Reverse>` resolve a color; the rest carry none.** `<Bold>`/`<Italic>`/`<Underline>`/`<Dim>` emit an attribute-only span (`<b>`/`<i>`/`<u>`/`{ dim: true }`) and inherit whatever an ancestor resolved — so **none of them may be the outermost colored element**. This is the mechanism behind the italic/dim guidance above: `<Fg role="fgMuted"><Italic>…</Italic></Fg>` is needed not only so the meaning survives a terminal that drops the ITALIC bit, but because without the `<Fg>` — or an `fg` on the enclosing `<text>` — the text has no color at all and falls through to opentui's white default (see [Colors](#colors)). `<Reverse>` is self-sufficient: it paints both `fg` and `bg` itself.
 
 **Composing:** nest to combine — `<Fg role="fgMuted"><Italic>{text}</Italic></Fg>`. For a single whole-line color, `<text fg={theme().role}>…</text>` is still fine (don't wrap one line in `<Fg>`); reach for the components when a line **mixes** colors/styles.
 

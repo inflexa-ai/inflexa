@@ -139,9 +139,6 @@ export type PresentationPart = {
     body: PresentationBody;
 };
 
-/** The glyph shape a card entry's row shows in the gutter — chosen by content kind, mapped to `GLYPHS` by the block. */
-export type OpenableIcon = "chart" | "image" | "document" | "report";
-
 /**
  * How an openable card entry resolves to something to open — the SEMANTIC reference, never a resolved
  * location (the artifact-open spec's open-time-resolution rule). Resolution happens when the user opens:
@@ -155,10 +152,12 @@ export type OpenTarget =
     | { kind: "svg"; presId: string; markup: string }
     | { kind: "unavailable"; reason: string };
 
-/** One row of an openable card: its glyph, name, optional caption, and the reference resolved at open time. */
+/**
+ * One row of an openable card: its name, optional caption, and the reference resolved at open time.
+ * An entry carries no content-kind marker — the card's gutter marks only whether a row opens or is
+ * broken, and the name plus its file extension already tell a reader what kind of thing it is.
+ */
 export type OpenableEntry = {
-    /** Glyph shape for the row marker. */
-    icon: OpenableIcon;
     /** Row name (file basename, chart title, "Report vN"). */
     name: string;
     /** Optional one-line context beside the name. */

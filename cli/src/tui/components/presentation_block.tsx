@@ -63,7 +63,9 @@ export function PresentationBlock(props: PresentationBlockProps) {
             <Show when={props.title}>
                 <text>
                     <Fg role="accent">{`${GLYPHS.triangleRight} `}</Fg>
-                    <Bold>{props.title}</Bold>
+                    <Fg role="fg">
+                        <Bold>{props.title}</Bold>
+                    </Fg>
                 </text>
             </Show>
             <markdown content={content()} fg={theme().fg} syntaxStyle={syntaxStyle()} streaming={true} internalBlockMode="top-level" paddingLeft={space.md} />
