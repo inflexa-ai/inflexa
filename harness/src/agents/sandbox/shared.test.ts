@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { SOULExecutionCore, SOULIdentity, SOULConversationalPrompt } from "../../prompts/SOUL.js";
 import { sandboxOrientCorePrompt, sandboxAnalysisStepStandardsPrompt } from "../../prompts/sandbox-standards.js";
 import type { SandboxClient } from "../../sandbox/client.js";
@@ -120,7 +124,10 @@ describe("createSandboxAgent", () => {
         expect(toolIds).not.toContain("comptox");
     });
 
-    it("wires list_available_refs as a workflow tool through step-bound replay-safe exec coordinates", async () => {
+    // Reference discovery reads the store the host already has on disk, so it needs no
+    // sandbox and no exec — the same reason it can be attached to the planner, which has
+    // no sandbox at all.
+    it("wires list_available_refs over the host reference store, issuing no sandbox exec", async () => {
         const submits: SubmitExecBody[] = [];
         const fake = makeFakeSandboxClient();
         const sandboxClient: SandboxClient = {
@@ -128,27 +135,15 @@ describe("createSandboxAgent", () => {
             async submitExec(_sandbox, body) {
                 submits.push(body);
             },
-            async awaitExec(_sandbox, execId) {
-                return {
-                    execId,
-                    exitCode: 0,
-                    stdout: JSON.stringify({ state: "empty", entries: [], scannedEntries: 0, truncated: false }),
-                    stderr: "",
-                    durationMs: 1,
-                    timedOut: false,
-                };
-            },
         };
+        const root = await mkdtemp(join(tmpdir(), "shared-refs-"));
         const base = makeFakeSandboxAgentDeps();
-        const def = createSandboxAgent({ ...base, sandboxClient }, meta, body);
+        const def = createSandboxAgent({ ...base, sandboxClient, refStorePath: root }, meta, body);
         const tool = def.tools.find((candidate) => candidate.id === "list_available_refs")!;
 
-        expect(tool.executionMode).toBe("workflow");
         const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
         expect(result).toMatchObject({ available: true, state: "empty" });
-        expect(submits).toHaveLength(1);
-        expect(submits[0]!.execId).toBe("wf-001:step-001:fn-1");
-        expect(submits[0]!.command.slice(0, 2)).toEqual(["python3", "-c"]);
+        expect(submits).toHaveLength(0);
     });
 
     it("wires inspect_data_profile as always-on substrate — no meta declares it", () => {

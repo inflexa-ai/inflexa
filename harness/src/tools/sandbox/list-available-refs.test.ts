@@ -4,173 +4,94 @@ import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { SandboxClient } from "../../sandbox/client.js";
-import type { CreateSandboxMeta, ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import { createListAvailableRefsTool } from "./list-available-refs.js";
 
 const HASH = "a".repeat(64);
-const sandbox: SandboxRef = {
-    sandboxId: "sb-refs",
-    host: "127.0.0.1",
-    port: 8765,
-    backend: "docker",
-    callbackSecret: "secret",
-};
 
-interface FakeClient extends SandboxClient {
-    readonly submits: SubmitExecBody[];
+/** A store rooted at an arbitrary host path — the reported paths must still be `/mnt/refs/...`. */
+async function makeStore(label: string): Promise<string> {
+    return await mkdtemp(join(tmpdir(), `refs-${label}-`));
 }
 
-interface ExecutingClient extends FakeClient {
-    readonly outputs: string[];
+function createTool(refStorePath?: string) {
+    return createListAvailableRefsTool(refStorePath === undefined ? {} : { refStorePath });
 }
 
-function makeClient(payload: unknown): FakeClient {
-    const submits: SubmitExecBody[] = [];
-    return {
-        submits,
-        async createSandbox(_meta: CreateSandboxMeta) {
-            return sandbox;
-        },
-        async submitExec(_sandbox: SandboxRef, body: SubmitExecBody) {
-            submits.push(body);
-        },
-        async awaitExec(_sandbox: SandboxRef, execId: string, _emit: ExecEmit, _deadline: number): Promise<ExecResult> {
-            return { execId, exitCode: 0, stdout: JSON.stringify(payload), stderr: "", durationMs: 1, timedOut: false };
-        },
-        async isAlive() {
-            return { alive: true, oomKilled: false };
-        },
-        async teardown() {},
-        async teardownById() {},
-        async listManagedSandboxes() {
-            return [];
-        },
-    };
+async function writeReceipt(root: string, datasetId: string, datasetVersion: string, artifacts: { path: string; bytes: number }[]): Promise<void> {
+    await mkdir(join(root, ".inflexa", "receipts"), { recursive: true });
+    await writeFile(
+        join(root, ".inflexa", "receipts", `${datasetId}.json`),
+        JSON.stringify({
+            version: 1,
+            datasetId,
+            datasetVersion,
+            activatedAt: "2026-07-14T10:30:00.000Z",
+            artifacts: artifacts.map((artifact) => ({ ...artifact, sha256: HASH })),
+        }),
+    );
 }
 
-function makeExecutingClient(): ExecutingClient {
-    const submits: SubmitExecBody[] = [];
-    const outputs: string[] = [];
-    return {
-        submits,
-        outputs,
-        async createSandbox(_meta: CreateSandboxMeta) {
-            return sandbox;
-        },
-        async submitExec(_sandbox: SandboxRef, body: SubmitExecBody) {
-            submits.push(body);
-        },
-        async awaitExec(_sandbox: SandboxRef, execId: string, _emit: ExecEmit, _deadline: number): Promise<ExecResult> {
-            const body = submits.at(-1)!;
-            const child = Bun.spawn(body.command, { stdout: "pipe", stderr: "pipe" });
-            const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-            outputs.push(stdout);
-            return { execId, exitCode, stdout, stderr, durationMs: 1, timedOut: false };
-        },
-        async isAlive() {
-            return { alive: true, oomKilled: false };
-        },
-        async teardown() {},
-        async teardownById() {},
-        async listManagedSandboxes() {
-            return [];
-        },
-    };
-}
-
-function createTool(client: FakeClient, nextFunctionId: () => string = () => "fn-1") {
-    return createListAvailableRefsTool({
-        sandboxClient: client,
-        sandbox,
-        workflowId: "wf-1",
-        stepId: "step-1",
-        nextFunctionId,
-        deadlineMs: () => 123_456,
-    });
-}
-
-function createFilesystemTool(client: FakeClient, scanRoot: string) {
-    return createListAvailableRefsTool({
-        sandboxClient: client,
-        sandbox,
-        workflowId: "wf-fs",
-        stepId: "step-fs",
-        nextFunctionId: (() => {
-            let id = 0;
-            return () => `fn-${++id}`;
-        })(),
-        deadlineMs: () => Date.now() + 60_000,
-        scanRoot,
-    });
+/** Stage a managed artifact at the layout the installer produces. */
+async function stageManaged(root: string, datasetId: string, version: string, file: string, body: string): Promise<void> {
+    const directory = join(root, "managed", datasetId, version);
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, file), body);
 }
 
 describe("list_available_refs", () => {
-    it("is a dependency-bearing workflow tool and discovers manifest-free user files", async () => {
-        const client = makeClient({
-            state: "populated",
-            entries: [{ path: "/mnt/refs/user/cohort/reference.h5ad", kind: "file", bytes: 42 }],
-            scannedEntries: 3,
-            truncated: false,
-            receipts: [],
-            legacyEntries: [],
-        });
-        const tool = createTool(client);
+    // The whole point of the host-side read: the store lives at an arbitrary host path,
+    // but every reported path is the container path the caller will actually open.
+    it("reads the host store and reports container paths", async () => {
+        const root = await makeStore("host-path");
+        await mkdir(join(root, "user", "cohort"), { recursive: true });
+        await writeFile(join(root, "user", "cohort", "reference.h5ad"), "reference");
+
+        const result = (await createTool(root).execute({ path: "user/cohort" }, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(result.entries).toEqual([{ path: "/mnt/refs/user/cohort/reference.h5ad", kind: "file", bytes: 9 }]);
+        expect(result.entries[0]!.path.startsWith(root)).toBe(false);
+    });
+
+    it("needs no sandbox and discovers manifest-free user files", async () => {
+        const root = await makeStore("manifest-free");
+        await mkdir(join(root, "user", "cohort"), { recursive: true });
+        await writeFile(join(root, "user", "cohort", "reference.h5ad"), "reference");
+
+        const tool = createTool(root);
         const result = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
 
-        expect(tool.executionMode).toBe("workflow");
+        expect(tool.executionMode).not.toBe("workflow");
         expect(result).toMatchObject({ available: true, state: "populated", truncated: false });
-        expect(result.entries[0]).toEqual({ path: "/mnt/refs/user/cohort/reference.h5ad", kind: "file", bytes: 42 });
-        expect(client.submits[0]!.execId).toBe("wf-1:step-1:fn-1");
-        expect(client.submits[0]!.command.slice(0, 2)).toEqual(["python3", "-c"]);
-        expect(client.submits[0]!.command[3]).toBe("/mnt/refs");
-        expect(client.submits[0]!.command[4]).toBe(".");
+        expect(result.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user", kind: "directory", fileCount: 1, bytes: 9 })]);
+        expect(result.entries[0]!.metadata).toBeUndefined();
     });
 
     it("merges valid receipt and legacy enrichment while retaining user files", async () => {
-        const managedPath = "/mnt/refs/managed/alpha/2026.07/reference.parquet";
-        const catalogPath = "/mnt/refs/managed/ncbi-gene-human/current/Homo_sapiens.gene_info.gz";
-        const legacyPath = "/mnt/refs/legacy/pathways.gmt";
-        const client = makeClient({
-            state: "populated",
-            entries: [
-                { path: managedPath, kind: "file", bytes: 12 },
-                { path: catalogPath, kind: "file", bytes: 15 },
-                { path: legacyPath, kind: "file", bytes: 13 },
-                { path: "/mnt/refs/user/custom.csv", kind: "file", bytes: 14 },
-            ],
-            scannedEntries: 5,
-            truncated: false,
-            receipts: [
-                {
-                    version: 1,
-                    datasetId: "alpha",
-                    datasetVersion: "2026.07",
-                    activatedAt: "2026-07-14T10:30:00.000Z",
-                    artifacts: [{ path: "reference.parquet", bytes: 999, sha256: HASH }],
-                },
-                {
-                    version: 1,
-                    datasetId: "ncbi-gene-human",
-                    datasetVersion: "current",
-                    activatedAt: "2026-07-14T10:30:00.000Z",
-                    artifacts: [{ path: "Homo_sapiens.gene_info.gz", bytes: 1_024, sha256: HASH }],
-                },
-            ],
-            legacyEntries: [{ local_path: "legacy/pathways.gmt", category: "pathways", dataset: "legacy-pathways", rows: 200 }],
-        });
+        const root = await makeStore("enrich");
+        await stageManaged(root, "alpha", "2026.07", "reference.parquet", "x".repeat(12));
+        await stageManaged(root, "ncbi-gene-human", "current", "Homo_sapiens.gene_info.gz", "x".repeat(15));
+        await mkdir(join(root, "legacy"), { recursive: true });
+        await writeFile(join(root, "legacy", "pathways.gmt"), "x".repeat(13));
+        await mkdir(join(root, "user"), { recursive: true });
+        await writeFile(join(root, "user", "custom.csv"), "x".repeat(14));
 
-        const result = (await createTool(client).execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        await writeReceipt(root, "alpha", "2026.07", [{ path: "reference.parquet", bytes: 999 }]);
+        await writeReceipt(root, "ncbi-gene-human", "current", [{ path: "Homo_sapiens.gene_info.gz", bytes: 1_024 }]);
+        await writeFile(
+            join(root, "registry.json"),
+            JSON.stringify({ files: { by_category: { pathways: [{ local_path: "legacy/pathways.gmt", dataset: "legacy-pathways", rows: 200 }] } } }),
+        );
 
-        expect(result.entries).toHaveLength(4);
+        const tool = createTool(root);
+        const managed = (await tool.execute({ path: "managed/alpha/2026.07" }, makeToolContext().ctx))._unsafeUnwrap();
         // Receipt for a dataset the catalog does not know: identity only, no provenance labels.
-        expect(result.entries.find((entry) => entry.path === managedPath)).toMatchObject({
-            bytes: 12,
-            metadata: { datasetId: "alpha", version: "2026.07" },
-        });
+        expect(managed.entries[0]).toMatchObject({ bytes: 12, metadata: { datasetId: "alpha", version: "2026.07" } });
+        expect(managed.entries[0]!.metadata?.title).toBeUndefined();
+
         // Receipt for a catalog dataset: provenance is joined in from the catalog entry.
-        expect(result.entries.find((entry) => entry.path === catalogPath)).toMatchObject({
+        const catalogued = (await tool.execute({ path: "managed/ncbi-gene-human/current" }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(catalogued.entries[0]).toMatchObject({
             bytes: 15,
             metadata: {
                 datasetId: "ncbi-gene-human",
@@ -180,187 +101,142 @@ describe("list_available_refs", () => {
                 license: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
             },
         });
-        expect(result.entries.find((entry) => entry.path === legacyPath)).toMatchObject({
-            bytes: 13,
-            metadata: { datasetId: "legacy-pathways", category: "pathways", rows: 200 },
-        });
-        expect(result.entries.find((entry) => entry.path.includes("/user/"))?.metadata).toBeUndefined();
+
+        const legacy = (await tool.execute({ path: "legacy" }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(legacy.entries[0]).toMatchObject({ bytes: 13, metadata: { datasetId: "legacy-pathways", category: "pathways", rows: 200 } });
+
+        const user = (await tool.execute({ path: "user" }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(user.entries[0]).toEqual({ path: "/mnt/refs/user/custom.csv", kind: "file", bytes: 14 });
     });
 
     // Skills name no reference paths, so an agent finds a file by describing what it needs. That
     // only works if the searchable text and the rendered answer both carry meaning, not just paths.
     it("resolves a catalogued file by what it holds and renders how to read it", async () => {
-        const collectriPath = "/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv";
-        const client = makeClient({
-            state: "populated",
-            entries: [
-                { path: collectriPath, kind: "file", bytes: 4_096 },
-                { path: "/mnt/refs/managed/msigdb-hallmark-mouse/2026.1/mh.all.v2026.1.Mm.symbols.gmt", kind: "file", bytes: 2_048 },
-            ],
-            scannedEntries: 2,
-            truncated: false,
-            receipts: [
-                {
-                    version: 1,
-                    datasetId: "collectri-human",
-                    datasetVersion: "2.0",
-                    activatedAt: "2026-07-14T10:30:00.000Z",
-                    artifacts: [{ path: "CollecTRI_regulons.csv", bytes: 4_096, sha256: HASH }],
-                },
-                {
-                    version: 1,
-                    datasetId: "msigdb-hallmark-mouse",
-                    datasetVersion: "2026.1",
-                    activatedAt: "2026-07-14T10:30:00.000Z",
-                    artifacts: [{ path: "mh.all.v2026.1.Mm.symbols.gmt", bytes: 2_048, sha256: HASH }],
-                },
-            ],
-            legacyEntries: [],
-        });
+        const root = await makeStore("by-meaning");
+        await stageManaged(root, "collectri-human", "2.0", "CollecTRI_regulons.csv", "x".repeat(4_096));
+        await stageManaged(root, "msigdb-hallmark-mouse", "2026.1", "mh.all.v2026.1.Mm.symbols.gmt", "x".repeat(2_048));
+        await writeReceipt(root, "collectri-human", "2.0", [{ path: "CollecTRI_regulons.csv", bytes: 4_096 }]);
+        await writeReceipt(root, "msigdb-hallmark-mouse", "2026.1", [{ path: "mh.all.v2026.1.Mm.symbols.gmt", bytes: 2_048 }]);
 
+        const tool = createTool(root);
         // "regulon" appears in neither filename; it is only in the catalog's contents description.
-        const byMeaning = (await createTool(client).execute({ query: "regulon" }, makeToolContext().ctx))._unsafeUnwrap();
+        const byMeaning = (await tool.execute({ path: "managed/collectri-human/2.0", query: "regulon" }, makeToolContext().ctx))._unsafeUnwrap();
         expect(byMeaning.entries).toHaveLength(1);
-        expect(byMeaning.entries[0]!.path).toBe(collectriPath);
+        expect(byMeaning.entries[0]!.path).toBe("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
         expect(byMeaning.entries[0]!.metadata).toMatchObject({ organism: "human", format: "csv", category: "regulatory-networks" });
         // The reader and the column shape must reach the model, not just sit in structured metadata.
         expect(byMeaning.content).toContain("csv — TF-target regulons");
         expect(byMeaning.content).toContain("source (TF symbol)");
 
         // Organism is a first-class filter, so a mouse analysis cannot silently pick up human data.
-        const byOrganism = (await createTool(client).execute({ query: "mouse" }, makeToolContext().ctx))._unsafeUnwrap();
+        const byOrganism = (await tool.execute({ path: "managed/msigdb-hallmark-mouse/2026.1", query: "mouse" }, makeToolContext().ctx))._unsafeUnwrap();
         expect(byOrganism.entries.map((entry) => entry.metadata?.datasetId)).toEqual(["msigdb-hallmark-mouse"]);
     });
 
     it("ignores invalid and stale metadata without hiding observed files", async () => {
-        const client = makeClient({
-            state: "populated",
-            entries: [{ path: "/mnt/refs/user/observed.csv", kind: "file", bytes: 7 }],
-            scannedEntries: 1,
-            truncated: false,
-            receipts: [{ version: 99, datasetId: "bad" }],
-            legacyEntries: [{ local_path: "missing.csv", category: "stale" }],
-        });
+        const root = await makeStore("stale");
+        await mkdir(join(root, "user"), { recursive: true });
+        await writeFile(join(root, "user", "observed.csv"), "x".repeat(7));
+        await mkdir(join(root, ".inflexa", "receipts"), { recursive: true });
+        await writeFile(join(root, ".inflexa", "receipts", "bad.json"), JSON.stringify({ version: 99, datasetId: "bad" }));
+        await writeFile(join(root, "registry.json"), JSON.stringify({ files: { by_category: { stale: [{ local_path: "missing.csv" }] } } }));
 
-        const result = (await createTool(client).execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        const result = (await createTool(root).execute({ path: "user" }, makeToolContext().ctx))._unsafeUnwrap();
         expect(result.entries).toEqual([{ path: "/mnt/refs/user/observed.csv", kind: "file", bytes: 7 }]);
     });
 
-    it.each([
-        ["unavailable", false, "not mounted"],
-        ["empty", true, "contains no reference files"],
-    ] as const)("returns expected %s state as data", async (state, available, content) => {
-        const client = makeClient({ state, entries: [], scannedEntries: 0, truncated: false });
-        const result = (await createTool(client).execute({}, makeToolContext().ctx))._unsafeUnwrap();
-        expect(result).toMatchObject({ state, available, entries: [] });
-        expect(result.content).toContain(content);
+    it("reports an unprovisioned store as data, not an error", async () => {
+        const result = (await createTool().execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        expect(result).toMatchObject({ state: "unavailable", available: false, entries: [] });
+        expect(result.content).toContain("No reference store is provisioned");
     });
 
-    it.each(["../etc", "/etc/passwd", "/mnt/refs/../etc", "user//cohort", ".inflexa/receipts"])(
-        "rejects out-of-scope path %s without executing",
-        async (path) => {
-            const client = makeClient({});
-            const result = (await createTool(client).execute({ path }, makeToolContext().ctx))._unsafeUnwrap();
-            expect(result).toMatchObject({ state: "out_of_scope", available: false });
-            expect(client.submits).toHaveLength(0);
-        },
-    );
+    it("reports a configured-but-missing store as unavailable", async () => {
+        const result = (await createTool(join(tmpdir(), "refs-does-not-exist-xyz")).execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        expect(result).toMatchObject({ state: "unavailable", available: false, entries: [] });
+    });
 
-    it("bounds an oversized zero-entry path rejection without executing", async () => {
-        const client = makeClient({});
-        const result = (await createTool(client).execute({ path: "a".repeat(70_000) }, makeToolContext().ctx))._unsafeUnwrap();
+    it("reports an empty store as data", async () => {
+        const root = await makeStore("empty");
+        const result = (await createTool(root).execute({}, makeToolContext().ctx))._unsafeUnwrap();
+        expect(result).toMatchObject({ state: "empty", available: true, entries: [] });
+        expect(result.content).toContain("contains no reference files");
+    });
+
+    it.each(["../etc", "/etc/passwd", "/mnt/refs/../etc", "user//cohort", ".inflexa/receipts"])("rejects out-of-scope path %s", async (path) => {
+        const root = await makeStore("scope");
+        const result = (await createTool(root).execute({ path }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(result).toMatchObject({ state: "out_of_scope", available: false });
+    });
+
+    it("bounds an oversized zero-entry path rejection", async () => {
+        const root = await makeStore("oversized-path");
+        const result = (await createTool(root).execute({ path: "a".repeat(70_000) }, makeToolContext().ctx))._unsafeUnwrap();
         expect(result).toMatchObject({ state: "out_of_scope", available: false, path: "/mnt/refs", entries: [] });
         expect(result.content).toContain("4096-byte");
         expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(64_000);
-        expect(client.submits).toHaveLength(0);
     });
 
-    it("reports symlinks without following them", async () => {
-        const client = makeClient({
-            state: "populated",
-            entries: [{ path: "/mnt/refs/user/external", kind: "symlink", bytes: 0 }],
-            scannedEntries: 1,
-            truncated: false,
-        });
-        const result = (await createTool(client).execute({ path: "user" }, makeToolContext().ctx))._unsafeUnwrap();
-        expect(result.entries[0]).toMatchObject({ kind: "symlink", path: "/mnt/refs/user/external" });
-        expect(client.submits[0]!.command[4]).toBe("user");
-    });
-
-    it("surfaces bounded traversal truncation with a drill-down hint", async () => {
-        const client = makeClient({
-            state: "populated",
-            entries: [{ path: "/mnt/refs/shards/0001.parquet", kind: "file", bytes: 5 }],
-            scannedEntries: 2000,
-            truncated: true,
-        });
-        const result = (await createTool(client).execute({}, makeToolContext().ctx))._unsafeUnwrap();
-        expect(result.truncated).toBe(true);
-        expect(result.content).toContain("narrower path");
-    });
-
-    it("derives the same exec id across replay", async () => {
-        const payload = { state: "empty", entries: [], scannedEntries: 0, truncated: false };
-        const first = makeClient(payload);
-        const replay = makeClient(payload);
-        await createTool(first, () => "stable").execute({}, makeToolContext().ctx);
-        await createTool(replay, () => "stable").execute({}, makeToolContext().ctx);
-        expect(first.submits[0]!.execId).toBe(replay.submits[0]!.execId);
-    });
-
-    it("runs the real scanner against manifest-free trees and supports directory drill-down", async () => {
-        const root = await mkdtemp(join(tmpdir(), "refs-scan-"));
-        const outside = await mkdtemp(join(tmpdir(), "refs-outside-"));
-        await mkdir(join(root, "user", "cohort"), { recursive: true });
-        await writeFile(join(root, "user", "cohort", "reference.h5ad"), "reference");
-        await writeFile(join(outside, "registry.json"), JSON.stringify({ files: { by_category: { fake: [{ local_path: "user/cohort/reference.h5ad" }] } } }));
-        await symlink(join(outside, "registry.json"), join(root, "registry.json"));
-        await symlink(outside, join(root, ".inflexa"));
+    // A symlink is the one way a store could hand back a file outside itself; it is reported
+    // as an opaque symlink and never resolved, so nothing downstream can be pointed off-store.
+    it("reports symlinks without following them, and refuses to traverse through one", async () => {
+        const root = await makeStore("symlink");
+        const outside = await makeStore("outside");
+        await writeFile(join(outside, "secret.csv"), "x".repeat(100));
+        await mkdir(join(root, "user"), { recursive: true });
         await symlink(outside, join(root, "user", "external"));
 
-        const client = makeExecutingClient();
-        const tool = createFilesystemTool(client, root);
+        const tool = createTool(root);
+        const listed = (await tool.execute({ path: "user" }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(listed.entries[0]).toMatchObject({ kind: "symlink", path: "/mnt/refs/user/external", bytes: 0 });
+
+        const through = (await tool.execute({ path: "user/external" }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(through.state).toBe("symlink");
+        expect(through.entries).toEqual([]);
+    });
+
+    // Installer metadata is never reference data: a symlinked .inflexa or registry.json must not
+    // become a route out of the store.
+    it("does not read installer metadata through a symlink", async () => {
+        const root = await makeStore("meta-symlink");
+        const outside = await makeStore("meta-outside");
+        await mkdir(join(outside, "receipts"), { recursive: true });
+        await writeReceipt(outside, "collectri-human", "2.0", [{ path: "CollecTRI_regulons.csv", bytes: 4_096 }]);
+        await writeFile(join(outside, "registry.json"), JSON.stringify({ files: { by_category: { fake: [{ local_path: "user/x.csv" }] } } }));
+        await stageManaged(root, "collectri-human", "2.0", "CollecTRI_regulons.csv", "x".repeat(4_096));
+        await symlink(join(outside, ".inflexa"), join(root, ".inflexa"));
+        await symlink(join(outside, "registry.json"), join(root, "registry.json"));
+
+        const result = (await createTool(root).execute({ path: "managed/collectri-human/2.0" }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(result.entries[0]!.metadata).toBeUndefined();
+    });
+
+    it("supports directory drill-down from the root", async () => {
+        const root = await makeStore("drill");
+        await mkdir(join(root, "user", "cohort"), { recursive: true });
+        await writeFile(join(root, "user", "cohort", "reference.h5ad"), "reference");
+
+        const tool = createTool(root);
         const rootResult = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
         expect(rootResult.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user", kind: "directory", fileCount: 1, bytes: 9 })]);
-        expect(rootResult.entries[0]?.metadata).toBeUndefined();
 
         const userResult = (await tool.execute({ path: "/mnt/refs/user" }, makeToolContext().ctx))._unsafeUnwrap();
-        expect(userResult.entries).toEqual(
-            expect.arrayContaining([
-                expect.objectContaining({ path: "/mnt/refs/user/cohort", kind: "directory", fileCount: 1 }),
-                { path: "/mnt/refs/user/external", kind: "symlink", bytes: 0 },
-            ]),
-        );
+        expect(userResult.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user/cohort", kind: "directory", fileCount: 1 })]);
 
         const cohortResult = (await tool.execute({ path: "/mnt/refs/user/cohort" }, makeToolContext().ctx))._unsafeUnwrap();
         expect(cohortResult.entries).toEqual([{ path: "/mnt/refs/user/cohort/reference.h5ad", kind: "file", bytes: 9 }]);
-        expect(client.outputs.every((output) => Buffer.byteLength(output) <= 64_001)).toBe(true);
     });
 
     // A single unparseable receipt used to abort the scan loop, silently dropping every receipt
     // that sorted after it — so one corrupt file stripped the labels off datasets that were fine.
     it("keeps enriching from the receipts that parse when one of them is corrupt", async () => {
-        const root = await mkdtemp(join(tmpdir(), "refs-bad-receipt-"));
-        const version = join(root, "managed", "wikipathways-human", "2026.07.10");
-        await mkdir(version, { recursive: true });
-        await mkdir(join(root, ".inflexa", "receipts"), { recursive: true });
-        await writeFile(join(version, "wikipathways_Homo_sapiens.gmt"), "pathway\tdescription\tGENE");
-
+        const root = await makeStore("bad-receipt");
+        await stageManaged(root, "wikipathways-human", "2026.07.10", "wikipathways_Homo_sapiens.gmt", "pathway\tdescription\tGENE");
+        await writeReceipt(root, "wikipathways-human", "2026.07.10", [{ path: "wikipathways_Homo_sapiens.gmt", bytes: 31 }]);
         // "aaa" sorts before "wikipathways", so a loop that dies on the bad file never reaches the good one.
         await writeFile(join(root, ".inflexa", "receipts", "aaa-corrupt.json"), "{ not json");
-        await writeFile(
-            join(root, ".inflexa", "receipts", "wikipathways-human.json"),
-            JSON.stringify({
-                version: 1,
-                datasetId: "wikipathways-human",
-                datasetVersion: "2026.07.10",
-                activatedAt: "2026-07-14T10:30:00.000Z",
-                artifacts: [{ path: "wikipathways_Homo_sapiens.gmt", bytes: 31, sha256: HASH }],
-            }),
-        );
 
-        const tool = createFilesystemTool(makeExecutingClient(), root);
-        const result = (await tool.execute({ path: "/mnt/refs/managed/wikipathways-human/2026.07.10" }, makeToolContext().ctx))._unsafeUnwrap();
+        const result = (await createTool(root).execute({ path: "managed/wikipathways-human/2026.07.10" }, makeToolContext().ctx))._unsafeUnwrap();
 
         expect(result.state).toBe("populated");
         expect(result.entries[0]).toMatchObject({
@@ -370,8 +246,8 @@ describe("list_available_refs", () => {
         });
     });
 
-    it("bounds the real scanner and final tool envelope for large subtrees and metadata", async () => {
-        const root = await mkdtemp(join(tmpdir(), "refs-large-"));
+    it("bounds the scan and the final envelope for large subtrees and metadata", async () => {
+        const root = await makeStore("large");
         await mkdir(join(root, "shards"), { recursive: true });
         for (let start = 0; start < 2_100; start += 200) {
             await Promise.all(
@@ -393,8 +269,7 @@ describe("list_available_refs", () => {
             }),
         );
 
-        const client = makeExecutingClient();
-        const tool = createFilesystemTool(client, root);
+        const tool = createTool(root);
         const summary = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
         expect(summary.scannedEntries).toBe(2_000);
         expect(summary.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/shards", kind: "directory", truncated: true, fileCount: 1_999 })]);
@@ -403,15 +278,20 @@ describe("list_available_refs", () => {
         expect(result.truncated).toBe(true);
         expect(result.entries.length).toBeLessThanOrEqual(200);
         expect(result.content).toContain("narrower path");
-        expect(client.outputs.every((output) => Buffer.byteLength(output, "utf8") <= 64_001)).toBe(true);
         expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(64_000);
     });
 
-    it("rejects malformed and oversized scanner stdout", async () => {
-        const malformed = makeClient({ state: "populated", entries: "not-an-array", scannedEntries: 1, truncated: false });
-        await expect(createTool(malformed).execute({}, makeToolContext().ctx)).rejects.toThrow();
+    // Truncation must be stable: a durably-cached step result cannot return a different
+    // prefix of the same store on replay.
+    it("truncates deterministically", async () => {
+        const root = await makeStore("deterministic");
+        await mkdir(join(root, "shards"), { recursive: true });
+        await Promise.all(Array.from({ length: 300 }, (_, index) => writeFile(join(root, "shards", `${String(index).padStart(4, "0")}.parquet`), "x")));
 
-        const oversized = makeClient({ state: "populated", entries: [], scannedEntries: 1, truncated: false, padding: "x".repeat(70_000) });
-        await expect(createTool(oversized).execute({}, makeToolContext().ctx)).rejects.toThrow(/exceeded its output bound/);
+        const tool = createTool(root);
+        const first = (await tool.execute({ path: "shards" }, makeToolContext().ctx))._unsafeUnwrap();
+        const second = (await tool.execute({ path: "shards" }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(first.entries.map((entry) => entry.path)).toEqual(second.entries.map((entry) => entry.path));
+        expect(first.entries[0]!.path).toBe("/mnt/refs/shards/0000.parquet");
     });
 });

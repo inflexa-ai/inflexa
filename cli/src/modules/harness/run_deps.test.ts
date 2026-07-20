@@ -61,6 +61,7 @@ function testComposition(overrides: { sandbox?: string; modelProvider?: string }
         // `comp.sandboxEmitters.swap(...)` drives the exact live-switch path the snapshot-safety tests need.
         sandboxEmitters: createSwappableSandboxEmitters(`${modelProvider}/${sandboxModel}`),
         skillsDir: "/tmp/skills",
+        refStorePath: "/tmp/refs",
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
     };
 }

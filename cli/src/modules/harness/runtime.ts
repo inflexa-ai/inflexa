@@ -863,6 +863,7 @@ async function bootHarnessRuntimeOnce(
             // The stable delegating sandbox emitters the run-engine bundles inject.
             sandboxEmitters: emitters,
             skillsDir: cfg.skillsDir,
+            refStorePath: env.refsDir,
             bioKeys: cfg.bioKeys,
         };
 
@@ -920,6 +921,9 @@ async function bootHarnessRuntimeOnce(
             templatesDir: cfg.templatesDir,
             // The in-process report-builder gets read-only `report-html` skill tools.
             skillsDir: cfg.skillsDir,
+            // Gives the planner reference discovery over the same store the sandbox
+            // mounts, so a plan can name what this install actually holds.
+            refStorePath: env.refsDir,
             chrome: {},
             // Host-supplied conversation tool: lets the agent drive the local `inflexa` CLI as a subprocess.
             hostTools: [createRunInflexaTool()],
