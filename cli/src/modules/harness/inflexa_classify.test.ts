@@ -187,4 +187,37 @@ describe("classifyInflexaArgv — policy + setOptions", () => {
         if (result.kind !== "action") throw new Error("expected action");
         expect(result.setOptions).toEqual([]);
     });
+
+    // Commander's default (non-positional) parsing lets the ROOT greedily consume any option it declares
+    // even after the subcommand, which hides an explicitly-set option from a plain `leaf.options` walk two
+    // ways. These pin that the leaf→root chain walk (via getOptionValueSourceWithGlobals) recovers both.
+    test("a shadowed leaf option counts as set even though the root consumes it (`ls --project`)", async () => {
+        // `ls` AND the root both declare `--project`; the root binds the value, so the leaf's LOCAL source is
+        // undefined — only the globals-aware chain walk sees this flag was explicitly set.
+        const result = await classifyInflexaArgv(["ls", "--project", "myproj"]);
+        expect(result).toEqual({
+            kind: "action",
+            argv: ["ls", "--project", "myproj"],
+            path: ["inflexa", "ls"],
+            grantKey: "inflexa ls",
+            policy: { kind: "auto", safeFlags: ["project"] },
+            setOptions: ["project"],
+        });
+    });
+
+    test("the `--opt=val` form of a shadowed leaf option counts too", async () => {
+        const result = await classifyInflexaArgv(["ls", "--project=myproj"]);
+        if (result.kind !== "action") throw new Error("expected action");
+        expect(result.setOptions).toEqual(["project"]);
+    });
+
+    test("an inherited root-only option counts as set on the leaf (`ls --analysis`)", async () => {
+        // `--analysis` is declared ONLY on the root, never on `ls`, so it is absent from `leaf.options`
+        // entirely and the root consumes it. The chain walk reaches the root's declaration; the flag counts
+        // and (being outside `ls`'s safeFlags) will escalate the auto invocation — deliberately conservative.
+        const result = await classifyInflexaArgv(["ls", "--analysis", "a"]);
+        if (result.kind !== "action") throw new Error("expected action");
+        expect(result.grantKey).toBe("inflexa ls");
+        expect(result.setOptions).toEqual(["analysis"]);
+    });
 });

@@ -1,3 +1,4 @@
+import { ESLint } from "eslint";
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
@@ -21,6 +22,10 @@ function runReport(channel: "development" | "production"): PolicyRow[] {
     delete childEnv.INFLEXA_DEV;
     const proc = Bun.spawnSync(["bun", "run", REPORT_ENTRY], { env: childEnv });
     if (proc.exitCode !== 0) throw new Error(`agent_policy_report failed (channel=${channel}, exit ${proc.exitCode}):\n${proc.stderr.toString()}`);
+    // The `as PolicyRow[]` is sound because both ends of this JSON are owned by the same module pair: the
+    // subprocess is `agent_policy_report.ts` printing `JSON.stringify(reportAgentPolicies())`, whose return
+    // type IS `PolicyRow[]`. The shape is fixed end-to-end by this code — not external input — so no runtime
+    // validation is warranted; a drift here would be a same-repo type change caught by tsc, not a wire skew.
     return JSON.parse(proc.stdout.toString()) as PolicyRow[];
 }
 
@@ -134,5 +139,33 @@ describe("agent policy — snapshot audit surface", () => {
 
     test("the dev-ON policy table matches the pinned snapshot (adds the dev-only entries)", () => {
         expect(policyTable(runReport("development"))).toEqual(EXPECTED_DEV_ON);
+    });
+});
+
+// The lint ban is the static half of the same audit surface: it stops a raw `command.action(fn)` from ever
+// registering an action with no policy in the first place. Exercising it here through ESLint's own Node API
+// against the REAL flat config (not a hand-rolled selector) pins the spec scenario "A raw `.action()` in the
+// registry is a lint error". lintText is fed REAL included file paths so the type-aware parser
+// (parserOptions.project) resolves them cleanly — the no-restricted-syntax rule is AST-only, so the linted
+// SNIPPET need not type-check or match the file on disk. If config loading ever breaks, lintText throws and
+// the test fails loudly rather than passing vacuously.
+describe("agent policy — the registry-scoped raw `.action(` lint ban", () => {
+    const cliRoot = join(import.meta.dir, "../..");
+    const banFires = (messages: readonly { readonly ruleId: string | null }[]): boolean => messages.some((m) => m.ruleId === "no-restricted-syntax");
+
+    test("a raw `.action(fn)` (plain and computed-member) in a registry file is a no-restricted-syntax error", async () => {
+        const eslint = new ESLint({ cwd: cliRoot });
+        // filePath is a REAL registry file (index.ts) so the typed parser finds it in tsconfig; the linted
+        // TEXT is the violating snippet. Both the plain member call and the computed-member bypass trip it.
+        const [plain] = await eslint.lintText("cmd.action(() => {});\n", { filePath: join(cliRoot, "src/cli/index.ts") });
+        const [computed] = await eslint.lintText('cmd["action"](() => {});\n', { filePath: join(cliRoot, "src/cli/index.ts") });
+        expect(banFires(plain?.messages ?? [])).toBe(true);
+        expect(banFires(computed?.messages ?? [])).toBe(true);
+    });
+
+    test("the same call in agent_policy.ts (the sanctioned registerAction site) is exempt", async () => {
+        const eslint = new ESLint({ cwd: cliRoot });
+        const [result] = await eslint.lintText("cmd.action(() => {});\n", { filePath: join(cliRoot, "src/cli/agent_policy.ts") });
+        expect(banFires(result?.messages ?? [])).toBe(false);
     });
 });

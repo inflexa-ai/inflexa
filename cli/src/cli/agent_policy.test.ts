@@ -18,6 +18,19 @@ describe("agent_policy — stamp round-trips on the Command instance", () => {
         // one command is invisible to any other, which is the whole reason a rename cannot orphan a policy.
         expect(getAgentPolicy(new Command("other"))).toBeUndefined();
     });
+
+    test("renaming a registered command cannot orphan its policy — the key is the instance, not the spelling", () => {
+        // Spec scenario "A rename cannot orphan a policy": register, then rename. A string-keyed store
+        // ("... go") would strand the entry under a dead key, leaving the command silently un-policied; keying
+        // on the Command INSTANCE means the same object still reads back the SAME policy after the rename.
+        const program = new Command();
+        program.exitOverride();
+        const policy: AgentPolicy = { kind: "auto", safeFlags: ["json"] };
+        const leaf = program.command("go");
+        registerAction(leaf, policy, () => {});
+        leaf.name("renamed");
+        expect(getAgentPolicy(leaf)).toBe(policy);
+    });
 });
 
 describe("agent_policy — registerAction couples handler and policy", () => {

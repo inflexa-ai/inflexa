@@ -39,7 +39,7 @@ Every command in the registry (`src/cli/index.ts`) declares an `AgentPolicy` at 
 
 **When adding a command — or adding an option to an `auto` command — ASK the user which classification it gets. Never guess `approval`/`auto`/`blocked` (or which flags are safe) for convenience.** The default is not "whatever compiles": a command that writes anything, however benign, is `approval`, and `auto` requires the user to have verified read-only-ness against the action's implementation. A flag belongs in `safeFlags` only when *every* value it can carry leaves the command read-only (output-shaping like `--json`), and a new option added to an `auto` command is unsafe until the user says otherwise.
 
-**An option that would change a command's effect class (read↔write) must be a new subcommand with its own policy, not a flag** (`run status`, not `run --status`) — this keeps `safeFlags` small and each effect class independently classified.
+**An option that would change a command's effect class (read↔write) must be a new subcommand with its own policy, not a flag** (`refs refresh`, not `refs list --refresh`) — this keeps `safeFlags` small and each effect class independently classified.
 
 ## Error handling — neverthrow first
 
