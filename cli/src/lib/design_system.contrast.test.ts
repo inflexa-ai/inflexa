@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { contrast } from "../test_support/contrast.ts";
 import { themeIds, themes, type Theme, type ThemeColors, type ThemeSyntax } from "./design_system.ts";
 
 /**
@@ -35,23 +36,6 @@ import { themeIds, themes, type Theme, type ThemeColors, type ThemeSyntax } from
  * the single enforceable record of what renders where; a palette edit or new theme that breaks any
  * pair fails `bun test`, and a rendered pair missing from the matrix is a review-time violation.
  */
-
-// WCAG 2.1 relative luminance + contrast ratio, inline (no dependency). Linearize each sRGB channel,
-// weight by the luminance coefficients, then ratio = (Lhi + 0.05) / (Llo + 0.05).
-function channel(v8: number): number {
-    const c = v8 / 255;
-    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-}
-function luminance(hex: string): number {
-    const n = parseInt(hex.slice(1), 16);
-    return 0.2126 * channel((n >> 16) & 0xff) + 0.7152 * channel((n >> 8) & 0xff) + 0.0722 * channel(n & 0xff);
-}
-function contrast(fg: string, bg: string): number {
-    const a = luminance(fg);
-    const b = luminance(bg);
-    const [hi, lo] = a >= b ? [a, b] : [b, a];
-    return (hi + 0.05) / (lo + 0.05);
-}
 
 const TEXT = 4.5;
 const NON_TEXT = 3;

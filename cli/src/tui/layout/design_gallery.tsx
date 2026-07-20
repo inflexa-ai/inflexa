@@ -324,21 +324,34 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                 </State>
                 <State n="13" label="type & emphasis">
                     <text>
-                        <Bold>bold</Bold> <Fg role="fgMuted">— names, active items</Fg>
+                        <Fg role="fg">
+                            <Bold>bold</Bold>
+                        </Fg>{" "}
+                        <Fg role="fgMuted">— names, active items</Fg>
                     </text>
                     <text>
-                        regular <Fg role="fgMuted">— body / assistant text</Fg>
+                        <Fg role="fg">regular</Fg> <Fg role="fgMuted">— body / assistant text</Fg>
                     </text>
                     <text>
-                        <Dim>dim</Dim> <Fg role="fgMuted">— meta, labels, hints (color role preferred)</Fg>
+                        <Fg role="fgMuted">
+                            <Dim>dim</Dim>
+                        </Fg>{" "}
+                        <Fg role="fgMuted">— meta, labels, hints (color role preferred)</Fg>
                     </text>
                     <text>
-                        <Italic>italic</Italic> <Fg role="fgMuted">— reasoning / quoted (terminal-dependent)</Fg>
+                        <Fg role="fgMuted">
+                            <Italic>italic</Italic>
+                        </Fg>{" "}
+                        <Fg role="fgMuted">— reasoning / quoted (terminal-dependent)</Fg>
                     </text>
                     <text>
-                        <Underline>underline</Underline> <Fg role="fgMuted">— links / paths</Fg>
+                        <Fg role="fg">
+                            <Underline>underline</Underline>
+                        </Fg>{" "}
+                        <Fg role="fgMuted">— links / paths</Fg>
                     </text>
                     <text>
+                        {/* Alone in this set, Reverse paints both fg and bg itself, so an outer Fg would fight it. */}
                         <Reverse> reverse </Reverse> <Fg role="fgMuted">— selection / cursor row</Fg>
                     </text>
                 </State>
@@ -453,22 +466,20 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     {/* Pixel-shaped content a terminal can't paint: click a row to open it externally.
                         onOpen is inert here — the gallery renders the pure block with resolved fixtures. */}
                     <OpenableCardBlock
-                        title="Volcano plot"
-                        rows={[{ icon: "chart", name: "Volcano plot", path: "~/proj/.inflexa/analyses/rna/presentations/pres-9f21a3.html", degraded: false }]}
+                        title="Differential expression"
+                        rows={[{ name: "Volcano plot", path: "~/proj/.inflexa/analyses/rna/presentations/pres-9f21a3.html", degraded: false }]}
                         onOpen={noop}
                     />
                     <OpenableCardBlock
                         title="Figures"
                         rows={[
                             {
-                                icon: "image",
                                 name: "volcano.png",
                                 caption: "condition A vs B",
                                 path: "~/proj/.inflexa/analyses/rna/runs/run-abc/figures/volcano.png",
                                 degraded: false,
                             },
                             {
-                                icon: "image",
                                 name: "heatmap.png",
                                 caption: "top 50 DE genes",
                                 path: "~/proj/.inflexa/analyses/rna/runs/run-abc/figures/heatmap.png",
@@ -483,7 +494,6 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         title="Referenced file"
                         rows={[
                             {
-                                icon: "document",
                                 name: "de-summary.csv",
                                 path: "~/proj/.inflexa/analyses/rna/runs/run-abc/output/de-summary.csv",
                                 degraded: true,
@@ -492,7 +502,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         onOpen={noop}
                     />
                     <OpenableCardBlock
-                        rows={[{ icon: "report", name: "Report preview v2 failed", caption: "render timed out after 60s", path: null, degraded: true }]}
+                        rows={[{ name: "Report preview v2 failed", caption: "render timed out after 60s", path: null, degraded: true }]}
                         onOpen={noop}
                     />
                 </State>

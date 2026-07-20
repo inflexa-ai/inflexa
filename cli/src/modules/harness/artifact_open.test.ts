@@ -59,14 +59,13 @@ describe("readFileReference", () => {
         });
         expect(out.title).toBe("Figures");
         expect(out.entries.map((e) => e.name)).toEqual(["a.png", "b.png"]);
-        expect(out.entries[0]?.icon).toBe("image");
         expect(out.entries[1]?.caption).toBe("heatmap");
         expect(out.folderPath).toBe("runs/r/figures");
     });
 
     test("a single-file reference carries no folder affordance", () => {
         const out = readFileReference({ id: "g", files: [{ path: "runs/r/out.csv" }] });
-        expect(out.entries[0]?.icon).toBe("document");
+        expect(out.entries[0]?.name).toBe("out.csv");
         expect(out.folderPath).toBeUndefined();
     });
 });

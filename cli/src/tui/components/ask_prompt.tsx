@@ -2,7 +2,7 @@ import { createSignal, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type { BoxRenderable } from "@opentui/core";
 
-import { GLYPHS, space } from "../../lib/design_system.ts";
+import { GLYPHS, size, space } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
 import { useBindings, KEYS, MODE_BASE } from "../keymap.ts";
 import { TextInput } from "./text_input.tsx";
@@ -53,8 +53,15 @@ export type AskPromptProps = {
 /**
  * The docked approval prompt for a pending `ctx.ask`: a full-width, non-collapsing row painted with
  * the panel background so it can sit directly below the chat's flexGrow scrollbox (the 1-cell
- * scrollbox-bleed rule) without transcript content bleeding through its gaps. It captures one
- * decision at a time across two local modes:
+ * scrollbox-bleed rule) without transcript content bleeding through its gaps.
+ *
+ * It is laid out as marker gutter + content column, the same fixed `size.gutter` the transcript
+ * blocks above it align to, so the dock reads as one more block in that column rather than a
+ * differently-indented strip. The caution glyph sits in that gutter — OUTSIDE the mode switch — for
+ * two reasons: it marks the whole ask rather than decorating the title line, and holding it still
+ * across both modes keeps the content from shifting horizontally as the user toggles with `n`/`esc`.
+ *
+ * It captures one decision at a time across two local modes:
  *   - **choice** — the box itself holds focus; bare `y` / `a` / `n` are approve-once, approve-always,
  *     and reject.
  *   - **feedback** — reached from `n`: a {@link TextInput} for optional reject feedback; enter submits
@@ -128,34 +135,46 @@ export function AskPrompt(props: AskPromptProps): JSX.Element {
             }}
             width="100%"
             flexShrink={0}
-            flexDirection="column"
+            flexDirection="row"
             backgroundColor={theme().bgRaised}
             paddingLeft={space.sm}
             paddingRight={space.sm}
         >
-            <Show
-                when={mode() === "choice"}
-                fallback={
-                    <box flexDirection="column">
-                        <text>
-                            <Fg role="fgMuted">{`Reject ${GLYPHS.emDash} add feedback (optional)`}</Fg>
-                        </text>
-                        <TextInput
-                            chrome="compact"
-                            placeholder="feedback"
-                            autoFocus={!(props.inert ?? false)}
-                            busy={props.busy}
-                            onSubmit={(v: string) => submitFeedback(v)}
-                        />
-                        <text>
-                            <Fg role="fgMuted">{`enter submit ${GLYPHS.middot} esc back`}</Fg>
-                        </text>
-                    </box>
-                }
-            >
-                <box flexDirection="column">
+            {/* Fixed-width so the content column starts at the same indent on every row and in both
+            modes; flexShrink={0} because a narrow terminal must squeeze the text, never the gutter. */}
+            <box width={size.gutter} flexShrink={0}>
+                <text>
+                    <Fg role="warning">{GLYPHS.warning}</Fg>
+                </text>
+            </box>
+            <box flexDirection="column" flexGrow={1}>
+                <Show
+                    when={mode() === "choice"}
+                    fallback={
+                        <>
+                            <text>
+                                <Fg role="fgMuted">{`Reject ${GLYPHS.emDash} add feedback (optional)`}</Fg>
+                            </text>
+                            <TextInput
+                                chrome="compact"
+                                placeholder="feedback"
+                                autoFocus={!(props.inert ?? false)}
+                                busy={props.busy}
+                                onSubmit={(v: string) => submitFeedback(v)}
+                            />
+                            <text>
+                                <Fg role="fgMuted">{`enter submit ${GLYPHS.middot} esc back`}</Fg>
+                            </text>
+                        </>
+                    }
+                >
+                    {/* The title carries no color of its own — <Bold> is attribute-only, so without an
+                    enclosing <Fg> it falls through to opentui's white default and vanishes on a light
+                    theme's raised panel. */}
                     <text>
-                        <Fg role="warning">{GLYPHS.warning}</Fg> <Bold>{props.title}</Bold>
+                        <Fg role="fg">
+                            <Bold>{props.title}</Bold>
+                        </Fg>
                     </text>
                     <text>
                         <Fg role="tool">
@@ -188,8 +207,8 @@ export function AskPrompt(props: AskPromptProps): JSX.Element {
                             </text>
                         </Show>
                     </box>
-                </box>
-            </Show>
+                </Show>
+            </box>
         </box>
     );
 }

@@ -6,7 +6,7 @@ import { err, ok, type Result } from "neverthrow";
 import { mkdirResult, writeFileResult } from "../../lib/fs.ts";
 import { openExternal } from "../../lib/open_external.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
-import type { OpenableEntry, OpenableIcon, OpenTarget, PresentationBody } from "../../types/session.ts";
+import type { OpenableEntry, OpenTarget, PresentationBody } from "../../types/session.ts";
 
 // The `artifact-open` capability: the shared readers that turn a harness display-card `data` payload
 // into a normalized card model, plus open-time RESOLUTION (reference → path) and MATERIALIZATION
@@ -58,15 +58,6 @@ function cloneSpec(v: unknown): Record<string, unknown> {
     }
 }
 
-const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".tiff", ".tif"]);
-
-/** The glyph shape a referenced file's row shows: images get the image marker, everything else a document. */
-function iconForPath(path: string): OpenableIcon {
-    const dot = path.lastIndexOf(".");
-    const ext = dot >= 0 ? path.slice(dot).toLowerCase() : "";
-    return IMAGE_EXTENSIONS.has(ext) ? "image" : "document";
-}
-
 // ── readers: harness `data` payload → normalized card model ──────────────────────────────────────────
 
 /**
@@ -107,7 +98,6 @@ export function readPresentation(data: unknown): PresentationReadout {
                 shape: "card",
                 title,
                 entry: {
-                    icon: "chart",
                     name: title ?? "Chart",
                     target: {
                         kind: "echart",
@@ -122,7 +112,7 @@ export function readPresentation(data: unknown): PresentationReadout {
             return {
                 shape: "card",
                 title,
-                entry: { icon: "image", name: title ?? "Diagram", target: { kind: "svg", presId: id, markup: str(content.markup) } },
+                entry: { name: title ?? "Diagram", target: { kind: "svg", presId: id, markup: str(content.markup) } },
             };
         default:
             // Observe an unrecognized presentation kind rather than swallowing it — render a visible inline note.
@@ -146,7 +136,6 @@ export function readFileReference(data: unknown): FileReferenceReadout {
         const file = (f ?? {}) as Record<string, unknown>;
         const path = str(file.path);
         return {
-            icon: iconForPath(path),
             name: basename(path) || path,
             ...(optStr(file.caption) !== undefined ? { caption: optStr(file.caption)! } : {}),
             target: { kind: "workspace-file", path },
@@ -172,7 +161,7 @@ export function readReportPreview(data: unknown): PreviewReadout {
     const previewPath = str(d.previewPath);
     const version = typeof d.version === "number" ? d.version : 0;
     const name = `${title ?? "Report"} v${version}`;
-    return { title, entry: { icon: "report", name, target: { kind: "workspace-file", path: `previews/${previewId}/${previewPath}` } } };
+    return { title, entry: { name, target: { kind: "workspace-file", path: `previews/${previewId}/${previewPath}` } } };
 }
 
 /**
@@ -183,7 +172,7 @@ export function readReportPreviewFailed(data: unknown): PreviewReadout {
     const d = (data ?? {}) as Record<string, unknown>;
     const version = typeof d.version === "number" ? d.version : 0;
     const reason = str(d.reason) || "unknown reason";
-    return { entry: { icon: "report", name: `Report preview v${version} failed`, caption: reason, target: { kind: "unavailable", reason } } };
+    return { entry: { name: `Report preview v${version} failed`, caption: reason, target: { kind: "unavailable", reason } } };
 }
 
 // ── open-time resolution + materialization ──────────────────────────────────────────────────────────

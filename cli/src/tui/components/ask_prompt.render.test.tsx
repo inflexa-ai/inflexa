@@ -4,6 +4,7 @@ import { testRender } from "@opentui/solid";
 import type { BoxRenderable, TextareaRenderable } from "@opentui/core";
 
 import { AskPrompt } from "./ask_prompt.tsx";
+import { GLYPHS, size, space } from "../../lib/design_system.ts";
 import { useKeymapRoot } from "../keymap.ts";
 import { renderFrame } from "../../test_support/tui.ts";
 
@@ -12,6 +13,28 @@ import { renderFrame } from "../../test_support/tui.ts";
 // width. The interactive tests drive the REAL keyboard bus through useKeymapRoot to prove the
 // focus-target gate: the prompt's bare y/a/n keys are legal ONLY while it holds focus, and never
 // steal characters from a co-mounted, focused editor (the bare-printable rule).
+//
+// The frames additionally pin the marker-gutter LAYOUT: the caution glyph occupies the shared fixed
+// gutter column on the title row and every other row hangs at that indent, in both modes. Character
+// frames are the right instrument for exactly this and nothing more — they carry no color, so they
+// prove a glyph landed in a column, never that it is legible. Contrast is measured separately, on
+// resolved span colors, in theme_contrast.render.test.tsx.
+
+/** The column every non-marker row starts at: the panel's own padding plus the marker gutter. */
+const gutterIndent = " ".repeat(space.sm + size.gutter);
+
+/** The title row: padding, the caution glyph alone in the gutter column, then the title at the indent. */
+function markerRow(title: string): string {
+    return `${" ".repeat(space.sm)}${GLYPHS.warning} ${title}`;
+}
+
+/**
+ * True when a row's content begins EXACTLY at the gutter indent. The negative half is what gives the
+ * check teeth: `startsWith` alone also passes a row indented one cell too far.
+ */
+function hangsAtGutter(line: string): boolean {
+    return line.startsWith(gutterIndent) && !line.startsWith(`${gutterIndent} `);
+}
 
 // A lone ESC byte is an ambiguous escape-sequence prefix that opentui's StdinParser holds for ~20ms
 // before flushing as a standalone key, so key-driven steps settle on a real clock (matches the
@@ -79,6 +102,16 @@ describe("AskPrompt choice-mode frame", () => {
             expect(frame).toContain("always");
             expect(frame).toContain("reject");
             expect(frame).toContain("+2 more");
+
+            // Alignment is asserted inside the sweep because it is width-independent by construction:
+            // the gutter is a fixed column and only the content column absorbs the squeeze.
+            const lines = frame.split("\n");
+            expect(lines[0]).toBe(markerRow("Run shell command"));
+            expect(lines[1]).toBe(`${gutterIndent}rm -rf build`);
+            expect(lines[2]).toBe(`${gutterIndent}Deletes the build directory`);
+            expect(lines[3]).toBe(`${gutterIndent}y approve ${GLYPHS.middot} a always ${GLYPHS.middot} n reject  +2 more`);
+            // The glyph marks the block once, from the gutter — it is not repeated down the rows.
+            expect(frame.split(GLYPHS.warning).length - 1).toBe(1);
         });
     }
 
@@ -95,6 +128,13 @@ describe("AskPrompt choice-mode frame", () => {
         expect(frame).toContain("approve");
         // No queue → no +N hint.
         expect(frame).not.toContain("more");
+
+        // A block with no detail row still hangs off the gutter — the indent is structural, not a
+        // side effect of the optional rows being present.
+        const lines = frame.split("\n");
+        expect(lines[0]).toBe(markerRow("Run shell command"));
+        expect(lines[1]).toBe(`${gutterIndent}rm -rf build`);
+        expect(lines[2]).toBe(`${gutterIndent}y approve ${GLYPHS.middot} a always ${GLYPHS.middot} n reject`);
     });
 });
 
@@ -115,6 +155,7 @@ describe("AskPrompt feedback mode", () => {
             box!.focus();
             await settle();
             expect(frame()).toContain("n reject");
+            expect(frame().split("\n")[0]).toBe(markerRow("Run shell command"));
 
             setup.mockInput.pressKey("n");
             await settle();
@@ -122,6 +163,14 @@ describe("AskPrompt feedback mode", () => {
             expect(frame()).toContain("feedback");
             expect(frame()).toContain("esc back");
             expect(frame()).not.toContain("n reject");
+
+            // The gutter lives outside the mode switch, so the toggle must not shift the block: the
+            // marker holds the same column and the feedback rows hang at the same indent as the
+            // choice rows did. This is the whole reason the glyph is not inside the <Show>.
+            const after = frame().split("\n");
+            expect(after[0]).toBe(markerRow(`Reject ${GLYPHS.emDash} add feedback (optional)`));
+            // Naming the offending rows beats a bare boolean: a failure has to say which line drifted.
+            expect(after.slice(1, 5).filter((l) => l.length > 0 && !hangsAtGutter(l))).toEqual([]);
         } finally {
             setup.renderer.destroy();
         }
@@ -147,6 +196,12 @@ describe("AskPrompt feedback mode", () => {
         expect(frame).toContain("feedback");
         expect(frame).toContain("esc back");
         expect(frame).not.toContain("n reject");
+
+        // The seeded surface hangs off the same gutter as the key-driven one — the marker is shared
+        // structure, not something the `n` transition installs.
+        const lines = frame.split("\n");
+        expect(lines[0]).toBe(markerRow(`Reject ${GLYPHS.emDash} add feedback (optional)`));
+        expect(lines.slice(1).filter((l) => l.length > 0 && !hangsAtGutter(l))).toEqual([]);
     });
 });
 

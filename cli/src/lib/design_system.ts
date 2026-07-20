@@ -67,6 +67,13 @@ export const GLYPHS = {
     arrowLeft: "←",
     /** U+2192 — right. */
     arrowRight: "→",
+    /**
+     * U+2197 — north-east arrow: the "opens outside this surface" affordance (an openable card's rows,
+     * whose content the terminal hands to an external application). U+2197 has TEXT presentation by
+     * default — emoji styling requires an explicit VS16 selector this project never emits — so it stays
+     * a single cell like every other glyph here and cannot break the fixed-column gutter alignment.
+     */
+    arrowUpRight: "↗",
     /** U+00B7 — middle dot: the inline separator between hint/metadata segments (` a · b · c `). */
     middot: "·",
     /** U+2026 — single-glyph ellipsis for placeholders and in-progress labels (never the three-dot `...`). */

@@ -146,7 +146,6 @@ export function MessageBlock(props: MessageBlockProps) {
 function OpenableCard(props: { part: OpenableCardPart }) {
     const rows = (): OpenableRowView[] =>
         props.part.entries.map((entry) => ({
-            icon: entry.icon,
             name: entry.name,
             ...(entry.caption !== undefined ? { caption: entry.caption } : {}),
             path: resolveEntryPath(props.part.analysisId, entry.target),
@@ -171,15 +170,21 @@ function OpenableCard(props: { part: OpenableCardPart }) {
 }
 
 /**
- * Map an ask card's status to its gutter marker: a busy half-circle while pending, then a settled
- * outcome glyph in the matching status color (approved → success check, rejected → error cross, and a
- * hollow no-decision dot for a turn that aborted or an ask that expired). The status word carries the
- * exact meaning; the marker gives it an at-a-glance color.
+ * Map an ask card's status to its gutter marker: a caution sign while pending, then a settled outcome
+ * glyph in the matching status color (approved → success check, rejected → error cross, and a hollow
+ * no-decision dot for a turn that aborted or an ask that expired). The status word carries the exact
+ * meaning; the marker gives it an at-a-glance color.
+ *
+ * Pending is the caution sign rather than the half-circle so the app keeps ONE marker per meaning. The
+ * half-circle denotes system-busy everywhere else here — chat thinking, harness booting, a running
+ * sidebar entry — but a pending ask is not the system working; it is the system stopped, waiting on the
+ * user, which is exactly what caution means. It is also the same glyph the docked approval prompt
+ * shows, so one pending ask no longer wears two different markers depending on where you look at it.
  */
 function askMarker(status: AskCardPart["status"]): { glyph: string; role: keyof ThemeColors } {
     switch (status) {
         case "pending":
-            return { glyph: GLYPHS.circleHalf, role: "warning" };
+            return { glyph: GLYPHS.warning, role: "warning" };
         case "resolved":
             return { glyph: GLYPHS.check, role: "success" };
         case "rejected":
