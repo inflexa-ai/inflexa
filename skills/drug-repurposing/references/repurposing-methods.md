@@ -91,7 +91,12 @@ def connectivity_score_prerank(disease_signature, drug_gene_sets,
     res = res.rename(columns={
         "Term": "drug",
         "NES": "nes",
-        "NOM p-val": "pval",
+        # gseapy's prerank res2d column is "p-val" (not "NOM p-val",
+        # which is the GSEA desktop label). DataFrame.rename ignores
+        # keys it cannot match SILENTLY, so getting this wrong leaves
+        # no "pval" column at all and every downstream significance
+        # filter raises KeyError.
+        "p-val": "pval",
         "FDR q-val": "fdr",
         "Lead_genes": "lead_genes",
     })
@@ -183,18 +188,52 @@ def network_proximity(drug_targets, disease_genes, graph,
     d_observed = closest_distance(drug_in, disease_in)
 
     rng = np.random.default_rng(seed)
-    all_nodes = list(nodes)
+
+    # DEGREE-PRESERVING null (Guney et al. 2016). Drug targets and
+    # disease genes are strongly hub-enriched, and hubs sit closer to
+    # everything, so sampling nodes uniformly builds a null of
+    # low-degree nodes that are further apart than they should be.
+    # That inflates mu and makes every z-score look more negative --
+    # i.e. manufactures proximity that is not there. Sample each
+    # random node from the degree bin of the node it replaces.
+    degrees = dict(graph.degree())
+    bins = {}
+    for node, deg in degrees.items():
+        # Log-spaced bins keep hub bins populated enough to sample from.
+        bins.setdefault(int(np.log2(deg + 1)), []).append(node)
+
+    def degree_matched_sample(reference_nodes):
+        picked = set()
+        for node in reference_nodes:
+            bucket = bins[int(np.log2(degrees[node] + 1))]
+            for _ in range(20):  # retry to avoid collisions
+                cand = bucket[rng.integers(len(bucket))]
+                if cand not in picked:
+                    picked.add(cand)
+                    break
+        return picked
+
     d_randoms = []
     for _ in range(n_random):
-        rand_targets = set(rng.choice(all_nodes, size=len(drug_in), replace=False))
-        rand_diseases = set(rng.choice(all_nodes, size=len(disease_in), replace=False))
-        d_randoms.append(closest_distance(rand_targets, rand_diseases))
+        d_randoms.append(closest_distance(
+            degree_matched_sample(drug_in),
+            degree_matched_sample(disease_in),
+        ))
 
-    d_randoms = np.array(d_randoms)
+    # Disconnected pairs give inf, which poisons mean/std into inf/nan.
+    d_randoms = np.array(d_randoms, dtype=float)
+    d_randoms = d_randoms[np.isfinite(d_randoms)]
+
+    if d_randoms.size == 0 or not np.isfinite(d_observed):
+        return {"d_c": float(d_observed), "z_score": np.nan, "p_value": np.nan}
+
     mu = np.mean(d_randoms)
     sigma = np.std(d_randoms)
 
-    z_score = (d_observed - mu) / sigma if sigma > 0 else 0
+    # A degenerate null is not the same as "no proximity signal".
+    # Returning 0 here would rank the drug as exactly average instead
+    # of flagging that the null could not be built.
+    z_score = (d_observed - mu) / sigma if sigma > 0 else np.nan
     p_value = np.mean(d_randoms <= d_observed)
 
     return {
@@ -287,7 +326,11 @@ def integrate_repurposing_evidence(candidates):
 
         sig_score = 0
         if "connectivity_nes" in ev:
-            sig_score = min(1.0, abs(ev["connectivity_nes"]) / 3)
+            # Only NEGATIVE NES is therapeutic: the drug REVERSES the
+            # disease signature. abs() would score a drug that mimics
+            # the disease (positive NES, potentially harmful) exactly
+            # like one that reverses it. One-sided, matching net_score.
+            sig_score = min(1.0, max(0.0, -ev["connectivity_nes"]) / 3)
 
         gen_score = ev.get("genetic_score", 0)
 
@@ -298,19 +341,33 @@ def integrate_repurposing_evidence(candidates):
 
         clinical = 1.0 if ev.get("clinical_trials") else 0.0
         literature = min(1.0, len(ev.get("literature_pmids", [])) / 5)
-        safety_ok = 0.5 if ev.get("safety_reports", 0) < 100 else 0.0
+        # Absence of FAERS data is NOT evidence of safety. Defaulting
+        # the count to 0 would hand the bonus to every drug nobody has
+        # assessed, which is the "skip safety assessment" anti-pattern.
+        safety_reports = ev.get("safety_reports")
+        safety_ok = 0.5 if (safety_reports is not None
+                            and safety_reports < 100) else 0.0
 
         evidence_count = sum(1 for s in [
             sig_score, gen_score, net_score, clinical, literature,
         ] if s > 0)
 
-        composite = np.mean([
-            sig_score * 0.3,
-            gen_score * 0.25,
-            net_score * 0.2,
-            clinical * 0.15,
-            literature * 0.1,
-        ]) / 0.2 + safety_ok * 0.1
+        # The five evidence weights sum to exactly 1.0, so this is a
+        # convex combination bounded by [0, 1]. (The previous
+        # `np.mean([...]) / 0.2` computed the same number -- mean of 5
+        # terms divided by 0.2 IS their sum -- but obscured that the
+        # weights already normalize.) The safety bonus sits outside
+        # that combination and would push the maximum to 1.05, so the
+        # result is clamped to keep the documented 0-1 scale.
+        composite = (
+            sig_score * 0.3
+            + gen_score * 0.25
+            + net_score * 0.2
+            + clinical * 0.15
+            + literature * 0.1
+            + safety_ok * 0.1
+        )
+        composite = min(1.0, composite)
 
         rows.append({
             "drug": c["drug_name"],

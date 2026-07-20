@@ -28,9 +28,13 @@ Choose the method based on input data and analytical goal:
        that sum to 1. Includes "other cells" category.
      - quanTIseq: designed for tumor deconvolution. Returns absolute
        fractions. Includes 10 immune cell types.
-     - CIBERSORTx: gold standard but requires registration/license.
-       If available in sandbox packages, preferred for high-resolution
-       (22 immune subsets via LM22).
+     - CIBERSORTx: **not available here.** Its source and the LM22
+       signature matrix are distributed only through a registered,
+       licensed download from the Alizadeh lab site, which needs both
+       an account and network egress. `immunedeconv` exposes a
+       `cibersort` method, but it errors unless you have already
+       placed those licensed files on disk. Do not plan around it and
+       do not report it as attempted — pick from the methods above.
    - **When to use multiple methods**: Always run at least 2 methods
      and compare. Concordant results across methods strengthen
      conclusions. Report discordances.
@@ -58,7 +62,10 @@ Choose the method based on input data and analytical goal:
      - T cell exhaustion: LAG3, HAVCR2 (TIM-3), PDCD1 (PD-1), TIGIT,
        CTLA4 co-expression.
    - **Scoring methods**: ssGSEA (per-sample), mean z-score, or
-     decoupler `run_ulm` / `run_mlm` with custom gene sets.
+     decoupler `dc.mt.ulm` / `dc.mt.mlm` with custom gene sets. Lower
+     decoupler's `tmin` (default 5) to the length of your shortest
+     signature, or short ones are dropped without an error — CYT is
+     2 genes, so `tmin=2`.
 
 4. **Checkpoint expression analysis**
    - Extract and visualize expression of immune checkpoint genes across

@@ -161,8 +161,8 @@ sdata = sd.read_zarr("dataset.zarr")
 # Read specific element types only
 sdata = sd.read_zarr("dataset.zarr", selection=("images", "tables"))
 
-# Read from remote storage
-sdata = sd.read_zarr("s3://bucket/dataset.zarr")
+# Remote reads (s3://, gs://, http://) FAIL — there is no network egress.
+# Zarr stores must already be on local disk. Read them by local path only.
 
 # Write individual elements
 sdata.write_element("my_image")
@@ -312,4 +312,5 @@ sq.gr.spatial_autocorr(adata, mode="moran", n_jobs=4)
 - `sdata.write()` defaults to `overwrite=False`. Writing to an existing path without `overwrite=True` raises an error.
 - SpatialData uses lazy loading (Dask for points, Zarr chunks for images). Call `.compute()` to materialize Dask arrays if needed.
 - Coordinate systems are strings (e.g., `"global"`, `"microscope"`). Elements in different coordinate systems are not directly comparable without transformation.
-- `spatialdata-io` readers are in a separate package: `pip install spatialdata-io`.
+- `spatialdata-io` readers live in a separate package from `spatialdata`, but it is **already installed** — import it directly. Do not attempt `pip install`; there is no network egress, and an install would fail for a package that is already present.
+- The `consolidate_metadata=True` note above is about cloud-compatible layout only. It does not enable remote reads: all Zarr I/O here is local-disk.

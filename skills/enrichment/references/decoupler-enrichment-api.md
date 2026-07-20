@@ -12,7 +12,7 @@ import numpy as np
 
 ## Resource Loading
 
-Never call `dc.op.progeny()`, `dc.op.collectri()`, `dc.op.ksn_omnipath()`, `dc.get_progeny()`, or any other `dc.op.*()` loader: they fetch from the OmniPath web API, and there is no network egress. Load the network from a file already available to you.
+Never call `dc.op.progeny()`, `dc.op.collectri()`, `dc.op.ksn_omnipath()`, or any other `dc.op.*()` loader: they fetch from the OmniPath web API, and there is no network egress. Load the network from a file already available to you.
 
 **Resolve the file before you write the script.** Ask for the *dataset* by what it is, not by a path — reference data is provisioned per-environment, so the directory, the filename, and the format all vary and none of them are yours to assume:
 
@@ -81,7 +81,7 @@ custom_net = pd.DataFrame({
 
 All methods share a common interface. They accept either an AnnData object or a pandas DataFrame as input.
 
-### dc.run_ulm() — Univariate Linear Model
+### dc.mt.ulm() — Univariate Linear Model
 
 Fast, recommended default. Estimates activity by fitting a linear model per source.
 
@@ -90,60 +90,69 @@ Fast, recommended default. Estimates activity by fitting a linear model per sour
 # mat: pd.DataFrame, shape (n_samples, n_genes)
 # net: pd.DataFrame with 'source', 'target', 'weight' columns
 
-acts, pvals = dc.mt.ulm(data=mat, net=progeny)
-# acts: pd.DataFrame (n_samples, n_sources) — activity scores
-# pvals: pd.DataFrame (n_samples, n_sources) — p-values
+acts, padj = dc.mt.ulm(data=mat, net=progeny)
+# acts: pd.DataFrame (n_samples, n_sources) — activity scores (t-values)
+# padj: pd.DataFrame (n_samples, n_sources) — Benjamini-Hochberg adjusted p-values
 
 # Filter significant activities
-sig_mask = pvals < 0.05
+sig_mask = padj < 0.05
 acts_filtered = acts.where(sig_mask)
 
-# On AnnData (stores results in adata.obsm)
+# On AnnData (stores results in adata.obsm, returns None)
 dc.mt.ulm(data=adata, net=progeny)
 # Results stored in:
-#   adata.obsm["ulm_estimate"]  — activity scores
-#   adata.obsm["ulm_pvals"]    — p-values
+#   adata.obsm["score_ulm"]  — activity scores
+#   adata.obsm["padj_ulm"]   — adjusted p-values
 ```
 
-### dc.run_mlm() — Multivariate Linear Model
+`tmin` (default `5`) drops any source with fewer than that many targets present in
+the data. Small hand-built gene sets need it lowered explicitly, or they vanish
+silently from the result.
+
+### dc.mt.mlm() — Multivariate Linear Model
 
 Fits all sources simultaneously. Better when sources share many targets.
 
 ```python
-acts, pvals = dc.mt.mlm(data=mat, net=progeny)
+acts, padj = dc.mt.mlm(data=mat, net=progeny)
 # Same output format as ulm
 
 # On AnnData
 dc.mt.mlm(data=adata, net=progeny)
-# adata.obsm["mlm_estimate"], adata.obsm["mlm_pvals"]
+# adata.obsm["score_mlm"], adata.obsm["padj_mlm"]
 ```
 
-### dc.run_wsum() — Weighted Sum
+### dc.mt.waggr() — Weighted Aggregation (weighted mean / weighted sum)
 
-Simple weighted sum of target gene values. Fast, no p-values from model (uses permutation).
+Simple weighted aggregate of target gene values. Fast; p-values come from
+permutation, so they only exist when `times` is set. There is no `dc.mt.wsum()` —
+in decoupler 2.x the weighted sum is `waggr(fun="wsum")`.
 
 ```python
-acts, pvals = dc.mt.wsum(data=mat, net=progeny, times=1000)
+acts, padj = dc.mt.waggr(data=mat, net=progeny, fun="wsum", times=1000, seed=0)
+# fun:   "wmean" (default) or "wsum"
 # times: number of permutations for p-value estimation
+# seed:  set it — permutation p-values are not reproducible otherwise
 
 # On AnnData
-dc.mt.wsum(data=adata, net=progeny, times=1000)
-# adata.obsm["wsum_estimate"], adata.obsm["wsum_pvals"]
+dc.mt.waggr(data=adata, net=progeny, fun="wsum", times=1000, seed=0)
+# adata.obsm["score_waggr"], adata.obsm["padj_waggr"]
 ```
 
 ### Running Multiple Methods
 
 ```python
-# Run several methods and combine results
+# Run several methods and combine results.
+# Only methods that always return adjusted p-values can be unpacked as a pair;
+# waggr returns scores alone unless `times` is set.
 results = {}
-for method_name, method_fn in [("ulm", dc.mt.ulm), ("mlm", dc.mt.mlm), ("wsum", dc.mt.wsum)]:
-    acts, pvals = method_fn(data=mat, net=progeny)
-    results[method_name] = {"acts": acts, "pvals": pvals}
+for method_name, method_fn in [("ulm", dc.mt.ulm), ("mlm", dc.mt.mlm)]:
+    acts, padj = method_fn(data=mat, net=progeny)
+    results[method_name] = {"acts": acts, "padj": padj}
 
-# Consensus: average across methods
-consensus_acts = pd.concat(
-    [results[m]["acts"] for m in results], axis=0
-).groupby(level=0).mean()
+# Or let decoupler do it: run a set of methods and score the consensus in one call.
+# On a DataFrame this returns a dict of results; on AnnData it writes obsm keys.
+scores = dc.mt.decouple(data=mat, net=progeny, methods=["ulm", "mlm"], cons=True)
 ```
 
 ## Pathway Activity Analysis (PROGENy)
@@ -270,8 +279,9 @@ tf_sig = tf_acts.loc[:, (tf_pvals < 0.05).any(axis=0)]
 
 - Input DataFrame must have genes as COLUMNS and samples as ROWS. This is transposed from typical bioinformatics convention (genes as rows).
 - Gene symbols in the expression matrix must match gene symbols in the network. Use HGNC symbols for human data. Check overlap with `set(mat.columns) & set(net["target"])`.
-- `dc.mt.ulm()` and `dc.mt.mlm()` return analytical p-values. `dc.mt.wsum()` returns permutation-based p-values (controlled by `times` parameter).
-- When used with AnnData, results are stored in `adata.obsm` with keys like `"ulm_estimate"`, `"ulm_pvals"`. When used with DataFrames, results are returned directly as a tuple.
+- `dc.mt.ulm()` and `dc.mt.mlm()` return analytical p-values, already Benjamini-Hochberg adjusted — do not re-correct them. `dc.mt.waggr()` returns permutation-based p-values, and only when `times` is set; without `times` it returns scores alone and unpacking it as a pair fails.
+- When used with AnnData, results are stored in `adata.obsm` under `score_<method>` and `padj_<method>` (`"score_ulm"`, `"padj_ulm"`) and the call returns `None`; read them back with `dc.pp.get_obsm(adata=adata, key="score_ulm")`. When used with DataFrames, results are returned directly as a tuple.
+- `tmin` defaults to `5`: sources with fewer surviving targets are dropped without an error. Lower it for small custom gene sets and check which sources actually came back.
 - PROGENy weights are signed (positive = activation, negative = repression). The activity score direction reflects pathway activation/repression.
 - CollecTRI weights are +1 (activation) or -1 (repression). This is critical for correct TF activity inference.
 - For sparse AnnData (e.g., single-cell), decoupler handles sparse matrices internally. No need to convert to dense first.

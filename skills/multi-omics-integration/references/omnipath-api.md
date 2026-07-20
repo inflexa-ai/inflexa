@@ -63,12 +63,13 @@ NOTE: DoRothEA is superseded by CollecTRI — prefer a CollecTRI regulon set whe
 
 ## omnipath Python Package (Direct Access)
 
-Every call in this section is a **web query and will fail here** — the service is unreachable. They are listed so you can recognise the interaction subsets by name and ask for the equivalent from the reference data available to you; the query is never the way to get it in this environment.
+**The `omnipath` Python package is not installed**, and it cannot be installed — `pip` needs the network too. Even the `import` below fails with `ModuleNotFoundError`; the calls under it are a second wall behind the first, since every one is a web query against an unreachable service. This section exists so you can recognise the interaction subsets by name and ask for the equivalent from the reference data available to you. None of it is a route to the data here.
 
 ```python
+# UNAVAILABLE — the package is absent, so this import alone raises ModuleNotFoundError.
 import omnipath
 
-# UNAVAILABLE — all of these hit omnipathdb.org over HTTP.
+# UNAVAILABLE — and all of these hit omnipathdb.org over HTTP.
 omnipath.interactions.AllInteractions.get()      # all curated interactions
 omnipath.interactions.OmniPath.get()             # curated PPI (high-confidence subset)
 omnipath.interactions.KinaseSubstrate.get()      # kinase-substrate
@@ -167,23 +168,23 @@ import pandas as pd
 collectri = pd.read_csv(regulon_path)
 
 # Run enrichment analysis on expression data
-# mat: DataFrame (samples x genes), net: DataFrame (source, target, weight)
-# Returns: estimate (activity scores) and pvalues
-acts, pvals = dc.run_ulm(
-    mat=expression_df,              # samples x genes
+# data: DataFrame (samples x genes), net: DataFrame (source, target, weight)
+# Returns: activity scores and Benjamini-Hochberg adjusted p-values
+acts, padj = dc.mt.ulm(
+    data=expression_df,             # samples x genes
     net=collectri                   # source, target, weight
 )
 
 # Multivariate Linear Model (MLM) for TF activity
-acts_mlm, pvals_mlm = dc.run_mlm(
-    mat=expression_df,
+acts_mlm, padj_mlm = dc.mt.mlm(
+    data=expression_df,
     net=collectri
 )
 
 # Pathway activity with PROGENy
 progeny = read_rda_frame(pathway_path)  # PROGENy is .rda; see Resource Loading
-pathway_acts, pathway_pvals = dc.run_mlm(
-    mat=expression_df,
+pathway_acts, pathway_padj = dc.mt.mlm(
+    data=expression_df,
     net=progeny
 )
 ```
@@ -236,7 +237,7 @@ import pandas as pd
 
 # 1. TF-target network (resolved + normalised per Resource Loading), infer activities
 collectri = pd.read_csv(regulon_path)
-tf_acts, tf_pvals = dc.run_ulm(mat=expression_df, net=collectri)
+tf_acts, tf_padj = dc.mt.ulm(data=expression_df, net=collectri)
 
 # 2. Get top differential TFs
 top_tfs = tf_acts.mean(axis=0).abs().sort_values(ascending=False).head(10).index.tolist()
@@ -260,7 +261,7 @@ subgraph = G.subgraph(tf_neighbors | set(top_tfs)).copy()
 
 # 4. Pathway activities
 progeny = read_rda_frame(pathway_path)  # PROGENy is .rda; see Resource Loading
-pathway_acts, _ = dc.run_mlm(mat=expression_df, net=progeny)
+pathway_acts, _ = dc.mt.mlm(data=expression_df, net=progeny)
 
 print(f"Network: {subgraph.number_of_nodes()} nodes, {subgraph.number_of_edges()} edges")
 print(f"Active pathways:\n{pathway_acts.mean(axis=0).sort_values(ascending=False).head()}")
@@ -271,9 +272,9 @@ print(f"Active pathways:\n{pathway_acts.mean(axis=0).sort_values(ascending=False
 - **No network access**: every `omnipath.interactions.*.get()` and every `dc.op.*()` call queries omnipathdb.org. There is no egress, so these calls cannot be made to work here. Load from a resolved file instead. `omnipath`'s built-in caching does not help: an empty cache still needs the first request.
 - **Never assume a format**: resolved networks circulate as CSV, TSV, and R `.rda` depending on the source. Use the reader the inventory reports for the file; do not default to one.
 - **Be honest about absence**: general OmniPath interaction data is not currently in the reference data available to you. If it does not resolve, say so and scope the analysis down — do not substitute a different network and present it as OmniPath.
-- **No runtime installs**: `pip install omnipath decoupler` cannot work — package installs need the network too. Confirm what is already staged before importing. The `omnipath` package, if present, is still useful for its column semantics even though its fetchers are unusable here.
+- **`omnipath` is not installed, and cannot be**: `pip install omnipath` needs the network too, so the import fails outright — do not write code that depends on it, and do not report it as a fallback. `decoupler` **is** installed (>=2.1.2); only its `dc.op.*()` loaders are unusable, because those are the web fetchers. The interaction-table column names documented above still apply to a resolved OmniPath-derived file, which is the reason to keep them here.
 - Prefer CollecTRI over DoRothEA for TF regulons — DoRothEA is superseded. If only DoRothEA is available, filter to confidence A-C and rename `tf`/`mor` to `source`/`weight`.
-- For `dc.run_ulm()` / `dc.run_mlm()`, the expression matrix must have genes as columns and samples as rows.
+- For `dc.mt.ulm()` / `dc.mt.mlm()`, the expression matrix must have genes as columns and samples as rows. Pass it as `data=`; the 1.x `dc.run_ulm(mat=...)` entry points no longer exist in decoupler 2.x.
 - Gene symbols must match between expression data and network. OmniPath uses HGNC symbols for human, MGI for mouse — and the network's organism must match the data's, or the run silently returns meaningless scores.
 - Some interactions appear in both directions. Use `is_directed` and `consensus_direction` columns to filter.
 - A full interaction network is very large (millions of rows). Filter to your genes or interaction type immediately after loading rather than carrying the whole frame.

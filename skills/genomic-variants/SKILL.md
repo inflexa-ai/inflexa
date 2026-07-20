@@ -89,7 +89,7 @@ Genotype data (VCF or PLINK format)
           → SAIGE (case-control imbalance, saddlepoint approximation)
 ```
 
-- PLINK2 is the default tool for GWAS QC and association. Use the `--glm` command. **Verify `plink2` is on PATH before building a pipeline around it** — it is not guaranteed to be staged, and with no egress it cannot be installed at runtime. If it is absent, report that and fall back to cyvcf2/`bcftools` for VCF-level QC and statsmodels for association on an extracted genotype matrix.
+- PLINK2 is the default tool for GWAS QC and association. Use the `--glm` command. **Verify `plink2` is on PATH before building a pipeline around it — it is installed on x86_64 only.** There is no linux-aarch64 build, so on an arm64 host it is absent by design, not by misconfiguration, and no-egress means it cannot be installed at runtime. Probe (`command -v plink2`), and if it is missing, report the reason and fall back: `bcftools`/cyvcf2 for filtering, allele frequencies and missingness, statsmodels for per-variant association on a cyvcf2-extracted dosage matrix, scikit-learn PCA for population structure. `references/plink2-cli.md` maps each step to its substitute.
 - ALWAYS include PCA covariates to adjust for population structure. Omitting this produces inflated results.
 - Check genomic inflation factor (lambda_GC); values >1.05 suggest residual confounding.
 - Use cyvcf2 for programmatic VCF parsing in Python.

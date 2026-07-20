@@ -116,8 +116,11 @@ When evaluating drug metabolism risk from omics data:
 
 ### Pharmacogenomic Variant Impact
 
-Look up known gene-drug interactions in PharmGKB. Flag
-these metabolizer phenotypes:
+Look up known gene-drug interactions in PharmGKB, if a PharmGKB source is
+available to you — there is no network egress, so its web API is not a
+route. Where no such source resolves, fall back to the CYP table above and
+say the pharmacogenomic annotation was not consulted. Flag these
+metabolizer phenotypes:
 - **Poor metabolizer (PM)**: reduced enzyme activity → drug accumulation → toxicity risk
 - **Ultrarapid metabolizer (UM)**: increased activity → subtherapeutic levels or excess active metabolite (codeine → morphine toxicity in CYP2D6 UM)
 
@@ -140,7 +143,7 @@ the specific liability concern.
 
 No predictive hERG model is available in the sandbox. Instead:
 - Flag compounds with `ALogP > 3.5` AND `basic nitrogen` — known hERG liability correlates
-- Check ChEMBL for existing hERG bioactivity data, querying the compound against target CHEMBL240 (hERG)
+- If a ChEMBL lookup is available to you, retrieve existing hERG bioactivity for the compound against target CHEMBL240. There is no network egress, so this only works through a provided data source — do not write an HTTP call to the ChEMBL API, and if no such source resolves, report the gap rather than substituting a guess
 - Report: "hERG liability not computationally assessed; experimental
   patch-clamp assay recommended for compounds entering lead optimization"
 
@@ -167,7 +170,7 @@ When clinical lab data is available alongside omics data:
 ## Drug-Drug Interaction Assessment
 
 When multiple drugs are in scope:
-1. Identify CYP metabolism pathways for each drug (use PharmGKB)
+1. Identify CYP metabolism pathways for each drug (PharmGKB if available to you, otherwise the CYP table above)
 2. Flag overlapping CYP substrates — co-administration risk
 3. Check for known inhibitor-substrate pairs
 4. Search FAERS for the drug combination to assess real-world signal
@@ -181,9 +184,9 @@ analysis to distinguish real signals from background noise.
 
 | Measure | Formula | Interpretation | Threshold |
 |---------|---------|---------------|-----------|
-| PRR (Proportional Reporting Ratio) | (a/a+b) / (c/c+d) | Frequentist, easy to compute | PRR > 2, chi-squared > 4, N >= 3 |
-| ROR (Reporting Odds Ratio) | (a/b) / (c/d) | Odds ratio analog, wider CI | Lower 95% CI > 1 |
-| IC (Information Component) | log2(observed/expected) | Bayesian, WHO-UMC method | IC025 > 0 (lower CI bound) |
+| PRR (Proportional Reporting Ratio) | `(a/(a+b)) / (c/(c+d))` | Frequentist, easy to compute | PRR > 2, chi-squared > 4, N >= 3 |
+| ROR (Reporting Odds Ratio) | `(a/b) / (c/d)` | Odds ratio analog, wider CI | Lower 95% CI > 1 |
+| IC (Information Component) | `log2((O + 0.5) / (E + 0.5))` | Bayesian shrinkage, WHO-UMC method | IC025 > 0 (lower credibility bound) |
 | EBGM (Empirical Bayes Geometric Mean) | Bayesian shrinkage estimate | FDA standard method | EB05 > 2 (5th percentile) |
 
 Contingency table: a = drug+event, b = drug+no-event,

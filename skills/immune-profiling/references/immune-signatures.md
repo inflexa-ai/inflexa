@@ -183,25 +183,33 @@ def score_signatures_ssgsea(expression_df, signatures_dict):
 
 ```python
 def score_signatures_decoupler(adata, signatures_dict,
-                                method="ulm"):
+                                method="ulm", tmin=2):
     """
-    Score signatures using decoupler's run_ulm or run_mlm.
+    Score signatures with decoupler's dc.mt.ulm or dc.mt.mlm.
 
     Parameters
     ----------
     adata : AnnData
-        Expression data (samples x genes).
+        Expression data (samples x genes), log-normalised in .X.
     signatures_dict : dict
         {signature_name: [gene_list]}.
     method : str
         "ulm" for univariate linear model, "mlm" for multivariate.
+    tmin : int
+        Minimum genes a signature must still have present in the data.
+        decoupler's default of 5 silently drops anything shorter, which
+        would remove the 2-gene CYT set outright, so the default here is
+        2. Note tmin is applied AFTER intersecting with the data, so a
+        signature also disappears when too few of its genes are measured
+        — always check which sources actually came back.
 
     Returns
     -------
     AnnData
-        Updated in place: decoupler writes the scores and p-values into
-        .obsm (keyed per method, e.g. "ulm_estimate" / "ulm_pvals").
-        Check the keys after the call rather than assuming a name.
+        Updated in place: decoupler writes the scores and adjusted p-values
+        into .obsm as "score_<method>" / "padj_<method>" — for method="ulm",
+        "score_ulm" and "padj_ulm". Read them back with
+        dc.pp.get_obsm(adata=adata, key="score_ulm").
     """
     import decoupler as dc
 
@@ -209,14 +217,14 @@ def score_signatures_decoupler(adata, signatures_dict,
     for sig_name, genes in signatures_dict.items():
         for gene in genes:
             net.append({"source": sig_name, "target": gene, "weight": 1.0})
+    # decoupler 2.x reads the 'source'/'target'/'weight' columns by name;
+    # there are no source=/target=/weight= keyword arguments.
     net_df = pd.DataFrame(net)
 
     if method == "ulm":
-        dc.run_ulm(adata, net=net_df, source="source", target="target",
-                    weight="weight", use_raw=False)
+        dc.mt.ulm(data=adata, net=net_df, tmin=tmin, raw=False)
     else:
-        dc.run_mlm(adata, net=net_df, source="source", target="target",
-                    weight="weight", use_raw=False)
+        dc.mt.mlm(data=adata, net=net_df, tmin=tmin, raw=False)
 
     return adata
 ```

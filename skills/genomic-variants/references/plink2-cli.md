@@ -2,7 +2,26 @@
 
 Command-line toolset for whole-genome association analysis. PLINK2 is the successor to PLINK 1.9 with better performance and additional features. Commands below are shell commands.
 
-**Verify `plink2` is on PATH before planning a pipeline around it.** It is not guaranteed to be staged in this environment, and with no network egress it cannot be installed at runtime. Probe once (`command -v plink2 && plink2 --version`) before writing the pipeline. If it is absent, report that plainly and either fall back to a route that exists (cyvcf2 or `bcftools` for VCF-level QC, filtering, and allele-frequency work; statsmodels for association testing on an extracted genotype matrix) or state that GWAS cannot be run here — do not emit a script full of commands that will not execute.
+**Verify `plink2` is on PATH before planning a pipeline around it — it is installed on x86_64 hosts only.** There is no linux-aarch64 build of plink2, so on an arm64 host it is simply absent. That is the expected state on a supported architecture, **not** a misconfiguration to be reported as a broken environment or worked around by installing it: there is no network egress, so it cannot be fetched at runtime either.
+
+Probe once before writing the pipeline:
+
+```bash
+command -v plink2 && plink2 --version
+```
+
+If it is absent, say so plainly — naming the reason, so nobody goes looking for a fault that isn't there — and take the fallback route, which is complete enough to carry most of this file's work:
+
+| plink2 step | Fallback that is installed everywhere |
+|-|-|
+| Format conversion, variant/sample filtering (`--maf`, `--geno`, `--mind`, `--hwe`) | `bcftools view` / `bcftools filter` with the equivalent expressions; `bcftools +fill-tags` to compute AF/AC/AN/HWE first |
+| Allele frequencies (`--freq`) | `bcftools +fill-tags -- -t AF,AC,AN`, or count genotypes directly with `cyvcf2` (`variant.num_hom_ref/num_het/num_hom_alt`, `variant.aaf`) |
+| Missingness / call-rate QC (`--missing`) | `cyvcf2` over `variant.gt_types`, counting `UNKNOWN` per variant and per sample |
+| Association testing (`--glm`) | Extract the genotype matrix with `cyvcf2` (`variant.gt_types` as a 0/1/2 dosage vector), then `statsmodels` — `sm.Logit` / `sm.OLS` per variant with covariates, BH or Bonferroni correction over the results |
+| PCA for population structure (`--pca`) | LD-prune with `bcftools`, build the dosage matrix with `cyvcf2`, then `sklearn.decomposition.PCA` (or `TruncatedSVD`) on the standardized matrix |
+| Relatedness (`--king-cutoff`) | Compute a GRM from the standardized dosage matrix in numpy and threshold it |
+
+This route is genuinely reachable — `bcftools` and `cyvcf2` are present on every architecture, and `statsmodels`/`scikit-learn`/`numpy` are in the Python environment. It is slower than plink2 and not a substitute at biobank scale; if the cohort is too large for an in-memory dosage matrix, say that explicitly rather than silently running out of memory. Never emit a script full of `plink2` commands that will not execute.
 
 ## File Formats
 

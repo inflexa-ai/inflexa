@@ -119,38 +119,20 @@ sq.gr.spatial_autocorr(adata, mode="geary")
 - **Moran's I**: Global measure. Range [-1, 1]. I > 0 = positive autocorrelation (clustering). I ~ 0 = random. I < 0 = dispersed.
 - **Geary's C**: Global measure, but weighted by squared differences between neighbours, so it is more sensitive to short-range variation than Moran's I. Range [0, 2]. C < 1 = positive autocorrelation. C ~ 1 = random. C > 1 = negative autocorrelation.
 
-## Ligand-Receptor Interaction: sq.gr.ligrec
+## Ligand-Receptor Interaction: sq.gr.ligrec — NOT AVAILABLE
 
-Tests for significant ligand-receptor interactions between cell types using permutation-based approach.
+**`sq.gr.ligrec()` cannot run in this environment. Do not write code that calls it.**
 
-```python
-sq.gr.ligrec(
-    adata,
-    cluster_key="cell_type",
-    n_perms=1000,
-    use_raw=False,             # use adata.raw.X if True
-    transmitter_params={"categories": "ligand"},
-    receiver_params={"categories": "receptor"},
-    interactions_params={"resources": "CellPhoneDB_v2.0"},  # or "CellChatDB"
-    threshold=0.01,            # expression threshold
-    n_jobs=4
-)
-# Results stored in:
-#   adata.uns['cell_type_ligrec']['means']   — mean expression of LR pairs
-#   adata.uns['cell_type_ligrec']['pvalues'] — permutation p-values
-#   adata.uns['cell_type_ligrec']['metadata']
+Two independent blockers, both fatal:
 
-# Plot top interactions
-sq.pl.ligrec(
-    adata,
-    cluster_key="cell_type",
-    source_groups=["Macrophage"],        # optional: filter senders
-    target_groups=["T_cell", "B_cell"],  # optional: filter receivers
-    pvalue_threshold=0.05,
-    mean_range=(0.3, None),              # filter by mean expression
-    figsize=(10, 6)
-)
-```
+1. The `omnipath` Python package is **not installed**. `sq.gr.ligrec` imports it, so the call fails at import time — before any parameter is even read.
+2. Even with the package present, its interaction resources (CellPhoneDB, CellChatDB) are fetched from a **web API**, and there is no network egress.
+
+There is no drop-in offline substitute: no ligand-receptor pair resource ships in the reference data catalog, and the squidpy entry point is unusable regardless of how interactions are supplied.
+
+If ligand-receptor analysis is requested, **report the blocker** rather than silently substituting a different analysis. If the user supplies their own ligand-receptor pair table (a DataFrame with source/target gene columns), a permutation test can be implemented directly against the expression matrix and the spatial graph — but state the assumptions and that it is not a validated CellPhoneDB run.
+
+Spatially-aware co-localization questions that do **not** need an LR database are fully supported offline — use `sq.gr.nhood_enrichment()` and `sq.gr.co_occurrence()` above.
 
 ## Plotting: sq.pl
 
@@ -231,8 +213,7 @@ sq.gr.nhood_enrichment(adata, cluster_key="clusters", n_perms=1000)
 sq.gr.co_occurrence(adata, cluster_key="clusters")
 sq.gr.spatial_autocorr(adata, mode="moran", n_perms=100, n_jobs=4)
 
-# Ligand-receptor analysis
-sq.gr.ligrec(adata, cluster_key="clusters", n_perms=1000, n_jobs=4)
+# NOTE: no ligand-receptor step here — sq.gr.ligrec is unavailable offline (see above)
 
 # Visualization
 sq.pl.spatial_scatter(adata, color="clusters", figsize=(8, 8))
@@ -243,9 +224,10 @@ sq.pl.spatial_scatter(adata, color=adata.uns['moranI'].head(4).index.tolist())
 ## Gotchas
 
 - Always call `sq.gr.spatial_neighbors()` before any spatial statistic function. Without a spatial graph, all `sq.gr.*` functions will fail.
+- `sc.read_visium()` is deprecated in current scanpy; it still works but warns and names `sq.read.visium()` as the replacement. Prefer `sq.read.visium()` for new code — squidpy is installed.
 - `sq.gr.moran()` is **deprecated**. Use `sq.gr.spatial_autocorr(mode="moran")` instead.
 - `coord_type="grid"` is for Visium (hexagonal grid). Use `"generic"` for all other technologies (MERFISH, Xenium, Slide-seq).
-- `sq.gr.ligrec()` requires the `omnipath` package for ligand-receptor databases. Install with `pip install omnipath`.
-- `use_raw=True` in `spatial_autocorr` and `ligrec` uses `adata.raw.X`. If `.raw` is not set, this silently uses `.X` in older versions but may error in newer ones.
+- `sq.gr.ligrec()` is **unavailable**: the `omnipath` package is not installed and cannot be installed (no network egress), and its interaction resources are web-fetched. Report the blocker instead of attempting the call. See the ligrec section above.
+- `use_raw=True` in `spatial_autocorr` uses `adata.raw.X`. If `.raw` is not set, this silently uses `.X` in older versions but may error in newer ones.
 - `n_perms=None` in `spatial_autocorr` uses analytical p-values (faster but less accurate for small datasets). Use permutation-based p-values (`n_perms=100+`) for publication results.
 - `sq.pl.spatial_scatter` requires coordinates in `adata.obsm['spatial']` (default key). For non-standard keys, pass `spatial_key=`.

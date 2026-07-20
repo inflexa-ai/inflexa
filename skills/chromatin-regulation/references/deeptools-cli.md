@@ -2,7 +2,19 @@
 
 Command-line suite for processing and visualizing high-throughput sequencing data (ChIP-seq, ATAC-seq, RNA-seq). All commands below are shell commands.
 
-**Verify the binaries before you build a pipeline around them.** deeptools is not guaranteed to be staged in this environment, and there is no network egress, so it cannot be installed at runtime. Probe first (`bamCoverage --version`, `computeMatrix --version`) and, if it is missing, say so plainly and fall back to a route that is available (pyBigWig for signal extraction, a counted matrix plotted with matplotlib) rather than emitting commands that will not run.
+> **deeptools is not installed in this environment.** It is absent from the library store, so `bamCoverage`, `bamCompare`, `multiBamSummary`, `computeMatrix`, `plotHeatmap`, `plotProfile`, `plotCorrelation` and `plotFingerprint` do not exist on PATH — and with no network egress it cannot be installed at runtime. **Verify availability before you plan around any of it** (`command -v bamCoverage`); expect it to be missing. When it is: say so plainly in your output, name the blocked step, and take a route that exists rather than emitting commands that cannot run. This reference stays here because it is correct the moment deeptools is staged.
+
+**What to use instead, per task:**
+
+| deeptools step | Available substitute |
+|-|-|
+| `bamCoverage` (BAM → binned/normalized signal) | Count reads per bin with `pysam` (`count_coverage`, or `fetch()` into a numpy bin array) and write the track with `pyBigWig` (`addHeader` / `addEntries`); or `bedtools genomecov -bg -ibam` for a bedGraph. Apply CPM/RPKM scaling yourself from the mapped-read total. |
+| `bamCompare` (log2 ratio of two BAMs) | Bin both BAMs on the same grid as above, then compute the ratio in numpy with an explicit pseudocount. |
+| `multiBamSummary` + `plotCorrelation` | Build the bins-by-samples count matrix with `pysam`/`bedtools multicov`, then correlate with `numpy`/`pandas` (`.corr(method="spearman")`) and plot with `matplotlib`/`seaborn`. |
+| `computeMatrix` + `plotHeatmap`/`plotProfile` | Extract per-region signal from an existing bigWig with `pyBigWig.values()` or `.stats(nBins=...)` over the anchored windows, stack into a numpy array, and plot with `matplotlib` (`imshow` for the heatmap, column means for the profile). See `references/pybigwig-api.md`. |
+| `plotFingerprint` | Cumulative-sum plot of a binned count matrix in numpy/matplotlib. |
+
+Read the substitute as a real deliverable, not a consolation: the anchored-signal matrix and its heatmap are ordinary numpy work once the per-region values are in hand.
 
 **Reference tracks are resolved, never named.** A blacklist region set, a gene-annotation BED, and a chromosome-sizes file are all provisioned per-environment; the directory, the filename, and the genome build vary and none are yours to assume. Ask for the *track* by what it is, and pass the resolved absolute path. An ENCODE blacklist BED and a genome GTF/BED are **not currently in the reference inventory** — if you look and they are not there, report it, run the step without blacklist filtering (noting the caveat in your output), and never invent a path or silently drop the option.
 
@@ -133,16 +145,20 @@ plotCorrelation \
 
 Aggregates signal scores around genomic regions. Two modes: reference-point and scale-regions.
 
+**`-R` needs a region set you actually have.** `genes.bed` in the examples below is a placeholder for a gene-annotation BED, and **no GTF/GFF or gene BED is in the reference inventory** — a TSS- or gene-body-anchored matrix is therefore not runnable here unless an annotation is handed to you. Peak-anchored profiles need no annotation: your own peak calls (`peaks.bed`, a consensus set, a differential subset) are region sets you produced, and are the default here. If the analysis genuinely requires TSS anchoring, report the missing annotation instead of substituting an arbitrary region set.
+
 ### reference-point Mode
 
 Computes signal relative to a single anchor point (TSS, TES, center).
 
 ```bash
-# Signal around TSS (+/- 3kb)
+# Signal around TSS (+/- 3kb).
+# "$GENE_BED" is an annotation BED you resolved; there is none in the
+# inventory, so confirm you were given one before writing this step.
 computeMatrix reference-point \
     --referencePoint TSS \
     -b 3000 -a 3000 \
-    -R genes.bed \
+    -R "$GENE_BED" \
     -S chip_signal.bw input_signal.bw \
     --skipZeros \
     -o matrix_tss.gz \
@@ -165,9 +181,9 @@ computeMatrix reference-point \
 Scales all regions to a uniform length, with optional flanking.
 
 ```bash
-# Gene body with 3kb flanking
+# Gene body with 3kb flanking (needs the resolved annotation BED)
 computeMatrix scale-regions \
-    -R genes.bed \
+    -R "$GENE_BED" \
     -S chip_signal.bw \
     --beforeRegionStartLength 3000 \
     --regionBodyLength 5000 \
@@ -176,7 +192,9 @@ computeMatrix scale-regions \
     -o matrix_scaled.gz \
     --numberOfProcessors 8
 
-# Multiple region files (plotted as separate groups)
+# Multiple region files (plotted as separate groups).
+# Promoter/gene-body sets are derived from an annotation you were given;
+# enhancer sets are usually your own peak calls.
 computeMatrix scale-regions \
     -R promoters.bed enhancers.bed gene_bodies.bed \
     -S h3k4me3.bw h3k27ac.bw \

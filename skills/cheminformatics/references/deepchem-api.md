@@ -33,17 +33,30 @@ fps = featurizer.featurize(smiles)
 # Returns: np.ndarray of shape (3, 2048)
 ```
 
-### MolGraphConvFeaturizer (Graph Neural Networks)
+### MolGraphConvFeaturizer (PyTorch/DGL graph models)
 
-Converts molecules into graph representations for GCN/AttentiveFP models.
+Converts molecules into `GraphData` objects, for the **PyTorch** graph models:
+`AttentiveFPModel`, `GCNModel`, `GATModel`.
 
 ```python
 featurizer = dc.feat.MolGraphConvFeaturizer(use_edges=True)
 # use_edges=True: include edge (bond) features for models that use them
 
 graphs = featurizer.featurize(smiles)
-# Returns: list of GraphData objects
+# Returns: np.ndarray (dtype=object) of GraphData objects
 # Each has .node_features, .edge_index, .edge_features
+```
+
+### ConvMolFeaturizer (GraphConvModel)
+
+Converts molecules into `ConvMol` objects. This is the featurizer
+`GraphConvModel` requires -- it is **not** interchangeable with
+`MolGraphConvFeaturizer`.
+
+```python
+featurizer = dc.feat.ConvMolFeaturizer()
+convmols = featurizer.featurize(smiles)
+# Returns: np.ndarray (dtype=object) of ConvMol objects
 ```
 
 ### WeaveFeaturizer
@@ -58,9 +71,18 @@ features = featurizer.featurize(smiles)
 ### Gotchas -- Featurizers
 
 - `featurize()` accepts a list of SMILES strings, not RDKit mol objects.
-- Invalid SMILES produce NaN entries. Check with `np.isnan(fps).any()` after featurization.
+- Invalid SMILES do **not** produce NaN. DeepChem logs `Failed to featurize datapoint N` and appends an **empty array** (`array([], dtype=float64)`). The overall result then comes back as a 1-D `dtype=object` array instead of a 2-D float array, and `np.isnan(fps).any()` raises `TypeError: ufunc 'isnan' not supported`. Detect failures by size:
+
+```python
+X = featurizer.featurize(smiles)
+valid_mask = np.array([np.size(x) > 0 for x in X])
+X = np.vstack(X[valid_mask]).astype(float)  # now a proper (n_valid, n_features) array
+```
+
+- When every SMILES parses, `CircularFingerprint.featurize()` does return a clean 2-D `float64` array -- which is why the NaN check appears to work until the first bad input.
 - `CircularFingerprint` output is directly usable with sklearn models (numpy array).
-- `MolGraphConvFeaturizer` output is NOT usable with sklearn -- it produces graph objects for DeepChem graph models only.
+- `MolGraphConvFeaturizer` / `ConvMolFeaturizer` output is NOT usable with sklearn -- it produces graph objects for DeepChem graph models only.
+- The two graph featurizers produce **different, incompatible** object types (`GraphData` vs `ConvMol`). Pairing one with a model expecting the other fails at `fit()` time with an opaque attribute error, not at featurization time.
 
 ## Dataset Loading
 
@@ -141,7 +163,9 @@ train, valid, test = datasets
 
 ### GraphConvModel (GCN)
 
-Graph convolutional network for molecular property prediction.
+Graph convolutional network (Duvenaud) for molecular property prediction.
+`GraphConvModel` is a **Keras/TensorFlow** model, so it only exists when
+TensorFlow is installed.
 
 ```python
 model = dc.models.GraphConvModel(
@@ -152,14 +176,20 @@ model = dc.models.GraphConvModel(
     dropout=0.1,
 )
 
-# Requires MolGraphConvFeaturizer input
-featurizer = dc.feat.MolGraphConvFeaturizer(use_edges=False)
-# Note: GraphConvModel does NOT use edge features
+# Requires ConvMolFeaturizer input -- NOT MolGraphConvFeaturizer.
+featurizer = dc.feat.ConvMolFeaturizer()
 ```
+
+`GraphConvModel.default_generator()` calls `ConvMol.agglomerate_mols(X_b)` on
+each batch. Feed it `GraphData` objects from `MolGraphConvFeaturizer` and that
+call fails mid-training with an attribute error that does not mention the
+featurizer at all.
 
 ### AttentiveFPModel
 
-Attention-based fingerprint model. Often best performing for molecular properties.
+Attention-based fingerprint model. Often best performing for molecular
+properties. This is a **PyTorch** model and additionally needs DGL and
+DGL-LifeSci.
 
 ```python
 model = dc.models.AttentiveFPModel(
@@ -178,7 +208,8 @@ featurizer = dc.feat.MolGraphConvFeaturizer(use_edges=True)
 
 ### MultitaskClassifier / MultitaskRegressor (Dense Network)
 
-Standard dense neural network on fingerprint features.
+Standard dense neural network on fingerprint features. Both are **PyTorch**
+models (`deepchem.models.fcnet`).
 
 ```python
 # Classification
@@ -205,8 +236,19 @@ featurizer = dc.feat.CircularFingerprint(size=2048, radius=2)
 
 ### Gotchas -- Models
 
-- `GraphConvModel` does NOT use edge features. Use `MolGraphConvFeaturizer(use_edges=False)` for it.
-- `AttentiveFPModel` DOES use edge features. Use `MolGraphConvFeaturizer(use_edges=True)`.
+**Model/featurizer pairings** -- getting these wrong fails at `fit()`, not at featurization:
+
+| Model | Backend | Featurizer |
+|-|-|-|
+| `GraphConvModel` | TensorFlow (Keras) | `ConvMolFeaturizer()` |
+| `WeaveModel` | TensorFlow (Keras) | `WeaveFeaturizer()` |
+| `AttentiveFPModel` | PyTorch + DGL | `MolGraphConvFeaturizer(use_edges=True)` |
+| `GCNModel` / `GATModel` | PyTorch + DGL | `MolGraphConvFeaturizer()` |
+| `MultitaskClassifier` / `MultitaskRegressor` | PyTorch | `CircularFingerprint(...)` |
+
+- `GraphConvModel` takes `ConvMolFeaturizer`, which has no `use_edges` argument at all. `MolGraphConvFeaturizer(use_edges=False)` is *not* a substitute -- it still emits `GraphData`, and `GraphConvModel` will fail on it.
+- **Backend availability is the first thing to check.** DeepChem imports its model classes lazily and silently skips any whose backend is missing, logging `Skipped loading some PyTorch models, missing a dependency`. The symptom is `AttributeError: module 'deepchem.models' has no attribute 'GraphConvModel'`, which reads like a typo but means TensorFlow is absent. Confirm with `hasattr(dc.models, "GraphConvModel")` before writing a training script.
+- The sandbox installs `deepchem[jax]`, which brings **neither TensorFlow nor PyTorch**. In that environment every model in this section is unavailable, and only the featurizers, `dc.data`, `dc.splits`, and `dc.metrics` work. Prefer the fingerprint + sklearn workflow below, and report the limitation rather than trying to install a backend.
 - `MultitaskClassifier/Regressor` expects flat numpy arrays (fingerprints), NOT graph objects.
 - Graph models (GCN, AttentiveFP) are GPU-intensive. For >10K compounds on CPU, prefer fingerprint + sklearn instead.
 
@@ -287,9 +329,9 @@ smiles = df["SMILES"].tolist()
 X = featurizer.featurize(smiles)
 y = df["pIC50"].values
 
-# Remove failed featurizations
-valid_mask = ~np.isnan(X).any(axis=1)
-X = X[valid_mask]
+# Remove failed featurizations. Failures are EMPTY arrays, not NaN, so test size.
+valid_mask = np.array([np.size(x) > 0 for x in X])
+X = np.vstack(X[valid_mask]).astype(float)
 y = y[valid_mask]
 
 # Train sklearn model (no DeepChem model needed)
@@ -305,7 +347,10 @@ print(f"RF RMSE: {np.sqrt(mean_squared_error(y_test, y_pred)):.3f}")
 
 ## Complete Workflow: Graph Neural Network
 
-Best for medium to large datasets with GPU access.
+Best for medium to large datasets with GPU access. **Requires PyTorch + DGL**,
+which the sandbox does not install (`deepchem[jax]` brings neither TensorFlow
+nor PyTorch) -- check `hasattr(dc.models, "AttentiveFPModel")` first and fall
+back to the fingerprint + sklearn workflow above if it is `False`.
 
 ```python
 import deepchem as dc
@@ -344,9 +389,9 @@ print(f"Train R2: {train_score}, Test R2: {test_score}")
 
 ## Gotchas
 
-- DeepChem uses TensorFlow, PyTorch, or JAX as backend. Check which is available in your environment.
-- `featurize()` silently returns NaN for invalid SMILES. Always check for NaN after featurization.
+- DeepChem uses TensorFlow, PyTorch, or JAX as backend, and model classes are only defined when their backend is importable. Check with `hasattr(dc.models, "...")` before use -- a missing backend surfaces as `AttributeError` on `dc.models`, not as an import error.
+- `featurize()` does NOT return NaN for invalid SMILES -- it appends an empty array and returns an `object`-dtype array. Filter on `np.size(x) > 0`; `np.isnan()` raises on such an array.
 - Graph models are memory-intensive. For large datasets, use smaller batch sizes.
 - `ScaffoldSplitter` is preferred over random splits for molecular data -- prevents data leakage from similar scaffolds appearing in both train and test.
 - Model checkpoints are saved to a temporary directory by default. Set `model_dir=` to persist.
-- DeepChem models are not serializable with pickle. Use `model.save()` and `dc.models.GraphConvModel.load()` for persistence.
+- DeepChem models are not serializable with pickle. Persistence is `model.save_checkpoint()` / `model.restore()` on the model instance (plus `model.load_from_pretrained()` for transfer learning). There is no `model.save()` and no `dc.models.GraphConvModel.load()` classmethod -- both raise `AttributeError`. To reload into a fresh process, reconstruct the model with the same constructor arguments and `model_dir=`, then call `restore()`.

@@ -13,9 +13,12 @@ classification-based approach.
 
 ```python
 import pertpy as pt
+import scanpy as sc
 
-# Load example data (or use your own AnnData)
-adata = pt.dt.sc_sim_augur()
+# Use your own AnnData. Every pt.dt.* loader (pt.dt.sc_sim_augur() and the
+# rest) downloads from exampledata.scverse.org, and there is no network
+# egress — they all fail here.
+adata = sc.read_h5ad(adata_path)  # a path you resolved, not a literal
 
 # Initialize with classifier
 ag = pt.tl.Augur(estimator="random_forest_classifier")

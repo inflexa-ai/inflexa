@@ -127,32 +127,52 @@ binary hit/no-hit.
 ```python
 def selectivity_entropy(pIC50_values, reference_pIC50=5.0):
     """
-    Selectivity entropy.
+    Selectivity entropy (Uitdehaag & Zaman, 2011).
+
+    Shannon entropy of the compound's binding partition over the panel:
+    p_i = Ka_i / sum(Ka), where Ka_i is the association constant and
+    Ka_i is proportional to 10 ** pIC50_i.
 
     Parameters
     ----------
     pIC50_values : array-like
-        pIC50 values for all panel targets. Inactive targets should
-        have pIC50 at or below the reference threshold.
+        pIC50 values for all panel targets. Include inactive targets at
+        their measured (low) pIC50 — they contribute negligibly to the
+        partition, which is exactly why the metric needs no cutoff.
     reference_pIC50 : float
-        Baseline activity threshold. Default 5.0 (= 10 μM).
-        Activities below this threshold are treated as background.
+        Activity threshold used ONLY to decide whether the profile has
+        any measurable binding at all. It deliberately does not enter
+        the entropy: a factor common to every Ka cancels in the p_i
+        normalisation, so subtracting a reference would leave the
+        result bit-for-bit unchanged. Default 5.0 (= 10 μM).
 
     Returns
     -------
     float
-        0 = perfectly selective (all activity on one target).
-        ln(N) = fully non-selective (equal activity on N targets).
+        0 = perfectly selective (all binding on one target).
+        ln(N) = fully non-selective (equal binding on N targets).
+        np.nan = no target reaches `reference_pIC50`, so the profile
+        holds no measurable binding and the entropy is undefined.
         Typical "selective" compounds have entropy < 2.
     """
-    activities = 10 ** (np.asarray(pIC50_values, dtype=float) - reference_pIC50)
-    activities = np.maximum(activities, 0)
-    total = np.sum(activities)
-    if total == 0:
-        return 0.0
-    probs = activities / total
-    probs = probs[probs > 0]
-    return -np.sum(probs * np.log(probs))
+    pIC50 = np.asarray(pIC50_values, dtype=float)
+    if pIC50.size == 0:
+        return np.nan
+
+    # Nothing on the panel is active enough for a binding partition to
+    # mean anything. Return NaN, not 0.0 — 0.0 is the value that means
+    # "perfectly selective", the opposite of what an all-inactive
+    # profile shows. Returning ln(N) would be just as wrong: assay
+    # noise distributed evenly is not evidence of promiscuity.
+    if np.max(pIC50) < reference_pIC50:
+        return np.nan
+
+    # Ka proportional to 10 ** pIC50. Subtracting the max is numerical
+    # stability only — like the reference, it cancels in the normalisation.
+    ka = 10 ** (pIC50 - np.max(pIC50))
+    probs = ka / np.sum(ka)
+    probs = probs[probs > 0]  # drop underflowed terms; 0*ln(0) := 0
+    return float(-np.sum(probs * np.log(probs)))
 ```
 
 ### Interpretation
@@ -168,12 +188,22 @@ def selectivity_entropy(pIC50_values, reference_pIC50=5.0):
 
 ### Edge Cases
 
-- **All pIC50 below reference**: All activities become 0, entropy = 0.
-  This means "no measurable selectivity" — not "perfectly selective."
-  Flag this case separately.
-- **One target above reference**: Entropy = 0 (truly selective).
+- **All pIC50 below reference**: returns `np.nan`, and the caller must
+  report it as "no measurable binding", not as a selectivity value.
+  Neither available number is defensible here: `0.0` is the code for
+  *perfectly selective*, and the raw partition of an all-inactive
+  profile drifts toward `ln(N)`, the code for *fully promiscuous*.
+  The profile is uninformative in both directions, so it is flagged.
+- **One target well above the rest**: entropy approaches 0 but is not
+  exactly 0, and the residual grows with panel size. One target at
+  pIC50 8 gives ≈ 0.07 against nine targets at pIC50 5, but ≈ 0.37
+  against forty-nine of them — the weak targets still hold ~5% of the
+  partition. Exactly 0 requires every other Ka to underflow. Compare
+  entropies only across panels of the same size.
 - **reference_pIC50 choice**: The default of 5.0 (10 μM) is standard
-  for kinase panels. For high-potency targets, use 6.0 (1 μM).
+  for kinase panels. For high-potency targets, use 6.0 (1 μM). Raising
+  it only makes the all-inactive flag stricter — it never changes a
+  computed entropy, since the reference cancels in the normalisation.
 
 ## Selectivity Window
 

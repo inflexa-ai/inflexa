@@ -134,13 +134,19 @@ dc.mt.mlm(data=adata, net=collectri)
 # Stores: adata.obsm["score_mlm"], adata.obsm["padj_mlm"]
 ```
 
-### WSUM (Weighted Sum)
+### WAGGR (Weighted Aggregation — weighted mean / weighted sum)
+
+There is no `dc.mt.wsum()`. In decoupler 2.x the weighted mean and weighted sum are
+both `waggr`, selected with `fun`.
 
 ```python
 # Weighted sum of target gene expression
-dc.mt.wsum(data=adata, net=collectri)
-# Stores: adata.obsm["score_wsum"], adata.obsm["padj_wsum"]
-#         adata.obsm["norm_wsum"]  (normalized scores)
+dc.mt.waggr(data=adata, net=collectri, fun="wsum")
+# Stores: adata.obsm["score_waggr"]
+
+# p-values only exist if you ask for permutations; set a seed for reproducibility
+dc.mt.waggr(data=adata, net=collectri, fun="wsum", times=1000, seed=0)
+# Stores: adata.obsm["score_waggr"], adata.obsm["padj_waggr"]
 ```
 
 ### Other Methods
@@ -197,12 +203,18 @@ dc.pl.network(
     vcenter=True,
 )
 
-# Barplot of top activities
+# Barplot of top activities for ONE contrast/group.
+# Signature is barplot(data, name, top=25, ...): `data` is a wide
+# DataFrame (rows = contrasts or groups, columns = sources), and `name`
+# selects the row to plot. There is no groupby= or top_n=.
+# Aggregate the per-cell scores into that wide frame first:
+acts_df = dc.pp.get_obsm(adata, key="score_ulm").to_df()
+by_celltype = acts_df.groupby(adata.obs["cell_type"], observed=True).mean()
+
 dc.pl.barplot(
-    acts,
-    "score_ulm",
-    groupby="cell_type",
-    top_n=10,
+    by_celltype,
+    "CD8 T",        # the row (cell type) to plot
+    top=10,
 )
 ```
 
@@ -259,8 +271,12 @@ sc.pl.matrixplot(pw_scores, var_names=pw_scores.var_names.tolist(), groupby="cel
   interactions). PROGENy is for pathway activity (pathway-responsive genes with
   weights). Do not mix them.
 - **Method choice**: ULM is fast and robust for most cases. MLM accounts for
-  co-regulation but is slower. WSUM is the simplest. Consensus runs multiple
+  co-regulation but is slower. WAGGR (`fun="wsum"` / `"wmean"`) is the simplest,
+  but yields no p-values unless `times` is set. Consensus runs multiple
   methods but takes longer.
+- **`tmin` silently drops sources**: it defaults to `5`, so any TF, pathway, or
+  gene set with fewer surviving targets disappears from the result without an
+  error. Lower it for small custom sets and check which sources came back.
 - **Sparse data**: Methods handle sparse matrices natively. No need to densify.
 - **Pseudobulk**: For differential activity analysis between conditions, consider
   pseudobulking first, then running decoupler on the pseudobulk DataFrame.

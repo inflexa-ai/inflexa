@@ -70,8 +70,11 @@ tune_splsda = mixomics.tune_splsda(
     measure='BER'                   # balanced error rate
 )
 
-# Extract optimal keepX
-optimal_keepX = ro.r('tune_splsda$choice.keepX')
+# Extract optimal keepX.
+# `tune_splsda` here is a Python-side R object; ro.r() evaluates in R's global
+# environment, which has never heard of it. Push it across first, or index the
+# result directly with .rx2 — do not name it inside an ro.r() string.
+optimal_keepX = tune_splsda.rx2('choice.keepX')
 ```
 
 ## DIABLO (block.splsda - Multi-Omics Supervised)
@@ -195,8 +198,9 @@ perf = mixomics.perf(
     folds=5,
     nrepeat=10
 )
-# Access error rates
-error_rate = ro.r('perf$WeightedVote.error.rate')
+# Access error rates — same rule: `perf` is a Python-side object, so index it
+# directly rather than naming it in an ro.r() string.
+error_rate = perf.rx2('WeightedVote.error.rate')
 ```
 
 ## Complete Workflow Example
@@ -216,8 +220,14 @@ grdevices = importr('grDevices')
 data_blocks = ro.ListVector({'mRNA': rna_r, 'protein': prot_r})
 y_r = ro.FactorVector(labels)
 
-# 2. Design matrix
-design = ro.r('matrix(0.1, ncol=2, nrow=2); diag(.) <- 0')
+# 2. Design matrix. Build it in one R block and end on the object itself —
+#    `diag(.) <- 0` is not valid R (`.` is undefined), and a trailing
+#    assignment returns the assigned value invisibly, not the matrix.
+design = ro.r('''
+  design <- matrix(0.1, ncol=2, nrow=2)
+  diag(design) <- 0
+  design
+''')
 
 # 3. Tune
 tune = mixomics.tune_block_splsda(

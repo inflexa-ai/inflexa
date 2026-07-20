@@ -297,16 +297,28 @@ AllChem.MMFFOptimizeMolecule(mol, maxIters=500)
 
 # Multiple conformers
 cids = AllChem.EmbedMultipleConfs(mol, numConfs=50, params=AllChem.ETKDGv3())
-# Optimize each
-results = AllChem.MMFFOptimizeMoleculeConfs(mol)
+# Optimize each. Returns one (not_converged, energy) tuple per
+# conformer, in conformer order: results[i] belongs to cids[i].
+results = AllChem.MMFFOptimizeMoleculeConfs(mol, maxIters=500)
 
-# Get lowest energy conformer
-energies = [r[1] for r in results if r[0] == 0]
-best_idx = int(np.argmin(energies))
+# Get lowest energy conformer. Pair each result with its conformer ID
+# BEFORE dropping the ones that failed to converge — a position in a
+# filtered energy list is not a conformer ID.
+converged = [
+    (energy, cid)
+    for (not_converged, energy), cid in zip(results, cids)
+    if not_converged == 0
+]
+if not converged:
+    raise RuntimeError(
+        "No conformer converged — raise maxIters, or check that MMFF "
+        "parameters exist for this molecule."
+    )
+best_energy, best_cid = min(converged)
 
 # Write to SDF
 writer = Chem.SDWriter("conformer.sdf")
-writer.write(mol, confId=best_idx)
+writer.write(mol, confId=best_cid)
 writer.close()
 ```
 
@@ -316,6 +328,8 @@ writer.close()
 - `EmbedMolecule` returns -1 on failure (happens with strained or very large molecules). Check the return value.
 - `ETKDGv3()` is the recommended embedding method (improved torsion angles).
 - `MMFFOptimizeMolecule` returns 0 on success, 1 if not converged, -1 if MMFF params not available.
+- `MMFFOptimizeMoleculeConfs` returns a list of `(not_converged, energy)` 2-tuples — one per conformer, in conformer order, aligned with the `cids` from `EmbedMultipleConfs`. Never `argmin` over a filtered energy list and use the result as a `confId`: filtering renumbers the positions, so the moment one conformer fails to converge you silently write out a different conformer than the lowest-energy one. Carry the `cid` alongside the energy instead.
+- `confId` is a conformer ID, not a list position. `writer.write(mol, confId=...)` with a stale position writes the wrong geometry rather than erroring.
 
 ## PandasTools Integration
 

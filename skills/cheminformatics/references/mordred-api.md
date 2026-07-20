@@ -12,6 +12,14 @@ import pandas as pd
 import numpy as np
 ```
 
+**Check this import first.** mordred 1.2.0 (the last PyPI release, 2018) does
+`from numpy import product` in `MolecularDistanceEdge`, and `numpy.product` was
+removed in NumPy 2. Under NumPy 2 the `from mordred import Calculator,
+descriptors` line above raises `ImportError: cannot import name 'product' from
+'numpy'` before any descriptor is computed. If that happens, mordred is
+unusable in the environment -- say so and fall back to RDKit descriptors rather
+than trying to downgrade NumPy, which would break the rest of the stack.
+
 ## Calculator Setup
 
 ### All Descriptors (2D Only)
@@ -36,23 +44,27 @@ calc = Calculator(descriptors, ignore_3D=False)
 
 ```python
 from mordred import (
-    Weight,       # molecular weight variants
-    LogS,         # aqueous solubility
-    TopoPSA,      # topological polar surface area
-    ABCIndex,     # atom-bond connectivity index
-    AcidBase,     # acid-base counts
-    AroRing,      # aromatic ring descriptors
-    BondCount,    # bond type counts
-    HBond,        # hydrogen bond descriptors
+    Weight,         # molecular weight variants
+    LogS,           # aqueous solubility
+    TopoPSA,        # topological polar surface area
+    ABCIndex,       # atom-bond connectivity index
+    AcidBase,       # acid-base counts
+    Aromatic,       # aromatic atom/bond proportion descriptors
+    BondCount,      # bond type counts
+    HydrogenBond,   # hydrogen bond descriptors
     RotatableBond,  # rotatable bond descriptors
-    RingCount,    # ring descriptors
-    SLogP,        # Wildman-Crippen logP
+    RingCount,      # ring descriptors
+    SLogP,          # Wildman-Crippen logP
 )
 
 # Calculator with specific descriptor modules
-calc = Calculator([Weight, SLogP, TopoPSA, HBond, RingCount])
-print(len(calc.descriptors))  # ~20-30 depending on modules
+calc = Calculator([Weight, SLogP, TopoPSA, HydrogenBond, RingCount])
+print(len(calc.descriptors))  # 146 -- RingCount alone contributes 138
 ```
+
+The module names are the ones listed in `mordred.descriptors.all`. Note there is
+no `HBond` module (it is `HydrogenBond`) and no `AroRing` module (it is
+`Aromatic`); importing either raises `ImportError`.
 
 ## Single Molecule Calculation
 
@@ -61,18 +73,32 @@ mol = Chem.MolFromSmiles("CC(=O)Oc1ccccc1C(=O)O")  # aspirin
 
 # Calculate all descriptors
 result = calc(mol)
-# Returns mordred.Result object (dict-like)
+# Returns a mordred.Result object
 
 # Access individual descriptors
-mw = result[0]              # by index
-# Or convert to dict
-result_dict = dict(result)
+first = result[0]           # by index (equivalent to result.ix[0])
+mw = result["MW"]           # by descriptor name (equivalent to result.name["MW"])
 
-# Check for errors (some descriptors fail on some molecules)
-for name, value in result:
-    if isinstance(value, mordred.error.Error):
-        print(f"{name}: calculation failed")
+# Convert to dict -- use asdict(), which gives STRING keys
+result_dict = result.asdict()
+# {"MW": 180.04, "AMW": 8.57, ...}
+# Plain dict(result) also "works" but keys are Descriptor INSTANCES, not names.
+
+# Check for errors (some descriptors fail on some molecules).
+# Iterating a Result yields VALUES only, so use .items() to get name + value.
+from mordred.error import MissingValueBase
+
+for desc, value in result.items():
+    if isinstance(value, MissingValueBase):
+        print(f"{desc}: calculation failed ({value.header})")
 ```
+
+### Gotchas -- Result objects
+
+- `Result.__iter__` is `Result.values`, so iterating yields **values only**. `for name, value in result:` raises `TypeError: cannot unpack non-iterable float object`. Use `result.items()` to get `(Descriptor, value)` pairs.
+- Failed descriptors come back as two classes: `mordred.error.Missing` (a known, expected failure -- e.g. a 3D descriptor on a 2D molecule) and `mordred.error.Error` (an unexpected exception). Both subclass `mordred.error.MissingValueBase`. Checking only `mordred.error.Error` misses the large majority: for aspirin with `ignore_3D=False`, 385 descriptors are missing but only 16 are `Error`. Test against `MissingValueBase` (or `mordred.error.is_missing`).
+- `result.asdict()` gives string keys; `dict(result)` gives `Descriptor` instance keys. `result[0]` indexes by position, `result["MW"]` by name.
+- `result.fill_missing(value=np.nan)` and `result.drop_missing()` return new `Result` objects -- they do not mutate in place.
 
 ## Batch Calculation with pandas
 
@@ -112,8 +138,9 @@ df_filled = df_clean.fillna(df_clean.median())
 
 ### Gotchas -- Batch Calculation
 
-- `calc.pandas()` is the recommended method for batch processing. Returns a proper DataFrame.
-- Some descriptors return `mordred.error.Error` objects instead of numbers. These are not NaN -- they are error objects. Use `select_dtypes(include=[np.number])` to filter.
+- `calc.pandas()` is the recommended method for batch processing. Returns a proper DataFrame. Signature: `calc.pandas(mols, nproc=None, nmols=None, quiet=False, ipynb=False, id=-1)`.
+- Failed descriptors come back as `mordred.error.Missing` / `mordred.error.Error` objects, not NaN, so those columns land with dtype `object`. `select_dtypes(include=[np.number])` drops them. For aspirin with `ignore_3D=False`, 385 of 1826 columns are `object` this way.
+- `select_dtypes(include=[np.number])` also keeps `int64` columns and drops `bool` ones -- check `df.dtypes` if you care about the boolean descriptors.
 - Calculation speed: ~100-500 molecules per second for all 2D descriptors. For large datasets (>10K), consider using only selected descriptor modules.
 
 ## 2D vs 3D Descriptors
@@ -146,19 +173,24 @@ df_3d = calc_3d.pandas(mols_3d)
 
 ## Common Descriptor Groups
 
-| Module | Description | Approx Count |
-|--------|-------------|-------------|
+Counts below are exact for mordred 1.2 (`len(Calculator(Module).descriptors)`).
+
+| Module | Description | Count |
+|-|-|-|
 | `Weight` | Molecular weight variants (average, exact) | 2 |
-| `SLogP` | Wildman-Crippen logP and related | 2 |
+| `SLogP` | Wildman-Crippen logP and molar refractivity | 2 |
 | `TopoPSA` | Topological polar surface area | 2 |
-| `HBond` | Hydrogen bond donor/acceptor counts | 2 |
-| `RotatableBond` | Rotatable bond count | 1 |
-| `RingCount` | Ring counts (aromatic, aliphatic, total) | 12 |
-| `AroRing` | Aromatic ring descriptors | 4 |
+| `HydrogenBond` | Hydrogen bond donor/acceptor counts | 2 |
+| `RotatableBond` | Rotatable bond count and ratio | 2 |
+| `RingCount` | Ring counts, by size/aromaticity/heteroatom | 138 |
+| `Aromatic` | Aromatic atom and bond proportions | 2 |
 | `BondCount` | Bond type counts (single, double, aromatic) | 9 |
 | `AcidBase` | Acidic/basic group counts | 2 |
-| `LogS` | Aqueous solubility (estimated) | 2 |
-| `ABCIndex` | Atom-bond connectivity indices | 1 |
+| `LogS` | Aqueous solubility (estimated) | 1 |
+| `ABCIndex` | Atom-bond connectivity indices | 2 |
+
+`RingCount` is by far the largest of these -- adding it to a "small" selective
+calculator takes you from a handful of descriptors to well over a hundred.
 
 ## QSAR Workflow Example
 
@@ -211,4 +243,5 @@ print(f"R2: {r2_score(y_test, y_pred):.3f}")
 - Some descriptors are strongly correlated. For ML, apply feature selection (variance threshold, correlation filter) before training.
 - The `Calculator` object is reusable. Create once, apply to many molecules.
 - Mordred requires RDKit molecules. Always convert SMILES to mol objects first.
-- `calc.pandas(mols)` with empty `mols` list raises an error. Check list length before calling.
+- `calc.pandas([])` does **not** raise -- it returns an empty DataFrame with the full descriptor columns, shape `(0, n_descriptors)`. Guard on `df.empty` rather than expecting an exception.
+- mordred 1.2.0 imports `numpy.product`, which was removed in NumPy 2. If you hit `ImportError: cannot import name 'product' from 'numpy'`, the environment has NumPy 2 and mordred cannot be used; report it rather than working around it.

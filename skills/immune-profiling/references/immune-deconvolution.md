@@ -15,8 +15,12 @@ import anndata as ad
 ## immunedeconv (R via rpy2)
 
 immunedeconv is an R wrapper providing a unified interface to multiple
-deconvolution methods: MCP-counter, xCell, EPIC, quanTIseq,
-CIBERSORTx, and TIMER.
+deconvolution methods: MCP-counter, xCell, EPIC, quanTIseq, and TIMER.
+
+It also exposes `cibersort` / `cibersort_abs`, but CIBERSORTx **cannot be
+used here**: its source and the LM22 signature matrix come only from a
+registered, licensed download, which needs an account and network egress.
+The method errors out until those files are on disk. Use the methods above.
 
 ### Setup
 
@@ -338,7 +342,13 @@ def store_deconvolution_in_adata(adata, deconv_df, method_name):
   counts and NOT log-transformed values. Always check with
   `validate_expression_input()` before running.
 - **Gene ID format**: immunedeconv expects HGNC gene symbols. If your
-  data uses Ensembl IDs, convert first (biomaRt or pymart).
+  data uses Ensembl IDs, map them first — offline. Resolve an
+  ID-mapping dataset (NCBI gene info, UniProt ID mapping) from the
+  reference data available to you and join on it, or use
+  `org.Hs.eg.db` via rpy2, which ships its mappings locally. Do not
+  reach for `biomaRt`: it is installed, but every query goes to
+  Ensembl over the network and there is no egress, so it fails. There
+  is no `pymart` package.
 - **Species**: All reference signatures are human. For mouse data,
   convert gene symbols to human orthologs first (babelgene).
 - **Batch effects**: Deconvolution is sensitive to batch effects.

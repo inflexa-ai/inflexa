@@ -41,7 +41,24 @@ table(msLevel(raw_data))           # number of scans per MS level
 rtime(raw_data)[1:10]              # first 10 retention times (seconds)
 ```
 
-**File requirements**: Input files MUST be centroided mzML. CentWave expects centroid data — profile-mode files will produce garbage peaks or errors. Convert vendor raw files with msconvert (ProteoWizard) using `--filter "peakPicking vendor msLevel=1-"`. File paths must be absolute.
+**File requirements**: Input files MUST be centroided mzML. CentWave expects centroid data — profile-mode files will produce garbage peaks or errors. File paths must be absolute.
+
+**Conversion from vendor raw formats is not possible here.** `msconvert` (ProteoWizard) is not installed, there is no egress to obtain it, and vendor format readers are Windows-only libraries regardless. So: **if you were handed `.raw` / `.d` / `.wiff` files, that is a hard blocker** — report it and state that mzML conversion must happen upstream with `msconvert --filter "peakPicking vendor msLevel=1-"` before the data reaches you. Do not attempt a conversion.
+
+Given mzML, **check centroiding yourself rather than assuming it** — profile data does not error, it silently produces junk features:
+
+```r
+# Centroided spectra have far fewer, sharper peaks than profile spectra.
+# MSnbase records the mode when the mzML header declares it.
+table(MSnbase::centroided(raw_data))   # TRUE = centroided, NA = undeclared
+
+# When the header is silent, inspect peak counts on a few MS1 scans.
+# Profile-mode scans typically carry tens of thousands of points.
+ms1 <- which(msLevel(raw_data) == 1)
+summary(peaksCount(raw_data)[head(ms1, 50)])
+```
+
+If the data is profile-mode, `MSnbase::pickPeaks()` can centroid it in R — a real fallback, but a generic one that does not match vendor peak-picking quality. Say which route you took.
 
 **On-disk mode**: `mode = "onDisk"` keeps spectra on disk and loads peaks on demand. This is essential for large datasets (dozens to hundreds of files). Never use `mode = "inMemory"` for production metabolomics workflows.
 
@@ -345,7 +362,7 @@ save(xdata, file = "output/xcms_result.RData")
 
 ## Gotchas
 
-- **Files must be centroided mzML.** CentWave assumes centroid input. Profile-mode data will yield incorrect peak detection. Convert with msconvert: `--filter "peakPicking vendor msLevel=1-"`.
+- **Files must be centroided mzML.** CentWave assumes centroid input. Profile-mode data yields incorrect peak detection, silently. Verify with `centroided()` / `peaksCount()` (see Step 1) rather than assuming. `msconvert` is **not installed here**, so vendor-raw conversion must happen upstream; `MSnbase::pickPeaks()` is the in-R fallback for profile-mode mzML.
 - **Do NOT re-run findChromPeaks after adjustRtime.** Alignment updates peak positions in place. Re-running peak detection on adjusted data double-corrects retention times.
 - **sampleGroups must match sample order.** The vector passed to `PeakDensityParam(sampleGroups = ...)` must have one element per sample in the same order as the files used in `readMSData()`. Mismatched order silently produces wrong grouping.
 - **featureValues replaces groupval.** The older `groupval()` function is deprecated. Use `featureValues(xdata, value = "into")`.

@@ -34,9 +34,20 @@ scglue.data.lsi(atac, n_components=100, use_highly_variable=False)
 # Result stored in atac.obsm['X_lsi']
 ```
 
-### Genomic Coordinate Requirements
+### Genomic Coordinate Requirements — USUALLY A HARD BLOCKER
 
-Both RNA and ATAC `.var` must have genomic coordinates for guidance graph construction:
+Both RNA and ATAC `.var` must carry genomic coordinates before a guidance graph can be built. **For RNA this is normally the blocking step.**
+
+ATAC coordinates are usually recoverable: peak names are typically already of the form `chr1:10000-10500` and can be parsed straight into `chrom`/`chromStart`/`chromEnd` with no external data.
+
+RNA coordinates are not. Genes are identified by symbol or Ensembl ID, and mapping those to `chrom`/`chromStart`/`chromEnd`/`strand` requires a **genome annotation (GTF/GFF)**. No genome annotation exists in the reference data catalog, and none can be fetched — there is no network egress. `scglue.data.get_gene_annotation()` reads a local GTF; with no GTF on disk there is nothing for it to read.
+
+**What to do:**
+
+1. First check whether `rna.var` **already** carries the coordinate columns — some published datasets ship them, in which case there is no blocker and you proceed normally.
+2. If it does not, **report this as a blocker** and name what is missing: a GTF/GFF annotation matching the dataset's genome build and gene-ID namespace. Do not fabricate coordinates, do not silently drop the genes, and do not substitute a different integration method without saying so.
+3. Offer MultiVI as the alternative for RNA+ATAC integration — it needs no genomic coordinates. It gives a joint embedding but **not** the peak-to-gene regulatory inference that is GLUE's distinguishing output, so say what is lost.
+4. **If the user supplies an annotation**, resolve the coordinates from it rather than assuming any particular path or build. Confirm the build matches the ATAC peak coordinates and that gene identifiers are in the same namespace as `rna.var_names`.
 
 ```python
 # rna.var must contain: chrom, chromStart, chromEnd, strand
@@ -259,7 +270,9 @@ glue.save("glue_model.dill")
 
 ## Gotchas
 
-- `.var` must have genomic coordinates (`chrom`, `chromStart`, `chromEnd`) for both RNA and ATAC. Missing coordinates cause `rna_anchored_guidance_graph` to silently skip features.
+- `.var` must have genomic coordinates (`chrom`, `chromStart`, `chromEnd`) for both RNA and ATAC. Missing coordinates cause `rna_anchored_guidance_graph` to silently skip features — a silently empty or near-empty graph, not an error.
+- **RNA coordinates are typically unobtainable here**: deriving them needs a GTF/GFF genome annotation, and none is in the reference catalog nor fetchable (no egress). Check whether `rna.var` already ships them; if not, report the blocker and offer MultiVI (no coordinates required, but no regulatory inference either). See the coordinate requirements section above.
+- ATAC coordinates are usually parseable from peak names (`chr1:10000-10500`) without any external annotation — the blocker is RNA-side.
 - Always call `scglue.graph.check_graph()` after building the guidance graph. It validates coverage, edge attributes, self-loops, and symmetry.
 - `configure_dataset()` must be called on each AnnData before `fit_SCGLUE()`. Configuration is stored in `adata.uns`.
 - SCGLUE uses separate AnnData objects per modality (not MuData). Each modality is passed as a dict entry.

@@ -98,10 +98,21 @@ def compute_ror(a, b, c, d):
 ```python
 def compute_ic(a, b, c, d):
     """
-    Compute Information Component (IC) using the WHO-UMC method.
+    Compute the Information Component (IC) and its lower credibility
+    bound, following the shrinkage BCPNN of Noren et al. (2006).
 
-    IC = log2(observed / expected).
-    IC025 = lower 95% credibility interval bound.
+    Point estimate, with alpha1 = alpha2 = 0.5 shrinkage:
+        IC = log2((O + 0.5) / (E + 0.5))
+
+    Lower 2.5% bound, from the published closed-form approximation
+    (Noren et al. 2006, appendix eq. 8-9):
+        IC025 = IC - 3.3 * (O + 0.5)**-0.5 - 2 * (O + 0.5)**-1.5
+
+    Use this closed form rather than a normal approximation. The IC
+    posterior is markedly right-skewed at the low counts that dominate
+    spontaneous-report data, so a symmetric `IC - 1.96 * se` bound is
+    wrong exactly where signals are decided. The correction here is
+    monotone in O alone and needs no variance term.
 
     Parameters
     ----------
@@ -115,14 +126,12 @@ def compute_ic(a, b, c, d):
     n_total = a + b + c + d
     expected = ((a + b) * (a + c)) / n_total if n_total > 0 else 0
 
-    if expected == 0:
+    if n_total == 0 or expected == 0:
         return {"ic": np.nan, "ic025": np.nan, "signal": False}
 
-    ic = np.log2((a + 0.5) / (expected + 0.5))
-
-    variance = 1 / (a + 0.5) - 1 / (n_total + 0.5)
-    se = np.sqrt(abs(variance))
-    ic025 = ic - 1.96 * se
+    observed = a + 0.5
+    ic = np.log2(observed / (expected + 0.5))
+    ic025 = ic - 3.3 * observed ** -0.5 - 2.0 * observed ** -1.5
 
     return {
         "ic": float(ic),
@@ -130,6 +139,11 @@ def compute_ic(a, b, c, d):
         "signal": bool(ic025 > 0),
     }
 ```
+
+The IC025 correction shrinks hard at low counts: a single report (`a = 1`)
+carries a penalty of about 4.8 IC units, so it cannot signal no matter how
+small the expected count. That is the intended behaviour — it is what stops
+one-off reports from producing signals — not a bug to tune away.
 
 ## Signal Detection from FAERS Tool Output
 
@@ -188,6 +202,7 @@ def detect_signals_from_faers(drug_events, total_drug_reports,
             "prr_signal": prr_result["signal"],
             "ror": ror_result["ror"],
             "ror_ci_lower": ror_result.get("ror_ci_lower"),
+            "ror_ci_upper": ror_result.get("ror_ci_upper"),
             "ror_signal": ror_result["signal"],
             "ic": ic_result["ic"],
             "ic025": ic_result["ic025"],
@@ -283,14 +298,28 @@ def plot_signal_forest(signal_df, top_n=20, measure="prr"):
     measure : str
         "prr" or "ror".
     """
+    if measure not in {"prr", "ror"}:
+        raise ValueError(f"measure must be 'prr' or 'ror', got {measure!r}")
+
     df = signal_df.nlargest(top_n, measure).iloc[::-1]
 
     fig, ax = plt.subplots(figsize=(10, max(6, top_n * 0.35)))
 
     y_pos = range(len(df))
-    values = df[measure].values
-    ci_lower = df[f"{measure}_ci_lower"].values
-    ci_upper = df.get(f"{measure}_ci_upper", values).values
+    values = df[measure].to_numpy()
+    # Fall back to the point estimate (zero-length whisker) when a bound is
+    # absent. DataFrame.get returns the default object as-is, so the default
+    # must already be an ndarray — calling .values on it would raise
+    # AttributeError.
+    lower_col = df.get(f"{measure}_ci_lower")
+    upper_col = df.get(f"{measure}_ci_upper")
+    ci_lower = values if lower_col is None else lower_col.to_numpy()
+    ci_upper = values if upper_col is None else upper_col.to_numpy()
+
+    # A missing bound in an otherwise-present column is NaN; matplotlib's
+    # errorbar rejects NaN in xerr, so clamp those to the point estimate too.
+    ci_lower = np.where(np.isnan(ci_lower), values, ci_lower)
+    ci_upper = np.where(np.isnan(ci_upper), values, ci_upper)
 
     colors = ["red" if s else "gray" for s in df[f"{measure}_signal"]]
 

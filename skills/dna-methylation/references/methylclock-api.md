@@ -4,6 +4,13 @@ Epigenetic age estimation from DNA methylation data using multiple clocks. Suppo
 
 ## Setup
 
+> **Two independent prerequisites, both of which can block this pack here.**
+>
+> - **Clock coefficients.** `methylclock` and `methylclockData` are installed, but the coefficients themselves are fetched from ExperimentHub over the network on first use, and there is no egress. Every `DNAmAge()`, `DNAmGA()`, and `checkClocks()` call depends on this. See Clock Data Loading.
+> - **GenomicRatioSet input only.** If your beta values must come from IDATs, that step needs `IlluminaHumanMethylation*manifest` / `*anno.*` packages that are not staged (see `minfi-api.md`), so the `library(minfi)` path below is unavailable. `methylclock` itself does not need array annotation — a beta matrix from any source works, and the matrix/data.frame/ExpressionSet input formats are unaffected.
+>
+> Verify both before planning clock analysis, and report whichever is missing plainly rather than working around it.
+
 ```r
 library(methylclock)
 library(methylclockData)   # clock coefficient data — read from a resolved ExperimentHub cache, see Clock Data Loading
@@ -130,7 +137,9 @@ cpg_check <- checkClocks(
   ...    # other parameters
 )
 # Returns: a list — one element per clock with the CpGs that are MISSING from the input
-# A clock is flagged when more than 80% of required CpGs are present (controlled by min.perc in DNAmAge)
+# A clock is flagged as infeasible when FEWER than 80% of its required CpGs are present.
+# Same threshold as min.perc (default 0.8) in DNAmAge(), which refuses to compute a clock
+# below it — so a clock flagged here is a clock DNAmAge() will not return.
 ```
 
 ```r
@@ -243,14 +252,14 @@ refs <- meffilListCellTypeReferences()
 
 `load_DNAm_Clocks_data()` and `load_DNAmGA_Clocks_data()` pull clock coefficients from `methylclockData` **via ExperimentHub**, and `DNAmAge()`/`DNAmGA()` call them for you on first use. ExperimentHub resolves against Bioconductor's servers, and there is no network egress — so left to itself, the very first `DNAmAge()` call fails, not the modelling that follows it.
 
-**Resolve the coefficient store before you write the script.** Ask for the *data* by what it is, not by a path — reference data is provisioned per-environment, so the directory is not yours to assume:
+**Establish where the clock coefficients come from before you write the script.** They are not a catalogued reference dataset, and there is no path you can assume — so the first thing to determine is whether an ExperimentHub cache already holding the `methylclockData` resources exists in this environment at all. Two outcomes, and only two:
 
-| You need | Ask for |
+| Situation | What to do |
 |-|-|
-| Chronological and biological clocks (Horvath, Hannum, Levine/PhenoAge, skin+blood, BLUP, EN, …) | A populated ExperimentHub cache carrying the `methylclockData` resources |
-| Gestational age clocks (Knight, Bohlin, Mayne, Lee, EPIC) | The same cache — the gestational coefficients are resources in it |
+| An ExperimentHub cache directory holding the `methylclockData` resources is present | Point ExperimentHub at it and open it offline, as below. Both chronological/biological and gestational coefficients live in the same cache. |
+| No such cache exists | Epigenetic age estimation cannot run. Report that and move on — do not request one as though it were a provisionable dataset, and do not invent a path. |
 
-Point ExperimentHub at that directory and force it offline *before* the first clock call, so it reads the cache instead of trying to refresh from the network:
+If a cache is available, point ExperimentHub at it and force it offline *before* the first clock call, so it reads the cache instead of trying to refresh from the network:
 
 ```r
 library(ExperimentHub)
@@ -271,11 +280,20 @@ If no such cache is available, report that epigenetic age estimation cannot run 
 
 ## Common Patterns
 
+> **Prerequisite for every pattern below.** Each one calls `DNAmAge()` or `DNAmGA()`, and the *first* such call loads clock coefficients from `methylclockData` via ExperimentHub — a network fetch that fails here. None of these patterns run until an already-populated ExperimentHub cache is resolved and opened with `localHub = TRUE` (see Clock Data Loading above). If no such cache exists, report that epigenetic age estimation is unavailable and continue with the rest of the analysis; do not adapt a pattern to work around it.
+>
+> A second prerequisite applies to patterns starting from a minfi `GenomicRatioSet`: producing that object from IDATs needs array manifest/annotation packages that are also not staged (see `minfi-api.md`). Patterns starting from an existing beta matrix are unaffected by that one.
+
 ### Pattern 1: Full Epigenetic Age Analysis from minfi Output
+
+Requires the resolved clock cache (see above) **and** a `GenomicRatioSet`, which cannot be built from IDATs in this environment.
 
 ```r
 library(methylclock)
 library(minfi)
+
+# --- Prerequisite: clock coefficient cache resolved and opened offline ---
+#     (see Clock Data Loading — DNAmAge() fails on first call without it)
 
 # --- Start from a normalized GenomicRatioSet (from minfi pipeline) ---
 grset <- readRDS("output/grset_normalized.rds")
@@ -313,6 +331,8 @@ dev.off()
 
 ### Pattern 2: Choosing Clocks by Tissue Type
 
+Requires the resolved clock cache — every `DNAmAge()` call below depends on it.
+
 ```r
 # Blood samples — use all three major blood clocks
 results_blood <- DNAmAge(beta, clocks = c("Horvath", "Hannum", "Levine"), age = ages)
@@ -331,6 +351,8 @@ results_bio <- DNAmAge(beta, clocks = c("Levine", "TL"), age = ages)
 ```
 
 ### Pattern 3: CpG Compatibility Check Before Clock Selection
+
+`checkClocks()` reads the same `methylclockData` coefficients, so this pattern needs the resolved clock cache too — the compatibility check is not a way to make progress without it.
 
 ```r
 # Check which clocks are feasible for the array platform
@@ -352,6 +374,8 @@ results <- DNAmAge(beta, clocks = clocks_to_run, age = ages)
 ```
 
 ### Pattern 4: Age Acceleration Analysis
+
+Requires the resolved clock cache — the `DNAmAge()` call is the first thing that runs.
 
 ```r
 # Age acceleration = predicted DNAm age - chronological age
@@ -385,6 +409,8 @@ write.csv(accel_df, "output/age_acceleration.csv", row.names = FALSE)
 
 ### Pattern 5: Gestational Age from Cord Blood
 
+Requires the resolved clock cache — `DNAmGA()` loads the gestational coefficients from it on first call.
+
 ```r
 # Cord blood methylation — estimate gestational age
 ga_results <- DNAmGA(
@@ -398,6 +424,8 @@ write.csv(ga_results, "output/gestational_ages.csv", row.names = FALSE)
 ```
 
 ### Pattern 6: Using M-values as Input
+
+Requires the resolved clock cache — `toBetas` changes the input handling, not the coefficient lookup.
 
 ```r
 # If you only have M-values, set toBetas = TRUE to convert internally

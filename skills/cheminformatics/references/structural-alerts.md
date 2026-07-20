@@ -119,11 +119,19 @@ catalog = FilterCatalog(params)
 
 df_alerts = screen_alerts(df["SMILES"].tolist(), catalog)
 
-# Summary statistics
-total = df_alerts["valid"].sum()
-flagged = df_alerts["flagged"].sum()
-clean_pct = (total - flagged) / total * 100
-print(f"Clean: {clean_pct:.1f}% ({total - flagged}/{total})")
+# Summary statistics.
+# `n_valid` counts PARSED molecules, so it is the right denominator --
+# but it is 0 for an all-invalid input list, which is a normal failure
+# mode (a bad SMILES column, a mis-set delimiter), not an impossible one.
+n_valid = int(df_alerts["valid"].sum())
+n_flagged = int(df_alerts["flagged"].fillna(False).astype(bool).sum())
+n_clean = n_valid - n_flagged
+
+if n_valid == 0:
+    print(f"No parsable molecules out of {len(df_alerts)} inputs — nothing screened.")
+else:
+    clean_pct = n_clean / n_valid * 100
+    print(f"Clean: {clean_pct:.1f}% ({n_clean}/{n_valid})")
 ```
 
 ### Separate Screening per Catalog
@@ -250,12 +258,18 @@ for idx, smi in enumerate(smiles_list):
     df_results.loc[idx, "ro5_pass"] = len(ro5_violations) == 0
 
 # Summary
-n_valid = df_results["valid"].sum()
-n_pains_clean = (~df_results["flagged"].fillna(True)).sum()
-n_ro5_pass = df_results["ro5_pass"].fillna(False).sum()
+n_valid = int(df_results["valid"].sum())
+n_pains_clean = int((~df_results["flagged"].fillna(True).astype(bool)).sum())
+n_ro5_pass = int(df_results["ro5_pass"].fillna(False).astype(bool).sum())
+
 print(f"Valid molecules: {n_valid}/{len(df_results)}")
-print(f"Alert-free: {n_pains_clean}/{n_valid} ({n_pains_clean/n_valid*100:.1f}%)")
-print(f"Ro5 pass: {n_ro5_pass}/{n_valid} ({n_ro5_pass/n_valid*100:.1f}%)")
+if n_valid == 0:
+    # Every SMILES failed to parse. Report it as a parse failure rather
+    # than dividing by zero or printing a nan percentage.
+    print("No parsable molecules — check the SMILES column before screening.")
+else:
+    print(f"Alert-free: {n_pains_clean}/{n_valid} ({n_pains_clean / n_valid * 100:.1f}%)")
+    print(f"Ro5 pass: {n_ro5_pass}/{n_valid} ({n_ro5_pass / n_valid * 100:.1f}%)")
 ```
 
 ## Gotchas

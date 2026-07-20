@@ -54,40 +54,70 @@ Combine target and non-target assessments:
 
 ```python
 def recist_classify_target(sum_diameters_baseline, sum_diameters_current,
-                            sum_diameters_nadir):
+                            sum_diameters_nadir,
+                            nonnodal_all_disappeared=None,
+                            max_nodal_short_axis_mm=None):
     """
     Classify target lesion response per RECIST 1.1.
 
     Parameters
     ----------
     sum_diameters_baseline : float
-        Sum of longest diameters at baseline.
+        Sum of diameters at baseline (longest diameter for non-nodal
+        lesions, short axis for nodal lesions).
     sum_diameters_current : float
-        Sum of longest diameters at current assessment.
+        Sum of diameters at the current assessment.
     sum_diameters_nadir : float
         Smallest sum of diameters recorded since baseline.
+    nonnodal_all_disappeared : bool, optional
+        True when every non-nodal target lesion measures 0 mm.
+    max_nodal_short_axis_mm : float, optional
+        Largest short axis among *nodal* target lesions at this
+        assessment. Pass 0.0 when there are no nodal targets.
+
+    CR cannot be read off the sum. A nodal target lesion keeps
+    contributing its short axis to the sum after it becomes
+    non-pathological (< 10 mm), so a genuine CR routinely has a
+    non-zero sum; conversely a zero sum is CR only when every target
+    was non-nodal. Supply the two lesion-level arguments whenever the
+    target set includes lymph nodes. Omitting them falls back to the
+    zero-sum test, which is correct only for all-non-nodal target sets
+    and otherwise under-calls CR as PR.
 
     Returns
     -------
     str
         One of: "CR", "PR", "SD", "PD".
     """
-    if sum_diameters_current == 0:
+    if nonnodal_all_disappeared is None:
+        # Without lesion-level data, a zero sum is the only observable
+        # that implies every target lesion has gone.
+        nonnodal_all_disappeared = sum_diameters_current == 0
+        max_nodal_short_axis_mm = 0.0
+    if max_nodal_short_axis_mm is None:
+        max_nodal_short_axis_mm = 0.0
+
+    if nonnodal_all_disappeared and max_nodal_short_axis_mm < 10:
         return "CR"
 
     # Change from baseline for PR
     pct_change_baseline = (
         (sum_diameters_current - sum_diameters_baseline)
         / sum_diameters_baseline * 100
+        if sum_diameters_baseline > 0 else 0.0
     )
 
-    # Change from nadir for PD
-    pct_change_nadir = (
-        (sum_diameters_current - sum_diameters_nadir)
-        / sum_diameters_nadir * 100
-        if sum_diameters_nadir > 0 else 0
-    )
+    # Change from nadir for PD. A nadir of 0 means the target lesions
+    # had wholly disappeared, so any measurable regrowth is progression
+    # and the percentage is unbounded — scoring it as 0% would hide a
+    # relapse behind an SD.
     abs_change_nadir = sum_diameters_current - sum_diameters_nadir
+    if sum_diameters_nadir > 0:
+        pct_change_nadir = abs_change_nadir / sum_diameters_nadir * 100
+    elif sum_diameters_current > 0:
+        pct_change_nadir = float("inf")
+    else:
+        pct_change_nadir = 0.0
 
     if pct_change_nadir >= 20 and abs_change_nadir >= 5:
         return "PD"
@@ -115,6 +145,12 @@ def best_overall_response(responses):
     valid = [r for r in responses if r in priority]
     if not valid:
         return "NE"
+    # RECIST 1.1: best response runs from start of treatment until
+    # progression. Assessments recorded after the first PD are not
+    # eligible, so truncate there rather than letting a later
+    # post-progression reading win the min().
+    if "PD" in valid:
+        valid = valid[: valid.index("PD") + 1]
     return min(valid, key=lambda r: priority[r])
 ```
 
@@ -225,9 +261,12 @@ def compute_response_endpoints(df, subject_col, visit_col,
   changes from triggering PD.
 - **New lesions = PD**: Any unambiguous new lesion is PD regardless
   of target lesion measurements.
-- **Lymph nodes**: Lymph nodes are never "CR=0" — they must have
-  short axis < 10 mm to be considered CR. Include their residual
-  measurement in the sum.
+- **Lymph nodes**: a nodal target lesion is CR at short axis < 10 mm,
+  not at 0 mm, and its residual short axis stays in the sum of
+  diameters. So CR and a non-zero sum coexist routinely, and
+  `sum == 0` is neither necessary nor sufficient for CR. Never derive
+  CR from the sum alone when any target lesion is a lymph node — pass
+  the lesion-level arguments to `recist_classify_target`.
 - **Missing assessments**: A single missing assessment does not
   change the prior response. Two consecutive missed assessments →
   "Not Evaluable" (NE).

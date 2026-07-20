@@ -11,6 +11,8 @@ Comprehensive guidelines for chromatin accessibility (ATAC-seq), histone/TF bind
 
 ## Method-Selection Decision Tree
 
+**Read the CLI tools note below before planning any step from raw reads.** The trees describe the canonical method end to end, but the read-processing binaries they name (`bowtie2`, `picard`, `macs2`, SEACR, HOMER, TOBIAS) and deeptools are **not installed here** — expect to receive aligned BAMs, called peaks, or a count matrix and to start from there. Probe before planning around any binary; report a gap rather than emitting a pipeline that cannot run.
+
 ### 1. ATAC-seq
 
 ```
@@ -117,13 +119,15 @@ ATAC-seq BAM (Tn5-corrected) + peak regions
 
 ```
 BAM files
-  → deeptools bamCoverage (generate bigWig, RPKM/CPM normalized)
-    → computeMatrix (reference-point at TSS or scale-regions for gene bodies)
-      → plotHeatmap / plotProfile
+  → Binned, depth-normalized coverage → bigWig
+    → Per-region signal extraction at an anchor (peak centers, or a TSS set if
+      an annotation was provided)
+      → Heatmap + average profile
 ```
 
-- Use deeptools for all signal visualization. It produces publication-quality heatmaps and profile plots.
-- Always normalize signal (RPKM or CPM) for cross-sample comparisons.
+- **deeptools is not installed here** (`bamCoverage`, `computeMatrix`, `plotHeatmap`, `plotProfile` are all absent) and there is no egress to install it. Verify before planning around it; when it is missing, build the same product from what is present: `pysam` or `bedtools genomecov` for binned counts, `pyBigWig` to write the track and to read per-region signal (`values()`, `stats(nBins=...)`), numpy to stack the region-by-bin matrix, matplotlib to draw the heatmap and the column-mean profile. `references/deeptools-cli.md` maps each deeptools step to its substitute.
+- Anchor on your own peak calls by default. TSS-anchored profiles need a gene annotation, and **no GTF/GFF or gene BED is in the reference inventory** — report the gap rather than substituting an arbitrary region set.
+- Always normalize signal (RPKM or CPM) for cross-sample comparisons, whichever route produces the track.
 
 ### 8. scATAC-seq
 
@@ -139,7 +143,7 @@ Fragment files (10x CellRanger-ATAC or custom)
                 → TF motif activity: chromVAR deviation scores
 ```
 
-- SnapATAC2 is the preferred Python tool for scATAC-seq. ArchR is the R alternative.
+- SnapATAC2 is the preferred Python tool for scATAC-seq — but it is **installed on x86_64 only** (PyPI ships no linux-aarch64 wheel), so on an arm64 host `import snapatac2` fails and that is expected, not a broken install. Import it inside a `try`/`except ImportError` and, when it is unavailable, run the same workflow on the peak/tile count matrix with scanpy: TF-IDF + TruncatedSVD for LSI, `sc.pp.neighbors` on the LSI embedding, `sc.tl.leiden` for clustering. ArchR (R) is not staged either — do not plan on it without probing.
 - Do NOT use PCA directly on scATAC count matrices. Use TF-IDF + LSI, which handles the extreme sparsity of single-cell chromatin data.
 
 ## Anti-Patterns
@@ -158,7 +162,7 @@ Fragment files (10x CellRanger-ATAC or custom)
 - Count matrices: AnnData (.h5ad) with peaks as `var`, samples/cells as `obs`.
 - Differential results: CSV with `chr`, `start`, `end`, `log2FC`, `pvalue`, `padj`, `nearest_gene`, `distance_to_TSS`.
 - Signal tracks: bigWig files (RPKM-normalized) for genome browser visualization.
-- Figures: TSS enrichment plots, fragment size distributions, peak heatmaps (deeptools), motif enrichment tables, volcano plots for differential peaks.
+- Figures: TSS enrichment plots, fragment size distributions, peak heatmaps, motif enrichment tables, volcano plots for differential peaks.
 - Motif results: ranked table of TFs with enrichment p-values and percent of targets with motif.
 
 ## Additional Available Packages
@@ -173,14 +177,18 @@ Fragment files (10x CellRanger-ATAC or custom)
 
 - **rtracklayer**: Read/write BED, BigWig, GFF in R. Use `import()` / `export()` for format conversion and signal extraction.
 
-### CLI tools (run as shell commands)
+### CLI tools
 
-- **bowtie2**: Short read alignment. Used for ChIP-seq, ATAC-seq, and CUT&Tag alignment.
-- **picard**: MarkDuplicates (essential for ChIP-seq, but do NOT use for CUT&Tag — natural duplicates from tagmentation), CollectInsertSizeMetrics.
+Present on every architecture: `samtools`, `bedtools`, `bcftools`, `tabix`. These cover BAM filtering/indexing/stats, interval arithmetic, and coverage.
+
+The read-processing tools the decision trees above name — `bowtie2`, `picard`, `macs2`, `SEACR`, `HOMER`, `TOBIAS` — are **not staged here**, and there is no egress to install them. They describe the canonical upstream pipeline, which is normally run before the data reaches you: expect to be handed aligned BAMs and called peaks. Probe (`command -v <binary>`) before planning any step that needs one, and if you were handed raw FASTQ with no aligner available, say so and stop rather than emitting a pipeline that cannot run.
+
+- **samtools**: MAPQ filtering (`view -q 30`), mitochondrial-read removal, duplicate flagging (`markdup`), indexing, `flagstat`/`idxstats` QC, and paired-end insert-size distributions for the fragment-size check.
+- **bedtools**: consensus peak sets (`intersect`, `merge`, `multiinter`), coverage (`genomecov`, `multicov`) for count matrices, and interval arithmetic in place of a dedicated tool.
 
 ## References
 
 - `references/diffbind-rpy2-api.md` — Differential binding analysis via rpy2
-- `references/deeptools-cli.md` — Signal normalization, heatmaps, and profile plots
+- `references/deeptools-cli.md` — Signal normalization, heatmaps, and profile plots (deeptools is **absent** here; the file opens with the substitute route per step)
 - `references/pybedtools-api.md` — Genomic interval operations in Python
 - `references/pybigwig-api.md` — BigWig file reading and signal extraction

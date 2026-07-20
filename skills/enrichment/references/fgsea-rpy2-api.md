@@ -141,7 +141,8 @@ res_df = r_to_pd(ro.r('result_df'))
 #   pathway       — gene set name
 #   pval          — nominal p-value
 #   padj          — BH-adjusted p-value
-#   log2err       — log2 fold enrichment error bound
+#   log2err       — expected error of the log of the p-value estimate
+#                   (precision of pval, NOT a fold-enrichment quantity)
 #   ES            — enrichment score
 #   NES           — normalized enrichment score
 #   size          — gene set size (after intersection with stats)
@@ -287,7 +288,7 @@ sig = res_df[res_df["padj"] < 0.05].sort_values("NES", ascending=False)
 - The `leadingEdge` column in fgsea results is an R list column, not a character vector. Direct pandas conversion creates nested objects. Extract it separately using R indexing.
 - `collapsePathways()` requires the original `result`, `pathways`, and `stats` objects. It re-runs fgsea internally for the collapsing procedure.
 - `minSize` and `maxSize` filter gene sets by the number of genes that overlap with the `stats` vector, not by the total gene set size.
-- fgsea uses the absolute ranking of genes (their position in the sorted vector), not the numeric values directly. The direction of enrichment depends on gene order.
+- fgsea computes a **weighted** running-sum (Kolmogorov-Smirnov) statistic: the magnitudes in `stats` are used, raised to the power `gseaParam` (default 1), not just the rank positions. So the choice of ranking statistic matters, and the vector must be sorted in decreasing order.
 - Duplicate gene names in the stats vector are not allowed. Remove duplicates before creating the R vector, keeping the entry with the highest absolute value.
 - Memory: fgsea with many large gene sets (>10k sets) can be memory-intensive. Call `ro.r("gc()")` after extracting results.
 - `fgseaMultilevel()` supersedes `fgsea()` and `fgseaSimple()`. Use it by default for publication-quality results.

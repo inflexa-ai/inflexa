@@ -130,13 +130,15 @@ palantir.plot.plot_gene_trend_heatmaps(adata, genes, scaling="z-score")
 Palantir often uses MAGIC-imputed data for smoother gene trends.
 
 ```python
-import magic
+import palantir
 
-# Impute expression (stores in adata.obsm["MAGIC_imputed_data"] or layers)
-magic_op = magic.MAGIC()
-adata.obsm["MAGIC_imputed_data"] = magic_op.fit_transform(
-    adata, genes="all_genes"
-)
+# Use Palantir's wrapper: it writes the imputed matrix into
+# adata.layers["MAGIC_imputed_data"] itself and returns the DataFrame.
+imputed = palantir.utils.run_magic_imputation(adata)
+
+# Do NOT hand an AnnData to magic.MAGIC().fit_transform() and assign the
+# result into .obsm — MAGIC returns the same type it was given, so that
+# stores an AnnData inside .obsm and fails downstream.
 ```
 
 ## Visualization

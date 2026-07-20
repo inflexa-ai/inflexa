@@ -30,7 +30,8 @@ Choose the method based on your data type and analytical goal:
 
 4. **TF activity scoring (fast, per-cell)**
    - Use **decoupler** with **CollecTRI** regulon resource.
-   - `run_ulm()` or `run_mlm()` on `adata` produces per-cell TF activity in `adata.obsm`.
+   - `dc.mt.ulm()` or `dc.mt.mlm()` on `adata` produces per-cell TF activity in
+     `adata.obsm` under `score_ulm` / `padj_ulm`.
    - Faster than pySCENIC, preferred when regulon discovery is not the goal.
 
 5. **Protein-protein interaction network**

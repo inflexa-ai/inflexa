@@ -210,15 +210,18 @@ cmp <- compareCluster(
 cmp_df = r_to_pd(ro.r('as.data.frame(cmp)'))
 # Columns: Cluster, ID, Description, GeneRatio, BgRatio, pvalue, p.adjust, qvalue, geneID, Count
 
-# compareCluster with KEGG (requires Entrez IDs)
-ro.r('''
-cmp_kegg <- compareCluster(
-    geneClusters = clusters,
-    fun = "enrichKEGG",
-    organism = "hsa",
-    pvalueCutoff = 0.05
-)
-''')
+# UNAVAILABLE — compareCluster(fun = "enrichKEGG") delegates to enrichKEGG,
+# which downloads the pathway data from rest.kegg.jp. There is no egress, so
+# this fails like every other KEGG entry point. Compare clusters against
+# Reactome or GO instead.
+# ro.r('''
+# cmp_kegg <- compareCluster(
+#     geneClusters = clusters,
+#     fun = "enrichKEGG",
+#     organism = "hsa",
+#     pvalueCutoff = 0.05
+# )
+# ''')
 ```
 
 ## Visualization

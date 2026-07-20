@@ -97,35 +97,58 @@ def terminal_half_life(time, concentration, min_points=3):
     Returns
     -------
     dict
-        t_half, lambda_z, r_squared. Returns NaN if insufficient data.
+        t_half, lambda_z, r_squared, n_points (size of the selected
+        terminal window). Returns NaN / 0 if insufficient data.
     """
     time = np.asarray(time)
     conc = np.asarray(concentration)
 
-    # Find declining phase (after Cmax)
+    # Candidate points: everything after Cmax with a measurable conc.
     cmax_idx = np.argmax(conc)
-    decline_mask = np.arange(len(conc)) > cmax_idx
-    decline_mask &= conc > 0
+    post_mask = np.arange(len(conc)) > cmax_idx
+    post_mask &= conc > 0
 
-    t_dec = time[decline_mask]
-    c_dec = conc[decline_mask]
+    t_post = time[post_mask]
+    c_post = conc[post_mask]
 
-    if len(t_dec) < min_points:
-        return {"t_half": np.nan, "lambda_z": np.nan, "r_squared": np.nan}
+    nan_result = {"t_half": np.nan, "lambda_z": np.nan,
+                  "r_squared": np.nan, "n_points": 0}
+    if len(t_post) < min_points:
+        return nan_result
 
-    log_c = np.log(c_dec)
-    slope, intercept = np.polyfit(t_dec, log_c, 1)
+    # Select the TERMINAL window, do not regress every post-Cmax point.
+    # Points just after Cmax still belong to the distribution phase; a
+    # fit that includes them is too steep, so lambda_z is overestimated
+    # -> t_half too short, AUC(0-inf) too small, CL/F and Vz/F wrong.
+    # Standard NCA takes the last n >= min_points samples maximising
+    # ADJUSTED R^2, which penalises reaching back into distribution.
+    log_c_post = np.log(c_post)
+    best = None
+    for n in range(min_points, len(t_post) + 1):
+        t_w, y_w = t_post[-n:], log_c_post[-n:]
+        slope, intercept = np.polyfit(t_w, y_w, 1)
+        if slope >= 0:
+            continue  # not a decline; cannot be a terminal phase
+        ss_tot = np.sum((y_w - np.mean(y_w)) ** 2)
+        if ss_tot <= 0:
+            continue
+        ss_res = np.sum((y_w - (slope * t_w + intercept)) ** 2)
+        r_sq = 1 - ss_res / ss_tot
+        adj_r_sq = 1 - (1 - r_sq) * (n - 1) / (n - 2) if n > 2 else r_sq
+        if best is None or adj_r_sq > best[0]:
+            best = (adj_r_sq, slope, r_sq, n)
 
-    # R-squared for terminal phase fit
-    predicted = slope * t_dec + intercept
-    ss_res = np.sum((log_c - predicted) ** 2)
-    ss_tot = np.sum((log_c - np.mean(log_c)) ** 2)
-    r_sq = 1 - ss_res / ss_tot if ss_tot > 0 else np.nan
+    if best is None:
+        return nan_result
 
+    _, slope, r_sq, n_used = best
     lambda_z = -slope
     t_half = np.log(2) / lambda_z if lambda_z > 0 else np.nan
 
-    return {"t_half": t_half, "lambda_z": lambda_z, "r_squared": r_sq}
+    # n_points is reported so the >= 3 terminal-points quality check
+    # below can actually be evaluated.
+    return {"t_half": t_half, "lambda_z": lambda_z,
+            "r_squared": r_sq, "n_points": n_used}
 ```
 
 ### Derived PK Parameters
@@ -156,7 +179,11 @@ def derive_pk_params(time, concentration, dose, dose_unit="mg"):
 
     cmax = np.max(conc)
     tmax = time[np.argmax(conc)]
-    auc_0_last = integrate.trapezoid(conc, time)
+    # Use the linear-up/log-down rule defined above, NOT a plain linear
+    # trapezoid. The linear rule overestimates AUC on a log-declining
+    # limb, and that bias propagates into AUC(0-inf), CL/F, Vz/F and
+    # AUC_extrap_pct.
+    auc_0_last = auc_log_linear_trapezoidal(time, conc)
     c_last = conc[-1]
 
     term = terminal_half_life(time, conc)

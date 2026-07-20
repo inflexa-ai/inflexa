@@ -146,14 +146,14 @@ ir.tl.define_clonotype_clusters(
 ir.tl.clonal_expansion(
     mdata,
     target_col="clone_id",
-    breakpoints=(1, 2, 5),  # Groups: "1", "2", "3-5", ">5"
+    breakpoints=(1, 2, 5),  # Categories: "<= 1", "<= 2", "<= 5", "> 5"
 )
 # Adds: mdata.obs["airr:clonal_expansion"]
 
 print(mdata.obs["airr:clonal_expansion"].value_counts())
 # <= 1     1850
-# 2         234
-# 3-5       156
+# <= 2      234
+# <= 5      156
 # > 5       108
 
 # Calculate proportion of expanded cells
