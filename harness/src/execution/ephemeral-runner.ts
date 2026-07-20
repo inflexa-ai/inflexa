@@ -29,6 +29,7 @@ import type { RunSession } from "../auth/types.js";
 import { forSubAgent } from "../auth/types.js";
 import { finalText, runAgent } from "../loop/run-agent.js";
 import { durableStep } from "../loop/run-step.js";
+import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import type { ResourcePolicy, ResourceSpec } from "../config/resource-limits.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { SandboxClient } from "../sandbox/client.js";
@@ -64,7 +65,7 @@ const DEFAULT_DEADLINE_MS = 120_000;
 const EPHEMERAL_SANDBOX_RESOURCES: ResourceSpec = { cpu: 4, memoryGb: 8 };
 
 /** The body's construction-time deps — closed over at registration. */
-export interface EphemeralDeps {
+export interface EphemeralDeps extends EnvironmentStorePaths {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly provider: ChatProvider;
@@ -81,18 +82,6 @@ export interface EphemeralDeps {
     readonly bioKeys: BioToolKeys;
     /** Host resource policy — its `ephemeral` spec overrides the default sandbox size. */
     readonly resourcePolicy?: ResourcePolicy;
-    /**
-     * Host path of the library store's `packages.txt`. Omit when the host mounts the
-     * store at the sandbox's own path; a host whose store is baked into the image must
-     * inject its extracted copy, or the executor reads the inventory as unknown.
-     */
-    readonly packagesFile?: string;
-    /**
-     * Host path of the reference store. Omit only when none is provisioned: the
-     * executor carries reference discovery, and without this it reports an installed
-     * store as absent.
-     */
-    readonly refStorePath?: string;
 }
 
 /**

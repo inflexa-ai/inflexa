@@ -82,6 +82,8 @@ import {
 } from "../tools/workspace/index.js";
 import { showUserTool } from "../tools/display/index.js";
 import { createUpdateWorkingMemoryTool } from "../tools/memory/index.js";
+import type { EnvironmentStorePaths } from "../config/environment-stores.js";
+import { createListAvailablePackagesTool } from "../tools/sandbox/list-available-packages.js";
 import { createListAvailableRefsTool } from "../tools/sandbox/list-available-refs.js";
 import { createExecutePlanTool } from "../tools/execute-plan.js";
 import { createRunEphemeralTool } from "../tools/run-ephemeral.js";
@@ -97,8 +99,13 @@ export const CONVERSATION_AGENT_ID = "conversation-agent" as const;
 /** Runaway guard — heavy tool-driving turns need generous headroom. */
 const CONVERSATION_MAX_ITERATIONS = 50;
 
-/** The shared dependencies the composition root explodes apart. */
-export interface ConversationAgentDeps {
+/**
+ * The shared dependencies the composition root explodes apart. The environment
+ * store paths give this agent and its planner the same view of what is staged and
+ * what is importable that a sandbox agent has — read host-side, so answering
+ * "does this environment have X?" costs a lookup rather than a container.
+ */
+export interface ConversationAgentDeps extends EnvironmentStorePaths {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     /** The LLM seam every loop-driving tool runs its sub-agent on. */
@@ -164,13 +171,6 @@ export interface ConversationAgentDeps {
      * built-in tool.
      */
     readonly hostTools?: readonly Tool[];
-    /**
-     * Host path of the reference store — the same bytes sandboxes mount at
-     * `/mnt/refs`. Gives `generate_plan` reference discovery, so a plan can be
-     * grounded in what this environment actually holds. Omit when no store is
-     * provisioned.
-     */
-    readonly refStorePath?: string;
 }
 
 /** Build the conversation `AgentDefinition` with every tool fully dep-bound. */
@@ -194,6 +194,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         resourcePolicy,
         hostTools,
         refStorePath,
+        packagesFile,
     } = deps;
     const workingMemory = createWorkingMemory(pool);
     const ncbi = createNcbiTools(bioKeys);
@@ -231,11 +232,15 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         // blind is how a user gets asked to download something already installed, or
         // told nothing is missing when it is; this is the only tool that can tell.
         createListAvailableRefsTool({ ...(refStorePath ? { refStorePath } : {}) }),
+        // What is importable inside a sandbox. Reads the same manifest a sandbox agent
+        // reads, host-side — so "is scanpy available?" is a manifest lookup here rather
+        // than a whole ephemeral container spun up to run one import.
+        createListAvailablePackagesTool({ ...(packagesFile ? { packagesFile } : {}) }),
         // Execution.
         createInspectRunTool(pool),
         // The dataset's own record. No file backs it — the DB row is the only copy.
         createInspectDataProfileTool(pool),
-        createGeneratePlanTool({ provider, pool, model, resourcePolicy, ...(refStorePath ? { refStorePath } : {}) }),
+        createGeneratePlanTool({ provider, pool, model, resourcePolicy, ...(refStorePath ? { refStorePath } : {}), ...(packagesFile ? { packagesFile } : {}) }),
         createExecutePlanTool({
             pool,
             executeAnalysisWorkflow,

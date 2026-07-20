@@ -4,7 +4,10 @@
  * installs and user-added files alike). Narrow with `path`/`category`, filter
  * with `query`, cap with `limit`; every response carries `returned`/`total`/
  * `hasMore` and the `categories` present, so a listing is never an unbounded
- * dump. Symlinks are never followed; nothing can be downloaded at runtime.
+ * dump. Symlinks are never followed. This tool only ever READS the store: the
+ * analysis environment cannot fetch reference data, and staging more is the
+ * host's job — so an absent dataset is a fact about this moment, not a verdict
+ * that it is unobtainable.
  *
  * The store is read from the host filesystem at the embedder-supplied
  * `refStorePath` and reported at `/mnt/refs`, the container path sandboxes mount
@@ -27,6 +30,7 @@ import { join as hostJoin, posix as posixPath } from "node:path";
 import { ok } from "neverthrow";
 import { z } from "zod";
 
+import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import { REFERENCE_DATA_CATALOG } from "../../reference-data/catalog.js";
 import { parseReferenceInstallReceipt } from "../../reference-data/receipt.js";
 import { defineTool } from "../define-tool.js";
@@ -74,14 +78,7 @@ const ListAvailableRefsInputSchema = z.object({
         ),
 });
 
-export interface ListAvailableRefsDeps {
-    /**
-     * Host path of the reference store — the same bytes sandboxes see at
-     * `/mnt/refs`. Omitted (or absent on disk) means no store is provisioned,
-     * which is a normal state reported as `unavailable`, not an error.
-     */
-    readonly refStorePath?: string;
-}
+export type ListAvailableRefsDeps = Pick<EnvironmentStorePaths, "refStorePath">;
 
 export interface ReferenceInventoryMetadata {
     readonly datasetId?: string;
@@ -538,7 +535,10 @@ function collectCategories(entries: readonly ReferenceInventoryEntry[]): string[
 
 function renderContent(path: string, scan: RawScan, entries: readonly ReferenceInventoryEntry[]): string {
     if (scan.state === "unavailable")
-        return "No reference store is provisioned. Reference data cannot be downloaded at runtime; provision it through the host setup flow.";
+        return (
+            "No reference store is provisioned. Nothing in the analysis environment can fetch reference data — the host stages it, " +
+            "so a store provisioned through the host's own path will show up on a later call."
+        );
     if (scan.state === "not_found") return `Reference path does not exist: ${path}`;
     if (scan.state === "not_a_directory") return `Reference path is not a directory: ${path}`;
     if (scan.state === "symlink") return `Reference path crosses a symlink and was not scanned: ${path}`;
@@ -573,7 +573,8 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
     return defineTool({
         id: "list_available_refs",
         description:
-            "Resolve reference data you need into a real path. Reports the reference data actually provisioned for this environment — the ONLY reference data that exists here; nothing can be downloaded at runtime. " +
+            "Resolve reference data you need into a real path. Reports the reference data provisioned for this environment right now — the only reference data an analysis script can open. " +
+            "Nothing inside the analysis environment reaches the network, so never write a download into a script. " +
             "Search by what the data IS, not by where you expect it: the store's directory layout is an installer detail and is not a stable interface. " +
             "Catalogued files come back with the organism, the format, and the file's internal shape (key columns, identifier space), so you can pick the right reader and the right species without opening the file first. " +
             "User-added files are returned too, with whatever labels exist — often none. Symlinks are never followed. " +
@@ -583,7 +584,9 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
             "`path` inspects one directory beneath /mnt/refs (a returned path, or store-relative) — drill in with it when a listing is truncated; " +
             '`category` is shorthand for a top-level group (e.g. "pathways", "regulatory-networks"), and the groups present come back in `categories`; ' +
             "`limit` caps the entries returned. The response carries `returned`, `total`, and `hasMore`, so truncation is never silent. " +
-            "An empty result means the data is genuinely absent — say so and proceed with what you have; do not guess a path. Provision additional files through the host setup flow.",
+            "An empty result means the dataset is absent right now — not that it is unobtainable. Say so; never guess a path, and never silently substitute a different dataset. " +
+            "The store is provisioned by the host and is NOT frozen: datasets can be added through the host's own provisioning path, and whatever is added shows up on a later call. " +
+            "So before you report a gap as permanent, check whether any tool you hold reaches that provisioning path — offer that route if one exists, and call the gap permanent only when none does.",
         inputSchema: ListAvailableRefsInputSchema,
         execute: async ({ path, category, query, limit }) => {
             // `category` is shorthand for a top-level path; an explicit `path` wins.
