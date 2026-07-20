@@ -54,14 +54,26 @@ export function packagesCachePath(imageId: string): string {
  * staying correct when the cache directory is wiped.
  */
 export async function cachePackageInventory(rt: ContainerRuntime, image: string): Promise<Result<string, PackageInventoryError>> {
-    const idProbe = await capture(rt, ["image", "inspect", "--format", "{{.Id}}", image]);
-    if (idProbe.code !== 0) return err({ type: "image_absent", image });
+    // `capture` THROWS when the runtime binary is not on PATH (ENOENT from spawn) — it
+    // does not return a non-zero code. An absent container runtime is an ordinary state
+    // for a host that has not provisioned one yet, and the inventory is an enrichment,
+    // so the throw is bridged here rather than allowed to escape into the boot sequence.
+    const probe = async (args: string[]): Promise<{ code: number; stdout: string } | null> => {
+        try {
+            return await capture(rt, args);
+        } catch {
+            return null;
+        }
+    };
+
+    const idProbe = await probe(["image", "inspect", "--format", "{{.Id}}", image]);
+    if (idProbe === null || idProbe.code !== 0) return err({ type: "image_absent", image });
     const imageId = idProbe.stdout.trim();
 
     // `index` (not `.Config.Labels.<key>`) because the key contains dots, which Go
     // templates would otherwise parse as field traversal.
-    const labelProbe = await capture(rt, ["image", "inspect", "--format", `{{index .Config.Labels "${PACKAGES_LABEL}"}}`, image]);
-    const inventory = labelProbe.code === 0 ? labelProbe.stdout : "";
+    const labelProbe = await probe(["image", "inspect", "--format", `{{index .Config.Labels "${PACKAGES_LABEL}"}}`, image]);
+    const inventory = labelProbe !== null && labelProbe.code === 0 ? labelProbe.stdout : "";
     // A missing label prints the Go zero value rather than failing the command.
     if (inventory.trim() === "" || inventory.trim() === "<no value>") return err({ type: "label_missing", image });
 

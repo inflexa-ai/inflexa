@@ -313,6 +313,14 @@ export type BootSeams = {
      * offline (no runtime binaries spawned).
      */
     readonly resolveSandboxEngine: () => Promise<Result<ResolvedSandboxEngine, ContainerRuntimeError>>;
+    /**
+     * Extract the sandbox image's package inventory onto the host, returning its cached
+     * path or null when none can be read. Effectful (it shells out to the container
+     * runtime), so it is a seam: the sequencing test must stay offline, and a host with
+     * no runtime binary on PATH must boot regardless — the inventory is an enrichment,
+     * never a prerequisite.
+     */
+    readonly resolvePackages: (rt: ContainerRuntime, image: string) => Promise<string | null>;
     readonly ensurePostgres: () => Promise<Result<PostgresConnection, PostgresError>>;
     /** Construct the sandbox client — a seam so boot tests can inspect the engine config it is wired with. */
     readonly createSandbox: typeof createSandboxClient;
@@ -363,6 +371,7 @@ export type BootSeams = {
 
 const realSeams: BootSeams = {
     resolveSandboxEngine: resolveSandboxEngineOnce,
+    resolvePackages: resolvePackagesFile,
     ensurePostgres: ensurePostgresReady,
     createSandbox: createSandboxClient,
     startIngress: () => startExecIngress(),
@@ -654,19 +663,23 @@ async function bootHarnessRuntimeOnce(
     if (engineResult.isErr()) return err({ type: "sandbox_engine_unresolved", message: engineResult.error.message });
     const { runtime: pinnedRuntime, socketPath: engineSocketPath } = engineResult.value;
 
+    const pgResult = await seams.ensurePostgres();
+    if (pgResult.isErr()) return err({ type: "postgres_unavailable", cause: pgResult.error });
+    const conn = pgResult.value;
+
     // Extract the image's package inventory onto the host. The cli never bind-mounts the
     // library store — it is baked into the image — so this cached copy is the ONLY thing
     // `list_available_packages` can read; without it every agent is told the installed set
     // is unknown. `ensureSandboxImage` has already pulled through this same pin, so the
-    // image is present. A null result is non-fatal by design and must not block boot.
-    const packagesFile = await resolvePackagesFile(pinnedRuntime, cfg.sandboxImage);
+    // image is present.
+    //
+    // Deliberately AFTER the prereq gates: it spawns a container-runtime probe, and a boot
+    // that is about to fail on Postgres must not pay for it. A null result is non-fatal —
+    // the inventory is an enrichment, never a prerequisite.
+    const packagesFile = await seams.resolvePackages(pinnedRuntime, cfg.sandboxImage);
     if (packagesFile === null) {
         logger.warn("no sandbox package inventory — agents will be told the installed package set is unknown", { image: cfg.sandboxImage });
     }
-
-    const pgResult = await seams.ensurePostgres();
-    if (pgResult.isErr()) return err({ type: "postgres_unavailable", cause: pgResult.error });
-    const conn = pgResult.value;
 
     // The local CLI is a POLL-mode embedder: the host polls the sandbox for
     // results, the sandbox initiates nothing, and there is no callback listener to
