@@ -166,6 +166,18 @@ RUN echo "/mnt/libs/current/python/site-packages" > /usr/lib/python3/dist-packag
 RUN useradd -m -u 1000 -s /bin/bash sandbox \
     && mkdir -p /workspace && chown -R sandbox:sandbox /workspace
 
+# Declared explicitly rather than left to the runtime's passwd lookup, which
+# resolves against the *create-time* user: poll mode creates the container as
+# root (for CAP_NET_ADMIN) and reaches uid 1000 only via the entrypoint's
+# `setpriv`, which changes credentials but not environment; K8s creates it with a
+# numeric `runAsUser` and no lookup at all. Neither yields a home for the uid the
+# workload actually runs as.
+#
+# This path must also stay writable: numba resolves a cache locator per
+# @njit(cache=True) function and raises when none is writable, and with the lib
+# store read-only `$HOME/.cache/numba` is the last candidate.
+ENV HOME=/home/sandbox
+
 # sandbox-server binary — copied last so Go code changes don't invalidate
 # the expensive apt/font layers above.
 COPY --from=server-builder /sandbox-server /usr/local/bin/sandbox-server
