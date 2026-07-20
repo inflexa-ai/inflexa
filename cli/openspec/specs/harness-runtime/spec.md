@@ -317,6 +317,10 @@ surface:
   which fails visibly at the point of use (report preview reports its unavailability;
   report submission remains the only gate) — consistent with the rule that no
   dependency is realized as a fake that fabricates success.
+- `hostTools` SHALL carry the `run_inflexa` tool (see `agent-cli-tool`) through the
+  harness host-tool seam, so the conversation agent can drive the `inflexa` CLI as an
+  approval-gated subprocess. The harness stays agnostic to the tool; the CLI owns its
+  classifier, spawn, and approval-request construction.
 
 #### Scenario: Conversation deps resolve to their designated backends
 
@@ -327,6 +331,11 @@ surface:
 
 - **WHEN** the agent attempts a report preview snapshot in a local chat
 - **THEN** the preview tool reports preview unavailability (no Chrome is contacted) and report iteration/submission still works
+
+#### Scenario: The conversation agent carries the inflexa CLI host tool
+
+- **WHEN** the runtime composes the conversation agent
+- **THEN** the `run_inflexa` host tool is present in the agent's tools via the harness `hostTools` seam
 
 ### Requirement: The CLI realizes the workspace-root resolver
 
