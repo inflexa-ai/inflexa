@@ -302,8 +302,63 @@ async function readLegacyEntries(root: string): Promise<unknown[]> {
     return legacyEntries;
 }
 
-/** Scan the store beneath `root`, reporting every expected state as data. */
-async function scanStore(root: string | undefined, relative: string): Promise<RawScan> {
+/**
+ * Collect FILES anywhere beneath `directory`, bounded by the scan budget.
+ *
+ * Searching by meaning only works if it reaches the files that carry meaning. A
+ * dataset's labels are joined onto its artifact at
+ * `managed/{id}/{version}/{artifact}`, so a listing of the store root — whose only
+ * entries are directories, which carry no such labels — can never match "regulon".
+ * Browsing wants the directory summary; searching wants the leaves.
+ */
+async function collectFiles(
+    directory: string,
+    relative: string,
+    budget: { scanned: number },
+): Promise<{ entries: ReferenceInventoryEntry[]; truncated: boolean }> {
+    const entries: ReferenceInventoryEntry[] = [];
+    let truncated = false;
+    const stack: { path: string; relative: string }[] = [{ path: directory, relative }];
+
+    while (stack.length > 0 && budget.scanned < MAX_SCANNED_ENTRIES) {
+        const current = stack.pop()!;
+        const { values, cut } = await cappedEntries(current.path, MAX_SCANNED_ENTRIES - budget.scanned);
+        truncated = truncated || cut;
+        for (const child of values) {
+            budget.scanned += 1;
+            const childRelative = current.relative === "." ? child.name : `${current.relative}/${child.name}`;
+            // Installer metadata is not reference data — it never becomes a search hit.
+            if (childRelative === ".inflexa" || childRelative.startsWith(".inflexa/") || childRelative === "registry.json") continue;
+            if (child.kind === "directory") {
+                stack.push({ path: hostJoin(current.path, child.name), relative: childRelative });
+            } else if (child.kind === "file" || child.kind === "symlink") {
+                if (entries.length >= MAX_ENTRIES) {
+                    truncated = true;
+                } else {
+                    entries.push(
+                        child.kind === "symlink"
+                            ? { path: `${REFS_ROOT}/${childRelative}`, kind: "symlink", bytes: 0 }
+                            : { path: `${REFS_ROOT}/${childRelative}`, kind: "file", bytes: child.bytes },
+                    );
+                }
+            }
+            if (budget.scanned >= MAX_SCANNED_ENTRIES) {
+                truncated = true;
+                break;
+            }
+        }
+    }
+    return { entries, truncated };
+}
+
+/**
+ * Scan the store beneath `root`, reporting every expected state as data.
+ *
+ * `recursive` selects the two modes: a browse lists immediate children (directories
+ * summarized), a search walks to the files, because only a file carries the labels a
+ * search matches on.
+ */
+async function scanStore(root: string | undefined, relative: string, recursive = false): Promise<RawScan> {
     const empty = (): Omit<RawScan, "state"> => ({ entries: [], scannedEntries: 0, truncated: false });
     if (!root) return { state: "unavailable", ...empty() };
     try {
@@ -322,6 +377,19 @@ async function scanStore(root: string | undefined, relative: string): Promise<Ra
         return { state: "not_found", ...empty() };
     }
     if (!targetStats.isDirectory()) return { state: "not_a_directory", ...empty() };
+
+    if (recursive) {
+        const budget = { scanned: 0 };
+        const walked = await collectFiles(target, relative, budget);
+        return {
+            state: walked.entries.length === 0 ? "empty" : "populated",
+            entries: walked.entries,
+            scannedEntries: budget.scanned,
+            truncated: walked.truncated,
+            receipts: await readReceipts(root),
+            legacyEntries: await readLegacyEntries(root),
+        };
+    }
 
     const entries: ReferenceInventoryEntry[] = [];
     let scanned = 0;
@@ -538,7 +606,11 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
                 return ok(response);
             }
 
-            const raw = await scanStore(deps.refStorePath, posixPath.relative(REFS_ROOT, requested.path) || ".");
+            // A query searches the leaves; a bare listing browses this level. Without the
+            // recursive pass a search from the store root only ever sees directories,
+            // which carry no dataset labels, so "find me a regulon network" finds nothing.
+            const needleGiven = (query?.trim() ?? "") !== "";
+            const raw = await scanStore(deps.refStorePath, posixPath.relative(REFS_ROOT, requested.path) || ".", needleGiven);
             const enriched = enrichEntries(raw.entries, raw);
             const categories = collectCategories(enriched);
             const needle = query?.trim().toLowerCase();
