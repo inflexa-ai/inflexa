@@ -114,17 +114,26 @@ The system SHALL register `inflexa status [--analysis <x>] [--project <p>]` (`ru
 
 ### Requirement: Commander registry with lazy-imported actions
 
-The commands SHALL be registered on the commander root in `src/cli/index.ts`, each lazy-importing
-its action (text commands from their module, chat-opening commands from `src/tui/app.launch.tsx`).
-Dev-channel commands (`chat`, `profile`, `run` — see `dev-commands`) SHALL be registered only when
-the dev channel is active, so a release build never carries them. Interactive confirms and pickers
-SHALL use the shared clack-based prompts in `src/lib/cli.ts` (`confirm`, `select`, `promptText`),
-declining gracefully on a non-interactive stdin — no bespoke `readline` picker.
+The commands SHALL be registered by a reusable `buildProgram()` factory in `src/cli/index.ts` that
+returns a fresh commander root, each command lazy-importing its action (text commands from their
+module, chat-opening commands from `src/tui/app.launch.tsx`). A `cli` root SHALL be derived by
+calling the factory once at module load, so the existing entry point (`src/index.ts`) and the docs
+generator consume it unchanged; the factory being callable more than once is what lets a second
+instance be built for dry classification (see `agent-cli-tool`). Dev-channel commands (`chat`,
+`profile`, `run` — see `dev-commands`) SHALL be registered only when the dev channel is active, so a
+release build never carries them. Interactive confirms and pickers SHALL use the shared clack-based
+prompts in `src/lib/cli.ts` (`confirm`, `select`, `promptText`), declining gracefully on a
+non-interactive stdin — no bespoke `readline` picker.
 
 #### Scenario: Actions are lazy-imported
 
 - **WHEN** a command runs
 - **THEN** only that command's action module is imported, keeping startup paths lean
+
+#### Scenario: The factory builds an independent program each call
+
+- **WHEN** `buildProgram()` is called more than once in a process
+- **THEN** each call returns a fresh commander root with the same command tree, so one instance can be built for real dispatch and another for classification without shared parse state
 
 #### Scenario: Non-interactive prompt declines
 
