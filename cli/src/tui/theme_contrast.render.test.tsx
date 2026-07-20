@@ -54,28 +54,45 @@ function spanFg(setup: Awaited<ReturnType<typeof testRender>>, needle: string): 
     return undefined;
 }
 
-/** Render `node`, driving frames on real timers until `needle` appears (markdown/code parse async). */
+/** How long a block gets to paint its needle before the wait is abandoned and reported as a failure. */
+const RENDER_TIMEOUT_MS = 3000;
+
+/**
+ * Render `node`, driving frames on real timers until `needle` appears in the character frame.
+ *
+ * `rendered` reports whether the needle actually arrived. Blocks whose body goes through the markdown
+ * / code / diff renderables parse asynchronously, so some waiting is unavoidable — but a wait that
+ * gives up has to SAY it gave up. Returning the same value for "the content arrived" and "the clock
+ * ran out" hands the caller a frame it cannot interpret, and any caller that measures an ABSENCE —
+ * no sub-floor spans, no wrong colors — would then read a blank screen as a clean bill of health.
+ */
 async function renderUntil(
     node: Parameters<typeof testRender>[0],
     needle: string,
     size: { width: number; height: number } = { width: 60, height: 12 },
-    timeoutMs = 3000,
-): Promise<Awaited<ReturnType<typeof testRender>>> {
+    timeoutMs = RENDER_TIMEOUT_MS,
+): Promise<{ setup: Awaited<ReturnType<typeof testRender>>; rendered: boolean }> {
     const setup = await testRender(node, size);
     const start = Date.now();
     for (;;) {
         await setup.renderOnce();
-        if (setup.captureCharFrame().includes(needle) || Date.now() - start > timeoutMs) return setup;
+        if (setup.captureCharFrame().includes(needle)) return { setup, rendered: true };
+        if (Date.now() - start > timeoutMs) return { setup, rendered: false };
         await new Promise((r) => setTimeout(r, 10));
     }
 }
 
+// These two cases carry their own precondition and so read `rendered` for nothing: each asserts on ONE
+// span located by needle, so a needle that never paints leaves `spanFg` undefined and fails at
+// `expect(fg).toBeDefined()` — the timeout cannot be mistaken for a pass. The sweep below cannot
+// borrow that safety, because it asserts an EMPTY set of violations and an empty screen satisfies it
+// identically to a correct one; it therefore checks the flag itself.
 describe("theme-contrast AA: un-captured spans use the theme fg, not white", () => {
     test("a markdown pipe-table data cell renders in the theme fg", async () => {
         setTheme(LIGHT);
         const md = ["| Column |", "| --- |", "| CELLDATA |"].join("\n");
         // The production markdown config (see MessageBlock): fg + active syntaxStyle, streaming pinned true.
-        const setup = await renderUntil(
+        const { setup } = await renderUntil(
             () => (
                 <box width="100%" height="100%">
                     <markdown content={md} fg={theme().fg} syntaxStyle={syntaxStyle()} streaming={true} internalBlockMode="top-level" />
@@ -95,7 +112,7 @@ describe("theme-contrast AA: un-captured spans use the theme fg, not white", () 
 
     test("a ToolBlock plain-text result renders in the theme fg", async () => {
         setTheme(LIGHT);
-        const setup = await renderUntil(
+        const { setup } = await renderUntil(
             () => (
                 <box width="100%" height="100%">
                     <ToolBlock name="read_file" result={"UNIQUEPLAINTEXT no highlights here"} filetype="text" status="ok" />
@@ -117,6 +134,22 @@ describe("theme-contrast AA: un-captured spans use the theme fg, not white", () 
 // ─────────────────────────────────────────────────────────────────────────────
 // The sweep: every covered block's rendered spans must clear their contrast floor
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// Two guards divide the contrast question between them, and neither subsumes the other.
+//
+// `lib/design_system.contrast.test.ts` owns BREADTH: it measures DECLARED (token, background) pairs
+// across all ten themes, so a palette edit that breaks a pair on a theme nobody opened still fails.
+// What it cannot see is a pair nobody wrote down.
+//
+// This sweep owns REALITY: it measures what a block ACTUALLY painted, on ONE theme, so a span no
+// palette row describes is still caught — an un-themed <text> falling through to opentui's opaque-white
+// default is invisible to a matrix of declared pairs precisely because nobody declared it. One theme
+// suffices for that defect and github-light is its sharpest form: its bg is pure #ffffff, so the
+// fallthrough measures exactly 1.00:1 rather than merely wrong.
+//
+// The seam this leaves: a THEMED token painted on a background absent from the palette matrix is only
+// ever checked here, hence on github-light alone. Closing that gap means adding the missing pair to
+// the matrix — per-theme coverage is its job — not widening this sweep to ten themes.
 
 /** WCAG AA for text: information-bearing content must clear 4.5:1 against what it is painted on. */
 const TEXT_FLOOR = 4.5;
@@ -176,9 +209,14 @@ type BlockCase = {
     /** The block, wrapped in a full-size box so it lays out against the terminal surface. */
     node: () => JSX.Element;
     /**
-     * Text that must be on screen before spans are read. Blocks whose body goes through the markdown
-     * / code renderables parse asynchronously, so their content is absent from the first frame and a
-     * single-frame capture would measure an empty block and pass vacuously.
+     * Text that must be on screen before spans are read, and a precondition of the case rather than a
+     * hint: a needle that never appears fails the case outright. Blocks whose body goes through the
+     * markdown / code renderables parse asynchronously, so their content is absent from the first
+     * frame and a single-frame capture would measure an empty block and pass vacuously.
+     *
+     * Pick a token that ONLY the intended content can produce. A needle that some other part of the
+     * block also satisfies — a word shared by the greeting and a path, say — resolves early against
+     * content it did not mean to wait for, which is the same missed wait in a form that never fails.
      */
     until: string;
 };
@@ -193,7 +231,8 @@ const BLOCKS: BlockCase[] = [
     {
         name: "Welcome",
         node: () => <Welcome greeting="welcome to inflexa" anchorPath="~/inflexa-tests" markerWritten={true} hints={["run /init", "ctrl+k for commands"]} />,
-        until: "inflexa",
+        // The whole greeting, not the product name inside it: the anchor path carries that name too.
+        until: "welcome to inflexa",
     },
     {
         name: "ThinkingBlock",
@@ -280,15 +319,23 @@ const BLOCKS: BlockCase[] = [
 ];
 
 /**
- * Render one block on the light theme and describe every sub-floor span it painted. Each violation
- * names the block, the span text, the measured ratio and its floor, and the exact pair measured — a
- * bare list of booleans would say a block is broken without saying which line to look at.
+ * Render one block on the light theme and describe everything wrong with what it painted: every
+ * sub-floor span, plus the two ways the measurement itself can come out void.
+ *
+ * Findings are prose, and the three kinds read differently on purpose. A bare list of booleans would
+ * say a block is broken without saying which line to look at, and a reader must be able to tell at a
+ * glance whether the block failed to draw (go look at the fixture or the renderable) or drew
+ * something illegible (go look at the palette) — the two send you to opposite ends of the codebase.
+ *
+ * An empty result therefore means "this block drew what it was supposed to draw, and every span of it
+ * clears its floor", never merely "nothing was found". A guard that can pass by measuring nothing
+ * reports a safety it never checked, which is the exact failure class this file exists to catch.
  */
-async function subAaSpans(block: BlockCase): Promise<string[]> {
+async function blockFindings(block: BlockCase): Promise<string[]> {
     setTheme(LIGHT);
     // A span that paints no background of its own lands on the app surface the chat stream renders on.
     const surface = themes[LIGHT].colors.bg;
-    const setup = await renderUntil(
+    const { setup, rendered } = await renderUntil(
         () => (
             <box width="100%" height="100%">
                 {block.node()}
@@ -298,26 +345,59 @@ async function subAaSpans(block: BlockCase): Promise<string[]> {
         { width: 80, height: 24 },
     );
     try {
+        // Reported alone, and before anything is measured: spans harvested from a screen that never
+        // showed the block describe a state no reader can act on, and listing them beside the real
+        // fault would bury it.
+        if (!rendered) {
+            return [
+                `${block.name} never rendered its expected content: no frame contained "${block.until}" within ${RENDER_TIMEOUT_MS}ms — the block, its fixture, or its needle is broken. This is NOT a contrast failure.`,
+            ];
+        }
+
         // Keyed by message: a block repeats the same pair across rows (every border cell of a frame),
         // and one line per DISTINCT violation is what a reader needs.
         const violations = new Set<string>();
+        let measurable = 0;
         for (const line of setup.captureSpans().lines) {
             for (const span of line.spans) {
                 const text = span.text.trim();
                 if (text.length === 0) continue;
+                measurable += 1;
                 // rgbToHex appends an alpha byte ONLY for a non-opaque color, so a 7-char string is
-                // exactly the "fully opaque" test. A transparent span bg means nothing was painted
-                // behind the text; an opaque one is a real surface the span sits on — opentui carries
-                // an ancestor box's backgroundColor into its spans, so a block on a raised panel is
-                // measured against that panel, not against the app background behind it.
+                // exactly the "fully opaque" test.
+                //
+                // For the BACKGROUND, a transparent value means nothing was painted behind the text;
+                // an opaque one is a real surface the span sits on — opentui carries an ancestor box's
+                // backgroundColor into its spans, so a block on a raised panel is measured against
+                // that panel, not against the app background behind it.
                 const bgHex = rgbToHex(span.bg);
                 const bg = bgHex.length === 7 ? bgHex : surface;
-                // Drop any alpha byte: the luminance math reads the three color channels only.
-                const fg = rgbToHex(span.fg).slice(0, 7);
+                // For the FOREGROUND there is no such substitute. A translucent fg composites toward
+                // whatever is behind it, so its true ratio is LOWER than the same channels read as
+                // opaque — discarding the alpha byte would overstate contrast, the one direction a
+                // contrast guard must never err in. Every color in the theme registry is an opaque
+                // hex, so this cannot fire today; it is reported rather than quietly rounded so that
+                // the day a translucent foreground does appear, the guard says it cannot measure the
+                // span instead of blessing it.
+                const fg = rgbToHex(span.fg);
+                if (fg.length !== 7) {
+                    violations.add(
+                        `${block.name} · "${text}" painted a non-opaque fg ${fg} — its true contrast on ${bg} is below what these channels read, so the span cannot be measured here`,
+                    );
+                    continue;
+                }
                 const floor = floorFor(text);
                 const ratio = contrast(fg, bg);
                 if (ratio < floor) violations.add(`${block.name} · "${text}" ${fg} on ${bg} = ${ratio.toFixed(2)}:1, need ${floor}:1`);
             }
+        }
+
+        // Vacuity by the other route: the needle landed but the block painted nothing measurable, so
+        // an empty violation list would attest to a screen that holds no spans to attest about.
+        if (measurable === 0) {
+            return [
+                `${block.name} rendered "${block.until}" but painted no non-blank span — there was nothing to measure, so a clean result would attest to nothing.`,
+            ];
         }
         return [...violations];
     } finally {
@@ -327,8 +407,8 @@ async function subAaSpans(block: BlockCase): Promise<string[]> {
 
 describe("theme-contrast AA: every block's rendered spans clear their floor", () => {
     for (const block of BLOCKS) {
-        test(`${block.name} paints no sub-AA span`, async () => {
-            expect(await subAaSpans(block)).toEqual([]);
+        test(`${block.name} renders its content and paints no sub-AA span`, async () => {
+            expect(await blockFindings(block)).toEqual([]);
         });
     }
 });
