@@ -78,6 +78,7 @@ import { setActiveExecId } from "../../state/index.js";
 
 import type { AgentMeta, SandboxToolName } from "./types.js";
 import { SANDBOX_AGENT_DEFAULT_MAX_ITERATIONS } from "./types.js";
+import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 import type { Logger } from "../../lib/logger.js";
 
 /**
@@ -106,7 +107,7 @@ export interface SandboxStepCoords {
 }
 
 /** The shared dependency graph every sandbox agent draws from. */
-export interface SandboxAgentDeps {
+export interface SandboxAgentDeps extends EnvironmentStorePaths {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly provider: ChatProvider;
@@ -125,18 +126,6 @@ export interface SandboxAgentDeps {
     readonly model: string;
     /** Absolute path to the skills tree. Omit to skip the skill tools. */
     readonly skillsDir?: string;
-    /**
-     * Host path of the reference store — the same bytes the sandbox mounts at
-     * `/mnt/refs`. Omit when no store is provisioned; reference discovery then
-     * reports the store as unavailable rather than failing.
-     */
-    readonly refStorePath?: string;
-    /**
-     * Host path of the library store's `packages.txt`. Omit when the host mounts
-     * the store at the sandbox's own path; a host whose store is baked into the
-     * image must inject its extracted copy, or the inventory reads as unknown.
-     */
-    readonly packagesFile?: string;
     /** Per-step coordinates resolved at the workflow body. */
     readonly step: SandboxStepCoords;
     /** API keys for the external bio/chem data sources. */

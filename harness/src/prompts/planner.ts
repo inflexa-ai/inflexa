@@ -113,6 +113,19 @@ before relying on it.
   annotation rather than the run. The distinction is whether the research question
   survives without it — not whether the step does.
 
+### Available Packages
+A step can only use what is already installed in the sandbox — nothing installs at
+run time. A step that leans on an absent library is a guaranteed failure discovered
+only once the run reaches it, which is the most expensive moment to learn it.
+
+- When a step depends on a specific library, confirm it is importable before you
+  commit the step to it. Checking a handful of names is one cheap call.
+- Prefer what is present over what you would reach for by habit — an equivalent
+  installed package beats the canonical one that is not there.
+- When nothing installed can do the step's work, treat it exactly as you would an
+  absent reference: \`request_clarification\`, rather than plan a step that can
+  only report failure.
+
 ### Resource Estimation
 ${resourceEstimationSection(resourcePolicy)}
 

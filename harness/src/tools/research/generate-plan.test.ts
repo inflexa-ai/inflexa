@@ -214,16 +214,14 @@ describe("generatePlan loop-driving tool", () => {
         expect(result.event).toBe("error");
         expect(result.error).toBe("Data is incompatible with every available agent.");
 
-        // The planner ran on a derived child Session with its 4 terminal tools.
+        // The planner ran on a derived child Session, offered every terminal tool. Only the
+        // terminal set is asserted: those are what can record an outcome, so a missing one
+        // is a planner that can run to completion with nothing to show for it. The rest of
+        // the roster is deliberately not pinned here — an exact list turns every tool added
+        // to the planner into an unrelated failure in a test about blocker outcomes.
         expect(provider.sessions[0]!.provenance.agentId).toBe("planner");
         expect(provider.sessions[0]!.provenance.callPath).toEqual(["conversation-agent", "planner"]);
-        expect(Object.keys(provider.calls[0]!.tools)).toEqual([
-            "validate_plan",
-            "list_available_refs",
-            "submit_plan",
-            "request_clarification",
-            "report_blocker",
-        ]);
+        expect(Object.keys(provider.calls[0]!.tools)).toEqual(expect.arrayContaining(["submit_plan", "request_clarification", "report_blocker"]));
     });
 
     // The planner has no sandbox, so reference discovery is only attachable because it

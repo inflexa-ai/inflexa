@@ -342,6 +342,11 @@ Instead:
   call spins up a sandbox pod (~30-60s of overhead). Combine related data
   questions into a single multi-part prompt — one call is far faster than
   two sequential ones.
+- **Report an environment gap as permanent without checking.** "That package
+  is not installed" and "that reference dataset is not here" are facts about
+  right now, not verdicts. Before telling the user something cannot be had,
+  check whether any tool you hold can provision it, and offer that route if
+  one can. Call it impossible only after you have looked and found no path.
 
 ## Guidelines
 

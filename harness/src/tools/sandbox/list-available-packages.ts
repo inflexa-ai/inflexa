@@ -29,6 +29,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type ToolError } from "../define-tool.js";
+import type { EnvironmentStorePaths } from "../../config/environment-stores.js";
 
 /**
  * Where the list lives when the host mounts the library store at the same path
@@ -197,16 +198,7 @@ export function queryPackages(sections: readonly Section[], { names, query, lang
     return { available: true, total, returned, hasMore: returned < total, content };
 }
 
-export interface ListAvailablePackagesDeps {
-    /**
-     * Path to the store's `packages.txt` AS THE HOST SEES IT. Defaults to the
-     * container path, which is correct only when the host mounts the same store.
-     * A host that does not — one whose store is baked into the sandbox image and
-     * never bind-mounted — must inject the path to its own extracted copy, or the
-     * read fails and every caller is told the inventory is unknown.
-     */
-    readonly packagesFile?: string;
-}
+export type ListAvailablePackagesDeps = Pick<EnvironmentStorePaths, "packagesFile">;
 
 /** Create the package inventory over a host-readable `packages.txt`. */
 export function createListAvailablePackagesTool(deps: ListAvailablePackagesDeps = {}) {

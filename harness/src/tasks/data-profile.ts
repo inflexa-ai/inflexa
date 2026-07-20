@@ -23,6 +23,7 @@ import { ok } from "neverthrow";
 import type { Pool } from "pg";
 
 import { forSubAgent, type AuthContext, type RunSession } from "../auth/types.js";
+import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import type { RunAuthorization, RunAuthorizer } from "../execution/run-authorizer.js";
 import type { StagedInput } from "../execution/staged-input.js";
 import { createDataProfilerAgent } from "../agents/sandbox/data-profiler.js";
@@ -67,7 +68,7 @@ const DATA_PROFILE_AGENT_ID = "data-profiler" as const;
 const DEFAULT_DEADLINE_MS = 300_000;
 
 /** The body's construction-time deps — closed over at registration. */
-export interface DataProfileDeps {
+export interface DataProfileDeps extends EnvironmentStorePaths {
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
     readonly provider: ChatProvider;
@@ -90,18 +91,6 @@ export interface DataProfileDeps {
     readonly embedding: EmbeddingProvider;
     /** Absolute path to the skills tree (one subdirectory per skill). */
     readonly skillsDir: string;
-    /**
-     * Host path of the library store's `packages.txt`. Omit when the host mounts the
-     * store at the sandbox's own path; a host whose store is baked into the image must
-     * inject its extracted copy, or the profiler reads the inventory as unknown.
-     */
-    readonly packagesFile?: string;
-    /**
-     * Host path of the reference store. Omit only when none is provisioned: the
-     * profiler carries reference discovery, and without this it reports an installed
-     * store as absent.
-     */
-    readonly refStorePath?: string;
 }
 
 /**
