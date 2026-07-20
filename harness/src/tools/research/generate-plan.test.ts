@@ -2,6 +2,10 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { ToolResultPart } from "ai";
 import type { Pool } from "pg";
 
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { PLANNABLE_AGENT_IDS } from "../../agents/sandbox-catalog.js";
 import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ScriptedProvider } from "../../loop/__fixtures__/scripted-provider.js";
@@ -213,7 +217,47 @@ describe("generatePlan loop-driving tool", () => {
         // The planner ran on a derived child Session with its 4 terminal tools.
         expect(provider.sessions[0]!.provenance.agentId).toBe("planner");
         expect(provider.sessions[0]!.provenance.callPath).toEqual(["conversation-agent", "planner"]);
-        expect(Object.keys(provider.calls[0]!.tools)).toEqual(["validate_plan", "submit_plan", "request_clarification", "report_blocker"]);
+        expect(Object.keys(provider.calls[0]!.tools)).toEqual([
+            "validate_plan",
+            "list_available_refs",
+            "submit_plan",
+            "request_clarification",
+            "report_blocker",
+        ]);
+    });
+
+    // The planner has no sandbox, so reference discovery is only attachable because it
+    // reads the store host-side. A plan should be able to name what this install holds
+    // rather than assuming, which is the whole reason the tool is offered here.
+    it("gives the planner reference discovery over the host store, with no sandbox", async () => {
+        const root = await mkdtemp(join(tmpdir(), "planner-refs-"));
+        await mkdir(join(root, "managed", "collectri-human", "2.0"), { recursive: true });
+        await writeFile(join(root, "managed", "collectri-human", "2.0", "CollecTRI_regulons.csv"), "source,target");
+
+        let observed: unknown;
+        const provider = scriptedProvider((callIndex) =>
+            callIndex === 0
+                ? makeMessage([toolUseBlock("t1", "list_available_refs", { query: "regulon" })], "tool_use")
+                : makeMessage([toolUseBlock("t2", "report_blocker", { reason: "probe only" })], "tool_use"),
+        );
+        const tool = createGeneratePlanTool({ provider, pool, model: "claude-test", refStorePath: root });
+        await tool.execute(INPUT, toolContext());
+
+        // The second call carries the first call's tool result — the inventory the planner saw.
+        const followUp = provider.calls[1]!.messages.at(-1);
+        observed = JSON.stringify(followUp);
+        expect(observed).toContain("/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv");
+    });
+
+    it("reports no reference store to the planner when none is configured", async () => {
+        const provider = scriptedProvider((callIndex) =>
+            callIndex === 0
+                ? makeMessage([toolUseBlock("t1", "list_available_refs", {})], "tool_use")
+                : makeMessage([toolUseBlock("t2", "report_blocker", { reason: "probe only" })], "tool_use"),
+        );
+        await toolFor(provider).execute(INPUT, toolContext());
+
+        expect(JSON.stringify(provider.calls[1]!.messages.at(-1))).toContain("No reference store is provisioned");
     });
 
     it("surfaces request_clarification as a clarification outcome", async () => {

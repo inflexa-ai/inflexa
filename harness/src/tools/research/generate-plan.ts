@@ -37,6 +37,7 @@ import type { AgentDefinition } from "../../loop/types.js";
 import { forSubAgent, scopeResource } from "../../auth/types.js";
 import { type ChatProvider } from "../../providers/types.js";
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { createListAvailableRefsTool } from "../sandbox/list-available-refs.js";
 import { createReportBlockerToolFor } from "../sandbox/report-blocker.js";
 
 import { DATA_PROFILE_ORIENTATION_MAX_CHARS, buildDataProfileOrientation } from "../../app/data-profile-orientation.js";
@@ -355,7 +356,7 @@ interface InnerTools {
  * shared `holder` so the outer `execute` reads the terminal outcome after the
  * loop finishes.
  */
-function buildInnerTools(holder: OutcomeHolder, persistCtx: PersistContext, pool: Pool, resourcePolicy?: ResourcePolicy): InnerTools {
+function buildInnerTools(holder: OutcomeHolder, persistCtx: PersistContext, pool: Pool, resourcePolicy?: ResourcePolicy, refStorePath?: string): InnerTools {
     const validatePlanTool = defineTool({
         id: "validate_plan",
         description:
@@ -469,8 +470,13 @@ function buildInnerTools(holder: OutcomeHolder, persistCtx: PersistContext, pool
             "could fix and submit.",
     });
 
+    // Reference discovery is non-terminal and read-only: it lets the planner check what
+    // reference data this environment actually holds before committing a step to needing
+    // it. It reads the store host-side, so no sandbox exists or is needed at plan time.
+    const listAvailableRefs = createListAvailableRefsTool(refStorePath === undefined ? {} : { refStorePath });
+
     const terminal = [submitPlanTool, requestClarificationTool, reportBlockerTool];
-    return { all: [validatePlanTool, ...terminal], terminal };
+    return { all: [validatePlanTool, listAvailableRefs, ...terminal], terminal };
 }
 
 // ── Outcome shaping ─────────────────────────────────────────────────
@@ -542,6 +548,13 @@ export interface GeneratePlanDeps {
      * default guidance and validation skips the ceiling check.
      */
     readonly resourcePolicy?: ResourcePolicy;
+    /**
+     * Host path of the reference store, giving the planner reference discovery.
+     * Absent, the tool reports the store as unavailable and the planner keeps
+     * planning as though nothing is guaranteed present — which is what the prompt
+     * already tells it to do.
+     */
+    readonly refStorePath?: string;
 }
 
 /** Build the `generate_plan` tool bound to its provider and pool. */
@@ -640,7 +653,7 @@ export function createGeneratePlanTool(deps: GeneratePlanDeps): Tool {
                 analysisId,
                 parentPlanId: input.parentPlanId ?? null,
             };
-            const innerTools = buildInnerTools(holder, persistCtx, deps.pool, deps.resourcePolicy);
+            const innerTools = buildInnerTools(holder, persistCtx, deps.pool, deps.resourcePolicy, deps.refStorePath);
             const planner: AgentDefinition = {
                 id: PLANNER_AGENT_ID,
                 systemPrompt: composeSystemPrompt(plannerInstructions(deps.resourcePolicy)),

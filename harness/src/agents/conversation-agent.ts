@@ -163,6 +163,13 @@ export interface ConversationAgentDeps {
      * built-in tool.
      */
     readonly hostTools?: readonly Tool[];
+    /**
+     * Host path of the reference store — the same bytes sandboxes mount at
+     * `/mnt/refs`. Gives `generate_plan` reference discovery, so a plan can be
+     * grounded in what this environment actually holds. Omit when no store is
+     * provisioned.
+     */
+    readonly refStorePath?: string;
 }
 
 /** Build the conversation `AgentDefinition` with every tool fully dep-bound. */
@@ -185,6 +192,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         chrome,
         resourcePolicy,
         hostTools,
+        refStorePath,
     } = deps;
     const workingMemory = createWorkingMemory(pool);
     const ncbi = createNcbiTools(bioKeys);
@@ -220,7 +228,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createInspectRunTool(pool),
         // The dataset's own record. No file backs it — the DB row is the only copy.
         createInspectDataProfileTool(pool),
-        createGeneratePlanTool({ provider, pool, model, resourcePolicy }),
+        createGeneratePlanTool({ provider, pool, model, resourcePolicy, ...(refStorePath ? { refStorePath } : {}) }),
         createExecutePlanTool({
             pool,
             executeAnalysisWorkflow,

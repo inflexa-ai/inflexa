@@ -91,6 +91,13 @@ export type RunEngineComposition = {
     readonly sandboxEmitters: SwappableSandboxEmitters;
     /** Absolute skills tree path — enables the sandbox agents' skill tools. */
     readonly skillsDir: string;
+    /**
+     * Absolute reference-store path — the same bytes sandboxes mount at `/mnt/refs`.
+     * Passed unconditionally: the store may be populated mid-session by a reference
+     * download, and the tool re-reads it per call, so a boot-time existence gate here
+     * would freeze the cold-start state for the process lifetime.
+     */
+    readonly refStorePath: string;
     /** Bio/chem API keys; absent keys pass as empty strings and surface per-call. */
     readonly bioKeys: ResolvedHarnessConfig["bioKeys"];
 };
@@ -120,6 +127,7 @@ function buildStepAgent(comp: RunEngineComposition, ctx: SandboxAgentBuildContex
         lineageCollector: ctx.lineageCollector,
         model: comp.sandbox.model,
         skillsDir: comp.skillsDir,
+        refStorePath: comp.refStorePath,
         bioKeys: comp.bioKeys,
         blockerHolder: ctx.blockerHolder,
         step: {

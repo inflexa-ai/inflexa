@@ -1,247 +1,48 @@
 /**
  * Reference-store discovery: `createListAvailableRefsTool`, a bounded, no-follow
- * inventory of what is ACTUALLY mounted read-only at /mnt/refs (managed installs
- * and user-added files alike), scanned live inside the sandbox. Narrow with
- * `path`/`category`, filter with `query`, cap with `limit`; every response
- * carries `returned`/`total`/`hasMore` and the `categories` present, so a
- * listing is never an unbounded dump. Symlinks are never followed; nothing can
- * be downloaded at runtime.
+ * inventory of what is ACTUALLY provisioned in the reference store (managed
+ * installs and user-added files alike). Narrow with `path`/`category`, filter
+ * with `query`, cap with `limit`; every response carries `returned`/`total`/
+ * `hasMore` and the `categories` present, so a listing is never an unbounded
+ * dump. Symlinks are never followed; nothing can be downloaded at runtime.
  *
- * The scan reports paths; meaning is joined on afterwards, host-side, from the
- * install receipt and the catalog it names (organism, format, and each file's
- * internal shape). Callers search by what the data IS, so the store's directory
- * layout stays an installer detail rather than an interface anything encodes.
- * Metadata only ever ENRICHES an entry — a file with no receipt and no catalog
- * match is still returned, because a user-provided store is as valid as a
- * managed one.
+ * The store is read from the host filesystem at the embedder-supplied
+ * `refStorePath` and reported at `/mnt/refs`, the container path sandboxes mount
+ * it at — read where it lives, render where the caller will open it. Reading it
+ * host-side is what lets a planner ask what reference data exists before any
+ * sandbox is created; a step agent asking mid-run sees the same store, because
+ * the mount and this path are the same bytes.
+ *
+ * The scan reports paths; meaning is joined on afterwards from the install
+ * receipt and the catalog it names (organism, format, and each file's internal
+ * shape). Callers search by what the data IS, so the store's directory layout
+ * stays an installer detail rather than an interface anything encodes. Metadata
+ * only ever ENRICHES an entry — a file with no receipt and no catalog match is
+ * still returned, because a user-provided store is as valid as a managed one.
  */
 
-import { posix as posixPath } from "node:path";
+import { lstat, readFile, readdir } from "node:fs/promises";
+import { join as hostJoin, posix as posixPath } from "node:path";
 
 import { ok } from "neverthrow";
 import { z } from "zod";
 
 import { REFERENCE_DATA_CATALOG } from "../../reference-data/catalog.js";
 import { parseReferenceInstallReceipt } from "../../reference-data/receipt.js";
-import type { SandboxClient } from "../../sandbox/client.js";
-import type { SandboxRef } from "../../sandbox/types.js";
 import { defineTool } from "../define-tool.js";
-import { runSandboxExec } from "../workspace/run-exec.js";
 
+/** Container path the ref store is mounted at; every reported path is rendered under it. */
 const REFS_ROOT = "/mnt/refs";
 const MAX_ENTRIES = 200;
 const MAX_SCANNED_ENTRIES = 2_000;
 const MAX_PATH_BYTES = 40_000;
 const MAX_ENVELOPE_BYTES = 64_000;
 const MAX_INPUT_PATH_BYTES = 4_096;
-
-const SCAN_SCRIPT = String.raw`
-import json, os, sys
-
-ROOT = sys.argv[1]
-RELATIVE = sys.argv[2]
-TARGET = ROOT if RELATIVE == "." else os.path.join(ROOT, *RELATIVE.split("/"))
-MAX_ENTRIES = int(sys.argv[3])
-MAX_SCANNED = int(sys.argv[4])
-MAX_PATH_BYTES = int(sys.argv[5])
-MAX_ENVELOPE_BYTES = int(sys.argv[6])
-
-def emit(value):
-    print(json.dumps(value, separators=(",", ":")))
-
-def capped_entries(path, limit):
-    """Inspect and sort at most limit names; probe one extra only to mark truncation."""
-    values = []
-    visited = 0
-    cut = False
-    try:
-        with os.scandir(path) as iterator:
-            for entry in iterator:
-                if visited >= limit:
-                    cut = True
-                    break
-                visited += 1
-                try:
-                    if entry.is_symlink():
-                        kind, size = "symlink", 0
-                    elif entry.is_file(follow_symlinks=False):
-                        kind, size = "file", entry.stat(follow_symlinks=False).st_size
-                    elif entry.is_dir(follow_symlinks=False):
-                        kind, size = "directory", 0
-                    else:
-                        kind, size = "other", 0
-                    values.append((entry.name, kind, size))
-                except OSError:
-                    continue
-    except OSError:
-        return [], False
-    values.sort(key=lambda value: value[0])
-    return values, cut
-
-if not os.path.isdir(ROOT) or os.path.islink(ROOT):
-    emit({"state": "unavailable", "entries": [], "scannedEntries": 0, "truncated": False})
-    raise SystemExit(0)
-
-relative = RELATIVE
-cursor = ROOT
-if relative != ".":
-    for part in relative.split(os.sep):
-        cursor = os.path.join(cursor, part)
-        if os.path.islink(cursor):
-            emit({"state": "symlink", "entries": [], "scannedEntries": 0, "truncated": False})
-            raise SystemExit(0)
-
-if not os.path.exists(TARGET):
-    emit({"state": "not_found", "entries": [], "scannedEntries": 0, "truncated": False})
-    raise SystemExit(0)
-if not os.path.isdir(TARGET):
-    emit({"state": "not_a_directory", "entries": [], "scannedEntries": 0, "truncated": False})
-    raise SystemExit(0)
-
-entries = []
-scanned = 0
-path_bytes = 0
-truncated = False
-
-children, children_cut = capped_entries(TARGET, min(MAX_ENTRIES + 2, MAX_SCANNED))
-truncated = children_cut
-
-for name, kind, size in children:
-    path = os.path.join(TARGET, name)
-    rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
-    if rel == ".inflexa" or rel.startswith(".inflexa/") or rel == "registry.json":
-        continue
-    scanned += 1
-    rendered = "/mnt/refs/" + rel
-    item = None
-
-    if kind == "symlink":
-        item = {"path": rendered, "kind": "symlink", "bytes": 0}
-    elif kind == "file":
-        item = {"path": rendered, "kind": "file", "bytes": size}
-    elif kind == "directory":
-        total_bytes = 0
-        file_count = 0
-        file_types = set()
-        directory_truncated = False
-        stack = [path]
-        while stack and scanned < MAX_SCANNED:
-            current = stack.pop()
-            descendants, descendants_cut = capped_entries(current, MAX_SCANNED - scanned)
-            directory_truncated = directory_truncated or descendants_cut
-            child_directories = []
-            for child_name, child_kind, child_size in descendants:
-                scanned += 1
-                if child_kind == "directory":
-                    child_directories.append(os.path.join(current, child_name))
-                elif child_kind == "file":
-                    file_count += 1
-                    total_bytes += child_size
-                    suffix = os.path.splitext(child_name)[1].lower()
-                    if suffix:
-                        file_types.add(suffix)
-                if scanned >= MAX_SCANNED:
-                    directory_truncated = True
-                    break
-            stack.extend(reversed(child_directories))
-        item = {
-            "path": rendered,
-            "kind": "directory",
-            "bytes": total_bytes,
-            "fileCount": file_count,
-            "fileTypes": sorted(file_types)[:10],
-            "truncated": directory_truncated,
-        }
-        truncated = truncated or directory_truncated
-
-    if item is not None:
-        if len(entries) < MAX_ENTRIES and path_bytes + len(rendered.encode()) <= MAX_PATH_BYTES:
-            entries.append(item)
-            path_bytes += len(rendered.encode())
-        else:
-            truncated = True
-    if scanned >= MAX_SCANNED:
-        truncated = True
-        break
-
-receipts = []
-receipt_bytes = 0
-metadata_dir = os.path.join(ROOT, ".inflexa")
-receipts_dir = os.path.join(metadata_dir, "receipts")
-try:
-    if os.path.islink(metadata_dir) or os.path.islink(receipts_dir):
-        raise ValueError("symlinked metadata directory")
-    receipt_entries, _ = capped_entries(receipts_dir, 100)
-    for name, kind, _ in receipt_entries:
-        path = os.path.join(receipts_dir, name)
-        if kind != "file":
-            continue
-        # Per-file, so one unreadable or malformed receipt costs only its own labels.
-        # A shared try would abandon the loop and silently drop every receipt sorting
-        # after the bad one, quietly stripping metadata from datasets that are fine.
-        try:
-            with open(path, "rb") as handle:
-                raw = handle.read(16385)
-            if len(raw) > 16384 or receipt_bytes + len(raw) > 32768:
-                continue
-            parsed = json.loads(raw)
-        except Exception:
-            continue
-        receipts.append(parsed)
-        receipt_bytes += len(raw)
-except Exception:
-    pass
-
-legacy_entries = []
-try:
-    registry_path = os.path.join(ROOT, "registry.json")
-    if os.path.islink(registry_path):
-        raise ValueError("symlinked registry")
-    with open(registry_path, "rb") as handle:
-        registry = json.loads(handle.read(131073))
-    if isinstance(registry, dict):
-        by_category = registry.get("files", {}).get("by_category", {})
-        if isinstance(by_category, dict):
-            for category in sorted(by_category):
-                values = by_category.get(category)
-                if not isinstance(values, list):
-                    continue
-                for item in values:
-                    if len(legacy_entries) >= 200:
-                        break
-                    if isinstance(item, dict) and isinstance(item.get("local_path"), str):
-                        legacy_entries.append({
-                            "local_path": item["local_path"][:1000],
-                            "category": str(category)[:500],
-                            "dataset": str(item.get("dataset"))[:500] if item.get("dataset") is not None else None,
-                            "subtype": str(item.get("subtype"))[:500] if item.get("subtype") is not None else None,
-                            "organism": str(item.get("organism"))[:500] if item.get("organism") is not None else None,
-                            "rows": item.get("rows"),
-                            "endpoint": item.get("endpoint"),
-                        })
-except Exception:
-    pass
-
-payload = {
-    "state": "empty" if len(entries) == 0 else "populated",
-    "entries": entries,
-    "scannedEntries": scanned,
-    "truncated": truncated,
-    "receipts": receipts,
-    "legacyEntries": legacy_entries,
-}
-while len(json.dumps(payload, separators=(",", ":")).encode()) > MAX_ENVELOPE_BYTES:
-    payload["truncated"] = True
-    if payload["legacyEntries"]:
-        payload["legacyEntries"].pop()
-    elif payload["receipts"]:
-        payload["receipts"].pop()
-    elif payload["entries"]:
-        payload["entries"].pop()
-    else:
-        break
-emit(payload)
-`;
+const MAX_RECEIPT_FILES = 100;
+const MAX_RECEIPT_BYTES = 16_384;
+const MAX_RECEIPT_TOTAL_BYTES = 32_768;
+const MAX_REGISTRY_BYTES = 131_072;
+const MAX_LEGACY_ENTRIES = 200;
 
 const ListAvailableRefsInputSchema = z.object({
     path: z
@@ -274,15 +75,12 @@ const ListAvailableRefsInputSchema = z.object({
 });
 
 export interface ListAvailableRefsDeps {
-    readonly sandboxClient: SandboxClient;
-    readonly sandbox: SandboxRef;
-    readonly workflowId: string;
-    readonly stepId: string;
-    readonly nextFunctionId: () => string;
-    readonly deadlineMs: () => number;
-    readonly markExecActive?: (execId: string) => Promise<void>;
-    /** Filesystem root used by the scanner; production callers omit this. */
-    readonly scanRoot?: string;
+    /**
+     * Host path of the reference store — the same bytes sandboxes see at
+     * `/mnt/refs`. Omitted (or absent on disk) means no store is provisioned,
+     * which is a normal state reported as `unavailable`, not an error.
+     */
+    readonly refStorePath?: string;
 }
 
 export interface ReferenceInventoryMetadata {
@@ -308,7 +106,7 @@ interface ReferenceInventoryEntryBase {
     readonly metadata?: ReferenceInventoryMetadata;
 }
 
-/** A bounded, no-follow observation from the live reference mount. */
+/** A bounded, no-follow observation of the reference store. */
 export type ReferenceInventoryEntry =
     | (ReferenceInventoryEntryBase & { readonly kind: "file"; readonly bytes: number })
     | (ReferenceInventoryEntryBase & { readonly kind: "symlink"; readonly bytes: 0 })
@@ -348,28 +146,6 @@ interface RawScan {
     readonly legacyEntries?: unknown[];
 }
 
-const RawScanSchema = z.object({
-    state: z.enum(["unavailable", "empty", "populated", "not_found", "not_a_directory", "symlink"]),
-    entries: z.array(
-        z.discriminatedUnion("kind", [
-            z.object({ path: z.string().startsWith(`${REFS_ROOT}/`), kind: z.literal("file"), bytes: z.number().nonnegative() }),
-            z.object({ path: z.string().startsWith(`${REFS_ROOT}/`), kind: z.literal("symlink"), bytes: z.literal(0) }),
-            z.object({
-                path: z.string().startsWith(`${REFS_ROOT}/`),
-                kind: z.literal("directory"),
-                bytes: z.number().nonnegative(),
-                fileCount: z.number().int().nonnegative(),
-                fileTypes: z.array(z.string()),
-                truncated: z.boolean(),
-            }),
-        ]),
-    ),
-    scannedEntries: z.number().int().nonnegative(),
-    truncated: z.boolean(),
-    receipts: z.array(z.unknown()).optional(),
-    legacyEntries: z.array(z.unknown()).optional(),
-});
-
 function resolveRequestedPath(input: string | undefined): { ok: true; path: string } | { ok: false; reason: string } {
     if (input === undefined || input === "" || input === REFS_ROOT) return { ok: true, path: REFS_ROOT };
     if (Buffer.byteLength(input, "utf8") > MAX_INPUT_PATH_BYTES) {
@@ -387,6 +163,219 @@ function resolveRequestedPath(input: string | undefined): { ok: true; path: stri
     const normalized = posixPath.join(REFS_ROOT, relative);
     if (!normalized.startsWith(`${REFS_ROOT}/`)) return { ok: false, reason: "Path is outside /mnt/refs." };
     return { ok: true, path: normalized };
+}
+
+interface ScannedName {
+    readonly name: string;
+    readonly kind: "file" | "directory" | "symlink" | "other";
+    readonly bytes: number;
+}
+
+/**
+ * Inspect at most `limit` names in one directory, sorted by name.
+ *
+ * Sorting BEFORE the cap (rather than capping the raw readdir order) keeps
+ * truncation deterministic: the same store yields the same prefix on every call,
+ * which a durably-cached step result has to be able to promise.
+ */
+async function cappedEntries(directory: string, limit: number): Promise<{ values: ScannedName[]; cut: boolean }> {
+    let names: string[];
+    try {
+        names = (await readdir(directory, { withFileTypes: true })).map((entry) => entry.name);
+    } catch {
+        return { values: [], cut: false };
+    }
+    names.sort();
+    const cut = names.length > limit;
+    const values: ScannedName[] = [];
+    for (const name of names.slice(0, limit)) {
+        try {
+            // lstat, never stat: a symlink is reported as a symlink and never resolved,
+            // so a link out of the store cannot smuggle in a foreign file's size or type.
+            const stats = await lstat(hostJoin(directory, name));
+            if (stats.isSymbolicLink()) values.push({ name, kind: "symlink", bytes: 0 });
+            else if (stats.isFile()) values.push({ name, kind: "file", bytes: stats.size });
+            else if (stats.isDirectory()) values.push({ name, kind: "directory", bytes: 0 });
+            else values.push({ name, kind: "other", bytes: 0 });
+        } catch {
+            continue;
+        }
+    }
+    return { values, cut };
+}
+
+/** Whether any component of `relative` beneath `root` is a symlink — the no-follow gate. */
+async function crossesSymlink(root: string, relative: string): Promise<boolean> {
+    let cursor = root;
+    for (const segment of relative.split("/")) {
+        cursor = hostJoin(cursor, segment);
+        try {
+            if ((await lstat(cursor)).isSymbolicLink()) return true;
+        } catch {
+            return false;
+        }
+    }
+    return false;
+}
+
+/** Recursively total a directory's files, bounded by the remaining scan budget. */
+async function summarizeDirectory(
+    directory: string,
+    scanned: number,
+): Promise<{ bytes: number; fileCount: number; fileTypes: string[]; truncated: boolean; scanned: number }> {
+    let totalBytes = 0;
+    let fileCount = 0;
+    let truncated = false;
+    const fileTypes = new Set<string>();
+    const stack = [directory];
+
+    while (stack.length > 0 && scanned < MAX_SCANNED_ENTRIES) {
+        const current = stack.pop()!;
+        const { values, cut } = await cappedEntries(current, MAX_SCANNED_ENTRIES - scanned);
+        truncated = truncated || cut;
+        const childDirectories: string[] = [];
+        for (const child of values) {
+            scanned += 1;
+            if (child.kind === "directory") childDirectories.push(hostJoin(current, child.name));
+            else if (child.kind === "file") {
+                fileCount += 1;
+                totalBytes += child.bytes;
+                const suffix = posixPath.extname(child.name).toLowerCase();
+                if (suffix) fileTypes.add(suffix);
+            }
+            if (scanned >= MAX_SCANNED_ENTRIES) {
+                truncated = true;
+                break;
+            }
+        }
+        stack.push(...childDirectories.reverse());
+    }
+    return { bytes: totalBytes, fileCount, fileTypes: [...fileTypes].sort().slice(0, 10), truncated, scanned };
+}
+
+/** Install receipts written by the host installer under `<root>/.inflexa/receipts`. */
+async function readReceipts(root: string): Promise<unknown[]> {
+    const receiptsDirectory = hostJoin(root, ".inflexa", "receipts");
+    if (await crossesSymlink(root, ".inflexa")) return [];
+    const { values } = await cappedEntries(receiptsDirectory, MAX_RECEIPT_FILES);
+    const receipts: unknown[] = [];
+    let totalBytes = 0;
+    for (const entry of values) {
+        if (entry.kind !== "file" || entry.bytes > MAX_RECEIPT_BYTES || totalBytes + entry.bytes > MAX_RECEIPT_TOTAL_BYTES) continue;
+        // Per-file, so one unreadable or malformed receipt costs only its own labels.
+        // A shared try would abandon the loop and silently drop every receipt sorting
+        // after the bad one, quietly stripping metadata from datasets that are fine.
+        try {
+            receipts.push(JSON.parse(await readFile(hostJoin(receiptsDirectory, entry.name), "utf-8")));
+            totalBytes += entry.bytes;
+        } catch {
+            continue;
+        }
+    }
+    return receipts;
+}
+
+/** Labels from a `registry.json` an externally-provisioned store may carry. */
+async function readLegacyEntries(root: string): Promise<unknown[]> {
+    const legacyEntries: unknown[] = [];
+    try {
+        if (await crossesSymlink(root, "registry.json")) return [];
+        const registryPath = hostJoin(root, "registry.json");
+        if ((await lstat(registryPath)).size > MAX_REGISTRY_BYTES) return [];
+        const registry: unknown = JSON.parse(await readFile(registryPath, "utf-8"));
+        if (!registry || typeof registry !== "object") return [];
+        const byCategory = (registry as { files?: { by_category?: unknown } }).files?.by_category;
+        if (!byCategory || typeof byCategory !== "object") return [];
+        for (const category of Object.keys(byCategory as Record<string, unknown>).sort()) {
+            const values = (byCategory as Record<string, unknown>)[category];
+            if (!Array.isArray(values)) continue;
+            for (const item of values) {
+                if (legacyEntries.length >= MAX_LEGACY_ENTRIES) break;
+                if (item && typeof item === "object" && typeof (item as { local_path?: unknown }).local_path === "string") {
+                    legacyEntries.push({ ...(item as Record<string, unknown>), category });
+                }
+            }
+        }
+    } catch {
+        return legacyEntries;
+    }
+    return legacyEntries;
+}
+
+/** Scan the store beneath `root`, reporting every expected state as data. */
+async function scanStore(root: string | undefined, relative: string): Promise<RawScan> {
+    const empty = (): Omit<RawScan, "state"> => ({ entries: [], scannedEntries: 0, truncated: false });
+    if (!root) return { state: "unavailable", ...empty() };
+    try {
+        if (!(await lstat(root)).isDirectory()) return { state: "unavailable", ...empty() };
+    } catch {
+        return { state: "unavailable", ...empty() };
+    }
+
+    if (relative !== "." && (await crossesSymlink(root, relative))) return { state: "symlink", ...empty() };
+
+    const target = relative === "." ? root : hostJoin(root, ...relative.split("/"));
+    let targetStats;
+    try {
+        targetStats = await lstat(target);
+    } catch {
+        return { state: "not_found", ...empty() };
+    }
+    if (!targetStats.isDirectory()) return { state: "not_a_directory", ...empty() };
+
+    const entries: ReferenceInventoryEntry[] = [];
+    let scanned = 0;
+    let pathBytes = 0;
+    let truncated = false;
+
+    const { values: children, cut } = await cappedEntries(target, Math.min(MAX_ENTRIES + 2, MAX_SCANNED_ENTRIES));
+    truncated = cut;
+
+    for (const child of children) {
+        const childRelative = relative === "." ? child.name : `${relative}/${child.name}`;
+        if (childRelative === ".inflexa" || childRelative.startsWith(".inflexa/") || childRelative === "registry.json") continue;
+        scanned += 1;
+        const rendered = `${REFS_ROOT}/${childRelative}`;
+
+        let entry: ReferenceInventoryEntry | undefined;
+        if (child.kind === "symlink") entry = { path: rendered, kind: "symlink", bytes: 0 };
+        else if (child.kind === "file") entry = { path: rendered, kind: "file", bytes: child.bytes };
+        else if (child.kind === "directory") {
+            const summary = await summarizeDirectory(hostJoin(target, child.name), scanned);
+            scanned = summary.scanned;
+            truncated = truncated || summary.truncated;
+            entry = {
+                path: rendered,
+                kind: "directory",
+                bytes: summary.bytes,
+                fileCount: summary.fileCount,
+                fileTypes: summary.fileTypes,
+                truncated: summary.truncated,
+            };
+        }
+
+        if (entry) {
+            if (entries.length < MAX_ENTRIES && pathBytes + Buffer.byteLength(rendered, "utf8") <= MAX_PATH_BYTES) {
+                entries.push(entry);
+                pathBytes += Buffer.byteLength(rendered, "utf8");
+            } else {
+                truncated = true;
+            }
+        }
+        if (scanned >= MAX_SCANNED_ENTRIES) {
+            truncated = true;
+            break;
+        }
+    }
+
+    return {
+        state: entries.length === 0 ? "empty" : "populated",
+        entries,
+        scannedEntries: scanned,
+        truncated,
+        receipts: await readReceipts(root),
+        legacyEntries: await readLegacyEntries(root),
+    };
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -481,11 +470,11 @@ function collectCategories(entries: readonly ReferenceInventoryEntry[]): string[
 
 function renderContent(path: string, scan: RawScan, entries: readonly ReferenceInventoryEntry[]): string {
     if (scan.state === "unavailable")
-        return "Reference store is not mounted at /mnt/refs. Reference data cannot be downloaded from sandbox workloads; provision it through the host setup flow.";
+        return "No reference store is provisioned. Reference data cannot be downloaded at runtime; provision it through the host setup flow.";
     if (scan.state === "not_found") return `Reference path does not exist: ${path}`;
     if (scan.state === "not_a_directory") return `Reference path is not a directory: ${path}`;
     if (scan.state === "symlink") return `Reference path crosses a symlink and was not scanned: ${path}`;
-    if (scan.state === "empty") return `Reference store path is mounted but contains no reference files: ${path}`;
+    if (scan.state === "empty") return `Reference store path exists but contains no reference files: ${path}`;
 
     const lines = [`Reference files visible beneath ${path}:`];
     for (const entry of entries) {
@@ -511,24 +500,24 @@ function renderContent(path: string, scan: RawScan, entries: readonly ReferenceI
     return lines.join("\n");
 }
 
-/** Create replay-safe reference discovery bound to the active sandbox. */
+/** Create reference discovery over the host-visible reference store. */
 export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
     return defineTool({
         id: "list_available_refs",
-        executionMode: "workflow",
         description:
-            "Resolve reference data you need into a real path. Inspects the files actually mounted read-only at /mnt/refs — the ONLY reference data that exists here; nothing can be downloaded at runtime. " +
+            "Resolve reference data you need into a real path. Reports the reference data actually provisioned for this environment — the ONLY reference data that exists here; nothing can be downloaded at runtime. " +
             "Search by what the data IS, not by where you expect it: the store's directory layout is an installer detail and is not a stable interface. " +
             "Catalogued files come back with the organism, the format, and the file's internal shape (key columns, identifier space), so you can pick the right reader and the right species without opening the file first. " +
             "User-added files are returned too, with whatever labels exist — often none. Symlinks are never followed. " +
+            "Paths are reported as the analysis environment sees them, so a returned path can be used verbatim in a script. " +
             "Results are ALWAYS bounded — prefer a targeted query over a full dump: " +
             '`query` is the main entry point, a case-insensitive substring filter over each entry\'s path and its dataset/title/category/organism/format/contents labels (e.g. "regulon", "hallmark", "mouse"); ' +
             "`path` inspects one directory beneath /mnt/refs (a returned path, or store-relative) — drill in with it when a listing is truncated; " +
             '`category` is shorthand for a top-level group (e.g. "pathways", "regulatory-networks"), and the groups present come back in `categories`; ' +
             "`limit` caps the entries returned. The response carries `returned`, `total`, and `hasMore`, so truncation is never silent. " +
-            "An empty result means the data is genuinely absent — say so and proceed with what you have; do not guess a path. Provision additional files through the host and re-run in a sandbox with that store mounted.",
+            "An empty result means the data is genuinely absent — say so and proceed with what you have; do not guess a path. Provision additional files through the host setup flow.",
         inputSchema: ListAvailableRefsInputSchema,
-        execute: async ({ path, category, query, limit }, ctx) => {
+        execute: async ({ path, category, query, limit }) => {
             // `category` is shorthand for a top-level path; an explicit `path` wins.
             const requestedInput = path ?? category;
             const requested = resolveRequestedPath(requestedInput);
@@ -549,33 +538,7 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps) {
                 return ok(response);
             }
 
-            const execId = `${deps.workflowId}:${deps.stepId}:${deps.nextFunctionId()}`;
-            const result = await runSandboxExec({
-                sandboxClient: deps.sandboxClient,
-                sandbox: deps.sandbox,
-                execId,
-                command: [
-                    "python3",
-                    "-c",
-                    SCAN_SCRIPT,
-                    deps.scanRoot ?? REFS_ROOT,
-                    posixPath.relative(REFS_ROOT, requested.path) || ".",
-                    String(MAX_ENTRIES),
-                    String(MAX_SCANNED_ENTRIES),
-                    String(MAX_PATH_BYTES),
-                    String(MAX_ENVELOPE_BYTES),
-                ],
-                timeoutSeconds: 20,
-                deadlineMs: deps.deadlineMs(),
-                emit: ctx.emit,
-                ...(deps.markExecActive ? { markExecActive: deps.markExecActive } : {}),
-            });
-            if (result.exitCode !== 0) throw new Error(`Reference inventory command failed (${result.exitCode}): ${result.stderr}`);
-
-            if (Buffer.byteLength(result.stdout, "utf8") > MAX_ENVELOPE_BYTES + 1) {
-                throw new Error("Reference inventory response exceeded its output bound");
-            }
-            const raw: RawScan = RawScanSchema.parse(JSON.parse(result.stdout));
+            const raw = await scanStore(deps.refStorePath, posixPath.relative(REFS_ROOT, requested.path) || ".");
             const enriched = enrichEntries(raw.entries, raw);
             const categories = collectCategories(enriched);
             const needle = query?.trim().toLowerCase();

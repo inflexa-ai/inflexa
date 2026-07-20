@@ -125,6 +125,12 @@ export interface SandboxAgentDeps {
     readonly model: string;
     /** Absolute path to the skills tree. Omit to skip the skill tools. */
     readonly skillsDir?: string;
+    /**
+     * Host path of the reference store — the same bytes the sandbox mounts at
+     * `/mnt/refs`. Omit when no store is provisioned; reference discovery then
+     * reports the store as unavailable rather than failing.
+     */
+    readonly refStorePath?: string;
     /** Per-step coordinates resolved at the workflow body. */
     readonly step: SandboxStepCoords;
     /** API keys for the external bio/chem data sources. */
@@ -161,15 +167,7 @@ function resolveSandboxTools(deps: SandboxAgentDeps, tools: readonly SandboxTool
     const chemDb = createChemDbTools(deps.bioKeys);
     const registry: Record<SandboxToolName, Tool> = {
         listAvailablePackages: listAvailablePackagesTool,
-        listAvailableRefs: createListAvailableRefsTool({
-            sandboxClient: deps.sandboxClient,
-            sandbox: deps.step.sandbox,
-            workflowId: deps.step.workflowId,
-            stepId: deps.step.stepId,
-            nextFunctionId: deps.step.nextFunctionId,
-            deadlineMs: deps.step.deadlineMs,
-            markExecActive: createMarkExecActive(deps),
-        }),
+        listAvailableRefs: createListAvailableRefsTool({ ...(deps.refStorePath ? { refStorePath: deps.refStorePath } : {}) }),
         resolveLibraryId: resolveLibraryIdTool,
         queryDocs: queryDocsTool,
         inspectRun: createInspectRunTool(deps.pool),
