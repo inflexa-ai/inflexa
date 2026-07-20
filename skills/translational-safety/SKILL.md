@@ -52,31 +52,54 @@ Cortex ships a curated secondary-pharmacology off-target safety panel
 (~30 well-established liability targets, organ-tagged). Use this as a
 fast first-pass screen before reaching for live tools.
 
-**From the agent (TS tool):**
+**From the agent:**
 
-Call `check_safety_panel` with one or more identifiers (ChEMBL IDs,
-gene symbols, or UniProt accessions). The tool returns matched entries
-with `organ_system`, `severity`, and `clinical_consequence`, plus a
-summary by severity and organ. Unknown identifiers return `null` —
-they are not panel hits, but may still have relevant Open Targets
-safety signals.
+Screen identifiers — ChEMBL IDs, gene symbols, or UniProt accessions —
+against the panel with the safety-panel lookup available to you. It
+returns matched entries plus a summary by severity and organ. An
+unmatched identifier is not a panel hit, which is not the same as being
+safe: it may still carry Open Targets signals.
+
+Each matched entry carries:
+
+| Field | Contents |
+|-|-|
+| `chembl_id` | ChEMBL target identifier — the join key against candidate targets |
+| `gene_symbol` | HGNC gene symbol |
+| `uniprot` | UniProt accession |
+| `organ_system` | Organ system the liability presents in (cardiovascular, hepatic, …) |
+| `severity` | Severity tier for the liability |
+| `clinical_consequence` | The observed clinical effect |
 
 **From a sandbox script (Python/R):**
 
-The same panel is mirrored at `/mnt/refs/safety-targets/safety-panel.csv`.
-Always check the ref is mounted with `list-available-refs` before reading.
+**The panel is a lookup, not a file.** It ships inside the agent runtime and is
+never staged onto disk, so there is no path to resolve and nothing to read — a
+script that goes looking for a safety-panel CSV is hunting for a file that does
+not exist in any environment.
+
+To use the panel in a script, look the identifiers up first, then persist the
+result into your working directory and read it back:
 
 ```python
 import pandas as pd
-panel = pd.read_csv("/mnt/refs/safety-targets/safety-panel.csv")
+
+# Written from the panel lookup you ran before invoking the script.
+panel = pd.read_csv("output/safety_panel_hits.csv")
 hits = candidates.merge(panel, left_on="target_chembl_id", right_on="chembl_id")
 ```
 
-**This panel is NOT exhaustive.** It is the well-cited tier-1 set.
-For comprehensive liability assessment, also call `get_target_safety`
-(Open Targets organ-specific signals) and `search_toxcast` (in-vitro
-high-throughput screening). The panel short-circuits the easy cases;
-the live tools cover the long tail.
+Screen the whole candidate list in one lookup rather than one call per target,
+and write the result once — the panel is small and fully in memory, so batching
+costs nothing and keeps the script's input a single reviewable file.
+
+**This panel is NOT exhaustive.** It is the well-cited tier-1 set, so a
+clean screen against it is weak evidence of safety and must never be
+reported as a clear result. For comprehensive liability assessment also
+pull Open Targets organ-specific safety signals and in-vitro
+high-throughput screening data (EPA CompTox / ToxCast) using the
+target- and chemical-lookup tools available to you. The panel
+short-circuits the easy cases; the live sources cover the long tail.
 
 ## CYP Metabolism Liability Assessment
 

@@ -12,34 +12,43 @@ import numpy as np
 
 ## Resource Loading
 
-Load prior knowledge networks from pre-staged parquet files. Never call `dc.op.collectri()`, `dc.op.progeny()`, or `dc.get_progeny()` — these query the OmniPath web API and require network access.
+Never call `dc.op.collectri()`, `dc.op.progeny()`, `dc.get_progeny()`, or any other `dc.op.*()` loader: they fetch from the OmniPath web API, and there is no network egress. Load the network from a file already available to you.
+
+**Resolve the file before you write the script.** Ask for the *dataset* by what it is, not by a path — reference data is provisioned per-environment, so the directory, the filename, and the format all vary and none of them are yours to assume:
+
+| You need | Ask for | Standard sources |
+|-|-|-|
+| TF activity | A TF-target regulon network for your organism | CollecTRI; or DoRothEA filtered to confidence A-C |
+| Pathway activity | Pathway responsive-gene weights for your organism | PROGENy (14 pathways) |
+
+Then read it with the reader its format actually calls for — these circulate as CSV, TSV, and R `.rda` depending on the source, and a wrong-format read fails immediately. Match the organism too: a human regulon set over mouse counts runs happily and returns meaningless activities.
 
 ```python
 import pandas as pd
 
-# CollecTRI: TF-target regulatory network
-# source = TF name, target = target gene symbol, weight = direction (+1/-1)
-collectri = pd.read_parquet("<path from list-available-refs>/omnipath/processed/organism_9606/interactions_by_dataset/interactions__dataset_collectri.parquet")
-# Returns DataFrame with columns: ['source', 'target', 'weight']
-# ~1200 TFs, ~50k interactions (human)
-
-# PROGENy: pathway activity inference (14 pathways, weighted)
-# source = pathway name, target = gene symbol, weight = regulatory weight (signed float)
-progeny = pd.read_parquet("<path from list-available-refs>/progeny/processed/progeny_human.parquet")
-# Returns DataFrame with columns: ['source', 'target', 'weight']
-# 14 pathways: Androgen, EGFR, Estrogen, Hypoxia, JAK-STAT, MAPK,
-#              NFkB, p53, PI3K, TGFb, TNFa, Trail, VEGF, WNT
+# `regulon_path` and `pathway_path` are paths you resolved, not literals to copy.
+collectri = pd.read_csv(regulon_path)
+progeny = pd.read_csv(pathway_path)
 ```
 
 ### Network DataFrame Format
 
-All networks share a common long-format structure:
+Every method below consumes the same long format:
 
 | Column | Type | Description |
 |-|-|-|
-| `source` | str | Regulator name (TF for CollecTRI, pathway for PROGENy) |
-| `target` | str | Target gene symbol (HGNC for human) |
-| `weight` | float | Regulatory weight. CollecTRI: +1 (activation) or -1 (repression). PROGENy: signed float reflecting regulatory strength. |
+| `source` | str | Regulator name (TF for a regulon network, pathway for PROGENy) |
+| `target` | str | Target gene symbol (HGNC for human, MGI for mouse) |
+| `weight` | float | Regulatory weight. Regulons: +1 (activation) or -1 (repression). PROGENy: signed float reflecting regulatory strength. |
+
+Column names vary by source — DoRothEA ships `tf`/`target`/`mor`, and some releases carry extra provenance columns. Inspect the frame after loading and rename into `source`/`target`/`weight` before passing it on:
+
+```python
+collectri = collectri.rename(columns={"tf": "source", "mor": "weight"})
+collectri = collectri[["source", "target", "weight"]]
+```
+
+For reference, CollecTRI human is roughly 1,200 TFs over ~50k interactions, and PROGENy covers 14 pathways: Androgen, EGFR, Estrogen, Hypoxia, JAK-STAT, MAPK, NFkB, p53, PI3K, TGFb, TNFa, Trail, VEGF, WNT.
 
 ## dc.mt.ulm() -- Univariate Linear Model
 
@@ -130,7 +139,7 @@ import pandas as pd
 import scanpy as sc
 
 # Load CollecTRI network
-collectri = pd.read_parquet("<path from list-available-refs>/omnipath/processed/organism_9606/interactions_by_dataset/interactions__dataset_collectri.parquet")
+collectri = pd.read_csv(regulon_path)  # resolved + normalised per Resource Loading
 
 # Check gene symbol overlap before running
 overlap = set(adata.var_names) & set(collectri["target"])
@@ -183,7 +192,7 @@ import decoupler as dc
 import pandas as pd
 
 # Load CollecTRI network
-collectri = pd.read_parquet("<path from list-available-refs>/omnipath/processed/organism_9606/interactions_by_dataset/interactions__dataset_collectri.parquet")
+collectri = pd.read_csv(regulon_path)  # resolved + normalised per Resource Loading
 
 # Expression matrix: samples as rows, genes as columns
 expr = pd.read_csv("vst_counts.csv", index_col=0)
@@ -232,7 +241,7 @@ import decoupler as dc
 import pandas as pd
 
 # Load PROGENy network
-progeny = pd.read_parquet("<path from list-available-refs>/progeny/processed/progeny_human.parquet")
+progeny = pd.read_csv(pathway_path)  # resolved + normalised per Resource Loading
 
 # Compute per-cell pathway activities
 dc.mt.mlm(data=adata, net=progeny)
@@ -262,7 +271,7 @@ import decoupler as dc
 import pandas as pd
 
 # Load PROGENy network
-progeny = pd.read_parquet("<path from list-available-refs>/progeny/processed/progeny_human.parquet")
+progeny = pd.read_csv(pathway_path)  # resolved + normalised per Resource Loading
 
 # Expression matrix: samples as rows, genes as columns
 expr = pd.read_csv("vst_counts.csv", index_col=0)
@@ -312,8 +321,8 @@ import numpy as np
 from scipy import stats as scipy_stats
 
 # Load networks
-collectri = pd.read_parquet("<path from list-available-refs>/omnipath/processed/organism_9606/interactions_by_dataset/interactions__dataset_collectri.parquet")
-progeny = pd.read_parquet("<path from list-available-refs>/progeny/processed/progeny_human.parquet")
+collectri = pd.read_csv(regulon_path)  # resolved + normalised per Resource Loading
+progeny = pd.read_csv(pathway_path)  # resolved + normalised per Resource Loading
 
 # Compute both on the same expression data
 expr = pd.read_csv("vst_counts.csv", index_col=0)
@@ -368,7 +377,8 @@ plt.close(fig)
 
 - **Gene orientation**: Input DataFrame must have genes as COLUMNS and samples as ROWS. This is transposed from typical bioinformatics convention. If you load a genes-as-rows matrix, transpose it first: `mat = mat.T`.
 - **Gene symbol matching**: Gene symbols in the expression data must match the network's `target` column. Use HGNC symbols for human. Always check overlap: `len(set(mat.columns) & set(net["target"]))`. Low overlap (<20% of network targets) indicates a symbol mismatch problem.
-- **No network access**: Never call `dc.op.collectri()` or `dc.op.progeny()` in the sandbox. These query the OmniPath web API. Always load from pre-staged parquet files via `pd.read_parquet()`.
+- **No network access**: Never call `dc.op.collectri()`, `dc.op.progeny()`, or any other `dc.op.*()` loader. They query the OmniPath web API, and egress is blocked — the call fails outright. Load from a resolved file instead, with the reader its format calls for.
+- **Network absent from the environment**: If no regulon or pathway-weight file resolves, say so and stop that branch of the analysis. Do not substitute a different network, and do not fabricate one from a marker list — a plausible-looking activity score computed against invented priors is worse than a missing result.
 - **tmin parameter**: Sources (TFs or pathways) with fewer than `tmin` targets present in your data are silently dropped. If a TF is missing from results, check how many of its targets are in your gene list. Lower `tmin` (e.g., `tmin=3`) to recover sparse TFs, but results become less reliable.
 - **AnnData obsm key naming**: In decoupler >=2.x, obsm keys follow the pattern `score_{method}` and `padj_{method}` (e.g., `score_ulm`, `padj_ulm`). Older versions used `{method}_estimate` and `{method}_pvals`. This project uses decoupler >=2.1.2 -- always use the `score_` / `padj_` prefix.
 - **CollecTRI weights are directional**: +1 means the TF activates the target, -1 means repression. A positive activity score means the TF's activation targets are up and/or its repression targets are down.

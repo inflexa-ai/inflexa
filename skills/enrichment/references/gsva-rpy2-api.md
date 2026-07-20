@@ -49,11 +49,19 @@ gs_list = ro.ListVector({
     name: ro.StrVector(genes) for name, genes in gene_sets.items()
 })
 
-# Or load from a pre-staged GMT file (preferred in sandbox)
-# Get the exact path from list-available-refs
-ro.r('''
-gs_list <- readGMT("<path from list-available-refs>/msigdb/processed/Hs/msigdb_hallmark.gmt", valueType="list")
-''')
+# Or load a gene set file resolved from the reference inventory (no network egress,
+# so nothing may be fetched at runtime). Ask for the dataset by what it is — the
+# MSigDB hallmark collection for your organism is the reliable default; Reactome and
+# WikiPathways cover curated pathways; GO/oncogenic/immunologic collections only if
+# your environment happens to have them. The directory, filename, and format all vary
+# per environment, so resolve them rather than assuming.
+#
+# `gmt_path` holds the resolved path. readGMT() reads GMT only: one set per line,
+# tab-separated — set name, description, then member gene symbols (HGNC for human,
+# MGI for mouse). If the inventory reports another format, parse it in Python and
+# build the ro.ListVector above instead.
+ro.r.assign("gmt_path", gmt_path)
+ro.r('gs_list <- readGMT(gmt_path, valueType="list")')
 gs_list = ro.r("gs_list")
 ```
 
@@ -195,11 +203,13 @@ plage_df.index = list(base.rownames(ro.r("plage_scores")))
 ## Using GeneSetCollection (Bioconductor)
 
 ```python
+ro.r.assign("gmt_path", gmt_path)  # resolved from the reference inventory
+
 ro.r('''
 library(GSEABase)
 
 # From a GMT file
-gsc <- getGmt("pathways.gmt")
+gsc <- getGmt(gmt_path)
 
 # Or build programmatically
 gs1 <- GeneSet(c("GENE1", "GENE2", "GENE3"), setName="PathwayA")
@@ -234,10 +244,9 @@ limma_df = r_to_pd(ro.r("results"))
 # Prepare expression matrix
 expr_r = base.as_matrix(pd_to_r(expr_df))
 
-# Load MSigDB Hallmark gene sets from pre-staged GMT
-ro.r('''
-gs_list <- readGMT("<path from list-available-refs>/msigdb/processed/Hs/msigdb_hallmark.gmt", valueType="list")
-''')
+# Load MSigDB hallmark gene sets from a GMT resolved per Input Preparation
+ro.r.assign("gmt_path", gmt_path)
+ro.r('gs_list <- readGMT(gmt_path, valueType="list")')
 
 ro.r.assign("expr_mat", expr_r)
 

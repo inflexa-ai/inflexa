@@ -12,28 +12,48 @@ import numpy as np
 
 ## Resource Loading
 
-Load curated gene set / regulatory network resources.
+Never call `dc.op.progeny()`, `dc.op.collectri()`, `dc.op.ksn_omnipath()`, `dc.get_progeny()`, or any other `dc.op.*()` loader: they fetch from the OmniPath web API, and there is no network egress. Load the network from a file already available to you.
+
+**Resolve the file before you write the script.** Ask for the *dataset* by what it is, not by a path — reference data is provisioned per-environment, so the directory, the filename, and the format all vary and none of them are yours to assume:
+
+| You need | Ask for | Standard sources |
+|-|-|-|
+| Pathway activity | Pathway responsive-gene weights for your organism | PROGENy (14 pathways) |
+| TF activity | A TF-target regulon network for your organism | CollecTRI; or DoRothEA filtered to confidence A-C |
+| Kinase activity | A kinase-substrate network for your organism | OmniPath enzyme-substrate; PhosphoSitePlus |
+
+Then read it with the reader its format actually calls for — these circulate as CSV, TSV, and R `.rda` depending on the source, and a wrong-format read fails immediately. Match the organism too: a human regulon set over mouse counts runs happily and returns meaningless activities. A kinase-substrate network is the least commonly provisioned of the three: confirm one is in the inventory before planning a kinase-activity step, rather than discovering its absence mid-script.
 
 ```python
 import pandas as pd
 
-# PROGENy: pathway activity inference (14 pathways, weighted)
-# Load from pre-staged ref store — NEVER call dc.op.progeny() / dc.get_progeny() (no network).
-progeny = pd.read_parquet("<path from list-available-refs>/progeny/processed/progeny_human.parquet")
-# Returns DataFrame: columns = ['source', 'target', 'weight', 'p_value']
-# source = pathway name, target = gene symbol, weight = regulatory weight
+# `pathway_path` and `regulon_path` are paths you resolved, not literals to copy.
+progeny = pd.read_csv(pathway_path)
+collectri = pd.read_csv(regulon_path)
+```
 
-# CollecTRI: TF-target regulatory network
-# Load from pre-staged ref store — NEVER call dc.op.collectri() (no network access).
-collectri = pd.read_parquet("<path from list-available-refs>/omnipath/processed/organism_9606/interactions_by_dataset/interactions__dataset_collectri.parquet")
-# Returns DataFrame: columns = ['source', 'target', 'weight']
-# source = TF name, target = target gene, weight = direction (+1/-1)
+### Network DataFrame Format
 
-# Kinase-substrate relationships: load pre-staged OmniPath enz_sub parquet.
-# NEVER call dc.op.ksn_omnipath() — it requires network access.
-ksn = pd.read_parquet("<path from list-available-refs>/omnipath/processed/organism_9606/enz_sub.parquet")
+Every method below consumes the same long format:
 
-# Custom network: any DataFrame with source, target, weight columns
+| Column | Type | Description |
+|-|-|-|
+| `source` | str | Regulator name (pathway for PROGENy, TF for a regulon network, kinase for a KSN) |
+| `target` | str | Target gene symbol (HGNC for human, MGI for mouse) |
+| `weight` | float | Regulatory weight. Regulons: +1 (activation) or -1 (repression). PROGENy: signed float reflecting regulatory strength. |
+
+Column names vary by source — DoRothEA ships `tf`/`target`/`mor`, PROGENy releases often carry an extra `p_value` column, and some releases add provenance columns. Inspect the frame after loading and rename into `source`/`target`/`weight` before passing it on:
+
+```python
+collectri = collectri.rename(columns={"tf": "source", "mor": "weight"})
+collectri = collectri[["source", "target", "weight"]]
+```
+
+### Hand-Built Networks
+
+Any DataFrame with `source`, `target`, `weight` columns works as a network:
+
+```python
 custom_net = pd.DataFrame({
     "source": ["PathA", "PathA", "PathB", "PathB"],
     "target": ["GENE1", "GENE2", "GENE3", "GENE4"],
@@ -114,7 +134,7 @@ consensus_acts = pd.concat(
 
 ```python
 # Load PROGENy network
-progeny = pd.read_parquet("<path from list-available-refs>/progeny/processed/progeny_human.parquet")
+progeny = pd.read_csv(pathway_path)  # resolved + normalised per Resource Loading
 # 14 pathways: Androgen, EGFR, Estrogen, Hypoxia, JAK-STAT, MAPK,
 #              NFkB, p53, PI3K, TGFb, TNFa, Trail, VEGF, WNT
 
@@ -130,7 +150,7 @@ pw_acts_sig = pw_acts.loc[:, sig_mask]
 
 ```python
 # Load CollecTRI network
-collectri = pd.read_parquet("<path from list-available-refs>/omnipath/processed/organism_9606/interactions_by_dataset/interactions__dataset_collectri.parquet")
+collectri = pd.read_csv(regulon_path)  # resolved + normalised per Resource Loading
 
 # Compute TF activities
 tf_acts, tf_pvals = dc.mt.ulm(data=mat, net=collectri)
@@ -218,11 +238,11 @@ import pandas as pd
 expr = pd.read_csv("vst_counts.csv", index_col=0)
 
 # Pathway activity
-progeny = pd.read_parquet("<path from list-available-refs>/progeny/processed/progeny_human.parquet")
+progeny = pd.read_csv(pathway_path)  # resolved + normalised per Resource Loading
 pw_acts, pw_pvals = dc.mt.ulm(data=expr, net=progeny)
 
 # TF activity
-collectri = pd.read_parquet("<path from list-available-refs>/omnipath/processed/organism_9606/interactions_by_dataset/interactions__dataset_collectri.parquet")
+collectri = pd.read_csv(regulon_path)  # resolved + normalised per Resource Loading
 tf_acts, tf_pvals = dc.mt.ulm(data=expr, net=collectri)
 
 # Filter significant
@@ -239,5 +259,5 @@ tf_sig = tf_acts.loc[:, (tf_pvals < 0.05).any(axis=0)]
 - PROGENy weights are signed (positive = activation, negative = repression). The activity score direction reflects pathway activation/repression.
 - CollecTRI weights are +1 (activation) or -1 (repression). This is critical for correct TF activity inference.
 - For sparse AnnData (e.g., single-cell), decoupler handles sparse matrices internally. No need to convert to dense first.
-- `dc.op.progeny()` and `dc.op.collectri()` query the OmniPath web API and require internet access. In sandbox environments, always load from the pre-staged ref store via `pd.read_parquet()`.
+- `dc.op.progeny()` and `dc.op.collectri()` query the OmniPath web API and require internet access. In sandbox environments, always load a network resolved from the reference inventory, using the reader its format calls for — formats vary by source, so do not assume one.
 - For large single-cell datasets, consider running on pseudobulk profiles rather than individual cells to reduce noise and compute time.

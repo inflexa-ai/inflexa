@@ -115,7 +115,11 @@ Filter by magnitude_rank and specificity_rank
 ### TF Activity Inference
 
 ```
-collectri = pd.read_parquet("<path from list-available-refs>/omnipath/processed/organism_9606/interactions_by_dataset/interactions__dataset_collectri.parquet")
+Resolve a TF-target regulon network for your organism (CollecTRI, or DoRothEA
+  confidence A-C) from the reference data available to you — never dc.op.collectri()
+  (no network egress). Formats vary; read it the way the inventory reports.
+collectri = pd.read_csv(regulon_path)   # regulon_path resolved, not a literal
+  → normalise columns to source / target / weight; targets are HGNC (human) / MGI (mouse)
 dc.mt.ulm(adata, net=collectri)
 Results in adata.obsm["ulm_estimate"], adata.obsm["ulm_pvals"]
 ```

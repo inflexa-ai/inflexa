@@ -52,11 +52,10 @@ gene_stats.names = gene_names
 ### Gene Sets (Named List of Character Vectors)
 
 ```python
-# From a pre-staged GMT file (preferred in sandbox — no network access)
-# Get the GMT path from list-available-refs, e.g. msigdb/processed/Hs/msigdb_hallmark.gmt
-ro.r('''
-pathways <- gmtPathways("<path from list-available-refs>/msigdb/processed/Hs/msigdb_hallmark.gmt")
-''')
+# From a GMT file you resolved from the reference inventory (see Loading Gene Sets below).
+# `gmt_path` is a Python variable holding the resolved path — never a literal.
+ro.r.assign("gmt_path", gmt_path)
+ro.r('pathways <- gmtPathways(gmt_path)')
 pathways = ro.r("pathways")
 
 # From a Python dict
@@ -192,29 +191,45 @@ main_pathways = list(ro.r('collapsed$mainPathways'))
 res_collapsed = res_df[res_df["pathway"].isin(main_pathways)]
 ```
 
-## Loading Gene Sets from MSigDB
+## Loading Gene Sets
 
-### Pre-staged GMT files (preferred in sandbox)
+### Resolved GMT files (the only option without network)
 
-MSigDB GMT files are pre-staged in the reference store. Load with `gmtPathways()`:
+**Resolve the file before you write the script.** Ask for the *dataset* by what
+it is, not by a path — reference data is provisioned per-environment, so the
+directory, the filename, and the format all vary and none of them are yours to
+assume:
+
+| You need | Ask for | Notes |
+|-|-|-|
+| Broad first-pass gene sets | The MSigDB hallmark collection for your organism | 50 low-redundancy sets; the reliable default |
+| Curated pathways | Reactome pathway gene sets; WikiPathways for your organism | Per-species files |
+| GO / oncogenic / immunologic sets | The MSigDB collection you need, *if available* | Do not assume; only hallmark is dependably present |
+
+`gmtPathways()` reads GMT and nothing else: one gene set per line,
+tab-separated, with the set name first, then a description or source URL, then
+the member gene symbols. If the inventory reports a different format for what
+you resolved, parse it in Python and build the R named list yourself (see
+"Gene Sets" above). Match the organism and the identifier space — these files
+carry HGNC symbols for human and MGI symbols for mouse, and they must agree with
+the names in your `stats` vector or every pathway drops out at `minSize`.
 
 ```python
-# Use the exact path from list-available-refs
-ro.r('''
-pathways <- gmtPathways("<path from list-available-refs>/msigdb/processed/Hs/msigdb_hallmark.gmt")
-''')
+# `gmt_path` was resolved from the reference inventory; do not hardcode it.
+ro.r.assign("gmt_path", gmt_path)
+ro.r('pathways <- gmtPathways(gmt_path)')
 pathways = ro.r("pathways")
 
-# Other pre-staged collections: msigdb_canonical_pathways.gmt,
-# msigdb_go_biological_process.gmt, msigdb_go_cellular_component.gmt,
-# msigdb_go_molecular_function.gmt, msigdb_oncogenic_signatures.gmt,
-# msigdb_immunologic_signatures.gmt, msigdb_cell_type_signatures.gmt
+# Sanity check once stats_vec is assigned: expect a healthy overlap, not a handful
+ro.r('cat(length(pathways), "sets;",
+          length(intersect(unlist(pathways), names(stats_vec))), "genes matched\n")')
 ```
 
-### msigdbr R package (requires network — fallback only)
+### msigdbr R package (requires network — WILL FAIL here)
 
 ```python
-# msigdbr queries an online database — only use outside sandbox
+# msigdbr queries an online database. Without egress this errors out; there is
+# no offline mode. Use a resolved GMT instead.
 msigdbr = importr("msigdbr")
 
 ro.r('''
@@ -222,10 +237,14 @@ msigdb_df <- msigdbr(species = "Homo sapiens", category = "H")
 pathways <- split(msigdb_df$gene_symbol, msigdb_df$gs_name)
 ''')
 pathways = ro.r("pathways")
-
-# Categories: "H" (hallmark), "C2" (curated), "C5" (ontology/GO),
-# "C6" (oncogenic), "C7" (immunologic), "C8" (cell type)
 ```
+
+### KEGG
+
+KEGG gene sets cannot be redistributed under their license, so they are not
+staged. `KEGGREST`, `clusterProfiler::gseKEGG()`, and Enrichr's KEGG libraries
+all reach for the network and fail. Use Reactome or WikiPathways for canonical
+pathway coverage instead.
 
 ## Complete Workflow Example
 
@@ -236,10 +255,9 @@ gene_names = ro.StrVector(stats_series.index.tolist())
 gene_stats = ro.FloatVector(stats_series.values.tolist())
 gene_stats.names = gene_names
 
-# Load Hallmark gene sets from pre-staged GMT
-ro.r('''
-pathways <- gmtPathways("<path from list-available-refs>/msigdb/processed/Hs/msigdb_hallmark.gmt")
-''')
+# Load hallmark gene sets from a GMT resolved per Loading Gene Sets
+ro.r.assign("gmt_path", gmt_path)
+ro.r('pathways <- gmtPathways(gmt_path)')
 
 # Run fgsea
 ro.r.assign("stats_vec", gene_stats)

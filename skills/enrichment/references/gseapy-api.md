@@ -2,34 +2,60 @@
 
 Python library for gene set enrichment analysis. Provides ORA (over-representation analysis), GSEA, preranked GSEA, and single-sample GSEA. Supports GMT files, Python dicts, and Enrichr web services as gene set sources.
 
-## Sandbox: Use Pre-Staged GMT Files
+## Resource Loading
 
-In sandbox environments there is **no network access**. Do NOT pass Enrichr
-library name strings (e.g., `"MSigDB_Hallmark_2020"`) to `gene_sets=` — this
-triggers an HTTP request that will fail. Instead, pass a **pre-staged GMT file
-path** from `list-available-refs`:
+Never pass an Enrichr library name string (e.g., `"MSigDB_Hallmark_2020"`,
+`"KEGG_2021_Human"`, `"GO_Biological_Process_2023"`) to `gene_sets=`: every one
+of them triggers an HTTP request to the Enrichr API, and there is no network
+egress — the call **will fail**. This holds for `gp.enrich()`, `gp.gsea()`,
+`gp.prerank()`, and `gp.ssgsea()` alike. Pass a gene set file already available
+to you instead.
+
+**Resolve the file before you write the script.** Ask for the *dataset* by what
+it is, not by a path — reference data is provisioned per-environment, so the
+directory, the filename, and the format all vary and none of them are yours to
+assume:
+
+| You need | Ask for | Notes |
+|-|-|-|
+| Broad first-pass gene sets | The MSigDB hallmark collection for your organism | 50 low-redundancy sets; the reliable default |
+| Curated pathways | Reactome pathway gene sets; WikiPathways for your organism | Per-species files |
+| GO / oncogenic / immunologic sets | The MSigDB collection you need, *if available* | Do not assume; only hallmark is dependably present |
+
+Gene set files circulate as GMT, and gseapy's `gene_sets=` accepts a GMT path or
+a plain `{set_name: [genes]}` dict — read anything else into a dict yourself.
+Match the organism: a human gene set file scored against mouse symbols runs
+happily and returns near-empty overlaps. The identifier space must match too —
+these files carry HGNC symbols for human and MGI symbols for mouse, so convert
+Ensembl or Entrez IDs to symbols before enrichment.
 
 ```python
-# Get the GMT path from list-available-refs tool output, then:
+# `hallmark_gmt_path` is a path you resolved, not a literal to copy.
 res = gp.prerank(
     rnk=rnk,
-    gene_sets="<path from list-available-refs>/msigdb/processed/Hs/msigdb_hallmark.gmt",
+    gene_sets=hallmark_gmt_path,
     min_size=15, max_size=500, outdir=None, seed=42,
 )
 
-# WikiPathways GMT is also pre-staged:
 res = gp.enrich(
     gene_list=de_genes,
-    gene_sets="<path from list-available-refs>/wikipathways/processed/wikipathways_Homo_sapiens.gmt",
+    gene_sets=wikipathways_gmt_path,  # resolved, per-species
     background=background_genes,
     outdir=None,
 )
 ```
 
-Available pre-staged MSigDB collections (human + mouse): hallmark,
-canonical_pathways, go_biological_process, go_cellular_component,
-go_molecular_function, oncogenic_signatures, immunologic_signatures,
-cell_type_signatures. WikiPathways GMT files are available per species.
+**KEGG is not available.** Its license forbids redistribution, so KEGG gene sets
+are not staged, and every route to them (`"KEGG_2021_Human"` via Enrichr,
+`clusterProfiler::enrichKEGG()`, KEGGREST) needs network access it will not get.
+Use Reactome or WikiPathways for canonical pathway coverage instead.
+
+### GMT File Contract
+
+A GMT is one gene set per line, tab-separated: set name, a description or source
+URL, then the member gene symbols. Whatever file you resolve must match your
+data on both axes — organism and identifier type — before the enrichment result
+means anything.
 
 ## Core Imports
 
@@ -47,27 +73,28 @@ Tests whether a gene list is enriched for specific gene sets compared to a backg
 # gene_list: list of gene symbols (DEGs, cluster markers, etc.)
 gene_list = ["BRCA1", "TP53", "EGFR", "MYC", "KRAS", "PTEN"]
 
-# Basic ORA using Enrichr libraries
+# Basic ORA against a resolved GMT
+# `hallmark_gmt_path` was resolved from the reference inventory.
 enr = gp.enrich(
     gene_list=gene_list,
-    gene_sets="GO_Biological_Process_2023",
+    gene_sets=hallmark_gmt_path,
     organism="human",
     outdir=None,            # None = do not write files to disk
     cutoff=0.05,            # adjusted p-value cutoff for output filtering
 )
 
-# Multiple gene set libraries
+# Multiple gene set files — pass a list of resolved paths
 enr = gp.enrich(
     gene_list=gene_list,
-    gene_sets=["GO_Biological_Process_2023", "KEGG_2021_Human", "MSigDB_Hallmark_2020"],
+    gene_sets=[hallmark_gmt_path, reactome_gmt_path, wikipathways_gmt_path],
     organism="human",
     outdir=None,
 )
 
-# With custom background
+# With custom background (required for a defensible ORA)
 enr = gp.enrich(
     gene_list=gene_list,
-    gene_sets="KEGG_2021_Human",
+    gene_sets=reactome_gmt_path,
     background="background_genes.txt",   # file path or list of gene symbols
     outdir=None,
 )
@@ -112,7 +139,7 @@ Requires an expression matrix and class labels. Computes gene-level ranking inte
 
 gsea_res = gp.gsea(
     data=expr_df,                       # DataFrame (genes x samples) or file path
-    gene_sets="MSigDB_Hallmark_2020",   # library name, GMT path, or dict
+    gene_sets=hallmark_gmt_path,        # resolved GMT path or dict (never a library name)
     cls=["control"] * 5 + ["treatment"] * 5,  # class labels
     permutation_num=1000,               # number of permutations
     permutation_type="phenotype",       # "phenotype" or "gene_set"
@@ -155,7 +182,7 @@ rnk = rnk.sort_values(ascending=False)
 
 pre_res = gp.prerank(
     rnk=rnk,                            # Series (index=genes, values=scores) or file path
-    gene_sets="MSigDB_Hallmark_2020",
+    gene_sets=hallmark_gmt_path,        # resolved GMT path or dict
     min_size=15,
     max_size=500,
     permutation_num=1000,
@@ -190,7 +217,7 @@ Per-sample enrichment scores for each gene set.
 
 ss_res = gp.ssgsea(
     data=expr_df,
-    gene_sets="MSigDB_Hallmark_2020",
+    gene_sets=hallmark_gmt_path,        # resolved GMT path or dict
     outdir=None,
     min_size=15,
     max_size=500,
@@ -208,39 +235,41 @@ scores_df = ss_res.res2d
 
 ## Gene Set Sources
 
-### Pre-staged GMT files (sandbox — preferred)
+### Resolved gene set files (the only option here)
 
-Use pre-staged GMT file paths from `list-available-refs`. This is the only
-method that works without network access:
+Pass a path you resolved from the reference inventory, or an in-memory dict.
+These are the only sources that work without network access:
 
 ```python
+# `hallmark_gmt_path` was resolved from the reference inventory.
 res = gp.prerank(
     rnk=rnk,
-    gene_sets="<path>/msigdb/processed/Hs/msigdb_hallmark.gmt",
+    gene_sets=hallmark_gmt_path,
     outdir=None,
 )
+
+# A dict works too, and is the escape hatch for any non-GMT source you parse yourself
+res = gp.prerank(rnk=rnk, gene_sets={"PathA": ["GENE1", "GENE2"]}, outdir=None)
 ```
 
-### Enrichr library names (requires network — NOT available in sandbox)
+### Enrichr library names (requires network — WILL FAIL here)
 
-These string names trigger HTTP requests to the Enrichr API:
+Every string below is an Enrichr library name. Passing one to `gene_sets=`
+issues an HTTP request to the Enrichr API and fails without egress — there is no
+cached fallback. `gp.get_library_name()` fails for the same reason. They are
+listed only so you can recognise and avoid them:
 
-| Library Name | Description |
-|-------------|-------------|
-| `"GO_Biological_Process_2023"` | GO biological processes |
-| `"GO_Molecular_Function_2023"` | GO molecular functions |
-| `"GO_Cellular_Component_2023"` | GO cellular components |
-| `"KEGG_2021_Human"` | KEGG pathways (human) |
-| `"MSigDB_Hallmark_2020"` | MSigDB hallmark gene sets (50 sets) |
-| `"Reactome_2022"` | Reactome pathways |
-| `"WikiPathway_2023_Human"` | WikiPathways (human) |
-| `"Transcription_Factor_PPIs"` | TF protein-protein interactions |
-| `"ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X"` | TF targets |
-
-```python
-# List all available Enrichr libraries (requires network)
-libs = gp.get_library_name()
-```
+| Library Name | Nearest available substitute |
+|-|-|
+| `"MSigDB_Hallmark_2020"` | The MSigDB hallmark collection, resolved as a GMT |
+| `"Reactome_2022"` | Reactome pathway gene sets, resolved as a GMT |
+| `"WikiPathway_2023_Human"` | WikiPathways for your organism, resolved as a GMT |
+| `"GO_Biological_Process_2023"` | An MSigDB GO collection *if* your environment has one |
+| `"GO_Molecular_Function_2023"` | An MSigDB GO collection *if* your environment has one |
+| `"GO_Cellular_Component_2023"` | An MSigDB GO collection *if* your environment has one |
+| `"KEGG_2021_Human"` | None — KEGG cannot be redistributed and is not staged |
+| `"Transcription_Factor_PPIs"` | A TF-target regulon network via decoupler |
+| `"ENCODE_and_ChEA_Consensus_TFs_from_ChIP-X"` | A TF-target regulon network via decoupler |
 
 ## Plotting
 
@@ -275,8 +304,8 @@ ax.figure.savefig("dotplot.png", dpi=150, bbox_inches="tight")
 
 - `outdir=None` suppresses file output. If you set a directory, GSEApy writes TSV and plot files. For programmatic use, always set `outdir=None`.
 - Results are in `res2d` (DataFrame), not `results` (which is a dict for GSEA/prerank). Use `res2d` for consistent access across all methods.
-- Gene set names in Enrichr are case-sensitive and include the year. Check exact names with `gp.get_library_name()`.
-- `organism="human"` is only needed for Enrichr web API calls (`enrich`). For `prerank`/`ssgsea` with local gene sets or GMT files, it is ignored.
+- Any Enrichr library name string fails without network access, and so does `gp.get_library_name()`. There is no offline library cache — resolve a gene set file instead.
+- `organism="human"` is only needed for Enrichr web API calls (`enrich`). For `prerank`/`ssgsea` with local gene sets or GMT files, it is ignored — it does **not** convert identifiers, so resolve a gene set file matching your organism rather than relying on this parameter.
 - The `background` parameter in `gp.enrich()` overrides `organism`. When `background` is provided, the background gene universe is restricted to those genes.
 - Column names in results vary slightly between methods. `enrich()` uses `"Adjusted P-value"` while `prerank()` uses `"FDR q-val"`.
 - `prerank()` expects a pre-sorted ranking. If you pass an unsorted Series, results may differ from expected.
