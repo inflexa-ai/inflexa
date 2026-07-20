@@ -1049,33 +1049,41 @@ export function writeDirectConnection(input: DirectConnectionInput): Result<void
 
 /**
  * The read-only signals that a credential-helper Anthropic setup exists. A pure shape (no IO) so the
- * offer/precedence is unit-testable. User-level vs org-managed is tracked SEPARATELY because only the
- * user's OWN `apiKeyHelper` may be pre-filled — the managed one is surfaced but never lifted.
+ * offer/precedence is unit-testable. User-level vs org-managed is tracked SEPARATELY because they are
+ * offered differently: the user's OWN `apiKeyHelper` is the recommended default, while the org-managed
+ * one is shown for the user to explicitly pick and confirm — never silently merged into the user path,
+ * and NEVER executed before the user has seen and accepted the exact command (the probe runs it only
+ * after that confirmation).
  */
 export type CredentialHelperDetection = {
     /** An `apiKeyHelper` from the user's OWN `~/.claude/settings.json` — pre-fillable as an editable default. */
     readonly userHelperCommand: string | null;
-    /** An org-managed `apiKeyHelper` is present — surfaced to the user, but NEVER pre-filled or auto-executed. */
-    readonly managedHelperPresent: boolean;
+    /**
+     * The `apiKeyHelper` from the org-managed Claude Code settings (the per-platform
+     * `managed-settings.json`), or `null` when absent/unreadable. Offered as its own EXPLICIT choice —
+     * shown to the user, editable before use, and executed only after they select and confirm it.
+     */
+    readonly managedHelperCommand: string | null;
     /** `ANTHROPIC_AUTH_TOKEN` is set — the env-bearer source is offerable. */
     readonly authTokenEnvSet: boolean;
 };
 
 /** True when ANY credential-helper signal was detected, so setup should offer the credential-source path. */
 export function credentialHelperDetected(d: CredentialHelperDetection): boolean {
-    return d.userHelperCommand !== null || d.managedHelperPresent || d.authTokenEnvSet;
+    return d.userHelperCommand !== null || d.managedHelperCommand !== null || d.authTokenEnvSet;
 }
 
 /**
- * Assemble the detection from its raw signals — pure, so the offer logic (and the "managed helper is not
- * auto-executed" guarantee) is testable without touching the filesystem or environment.
+ * Assemble the detection from its raw signals — pure, so the offer logic (and the "managed helper is
+ * never executed without explicit confirmation" guarantee) is testable without touching the filesystem
+ * or environment.
  */
 export function detectCredentialHelperFrom(
     userHelperCommand: string | null,
-    managedHelperPresent: boolean,
+    managedHelperCommand: string | null,
     authTokenEnvSet: boolean,
 ): CredentialHelperDetection {
-    return { userHelperCommand, managedHelperPresent, authTokenEnvSet };
+    return { userHelperCommand, managedHelperCommand, authTokenEnvSet };
 }
 
 /** The user's OWN Claude Code settings — an `apiKeyHelper` here is theirs, so setup may pre-fill it as an editable default. */
@@ -1084,15 +1092,23 @@ function userClaudeSettingsPath(): string {
 }
 
 /**
- * The org-managed Claude Code settings file (Claude Code's documented per-platform managed-settings path).
- * An `apiKeyHelper` here belongs to the organization: setup surfaces that one exists but NEVER pre-fills or
- * auto-executes it — the governance decision stays with the user, and the file may be unreadable or need
- * special env anyway.
+ * The org-managed Claude Code settings locations, most-specific first (Claude Code's documented
+ * per-platform managed-settings paths — this is the standard place an enterprise MDM/IT deploys the
+ * org's `apiKeyHelper`). macOS additionally probes the per-user `~/Library` twin of the system path:
+ * some IT rollouts install there ("Library/Application Support/…" in per-user install docs), and a
+ * read-only existence probe of one extra path is free. An `apiKeyHelper` found here belongs to the
+ * organization: setup shows it as an explicit choice but never runs it before the user confirms the
+ * exact command — the governance decision stays with the user, and the file may need special env anyway.
  */
-function managedClaudeSettingsPath(): string {
-    if (process.platform === "darwin") return "/Library/Application Support/ClaudeCode/managed-settings.json";
-    if (process.platform === "win32") return "C:\\ProgramData\\ClaudeCode\\managed-settings.json";
-    return "/etc/claude-code/managed-settings.json";
+function managedClaudeSettingsPaths(): string[] {
+    if (process.platform === "darwin") {
+        return [
+            "/Library/Application Support/ClaudeCode/managed-settings.json",
+            join(homedir(), "Library", "Application Support", "ClaudeCode", "managed-settings.json"),
+        ];
+    }
+    if (process.platform === "win32") return ["C:\\ProgramData\\ClaudeCode\\managed-settings.json"];
+    return ["/etc/claude-code/managed-settings.json"];
 }
 
 /**
@@ -1119,11 +1135,9 @@ function readApiKeyHelper(path: string): string | null {
  * settings-file signal already subsumes it — no fragile `claude` subprocess is spawned.
  */
 function detectCredentialHelper(): CredentialHelperDetection {
-    return detectCredentialHelperFrom(
-        readApiKeyHelper(userClaudeSettingsPath()),
-        readApiKeyHelper(managedClaudeSettingsPath()) !== null,
-        anthropicAuthTokenSet(),
-    );
+    // First managed location that yields a helper wins — the paths are ordered most-authoritative first.
+    const managed = managedClaudeSettingsPaths().reduce<string | null>((found, path) => found ?? readApiKeyHelper(path), null);
+    return detectCredentialHelperFrom(readApiKeyHelper(userClaudeSettingsPath()), managed, anthropicAuthTokenSet());
 }
 
 /** The wire protocol a direct connection speaks, resolving the "infer from provider" default the way `resolveModelConnection` does — the probe needs it to add the anthropic version header. */
@@ -1185,25 +1199,25 @@ function truncateCommand(s: string, max = 44): string {
 
 /**
  * Offer the credential-source path for a detected helper setup. Opt-in: the user chooses a credential
- * command (pre-filled from their OWN settings when present, always editable), the
- * `ANTHROPIC_AUTH_TOKEN` env bearer (when set), or declines to the static-key path. An org-managed helper is
- * announced but the user must still supply/confirm the command — it is never auto-executed. The chosen
- * source is VALIDATED (run once + auth probe) before it is returned; a probe failure reports the likely
- * cause and returns `null` (falling back to the static key). Returns the token-free `auth` block, or `null`.
+ * command — pre-filled from their OWN settings, or from the ORG-MANAGED `managed-settings.json` as its
+ * own explicitly-labeled choice, both always editable — the `ANTHROPIC_AUTH_TOKEN` env bearer (when
+ * set), or declines to the static-key path. The managed helper is never run before the user has seen
+ * and confirmed the exact command in the editable prompt. The chosen source is VALIDATED (run once +
+ * auth probe) before it is returned; a probe failure reports the likely cause and returns `null`
+ * (falling back to the static key). Returns the token-free `auth` block, or `null`.
  */
 async function offerCredentialSource(direct: DirectConnectionInput, detection: CredentialHelperDetection): Promise<ModelAuthConfig | null> {
-    // A managed-only helper: announce it, but the user must still supply/confirm a command — never lifted.
-    if (detection.managedHelperPresent && detection.userHelperCommand === null) {
-        log.info(
-            "An organization-managed Claude credential helper was detected. Inflexa will not run it automatically — supply or confirm the command to use it.",
-        );
-    }
-
     const options: { value: string; label: string }[] = [];
     if (detection.userHelperCommand !== null) {
         options.push({
             value: "command_prefill",
             label: `Use the credential command from ~/.claude/settings.json (${truncateCommand(detection.userHelperCommand)})`,
+        });
+    }
+    if (detection.managedHelperCommand !== null) {
+        options.push({
+            value: "command_prefill_managed",
+            label: `Use your organization's managed credential command (${truncateCommand(detection.managedHelperCommand)})`,
         });
     }
     options.push({ value: "command", label: "Run a credential command to mint a short-lived token" });
@@ -1217,19 +1231,28 @@ async function offerCredentialSource(direct: DirectConnectionInput, detection: C
     if (chosen === "env_bearer") {
         auth = { kind: "env", var: ANTHROPIC_AUTH_TOKEN_VAR, scheme: "bearer" };
     } else {
-        const prefill = chosen === "command_prefill" ? (detection.userHelperCommand ?? "") : "";
+        const prefill =
+            chosen === "command_prefill"
+                ? (detection.userHelperCommand ?? "")
+                : chosen === "command_prefill_managed"
+                  ? (detection.managedHelperCommand ?? "")
+                  : "";
         const command = (
             await promptText("Credential command (its stdout is the token — Claude Code apiKeyHelper compatible)", {
                 ...(prefill !== "" && { defaultValue: prefill, placeholder: prefill }),
                 validate: (v) => (v.trim() === "" ? "Enter a command." : undefined),
             })
         ).trim();
-        // Infer a scheme default and let the user override (the probe validates it): an apiKeyHelper mints an
-        // `x-api-key`; a bearer is the OAuth/WIF case.
-        const scheme = (await select("How is the minted token sent on the wire?", [
+        // Infer a scheme default and let the user override (the probe validates it either way): a personal
+        // apiKeyHelper conventionally mints an `x-api-key`, while an ORG-MANAGED helper fronting an
+        // enterprise gateway conventionally mints a short-lived OAuth access token sent as a Bearer — so
+        // the managed choice lists bearer first. Our `select` has no initialValue; ordering IS the default.
+        const schemeOptions = [
             { value: "x-api-key", label: "x-api-key header (a minted API key — apiKeyHelper default)" },
-            { value: "bearer", label: "Authorization: Bearer (an OAuth / WIF access token)" },
-        ])) as CredentialScheme;
+            { value: "bearer", label: "Authorization: Bearer (an OAuth / WIF / enterprise-gateway access token)" },
+        ];
+        if (chosen === "command_prefill_managed") schemeOptions.reverse();
+        const scheme = (await select("How is the minted token sent on the wire?", schemeOptions)) as CredentialScheme;
         auth = { kind: "command", command, scheme };
     }
 
