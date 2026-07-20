@@ -11,10 +11,14 @@ call — it drives an internal `planner` sub-agent (`AgentDefinition`, id
 text reply is discarded, and the outcome is read from a closure cell that the
 terminal tools write.
 
-The planner has four inner tools: `validate_plan` (a non-terminal Zod + semantic
-dry-run) and three terminal tools — `submit_plan` (re-validate and persist),
-`request_clarification`, and `report_blocker` (the planner's honest "no viable
-plan" exit). Exactly one terminal outcome is recorded per invocation. The whole
+The planner's inner tools divide by whether they end the loop. The terminal set
+is `submit_plan` (re-validate and persist), `request_clarification`, and
+`report_blocker` (the planner's honest "no viable plan" exit); everything else is
+non-terminal and may be called freely — `validate_plan` (a Zod + semantic
+dry-run) and `list_available_refs` (reference-store discovery, so a step is only
+committed to reference data the environment actually holds). That split, not the
+size of either set, is the invariant: a plan reaches the caller through exactly
+one terminal call, and non-terminal tools record no outcome. The whole
 invocation is bounded by a single 600s wall-clock guard merged with the caller's
 abort signal; the planner loop is iteration-capped at 13. There is no per-attempt
 timeout, no internal retry counter, and no `adaptive` thinking or `budget_tokens`
@@ -41,19 +45,28 @@ only through terminal tool calls; its text reply SHALL be discarded.
 - **WHEN** the planner finishes its loop
 - **THEN** the tool reads the recorded outcome from the shared closure cell, not from the planner's text reply
 
-### Requirement: The planner exposes one non-terminal validator and three terminal tools
+### Requirement: The planner separates non-terminal tools from a terminal outcome set
 
-The planner SHALL be given `validate_plan` (a non-terminal Zod + semantic dry-run
-returning `{ valid, issues }`) plus the terminal tools `submit_plan`,
-`request_clarification`, and `report_blocker`. `submit_plan` SHALL re-validate
-and persist the plan. Exactly one terminal outcome SHALL be recorded per
-invocation; any later terminal call SHALL be rejected.
+The planner SHALL be given the terminal tools `submit_plan`,
+`request_clarification`, and `report_blocker`, and SHALL additionally be given
+non-terminal tools including `validate_plan` (a Zod + semantic dry-run returning
+`{ valid, issues }`) and `list_available_refs` (reference-store discovery).
+`submit_plan` SHALL re-validate and persist the plan. Exactly one terminal
+outcome SHALL be recorded per invocation; any later terminal call SHALL be
+rejected. Non-terminal tools SHALL record no outcome and SHALL be callable any
+number of times, so adding one does not change the planner's exit contract.
 
-#### Scenario: validate_plan is non-terminal
+#### Scenario: Non-terminal tools record no outcome
 
 - **WHEN** the planner calls `validate_plan` with a candidate plan
 - **THEN** it returns `{ valid, issues }` and records no outcome
 - **AND** the planner may call it any number of times
+
+#### Scenario: The planner can see what reference data is staged
+
+- **WHEN** the planner calls `list_available_refs`
+- **THEN** it receives the current reference inventory and records no outcome
+- **AND** the planner may ground a step's reference needs in that result, or take a terminal `request_clarification` exit when data the analysis cannot proceed without is absent
 
 #### Scenario: submit_plan re-validates and persists
 
