@@ -39,6 +39,25 @@ The tool SHALL classify each argv before running it. An argv that classification
 - **WHEN** the user rejects the approval
 - **THEN** the tool does not spawn the CLI and the turn ends through the harness denial path
 
+### Requirement: Interactive TUI-launcher commands are blocked from the agent
+
+A small set of commands open an interactive terminal UI — bare `inflexa` and `inflexa config` — and cannot function as a captured subprocess: with `stdin` ignored and `stdout`/`stderr` piped, there is no terminal to drive, so the child renders into a non-TTY pipe and hangs. The tool SHALL refuse such a command outright — it returns a blocked result to the model WITHOUT prompting for approval and WITHOUT spawning. This is a denylist of structurally-unrunnable commands, keyed on the resolved subcommand path, NOT an allowlist: every other action remains approval-gated. A blocked command's introspection (its `--help`) SHALL remain allowed, since it runs no UI.
+
+#### Scenario: Bare inflexa is refused
+
+- **WHEN** the tool is invoked with an empty argv (bare `inflexa`, which opens the TUI)
+- **THEN** it returns a blocked result to the model without prompting and without spawning
+
+#### Scenario: inflexa config is refused
+
+- **WHEN** the tool is invoked with `["config"]` (which opens the interactive settings UI)
+- **THEN** it returns a blocked result to the model without prompting and without spawning
+
+#### Scenario: A blocked command's help is still allowed
+
+- **WHEN** the tool is invoked with `["config", "--help"]`
+- **THEN** it classifies as introspection and runs, returning the help text without prompting
+
 ### Requirement: Classification is the commander parse, not a string heuristic
 
 The tool SHALL classify an argv by parsing it against the real commander program tree in-process — built through the `buildProgram()` factory, with a `preAction` hook that fires a classification sentinel the instant an action would run, `exitOverride` set, and help/version output silenced — never by a string match on the argv. Classification SHALL yield exactly one of: introspection (a help/version parse outcome) → auto-allow; a resolved action (the sentinel fires) → approval, carrying the resolved subcommand path; or a parse error (unknown command/option, missing/excess argument) → returned to the model as a tool result WITHOUT spawning and WITHOUT prompting. Because the decision is commander's own parse, an argv that places `--help` after a `--` terminator SHALL classify as an action, not introspection.

@@ -149,4 +149,42 @@ describe("run_inflexa — execute", () => {
 
         expect(result.status).toBe("timed_out");
     });
+
+    test("bare inflexa is blocked — never asks, never spawns", async () => {
+        const sub = recordingSubprocess();
+        const ask = recordingAsk({ kind: "once" });
+        const tool = makeTool(sub.fn);
+
+        const result = (await tool.execute({ argv: [] }, makeCtx(ask.fn)))._unsafeUnwrap();
+
+        expect(ask.calls.length).toBe(0);
+        expect(sub.calls.length).toBe(0);
+        expect(result.status).toBe("blocked");
+    });
+
+    test("inflexa config is blocked — never asks, never spawns", async () => {
+        const sub = recordingSubprocess();
+        const ask = recordingAsk({ kind: "once" });
+        const tool = makeTool(sub.fn);
+
+        const result = (await tool.execute({ argv: ["config"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+
+        expect(ask.calls.length).toBe(0);
+        expect(sub.calls.length).toBe(0);
+        expect(result.status).toBe("blocked");
+        if (result.status !== "blocked") throw new Error("expected blocked");
+        expect(result.message.length).toBeGreaterThan(0);
+    });
+
+    test("a blocked command's --help is still introspection and runs", async () => {
+        const sub = recordingSubprocess();
+        const ask = recordingAsk({ kind: "once" });
+        const tool = makeTool(sub.fn);
+
+        const result = (await tool.execute({ argv: ["config", "--help"] }, makeCtx(ask.fn)))._unsafeUnwrap();
+
+        expect(ask.calls.length).toBe(0);
+        expect(sub.calls.length).toBe(1);
+        expect(result.status).toBe("ran");
+    });
 });
