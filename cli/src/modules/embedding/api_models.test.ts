@@ -39,6 +39,31 @@ describe("listEmbeddingModels", () => {
         expect(spy.calls[0]!.auth).toBe("Bearer sk-abc");
     });
 
+    test("plain-http loopback endpoints are accepted so the fetch runs (ollama, llama.cpp server)", async () => {
+        const spy = stubFetch({ data: [{ id: "nomic-embed-text" }] });
+        expect((await listEmbeddingModels("http://localhost:11434/v1", "k"))._unsafeUnwrap()).toEqual(["nomic-embed-text"]);
+        expect((await listEmbeddingModels("http://127.0.0.1:8080", "k"))._unsafeUnwrap()).toEqual(["nomic-embed-text"]);
+        expect(spy.calls.map((c) => c.url)).toEqual(["http://localhost:11434/v1/models", "http://127.0.0.1:8080/models"]);
+    });
+
+    test("cleartext http to a non-loopback host is invalid_url and the key never leaves — fetch is not called", async () => {
+        const spy = stubFetch({ data: [{ id: "text-embedding-3-small" }] });
+        expect((await listEmbeddingModels("http://gw.corp/v1", "sk-secret"))._unsafeUnwrapErr().type).toBe("invalid_url");
+        expect(spy.calls).toHaveLength(0);
+    });
+
+    test("a non-http(s) protocol is invalid_url and fetch is not called", async () => {
+        const spy = stubFetch({ data: [{ id: "text-embedding-3-small" }] });
+        expect((await listEmbeddingModels("ftp://x/v1", "k"))._unsafeUnwrapErr().type).toBe("invalid_url");
+        expect(spy.calls).toHaveLength(0);
+    });
+
+    test("an unparseable URL is invalid_url and fetch is not called", async () => {
+        const spy = stubFetch({ data: [{ id: "text-embedding-3-small" }] });
+        expect((await listEmbeddingModels("not a url", "k"))._unsafeUnwrapErr().type).toBe("invalid_url");
+        expect(spy.calls).toHaveLength(0);
+    });
+
     test("a listing whose ids are all non-embedding is no_models — the free-text fallback case", async () => {
         stubFetch({ data: [{ id: "gpt-4o" }, { id: "whisper-1" }] });
         expect((await listEmbeddingModels("https://api.openai.com/v1", "sk-test"))._unsafeUnwrapErr().type).toBe("no_models");
