@@ -93,6 +93,45 @@ describe("writeConfig / readConfig round-trip", () => {
     });
 });
 
+describe("readConfig — embedding block", () => {
+    test("an apiKey without a mode infers api-key mode (a hand-edited key just works)", () => {
+        writeRawConfig(JSON.stringify({ telemetry: false, embedding: { apiKey: "sk-test" } }));
+        const { embedding } = readConfig();
+        expect(embedding.mode).toBe("api-key");
+        expect(embedding.apiKey).toBe("sk-test");
+    });
+
+    test("a modelPath without a mode infers local mode", () => {
+        writeRawConfig(JSON.stringify({ telemetry: false, embedding: { modelPath: "/models/x.gguf" } }));
+        expect(readConfig().embedding.mode).toBe("local");
+    });
+
+    test("an explicit off wins over a set apiKey — a deliberate switch-off is honored", () => {
+        writeRawConfig(JSON.stringify({ telemetry: false, embedding: { mode: "off", apiKey: "sk-test" } }));
+        const { embedding } = readConfig();
+        expect(embedding.mode).toBe("off");
+        expect(embedding.apiKey).toBe("sk-test"); // kept, so the resolver can name the contradiction
+    });
+
+    test("one malformed field degrades alone — it must NOT reset the whole block to off", () => {
+        writeRawConfig(JSON.stringify({ telemetry: false, embedding: { mode: "api-key", apiKey: "sk-test", dimensions: "1536" } }));
+        const { embedding } = readConfig();
+        expect(embedding.mode).toBe("api-key"); // block survived the bad sibling
+        expect(embedding.apiKey).toBe("sk-test");
+        expect(embedding.dimensions).toBeUndefined(); // only the malformed field was dropped
+    });
+
+    test("an unrecognized mode with an apiKey heals to the inferred api-key, not off", () => {
+        writeRawConfig(JSON.stringify({ telemetry: false, embedding: { mode: "apikey", apiKey: "sk-test" } }));
+        expect(readConfig().embedding.mode).toBe("api-key");
+    });
+
+    test("an absent embedding block still defaults to off", () => {
+        writeRawConfig(JSON.stringify({ telemetry: false }));
+        expect(readConfig().embedding.mode).toBe("off");
+    });
+});
+
 describe("ensureRuntime", () => {
     function probeReady(readyIds: readonly string[], probed?: string[]) {
         return (rt: ContainerRuntime): Promise<Result<void, ContainerRuntimeError>> => {

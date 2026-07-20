@@ -21,6 +21,17 @@ describe("resolveEmbedder", () => {
         expect(outcome).toBe("embeddings_not_configured");
     });
 
+    test("an explicit off beside a set apiKey names the contradiction, not a bare 'not configured'", () => {
+        // Reaching `off` with apiKey set means the user WROTE `mode: "off"` (an absent mode would have
+        // been inferred to api-key by the config schema) — the message must point at that override.
+        const message = resolveEmbedder(baseConfig({ mode: "off", apiKey: "sk-test" })).match(
+            () => "",
+            (e) => e.message,
+        );
+        expect(message).toContain("embedding.apiKey");
+        expect(message).toContain('"off"');
+    });
+
     test("local mode with modelPath → ok provider", () => {
         const provider = resolveEmbedder(baseConfig({ mode: "local", modelPath: "/some/model.gguf" })).match(
             (p) => p,

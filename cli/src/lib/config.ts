@@ -76,17 +76,33 @@ const configSchema = z.object({
     // embeddings route): `apiKey` is required; `baseURL`/`model`/`dimensions` default
     // to api.openai.com + text-embedding-3-small + 1536. `dimensions` must match what
     // `model` emits — it sizes each per-analysis vector index.
+    //
+    // Resilience is PER-FIELD (`.catch(undefined)` on each optional), never block-level:
+    // a block-level `.catch({mode:"off"})` would let ONE malformed field (say a quoted
+    // `dimensions`) silently reset the whole block, surfacing a hand-written `apiKey` as
+    // a baffling "embeddings are not configured". A malformed field now degrades to
+    // unset alone, keeping its siblings.
+    //
+    // An ABSENT/invalid `mode` is inferred from which backend fields the user filled in
+    // (`apiKey` → `api-key`, `modelPath` → `local`) — a hand-edited config that supplies
+    // a credential plainly intends the matching mode, and demanding a second field to
+    // activate the first is a trap. An EXPLICIT `mode: "off"` still wins: it is a
+    // deliberate switch-off, not an omission.
     embedding: z
         .object({
-            mode: z.enum(["local", "api-key", "off"]).catch("off").default("off"),
-            modelPath: z.string().optional(),
-            apiKey: z.string().optional(),
-            baseURL: z.string().optional(),
-            model: z.string().optional(),
-            dimensions: z.number().int().positive().optional(),
+            mode: z.enum(["local", "api-key", "off"]).optional().catch(undefined),
+            modelPath: z.string().optional().catch(undefined),
+            apiKey: z.string().optional().catch(undefined),
+            baseURL: z.string().optional().catch(undefined),
+            model: z.string().optional().catch(undefined),
+            dimensions: z.number().int().positive().optional().catch(undefined),
         })
-        .catch({ mode: "off" })
-        .default({ mode: "off" }),
+        .catch({})
+        .default({})
+        .transform((e) => ({
+            ...e,
+            mode: e.mode ?? (e.apiKey !== undefined ? ("api-key" as const) : e.modelPath !== undefined ? ("local" as const) : ("off" as const)),
+        })),
 });
 export type Config = z.infer<typeof configSchema>;
 

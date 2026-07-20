@@ -23,15 +23,16 @@ import { dirname } from "node:path";
 import { log, spinner as clackSpinner } from "@clack/prompts";
 import { err, ok, type Result } from "neverthrow";
 
-import type { AgentSession } from "@inflexa-ai/harness";
+import { createEmbeddingProvider, createNoopBillingResolver, type AgentSession } from "@inflexa-ai/harness";
 
 import { readConfig, writeConfig } from "../../lib/config.ts";
-import { promptText, select } from "../../lib/cli.ts";
+import { promptSecret, promptText, select } from "../../lib/cli.ts";
 import { env } from "../../lib/env.ts";
 import { isCompiledBinary } from "../../lib/install_context.ts";
 import { ensureLlamaServer, materializedLlamaServer } from "./llama_runtime.ts";
 import { createLocalEmbeddingProvider, LOCAL_EMBEDDING_DIMENSIONS, stopLocalSidecar } from "./local-provider.ts";
 import { MODEL_SHA256, MODEL_URL } from "./model_pin.ts";
+import { DEFAULT_API_BASE_URL, DEFAULT_API_EMBEDDING_DIMENSIONS, DEFAULT_API_EMBEDDING_MODEL } from "./resolve.ts";
 
 export type EmbeddingSetupError =
     // Model acquisition failed — spans BOTH byte sources: a from-source HuggingFace download fault AND a
@@ -244,6 +245,9 @@ export async function verifyModel(modelPath: string, expectedDim?: number): Prom
  *   + `modelPath = env.embeddingModelPath`.
  * - your own GGUF → prompt for a path, verify it (measuring whatever width it emits), and record
  *   `mode = "local"` + that `modelPath` + the measured `dimensions` (so the index is sized to it).
+ * - API key → prompt for the endpoint/key (the key input is MASKED — paste-friendly, never echoed) +
+ *   model id, probe the endpoint with one real embed (measuring the emitted width), and record
+ *   `mode = "api-key"` + the key + only the fields that differ from the provider defaults.
  *
  * Non-interactive shells (no TTY, or `interactive === false`) skip the prompt entirely without hanging —
  * `mode` stays whatever it was. A preselected `mode` (from `--embeddings`) overrides the prompt and runs
@@ -256,13 +260,9 @@ export async function runEmbeddingSetup(interactive: boolean, preselected?: "loc
     // A preselected mode from `--embeddings` short-circuits the prompt.
     if (preselected !== undefined) {
         if (preselected === "off") return ok(undefined);
-        if (preselected === "api-key") {
-            warnOnModeSwitch(config.embedding.mode, "api-key");
-            // API-key mode setup is deferred; only local setup is implemented
-            // here. Decline cleanly rather than half-doing it.
-            log.warn("API-key embedding mode is selected but not yet configured by setup. Set it via `inflexa config`, or `embedding.apiKey` in config.json.");
-            return ok(undefined);
-        }
+        // `api-key` still prompts for its endpoint/key (a secret cannot ride a flag), so it needs a TTY
+        // even when preselected — promptText/promptSecret fail fast with a clear message otherwise.
+        if (preselected === "api-key") return runApiKeySetup(config);
         // preselected === "local" → the built-in model (custom paths are interactive-only).
         return runBuiltinLocalSetup(config);
     }
@@ -280,11 +280,7 @@ export async function runEmbeddingSetup(interactive: boolean, preselected?: "loc
         log.info("Embeddings skipped (mode left unchanged).");
         return ok(undefined);
     }
-    if (choice === "api-key") {
-        warnOnModeSwitch(config.embedding.mode, "api-key");
-        log.warn("API-key embedding mode is not yet configured by setup. Set it via `inflexa config`, or `embedding.apiKey` in config.json.");
-        return ok(undefined);
-    }
+    if (choice === "api-key") return runApiKeySetup(config);
     if (choice === "custom") return runCustomLocalSetup(config);
     // choice === "builtin"
     return runBuiltinLocalSetup(config);
@@ -403,6 +399,103 @@ async function runCustomLocalSetup(config: ReturnType<typeof readConfig>): Promi
         .mapErr((e): EmbeddingSetupError => ({ type: "verify_failed", message: `Verification passed but config could not be written: ${e.type}` }))
         .map(() => {
             log.success(`Local embeddings configured from your model (${dimensions}-dim). \`embedding.mode\` is now \`local\`.`);
+            return undefined;
+        });
+}
+
+/**
+ * Probe a candidate api-key configuration with ONE real embed against the endpoint — the same wire path
+ * the hot loop uses (the harness provider + noop billing) — and MEASURE the vector width it emits. A
+ * wrong key, endpoint, or model id surfaces here, at setup, instead of late in the profile workflow;
+ * the measured width is returned so the caller records the true index size rather than trusting a
+ * guessed `dimensions`. Failures are `verify_failed` — the message carries the provider's own cause.
+ */
+async function probeApiEmbedding(candidate: { baseURL: string; apiKey: string; model: string }): Promise<Result<number, EmbeddingSetupError>> {
+    const s = clackSpinner();
+    s.start(`Probing ${candidate.baseURL} with one ${candidate.model} embed`);
+
+    const provider = createEmbeddingProvider({
+        baseURL: candidate.baseURL,
+        token: candidate.apiKey,
+        model: candidate.model,
+        resolveBilling: createNoopBillingResolver(),
+    });
+    // Same structural stand-in as verifyModel's probe: the noop billing resolver reads only `scope`,
+    // and nothing downstream touches the omitted RunSession fields — hence the `as unknown as`.
+    const probeSession = { scope: { kind: "analysis", analysisId: "embedding-setup-verify" } } as unknown as AgentSession;
+    const outcome = await provider.embed(["inflexa embedding verification probe"], probeSession).match(
+        (vectors): { readonly ok: true; readonly dim: number } => ({ ok: true, dim: vectors[0]?.length ?? 0 }),
+        (e): { readonly ok: false; readonly message: string } => ({ ok: false, message: e.message }),
+    );
+
+    if (!outcome.ok) {
+        s.error("Endpoint probe failed");
+        return err({ type: "verify_failed", message: `The embeddings endpoint rejected the probe: ${outcome.message}` });
+    }
+    if (outcome.dim <= 0) {
+        s.error("Endpoint probe failed");
+        return err({ type: "verify_failed", message: "The endpoint answered but produced empty vectors — check the model id names an embedding model." });
+    }
+    s.stop(`Verified: ${outcome.dim}-dim vectors`);
+    return ok(outcome.dim);
+}
+
+/**
+ * The api-key branch: collect endpoint + key + model interactively, probe with one real embed, and
+ * record the choice. The key prompt is MASKED (paste-friendly, never echoed into scrollback) — it is
+ * still persisted in the clear to config.json, which the log line says out loud so the trade-off is the
+ * user's. Only fields that differ from the provider defaults are written (minimal-config, mirroring
+ * {@link runCustomLocalSetup}'s dimensions handling): the measured width replaces any guessed
+ * `dimensions`, so a non-default model sizes the per-analysis index to what it actually emits.
+ */
+async function runApiKeySetup(config: ReturnType<typeof readConfig>): Promise<Result<void, EmbeddingSetupError>> {
+    warnOnModeSwitch(config.embedding.mode, "api-key");
+    log.message("Setting up remote embeddings (an OpenAI-compatible /embeddings endpoint). The key is stored in config.json — keep that file private.");
+
+    const urlPrefill = config.embedding.baseURL ?? DEFAULT_API_BASE_URL;
+    const baseURL = (
+        await promptText("Embeddings endpoint URL — the /v1-terminated root", {
+            defaultValue: urlPrefill,
+            placeholder: urlPrefill,
+            validate: (v) => {
+                const s = v.trim();
+                if (s === "") return undefined; // empty submit keeps the pre-filled default
+                return URL.canParse(s) ? undefined : "Must be a valid URL, including the scheme (e.g. https://…).";
+            },
+        })
+    ).trim();
+    const confirmedURL = baseURL === "" ? urlPrefill : baseURL;
+
+    const apiKey = (
+        await promptSecret("API key (input is hidden — paste it)", {
+            validate: (v) => (v.trim() === "" ? "Enter the API key." : undefined),
+        })
+    ).trim();
+
+    const modelPrefill = config.embedding.model ?? DEFAULT_API_EMBEDDING_MODEL;
+    const model =
+        (
+            await promptText("Embedding model id", {
+                defaultValue: modelPrefill,
+                placeholder: modelPrefill,
+            })
+        ).trim() || modelPrefill;
+
+    const probe = await probeApiEmbedding({ baseURL: confirmedURL, apiKey, model });
+    if (probe.isErr()) return err(probe.error);
+    const dimensions = probe.value;
+
+    const embedding = {
+        mode: "api-key" as const,
+        apiKey,
+        ...(confirmedURL === DEFAULT_API_BASE_URL ? {} : { baseURL: confirmedURL }),
+        ...(model === DEFAULT_API_EMBEDDING_MODEL ? {} : { model }),
+        ...(dimensions === DEFAULT_API_EMBEDDING_DIMENSIONS ? {} : { dimensions }),
+    };
+    return writeConfig({ ...config, embedding })
+        .mapErr((e): EmbeddingSetupError => ({ type: "verify_failed", message: `The endpoint probe passed but config could not be written: ${e.type}` }))
+        .map(() => {
+            log.success(`Remote embeddings configured (${model}, ${dimensions}-dim). \`embedding.mode\` is now \`api-key\`.`);
             return undefined;
         });
 }
