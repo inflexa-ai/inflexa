@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Define the conversation-agent tool that drives the local `inflexa` CLI as an approval-gated subprocess: the single-tool argv contract, the commander-as-oracle classifier that auto-allows introspection and gates every action, the subcommand-path standing grant, subprocess hygiene, and dev/release invocation resolution. The agent drives `inflexa` the way it drives any command — it discovers the surface through `--help` — and the in-chat approval prompt is the security boundary, not a per-command allowlist.
+Define the conversation-agent tool that drives the local `inflexa` CLI as a policy-gated subprocess: the single-tool argv contract, the commander-as-oracle classifier that auto-allows introspection and resolves every action's registration-declared policy (the `agent-command-policy` capability), the subcommand-path standing grant, subprocess hygiene, and dev/release invocation resolution. The agent drives `inflexa` the way it drives any command — it discovers the surface through `--help`. Policy is declared per command at registration in three tiers and is the command's floor; explicitly-set flags only escalate, and within the `approval` tier the in-chat approval prompt remains the security boundary.
 
 ## Requirements
 
 ### Requirement: The agent drives the inflexa CLI through one subprocess tool
 
-The system SHALL provide exactly one conversation-agent tool (`run_inflexa`) that takes an argv array, runs the `inflexa` CLI as a subprocess, and returns the exit code and captured stdout/stderr to the model. The tool SHALL NOT be a family of per-command tools and SHALL NOT encode a per-command allowlist; the surface the agent learns is the CLI's own, discovered through `--help`. Input SHALL be an argv `string[]` passed to the subprocess as an argv array (no shell); a single-element input that contains whitespace SHALL be tokenized shell-style into argv before use, so a model that emits one string still runs safely. Tokenization SHALL happen exactly once — the argv the classifier verdicts on is the same argv displayed for approval and spawned, so the two can never diverge.
+The system SHALL provide exactly one conversation-agent tool (`run_inflexa`) that takes an argv array, runs the `inflexa` CLI as a subprocess, and returns the exit code and captured stdout/stderr to the model. The tool SHALL NOT be a family of per-command tools. Per-command availability SHALL derive solely from the registration-declared agent policy (the `agent-command-policy` capability): the declared policy is a command's floor, explicitly-set options can only escalate an invocation toward approval — never de-escalate it — and within the `approval` tier the in-chat approval prompt remains the security boundary. The surface the agent learns is the CLI's own, discovered through `--help`. Input SHALL be an argv `string[]` passed to the subprocess as an argv array (no shell); a single-element input that contains whitespace SHALL be tokenized shell-style into argv before use, so a model that emits one string still runs safely. Tokenization SHALL happen exactly once — the argv the classifier verdicts on is the same argv displayed for approval and spawned, so the two can never diverge.
 
 #### Scenario: A command runs and returns its result
 
@@ -41,9 +41,9 @@ The tool SHALL classify each argv before running it. An argv that classification
 
 ### Requirement: Interactive TUI-launcher commands are blocked from the agent
 
-The commands that exist only to open an interactive terminal UI — bare `inflexa`, `inflexa config`, `inflexa new`, `inflexa resume`, and the dev-channel `inflexa chat` — cannot function as a captured subprocess: with `stdin` ignored and `stdout`/`stderr` piped, there is no terminal to drive. The tool SHALL refuse such a command outright — it returns a blocked result to the model WITHOUT prompting for approval and WITHOUT spawning. This is a denylist of structurally-unrunnable commands, keyed on the resolved subcommand path, NOT an allowlist: every other action remains approval-gated. A blocked command's introspection (its `--help`) SHALL remain allowed, since it runs no UI.
+The commands that exist only to open an interactive terminal UI — bare `inflexa`, `inflexa config`, `inflexa new`, `inflexa resume`, and the dev-channel `inflexa chat` — cannot function as a captured subprocess: with `stdin` ignored and `stdout`/`stderr` piped, there is no terminal to drive. Each SHALL be registered with a `blocked` agent policy whose reason explains this to the model, and the tool SHALL refuse such a command outright — a blocked result WITHOUT prompting for approval and WITHOUT spawning. A blocked command's introspection (its `--help`) SHALL remain allowed, since it runs no UI.
 
-The denylist is the courtesy layer, not the safety boundary: every TUI launcher SHALL itself refuse a non-interactive stdin at entry, before doing any other work — so a TUI command missing from the denylist exits non-zero with a clear message instead of hanging, and a launcher that creates state before its first frame (`inflexa new` creates the analysis during target resolution) refuses before any state exists.
+The policy declaration is the courtesy layer, not the safety boundary: every TUI launcher SHALL itself refuse a non-interactive stdin at entry, before doing any other work — so a TUI command misdeclared or unclassified exits non-zero with a clear message instead of hanging, and a launcher that creates state before its first frame (`inflexa new` creates the analysis during target resolution) refuses before any state exists.
 
 #### Scenario: Bare inflexa is refused
 
@@ -77,7 +77,7 @@ The denylist is the courtesy layer, not the safety boundary: every TUI launcher 
 
 ### Requirement: Infrastructure lifecycle commands are blocked from the agent
 
-The commands that manage the infrastructure containers the running conversation itself depends on — `inflexa up`, `inflexa down`, and `inflexa setup` — SHALL be refused outright: a blocked result to the model, WITHOUT prompting for approval and WITHOUT spawning. `inflexa down` stops the Postgres the harness session is connected to, so even an informed approval could sever the session mid-turn; `up` and `setup` mutate or re-provision the same stack. Unlike the TUI launchers, these commands run fine headless, so for this family the denylist IS the gate: a new lifecycle command MUST be added to it. Their introspection (`--help`) SHALL remain allowed, since it touches nothing.
+The commands that manage the infrastructure containers the running conversation itself depends on — `inflexa up`, `inflexa down`, and `inflexa setup` — SHALL be registered with a `blocked` agent policy and refused outright: a blocked result to the model, WITHOUT prompting for approval and WITHOUT spawning. `inflexa down` stops the Postgres the harness session is connected to, so even an informed approval could sever the session mid-turn; `up` and `setup` mutate or re-provision the same stack. These commands run fine headless, so for this family the declared policy IS the gate — and the registration helper makes an undeclared lifecycle command unrepresentable: a new command cannot be registered without a policy at all. Their introspection (`--help`) SHALL remain allowed, since it touches nothing.
 
 #### Scenario: inflexa down is refused
 
@@ -89,9 +89,43 @@ The commands that manage the infrastructure containers the running conversation 
 - **WHEN** the tool is invoked with `["up"]` or `["setup"]`
 - **THEN** it returns a blocked result to the model without prompting and without spawning
 
+#### Scenario: A standing grant cannot resurrect a blocked command
+
+- **GIVEN** an analysis holding an `always` grant whose grant key matches a command that is now registered `blocked`
+- **WHEN** the tool is invoked with that command
+- **THEN** it returns a blocked result — the policy check runs before the grant lookup, so a stale grant never overrides a block
+
+### Requirement: Auto-classified invocations run without approval
+
+For a command registered with the `auto` policy, the tool SHALL spawn immediately — no approval prompt and no grant lookup — if and only if every explicitly-set option of the invocation is in the policy's `safeFlags`. Any other invocation of the same command SHALL follow the full `approval` flow (`ctx.ask`, grantable per analysis): an out-of-set flag escalates, and nothing de-escalates. Positional operands SHALL NOT affect the auto decision — an `auto` declaration asserts read-only behavior over the command's entire positional domain, so only explicitly-set options are measured against `safeFlags`. An `auto` run's audit posture SHALL equal introspection's — it records no ask-ledger row (the tool result in thread history is its record); this is deliberate, as `auto` is a curated extension of the introspection tier. Introspection classification itself is unaffected by policy: help and version run free for every command, including blocked ones.
+
+#### Scenario: A safe-flagged invocation runs free
+
+- **GIVEN** `refs list` registered as `auto` with safeFlags covering `urls` and `json`
+- **WHEN** the tool is invoked with `["refs", "list", "--json"]`
+- **THEN** it spawns without prompting and returns the captured output
+
+#### Scenario: An out-of-set flag escalates to approval
+
+- **GIVEN** an `auto` command with a newly added option not present in its safeFlags
+- **WHEN** the tool is invoked with that option explicitly set
+- **THEN** it raises an approval request through the standard approval flow instead of running free
+
+#### Scenario: A defaulted option does not escalate
+
+- **GIVEN** an `auto` command with an option that has a default value and is absent from safeFlags
+- **WHEN** the tool is invoked without mentioning that option
+- **THEN** the invocation runs free — only explicitly-set options are measured against safeFlags
+
+#### Scenario: Positional operands do not escalate
+
+- **GIVEN** `refs verify` registered as `auto` with safeFlags covering `json`
+- **WHEN** the tool is invoked with `["refs", "verify", "reactome-pathways", "--json"]`
+- **THEN** the invocation runs free — the positional dataset id plays no part in the auto decision
+
 ### Requirement: Classification is the commander parse, not a string heuristic
 
-The tool SHALL classify an argv by parsing it against the real commander program tree in-process — built through the `buildProgram()` factory, with a `preAction` hook that fires a classification sentinel the instant an action would run, `exitOverride` set, and help/version output silenced — never by a string match on the argv. Classification SHALL yield exactly one of: introspection (a help/version parse outcome) → auto-allow; a resolved action (the sentinel fires) → approval, carrying the resolved subcommand path; or a parse error (unknown command/option, missing/excess argument) → returned to the model as a tool result WITHOUT spawning and WITHOUT prompting. Because the decision is commander's own parse, an argv that places `--help` after a `--` terminator SHALL classify as an action, not introspection.
+The tool SHALL classify an argv by parsing it against the real commander program tree in-process — built through the `buildProgram()` factory, with a `preAction` hook that fires a classification sentinel the instant an action would run, `exitOverride` set, and help/version output silenced — never by a string match on the argv. Classification SHALL yield exactly one of: introspection (a help/version parse outcome) → auto-allow; a resolved action (the sentinel fires) → the action verdict, carrying the resolved subcommand path, the registration-declared agent policy read from the resolved `Command` instance, and the canonical attribute names of the options explicitly set by the invocation (option-value source, not argv string matching — short forms, `--opt=val`, and negations collapse to one canonical name, and a defaulted option is not "set"); or a parse error (unknown command/option, missing/excess argument) → returned to the model as a tool result WITHOUT spawning and WITHOUT prompting. Because the decision is commander's own parse, an argv that places `--help` after a `--` terminator SHALL classify as an action, not introspection.
 
 #### Scenario: A masked help flag is gated, not auto-allowed
 
@@ -102,6 +136,20 @@ The tool SHALL classify an argv by parsing it against the real commander program
 
 - **WHEN** the tool is invoked with an argv commander cannot resolve (an unknown command or option)
 - **THEN** the tool returns a parse error to the model without spawning the CLI and without raising an approval
+
+#### Scenario: Explicitly-set options are derived from the parse
+
+- **WHEN** an option is passed in short form or as `--opt=value`
+- **THEN** the action verdict reports the same canonical option name as the long form, and an option that was merely defaulted is not reported as set
+
+### Requirement: An unclassified action fails closed
+
+If an action verdict carries no registration-declared policy — reachable only by bypassing every static enforcement layer — the tool SHALL return a blocked result stating the command is not classified for agent use, WITHOUT prompting and WITHOUT spawning. Drift fails closed: a command can be needlessly blocked by a gap, never silently approvable.
+
+#### Scenario: A policy-less action is blocked, not prompted
+
+- **WHEN** the tool resolves an action whose `Command` carries no stamped policy
+- **THEN** it returns a blocked result to the model without raising an approval and without spawning
 
 ### Requirement: The standing grant keys on the resolved subcommand path
 
