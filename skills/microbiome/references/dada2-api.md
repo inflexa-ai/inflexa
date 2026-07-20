@@ -248,16 +248,28 @@ taxa <- assignTaxonomy(
 
 ### Reference Databases
 
-```r
-# 16S: SILVA 138.1 (standard reference)
-# File: silva_nr99_v138.1_train_set.fa.gz (genus-level)
-# File: silva_species_assignment_v138.1.fa.gz (species-level, exact match)
-taxa <- assignTaxonomy(seqtab.nochim, "silva_nr99_v138.1_train_set.fa.gz", multithread = TRUE)
-taxa <- addSpecies(taxa, "silva_species_assignment_v138.1.fa.gz")
+`assignTaxonomy()` and `addSpecies()` take a *path* to a reference FASTA. A bare filename is not one — it resolves against the working directory, where reference data does not live, and the call fails there rather than at the end of a long pipeline.
 
-# ITS: UNITE (fungal)
-# File: sh_general_release_dynamic_s_all_*.fasta.gz
-taxa <- assignTaxonomy(seqtab.nochim, "sh_general_release_dynamic_s_all_29.11.2022.fasta.gz",
+**Resolve the training set before you write the script.** Ask for the *database* by what it is, not by a path — reference data is provisioned per-environment, so the directory, the filename, and the release version all vary and none of them are yours to assume:
+
+| You need | Ask for | Standard sources |
+|-|-|-|
+| 16S genus-level taxonomy | A DADA2-formatted taxonomy training FASTA for 16S | SILVA (v138.1 is the common release) |
+| 16S species-level assignment | A DADA2-formatted species-assignment FASTA for 16S | SILVA species assignment |
+| ITS fungal taxonomy | A DADA2-formatted taxonomy training FASTA for ITS | UNITE general release, all eukaryotes |
+
+The data contract matters more than the name. `assignTaxonomy()` needs the **DADA2-formatted training** version of a database: a gzipped FASTA whose headers are semicolon-delimited taxonomy strings from Kingdom down (`Bacteria;Firmicutes;Bacilli;…`), not accession-style headers. `addSpecies()` needs the **species-assignment** version, a different file whose headers are `ID Genus species`. The two are not interchangeable, and passing a plain sequence database to either produces an immediate parse failure or, worse, an all-`NA` taxonomy table. Match the marker region too — SILVA against ITS reads, or UNITE against 16S reads, runs to completion and returns nonsense.
+
+**SILVA and UNITE training sets are not currently in the reference inventory.** If you look and they are not there, report that taxonomy assignment cannot be run and hand back the ASV table, sequences, and read tracking, which are complete and useful without it. Do not invent a path, do not substitute a general-purpose sequence database, and do not drop the taxonomy step silently.
+
+```r
+# 16S: `silva_train_path` and `silva_species_path` are paths you resolved,
+# not literals to copy.
+taxa <- assignTaxonomy(seqtab.nochim, silva_train_path, multithread = TRUE)
+taxa <- addSpecies(taxa, silva_species_path)
+
+# ITS (fungal): `unite_train_path` is a path you resolved.
+taxa <- assignTaxonomy(seqtab.nochim, unite_train_path,
                        multithread = TRUE, tryRC = TRUE)
 ```
 
@@ -371,8 +383,10 @@ seqtab.nochim <- removeBimeraDenovo(seqtab, method = "consensus", multithread = 
 cat("Reads retained after chimera removal:", sum(seqtab.nochim) / sum(seqtab) * 100, "%\n")
 
 # --- Assign Taxonomy ---
-taxa <- assignTaxonomy(seqtab.nochim, "silva_nr99_v138.1_train_set.fa.gz", multithread = TRUE)
-taxa <- addSpecies(taxa, "silva_species_assignment_v138.1.fa.gz")
+# SILVA paths resolved per Reference Databases; if unavailable, report it and
+# stop here — the ASV table below is still complete.
+taxa <- assignTaxonomy(seqtab.nochim, silva_train_path, multithread = TRUE)
+taxa <- addSpecies(taxa, silva_species_path)
 
 # --- Track Reads ---
 getN <- function(x) sum(getUniques(x))
@@ -449,8 +463,9 @@ seqtab <- seqtab[, nchar(colnames(seqtab)) %in% 100:600]
 seqtab.nochim <- removeBimeraDenovo(seqtab, method = "consensus", multithread = TRUE, verbose = TRUE)
 
 # --- Assign Taxonomy (UNITE) ---
-taxa <- assignTaxonomy(seqtab.nochim,
-                       "sh_general_release_dynamic_s_all_29.11.2022.fasta.gz",
+# `unite_train_path` resolved per Reference Databases; if unavailable, report it
+# and stop here — the ASV table is still complete.
+taxa <- assignTaxonomy(seqtab.nochim, unite_train_path,
                        multithread = TRUE, tryRC = TRUE)
 
 # --- Export ---
@@ -535,7 +550,8 @@ saveRDS(taxa, "output/taxonomy.rds")
 - **Primers must be removed before DADA2.** DADA2 does not handle primer removal. If primers are in the reads (especially ITS data), use cutadapt first. Residual primers cause spurious ASVs.
 - **Merge requires sufficient overlap.** If `mergePairs` drops too many reads, the `truncLen` values are too aggressive. Calculate: `fwd_truncLen + rev_truncLen - amplicon_length >= 20` for adequate overlap.
 - **Column names of seqtab are DNA sequences.** The ASV table uses full DNA sequences as column names, not short IDs. Rename to ASV1, ASV2, etc. after the pipeline is complete, preserving the sequence-to-ID mapping.
-- **Reference databases must match the marker.** Use SILVA 138.1 for 16S, UNITE for ITS. Using the wrong database produces nonsensical taxonomy. The reference FASTA files must be the DADA2-formatted versions (available from https://benjjneb.github.io/dada2/training.html).
+- **Reference databases must match the marker.** Use SILVA for 16S, UNITE for ITS. Using the wrong database produces nonsensical taxonomy rather than an error. The reference FASTA must also be the DADA2-formatted training version — semicolon-delimited taxonomy headers, not accession headers — and `addSpecies()` needs the separate species-assignment file, not the training set.
+- **Reference FASTAs are paths, never bare filenames.** `assignTaxonomy(seqtab, "something.fa.gz")` resolves against the working directory and fails there; pass a path resolved from the reference data available to you. There is no network egress, so fetching a training set at runtime is not an option — and SILVA and UNITE training sets are not currently in the reference inventory. When they are absent, report it and deliver the ASV table without taxonomy; never invent a path or quietly skip the step.
 - **Chimera removal removes ASVs, not reads.** `removeBimeraDenovo` removes chimeric sequences but the read count typically drops only 1-10%. If >25% of reads are lost, upstream steps (trimming, error learning) need investigation.
 - **Pool for rare taxa.** `pool = FALSE` (default) processes samples independently and may miss rare sequences. Use `pool = "pseudo"` when detecting low-abundance cross-sample variants matters. Full `pool = TRUE` is memory-intensive for large datasets.
 - **Track reads through every step.** Always build the tracking table (input -> filtered -> denoised -> merged -> nonchim). A sharp drop at any step indicates a problem: large loss at filterAndTrim means poor quality or wrong truncLen; large loss at mergePairs means insufficient overlap; large loss at removeBimeraDenovo means upstream contamination or poor error models.

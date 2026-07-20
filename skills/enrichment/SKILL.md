@@ -18,7 +18,8 @@ Choose the method based on your input data and analytical goal:
    - Rank by signed statistic (e.g., `sign(log2FC) * -log10(pvalue)`), not by p-value alone.
 
 2. **Input is an unranked gene list (e.g., DE genes at FDR < 0.05)**
-   - Use **ORA** via `gseapy.enrich()` (Python) or `clusterProfiler::enrichGO()` / `enrichKEGG()` (R via rpy2).
+   - Use **ORA** via `gseapy.enrich()` (Python) or `clusterProfiler::enrichGO()` (R via rpy2). Do NOT use `enrichKEGG()` — KEGG is not staged and the call needs network access it will not get.
+   - Pass gene sets as a file resolved from the reference data available to you, never as an Enrichr library name string — those trigger HTTP requests and fail.
    - ALWAYS supply the background gene set (all expressed/detected genes).
 
 3. **Need per-sample pathway activity scores**
@@ -35,13 +36,22 @@ Choose the method based on your input data and analytical goal:
 
 ## Gene Set Database Selection
 
-| Database | When to Use |
-|-|-|
-| MSigDB Hallmark (H) | First pass, curated, low redundancy (50 gene sets) |
-| MSigDB C2:CP | Canonical pathways (KEGG, Reactome, BioCarta, PID) |
-| MSigDB C5:GO | Gene Ontology (BP, CC, MF) -- high redundancy, use with collapse |
-| KEGG (via gseapy or clusterProfiler) | Metabolic and signaling pathways with topology |
-| Reactome | Detailed pathway hierarchy, good for mechanistic interpretation |
+Ask for a database by name and resolve it from the reference data available to
+you — never assume a path, a filename, or a format. What is provisioned varies
+per environment, so confirm what you have before committing to a method.
+
+| Database | When to Use | Availability |
+|-|-|-|
+| MSigDB Hallmark (H) | First pass, curated, low redundancy (50 gene sets) | The reliable default — human and mouse |
+| Reactome | Detailed pathway hierarchy, good for mechanistic interpretation | Normally available |
+| WikiPathways | Community-curated pathways, per species | Normally available |
+| MSigDB C2:CP | Canonical pathways (Reactome, BioCarta, PID) | Only if available in your environment — do not assume |
+| MSigDB C5:GO | Gene Ontology (BP, CC, MF) -- high redundancy, use with collapse | Only if available in your environment — do not assume |
+| KEGG | Metabolic and signaling pathways with topology | **Not available.** License forbids redistribution, so KEGG is not staged; `enrichKEGG()`, `gseKEGG()`, KEGGREST, and Enrichr's KEGG libraries all need network access and will fail. Use Reactome or WikiPathways instead. |
+
+Start with hallmark unless the question demands finer granularity. If a GO or
+canonical-pathway analysis is required and those collections are not in your
+environment, say so rather than silently substituting a different database.
 
 ## Redundancy Reduction
 
@@ -73,7 +83,7 @@ After enrichment, collapse redundant terms to improve interpretability:
 - **GSEA on an unranked list**: GSEA requires a continuous ranking. If you only have a gene list, use ORA.
 - **Ignoring gene set size limits**: Very small sets (<15) are noisy; very large sets (>500) are uninformative. Filter before running.
 - **Gene ID mismatch**: Verify gene identifiers match the database organism and ID type (symbol vs. Ensembl vs. Entrez). Convert with `gseapy.parser` or `pymart` before enrichment.
-- **Not reporting database version**: Always log which MSigDB version, GO release, or KEGG snapshot was used.
+- **Not reporting database version**: Always log which gene set database and release you used, as reported by the reference inventory for the file you resolved.
 - **Treating enrichment as validation**: Enrichment finds statistical associations, not causal mechanisms. Frame results as "consistent with" not "proves".
 - **Running ORA on the full DE list without a threshold**: ORA requires a discrete gene list. Apply a significance cutoff first.
 - **Ignoring direction**: Separate up- and down-regulated genes for ORA, or use a signed ranking for GSEA.
@@ -81,7 +91,7 @@ After enrichment, collapse redundant terms to improve interpretability:
 ## Additional Available Packages
 
 - **singscore** (R via rpy2): Rank-based single-sample gene set scoring. Alternative to ssGSEA, stable for small gene sets.
-- **msigdbr** (R via rpy2): Retrieve MSigDB gene sets with species conversion. Requires network access — in sandbox, use **pre-staged MSigDB GMT/Parquet files** from `list-available-refs` instead (hallmark, canonical_pathways, GO, oncogenic, immunologic, cell type collections are pre-staged for human and mouse).
+- **msigdbr** (R via rpy2): Retrieve MSigDB gene sets with species conversion. Queries an online database, so it fails without network access — resolve an MSigDB gene set file from the reference data available to you instead, and read it with the reader its reported format calls for.
 - **upsetplot** (Python) / **UpSetR** (R): UpSet plots for visualizing overlap between enriched term sets across comparisons.
 
 ## References

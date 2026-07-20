@@ -6,7 +6,7 @@ Epigenetic age estimation from DNA methylation data using multiple clocks. Suppo
 
 ```r
 library(methylclock)
-library(methylclockData)   # clock coefficient data (auto-loaded via ExperimentHub)
+library(methylclockData)   # clock coefficient data — read from a resolved ExperimentHub cache, see Clock Data Loading
 library(minfi)             # for GenomicRatioSet input
 library(ggplot2)           # for plotting functions
 ```
@@ -241,12 +241,33 @@ refs <- meffilListCellTypeReferences()
 
 ## Clock Data Loading
 
-These functions load clock coefficients from the `methylclockData` package via ExperimentHub. Called automatically by `DNAmAge()`/`DNAmGA()` on first use — manual loading is rarely needed.
+`load_DNAm_Clocks_data()` and `load_DNAmGA_Clocks_data()` pull clock coefficients from `methylclockData` **via ExperimentHub**, and `DNAmAge()`/`DNAmGA()` call them for you on first use. ExperimentHub resolves against Bioconductor's servers, and there is no network egress — so left to itself, the very first `DNAmAge()` call fails, not the modelling that follows it.
+
+**Resolve the coefficient store before you write the script.** Ask for the *data* by what it is, not by a path — reference data is provisioned per-environment, so the directory is not yours to assume:
+
+| You need | Ask for |
+|-|-|
+| Chronological and biological clocks (Horvath, Hannum, Levine/PhenoAge, skin+blood, BLUP, EN, …) | A populated ExperimentHub cache carrying the `methylclockData` resources |
+| Gestational age clocks (Knight, Bohlin, Mayne, Lee, EPIC) | The same cache — the gestational coefficients are resources in it |
+
+Point ExperimentHub at that directory and force it offline *before* the first clock call, so it reads the cache instead of trying to refresh from the network:
 
 ```r
-load_DNAm_Clocks_data()     # loads chronological/biological clock coefficients
-load_DNAmGA_Clocks_data()   # loads gestational age clock coefficients
+library(ExperimentHub)
+library(methylclockData)
+
+# `hub_cache` is a directory you resolved, not a literal to copy.
+setExperimentHubOption("CACHE", hub_cache)
+eh <- ExperimentHub(localHub = TRUE)   # localHub = TRUE never touches the network
+
+# Populate the package caches up front so DNAmAge() does not try to fetch.
+load_DNAm_Clocks_data()     # chronological / biological clock coefficients
+load_DNAmGA_Clocks_data()   # gestational age clock coefficients
 ```
+
+A usable cache is one `ExperimentHub(localHub = TRUE)` opens without error and in which `query(eh, "methylclockData")` returns the clock resources; an empty or unrelated cache surfaces as a resource-not-found error on the first clock call, not as a silent wrong answer. Confirm that before running the pipeline.
+
+If no such cache is available, report that epigenetic age estimation cannot run here and continue with the rest of the analysis. Do not invent a cache path, and do not present clock output from a partial cache as complete.
 
 ## Common Patterns
 
@@ -395,6 +416,6 @@ results <- DNAmAge(mvals, toBetas = TRUE, clocks = "Horvath", age = ages)
 - **cell.count adds columns to the result**: When `cell.count = TRUE` (default), cell type proportion columns are appended to the result tibble. If you do not have blood data, set `cell.count = FALSE` to avoid spurious cell count estimates from inappropriate reference panels.
 - **cell.count.reference must match tissue**: The default `"blood gse35069 complete"` is for adult blood. For cord blood, use `"andrews and bakulski cord blood"`. For brain, use `"guintivano dlpfc"`. Using the wrong reference produces meaningless cell proportions.
 - **Age acceleration requires the age parameter**: To get `ageAcc.*` columns in the output, you must pass the `age` parameter with known chronological ages. Without it, only raw predicted ages are returned. For proper IEAA/EEAA, compute acceleration manually (see Pattern 4) rather than relying on the simple subtraction in the output.
-- **First run downloads data from ExperimentHub**: Clock coefficients are fetched from Bioconductor's ExperimentHub on first use and cached locally. This requires internet access. In sandboxed environments, ensure `methylclockData` is pre-installed and the ExperimentHub cache is populated, or call `load_DNAm_Clocks_data()` / `load_DNAmGA_Clocks_data()` explicitly before `DNAmAge()`.
+- **No network access — the ExperimentHub fetch cannot work**: clock coefficients are normally fetched from Bioconductor's ExperimentHub on first use, and there is no egress here, so the first `DNAmAge()`/`DNAmGA()` call fails before any modelling happens. Point ExperimentHub at a resolved, already-populated cache and open it with `localHub = TRUE` before the first clock call (see Clock Data Loading). If no populated cache is available, report it rather than working around it.
 - **fastImp only imputes clock CpGs**: With `fastImp = TRUE`, only CpGs needed by the selected clocks are imputed (faster). With `fastImp = FALSE` (default), the entire matrix is imputed first (more accurate KNN neighbors, but much slower for large datasets). Use `fastImp = TRUE` for datasets with >100 samples.
 - **GenomicRatioSet input extracts beta automatically**: When passing a minfi GenomicRatioSet, methylclock calls `getBeta()` internally. Do not pre-extract and transpose — pass the GenomicRatioSet directly.

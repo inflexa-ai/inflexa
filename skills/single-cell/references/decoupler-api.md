@@ -7,16 +7,34 @@ gene set scoring.
 
 ## Prior Knowledge Resources
 
+Never call `dc.op.collectri()`, `dc.op.progeny()`, `dc.op.msigdb()`, or any other
+`dc.op.*()` loader: they fetch from the OmniPath web API, and there is no network
+egress. Load every network from a file already available to you.
+
+**Resolve the file before you write the script.** Ask for the *dataset* by what it
+is, not by a path — reference data is provisioned per-environment, so the
+directory, the filename, and the format all vary and none of them are yours to
+assume:
+
+| You need | Ask for | Standard sources |
+|-|-|-|
+| TF activity | A TF-target regulon network for your organism | CollecTRI; or DoRothEA filtered to confidence A-C |
+| Pathway activity | Pathway responsive-gene weights for your organism | PROGENy (14 pathways) |
+| Gene set scoring | A gene-set collection for your organism | MSigDB (hallmark, canonical pathways, GO, oncogenic/immunologic/cell-type signatures) |
+
+Then read it with the reader its format actually calls for — these circulate as
+CSV, TSV, GMT, and R `.rda` depending on the source, and a wrong-format read fails
+immediately. Match the organism too: a human regulon set over mouse counts runs
+happily and returns meaningless activities.
+
 ### CollecTRI (Transcription Factors)
 
 ```python
 import pandas as pd
 
-# Load pre-staged CollecTRI regulons from the reference store.
-# Call list-available-refs to get the exact path.
-# NEVER call dc.op.collectri() — it requires network access (unavailable in sandbox).
-collectri = pd.read_parquet("<path from list-available-refs>/omnipath/processed/organism_9606/interactions_by_dataset/interactions__dataset_collectri.parquet")
-# Returns DataFrame: source (TF), target (gene), weight (activation/repression)
+# `regulon_path` is a path you resolved from the reference inventory, not a literal.
+collectri = pd.read_csv(regulon_path)
+# Long format: source (TF), target (gene symbol), weight (+1 activation / -1 repression)
 #     source  target  weight
 # 0   STAT1   IRF1    1.0
 # 1   STAT1   GBP1    1.0
@@ -25,10 +43,9 @@ collectri = pd.read_parquet("<path from list-available-refs>/omnipath/processed/
 ### PROGENy (Pathway Activity)
 
 ```python
-# Load pre-staged PROGENy pathway gene weights from the reference store.
-# NEVER call dc.op.progeny() — it requires network access.
-progeny = pd.read_parquet("<path from list-available-refs>/progeny/processed/progeny_human.parquet")
-# Returns DataFrame: source (pathway), target (gene), weight, p_value
+# `pathway_path` resolved from the reference inventory.
+progeny = pd.read_csv(pathway_path)
+# Long format: source (pathway), target (gene symbol), weight (signed float)
 # 14 pathways: Androgen, EGFR, Estrogen, Hypoxia, JAK-STAT, MAPK,
 # NFkB, p53, PI3K, TGFb, TNFa, Trail, VEGF, WNT
 ```
@@ -36,16 +53,27 @@ progeny = pd.read_parquet("<path from list-available-refs>/progeny/processed/pro
 ### MSigDB Gene Sets
 
 ```python
-# Load pre-staged MSigDB gene sets from the reference store.
-# NEVER call dc.op.msigdb() — it requires network access (unavailable in sandbox).
-# Available collections: hallmark, canonical_pathways, go_biological_process,
-# go_cellular_component, go_molecular_function, oncogenic_signatures,
-# immunologic_signatures, cell_type_signatures.
-msigdb_hallmark = pd.read_parquet("<path from list-available-refs>/msigdb/processed/Hs/msigdb_hallmark.parquet")
-# Returns DataFrame: gene_set, description, gene_symbol (long format)
-# GMT format also available for gseapy/fgsea:
-#   "<path from list-available-refs>/msigdb/processed/Hs/msigdb_hallmark.gmt"
+# `geneset_path` resolved from the reference inventory. Collections are named
+# (hallmark, canonical pathways, GO BP/CC/MF, oncogenic, immunologic, cell-type)
+# — ask for the collection by name, not by filename.
+msigdb_hallmark = pd.read_csv(geneset_path)
+# Long format: gene_set / description / gene_symbol, or GMT if the inventory
+# reports a GMT — GMT is what gseapy and fgsea want, so check before converting.
 ```
+
+### Normalising Column Names
+
+Column names vary by source — DoRothEA ships `tf`/`target`/`mor`, and some releases
+carry extra provenance columns. Every method below consumes `source`/`target`/`weight`,
+so inspect the frame after loading and rename before passing it on:
+
+```python
+collectri = collectri.rename(columns={"tf": "source", "mor": "weight"})
+collectri = collectri[["source", "target", "weight"]]
+```
+
+Target gene symbols are HGNC for human and MGI for mouse; they must match
+`adata.var_names` exactly.
 
 ## Running Methods on AnnData
 
@@ -157,8 +185,8 @@ import decoupler as dc
 # 1. Load preprocessed, annotated AnnData
 adata = sc.read_h5ad("annotated.h5ad")
 
-# 2. Load prior knowledge network from ref store (NOT dc.op.collectri — no network)
-collectri = pd.read_parquet("<path from list-available-refs>/omnipath/processed/organism_9606/interactions_by_dataset/interactions__dataset_collectri.parquet")
+# 2. Load prior knowledge network (NOT dc.op.collectri — no network)
+collectri = pd.read_csv(regulon_path)  # resolved + normalised per Prior Knowledge Resources
 
 # 3. Infer TF activities
 dc.mt.ulm(data=adata, net=collectri)
@@ -176,8 +204,8 @@ sc.pl.matrixplot(acts, var_names=["STAT1", "MYC", "GATA1"], groupby="cell_type")
 ```python
 import decoupler as dc
 
-# 1. Load PROGENy pathways from ref store (NOT dc.op.progeny — no network)
-progeny = pd.read_parquet("<path from list-available-refs>/progeny/processed/progeny_human.parquet")
+# 1. Load PROGENy pathways (NOT dc.op.progeny — no network)
+progeny = pd.read_csv(pathway_path)  # resolved + normalised per Prior Knowledge Resources
 
 # 2. Score pathways
 dc.mt.ulm(data=adata, net=progeny)

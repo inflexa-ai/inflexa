@@ -13,14 +13,16 @@ xcms depends on MSnbase for data classes. Both must be loaded. If using xcms >= 
 
 ## Step 1: Read Raw Data
 
+xcms needs **absolute** paths to centroided mzML files. Take them from the input paths you were given — do not assume a directory layout and do not construct a path from a sample name. The placeholders below stand in for paths you already hold.
+
 ```r
-# Define input files — must be absolute paths to centroided mzML files
 files <- c(
-  "/data/inputs/sample1.mzML",
-  "/data/inputs/sample2.mzML",
-  "/data/inputs/sample3.mzML",
-  "/data/inputs/sample4.mzML"
+  mzml_ctrl_1, mzml_ctrl_2,
+  mzml_treat_1, mzml_treat_2
 )
+
+# Fail loudly before a long read rather than midway through it.
+stopifnot(all(file.exists(files)))
 
 # Phenotype data: one row per file, must match file order
 pd <- data.frame(
@@ -242,14 +244,12 @@ library(xcms)
 library(MSnbase)
 
 # --- 1. Read data ---
+# Absolute paths taken from the inputs you were given, in phenotype order.
 files <- c(
-  "/data/inputs/ctrl_1.mzML",
-  "/data/inputs/ctrl_2.mzML",
-  "/data/inputs/ctrl_3.mzML",
-  "/data/inputs/treat_1.mzML",
-  "/data/inputs/treat_2.mzML",
-  "/data/inputs/treat_3.mzML"
+  mzml_ctrl_1, mzml_ctrl_2, mzml_ctrl_3,
+  mzml_treat_1, mzml_treat_2, mzml_treat_3
 )
+stopifnot(all(file.exists(files)))
 
 pd <- data.frame(
   sample_name = c("ctrl_1", "ctrl_2", "ctrl_3", "treat_1", "treat_2", "treat_3"),

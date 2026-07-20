@@ -6,35 +6,45 @@ models and custom model training.
 
 ## Model Management
 
+Never call `models.download_models()`: it fetches from the CellTypist model server, and there is no network egress. Do not fall back on CellTypist's own cache either — `models.models_description()` and `models.models_path` describe that download cache, which is not populated here. Load the model from a file already available to you.
+
+**Resolve the model before you write the script.** Ask for the *model* by what it is, not by a path — reference data is provisioned per-environment, so the directory and the filename both vary and neither is yours to assume:
+
+| You need | Ask for | Standard models |
+|-|-|-|
+| Broad immune labels | A pre-trained CellTypist immune model, low-hierarchy | Immune_All_Low |
+| Fine immune subtypes | A pre-trained CellTypist immune model, high-hierarchy | Immune_All_High |
+| Tissue-specific labels | A pre-trained CellTypist model for your tissue and organism | Human_Lung_Atlas, Developing_Human_Brain, Adult_Mouse_Gut, Cells_Fetal_Lung, Pan_Fetal_Human |
+
+**Load by absolute path.** Passing a bare model name (`model="Immune_All_Low.pkl"`) makes CellTypist resolve it against its own cache directory, which fails when the file lives anywhere else. Every `model=` argument below takes a path you resolved, and it must be absolute.
+
+The file should be a pickled CellTypist `Model` — a logistic-regression classifier carrying the gene list it was trained on and the labels it can emit. Verify that after loading rather than trusting the name: `model.cell_types` should hold the labels you expect and `model.features` the training genes. Organism matters as much as tissue — a human model applied to mouse symbols runs happily and returns meaningless labels.
+
+If no suitable model is available, report that and fall back to marker-based annotation. Do not invent a path, and do not silently annotate with the wrong tissue's model.
+
 ```python
 import celltypist
 from celltypist import models
 
-# Download all available models
-models.download_models()
-
-# Download a specific model
-models.download_models(model="Immune_All_Low.pkl")
-
-# List available models
-print(models.models_description())
-
-# Load a model
-model = models.Model.load(model="Immune_All_Low.pkl")
-print(model.cell_types)  # View cell types the model can predict
+# `model_path` is an absolute path you resolved, not a literal to copy.
+model = models.Model.load(model=model_path)
+print(model.cell_types)     # labels this model can predict
+print(len(model.features))  # genes it was trained on
 ```
 
 ### Key Built-in Models
 
 | Model | Description |
-|-------|-------------|
-| `Immune_All_Low.pkl` | Immune cells, low-hierarchy (broad types) |
-| `Immune_All_High.pkl` | Immune cells, high-hierarchy (fine subtypes) |
-| `Developing_Human_Brain.pkl` | Human brain development |
-| `Adult_Mouse_Gut.pkl` | Mouse intestinal cells |
-| `Human_Lung_Atlas.pkl` | Human lung cell types |
-| `Cells_Fetal_Lung.pkl` | Fetal lung development |
-| `Pan_Fetal_Human.pkl` | Pan-fetal human tissues |
+|-|-|
+| Immune_All_Low | Immune cells, low-hierarchy (broad types) |
+| Immune_All_High | Immune cells, high-hierarchy (fine subtypes) |
+| Developing_Human_Brain | Human brain development |
+| Adult_Mouse_Gut | Mouse intestinal cells |
+| Human_Lung_Atlas | Human lung cell types |
+| Cells_Fetal_Lung | Fetal lung development |
+| Pan_Fetal_Human | Pan-fetal human tissues |
+
+These are the models CellTypist publishes; which of them exist in this environment is a separate question, answered by the reference data available to you.
 
 ## Annotation
 
@@ -48,7 +58,7 @@ adata = sc.read_h5ad("input.h5ad")
 # Basic annotation (input should be log-normalized)
 predictions = celltypist.annotate(
     adata,
-    model="Immune_All_Low.pkl",
+    model=model_path,  # absolute path, resolved per Model Management
     mode="best match",  # Default: assign single best label per cell
 )
 
@@ -64,7 +74,7 @@ predictions.probability_matrix  # Probability scores per type
 # Majority voting refines predictions using local neighborhood consensus
 predictions = celltypist.annotate(
     adata,
-    model="Immune_All_Low.pkl",
+    model=model_path,  # absolute path, resolved per Model Management
     majority_voting=True,
     over_clustering="leiden",  # Use existing clustering in adata.obs
 )
@@ -72,7 +82,7 @@ predictions = celltypist.annotate(
 # With automatic over-clustering (CellTypist computes it)
 predictions = celltypist.annotate(
     adata,
-    model="Immune_All_Low.pkl",
+    model=model_path,  # absolute path, resolved per Model Management
     majority_voting=True,
     # Omit over_clustering to let CellTypist create one
 )
@@ -84,7 +94,7 @@ predictions = celltypist.annotate(
 # Probability matching: cells can get 0, 1, or multiple labels
 predictions = celltypist.annotate(
     adata,
-    model="Immune_All_Low.pkl",
+    model=model_path,  # absolute path, resolved per Model Management
     mode="prob match",
     p_thres=0.5,  # Probability threshold for label assignment
 )
@@ -193,10 +203,10 @@ sc.pp.neighbors(adata)
 sc.tl.leiden(adata, resolution=2.0, key_added="leiden_fine")
 
 # 3. Annotate with majority voting
-models.download_models(model="Immune_All_Low.pkl")
+# `model_path` is an absolute path you resolved (Immune_All_Low here) — no download step.
 predictions = celltypist.annotate(
     adata,
-    model="Immune_All_Low.pkl",
+    model=model_path,  # absolute path, resolved per Model Management
     majority_voting=True,
     over_clustering="leiden_fine",
 )
@@ -214,7 +224,18 @@ adata = predictions.to_adata()
 - **Over-clustering resolution**: For majority voting, use a high-resolution
   clustering (e.g., `resolution=2.0-5.0`) so that each micro-cluster is mostly
   one cell type. Too coarse a clustering defeats the purpose.
-- **Model path**: Models downloaded via `models.download_models()` are stored in
-  `models.models_path`. Specify the full path for custom models.
+- **No network access**: Never call `models.download_models()` — it reaches the
+  CellTypist model server and fails outright. `models.models_description()` reads
+  the same download cache and is equally unusable here.
+- **Load models by absolute path**: `model="Immune_All_Low.pkl"` is a *name*
+  lookup against `models.models_path`, not a file read. It fails whenever the
+  model is not inside that cache directory. Pass the absolute path you resolved
+  to both `models.Model.load()` and `celltypist.annotate()`, for pre-trained and
+  custom models alike.
+- **`CELLTYPIST_FOLDER` is read at import**: if you point CellTypist at a
+  different model directory with `CELLTYPIST_FOLDER`, export it in the *same*
+  command that runs the script (`CELLTYPIST_FOLDER=... python script.py`), using
+  a directory you resolved — setting it in a separate shell invocation has no
+  effect on the run. Passing an absolute `model=` path avoids the issue entirely.
 - **Large datasets**: Use `use_SGD=True` with `mini_batch=True` for datasets
   exceeding 100k cells to avoid memory issues.

@@ -1,17 +1,24 @@
 # pyBigWig API Reference
 
-Python extension for reading and writing BigWig and BigBed files. Built on libBigWig for fast access to signal tracks. Supports both local and remote files.
+Python extension for reading and writing BigWig and BigBed files. Built on libBigWig for fast access to signal tracks.
 
 ## Opening Files
+
+pyBigWig accepts an HTTP/HTTPS URL as well as a path, but the remote route is dead here: there is no network egress, so `pyBigWig.open()` on a URL fails outright rather than merely running slowly. Open files that are already available to you.
+
+That covers reference tracks too — a blacklist region set, a mappability track, a conservation track (phyloP, phastCons). **Resolve those before you write the script**, asking for the *track* by what it is rather than by a path: reference data is provisioned per-environment, so the directory, the filename, and the genome build all vary and none are yours to assume. A conservation track is only meaningful against the build it was computed on, and a mismatched build reads cleanly while returning values for the wrong coordinates — check `bw.chroms()` against your intervals before trusting anything.
+
+If a track you need is not available, say so in your report and continue with the analysis that does not depend on it. Do not invent a path and do not substitute a different build.
 
 ```python
 import pyBigWig
 
-# Open a local BigWig file for reading
+# Open a BigWig file your own pipeline produced
 bw = pyBigWig.open("signal.bw")
 
-# Open a remote BigWig file (HTTP/HTTPS)
-bw = pyBigWig.open("https://example.com/data/signal.bw")
+# Open a reference track — `conservation_path` is a path you resolved,
+# not a literal to copy.
+cons = pyBigWig.open(conservation_path)
 
 # Open a BigBed file
 bb = pyBigWig.open("annotations.bb")
@@ -264,6 +271,7 @@ finally:
 - **stats() returns a list**: Even for a single bin, the return value is a list (e.g., `[0.5]`). Access with `[0]`. Returns `[None]` if the region has no data.
 - **Chromosome names must match exactly**: BigWig chromosome names are case-sensitive. `chr1` and `Chr1` are different. Check `bw.chroms()` for the exact names used.
 - **Writing order matters**: When writing, entries must be added in chromosome order matching the header, and within each chromosome they must be non-overlapping and sorted by start position.
-- **Remote file access**: Opening remote files works but can be slow. For repeated queries, download the file first.
+- **No network access**: pyBigWig accepts HTTP/HTTPS URLs, but there is no egress here, so opening one fails outright rather than running slowly. Downloading the file first is not an option either. Open reference tracks from a resolved path instead.
+- **Genome build must match**: a conservation or mappability track computed on a different build opens without complaint and returns values for the wrong coordinates. Compare `bw.chroms()` against your intervals — differing chromosome sets or lengths mean the wrong build.
 - **No context manager**: pyBigWig does not support Python `with` statements natively. Always use try/finally or explicit `close()`.
 - **addHeader is required before addEntries**: Calling addEntries before addHeader will fail silently or produce a corrupt file.
