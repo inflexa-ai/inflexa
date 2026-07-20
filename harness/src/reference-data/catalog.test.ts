@@ -16,7 +16,7 @@ const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
 
 function artifact(path: string, index = 0): Record<string, unknown> {
-    return { path, url: `https://example.org/artifact-${index}` };
+    return { path, url: `https://example.org/artifact-${index}`, format: "parquet", contents: "A fixture table." };
 }
 
 function dataset(id: string, artifacts: Record<string, unknown>[] = [artifact("reference.parquet")]): Record<string, unknown> {
@@ -60,6 +60,10 @@ describe("reference-data catalog", () => {
             "msigdb-hallmark-human",
             "msigdb-hallmark-mouse",
             "collectri-human",
+            "progeny-human",
+            "progeny-mouse",
+            "dorothea-human",
+            "dorothea-mouse",
             "gtex-v8",
             "hpa-proteinatlas",
             "celltypist-immune",
@@ -95,6 +99,8 @@ describe("reference-data catalog", () => {
             "panglaodb.se",
             "celltypist.cog.sanger.ac.uk",
             "www.celltypist.org",
+            "github.com",
+            "raw.githubusercontent.com",
         ]);
 
         for (const dataset of REFERENCE_DATA_CATALOG.datasets) {
@@ -107,14 +113,36 @@ describe("reference-data catalog", () => {
         }
     });
 
-    // The uniform trust-on-first-use model: the catalog is URL + provenance only, so no artifact
-    // may carry a size or digest to compute, review, or let go stale. Integrity lives entirely in
-    // the install receipt, off the bytes the user actually downloaded.
-    it("carries only a path and url for every artifact — no checked-in size or digest", () => {
+    // The uniform trust-on-first-use model: an artifact carries where to fetch it and what it holds,
+    // never a size or digest to compute, review, or let go stale. Integrity lives entirely in the
+    // install receipt, off the bytes the user actually downloaded. Descriptive fields are welcome —
+    // they cost no maintenance and are what lets a caller find a file without knowing its path —
+    // but the exact key set is pinned so an integrity field cannot reappear unnoticed.
+    it("describes every artifact without a checked-in size or digest", () => {
         for (const dataset of REFERENCE_DATA_CATALOG.datasets) {
             for (const artifact of dataset.artifacts) {
-                expect(Object.keys(artifact).sort()).toEqual(["path", "url"]);
+                expect(Object.keys(artifact).sort()).toEqual(["contents", "format", "path", "url"]);
             }
+        }
+    });
+
+    // Skills name no paths, so an entry is only findable through what it says about itself.
+    it("gives every artifact a format and a non-restating description of its contents", () => {
+        for (const dataset of REFERENCE_DATA_CATALOG.datasets) {
+            for (const artifact of dataset.artifacts) {
+                expect(artifact.format).toMatch(/^[a-z0-9]+(?:[+-][a-z0-9]+)*$/);
+                expect(artifact.contents.length).toBeGreaterThan(40);
+                expect(artifact.contents).not.toBe(dataset.title);
+            }
+        }
+    });
+
+    // Wrong-species reference data still runs and silently produces wrong numbers, so a
+    // single-organism dataset must say which one; multi-species sources correctly omit it.
+    it("labels every single-organism dataset with its organism", () => {
+        const multiSpecies = new Set(["ncbi-gene2ensembl", "ncbi-gene2refseq", "reactome-pathways", "reactome-mappings", "panglaodb-markers"]);
+        for (const dataset of REFERENCE_DATA_CATALOG.datasets) {
+            expect(dataset.organism === undefined).toBe(multiSpecies.has(dataset.id));
         }
     });
 
@@ -197,6 +225,8 @@ describe("reference-data catalog", () => {
                 "celltypist-immune",
                 "celltypist-pan-fetal",
                 "collectri-human",
+                "dorothea-human",
+                "dorothea-mouse",
                 "gtex-v8",
                 "hpa-proteinatlas",
                 "msigdb-hallmark-human",
@@ -208,6 +238,8 @@ describe("reference-data catalog", () => {
                 "ncbi-gene2refseq",
                 "panglaodb-markers",
                 "pharmcat-grch38-fasta",
+                "progeny-human",
+                "progeny-mouse",
                 "reactome-mappings",
                 "reactome-pathways",
                 "uniprot-idmapping-human",

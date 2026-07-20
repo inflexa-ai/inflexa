@@ -187,6 +187,51 @@ describe("list_available_refs", () => {
         expect(result.entries.find((entry) => entry.path.includes("/user/"))?.metadata).toBeUndefined();
     });
 
+    // Skills name no reference paths, so an agent finds a file by describing what it needs. That
+    // only works if the searchable text and the rendered answer both carry meaning, not just paths.
+    it("resolves a catalogued file by what it holds and renders how to read it", async () => {
+        const collectriPath = "/mnt/refs/managed/collectri-human/2.0/CollecTRI_regulons.csv";
+        const client = makeClient({
+            state: "populated",
+            entries: [
+                { path: collectriPath, kind: "file", bytes: 4_096 },
+                { path: "/mnt/refs/managed/msigdb-hallmark-mouse/2026.1/mh.all.v2026.1.Mm.symbols.gmt", kind: "file", bytes: 2_048 },
+            ],
+            scannedEntries: 2,
+            truncated: false,
+            receipts: [
+                {
+                    version: 1,
+                    datasetId: "collectri-human",
+                    datasetVersion: "2.0",
+                    activatedAt: "2026-07-14T10:30:00.000Z",
+                    artifacts: [{ path: "CollecTRI_regulons.csv", bytes: 4_096, sha256: HASH }],
+                },
+                {
+                    version: 1,
+                    datasetId: "msigdb-hallmark-mouse",
+                    datasetVersion: "2026.1",
+                    activatedAt: "2026-07-14T10:30:00.000Z",
+                    artifacts: [{ path: "mh.all.v2026.1.Mm.symbols.gmt", bytes: 2_048, sha256: HASH }],
+                },
+            ],
+            legacyEntries: [],
+        });
+
+        // "regulon" appears in neither filename; it is only in the catalog's contents description.
+        const byMeaning = (await createTool(client).execute({ query: "regulon" }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(byMeaning.entries).toHaveLength(1);
+        expect(byMeaning.entries[0]!.path).toBe(collectriPath);
+        expect(byMeaning.entries[0]!.metadata).toMatchObject({ organism: "human", format: "csv", category: "regulatory-networks" });
+        // The reader and the column shape must reach the model, not just sit in structured metadata.
+        expect(byMeaning.content).toContain("csv — TF-target regulons");
+        expect(byMeaning.content).toContain("source (TF symbol)");
+
+        // Organism is a first-class filter, so a mouse analysis cannot silently pick up human data.
+        const byOrganism = (await createTool(client).execute({ query: "mouse" }, makeToolContext().ctx))._unsafeUnwrap();
+        expect(byOrganism.entries.map((entry) => entry.metadata?.datasetId)).toEqual(["msigdb-hallmark-mouse"]);
+    });
+
     it("ignores invalid and stale metadata without hiding observed files", async () => {
         const client = makeClient({
             state: "populated",

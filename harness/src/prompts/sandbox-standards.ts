@@ -74,32 +74,45 @@ invent or guess one.
 
 ## Environment — No Network, No Installs
 
-The sandbox has **no network access** and **no runtime installs**: what is staged
-is what you get. Check what you need when you need it — a targeted lookup, never a
-catalog dump up front.
+**There is no egress from this sandbox.** Outbound connections are blocked at the
+firewall, not merely discouraged: every download, API call, package install, and
+\`ExperimentHub\`/\`AnnotationHub\`/\`models.download_*\` style fetch fails outright.
+There is no proxy, no mirror, and no retry that succeeds. Packages and reference
+data were staged onto read-only mounts by the host **before** this container
+started, and that is the whole of what exists. Work that genuinely requires the
+internet — fetching a dataset, querying an external API, literature lookup — is
+done **outside** the sandbox through the host's tools, not from your scripts.
+
+So: check what you need when you need it — a targeted lookup, never a catalog dump
+up front.
 
 - **Packages** — before importing a package you are not certain is present, look it
   up with \`list_available_packages\`, narrowed to the packages you actually intend
   to import. Importing one that isn't installed fails the script; the lookup costs
   one call.
-- **Reference data** — \`list_available_refs\`, narrowed to the collection you need,
-  returns the exact paths of the pre-staged resources mounted read-only at
-  \`/mnt/refs\` (PROGENy, CollecTRI, MSigDB, WikiPathways, Reactome, OmniPath, gene
-  mappings, design-system templates). Each biological collection ships as
-  **Parquet** (pandas/decoupler) and **GMT** (gseapy/fgsea/GSVA) — use the format
-  your tool expects. The reference store is OPTIONAL and may be absent or hold none
-  of what you want — a normal state, not an error. Never assume a reference path
-  exists and never hardcode one: if a reference you need is not in the inventory,
-  say so plainly and proceed with what you do have (or state what must be
-  provisioned) rather than inventing a path or a substitute. Pass reference paths
-  EXPLICITLY to the library — nothing in the image points a library at the store,
-  so a library that resolves data by name from an env var (CellTypist reads
-  \`$CELLTYPIST_FOLDER\`) will not find it unless you export that variable yourself,
-  in the same command, using a path the inventory actually returned.
-- Do NOT call \`dc.op.collectri()\`, \`dc.op.progeny()\`, \`dc.op.msigdb()\`, or any
-  \`dc.op.*()\` function — they fetch over the network and will fail. Do NOT pass
-  Enrichr library names to gseapy — pass the pre-staged GMT path. Do NOT download
-  data or install packages at runtime.
+- **Reference data** — \`list_available_refs\` resolves reference data into a real
+  path against the store mounted read-only at \`/mnt/refs\`. **Search by what the
+  data IS, not by where you expect it** ("TF-target regulons", "hallmark gene
+  sets", "mouse"): the store's directory layout is an installer detail, it differs
+  between hosts, and no path you have seen before is guaranteed to exist here.
+  Catalogued entries come back with the organism, the format, and the file's
+  internal shape, so read the entry and use the reader and species it names rather
+  than assuming — formats vary per dataset, and there is no guarantee any given
+  collection ships in the format your tool prefers.
+  The store is OPTIONAL and may be absent or hold none of what you want — a normal
+  state, not an error. Never assume a reference path exists and never hardcode one:
+  if a reference you need is not in the inventory, say so plainly and proceed with
+  what you do have (or state what must be provisioned) rather than inventing a path
+  or substituting something else unannounced. Pass reference paths EXPLICITLY to the
+  library — nothing in the image points a library at the store, so a library that
+  resolves data by name from an env var (CellTypist reads \`$CELLTYPIST_FOLDER\`)
+  will not find it unless you export that variable yourself, in the same command,
+  using a path the inventory actually returned.
+- Do NOT call a library's built-in data fetcher — \`dc.op.collectri()\`,
+  \`dc.op.progeny()\`, \`dc.op.msigdb()\` and every other \`dc.op.*()\`, CellTypist's
+  \`models.download_models()\`, gseapy's Enrichr library names, \`ExperimentHub\`/
+  \`AnnotationHub\` — they all reach for the network and will fail. Load from an
+  inventory path instead. Do NOT download data or install packages at runtime.
 
 ## Output Contract — Persisted Files Are the Deliverable
 
