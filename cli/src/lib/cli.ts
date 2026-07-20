@@ -1,4 +1,4 @@
-import { confirm as clackConfirm, isCancel, select as clackSelect, text as clackText } from "@clack/prompts";
+import { confirm as clackConfirm, isCancel, password as clackPassword, select as clackSelect, text as clackText } from "@clack/prompts";
 
 import { shutdown } from "./shutdown.ts";
 
@@ -105,6 +105,24 @@ export async function promptText(
         message,
         placeholder: opts?.placeholder,
         defaultValue: opts?.defaultValue,
+        validate: validate ? (v) => validate(v ?? "") : undefined,
+    });
+    if (isCancel(answer)) fail("Cancelled.");
+    return answer;
+}
+
+/**
+ * Interactive SECRET prompt for the text commands (API keys, tokens): behaves like
+ * {@link promptText} but every typed or pasted character renders masked, so a key never
+ * lands in the terminal scrollback. The submitted value is returned in the clear — masking
+ * is display-only. TTY-only (see {@link promptText}); cancelling aborts. Text-command layer
+ * ONLY — never from the opentui TUI.
+ */
+export async function promptSecret(message: string, opts?: { validate?: (value: string) => string | undefined }): Promise<string> {
+    if (!process.stdin.isTTY) fail(`${message}: a value is required, but stdin is not interactive — pass it via configuration instead.`);
+    const validate = opts?.validate;
+    const answer = await clackPassword({
+        message,
         validate: validate ? (v) => validate(v ?? "") : undefined,
     });
     if (isCancel(answer)) fail("Cancelled.");

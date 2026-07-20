@@ -37,6 +37,14 @@ export const DEFAULT_API_BASE_URL = "https://api.openai.com/v1";
  */
 export const DEFAULT_API_EMBEDDING_DIMENSIONS = 1536;
 
+/**
+ * The model `api-key` mode ends up on when `embedding.model` is unset — mirrors the harness provider's
+ * own default. Like {@link DEFAULT_API_EMBEDDING_DIMENSIONS}, it is not consulted by
+ * {@link resolveEmbedder} (the harness applies its default); it exists so the setup prompt can pre-fill
+ * the exact model the config would otherwise resolve to.
+ */
+export const DEFAULT_API_EMBEDDING_MODEL = "text-embedding-3-small";
+
 export type EmbeddingResolveError =
     | { readonly type: "embeddings_not_configured"; readonly message: string }
     | { readonly type: "local_model_missing"; readonly message: string }
@@ -51,9 +59,17 @@ export function resolveEmbedder(config: Config): Result<EmbeddingProvider, Embed
     const { mode } = config.embedding;
 
     if (mode === "off") {
+        // `mode` is inferred from a lone `apiKey`/`modelPath` (see the embedding schema in lib/config.ts),
+        // so reaching `off` WITH a backend field set means the user wrote an EXPLICIT `mode: "off"` beside
+        // it — name that contradiction instead of claiming nothing is configured.
+        const strandedField =
+            config.embedding.apiKey !== undefined ? "embedding.apiKey" : config.embedding.modelPath !== undefined ? "embedding.modelPath" : null;
         return err({
             type: "embeddings_not_configured",
-            message: "Embeddings are not configured. Run `inflexa setup --embeddings local` to enable local embeddings.",
+            message:
+                strandedField !== null
+                    ? `Embeddings are switched off: ${strandedField} is set but embedding.mode is explicitly "off". Remove the mode override (it is inferred from ${strandedField}), or set it to ${strandedField === "embedding.apiKey" ? '"api-key"' : '"local"'}.`
+                    : "Embeddings are not configured. Run `inflexa setup --embeddings local` to enable local embeddings.",
         });
     }
 
