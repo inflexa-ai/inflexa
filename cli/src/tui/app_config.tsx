@@ -442,7 +442,16 @@ export function ConfigApp(props: { onClose?: () => void }) {
     /** The shared tail of both api-key paths: width, then apply. An empty model defers to the harness default. */
     function finishApiKey(apiKey: string, baseURL: string, model: string): void {
         promptDimensions("api-key", DEFAULT_API_EMBEDDING_DIMENSIONS, (dimensions) =>
-            applyEmbedding({ mode: "api-key", apiKey, baseURL, dimensions, ...(model === "" ? {} : { model }) }),
+            // Omit `dimensions` when it equals the api-key default width — resolve.ts passes it straight
+            // through and the harness provider falls back to the same 1536 regardless of model, so recording
+            // it would only bloat config.json. Mirrors the custom-GGUF branch's built-in-width omission.
+            applyEmbedding({
+                mode: "api-key",
+                apiKey,
+                baseURL,
+                ...(model === "" ? {} : { model }),
+                ...(dimensions === DEFAULT_API_EMBEDDING_DIMENSIONS ? {} : { dimensions }),
+            }),
         );
     }
 
