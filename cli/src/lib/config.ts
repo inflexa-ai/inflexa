@@ -6,6 +6,7 @@ import { z } from "zod";
 import { DEFAULT_THEME_ID, themeIds } from "./design_system.ts";
 import { ContainerRuntimeError, ensureReady, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime } from "./container.ts";
 import { env, isReservedPostgresPort } from "./env.ts";
+import { getLogger } from "./log.ts";
 import { DEFAULT_DATABASE, DEFAULT_HOST, DEFAULT_PASSWORD, DEFAULT_USER, type PostgresConnection } from "../modules/infra/postgres_types.ts";
 
 const configSchema = z.object({
@@ -307,6 +308,23 @@ export function resolveConnectionMode(): "cliproxy" | "direct" {
     return parsed.data.connection?.mode ?? "cliproxy";
 }
 
+// resolvePostgresConfig runs on nearly every boot path and is called repeatedly within one; latch so the
+// discarded-reserved-port warning is emitted at most once per process rather than on each resolve.
+let warnedDiscardedReservedPort = false;
+
+/**
+ * Log (once) that a persisted `postgres.port` was ignored because it equals a reserved channel default.
+ * Routed through the pino sink ({@link getLogger}) — NEVER raw stdout/stderr — because the TUI owns the
+ * terminal in alternate-screen mode and a stray write would corrupt the opentui frame.
+ */
+function warnDiscardedReservedPort(persisted: number, resolved: number): void {
+    if (warnedDiscardedReservedPort) return;
+    warnedDiscardedReservedPort = true;
+    getLogger("config").warn(
+        `Ignoring postgres.port ${persisted} in config.json — it is a reserved channel default, so honoring it would let one build channel's stack collide with the other's. Using ${resolved} instead. To apply a custom port, remove postgres.port from config.json or set it to a non-reserved value.`,
+    );
+}
+
 /**
  * Resolve the postgres config from {@link readConfig}, filling every unset field
  * per-field with the defaults from modules/infra/postgres_types.ts. The result is a
@@ -328,6 +346,12 @@ export function resolveConnectionMode(): "cliproxy" | "direct" {
 export function resolvePostgresConfig(): PostgresConnection {
     const pg = readConfig().postgres;
     const port = pg?.port !== undefined && !isReservedPostgresPort(pg.port) ? pg.port : env.postgresPort;
+    // The discard above is deliberate freeze-bug healing but otherwise silent — a user who set a reserved
+    // port on purpose (e.g. a prod-only user picking the dev default 8434 to dodge a local conflict) would
+    // see it stop working with no explanation. Surface it, but ONLY when the discard actually changes the
+    // resolved port: a reserved pin equal to THIS channel's own default resolves to itself, so warning then
+    // would be pure noise.
+    if (pg?.port !== undefined && isReservedPostgresPort(pg.port) && pg.port !== port) warnDiscardedReservedPort(pg.port, port);
     return {
         host: pg?.host ?? DEFAULT_HOST,
         port,

@@ -1264,10 +1264,6 @@ export function recordCliproxyProvider(kind: Provider): Result<void, ConfigError
 
 // --- proxy runtime ---------------------------------------------------------
 
-// The login container runs the same pinned image as the compose proxy service (see PROXY_IMAGE's
-// comment in compose.ts for the pin rationale and bump procedure).
-const IMAGE = PROXY_IMAGE;
-
 /**
  * The image runs `./CLIProxyAPI` from WORKDIR /CLIProxyAPI (see upstream
  * Dockerfile); these are the in-container paths the binary reads.
@@ -1411,7 +1407,8 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
     const publish = port === null ? [] : ["-p", `127.0.0.1:${port}:${port}`];
     // No `-t`: the `--no-browser` flow doesn't need a PTY. Dropping it lets us
     // pipe stdout/stderr to capture the auth URL without hanging.
-    const args = ["run", "--rm", "-i", ...volumeArgs(rt), ...publish, IMAGE, CONTAINER_BINARY, PROVIDER_LOGIN_FLAG[provider], "--no-browser"];
+    // The login container runs the same pinned image as the compose proxy service (PROXY_IMAGE).
+    const args = ["run", "--rm", "-i", ...volumeArgs(rt), ...publish, PROXY_IMAGE, CONTAINER_BINARY, PROVIDER_LOGIN_FLAG[provider], "--no-browser"];
 
     const s = clackSpinner();
     s.start(`Authenticating ${PROVIDER_LABEL[provider]}`);

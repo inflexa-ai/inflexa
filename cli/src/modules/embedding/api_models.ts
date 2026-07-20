@@ -18,7 +18,18 @@ const modelsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
 
 /** Why a listing could not be produced. Every variant is caller-degradable to free-text model entry. */
 export type EmbeddingModelListError =
-    { readonly type: "unreachable"; readonly detail: string } | { readonly type: "http_error"; readonly status: number } | { readonly type: "no_models" };
+    | { readonly type: "invalid_url"; readonly detail: string }
+    | { readonly type: "unreachable"; readonly detail: string }
+    | { readonly type: "http_error"; readonly status: number }
+    | { readonly type: "no_models" };
+
+/**
+ * Loopback hosts the api key may travel to over cleartext http. `new URL` normalizes an IPv6 literal
+ * with its brackets kept, so the v6 loopback presents as `[::1]`, not `::1`.
+ */
+function isLoopbackHost(hostname: string): boolean {
+    return hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "127.0.0.1" || hostname === "[::1]";
+}
 
 /**
  * An OpenAI-compatible `/models` listing carries no "this is an embedding model" flag — the payload is
@@ -38,11 +49,28 @@ function isEmbeddingModelId(id: string): boolean {
 /**
  * List the endpoint's embedding-capable model ids, sorted for a stable picker order.
  *
- * Never throws: a dead host, a non-2xx, an unparseable/schema-mismatched body, and an empty or
- * fully-filtered listing all land on the error channel, because the caller's remedy is identical for
- * every one of them — offer free-text entry instead of dead-ending the configuration flow.
+ * Never throws: an unparseable or unsafe-transport URL, a dead host, a non-2xx, an
+ * unparseable/schema-mismatched body, and an empty or fully-filtered listing all land on the error
+ * channel, because the caller's remedy is identical for every one of them — offer free-text entry
+ * instead of dead-ending the configuration flow.
  */
 export async function listEmbeddingModels(baseURL: string, apiKey: string, signal?: AbortSignal): Promise<Result<string[], EmbeddingModelListError>> {
+    // Credential-leak guard, run BEFORE any fetch so the key never leaves the process on a rejected URL:
+    // this request carries `Authorization: Bearer <apiKey>`, so a cleartext http:// URL to a non-loopback
+    // host would expose the key to anything on the wire. Loopback is exempt because the local inference
+    // servers this backend targets (ollama, llama.cpp server) speak plain http by design.
+    let parsedURL: URL;
+    try {
+        parsedURL = new URL(baseURL);
+    } catch {
+        return err({ type: "invalid_url", detail: `not a valid URL: ${baseURL}` });
+    }
+    if (parsedURL.protocol !== "http:" && parsedURL.protocol !== "https:") {
+        return err({ type: "invalid_url", detail: `unsupported protocol: ${parsedURL.protocol}` });
+    }
+    if (parsedURL.protocol === "http:" && !isLoopbackHost(parsedURL.hostname)) {
+        return err({ type: "invalid_url", detail: `refusing to send the api key over cleartext http to non-loopback host ${parsedURL.hostname}` });
+    }
     // Tolerate a trailing slash on the user-typed base URL, so `…/v1/` does not become `…/v1//models`.
     const url = `${baseURL.replace(/\/+$/, "")}/models`;
     let res: Response;

@@ -1,11 +1,11 @@
 import { render, useRenderer } from "@opentui/solid";
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import type { ScrollBoxRenderable } from "@opentui/core";
 import { homedir } from "node:os";
 import { basename } from "node:path";
 
 import { readConfig, resolvePostgresConfig, writeConfig, type Config } from "../lib/config.ts";
-import { env } from "../lib/env.ts";
+import { env, isReservedPostgresPort } from "../lib/env.ts";
 import { GLYPHS, themes, themeIds } from "../lib/design_system.ts";
 import { shutdown } from "../lib/shutdown.ts";
 import { setTheme, theme, noticeColor, type Notice } from "./theme.ts";
@@ -19,6 +19,7 @@ import { FilePicker } from "./components/dialog/file_picker.tsx";
 import { ScrollPane } from "./components/scroll_pane.tsx";
 import { runtimes, runtimeIds } from "../lib/container.ts";
 import { listEmbeddingModels } from "../modules/embedding/api_models.ts";
+import { explicitPostgresFields } from "../modules/infra/setup.ts";
 import { DEFAULT_API_BASE_URL, DEFAULT_API_EMBEDDING_DIMENSIONS } from "../modules/embedding/resolve.ts";
 import { LOCAL_EMBEDDING_DIMENSIONS } from "../modules/embedding/local-provider.ts";
 
@@ -113,13 +114,17 @@ const RUNTIME_SECTION = settings.length + 1;
 const PG_FIELD_SECTIONS_START = settings.length + 2;
 const EMBEDDING_SECTION = PG_FIELD_SECTIONS_START + PG_FIELDS.length;
 
+/** Upper bound on the api-key model probe. A hung endpoint must not keep the "Fetching models…" notice up: the abort trips this timeout, and the fetch then degrades to manual model-id entry like any other listing failure. */
+const MODEL_FETCH_TIMEOUT_MS = 10_000;
+
 export function ConfigApp(props: { onClose?: () => void }) {
     const renderer = useRenderer();
     // Read config once; saved and draft both start from it. Focus starts on the first
     // section (the telemetry toggle) — the top of the form — so every section, including
     // the toggles, is reachable by walking down from a fixed, predictable origin.
     // Seed postgres with resolved defaults so the form shows every field even when
-    // config.json has no `postgres` key. writeConfig persists these explicit values.
+    // config.json has no `postgres` key. These resolved defaults are NOT persisted verbatim —
+    // save() filters the block to explicit non-default choices (see explicitPostgresFields).
     const initial = { ...readConfig(), postgres: resolvePostgresConfig() };
     const [saved, setSaved] = createSignal(initial);
     const [draft, setDraft] = createSignal(initial);
@@ -263,6 +268,18 @@ export function ConfigApp(props: { onClose?: () => void }) {
     // Nothing touches the draft until the FINAL step of a branch, which is what makes cancelling any
     // step a clean abort: there is no partially-applied backend to unwind.
 
+    // The api-key backend probes the user's endpoint for its model list. Track the in-flight probe's
+    // controller so (a) re-entering the flow aborts the previous fetch, and (b) unmount aborts it — a
+    // late resolution must never dialogPush / setNotice onto a screen the user has already left. The
+    // continuation distinguishes "flow is dead" (disposed on unmount, or superseded by a newer probe →
+    // run NOTHING) from a live timeout (the endpoint hung → degrade to manual entry).
+    let modelFetchController: AbortController | null = null;
+    let disposed = false;
+    onCleanup(() => {
+        disposed = true;
+        modelFetchController?.abort();
+    });
+
     /* eslint-disable solid/reactivity -- every callback in this block runs from a user-driven dialog
        submission, which the rule cannot see (it recognizes JSX handlers, not our promptField /
        promptDimensions / Result.match boundaries). Each draft read inside them is a deliberate
@@ -301,8 +318,12 @@ export function ConfigApp(props: { onClose?: () => void }) {
      * probe a model — so the user states it, and a wrong value is deliberately not guarded here (see
      * issue #164: a width that disagrees with an analysis's existing index fails at the pgvector upsert).
      */
-    function promptDimensions(fallback: number, apply: (dimensions: number) => void): void {
-        promptField("Vector dimensions", String(embDraft().dimensions ?? fallback), (value) => {
+    function promptDimensions(targetMode: "local" | "api-key", fallback: number, apply: (dimensions: number) => void): void {
+        // Only carry the draft's width forward when the user is staying within the same backend family: a
+        // 768-dim custom-GGUF draft must NOT pre-fill 768 into the api-key prompt (whose default is 1536),
+        // and vice versa. A backend switch seeds the TARGET's own default instead.
+        const seed = embDraft().mode === targetMode ? (embDraft().dimensions ?? fallback) : fallback;
+        promptField("Vector dimensions", String(seed), (value) => {
             const trimmed = value.trim();
             const n = Number(trimmed);
             if (!Number.isInteger(n) || n <= 0) {
@@ -325,7 +346,11 @@ export function ConfigApp(props: { onClose?: () => void }) {
                     dialogClose();
                     const path = paths[0];
                     if (path === undefined) return;
-                    promptDimensions(LOCAL_EMBEDDING_DIMENSIONS, (dimensions) => applyEmbedding({ mode: "local", modelPath: path, dimensions }));
+                    // Omit `dimensions` when it equals the built-in width — the local provider defaults to it,
+                    // so recording it would only bloat config.json. Mirrors modules/embedding/setup.ts's branch.
+                    promptDimensions("local", LOCAL_EMBEDDING_DIMENSIONS, (dimensions) =>
+                        applyEmbedding({ mode: "local", modelPath: path, ...(dimensions === LOCAL_EMBEDDING_DIMENSIONS ? {} : { dimensions }) }),
+                    );
                 }}
                 onCancel={() => {}}
             />
@@ -343,7 +368,18 @@ export function ConfigApp(props: { onClose?: () => void }) {
             promptField("embedding.baseURL", embDraft().baseURL ?? DEFAULT_API_BASE_URL, (rawUrl) => {
                 const baseURL = rawUrl.trim() === "" ? DEFAULT_API_BASE_URL : rawUrl.trim();
                 setNotice({ kind: "info", text: `Fetching models from ${baseURL}…` });
-                void listEmbeddingModels(baseURL, apiKey).then((result) =>
+                // Supersede any prior in-flight probe, then bound this one so a hung endpoint aborts.
+                modelFetchController?.abort();
+                const controller = new AbortController();
+                modelFetchController = controller;
+                const timer = setTimeout(() => controller.abort(), MODEL_FETCH_TIMEOUT_MS);
+                void listEmbeddingModels(baseURL, apiKey, controller.signal).then((result) => {
+                    clearTimeout(timer);
+                    // Unmounted, or a newer probe replaced this one → the flow this continuation targets is
+                    // gone; run NOTHING (no setNotice / dialogPush / promptField onto a dead screen). A live
+                    // timeout leaves both checks false, so it falls through to the failure branch below.
+                    if (disposed || modelFetchController !== controller) return;
+                    modelFetchController = null;
                     result.match(
                         (ids) => {
                             setNotice(null);
@@ -361,21 +397,21 @@ export function ConfigApp(props: { onClose?: () => void }) {
                             ));
                         },
                         // Every listing failure degrades the same way, so they share one branch: an endpoint
-                        // that is offline, gates /models, or names its models unconventionally is still
-                        // configurable by typing the id.
+                        // that is offline, gates /models, times out, or names its models unconventionally is
+                        // still configurable by typing the id.
                         () => {
                             setNotice({ kind: "warn", text: "Could not list models from that endpoint — enter the model id manually." });
                             promptField("embedding.model", embDraft().model ?? "", (model) => finishApiKey(apiKey, baseURL, model.trim()));
                         },
-                    ),
-                );
+                    );
+                });
             });
         });
     }
 
     /** The shared tail of both api-key paths: width, then apply. An empty model defers to the harness default. */
     function finishApiKey(apiKey: string, baseURL: string, model: string): void {
-        promptDimensions(DEFAULT_API_EMBEDDING_DIMENSIONS, (dimensions) =>
+        promptDimensions("api-key", DEFAULT_API_EMBEDDING_DIMENSIONS, (dimensions) =>
             applyEmbedding({ mode: "api-key", apiKey, baseURL, dimensions, ...(model === "" ? {} : { model }) }),
         );
     }
@@ -437,6 +473,16 @@ export function ConfigApp(props: { onClose?: () => void }) {
                 setNotice({ kind: "error", text: `"${trimmed}" is not a valid port number (1-65535).` });
                 return;
             }
+            // 8432 (prod) / 8434 (dev) are the build channels' reserved default ports. config.json is shared
+            // across channels, so resolvePostgresConfig ignores a reserved port at read time — accepting one
+            // here would silently discard it. Reject it up front and say why.
+            if (isReservedPostgresPort(n)) {
+                setNotice({
+                    kind: "error",
+                    text: `${n} is a reserved default port (prod 8432 / dev 8434) that cannot be pinned in config.json — each channel resolves its own default automatically.`,
+                });
+                return;
+            }
             setDraft({ ...draft(), postgres: { ...pgDraft(), port: n } });
         } else if (trimmed === "") {
             setNotice({ kind: "error", text: "Value cannot be empty." });
@@ -454,7 +500,16 @@ export function ConfigApp(props: { onClose?: () => void }) {
             return;
         }
         const next = draft();
-        writeConfig(next).match(
+        // config.json is shared by both build channels, so a postgres field the user merely ACCEPTED at its
+        // channel default must not be frozen into the file — that would override the other channel's sibling
+        // default and re-create the port collision explicitPostgresFields exists to prevent. Persist only the
+        // fields that differ from their defaults; an all-defaults result drops the `postgres` key entirely
+        // (JSON.stringify omits an `undefined` value). saved() still holds the FULL resolved draft so the
+        // on-screen form keeps every field populated — mirroring how setup returns the full connection for
+        // this-run use but persists only the filtered block.
+        const explicit = explicitPostgresFields(pgDraft());
+        const persisted = Object.keys(explicit).length === 0 ? undefined : explicit;
+        writeConfig({ ...next, postgres: persisted }).match(
             () => {
                 setSaved(next);
                 setNotice({ kind: "info", text: "Saved." });
