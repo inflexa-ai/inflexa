@@ -6,7 +6,7 @@
       "name": "inflexa",
       "dependencies": {
         "@clack/prompts": "^1.7.0",
-        "@inflexa-ai/harness": "0.7.0",
+        "@inflexa-ai/harness": "0.7.1",
         "@inflexa-ai/tsprov": "0.5.1",
         "@opentelemetry/api": "^1.9.1",
         "@opentelemetry/api-logs": "^0.219.0",
@@ -151,7 +151,7 @@
 
     "@humanwhocodes/retry": ["@humanwhocodes/retry@0.4.3", "", {}, "sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ=="],
 
-    "@inflexa-ai/harness": ["@inflexa-ai/harness@0.7.0", "", { "dependencies": { "@ai-sdk/anthropic": "^4.0.15", "@ai-sdk/openai-compatible": "^3.0.10", "@ai-sdk/provider": "^4.0.3", "@anthropic-ai/sdk": "^0.107.0", "@dbos-inc/dbos-sdk": "^4.23.6", "@kubernetes/client-node": "^1.4.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/core": "^2.9.0", "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.219.0", "@opentelemetry/resources": "^2.9.0", "@opentelemetry/sdk-metrics": "^2.9.0", "@opentelemetry/sdk-trace-base": "^2.9.0", "@opentelemetry/sdk-trace-node": "^2.9.0", "@opentelemetry/semantic-conventions": "^1.43.0", "ai": "^7.0.28", "cheerio": "^1.2.0", "dockerode": "^4.0.12", "fast-xml-parser": "^5.10.0", "hono": "^4.12.30", "js-tiktoken": "^1.0.21", "mime": "^4.1.0", "nanoid": "^5.1.16", "neverthrow": "^8.2.0", "nunjucks": "^3.2.4", "openai": "^4.104.0", "pdf-parse": "^2.4.5", "pg": "^8.22.0", "puppeteer-core": "^23.11.1", "zod": "^4.4.3" } }, "sha512-hFBdFrrWPlEG2hnWEgknOk+Hn2Pse/TSbOrQd90Xand+NHT3umQyzzm/gnyCkrqoSwUpBfkzv5mMwc6DF0wrcg=="],
+    "@inflexa-ai/harness": ["@inflexa-ai/harness@0.7.1", "", { "dependencies": { "@ai-sdk/anthropic": "^4.0.15", "@ai-sdk/openai-compatible": "^3.0.10", "@ai-sdk/provider": "^4.0.3", "@anthropic-ai/sdk": "^0.107.0", "@dbos-inc/dbos-sdk": "^4.23.6", "@kubernetes/client-node": "^1.4.0", "@opentelemetry/api": "^1.9.1", "@opentelemetry/core": "^2.9.0", "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.219.0", "@opentelemetry/resources": "^2.9.0", "@opentelemetry/sdk-metrics": "^2.9.0", "@opentelemetry/sdk-trace-base": "^2.9.0", "@opentelemetry/sdk-trace-node": "^2.9.0", "@opentelemetry/semantic-conventions": "^1.43.0", "ai": "^7.0.28", "cheerio": "^1.2.0", "dockerode": "^4.0.12", "fast-xml-parser": "^5.10.0", "hono": "^4.12.30", "js-tiktoken": "^1.0.21", "mime": "^4.1.0", "nanoid": "^5.1.16", "neverthrow": "^8.2.0", "nunjucks": "^3.2.4", "openai": "^4.104.0", "pdf-parse": "^2.4.5", "pg": "^8.22.0", "puppeteer-core": "^23.11.1", "zod": "^4.4.3" } }, "sha512-zmvg1WnXyZMHZOXbqAHPvWz08ch1wp7Wf/apsouObAuyy/SLNwU9+9ZXDAzj9Cj2eHITe/SbLeNfiVTySzkU7A=="],
 
     "@inflexa-ai/tsprov": ["@inflexa-ai/tsprov@0.5.1", "", { "dependencies": { "luxon": "^3.7.2" } }, "sha512-F2Q+trPPT0YdAs5aQ8LY6OJ718yaVWYABTg5bN1qNqdIJvjjH/NCThbOA2j5IJvevErhpHJXPEqcixeOHiHzGQ=="],
 
