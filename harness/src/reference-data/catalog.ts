@@ -29,6 +29,15 @@ export const ReferenceSha256Schema = z.string().regex(SHA256, "Expected a lowerc
 const ReferenceArtifactUrlSchema = z.url().refine((value) => value.startsWith("https://"), "Reference artifacts must be fetched over https");
 
 /**
+ * Logical content format, independent of compression: a `.txt.gz` mapping table
+ * is `tsv`, not `gz`. Agents pick a reader from this rather than guessing from
+ * the extension, so it stays a free token instead of an enum — a new source must
+ * remain cheap to add, and an unrecognized format degrades to "unknown reader"
+ * rather than failing catalog validation.
+ */
+export const ReferenceArtifactFormatSchema = z.string().regex(/^[a-z0-9]+(?:[+-][a-z0-9]+)*$/, "Expected a lowercase format token");
+
+/**
  * One final file distributed for a reference dataset: a stable install-relative
  * path and the third-party https URL it is fetched from. The catalog carries no
  * size or digest — every upstream is authenticated over TLS at download time,
@@ -37,11 +46,26 @@ const ReferenceArtifactUrlSchema = z.url().refine((value) => value.startsWith("h
  * one uniform trust-on-first-use model; there is deliberately no per-artifact
  * integrity class, so adding a source is only ever a URL, and no checked-in
  * digest is ours to maintain or lets go stale when a `current` upstream rebuilds.
+ *
+ * `format` and `contents` exist because skills name no paths: an agent asked for
+ * "a TF-target regulon network" can only match that against an inventory entry if
+ * the entry says what it holds and how to read it. `contents` should name the
+ * shape a caller must know — key columns, identifier space — not restate the title.
  */
 export const ReferenceArtifactSchema = z.strictObject({
     path: ReferenceArtifactPathSchema,
     url: ReferenceArtifactUrlSchema,
+    format: ReferenceArtifactFormatSchema,
+    contents: z.string().min(1),
 });
+
+/**
+ * Common-name organism the dataset describes, lowercase (`human`, `mouse`, `rat`).
+ * Omitted for species-agnostic or multi-species sources. This is the axis a wrong
+ * choice is most silently wrong on — human regulons over mouse counts still run —
+ * so it is a first-class field rather than something inferred from the id suffix.
+ */
+export const ReferenceOrganismSchema = z.string().regex(/^[a-z][a-z0-9]*(?:[ -][a-z0-9]+)*$/, "Expected a lowercase organism common name");
 
 /** Provenance and licensing information for one supported reference dataset. */
 export const ReferenceDatasetSchema = z.object({
@@ -49,6 +73,7 @@ export const ReferenceDatasetSchema = z.object({
     version: z.string().regex(SAFE_VERSION, "Expected a safe dataset version path segment"),
     title: z.string().min(1),
     description: z.string().min(1),
+    organism: ReferenceOrganismSchema.optional(),
     sourceUrl: z.url(),
     license: z.object({
         identifier: z.string().min(1),
@@ -121,9 +146,11 @@ function deepFreeze<T>(value: T): DeepReadonly<T> {
 /**
  * Canonical release catalog. Every artifact is fetched directly from the third
  * party that publishes it; this project hosts, mirrors, and redistributes
- * nothing. Entries are added with a real upstream https URL, provenance, and
- * licensing data — and nothing else per file: no size, no digest to compute or
- * keep in sync.
+ * nothing. Entries are added with a real upstream https URL, provenance and
+ * licensing data, and a description of what the file holds — but never a size or
+ * digest to compute and keep in sync. The descriptive half is what makes a
+ * dataset findable: this catalog is the only place that says what a reference
+ * file is, so nothing downstream has to encode a path or a filename to use it.
  *
  * `version` is the dataset's upstream release identifier. Datasets built on an
  * upstream that has no immutable release — NCBI regenerates `gene_info` daily,
@@ -140,6 +167,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "NCBI human gene identifiers",
                 description:
                     "Entrez Gene records for Homo sapiens (NCBI taxonomy 9606): identifiers, approved symbols, synonyms, and cross-references (Ensembl, HGNC) in the dbXrefs column. Tab-separated, gzipped. NCBI rebuilds this file in place, so it is verified against what you downloaded rather than a checked-in digest.",
+                organism: "human",
                 sourceUrl: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/",
                 license: {
                     identifier: "NCBI-Molecular-Data-Usage-Policy",
@@ -150,6 +178,9 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "Homo_sapiens.gene_info.gz",
                         url: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/Homo_sapiens.gene_info.gz",
+                        format: "tsv",
+                        contents:
+                            "One row per gene, gzipped, header line prefixed '#'. Key columns: GeneID (Entrez), Symbol (HGNC), Synonyms, dbXrefs (holds Ensembl: and HGNC: cross-references, '|'-separated), type_of_gene.",
                     },
                 ],
             },
@@ -159,6 +190,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "NCBI mouse gene identifiers",
                 description:
                     "Entrez Gene records for Mus musculus (NCBI taxonomy 10090): identifiers, approved symbols, synonyms, and cross-references (Ensembl, MGI) in the dbXrefs column. Tab-separated, gzipped. NCBI rebuilds this file in place, so it is verified against what you downloaded rather than a checked-in digest.",
+                organism: "mouse",
                 sourceUrl: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/",
                 license: {
                     identifier: "NCBI-Molecular-Data-Usage-Policy",
@@ -169,6 +201,9 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "Mus_musculus.gene_info.gz",
                         url: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/Mus_musculus.gene_info.gz",
+                        format: "tsv",
+                        contents:
+                            "One row per gene, gzipped, header line prefixed '#'. Key columns: GeneID (Entrez), Symbol (MGI), Synonyms, dbXrefs (holds Ensembl: and MGI: cross-references, '|'-separated), type_of_gene.",
                     },
                 ],
             },
@@ -178,6 +213,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "NCBI rat gene identifiers",
                 description:
                     "Entrez Gene records for Rattus norvegicus (NCBI taxonomy 10116): identifiers, approved symbols, synonyms, and cross-references (Ensembl, RGD) in the dbXrefs column. Tab-separated, gzipped. NCBI rebuilds this file in place, so it is verified against what you downloaded rather than a checked-in digest.",
+                organism: "rat",
                 sourceUrl: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/",
                 license: {
                     identifier: "NCBI-Molecular-Data-Usage-Policy",
@@ -188,6 +224,9 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "Rattus_norvegicus.gene_info.gz",
                         url: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/GENE_INFO/Mammalia/Rattus_norvegicus.gene_info.gz",
+                        format: "tsv",
+                        contents:
+                            "One row per gene, gzipped, header line prefixed '#'. Key columns: GeneID (Entrez), Symbol (RGD), Synonyms, dbXrefs (holds Ensembl: and RGD: cross-references, '|'-separated), type_of_gene.",
                     },
                 ],
             },
@@ -205,7 +244,15 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     url: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
                 },
                 recommendation: { group: "gene-identifiers", recommended: false },
-                artifacts: [{ path: "gene2ensembl.gz", url: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene2ensembl.gz" }],
+                artifacts: [
+                    {
+                        path: "gene2ensembl.gz",
+                        url: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene2ensembl.gz",
+                        format: "tsv",
+                        contents:
+                            "Every species in one gzipped table — filter on #tax_id first (9606 human, 10090 mouse, 10116 rat). Columns: #tax_id, GeneID, Ensembl_gene_identifier, RNA_nucleotide_accession.version, Ensembl_rna_identifier, protein_accession.version, Ensembl_protein_identifier.",
+                    },
+                ],
             },
             {
                 // ~2.2 GB all-species monolithic table — the largest catalog entry. Opt-in like reactome-mappings.
@@ -220,7 +267,15 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     url: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
                 },
                 recommendation: { group: "gene-identifiers", recommended: false },
-                artifacts: [{ path: "gene2refseq.gz", url: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene2refseq.gz" }],
+                artifacts: [
+                    {
+                        path: "gene2refseq.gz",
+                        url: "https://ftp.ncbi.nlm.nih.gov/gene/DATA/gene2refseq.gz",
+                        format: "tsv",
+                        contents:
+                            "Every species in one gzipped table (~2.2 GB) — filter on #tax_id first, and prefer a streaming read. Columns: #tax_id, GeneID, status, RNA_nucleotide_accession.version, protein_accession.version, genomic_nucleotide_accession.version, Symbol.",
+                    },
+                ],
             },
             {
                 id: "uniprot-idmapping-human",
@@ -228,6 +283,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "UniProt human ID mapping",
                 description:
                     "UniProtKB accession ↔ Entrez, Ensembl, RefSeq and other identifiers for Homo sapiens (idmapping_selected, ~61 MB gzipped). UniProt overwrites `current_release` each cycle, so it is verified against what you downloaded rather than a checked-in digest.",
+                organism: "human",
                 sourceUrl: "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/by_organism/",
                 license: { identifier: "CC-BY-4.0", url: "https://www.uniprot.org/help/license" },
                 recommendation: { group: "gene-identifiers", recommended: true },
@@ -235,6 +291,9 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "HUMAN_9606_idmapping_selected.tab.gz",
                         url: "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/by_organism/HUMAN_9606_idmapping_selected.tab.gz",
+                        format: "tsv",
+                        contents:
+                            "Gzipped, 22 columns, NO header. Positional: 1 UniProtKB-AC, 2 UniProtKB-ID, 3 GeneID (Entrez), 4 RefSeq, 19 Ensembl, 20 Ensembl_TRS, 21 Ensembl_PRO. Multi-valued cells are '; '-separated.",
                     },
                 ],
             },
@@ -244,6 +303,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "UniProt mouse ID mapping",
                 description:
                     "UniProtKB accession ↔ Entrez, Ensembl, RefSeq and other identifiers for Mus musculus (idmapping_selected, ~18 MB gzipped). UniProt overwrites `current_release` each cycle, so it is verified against what you downloaded rather than a checked-in digest.",
+                organism: "mouse",
                 sourceUrl: "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/by_organism/",
                 license: { identifier: "CC-BY-4.0", url: "https://www.uniprot.org/help/license" },
                 recommendation: { group: "gene-identifiers", recommended: true },
@@ -251,6 +311,9 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "MOUSE_10090_idmapping_selected.tab.gz",
                         url: "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/by_organism/MOUSE_10090_idmapping_selected.tab.gz",
+                        format: "tsv",
+                        contents:
+                            "Gzipped, 22 columns, NO header. Positional: 1 UniProtKB-AC, 2 UniProtKB-ID, 3 GeneID (Entrez), 4 RefSeq, 19 Ensembl, 20 Ensembl_TRS, 21 Ensembl_PRO. Multi-valued cells are '; '-separated.",
                     },
                 ],
             },
@@ -260,6 +323,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "UniProt rat ID mapping",
                 description:
                     "UniProtKB accession ↔ Entrez, Ensembl, RefSeq and other identifiers for Rattus norvegicus (idmapping_selected, ~6 MB gzipped). UniProt overwrites `current_release` each cycle, so it is verified against what you downloaded rather than a checked-in digest.",
+                organism: "rat",
                 sourceUrl: "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/by_organism/",
                 license: { identifier: "CC-BY-4.0", url: "https://www.uniprot.org/help/license" },
                 recommendation: { group: "gene-identifiers", recommended: true },
@@ -267,6 +331,9 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "RAT_10116_idmapping_selected.tab.gz",
                         url: "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/idmapping/by_organism/RAT_10116_idmapping_selected.tab.gz",
+                        format: "tsv",
+                        contents:
+                            "Gzipped, 22 columns, NO header. Positional: 1 UniProtKB-AC, 2 UniProtKB-ID, 3 GeneID (Entrez), 4 RefSeq, 19 Ensembl, 20 Ensembl_TRS, 21 Ensembl_PRO. Multi-valued cells are '; '-separated.",
                     },
                 ],
             },
@@ -280,8 +347,19 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 license: { identifier: "CC0-1.0", url: "https://reactome.org/license" },
                 recommendation: { group: "pathways", recommended: true },
                 artifacts: [
-                    { path: "ReactomePathways.gmt", url: "https://reactome.org/download/current/ReactomePathways.gmt" },
-                    { path: "ReactomePathways.txt", url: "https://reactome.org/download/current/ReactomePathways.txt" },
+                    {
+                        path: "ReactomePathways.gmt",
+                        url: "https://reactome.org/download/current/ReactomePathways.gmt",
+                        format: "gmt",
+                        contents:
+                            "One pathway per line, tab-separated: pathway name, Reactome stable ID, then member gene symbols. Covers every Reactome species in one file — filter by pathway name suffix or join ReactomePathways.txt to restrict to one.",
+                    },
+                    {
+                        path: "ReactomePathways.txt",
+                        url: "https://reactome.org/download/current/ReactomePathways.txt",
+                        format: "tsv",
+                        contents: "Pathway index, no header: stable ID, display name, species name. Join on stable ID to restrict the GMT to one species.",
+                    },
                 ],
             },
             {
@@ -301,14 +379,23 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "NCBI2Reactome_All_Levels.txt",
                         url: "https://reactome.org/download/current/NCBI2Reactome_All_Levels.txt",
+                        format: "tsv",
+                        contents:
+                            "No header, every species: Entrez gene ID, Reactome pathway stable ID, pathway URL, pathway name, evidence code, species name. Filter on the species column.",
                     },
                     {
                         path: "Ensembl2Reactome_All_Levels.txt",
                         url: "https://reactome.org/download/current/Ensembl2Reactome_All_Levels.txt",
+                        format: "tsv",
+                        contents:
+                            "No header, every species: Ensembl gene ID, Reactome pathway stable ID, pathway URL, pathway name, evidence code, species name. Filter on the species column.",
                     },
                     {
                         path: "UniProt2Reactome_All_Levels.txt",
                         url: "https://reactome.org/download/current/UniProt2Reactome_All_Levels.txt",
+                        format: "tsv",
+                        contents:
+                            "No header, every species: UniProtKB accession, Reactome pathway stable ID, pathway URL, pathway name, evidence code, species name. Filter on the species column.",
                     },
                 ],
             },
@@ -317,6 +404,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 version: "2026.07.10",
                 title: "WikiPathways human pathways",
                 description: "Community-curated Homo sapiens pathway gene sets (GMT) from the immutable 2026-07-10 WikiPathways snapshot.",
+                organism: "human",
                 sourceUrl: "https://data.wikipathways.org/20260710/gmt/",
                 license: { identifier: "CC0-1.0", url: "https://www.wikipathways.org/about/terms.html" },
                 recommendation: { group: "pathways", recommended: true },
@@ -324,6 +412,9 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "wikipathways_Homo_sapiens.gmt",
                         url: "https://data.wikipathways.org/20260710/gmt/wikipathways-20260710-gmt-Homo_sapiens.gmt",
+                        format: "gmt",
+                        contents:
+                            "One pathway per line, tab-separated: '%'-delimited descriptor (name, WikiPathways ID, species), pathway URL, then member gene symbols (HGNC). Split the first field on '%' to recover a readable set name.",
                     },
                 ],
             },
@@ -332,6 +423,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 version: "2026.07.10",
                 title: "WikiPathways mouse pathways",
                 description: "Community-curated Mus musculus pathway gene sets (GMT) from the immutable 2026-07-10 WikiPathways snapshot.",
+                organism: "mouse",
                 sourceUrl: "https://data.wikipathways.org/20260710/gmt/",
                 license: { identifier: "CC0-1.0", url: "https://www.wikipathways.org/about/terms.html" },
                 recommendation: { group: "pathways", recommended: true },
@@ -339,6 +431,9 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "wikipathways_Mus_musculus.gmt",
                         url: "https://data.wikipathways.org/20260710/gmt/wikipathways-20260710-gmt-Mus_musculus.gmt",
+                        format: "gmt",
+                        contents:
+                            "One pathway per line, tab-separated: '%'-delimited descriptor (name, WikiPathways ID, species), pathway URL, then member gene symbols (MGI). Split the first field on '%' to recover a readable set name.",
                     },
                 ],
             },
@@ -347,6 +442,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 version: "2026.07.10",
                 title: "WikiPathways rat pathways",
                 description: "Community-curated Rattus norvegicus pathway gene sets (GMT) from the immutable 2026-07-10 WikiPathways snapshot.",
+                organism: "rat",
                 sourceUrl: "https://data.wikipathways.org/20260710/gmt/",
                 license: { identifier: "CC0-1.0", url: "https://www.wikipathways.org/about/terms.html" },
                 recommendation: { group: "pathways", recommended: true },
@@ -354,6 +450,9 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "wikipathways_Rattus_norvegicus.gmt",
                         url: "https://data.wikipathways.org/20260710/gmt/wikipathways-20260710-gmt-Rattus_norvegicus.gmt",
+                        format: "gmt",
+                        contents:
+                            "One pathway per line, tab-separated: '%'-delimited descriptor (name, WikiPathways ID, species), pathway URL, then member gene symbols (RGD). Split the first field on '%' to recover a readable set name.",
                     },
                 ],
             },
@@ -363,6 +462,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "MSigDB human hallmark gene sets",
                 description:
                     "The 50 MSigDB hallmark gene sets for Homo sapiens (symbols GMT) — coherent, well-defined biological states and processes for enrichment. From the immutable MSigDB 2026.1 human release.",
+                organism: "human",
                 sourceUrl: "https://data.broadinstitute.org/gsea-msigdb/msigdb/",
                 license: { identifier: "MSigDB-License", url: "https://www.gsea-msigdb.org/gsea/msigdb/license.jsp" },
                 recommendation: { group: "pathways", recommended: true },
@@ -370,6 +470,9 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "h.all.v2026.1.Hs.symbols.gmt",
                         url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/h.all.v2026.1.Hs.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "50 hallmark sets, one per line, tab-separated: set name (HALLMARK_*), source URL, then member gene symbols (HGNC). Hallmark only — the C2/C5/C6/C7/C8 collections are not part of this dataset.",
                     },
                 ],
             },
@@ -379,6 +482,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "MSigDB mouse hallmark gene sets",
                 description:
                     "The MSigDB mouse hallmark gene sets for Mus musculus (symbols GMT) — the murine ortholog-mapped hallmark collection for enrichment. From the immutable MSigDB 2026.1 mouse release.",
+                organism: "mouse",
                 sourceUrl: "https://data.broadinstitute.org/gsea-msigdb/msigdb/",
                 license: { identifier: "MSigDB-License", url: "https://www.gsea-msigdb.org/gsea/msigdb/license.jsp" },
                 recommendation: { group: "pathways", recommended: true },
@@ -386,6 +490,9 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "mh.all.v2026.1.Mm.symbols.gmt",
                         url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Mm/mh.all.v2026.1.Mm.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "Mouse hallmark sets, one per line, tab-separated: set name, source URL, then member gene symbols (MGI). Hallmark only — the C2/C5/C6/C7/C8 collections are not part of this dataset.",
                     },
                 ],
             },
@@ -394,6 +501,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 version: "2.0",
                 title: "CollecTRI human regulatory network",
                 description: "A literature-curated human transcription-factor target interaction network (CSV) from the immutable Zenodo record 8192729.",
+                organism: "human",
                 sourceUrl: "https://zenodo.org/records/8192729",
                 license: { identifier: "CC-BY-4.0", url: "https://zenodo.org/records/8192729" },
                 recommendation: { group: "regulatory-networks", recommended: true },
@@ -401,6 +509,92 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "CollecTRI_regulons.csv",
                         url: "https://zenodo.org/records/8192729/files/CollecTRI_regulons.csv",
+                        format: "csv",
+                        contents:
+                            "TF-target regulons, one interaction per row: source (TF symbol), target (gene symbol), weight (+1 activating, -1 repressing), then curation provenance columns. This is the prior a TF-activity method consumes — read it with a CSV reader and pass the frame directly as decoupler's network argument. It is CSV, not Parquet.",
+                    },
+                ],
+            },
+            {
+                // Sourced from the package repository's data/ directory rather than the OmniPath web
+                // service that `dc.op.progeny()` calls: a live query endpoint is not an artifact, and
+                // an install that depends on one breaks whenever the service does.
+                id: "progeny-human",
+                version: "current",
+                title: "PROGENy human pathway weights",
+                description:
+                    "PROGENy footprint-based pathway responsive genes for Homo sapiens — per-gene weights for 14 signalling pathways (EGFR, MAPK, PI3K, TNFa, p53, Hypoxia and others), the standard prior for pathway-activity inference from expression. Tracks the package's default branch, so it is verified against what you downloaded rather than a checked-in digest.",
+                organism: "human",
+                sourceUrl: "https://github.com/saezlab/progeny",
+                license: { identifier: "Apache-2.0", url: "https://github.com/saezlab/progeny/blob/master/LICENSE" },
+                recommendation: { group: "pathway-activity", recommended: true },
+                artifacts: [
+                    {
+                        path: "model_human_full.rda",
+                        url: "https://raw.githubusercontent.com/saezlab/progeny/master/data/model_human_full.rda",
+                        format: "rda",
+                        contents:
+                            "R serialized data frame `model_human_full` of pathway weights: columns gene, weight, p.value, pathway. Load in R with load(); from Python read it through rpy2 rather than a pandas reader. Rename to source/target/weight if a decoupler-style network is expected.",
+                    },
+                ],
+            },
+            {
+                id: "progeny-mouse",
+                version: "current",
+                title: "PROGENy mouse pathway weights",
+                description:
+                    "PROGENy footprint-based pathway responsive genes for Mus musculus — per-gene weights for 14 signalling pathways, the standard prior for pathway-activity inference from expression. Tracks the package's default branch, so it is verified against what you downloaded rather than a checked-in digest.",
+                organism: "mouse",
+                sourceUrl: "https://github.com/saezlab/progeny",
+                license: { identifier: "Apache-2.0", url: "https://github.com/saezlab/progeny/blob/master/LICENSE" },
+                recommendation: { group: "pathway-activity", recommended: true },
+                artifacts: [
+                    {
+                        path: "model_mouse_full.rda",
+                        url: "https://raw.githubusercontent.com/saezlab/progeny/master/data/model_mouse_full.rda",
+                        format: "rda",
+                        contents:
+                            "R serialized data frame `model_mouse_full` of pathway weights: columns gene, weight, p.value, pathway. Load in R with load(); from Python read it through rpy2 rather than a pandas reader. Rename to source/target/weight if a decoupler-style network is expected.",
+                    },
+                ],
+            },
+            {
+                id: "dorothea-human",
+                version: "current",
+                title: "DoRothEA human TF regulons",
+                description:
+                    "DoRothEA transcription-factor regulons for Homo sapiens with per-interaction confidence levels A-E, where A is the best-supported. The confidence-filtered alternative to CollecTRI for TF-activity inference; most analyses keep levels A-C. Tracks the package's default branch, so it is verified against what you downloaded rather than a checked-in digest.",
+                organism: "human",
+                sourceUrl: "https://github.com/saezlab/dorothea",
+                license: { identifier: "GPL-3.0", url: "https://github.com/saezlab/dorothea/blob/master/LICENSE" },
+                recommendation: { group: "regulatory-networks", recommended: true },
+                artifacts: [
+                    {
+                        path: "dorothea_hs.rda",
+                        url: "https://raw.githubusercontent.com/saezlab/dorothea/master/data/dorothea_hs.rda",
+                        format: "rda",
+                        contents:
+                            "R serialized data frame `dorothea_hs` of TF-target regulons: columns tf, confidence (A-E), target, mor (+1 activating, -1 repressing). Load in R with load(); from Python read it through rpy2. Filter on confidence before use, then rename tf/target/mor to source/target/weight for a decoupler-style network.",
+                    },
+                ],
+            },
+            {
+                id: "dorothea-mouse",
+                version: "current",
+                title: "DoRothEA mouse TF regulons",
+                description:
+                    "DoRothEA transcription-factor regulons for Mus musculus with per-interaction confidence levels A-E, where A is the best-supported. The confidence-filtered alternative to CollecTRI for TF-activity inference; most analyses keep levels A-C. Tracks the package's default branch, so it is verified against what you downloaded rather than a checked-in digest.",
+                organism: "mouse",
+                sourceUrl: "https://github.com/saezlab/dorothea",
+                license: { identifier: "GPL-3.0", url: "https://github.com/saezlab/dorothea/blob/master/LICENSE" },
+                recommendation: { group: "regulatory-networks", recommended: true },
+                artifacts: [
+                    {
+                        path: "dorothea_mm.rda",
+                        url: "https://raw.githubusercontent.com/saezlab/dorothea/master/data/dorothea_mm.rda",
+                        format: "rda",
+                        contents:
+                            "R serialized data frame `dorothea_mm` of TF-target regulons: columns tf, confidence (A-E), target, mor (+1 activating, -1 repressing). Load in R with load(); from Python read it through rpy2. Filter on confidence before use, then rename tf/target/mor to source/target/weight for a decoupler-style network.",
                     },
                 ],
             },
@@ -410,6 +604,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "GTEx v8 normal tissue expression",
                 description:
                     "GTEx v8 median gene TPM by tissue (GCT) with the sample attributes table, for normal-reference workflows. Immutable v8 release files.",
+                organism: "human",
                 sourceUrl: "https://gtexportal.org/home/downloads/adult-gtex/bulk_tissue_expression",
                 license: { identifier: "GTEx-Portal-Data-License", url: "https://gtexportal.org/home/license" },
                 recommendation: { group: "normal-expression", recommended: true },
@@ -417,10 +612,16 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz",
                         url: "https://storage.googleapis.com/adult-gtex/bulk-gex/v8/rna-seq/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz",
+                        format: "gct",
+                        contents:
+                            "Gzipped GCT: skip 2 header lines, then columns Name (versioned Ensembl gene ID — strip the suffix to join) and Description (symbol), followed by one median-TPM column per tissue.",
                     },
                     {
                         path: "GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt",
                         url: "https://storage.googleapis.com/adult-gtex/annotations/v8/metadata-files/GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt",
+                        format: "tsv",
+                        contents:
+                            "Per-sample attributes; key columns SAMPID, SMTS (tissue) and SMTSD (detailed tissue). Only needed to interpret or regroup the tissue columns.",
                     },
                 ],
             },
@@ -430,10 +631,19 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "Human Protein Atlas",
                 description:
                     "The full Human Protein Atlas table (proteinatlas.tsv.zip, ~7 MB): per-gene RNA/protein tissue expression, tissue specificity, subcellular location, secretome and blood-concentration annotations for Homo sapiens. HPA republishes this file per release, so it is verified against what you downloaded rather than a checked-in digest.",
+                organism: "human",
                 sourceUrl: "https://www.proteinatlas.org/about/download",
                 license: { identifier: "CC-BY-SA-3.0", url: "https://www.proteinatlas.org/about/licence" },
                 recommendation: { group: "normal-expression", recommended: true },
-                artifacts: [{ path: "proteinatlas.tsv.zip", url: "https://www.proteinatlas.org/download/proteinatlas.tsv.zip" }],
+                artifacts: [
+                    {
+                        path: "proteinatlas.tsv.zip",
+                        url: "https://www.proteinatlas.org/download/proteinatlas.tsv.zip",
+                        format: "zip",
+                        contents:
+                            "Zip holding a single proteinatlas.tsv — one row per gene with Ensembl and Gene columns plus RNA/protein tissue expression, tissue specificity, subcellular location, secretome and blood-concentration annotations. Read the member from the archive; do not expect a bare .tsv on disk.",
+                    },
+                ],
             },
             {
                 id: "celltypist-immune",
@@ -441,6 +651,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "CellTypist immune cell models",
                 description:
                     "CellTypist Immune All low- and high-resolution models for immune cell-type annotation. Load by absolute path — CellTypist's by-name lookup expects its own cache layout, which the reference store deliberately does not impersonate.",
+                organism: "human",
                 sourceUrl: "https://www.celltypist.org/models",
                 license: { identifier: "NOASSERTION" },
                 recommendation: { group: "cell-typing", recommended: true },
@@ -448,10 +659,16 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "Immune_All_Low.pkl",
                         url: "https://celltypist.cog.sanger.ac.uk/models/Pan_Immune_CellTypist/v2/Immune_All_Low.pkl",
+                        format: "pickle",
+                        contents:
+                            "Trained CellTypist model, fine-grained immune labels. Load by absolute path through CellTypist's model loader; passing the bare name makes it search its own cache and fail.",
                     },
                     {
                         path: "Immune_All_High.pkl",
                         url: "https://celltypist.cog.sanger.ac.uk/models/Pan_Immune_CellTypist/v2/Immune_All_High.pkl",
+                        format: "pickle",
+                        contents:
+                            "Trained CellTypist model, coarse-grained immune labels. Load by absolute path through CellTypist's model loader; passing the bare name makes it search its own cache and fail.",
                     },
                 ],
             },
@@ -461,6 +678,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "CellTypist pan-fetal human model",
                 description:
                     "CellTypist Pan_Fetal_Human model — cell-type annotation across human fetal tissues. Load by absolute path; CellTypist's by-name lookup expects its own cache layout, which the reference store deliberately does not impersonate.",
+                organism: "human",
                 sourceUrl: "https://www.celltypist.org/models",
                 license: { identifier: "NOASSERTION" },
                 recommendation: { group: "cell-typing", recommended: true },
@@ -468,6 +686,9 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "Pan_Fetal_Human.pkl",
                         url: "https://celltypist.cog.sanger.ac.uk/models/Pan_Fetal_Suo/v2/Pan_Fetal_Human.pkl",
+                        format: "pickle",
+                        contents:
+                            "Trained CellTypist model covering human fetal tissues. Load by absolute path through CellTypist's model loader; passing the bare name makes it search its own cache and fail.",
                     },
                 ],
             },
@@ -477,6 +698,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "CellTypist COVID-19 immune model",
                 description:
                     "CellTypist COVID19_Immune_Landscape model — immune cell-type annotation trained on the cross-study COVID-19 immune atlas. Load by absolute path; CellTypist's by-name lookup expects its own cache layout, which the reference store deliberately does not impersonate.",
+                organism: "human",
                 sourceUrl: "https://www.celltypist.org/models",
                 license: { identifier: "NOASSERTION" },
                 recommendation: { group: "cell-typing", recommended: true },
@@ -484,6 +706,9 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "COVID19_Immune_Landscape.pkl",
                         url: "https://celltypist.cog.sanger.ac.uk/models/COVID19_Immune_Ren/v1/COVID19_Immune_Landscape.pkl",
+                        format: "pickle",
+                        contents:
+                            "Trained CellTypist model from the cross-study COVID-19 immune atlas. Load by absolute path through CellTypist's model loader; passing the bare name makes it search its own cache and fail.",
                     },
                 ],
             },
@@ -500,6 +725,9 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "PanglaoDB_markers_27_Mar_2020.tsv.gz",
                         url: "https://panglaodb.se/markers/PanglaoDB_markers_27_Mar_2020.tsv.gz",
+                        format: "tsv",
+                        contents:
+                            "Gzipped marker table covering human and mouse together — filter the species column ('Hs', 'Mm', or both) before use. Key columns: species, official gene symbol, cell type, organ, ubiquitousness index.",
                     },
                 ],
             },
@@ -509,6 +737,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "Azimuth human PBMC reference",
                 description:
                     "Azimuth annotated reference for human peripheral blood mononuclear cells: the Seurat reference object plus its Annoy nearest-neighbour index, for supervised mapping and cell-type label transfer. Immutable Zenodo release 4546839.",
+                organism: "human",
                 sourceUrl: "https://zenodo.org/records/4546839",
                 license: { identifier: "CC-BY-4.0", url: "https://zenodo.org/records/4546839" },
                 recommendation: { group: "cell-typing", recommended: true },
@@ -516,10 +745,15 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "ref.Rds",
                         url: "https://zenodo.org/records/4546839/files/ref.Rds",
+                        format: "rds",
+                        contents: "Seurat reference object (PBMC) for Azimuth label transfer, read with readRDS. Requires idx.annoy in the same directory.",
                     },
                     {
                         path: "idx.annoy",
                         url: "https://zenodo.org/records/4546839/files/idx.annoy",
+                        format: "annoy",
+                        contents:
+                            "Annoy neighbour index paired with ref.Rds. Never opened directly — Azimuth loads it via the reference object, which needs both files side by side.",
                     },
                 ],
             },
@@ -530,6 +764,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "Azimuth human tonsil reference",
                 description:
                     "Azimuth annotated reference for human tonsil: the Seurat reference object plus its Annoy nearest-neighbour index, for supervised mapping and cell-type label transfer. Immutable Zenodo release 7032928, roughly 443 MB.",
+                organism: "human",
                 sourceUrl: "https://zenodo.org/records/7032928",
                 license: { identifier: "CC-BY-4.0", url: "https://zenodo.org/records/7032928" },
                 recommendation: { group: "cell-typing", recommended: false },
@@ -537,10 +772,15 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "ref.Rds",
                         url: "https://zenodo.org/records/7032928/files/ref.Rds",
+                        format: "rds",
+                        contents: "Seurat reference object (tonsil) for Azimuth label transfer, read with readRDS. Requires idx.annoy in the same directory.",
                     },
                     {
                         path: "idx.annoy",
                         url: "https://zenodo.org/records/7032928/files/idx.annoy",
+                        format: "annoy",
+                        contents:
+                            "Annoy neighbour index paired with ref.Rds. Never opened directly — Azimuth loads it via the reference object, which needs both files side by side.",
                     },
                 ],
             },
@@ -551,6 +791,7 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 title: "PharmCAT GRCh38 reference FASTA",
                 description:
                     "The GRCh38.p13 reference genome FASTA that PharmCAT's VCF preprocessor expects (bgzip'd with a .fai/.gzi faidx), bundled as a tar — roughly 842 MB. Immutable Zenodo release 7288118. Needed only for pharmacogenomics (PharmCAT) workflows.",
+                organism: "human",
                 sourceUrl: "https://zenodo.org/records/7288118",
                 license: { identifier: "CC-BY-4.0", url: "https://zenodo.org/records/7288118" },
                 recommendation: { group: "pharmacogenomics", recommended: false },
@@ -558,6 +799,9 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     {
                         path: "PharmCAT_GRCh38_reference_fasta.tar",
                         url: "https://zenodo.org/records/7288118/files/GRCh38_reference_fasta.tar?download=1",
+                        format: "tar",
+                        contents:
+                            "Tar bundle of the GRCh38.p13 bgzip-compressed FASTA with its .fai and .gzi indexes. Extract to a writable directory first, then point the tool at the extracted .fna.bgz — the store is read-only, and nothing reads this tar in place.",
                     },
                 ],
             },

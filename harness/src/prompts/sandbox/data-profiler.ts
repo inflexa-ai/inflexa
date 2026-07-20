@@ -65,10 +65,11 @@ Where to look (in this order):
 - **Filenames and folder structure** — accession prefixes
   (\`GSE...\`, \`SRR...\`, \`PRJNA...\`), organism shorthand
   (\`human_\`, \`hg38\`, \`mm10\`, \`macaque_\`, \`cyno_\`).
-- **Reference store** — \`list_available_refs\` lists per-organism
-  reference files (e.g. \`entrez_to_symbol_9541.parquet\` for Macaca
-  fascicularis). Use it to validate a candidate taxon ID — if a
-  per-organism file exists, the taxon ID is well-known.
+- **Reference store** — \`list_available_refs\` labels catalogued files
+  with the organism they describe. Query it for a candidate organism as
+  corroboration only: a hit means reference data for that species is
+  staged here, not that your data is that species, and an empty store
+  is a normal state that proves nothing either way.
 
 How to record what you find:
 
