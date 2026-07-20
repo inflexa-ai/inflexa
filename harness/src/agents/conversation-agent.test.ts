@@ -1,9 +1,14 @@
 import { describe, test, expect } from "bun:test";
 import { join } from "node:path";
+import { ok } from "neverthrow";
+import { z } from "zod";
 import type { Pool } from "pg";
 
 import { createConversationAgent, CONVERSATION_AGENT_ID } from "./conversation-agent.js";
 import { createRegistry } from "../tools/registry.js";
+import { defineTool, type Tool } from "../tools/define-tool.js";
+import { AskRejectedError } from "../tools/approval/contract.js";
+import { makeToolContext } from "../tools/__fixtures__/tool-context.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
@@ -12,7 +17,7 @@ import type { RunLauncher } from "../execution/run-launcher.js";
 // The composition root closes over its deps but never touches them at
 // construction — every factory just calls `defineTool`. Bare stubs suffice
 // for asserting the assembled `AgentDefinition`'s shape.
-function buildAgent() {
+function buildAgent(hostTools?: readonly Tool[]) {
     return createConversationAgent({
         provider: {} as ChatProvider,
         pool: {} as Pool,
@@ -33,7 +38,9 @@ function buildAgent() {
         }) as never,
         bioKeys: { drugbank: "", disgenet: "", epaCcte: "" },
         templatesDir: "/templates",
+        skillsDir: "/skills",
         chrome: {},
+        ...(hostTools ? { hostTools } : {}),
     });
 }
 
@@ -105,5 +112,47 @@ describe("createConversationAgent", () => {
             expect(typeof def.description).toBe("string");
             expect(def.inputSchema.jsonSchema.type).toBe("object");
         }
+    });
+
+    test("appends a supplied host tool after the built-in roster", () => {
+        const builtInCount = buildAgent().tools.length;
+        const hostTool = defineTool({
+            id: "host_echo",
+            description: "A host-contributed tool.",
+            inputSchema: z.object({}),
+            execute: async () => ok({ done: true }),
+        });
+        const agent = buildAgent([hostTool]);
+        const ids = agent.tools.map((t) => t.id);
+        expect(agent.tools.length).toBe(builtInCount + 1);
+        expect(ids).toContain("host_echo");
+        // The host tool joins without displacing any built-in.
+        expect(ids).toContain("generate_plan");
+        expect(ids).toContain("read_file");
+    });
+
+    test("omitting host tools yields exactly the built-in roster", () => {
+        const withNone = buildAgent();
+        const withEmpty = buildAgent([]);
+        expect(withNone.tools.length).toBe(35);
+        expect(withEmpty.tools.map((t) => t.id)).toEqual(withNone.tools.map((t) => t.id));
+    });
+
+    test("a host tool receives the shared ToolContext and its ask is denied by default", async () => {
+        const hostAskTool = defineTool({
+            id: "host_needs_approval",
+            description: "A host tool that pauses for user approval.",
+            inputSchema: z.object({}),
+            execute: async (_input, ctx) => {
+                await ctx.ask({ title: "Host action", command: "do the thing" });
+                return ok({ approved: true });
+            },
+        });
+        const agent = buildAgent([hostAskTool]);
+        const wired = agent.tools.find((t) => t.id === "host_needs_approval")!;
+        // The fixture wires `UnavailableAsk` — no interactive surface — so the ask
+        // resolves to a denial rather than waiting on a surface that cannot answer.
+        const { ctx } = makeToolContext();
+        await expect(wired.execute({}, ctx)).rejects.toBeInstanceOf(AskRejectedError);
     });
 });

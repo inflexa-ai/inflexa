@@ -22,6 +22,14 @@ export interface AskRequest {
     readonly title: string;
     readonly command: string;
     readonly detail?: string;
+    /**
+     * Keys the standing grant an `always` records when the class being blessed is
+     * broader than the displayed `command` — a tool that grants a whole family of
+     * operations passes the family's key here while still showing one concrete
+     * command. It is a generic, opaque key string, not a tool- or domain-specific
+     * field, and the surface never renders it. Absent, the grant keys on `command`.
+     */
+    readonly grantKey?: string;
 }
 
 /**

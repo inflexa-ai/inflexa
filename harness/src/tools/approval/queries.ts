@@ -48,6 +48,8 @@ export interface AskRow {
     readonly title: string;
     readonly command: string;
     readonly detail: string | null;
+    /** Grant key an `always` keys its standing grant under; `null` falls back to `command`. */
+    readonly grantKey: string | null;
     readonly createdAt: string;
 }
 
@@ -56,9 +58,9 @@ export function insertPendingAsk(querier: Querier, row: AskRow): ResultAsync<voi
     return tryMutation("asks.insertPending", async () => {
         await querier.query({
             text: `INSERT INTO cortex_asks
-              (id, analysis_id, thread_id, title, command, detail, status, created_at)
-              VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)`,
-            values: [row.id, row.analysisId, row.threadId, row.title, row.command, row.detail, row.createdAt],
+              (id, analysis_id, thread_id, title, command, detail, grant_key, status, created_at)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8)`,
+            values: [row.id, row.analysisId, row.threadId, row.title, row.command, row.detail, row.grantKey ?? row.command, row.createdAt],
         });
     });
 }
@@ -72,9 +74,20 @@ export function insertGrantedAsk(querier: Querier, row: AskRow, resolvedAt: stri
     return tryMutation("asks.insertGranted", async () => {
         await querier.query({
             text: `INSERT INTO cortex_asks
-              (id, analysis_id, thread_id, title, command, detail, status, reply, created_at, resolved_at)
-              VALUES ($1, $2, $3, $4, $5, $6, 'resolved', $7::jsonb, $8, $9)`,
-            values: [row.id, row.analysisId, row.threadId, row.title, row.command, row.detail, JSON.stringify({ kind: "always" }), row.createdAt, resolvedAt],
+              (id, analysis_id, thread_id, title, command, detail, grant_key, status, reply, created_at, resolved_at)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, 'resolved', $8::jsonb, $9, $10)`,
+            values: [
+                row.id,
+                row.analysisId,
+                row.threadId,
+                row.title,
+                row.command,
+                row.detail,
+                row.grantKey ?? row.command,
+                JSON.stringify({ kind: "always" }),
+                row.createdAt,
+                resolvedAt,
+            ],
         });
     });
 }
@@ -163,18 +176,21 @@ export function answerAsk(pool: Pool, id: string, reply: AskReply, now: string):
             client.query({
                 text: `UPDATE cortex_asks SET status = $1, reply = $2::jsonb, resolved_at = $3
                   WHERE id = $4 AND status = 'pending'
-                  RETURNING analysis_id, command`,
+                  RETURNING analysis_id, grant_key`,
                 values: [status, JSON.stringify(reply), now, id],
             }),
         ).andThen((updated) => {
             if ((updated.rowCount ?? 0) === 0) return discriminateMiss(client, id);
             if (reply.kind !== "always") return okAsync<AnswerOutcome, DbError>("applied");
-            const granted = updated.rows[0] as { analysis_id: string; command: string };
+            // The grant keys on the ask's grant key, which the insert wrote as the
+            // command when the tool supplied none. `cortex_ask_grants.command` is that
+            // key column — its name predates grant keys; the value is the grant key.
+            const granted = updated.rows[0] as { analysis_id: string; grant_key: string };
             return tryMutation("asks.answer:grant", async () => {
                 await client.query({
                     text: `INSERT INTO cortex_ask_grants (analysis_id, command, created_at)
                       VALUES ($1, $2, $3) ON CONFLICT (analysis_id, command) DO NOTHING`,
-                    values: [granted.analysis_id, granted.command, now],
+                    values: [granted.analysis_id, granted.grant_key, now],
                 });
             }).map<AnswerOutcome>(() => "applied");
         }),

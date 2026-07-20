@@ -264,6 +264,11 @@ CREATE TABLE IF NOT EXISTS cortex_asks (
   title        TEXT NOT NULL,
   command      TEXT NOT NULL,
   detail       TEXT,
+  -- The key the standing grant behind an 'always' is recorded under: the displayed
+  -- command unless the tool supplied a broader grant key. Written on every insert,
+  -- defaulting to the command when absent. Nullable only so the additive migration
+  -- can add it to an already-created table without a per-row backfill.
+  grant_key    TEXT,
   status       TEXT NOT NULL,
   reply        JSONB,
   created_at   TEXT NOT NULL,
@@ -279,9 +284,10 @@ CREATE INDEX IF NOT EXISTS idx_cortex_asks_pending
   ON cortex_asks(status) WHERE status = 'pending';
 
 -- Standing approval grants behind an 'always' reply — keyed by the analysis and
--- the exact command string the user approved, so a later matching ask
--- auto-approves without pausing. Lives for the analysis lifecycle, surviving
--- process restarts, and never applies to another analysis.
+-- the ask's grant key, so a later matching ask auto-approves without pausing. The
+-- command column holds that grant-key value: the displayed command unless the tool
+-- supplied a broader grant key. Lives for the analysis lifecycle, surviving process
+-- restarts, and never applies to another analysis.
 CREATE TABLE IF NOT EXISTS cortex_ask_grants (
   analysis_id  TEXT NOT NULL,
   command      TEXT NOT NULL,
@@ -419,6 +425,11 @@ export async function initCortexState(pool: Pool, injected?: Logger): Promise<vo
                 // dropping an absent NOT NULL no-ops, so this is a no-op on fresh DBs.
                 "ALTER TABLE cortex_analysis_state ALTER COLUMN data_profile_status DROP NOT NULL",
                 "ALTER TABLE messages ADD COLUMN IF NOT EXISTS message_envelope JSONB",
+                // Grant key an 'always' records the standing grant under. Nullable
+                // and unbackfilled: every new row writes it (command when absent), and
+                // orphaned legacy pending rows are swept to 'expired' before any answer
+                // reads it, so no existing row is left needing a value.
+                "ALTER TABLE cortex_asks ADD COLUMN IF NOT EXISTS grant_key TEXT",
             ];
             for (const sql of addMigrations) {
                 await client.query(sql);

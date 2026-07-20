@@ -65,6 +65,7 @@ import {
 // graph. The value import is the release-gated dynamic `import("./content.ts")` in the boot body below.
 import type { ContentError } from "./content.ts";
 import { noopExecIngress, startExecIngress, type ExecIngress, type IngressError } from "./ingress.ts";
+import { createRunInflexaTool } from "./inflexa_tool.ts";
 import { createSwappableSandboxEmitters } from "./prov_bridge.ts";
 import {
     buildEphemeralDeps,
@@ -920,6 +921,8 @@ async function bootHarnessRuntimeOnce(
             // The in-process report-builder gets read-only `report-html` skill tools.
             skillsDir: cfg.skillsDir,
             chrome: {},
+            // Host-supplied conversation tool: lets the agent drive the local `inflexa` CLI as a subprocess.
+            hostTools: [createRunInflexaTool()],
         };
         // Re-point the sandbox agent's provenance emitters when its model switches live.
         // The run-engine bundles injected the holder's STABLE `artifactRegistry` / `emitProvenance`

@@ -156,6 +156,13 @@ export interface ConversationAgentDeps {
      * planning guidance and scheduling keep their legacy behavior.
      */
     readonly resourcePolicy?: ResourcePolicy;
+    /**
+     * Embedder-contributed conversation-tool seam — additional tools the host
+     * supplies, appended after the built-in roster. The harness stays agnostic to
+     * what they do; each receives the same `ToolContext` (including `ask`) as any
+     * built-in tool.
+     */
+    readonly hostTools?: readonly Tool[];
 }
 
 /** Build the conversation `AgentDefinition` with every tool fully dep-bound. */
@@ -177,6 +184,7 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         skillsDir,
         chrome,
         resourcePolicy,
+        hostTools,
     } = deps;
     const workingMemory = createWorkingMemory(pool);
     const ncbi = createNcbiTools(bioKeys);
@@ -256,6 +264,9 @@ export function createConversationAgent(deps: ConversationAgentDeps): AgentDefin
         createGrepTool(workspaceFs),
         // Working memory.
         createUpdateWorkingMemoryTool(workingMemory, pool),
+        // Host-contributed tools ride the same context and dispatch path as the
+        // built-ins; appended last so the built-in roster order stays fixed.
+        ...(hostTools ?? []),
     ];
 
     return {
