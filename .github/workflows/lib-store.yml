@@ -104,6 +104,14 @@ jobs:
       ARCH: ${{ matrix.arch }}
       VERSION: ${{ needs.prepare.outputs.version }}
       BASE_IMAGE: ${{ needs.prepare.outputs.base_image }}
+      # Self-hosted boxes keep buildx state across jobs: setup-buildx-action boots
+      # the `default` docker-driver builder but never selects it, so a leftover
+      # `docker buildx use <name>` on the box silently reroutes every build — in
+      # this workflow and inside its scripts — to a docker-container builder that
+      # cannot see locally-loaded images (the pre-push label stamp FROMs a tag
+      # that exists only in the daemon at that point). Pin the builder instead of
+      # trusting machine state.
+      BUILDX_BUILDER: default
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
