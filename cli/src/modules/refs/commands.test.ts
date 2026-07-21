@@ -163,6 +163,16 @@ describe("reference command policy", () => {
         expect(await Bun.file(`${env.refsDir}/managed`).exists()).toBe(false);
     });
 
+    test("headless setup without ids defaults to the recommended set but still gates the transfer on consent", async () => {
+        assertTestSandbox(env.refsDir);
+        // The fixture's only dataset is recommended, so the omitted-`--refs` headless path selects it as
+        // the default — but without `--yes` the consent gate must still stop before any transfer, exactly
+        // as an explicit selection does. This pins the invariant that the default never downloads silently.
+        const result = await runReferenceSetup({ interactive: false, source: singleFileSource });
+        expect(result.isOk()).toBe(true);
+        expect(await Bun.file(`${env.refsDir}/managed`).exists()).toBe(false);
+    });
+
     test("headless setup with ids but no consent prints guidance and continues without transfer", async () => {
         const result = await runReferenceSetup({ interactive: false, ids: ["demo"] });
         expect(result.isOk()).toBe(true);
