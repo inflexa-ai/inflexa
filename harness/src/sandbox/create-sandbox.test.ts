@@ -12,8 +12,7 @@ import { join } from "node:path";
 import type { Pool } from "pg";
 
 import type { AwaitExecOptions } from "./await-exec.js";
-import { composeAwaitOptions, createSandboxClient, precreateStepTree, resolveCompletedSiblings } from "./create-sandbox.js";
-import { createNoopLogger } from "../lib/console-logger.js";
+import { composeAwaitOptions, createSandboxClient, precreateStepTree } from "./create-sandbox.js";
 import { STEP_SUBDIRS } from "./mount-plan.js";
 import type { CreateSandboxMeta, SandboxLiveness } from "./types.js";
 
@@ -113,49 +112,6 @@ describe("precreateStepTree — step-tree access mode", () => {
 
         // The read-only path returns before creating or chmodding any step tree.
         await expect(stat(stepDir())).rejects.toThrow();
-    });
-});
-
-describe("resolveCompletedSiblings", () => {
-    const meta: CreateSandboxMeta = {
-        runId: "run-2",
-        stepId: "de",
-        analysisId: "an-1",
-        childWorkflowId: "run-2-0",
-        resources: { cpu: 1, memoryGb: 1 },
-    };
-    /** Stands in for the completed-step rows the query returns. */
-    const poolOf = (rows: Array<{ run_id: string; step_id: string }>) =>
-        ({
-            query: async () => ({ rows }),
-        }) as unknown as Pool;
-
-    test("keeps this run's completed steps and drops other runs' and this step's own", async () => {
-        const siblings = await resolveCompletedSiblings(
-            poolOf([
-                { run_id: "run-2", step_id: "qc" },
-                { run_id: "run-2", step_id: "norm" },
-                // A prior run's completed step: admissible for lineage, but not
-                // a watch dir under this run's tree.
-                { run_id: "run-1", step_id: "qc" },
-                // The step's own prior attempt.
-                { run_id: "run-2", step_id: "de" },
-            ]),
-            meta,
-            createNoopLogger(),
-        );
-
-        expect(siblings).toEqual(["qc", "norm"]);
-    });
-
-    test("a failed lookup narrows the watch set instead of failing sandbox creation", async () => {
-        const pool = {
-            query: async () => {
-                throw new Error("connection terminated");
-            },
-        } as unknown as Pool;
-
-        expect(await resolveCompletedSiblings(pool, meta, createNoopLogger())).toEqual([]);
     });
 });
 

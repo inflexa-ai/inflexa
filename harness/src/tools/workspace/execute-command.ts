@@ -248,13 +248,19 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
             // the degradation is a fact about the exec, not about this wiring.
             const watchBudget = result.provenance?.watchBudget;
             if (watchBudget) {
-                logger.warn("sandbox inotify watch budget exhausted — file operations under unwatched directories were not observed", {
+                logger.warn("sandbox inotify watch coverage was incomplete — file operations under unwatched directories were not observed", {
                     execId,
                     stepId,
                     ...(ctx.session.runFrame ? { runId: ctx.session.runFrame.runId } : {}),
                     watchLimit: watchBudget.limit,
                     watchedDirs: watchBudget.watched,
+                    // The two shortfalls stay separate fields because they name
+                    // different limits: `unwatchedDirs` is the sandbox's own cap
+                    // declining to descend (raise PROVENANCE_MAX_INOTIFY_WATCHES),
+                    // `failedWatches` is the host's per-uid ceiling refusing the
+                    // registration (raise fs.inotify.max_user_watches on the node).
                     unwatchedDirs: watchBudget.unwatchedDirs,
+                    failedWatches: watchBudget.failedWatches ?? 0,
                 });
             }
 

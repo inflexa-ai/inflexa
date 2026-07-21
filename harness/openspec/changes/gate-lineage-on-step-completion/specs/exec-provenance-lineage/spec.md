@@ -100,39 +100,35 @@ writes rather than throw.
 
 ### Requirement: Sandbox provenance capture is scoped to the analysis resource mount
 
-`buildMountPlan` SHALL set the container's `PROVENANCE_WATCH_DIRS` to an
-**enumerated** list of absolute container paths — never to the analysis resource
-mount root (`/{resourceId}`). For a given step the list SHALL contain exactly:
+`buildMountPlan` SHALL set the container's `PROVENANCE_WATCH_DIRS` to the step's
+own run tree alone — `/{resourceId}/runs/{runId}/{stepId}` — and SHALL leave it
+empty when the mount plan emits no read-write step mount (a read-only sandbox),
+which writes nowhere. It SHALL NOT be set to the analysis resource mount root
+(`/{resourceId}`), to the `data/` tree, or to any sibling step's tree.
 
-1. the analysis data tree — `/{resourceId}/data`,
-2. the step's own run tree — `/{resourceId}/runs/{runId}/{stepId}`, omitted when the mount plan emits no read-write step mount (a read-only sandbox), since no such tree exists,
-3. `/{resourceId}/runs/{runId}/{siblingStepId}` for every sibling step of the **same run** whose status is `completed` at **sandbox-creation** time — one entry per completed sibling.
+The criterion is **what this exec mutates**, not what it may read. inotify
+reports only creations, deletions, and moves — a bare `IN_OPEN` may not be
+reported as a read (see the sandbox-provenance-tracking spec) — and the only tree
+this exec writes is its own. `data/` is staged before the run and frozen for its
+duration; a completed sibling is immutable by this capability's own completion
+gate. Neither can emit a create, delete, or move while this step runs, so
+watching them would register watches that structurally cannot fire.
 
-The watch set is therefore the **immutable** set. A completed step's directory
-is immutable — it will never be written again — so watching it costs nothing in
-churn AND its reads are admissible under the completion gate; the two scopes
-agree by construction instead of contradicting each other. A **running**
-sibling's tree is never watched, which is exactly the churn that caused the
-defect this change exists to fix.
+Exclusion from the watch set SHALL NOT be read as inadmissibility. A completed
+sibling's outputs remain a perfectly admissible lineage input; they are simply
+not something inotify has anything to say about. Capture scope and admissibility
+answer different questions, and this requirement answers only the first.
 
-`dependsOn` SHALL NOT be the criterion. The scheduler already guarantees that
-every declared dependency completed before the step starts, so the declared set
-is a strict subset of (3). This replaces the earlier "declared `dependsOn` only"
-scoping, which wrongly excluded completed non-declared siblings that
-classification admits — a step could then be denied capture of a read the
-admissibility rule would have accepted.
+Narrowing SHALL NOT cost a read edge, because reads do not come from inotify at
+all. That is what makes the scope safe to shrink, and it holds only because the
+layer prefixes are configured separately (below).
 
-The value SHALL be an enumeration rather than a single root because the
-read-only mount of the analysis tree is **flat**: no directory has exactly this
-set as its contents, so the only covering root is the mount root, and that root
-covers every sibling step's tree as well.
-
-**Known limitation, stated rather than implied away**: the watcher walks its
-configured dirs once at container start and never re-walks, so a sibling that
-completes *after* this sandbox was created is not inotify-watched for the
-remainder of this step. That is under-capture, conservative in the same
-direction as the completion gate, and such a read remains capturable by the
-in-process hooks (below).
+Excluding `data/` also removes the only **unbounded** term from the walk.
+`data/` is user-staged and its directory count follows the shape of the input
+dataset, as does a sibling's output tree whenever a step writes per-entity
+directories. Neither is bounded by anything the harness controls, and the walk is
+a startup cost paid before the child process spawns. What remains is bounded by
+what this step itself created.
 
 `PROVENANCE_DATA_PREFIXES` SHALL be configured **independently** of
 `PROVENANCE_WATCH_DIRS`, and SHALL NOT be derived from it. The in-container
@@ -155,9 +151,9 @@ internals) SHALL NOT appear in the frame.
 
 #### Scenario: Input read under the resource mount is captured
 
-- **GIVEN** an analysis mounted at `/{resourceId}` and a sandbox created for one of its steps, whose watch dirs include `/{resourceId}/data`
+- **GIVEN** an analysis mounted at `/{resourceId}` and a sandbox whose watch dirs do NOT include `/{resourceId}/data`
 - **WHEN** a script reads `/{resourceId}/data/inputs/Lab/counts.csv`
-- **THEN** the exec frame's `reads` includes that path
+- **THEN** the exec frame's `reads` includes that path, because the hook that intercepted the open filters on the mount-root prefix rather than on the watch dirs
 
 #### Scenario: Library read is not captured
 
@@ -165,24 +161,26 @@ internals) SHALL NOT appear in the frame.
 - **WHEN** a script imports a package from `/mnt/libs`
 - **THEN** the exec frame's `reads` does NOT include any `/mnt/libs` path
 
-#### Scenario: A running sibling's directory is not watched
+#### Scenario: No tree but the step's own is watched
 
 - **GIVEN** step `T4S1` of run `run-002` with `dependsOn: ["qc"]`, a sibling `qc` that is `completed`, and a sibling `T2S2` that is `running` when `T4S1`'s sandbox is created
 - **WHEN** `buildMountPlan` composes the sandbox for `T4S1`
-- **THEN** `PROVENANCE_WATCH_DIRS` contains `/{resourceId}/data`, `/{resourceId}/runs/run-002/T4S1`, and `/{resourceId}/runs/run-002/qc`, and does NOT contain `/{resourceId}/runs/run-002/T2S2` or the mount root `/{resourceId}`
+- **THEN** `PROVENANCE_WATCH_DIRS` is exactly `/{resourceId}/runs/run-002/T4S1`, containing neither `/{resourceId}/data`, nor either sibling's tree, nor the mount root `/{resourceId}`
 - **AND** `T2S2` creating and deleting `output/_ct_for_r_BRAF.csv` while `T4S1` runs produces no entry in any `T4S1` exec frame
 
-#### Scenario: A completed non-declared sibling is both watched and admissible
+#### Scenario: A completed non-declared sibling is unwatched yet admissible
 
-- **GIVEN** step `de` of run `run-002` with `dependsOn: ["qc"]`, and a sibling `norm` that is NOT in `de`'s `dependsOn` but whose status is `completed` when `de`'s sandbox is created
-- **WHEN** `buildMountPlan` composes the sandbox for `de` and `de` later reads `/{resourceId}/runs/run-002/norm/output/norm.csv`
-- **THEN** `PROVENANCE_WATCH_DIRS` contains `/{resourceId}/runs/run-002/norm`, the read appears in the exec frame, and classification admits it as `source: "upstream"` — capture scope and admissibility agree, where `dependsOn`-based scoping would have watched nothing and silently lost an edge the gate accepts
+- **GIVEN** step `de` of run `run-002` with `dependsOn: ["qc"]`, and a sibling `norm` that is NOT in `de`'s `dependsOn` but whose status is `completed` when `de`'s exec is submitted
+- **WHEN** `de` reads `/{resourceId}/runs/run-002/norm/output/norm.csv` and a hook intercepts the open
+- **THEN** `PROVENANCE_WATCH_DIRS` does NOT contain `/{resourceId}/runs/run-002/norm`, yet the read still appears in the exec frame and classification admits it as `source: "upstream"`
+- **AND** capture scope did not decide admissibility — being unwatched costs the edge nothing, because inotify was never the source of reads
 
-#### Scenario: A sibling that completes after sandbox creation is not watched but stays capturable
+#### Scenario: Admissibility tracks each exec's submit time, not sandbox creation
 
-- **GIVEN** step `de` whose sandbox was created while sibling `norm` was `running`, so `/{resourceId}/runs/run-002/norm` is absent from `PROVENANCE_WATCH_DIRS`, and `norm` reaches `completed` before `de` submits a later exec
-- **WHEN** that exec's command itself opens `/{resourceId}/runs/run-002/norm/output/norm.csv`
-- **THEN** inotify does not report the read — the watcher walked once at container start and never re-walks — while the in-process hook that intercepted the command's own open does report it, because `PROVENANCE_DATA_PREFIXES` still covers `/{resourceId}`, and the read is admissible under the submit-time snapshot
+- **GIVEN** step `de` whose sandbox was created while sibling `norm` was still `running`, and `norm` reaching `completed` before `de` submits a later exec
+- **WHEN** that later exec's command opens `/{resourceId}/runs/run-002/norm/output/norm.csv`
+- **THEN** the read is admissible, because each exec snapshots the completed set at its own submit time rather than inheriting one fixed at sandbox creation
+- **AND** the same read performed by an earlier exec, submitted while `norm` was still running, is rejected — the sandbox is shared but the snapshot is per-exec
 
 ## ADDED Requirements
 

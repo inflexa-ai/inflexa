@@ -13,8 +13,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const maxInotifyWatches = 1000
-
 // inotifyWatchMask carries no IN_OPEN. An open attests only that a file
 // descriptor was obtained — it fires for opens for *writing* and for opens by
 // processes unrelated to the command — so it cannot establish that the command
@@ -30,9 +28,11 @@ type linuxInotifyWatcher struct {
 	stopCh chan struct{}
 	wg     sync.WaitGroup
 	// Written by the walk in start(), read after stop().
+	limit         int
 	exhausted     bool
 	watched       int
 	unwatchedDirs int
+	failedWatches int
 }
 
 func newInotifyWatcher(pt *ProvenanceTracker) inotifyWatcher {
@@ -45,6 +45,9 @@ func newInotifyWatcher(pt *ProvenanceTracker) inotifyWatcher {
 }
 
 func (w *linuxInotifyWatcher) start(watchDirs []string) {
+	// Resolved once per exec and held on the watcher so budget() reports the
+	// bound the walk actually applied, not whatever the env says at drain time.
+	w.limit = inotifyWatchLimit()
 	if len(watchDirs) == 0 {
 		return
 	}
@@ -68,17 +71,30 @@ func (w *linuxInotifyWatcher) start(watchDirs []string) {
 			if err != nil || info == nil || !info.IsDir() {
 				return nil
 			}
-			if watchCount >= maxInotifyWatches {
+			if watchCount >= w.limit {
 				// Counted, not just logged: this line stays in the container,
 				// so without the count on the frame the host cannot tell
 				// degraded capture from an exec that touched nothing.
 				w.exhausted = true
 				w.unwatchedDirs++
-				log.Printf("[provenance] inotify watch limit (%d) reached, skipping deeper dirs", maxInotifyWatches)
+				log.Printf("[provenance] inotify watch limit (%d) reached, skipping deeper dirs", w.limit)
 				return filepath.SkipDir
 			}
 			wd, err := unix.InotifyAddWatch(fd, path, inotifyWatchMask)
 			if err != nil {
+				// The kernel refusing, not this server declining: ENOSPC here
+				// means the per-uid ceiling
+				// (/proc/sys/fs/inotify/max_user_watches) is spent, which
+				// raising this server's own cap cannot fix. Counted separately
+				// from the cap so the host sees which limit it has to move.
+				// Only the first is logged — the walk can meet the same
+				// refusal on every remaining directory.
+				if w.failedWatches == 0 {
+					log.Printf("[provenance] inotify watch registration failed for %s: %v", path, err)
+				}
+				w.failedWatches++
+				// Skipped rather than aborted: a directory nothing watches
+				// under-captures, and provenance never fails a command.
 				return nil
 			}
 			w.wds[wd] = path
@@ -94,11 +110,15 @@ func (w *linuxInotifyWatcher) start(watchDirs []string) {
 	}
 }
 
+// budget reports what the walk failed to cover, or nil when it covered
+// everything. A refused registration counts as much as a reached cap: it leaves
+// exactly the same blind spot on the frame, so silence here would report a
+// partially-blind walk as a clean one.
 func (w *linuxInotifyWatcher) budget() *watchBudgetSignal {
-	if !w.exhausted {
+	if !w.exhausted && w.failedWatches == 0 {
 		return nil
 	}
-	return &watchBudgetSignal{Limit: maxInotifyWatches, Watched: w.watched, UnwatchedDirs: w.unwatchedDirs}
+	return &watchBudgetSignal{Limit: w.limit, Watched: w.watched, UnwatchedDirs: w.unwatchedDirs, FailedWatches: w.failedWatches}
 }
 
 func (w *linuxInotifyWatcher) readLoop() {

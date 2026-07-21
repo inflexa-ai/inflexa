@@ -29,8 +29,9 @@ describe("buildMountPlan", () => {
         expect(plan.readonlyTreePath).toBe("/an-1");
         expect(plan.libsPath).toBe("/mnt/libs");
         expect(plan.refsPath).toBe("/mnt/refs");
-        // No step tree exists to watch, so only the data tree is enumerated.
-        expect(plan.env.PROVENANCE_WATCH_DIRS).toBe("/an-1/data");
+        // A read-only sandbox writes nowhere, so there is nothing for inotify
+        // to verify — while the hooks still report whatever it reads.
+        expect(plan.env.PROVENANCE_WATCH_DIRS).toBe("");
         expect(plan.env.PROVENANCE_DATA_PREFIXES).toBe("/an-1");
     });
 
@@ -46,42 +47,37 @@ describe("buildMountPlan", () => {
         expect([...plan.stepSubdirs]).toEqual(["output", "scripts", "figures", "logs", "notebooks"]);
     });
 
-    test("watch dirs enumerate the data tree and this step's own tree, never the mount root", () => {
+    test("the step's own run tree is the only watch dir", () => {
+        // inotify collects creates, deletes, and moves — the events only this
+        // step's own read-write mount can raise.
         const plan = buildMountPlan(COORDS, { libs: false, refs: false });
-        expect(plan.env.PROVENANCE_WATCH_DIRS.split(",")).toEqual(["/an-1/data", "/an-1/runs/run-1/step-a"]);
-        expect(plan.env.PROVENANCE_WATCH_DIRS.split(",")).not.toContain("/an-1");
+        expect(plan.env.PROVENANCE_WATCH_DIRS).toBe("/an-1/runs/run-1/step-a");
     });
 
-    test("a completed sibling is watched whether or not this step declared it", () => {
-        // Membership follows observed completion: a completed step writes no
-        // more, and its reads are admissible under the completion gate anyway.
-        const plan = buildMountPlan(COORDS, { libs: false, refs: false }, ["qc", "norm"]);
-        expect(plan.env.PROVENANCE_WATCH_DIRS.split(",")).toEqual(["/an-1/data", "/an-1/runs/run-1/step-a", "/an-1/runs/run-1/qc", "/an-1/runs/run-1/norm"]);
-    });
-
-    test("a sibling absent from the completed list is not watched", () => {
-        // A running sibling mutates its own read-write mount freely; watching it
-        // folds that churn into this step's frame.
-        const dirs = buildMountPlan(COORDS, { libs: false, refs: false }, ["qc"]).env.PROVENANCE_WATCH_DIRS.split(",");
-        expect(dirs).toContain("/an-1/runs/run-1/qc");
+    test("neither the data tree, nor a sibling's tree, nor the mount root is watched", () => {
+        // `data/` is frozen for the run and a completed sibling writes no more,
+        // so a watch on either could never fire; the mount root would pull in
+        // every running sibling's churn.
+        const dirs = buildMountPlan(COORDS, { libs: false, refs: false }).env.PROVENANCE_WATCH_DIRS.split(",");
+        expect(dirs).not.toContain("/an-1/data");
+        expect(dirs).not.toContain("/an-1/runs/run-1/qc");
         expect(dirs).not.toContain("/an-1/runs/run-1/T2S2");
+        expect(dirs).not.toContain("/an-1");
     });
 
-    test("the step's own id in the completed list does not duplicate its tree", () => {
-        const dirs = buildMountPlan(COORDS, { libs: false, refs: false }, ["step-a", "qc"]).env.PROVENANCE_WATCH_DIRS.split(",");
-        expect(dirs.filter((d) => d === "/an-1/runs/run-1/step-a")).toHaveLength(1);
-    });
-
-    test("read-only watches the data tree and completed siblings but no step tree", () => {
-        const plan = buildMountPlan({ ...COORDS, readOnly: true }, { libs: false, refs: false }, ["qc"]);
-        expect(plan.env.PROVENANCE_WATCH_DIRS.split(",")).toEqual(["/an-1/data", "/an-1/runs/run-1/qc"]);
+    test("a read-only sandbox configures no watch dirs at all", () => {
+        // No read-write step mount means the container writes nowhere, so no
+        // path under the tree can raise an event it caused.
+        const plan = buildMountPlan({ ...COORDS, readOnly: true }, { libs: false, refs: false });
+        expect(plan.env.PROVENANCE_WATCH_DIRS).toBe("");
     });
 
     test("PROVENANCE_DATA_PREFIXES stays the mount root, independent of the watch dirs", () => {
         // The in-container hooks see only their own process's opens, so a
         // command's own read under an unwatched tree still reaches the frame.
-        const plan = buildMountPlan(COORDS, { libs: false, refs: false }, ["qc"]);
+        const plan = buildMountPlan(COORDS, { libs: false, refs: false });
         expect(plan.env.PROVENANCE_DATA_PREFIXES).toBe("/an-1");
+        expect(plan.env.PROVENANCE_DATA_PREFIXES).not.toBe(plan.env.PROVENANCE_WATCH_DIRS);
     });
 
     test("libs enabled injects lib-store env", () => {
@@ -98,7 +94,7 @@ describe("buildMountPlan", () => {
         expect(plan.env.NODE_PATH).toBeUndefined();
         expect(plan.env.PATH).toBeUndefined();
         // Provenance still present even with no stores.
-        expect(plan.env.PROVENANCE_WATCH_DIRS).toBe("/an-1/data,/an-1/runs/run-1/step-a");
+        expect(plan.env.PROVENANCE_WATCH_DIRS).toBe("/an-1/runs/run-1/step-a");
         expect(plan.env.PROVENANCE_DATA_PREFIXES).toBe("/an-1");
     });
 
@@ -149,11 +145,5 @@ describe("buildMountPlan id validation", () => {
         expect(() => buildMountPlan({ ...COORDS, analysisId: ".." }, { libs: false, refs: false })).toThrow(/Invalid analysisId/);
         expect(() => buildMountPlan({ ...COORDS, stepId: ".." }, { libs: false, refs: false })).toThrow(/Invalid stepId/);
         expect(() => buildMountPlan({ ...COORDS, runId: ".." }, { libs: false, refs: false })).toThrow(/Invalid runId/);
-    });
-
-    test("rejects a crafted `..` sibling step id", () => {
-        // Sibling ids arrive from a query, but they land in an env value the
-        // container walks — the same validation the mount paths get.
-        expect(() => buildMountPlan(COORDS, { libs: false, refs: false }, [".."])).toThrow(/Invalid stepId/);
     });
 });

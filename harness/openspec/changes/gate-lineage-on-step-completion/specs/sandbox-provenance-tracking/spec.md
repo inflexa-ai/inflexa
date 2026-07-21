@@ -2,101 +2,118 @@
 
 ## ADDED Requirements
 
-### Requirement: Provenance capture is scoped to the immutable set — data, the step's own tree, and completed siblings
+### Requirement: Provenance capture is scoped to the step's own run tree
 
-The container's `PROVENANCE_WATCH_DIRS` SHALL enumerate, for a given step, exactly:
-
-1. the analysis `data/` tree — `/{resourceId}/data`,
-2. the step's own run tree — `/{resourceId}/runs/{runId}/{stepId}`, omitted when the mount plan emits no read-write step mount (a read-only sandbox), since no such tree exists,
-3. `/{resourceId}/runs/{runId}/{siblingStepId}` for every sibling step of the **same run** whose status is `completed` at sandbox-creation time — one entry per completed sibling.
-
-It SHALL NOT be set to the analysis resource mount root (`/{resourceId}`). The read-only
-mount of the analysis tree is **flat** — no single directory has exactly this set as its
-contents — so the value SHALL be an enumeration of absolute container paths rather than one
-root. A configured watch dir that does not exist when the container starts SHALL be skipped
+The container's `PROVENANCE_WATCH_DIRS` SHALL name exactly one path — the step's own run tree,
+`/{resourceId}/runs/{runId}/{stepId}` — and SHALL be empty when the mount plan emits no
+read-write step mount (a read-only sandbox), which writes nowhere. It SHALL NOT be set to the
+analysis resource mount root (`/{resourceId}`), to the `data/` tree, or to any sibling step's
+tree. A configured watch dir that does not exist when the container starts SHALL be skipped
 without failing the exec: provenance is best-effort and never fails a command.
 
-Completion is the criterion because a completed step's directory is **immutable** — it will
-never be written again — so watching it costs nothing in churn, *and* its reads are admissible
-under the completion gate (see the exec-provenance-lineage spec, "A sibling lineage edge
-requires the producing step to have completed"). A **running** sibling's tree SHALL NOT be
-watched, which is exactly the churn that caused the defect this change exists to remove.
+The criterion is **what this exec mutates**, not what it may read. inotify reports only
+creations, deletions, and moves — never reads, since a bare `IN_OPEN` may not be reported as one
+(see "inotify provides verification channel for all file operations"). The only tree this exec
+writes is its own. The `data/` tree is staged before the run and frozen for its duration, and a
+completed sibling is immutable by the completion gate's own premise, so neither can emit a
+create, delete, or move while this step runs. Watching them would register watches that
+structurally cannot fire.
 
-`dependsOn` SHALL NOT be the criterion. The scheduler already guarantees that every declared
-dependency completed before the step starts, so the declared set is a strict subset of (3).
-Scoping to declared dependencies alone was wrong because it excluded completed non-declared
-siblings that classification admits.
+Narrowing SHALL NOT cost a read edge, because reads do not come from inotify. A read the command
+itself performs — of `data/`, of a sibling's tree, or of a prior run — is intercepted by the
+in-container hooks, whose prefix filter (`PROVENANCE_DATA_PREFIXES`) is the analysis resource
+mount root and is configured independently of the watch dirs. The hooks are the authoritative
+read signal; inotify verifies mutations.
 
-**Known limitation — the watch set is fixed at container start.** The watcher walks each
-configured dir once when the container starts and never re-walks, so a sibling that completes
-*after* this sandbox was created is not inotify-watched for the remainder of the sandbox's
-life. That is under-capture, conservative in the same direction as the completion gate, and it
-is not a capture hole: a read the command itself performs under such a tree is still observed
-by the in-container hooks, whose prefix filter is configured independently of the watch dirs
-(see "inotify provides verification channel for all file operations").
+Excluding `data/` also removes the only **unbounded** term from the walk. `data/` is user-staged
+and its directory count follows the shape of the input dataset, so a per-sample cohort makes it
+arbitrarily large; a sibling's output tree grows the same way whenever a step writes per-entity
+directories. Neither is bounded by anything the harness controls, and the walk is a startup cost
+paid before the child process spawns. What remains — the step's own tree — holds only the
+directories `precreateStepTree` created, plus, on a retry, whatever the previous attempt left.
 
-This narrowing is **noise reduction at the capture layer, not the correctness rule**. What an
-observed read is allowed to assert is decided by the harness when it classifies the read (see
-the explicit-input-classification and exec-provenance-lineage specs); narrowing the watch scope
-only keeps unusable observations out of the frame. It also relieves the watcher's **pre-existing**
-watch budget — the recursive walk is capped at `maxInotifyWatches` (1000), a bound this
-capability already carries and this change neither introduces nor alters — by reducing the
-number of directories the walk has to cover.
+**Accepted limitation — reads by uninstrumented processes are not captured.** A process the
+hooks cannot instrument (a statically-linked binary, which `LD_PRELOAD` does not apply to, or a
+runtime with no hook) performs reads that no layer observes. This is deliberate rather than an
+oversight: inotify cannot attribute an event to the process that caused it, so restoring
+`IN_OPEN` to recover those reads would also manufacture reads from other containers' opens of
+the same shared tree — including opens of *completed* siblings, which the completion gate
+admits, so the gate does not contain the damage. An under-reported read leaves a lineage graph
+that is incomplete; a fabricated one leaves a graph that is wrong, and only the second is
+unrecoverable by inspection.
 
-#### Scenario: A running sibling's directory is not watched
+This narrowing is **capture-layer scoping, not the correctness rule**. What an observed read is
+allowed to assert is decided by the harness when it classifies the read (see the
+explicit-input-classification and exec-provenance-lineage specs).
 
-- **GIVEN** step `T4S1` of run `run-002`, and a sibling step `T2S2` in the same run whose status is `running` when `T4S1`'s sandbox is created
-- **WHEN** the sandbox for `T4S1` is created and its watch dirs are configured
-- **THEN** `PROVENANCE_WATCH_DIRS` does NOT contain `/{resourceId}/runs/run-002/T2S2` or the mount root `/{resourceId}`, and no watch is added anywhere under `T2S2`'s tree
+#### Scenario: The step's own tree is the only watch dir
+
+- **GIVEN** step `de` of run `run-002` with `dependsOn: ["qc"]`, a completed sibling `norm`, and a running sibling `T2S2`
+- **WHEN** the sandbox for `de` is created
+- **THEN** `PROVENANCE_WATCH_DIRS` is exactly `/{resourceId}/runs/run-002/de`
+- **AND** it contains neither `/{resourceId}/data`, nor `/{resourceId}/runs/run-002/qc`, nor `/{resourceId}/runs/run-002/norm`, nor `/{resourceId}/runs/run-002/T2S2`, nor the mount root `/{resourceId}`
+
+#### Scenario: A write to the step's own tree is verified by inotify
+
+- **GIVEN** a sandbox for step `de` of run `run-002`
+- **WHEN** the command creates `/{resourceId}/runs/run-002/de/output/tmm.csv`
+- **THEN** the inotify watcher receives an `IN_CREATE` event for it and the exec frame records that path as a write
+
+#### Scenario: The data tree is not watched, and its reads are still captured
+
+- **GIVEN** a sandbox whose `PROVENANCE_WATCH_DIRS` omits `/{resourceId}/data`
+- **WHEN** the command reads `/{resourceId}/data/inputs/Lab/counts.csv` and an in-container hook intercepts the open
+- **THEN** the path matches `PROVENANCE_DATA_PREFIXES` (the mount root), the read reaches the exec frame's `reads`, and it classifies as `source: "data"`
+- **AND** no inotify watch under `data/` was required for that edge
+
+#### Scenario: No sibling's tree is watched, completed or running
+
+- **GIVEN** step `T4S1` of run `run-002`, a completed sibling `qc`, and a sibling `T2S2` still running
+- **WHEN** the sandbox for `T4S1` is created
+- **THEN** no watch is added anywhere under either sibling's tree
 - **AND** `T2S2` creating and deleting `output/_ct_for_r_BRAF.csv` while `T4S1` runs produces no entry in any `T4S1` exec frame
+- **AND** a `T4S1` command that itself reads `/{resourceId}/runs/run-002/qc/output/qc.csv` still has that read captured by the hooks, where classification decides whether it may assert lineage
 
-#### Scenario: A completed sibling is watched whether or not it is declared
+#### Scenario: A read-only sandbox configures no watch dirs
 
-- **GIVEN** step `de` of run `run-002` with `dependsOn: ["qc"]`, and a sibling `norm` that `de` does not declare, both `qc` and `norm` being `completed` when `de`'s sandbox is created
-- **WHEN** the sandbox for `de` is created
-- **THEN** `PROVENANCE_WATCH_DIRS` contains `/{resourceId}/runs/run-002/qc` **and** `/{resourceId}/runs/run-002/norm` — membership follows observed completion, not declaration
-- **AND** a read of `/{resourceId}/runs/run-002/norm/output/norm.csv` is captured and appears in the exec frame's `reads`
-
-#### Scenario: The data tree and the step's own tree are watched
-
-- **GIVEN** step `de` of run `run-002`
-- **WHEN** the sandbox for `de` is created
-- **THEN** `PROVENANCE_WATCH_DIRS` contains `/{resourceId}/data` and `/{resourceId}/runs/run-002/de`
-- **AND** a read of `/{resourceId}/data/inputs/Lab/counts.csv` and a write of `/{resourceId}/runs/run-002/de/output/tmm.csv` both appear in the exec frame
-
-#### Scenario: A sibling that completes after sandbox creation is not watched but stays capturable
-
-- **GIVEN** step `de` whose sandbox was created while sibling `norm` was `running`, and `norm` subsequently reaching `completed`
-- **WHEN** a `de` command later reads `/{resourceId}/runs/run-002/norm/output/norm.csv`
-- **THEN** no inotify watch exists under `norm`'s tree — the walk is not repeated — yet the in-container hook that intercepted the open reports the path, since the layer prefixes are not derived from the watch dirs, and the read reaches the frame
-- **AND** whether that read may assert lineage is decided by classification against the completed-step snapshot, not by whether it was inotify-watched
+- **GIVEN** a mount plan that emits no read-write step mount
+- **WHEN** the sandbox is created
+- **THEN** `PROVENANCE_WATCH_DIRS` is empty, the watcher registers no watches, and the exec completes with a provenance frame carrying whatever the hooks reported
 
 #### Scenario: A missing watch dir does not fail the command
 
-- **GIVEN** a configured watch dir that does not exist in the container (a completed sibling whose tree was never created, or a read-only sandbox with no step tree)
+- **GIVEN** a configured watch dir that does not exist in the container
 - **WHEN** a command executes
-- **THEN** the watcher skips that dir, the remaining watch dirs are watched normally, and the exec completes with a provenance frame
+- **THEN** the watcher skips that dir and the exec completes with a provenance frame
 
-### Requirement: Reaching the inotify watch budget is observable to the harness
+### Requirement: The inotify watch budget is configurable, and every form of exhaustion is observable
 
-Reaching the pre-existing `maxInotifyWatches` cap SHALL be observable to the harness. When the
-watcher's recursive walk stops adding watches at the cap, the sandbox-server SHALL surface that
-fact — as a signal on the exec `provenance` frame (a flag, or the count of directories left
-unwatched) or as a counter the harness increments on receipt — and the harness SHALL record it
-through the injected `Logger` with the run's structured identifiers. An in-container
-`log.Printf` alone SHALL NOT be a conforming
-realization: that line never reaches the harness log, so watch-budget exhaustion silently
-degrades capture — the same class of blind spot as the silently fabricated edges this change
-exists to remove.
+The watcher's cap on registered watches SHALL be configurable through the environment, in
+keeping with every neighbouring knob in this capability (`PROVENANCE_WATCH_DIRS`,
+`PROVENANCE_DATA_PREFIXES`, the tree-diff interval). A bare compile-time constant is not a
+conforming realization: the value bounds a walk over user-shaped trees, so the one deployment
+that outgrows it must be able to raise it without a rebuilt image. The shipped default remains
+the pre-existing `maxInotifyWatches` (1000), which this change neither introduces nor alters.
 
-The cap itself is unchanged and is not introduced here: it is `maxInotifyWatches` in
-`images/sandbox-base/server/provenance_inotify_linux.go:16`, and the degraded behaviour on
-reaching it (warn, then watch only the top-level directories) is already specified by "inotify
-provides verification channel for all file operations". This requirement adds observability
-only.
+Reaching that cap SHALL be observable to the harness. When the walk stops adding watches, the
+sandbox-server SHALL surface the fact — as a signal on the exec `provenance` frame (a flag, or
+the count of directories left unwatched) or as a counter the harness increments on receipt — and
+the harness SHALL record it through the injected `Logger` with the run's structured identifiers.
+An in-container `log.Printf` alone SHALL NOT be a conforming realization: that line never
+reaches the harness log, so exhaustion would silently degrade capture — the same class of blind
+spot as the silently fabricated edges this change exists to remove.
 
-Exhaustion SHALL NOT fail the exec: capture is best-effort, so the signal rides alongside a
-normal completion rather than turning a degraded capture into a failed command.
+**Kernel-side exhaustion SHALL be reported distinctly from the configured cap.** Registering a
+watch can fail because the kernel's own per-uid limit
+(`/proc/sys/fs/inotify/max_user_watches`) is exhausted, which is a different condition with a
+different remedy: the configured cap is the harness declining to watch more, while `ENOSPC` is
+the host refusing. A failed registration SHALL NOT be silently skipped — it SHALL be counted and
+surfaced alongside the cap signal, distinguishable from it. Reporting only the self-imposed cap
+would leave the genuine resource failure exactly as invisible as it is today, which is the blind
+spot one layer down.
+
+Neither form of exhaustion SHALL fail the exec: capture is best-effort, so the signal rides
+alongside a normal completion rather than turning degraded capture into a failed command.
 
 This signal counts **capture degradation**, not a rejected edge. It SHALL NOT be counted on
 `lineageEdgeRejected` (`cortex.lineage.edge_rejected`, tagged `agent_id`, `step_id`, `reason`),
@@ -123,6 +140,19 @@ only.
 - **WHEN** the command completes
 - **THEN** no watch-budget signal is present on the frame and no exhaustion record is logged
 
+#### Scenario: The cap is raised without rebuilding the image
+
+- **GIVEN** a deployment whose step trees walk to more directories than the default cap
+- **WHEN** the operator sets the cap's environment variable to a higher value and a command executes
+- **THEN** the watcher registers watches up to the configured value rather than the shipped default, and no image rebuild was required
+
+#### Scenario: Kernel watch exhaustion is distinguishable from the configured cap
+
+- **GIVEN** a host whose `/proc/sys/fs/inotify/max_user_watches` is already exhausted by other processes, and a step whose walk stays well inside the configured cap
+- **WHEN** the watcher attempts to register a watch and the kernel returns `ENOSPC`
+- **THEN** the failure is counted and surfaced to the harness, distinguishable from a configured-cap refusal, and the exec still completes with whatever the hooks reported
+- **AND** the failure is not silently skipped, so degraded capture is never reported as a clean walk
+
 ## MODIFIED Requirements
 
 ### Requirement: inotify provides verification channel for all file operations
@@ -144,11 +174,11 @@ exec, are both conforming realizations. No read SHALL enter the exec provenance 
 strength of an `IN_OPEN` alone.
 
 Since `inotify_add_watch` is per-directory (not recursive), the watcher SHALL walk each
-configured watch dir at startup and add a watch on each subdirectory. If the configured trees
-are too deep or too large (> 1000 watches), the watcher SHALL log a warning and watch only the
-top-level directories — the pre-existing `maxInotifyWatches` bound, which this change neither
-introduces nor alters and whose exhaustion SHALL additionally be surfaced per "Reaching the
-inotify watch budget is observable to the harness".
+configured watch dir at startup and add a watch on each subdirectory. If the configured tree is
+too deep or too large, the watcher SHALL log a warning and watch only the top-level
+directories — the pre-existing `maxInotifyWatches` bound, which this change neither introduces
+nor alters in value, and whose configurability and exhaustion reporting are required by "The
+inotify watch budget is configurable, and every form of exhaustion is observable".
 
 The inotify watcher SHALL be started before the child process is spawned and stopped after the
 child process exits (with a short drain window for late events). The watcher SHALL use
@@ -163,9 +193,9 @@ in-container hooks (the Python audit hook, the R hooks, and the LD_PRELOAD `prov
 intercept only **their own process's** opens — LD_PRELOAD interposition and interpreter-level
 hooks cannot observe another container's writes — so their prefix filter MAY remain the
 analysis resource mount root `/{resourceId}`, unchanged. In production the harness's
-`buildMountPlan` sets `PROVENANCE_WATCH_DIRS` to the enumerated, step-scoped list required by
-"Provenance capture is scoped to the immutable set — data, the step's own tree, and completed
-siblings" — never to the mount root — while `PROVENANCE_DATA_PREFIXES` stays the mount root.
+`buildMountPlan` sets `PROVENANCE_WATCH_DIRS` to the step's own run tree alone, as required by
+"Provenance capture is scoped to the step's own run tree" — never to the mount root, the `data/`
+tree, or a sibling's tree — while `PROVENANCE_DATA_PREFIXES` stays the mount root.
 
 The consequence is intended: a legitimate cross-step or prior-run read performed by the command
 itself remains capturable through the hooks even when its path is not inotify-watched, and
@@ -189,10 +219,10 @@ sandbox-server activates the in-container layers per command").
 
 #### Scenario: The layer prefixes are not narrowed to the watch dirs
 
-- **GIVEN** a sandbox whose `PROVENANCE_WATCH_DIRS` omits the tree of a sibling that was still running at sandbox creation
-- **WHEN** the command itself reads a file under that sibling's tree and the LD_PRELOAD hook intercepts the open
+- **GIVEN** a sandbox whose `PROVENANCE_WATCH_DIRS` is the step's own run tree alone, omitting `data/` and every sibling's tree
+- **WHEN** the command itself reads a file under a sibling's tree and the LD_PRELOAD hook intercepts the open
 - **THEN** the path matches `PROVENANCE_DATA_PREFIXES` (the mount root `/{resourceId}`), the datagram is sent, and the read appears in the frame despite there being no watch on that tree
-- **AND** the harness drops it at classification if the sibling was not `completed` in the exec's snapshot — the capture layer does not make that decision
+- **AND** the harness rejects it at classification if the sibling was not `completed` in the exec's snapshot — the capture layer does not make that decision
 
 #### Scenario: A write-open does not produce a read edge
 

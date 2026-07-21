@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,9 @@ const (
 	provenanceBufSize = 65536
 	// Time to wait for late-arriving datagrams after process exit
 	provenanceDrainTimeout = 200 * time.Millisecond
+	// Watches the inotify walk may register before it stops descending, unless
+	// PROVENANCE_MAX_INOTIFY_WATCHES says otherwise.
+	defaultInotifyWatchLimit = 1000
 )
 
 // Paths to provenance hook files in the container image.
@@ -130,11 +134,17 @@ type provenanceResult struct {
 	WatchBudget *watchBudgetSignal
 }
 
-// watchBudgetSignal reports that the inotify walk stopped adding watches at its
-// cap, leaving directories unobserved. It rides the exec's provenance frame
-// because the watcher's own log line never leaves the container: without it,
-// degraded capture is indistinguishable from a step that touched nothing.
-// Never a failure — capture is best-effort and this accompanies a normal exec.
+// watchBudgetSignal reports that the inotify walk left directories unobserved,
+// whether because it hit its own cap or because the kernel refused a
+// registration. It rides the exec's provenance frame because the watcher's own
+// log line never leaves the container: without it, degraded capture is
+// indistinguishable from a step that touched nothing. Never a failure —
+// capture is best-effort and this accompanies a normal exec.
+//
+// The two shortfalls are counted separately because they have different
+// remedies: the cap is this server declining to watch more and is raised with
+// PROVENANCE_MAX_INOTIFY_WATCHES, while a refused registration is the host
+// refusing and is relieved only on the host.
 type watchBudgetSignal struct {
 	// The cap the walk stopped at.
 	Limit int `json:"limit"`
@@ -143,6 +153,33 @@ type watchBudgetSignal struct {
 	// Directories the walk reached and refused. A floor, not an exact count:
 	// each refusal also skips that directory's subtree, which is never walked.
 	UnwatchedDirs int `json:"unwatchedDirs"`
+	// Directories inotify_add_watch rejected, the cap notwithstanding. ENOSPC
+	// here means the kernel's per-uid ceiling
+	// (/proc/sys/fs/inotify/max_user_watches) is exhausted by this host's
+	// processes, which no setting inside the container can relieve.
+	FailedWatches int `json:"failedWatches"`
+}
+
+// inotifyWatchLimit returns the cap on watches the walk may register (env
+// override, else the shipped default).
+//
+// Configurable because the value bounds a walk over a tree whose shape is the
+// workload's: a step that writes per-entity output directories can exceed any
+// number chosen at build time, and the deployment that hits it must be able to
+// raise the bound without waiting on a rebuilt image. An absent or unusable
+// value falls back to the default rather than failing — provenance never fails
+// a command, so a typo in an env var must not either.
+func inotifyWatchLimit() int {
+	raw := strings.TrimSpace(os.Getenv(envInotifyWatchLimit))
+	if raw == "" {
+		return defaultInotifyWatchLimit
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		log.Printf("WARNING: invalid %s=%q, falling back to %d", envInotifyWatchLimit, raw, defaultInotifyWatchLimit)
+		return defaultInotifyWatchLimit
+	}
+	return n
 }
 
 // Stop drains remaining messages, reads the R log file, and cleans up.

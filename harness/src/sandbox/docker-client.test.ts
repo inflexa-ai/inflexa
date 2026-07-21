@@ -277,7 +277,7 @@ describe("docker createSandbox — transport modes", () => {
         const sandbox = sandboxOf(created)!;
         const env = envMapOf(sandbox);
         expect(env.SANDBOX_CALLBACK_SECRET).toBe(ref.callbackSecret);
-        expect(env.PROVENANCE_WATCH_DIRS).toBe("/an-1/data,/an-1/runs/run-1/step-a");
+        expect(env.PROVENANCE_WATCH_DIRS).toBe("/an-1/runs/run-1/step-a");
         expect(env.PROVENANCE_DATA_PREFIXES).toBe("/an-1");
         expect(env.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
 
@@ -350,10 +350,10 @@ describe("docker createSandbox — mounts and platform", () => {
         expect(sandbox.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
         expect(env.R_LIBS_SITE).toBeUndefined();
         expect(env.NODE_PATH).toBeUndefined();
-        expect(env.PROVENANCE_WATCH_DIRS).toBe("/an-1/data,/an-1/runs/run-1/step-a");
+        expect(env.PROVENANCE_WATCH_DIRS).toBe("/an-1/runs/run-1/step-a");
     });
 
-    test("completed siblings on the meta become watch dirs; the mount root never does", async () => {
+    test("the watch dirs are the step's own tree alone — no data tree, no sibling, no mount root", async () => {
         const { docker, created } = stubDocker();
         const ops = createDockerSandboxOps({
             image: "sandbox-base:latest",
@@ -364,12 +364,15 @@ describe("docker createSandbox — mounts and platform", () => {
             registerSandbox: async () => {},
         });
 
-        (await ops.createSandbox({ ...META, completedSiblingStepIds: ["qc"] }, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+        (await ops.createSandbox(META, mintSandboxIdentity("run-1")))._unsafeUnwrap();
 
         const env = envMapOf(sandboxOf(created)!);
-        expect(env.PROVENANCE_WATCH_DIRS.split(",")).toEqual(["/an-1/data", "/an-1/runs/run-1/step-a", "/an-1/runs/run-1/qc"]);
-        // The sibling's tree is watched, but the container still binds only its
-        // own step dir read-write — capture scope is not a mount change.
+        expect(env.PROVENANCE_WATCH_DIRS.split(",")).toEqual(["/an-1/runs/run-1/step-a"]);
+        // The hooks keep the whole mount as their prefix, so a read of an
+        // unwatched tree still reaches the frame.
+        expect(env.PROVENANCE_DATA_PREFIXES).toBe("/an-1");
+        // The watch scope tracks the read-write mount: the container binds
+        // exactly the one tree it watches.
         expect(sandboxOf(created)!.binds).toEqual(["/sessions/an-1:/an-1:ro", "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw"]);
     });
 

@@ -155,14 +155,10 @@ function workspaceSubPathFor(config: K8sClientConfig, analysisId: string): strin
 
 function buildJobSpec(meta: CreateSandboxMeta, config: K8sClientConfig, identity: SandboxIdentity): V1Job {
     const { sandboxId } = identity;
-    const plan = buildMountPlan(
-        meta,
-        {
-            libs: !!config.libStorePvc,
-            refs: !!config.refStorePvc,
-        },
-        meta.completedSiblingStepIds,
-    );
+    const plan = buildMountPlan(meta, {
+        libs: !!config.libStorePvc,
+        refs: !!config.refStorePvc,
+    });
 
     const transport = config.transport ?? "poll";
     const env = [

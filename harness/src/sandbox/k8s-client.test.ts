@@ -131,7 +131,7 @@ describe("k8s createSandbox", () => {
         expect(envMap.SANDBOX_TRANSPORT).toBe("callback");
         expect(envMap.CORTEX_BASE_URL).toBe("https://cortex.example.com:443");
         expect(envMap.SANDBOX_CALLBACK_SECRET).toBe(ref.callbackSecret);
-        expect(envMap.PROVENANCE_WATCH_DIRS).toBe("/an-1/data,/an-1/runs/run-1/step-a");
+        expect(envMap.PROVENANCE_WATCH_DIRS).toBe("/an-1/runs/run-1/step-a");
         expect(envMap.PROVENANCE_DATA_PREFIXES).toBe("/an-1");
         expect(envMap.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
 
@@ -440,10 +440,10 @@ describe("k8s createSandbox", () => {
         const env = podSpec.containers[0].env ?? [];
         const envMap = Object.fromEntries(env.map((e) => [e.name, e.value]));
         expect(envMap.R_LIBS_SITE).toBeUndefined();
-        expect(envMap.PROVENANCE_WATCH_DIRS).toBe("/an-1/data,/an-1/runs/run-1/step-a");
+        expect(envMap.PROVENANCE_WATCH_DIRS).toBe("/an-1/runs/run-1/step-a");
     });
 
-    test("completed siblings on the meta become watch dirs; the mount root never does", async () => {
+    test("the watch dirs are the step's own tree alone — no data tree, no sibling, no mount root", async () => {
         const stub = stubApis([
             {
                 status: { phase: "Running", podIP: "10.0.0.3" },
@@ -471,7 +471,6 @@ describe("k8s createSandbox", () => {
                     analysisId: "an-1",
                     childWorkflowId: "run-1-0",
                     resources: { cpu: 2, memoryGb: 4 },
-                    completedSiblingStepIds: ["qc", "norm"],
                 },
                 mintSandboxIdentity("run-1"),
             )
@@ -479,12 +478,51 @@ describe("k8s createSandbox", () => {
 
         const env = stub.createdJobs[0]!.spec!.template.spec!.containers[0].env ?? [];
         const envMap = Object.fromEntries(env.map((e) => [e.name, e.value]));
-        expect((envMap.PROVENANCE_WATCH_DIRS ?? "").split(",")).toEqual([
-            "/an-1/data",
-            "/an-1/runs/run-1/step-a",
-            "/an-1/runs/run-1/qc",
-            "/an-1/runs/run-1/norm",
+        expect((envMap.PROVENANCE_WATCH_DIRS ?? "").split(",")).toEqual(["/an-1/runs/run-1/step-a"]);
+        // The hooks keep the whole mount as their prefix, so a read of an
+        // unwatched tree still reaches the frame.
+        expect(envMap.PROVENANCE_DATA_PREFIXES).toBe("/an-1");
+    });
+
+    test("a read-only sandbox carries an empty watch dir list", async () => {
+        // No read-write step mount means the pod writes nowhere, so there is
+        // nothing for inotify to verify.
+        const stub = stubApis([
+            {
+                status: { phase: "Running", podIP: "10.0.0.4" },
+                metadata: { name: "sbx-ro" },
+            },
         ]);
+
+        const ops = createK8sSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            namespace: "sandbox",
+            sessionPvcRoot: SESSION_PVC_ROOT,
+            resolveWorkspaceRoot,
+            sessionPvc: "cortex-sessions",
+            batchApi: stub.batchApi,
+            coreApi: stub.coreApi,
+            registerSandbox: async () => {},
+        });
+
+        (
+            await ops.createSandbox(
+                {
+                    runId: "run-1",
+                    stepId: "step-a",
+                    analysisId: "an-1",
+                    childWorkflowId: "run-1-0",
+                    resources: { cpu: 2, memoryGb: 4 },
+                    readOnly: true,
+                },
+                mintSandboxIdentity("run-1"),
+            )
+        )._unsafeUnwrap();
+
+        const env = stub.createdJobs[0]!.spec!.template.spec!.containers[0].env ?? [];
+        const envMap = Object.fromEntries(env.map((e) => [e.name, e.value]));
+        expect(envMap.PROVENANCE_WATCH_DIRS).toBe("");
         expect(envMap.PROVENANCE_DATA_PREFIXES).toBe("/an-1");
     });
 });

@@ -74,3 +74,15 @@
 - [ ] 9.1 Write a read-only audit that flags registered `upstream` edges which could not have been admissible, comparing the producing step's `completed_at` against the reading step's execution window in `cortex_step_executions`.
 - [ ] 9.2 Run it over existing analyses and report the blast radius. Known instance to expect: run `19110b58`, step `T4S1`, three fabricated edges to `T2S2` (`logs/run_gsea.log`, `output/wikipathways_symbols.gmt`, `scripts/run_gsea.py`).
 - [ ] 9.3 Decide with the user whether to purge, annotate, or leave flagged edges. Do not mutate registered provenance without that decision.
+
+## 10. Amendment — scope the watch set to the step's own tree
+
+Dropping `IN_OPEN` (task 6.6) removed inotify's ability to report reads at all, which invalidated the premise of the wider watch set: `data/` and completed siblings are immutable during the step, so they cannot emit the creates, deletes, and moves inotify still collects. They cost budget and yield nothing. Reads of them are captured by the process-local hooks, whose prefixes are configured independently (task 6.3), so narrowing costs no lineage edge.
+
+- [x] 10.1 Set `PROVENANCE_WATCH_DIRS` to the step's own run tree alone in `src/sandbox/mount-plan.ts`, and to empty for a read-only sandbox. It must not contain the mount root, `data/`, or any sibling's tree.
+- [x] 10.2 Remove the completed-sibling resolution that scoping made necessary: `resolveCompletedSiblings` in `src/sandbox/create-sandbox.ts`, `CreateSandboxMeta.completedSiblingStepIds`, `buildMountPlan`'s third parameter, and the docker/k8s client threading. Sandbox creation should no longer query step state at all.
+- [x] 10.3 Keep `queryCompletedStepsByAnalysis` — it is still the classification snapshot's source (task 4.1). Only the mount-plan caller goes away. Verify no other caller regressed.
+- [x] 10.4 Make the inotify watch cap configurable through the environment rather than a bare `const`, defaulting to the existing 1000. A value bounding a walk over user-shaped trees must be raisable without rebuilding the image.
+- [x] 10.5 Count and surface a failed `InotifyAddWatch` distinctly from a configured-cap refusal. A kernel `ENOSPC` is currently swallowed by `if err != nil { return nil }`, so the genuine resource failure stays as invisible as it was before task 6.7 — the same blind spot one layer down.
+- [x] 10.6 Update the mount-plan, docker-client, k8s-client, create-sandbox, and Go watcher tests to the narrowed scope; delete assertions that depended on siblings or `data/` being watched.
+- [x] 10.7 Re-run `tsc`, `bun test`, `go build ./... && go test ./...`, and `openspec validate --strict`.

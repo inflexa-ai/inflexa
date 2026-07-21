@@ -15,6 +15,10 @@ const (
 	envTreeDiffInterval = "SANDBOX_TREE_DIFF_INTERVAL_MS"
 	envTransport        = "SANDBOX_TRANSPORT"
 	envEgressFirewall   = "SANDBOX_EGRESS_FIREWALL"
+	// Sits with the other PROVENANCE_* knobs the harness sets on the container
+	// (PROVENANCE_WATCH_DIRS, PROVENANCE_DATA_PREFIXES) rather than with the
+	// SANDBOX_* server settings: it tunes the capture layer, not the server.
+	envInotifyWatchLimit = "PROVENANCE_MAX_INOTIFY_WATCHES"
 )
 
 // transportMode selects how a command's progress events and terminal result

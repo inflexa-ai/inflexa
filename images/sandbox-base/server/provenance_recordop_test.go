@@ -11,9 +11,10 @@ const testDataPrefix = "/019f6a20-1a3b-7000-a942-ae871e5de040/"
 
 func newTestTracker() *ProvenanceTracker {
 	return &ProvenanceTracker{
-		// Watch dirs are deliberately narrower than the prefix bound: what a
-		// hook may report is not what inotify watches.
-		watchDirs:    []string{testDataPrefix + "data/", testDataPrefix + "runs/r1/T3S1/"},
+		// The step's own tree alone, as the harness configures it — deliberately
+		// narrower than the prefix bound: what a hook may report is not what
+		// inotify watches.
+		watchDirs:    []string{testDataPrefix + "runs/r1/T3S1/"},
 		dataPrefixes: []string{testDataPrefix},
 		ops:          make(map[string]map[string]map[string]bool),
 	}
@@ -71,9 +72,9 @@ func TestRecordOp_KeepsInTreeRead(t *testing.T) {
 
 func TestRecordOp_KeepsAReadOutsideTheWatchDirs(t *testing.T) {
 	// A hook intercepts its own process's open, so a read under a tree no
-	// watcher covers — a step that completed after this sandbox started — is
-	// still the command's own read. Whether it may assert lineage is the host's
-	// decision at classification; dropping it here would make it undecidable.
+	// watcher covers — a sibling's output, `data/`, a prior run — is still the
+	// command's own read. Whether it may assert lineage is the host's decision
+	// at classification; dropping it here would make it undecidable.
 	pt := newTestTracker()
 	want := "/019f6a20-1a3b-7000-a942-ae871e5de040/runs/r1/norm/output/norm.csv"
 	pt.recordOp("read", want, "ld_preload")
@@ -100,8 +101,8 @@ func TestEnv_DataPrefixesAreNotDerivedFromWatchDirs(t *testing.T) {
 }
 
 func TestProvenanceWatchDirs_SkipsAConfiguredDirThatDoesNotExist(t *testing.T) {
-	// A completed sibling that produced no tree, or a read-only sandbox with no
-	// step tree, are ordinary — capture is best-effort and never fails a command.
+	// A step tree the host has not pre-created yet is ordinary — capture is
+	// best-effort and never fails a command.
 	present := t.TempDir()
 	t.Setenv("PROVENANCE_WATCH_DIRS", present+","+present+"/never-created")
 
@@ -113,13 +114,44 @@ func TestProvenanceWatchDirs_SkipsAConfiguredDirThatDoesNotExist(t *testing.T) {
 }
 
 func TestProvenanceDataPrefixes_ReadsItsOwnVariable(t *testing.T) {
-	t.Setenv("PROVENANCE_WATCH_DIRS", "/an-1/data,/an-1/runs/r1/T3S1")
+	t.Setenv("PROVENANCE_WATCH_DIRS", "/an-1/runs/r1/T3S1")
 	t.Setenv("PROVENANCE_DATA_PREFIXES", "/an-1")
 
 	got := provenanceDataPrefixes()
 
 	if len(got) != 1 || got[0] != "/an-1/" {
 		t.Fatalf("data prefixes must come from PROVENANCE_DATA_PREFIXES with a trailing slash; got %v", got)
+	}
+}
+
+func TestInotifyWatchLimit_DefaultsWhenUnset(t *testing.T) {
+	t.Setenv(envInotifyWatchLimit, "")
+
+	if got := inotifyWatchLimit(); got != defaultInotifyWatchLimit {
+		t.Fatalf("an unset cap must ship the default; want %d, got %d", defaultInotifyWatchLimit, got)
+	}
+}
+
+func TestInotifyWatchLimit_HonorsTheEnvironment(t *testing.T) {
+	// The knob exists so a deployment whose step trees outgrow the default can
+	// raise it without waiting on a rebuilt image.
+	t.Setenv(envInotifyWatchLimit, "25000")
+
+	if got := inotifyWatchLimit(); got != 25000 {
+		t.Fatalf("the configured cap must win over the default; want 25000, got %d", got)
+	}
+}
+
+func TestInotifyWatchLimit_FallsBackOnAnUnusableValue(t *testing.T) {
+	// Provenance never fails a command, so neither may a typo in its config.
+	for _, raw := range []string{"not-a-number", "0", "-5"} {
+		t.Run(raw, func(t *testing.T) {
+			t.Setenv(envInotifyWatchLimit, raw)
+
+			if got := inotifyWatchLimit(); got != defaultInotifyWatchLimit {
+				t.Fatalf("%q must fall back to the default; got %d", raw, got)
+			}
+		})
 	}
 }
 

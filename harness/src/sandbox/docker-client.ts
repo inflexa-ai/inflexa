@@ -298,14 +298,10 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     // noise. A store that appears mid-session is picked up by the next create.
                     const refsMounted = !!config.refStorePath && refStoreUsable(config.refStorePath);
 
-                    const plan = buildMountPlan(
-                        meta,
-                        {
-                            libs: libsMounted,
-                            refs: refsMounted,
-                        },
-                        meta.completedSiblingStepIds,
-                    );
+                    const plan = buildMountPlan(meta, {
+                        libs: libsMounted,
+                        refs: refsMounted,
+                    });
 
                     const hostTreePath = config.resolveWorkspaceRoot(meta.analysisId);
                     // `stepWritePrefix` (not a raw `join`) so the RW bind source runs through
