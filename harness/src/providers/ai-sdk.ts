@@ -1,14 +1,26 @@
 import { generateText, streamText, type FinishReason, type LanguageModel, type LanguageModelUsage, type ModelMessage } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { APICallError } from "@ai-sdk/provider";
+import { retryWithExponentialBackoff } from "@ai-sdk/provider-utils";
 import { ResultAsync, err, ok, type Result } from "neverthrow";
 
 import { scopeWorkloadId, type AgentSession } from "../auth/types.js";
 import type { ResolveBilling } from "../billing/resolver.js";
-import { type ProviderError, toProviderError } from "./errors.js";
+import { classifyProviderError, type ProviderError, toProviderError } from "./errors.js";
 import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage, FetchLike, ProviderCapabilities } from "./types.js";
 
-const DEFAULT_MAX_RETRIES = 2;
+/**
+ * The harness-owned retry envelope. The AI SDK's built-in retry exposes only a
+ * count: its 2s initial delay and ×2 factor are fixed, it caps neither the
+ * per-attempt delay nor the total, and it ignores a server-named `Retry-After`.
+ * Wrapping each wire attempt in `retryWithExponentialBackoff` with these values
+ * gives a bounded, jittered envelope with a hard per-attempt delay ceiling.
+ */
+export const RETRY_MAX_RETRIES = 10;
+export const RETRY_INITIAL_DELAY_MS = 2_000;
+export const RETRY_BACKOFF_FACTOR = 2;
+export const RETRY_MAX_DELAY_MS = 30_000;
 
 export interface AiSdkProviderDeps {
     readonly model: LanguageModel;
@@ -58,6 +70,105 @@ function isAbortError(value: unknown): boolean {
     if (value instanceof DOMException && value.name === "AbortError") return true;
     if (value instanceof Error && value.name === "AbortError") return true;
     return false;
+}
+
+/**
+ * Locate an `APICallError` on the throwable itself or one hop down its `cause`.
+ * A wire failure the SDK raises is an `APICallError` directly; once rewrapped it
+ * sits on the wrapper's `cause`, which is as deep as a `Retry-After` header is
+ * ever carried.
+ */
+function apiCallErrorOf(error: unknown): APICallError | undefined {
+    if (APICallError.isInstance(error)) return error;
+    const cause = (error as { cause?: unknown } | null | undefined)?.cause;
+    if (APICallError.isInstance(cause)) return cause;
+    return undefined;
+}
+
+/** Case-insensitive header lookup; `name` must already be lowercase. */
+function headerValue(headers: Record<string, string> | undefined, name: string): string | undefined {
+    if (headers === undefined) return undefined;
+    const direct = headers[name];
+    if (direct !== undefined) return direct;
+    for (const [key, value] of Object.entries(headers)) {
+        if (key.toLowerCase() === name) return value;
+    }
+    return undefined;
+}
+
+/** Parse a header to a finite number, or `undefined` when it is not numeric. */
+function finiteNumber(value: string): number | undefined {
+    const trimmed = value.trim();
+    if (trimmed === "") return undefined;
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * The delay a server named via `Retry-After`, in ms, or `undefined` when none
+ * applies. `retry-after-ms` is float ms; `retry-after` is float seconds or an
+ * HTTP date read relative to now. A value outside `[0, RETRY_MAX_DELAY_MS]` is
+ * treated as absent so the jittered exponential delay governs instead — this
+ * envelope does not honor a wait longer than its own ceiling verbatim.
+ */
+function serverNamedDelayMs(error: unknown): number | undefined {
+    const headers = apiCallErrorOf(error)?.responseHeaders;
+    if (headers === undefined) return undefined;
+
+    let ms: number | undefined;
+    const retryAfterMs = headerValue(headers, "retry-after-ms");
+    if (retryAfterMs !== undefined) ms = finiteNumber(retryAfterMs);
+    if (ms === undefined) {
+        const retryAfter = headerValue(headers, "retry-after");
+        if (retryAfter !== undefined) {
+            const seconds = finiteNumber(retryAfter);
+            if (seconds !== undefined) {
+                ms = seconds * 1_000;
+            } else {
+                const at = Date.parse(retryAfter);
+                if (Number.isFinite(at)) ms = at - Date.now();
+            }
+        }
+    }
+    if (ms === undefined || ms < 0 || ms > RETRY_MAX_DELAY_MS) return undefined;
+    return ms;
+}
+
+/**
+ * The delay before the next retry attempt. A server-named `Retry-After` inside
+ * the envelope is honored exactly — the server pointed at a precise time, so
+ * jitter would only fight it. Otherwise apply full jitter over the exponential
+ * delay capped at `RETRY_MAX_DELAY_MS`: full jitter spreads a crowd of callers
+ * that failed at the same instant across the window instead of re-colliding on
+ * the same retry tick. `random` is injectable so the delay is testable.
+ */
+export function computeRetryDelayMs(error: unknown, exponentialBackoffDelay: number, random: () => number = Math.random): number {
+    const named = serverNamedDelayMs(error);
+    if (named !== undefined) return named;
+    return random() * Math.min(exponentialBackoffDelay, RETRY_MAX_DELAY_MS);
+}
+
+/**
+ * Wrap a single wire attempt in the harness retry envelope. Built per call so
+ * the caller's `AbortSignal` reaches the primitive: it rethrows abort errors
+ * without retrying and cancels its own backoff sleep when the signal fires, so
+ * the retried closure adds no abort handling of its own. `shouldRetry` defers to
+ * the harness retryability taxonomy, and a non-retryable first failure is
+ * rethrown untouched — preserving the exact throwable `toProviderError`
+ * classifies. `createRetryError` carries the last real failure on `cause` so
+ * that, once retries are exhausted, `toProviderError`'s status walk reaches the
+ * true HTTP status instead of stopping at a synthetic wrapper.
+ */
+function createRetry(signal: AbortSignal | undefined) {
+    return retryWithExponentialBackoff({
+        maxRetries: RETRY_MAX_RETRIES,
+        initialDelayInMs: RETRY_INITIAL_DELAY_MS,
+        backoffFactor: RETRY_BACKOFF_FACTOR,
+        abortSignal: signal,
+        shouldRetry: (e) => classifyProviderError(e).retryable,
+        getDelayInMs: ({ error, exponentialBackoffDelay }) => computeRetryDelayMs(error, exponentialBackoffDelay),
+        createRetryError: ({ message, errors }) => new Error(message, { cause: errors[errors.length - 1] }),
+    });
 }
 
 /**
@@ -140,19 +251,26 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
 
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
         const run = async (): Promise<Result<ChatResponse, ProviderError>> => {
+            const retry = createRetry(signal);
             try {
-                const headers = await deps.resolveBilling(session);
-                const result = await generateText({
-                    model: deps.model,
-                    system: req.system,
-                    messages: sanitizeMessages(req.messages),
-                    tools: req.tools,
-                    toolChoice: req.toolChoice ?? "auto",
-                    stopWhen: [],
-                    maxRetries: DEFAULT_MAX_RETRIES,
-                    headers,
-                    abortSignal: signal,
-                    providerOptions: req.providerOptions,
+                const result = await retry(async () => {
+                    // Attribution headers are time-limited; resolving them inside the
+                    // retried closure keeps them fresh across a multi-minute window.
+                    const headers = await deps.resolveBilling(session);
+                    return generateText({
+                        model: deps.model,
+                        system: req.system,
+                        messages: sanitizeMessages(req.messages),
+                        tools: req.tools,
+                        toolChoice: req.toolChoice ?? "auto",
+                        stopWhen: [],
+                        // The harness envelope owns retries; leaving the SDK default in
+                        // place would multiply attempts (10 outer × 3 inner).
+                        maxRetries: 0,
+                        headers,
+                        abortSignal: signal,
+                        providerOptions: req.providerOptions,
+                    });
                 });
                 return ok(responseFromGenerate(result));
             } catch (e) {
@@ -164,24 +282,68 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     }
 
     async function* chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent> {
+        const retry = createRetry(signal);
         try {
-            const headers = await deps.resolveBilling(session);
-            const result = streamText({
-                model: deps.model,
-                system: req.system,
-                messages: sanitizeMessages(req.messages),
-                tools: req.tools,
-                toolChoice: req.toolChoice ?? "auto",
-                stopWhen: [],
-                maxRetries: DEFAULT_MAX_RETRIES,
-                headers,
-                abortSignal: signal,
-                providerOptions: req.providerOptions,
+            // Retry covers only stream establishment: streamText defers wire errors
+            // to consumption, so a failure is not visible until the stream is read.
+            // The retried closure resolves to one of two outcomes — the stream is
+            // live with a first delta in hand, or it finished without yielding any
+            // text — and a delta is only ever yielded OUTSIDE the closure, so a
+            // retried attempt can never re-emit a delta the consumer already saw.
+            // Resolving billing inside the closure keeps attribution headers fresh
+            // per attempt.
+            const opened = await retry(async () => {
+                const headers = await deps.resolveBilling(session);
+                const result = streamText({
+                    model: deps.model,
+                    system: req.system,
+                    messages: sanitizeMessages(req.messages),
+                    tools: req.tools,
+                    toolChoice: req.toolChoice ?? "auto",
+                    stopWhen: [],
+                    maxRetries: 0,
+                    headers,
+                    abortSignal: signal,
+                    providerOptions: req.providerOptions,
+                });
+                const iterator = result.textStream[Symbol.asyncIterator]();
+                const first = await iterator.next();
+                if (first.done) {
+                    // A doStream promise rejection — the shape a real connection
+                    // failure takes — does NOT surface at this first pull: streamText
+                    // resolves it `{ done: true }` and defers the rejection to the
+                    // deferred result promises. Awaiting them here brings that failure
+                    // inside the retry envelope so a text-less establishment error is
+                    // retried; a genuine text-less turn resolves them, and the terminal
+                    // event is built from these already-resolved values without a
+                    // second await. (These promises only settle once the stream is
+                    // fully drained, so they can be awaited here only because the first
+                    // pull already reported the stream done.)
+                    return {
+                        kind: "completed" as const,
+                        messages: await result.responseMessages,
+                        finishReason: await result.finishReason,
+                        rawFinishReason: await result.rawFinishReason,
+                        usage: await result.usage,
+                    };
+                }
+                return { kind: "streaming" as const, result, iterator, firstDelta: first.value };
             });
-            let text = "";
-            for await (const delta of result.textStream) {
-                text += delta;
-                yield { type: "text-delta", text: delta };
+
+            if (opened.kind === "completed") {
+                const response = responseFromMessages(opened.messages, "", opened.finishReason, opened.rawFinishReason, opened.usage);
+                yield { type: "done", response };
+                return;
+            }
+
+            const { result, iterator, firstDelta } = opened;
+            let text = firstDelta;
+            yield { type: "text-delta", text: firstDelta };
+            // Drain the same iterator: past the first delta, errors propagate
+            // unchanged (no retry, no re-emit).
+            for (let next = await iterator.next(); !next.done; next = await iterator.next()) {
+                text += next.value;
+                yield { type: "text-delta", text: next.value };
             }
             const response = responseFromMessages(
                 await result.responseMessages,

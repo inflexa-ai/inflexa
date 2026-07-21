@@ -1,14 +1,17 @@
 import { describe, expect, it } from "bun:test";
+import { APICallError } from "@ai-sdk/provider";
 import type {
     LanguageModelV4,
     LanguageModelV4CallOptions,
     LanguageModelV4GenerateResult,
+    LanguageModelV4StreamPart,
     LanguageModelV4StreamResult,
     LanguageModelV4Usage,
 } from "@ai-sdk/provider";
 
 import { makeSession } from "./__fixtures__/session.js";
-import { createAiSdkProvider, createConfiguredAiSdkProvider } from "./ai-sdk.js";
+import { computeRetryDelayMs, createAiSdkProvider, createConfiguredAiSdkProvider, RETRY_MAX_DELAY_MS, RETRY_MAX_RETRIES } from "./ai-sdk.js";
+import { isProviderError } from "./errors.js";
 import type { ChatRequest } from "./types.js";
 
 const usage: LanguageModelV4Usage = {
@@ -66,6 +69,83 @@ const request: ChatRequest = {
     tools: {},
 };
 
+/**
+ * A real 503 `APICallError` naming a zero-millisecond `retry-after-ms` by
+ * default. Retry backoff is a genuine wall-clock sleep here — the provider
+ * injects no timer — so a server-named 0ms delay is what lets a full
+ * exhaustion run (1 + RETRY_MAX_RETRIES attempts) finish inside bun's 5s
+ * per-test budget while still exercising the real header-honoring path. Pass
+ * other headers to drive the delay/classification a specific test needs.
+ */
+function apiError503(responseHeaders: Record<string, string> = { "retry-after-ms": "0" }): APICallError {
+    return new APICallError({
+        message: "upstream unavailable",
+        url: "https://model.test/v1/messages",
+        requestBodyValues: {},
+        statusCode: 503,
+        responseHeaders,
+        isRetryable: true,
+    });
+}
+
+/**
+ * A stream that fails during establishment by erroring before any text delta
+ * reaches the consumer, so the failure surfaces at the retried closure's first
+ * `textStream` pull. This is one of two distinct SDK surfacing paths the retry
+ * envelope covers — the other is a `doStream` promise rejection, which
+ * `streamText` defers past a clean first pull to the result promises — so each
+ * flavor is exercised on its own.
+ */
+function streamErrorsBeforeDelta(error: unknown): LanguageModelV4StreamResult {
+    return {
+        stream: new ReadableStream<LanguageModelV4StreamPart>({
+            start(controller) {
+                controller.enqueue({ type: "stream-start", warnings: [] });
+                controller.error(error);
+            },
+        }),
+    };
+}
+
+/**
+ * A well-formed stream that finishes cleanly without ever emitting a text part —
+ * a genuine text-less turn. Pins that awaiting the deferred result promises
+ * inside the envelope resolves such a turn instead of mistaking its empty first
+ * pull for an establishment failure to retry.
+ */
+function streamWithNoText(): LanguageModelV4StreamResult {
+    return {
+        stream: new ReadableStream<LanguageModelV4StreamPart>({
+            start(controller) {
+                controller.enqueue({ type: "stream-start", warnings: [] });
+                controller.enqueue({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage });
+                controller.close();
+            },
+        }),
+    };
+}
+
+/**
+ * A stream that delivers exactly one text delta and then errors. The error is
+ * raised on a later pull rather than in the same tick as the delta so the
+ * consumer observes the delta before the failure — a same-tick `controller.error`
+ * races ahead of the buffered delta and the consumer never sees it.
+ */
+function streamDeltaThenError(delta: string, error: unknown): LanguageModelV4StreamResult {
+    let step = 0;
+    return {
+        stream: new ReadableStream<LanguageModelV4StreamPart>({
+            pull(controller) {
+                step += 1;
+                if (step === 1) controller.enqueue({ type: "stream-start", warnings: [] });
+                else if (step === 2) controller.enqueue({ type: "text-start", id: "txt-1" });
+                else if (step === 3) controller.enqueue({ type: "text-delta", id: "txt-1", delta });
+                else controller.error(error);
+            },
+        }),
+    };
+}
+
 describe("createAiSdkProvider", () => {
     it("runs an embedder-supplied AI SDK language model and applies billing headers", async () => {
         const calls: LanguageModelV4CallOptions[] = [];
@@ -102,25 +182,6 @@ describe("createAiSdkProvider", () => {
             expect(result.error).toMatchObject({
                 type: "budget",
                 retryable: false,
-            });
-        }
-    });
-
-    it("preserves retryability classification for transient upstream failures", async () => {
-        const provider = createAiSdkProvider({
-            model: fakeModel(async () => {
-                throw Object.assign(new Error("upstream unavailable"), { status: 503 });
-            }),
-            resolveBilling: async () => ({}),
-        });
-
-        const result = await provider.chat(request, makeSession());
-
-        expect(result.isErr()).toBe(true);
-        if (result.isErr()) {
-            expect(result.error).toMatchObject({
-                type: "provider",
-                retryable: true,
             });
         }
     });
@@ -364,5 +425,363 @@ describe("createConfiguredAiSdkProvider", () => {
         });
 
         expect(provider.capabilities.toolCalling).toBe(true);
+    });
+});
+
+describe("computeRetryDelayMs", () => {
+    it("scales the exponential input with full jitter and caps it at the ceiling", () => {
+        // random = () => 1 removes jitter, so the result is the capped input itself.
+        const noJitter = () => 1;
+        expect(computeRetryDelayMs(new Error("transient"), 2_000, noJitter)).toBe(2_000);
+        expect(computeRetryDelayMs(new Error("transient"), 4_000, noJitter)).toBe(4_000);
+        expect(computeRetryDelayMs(new Error("transient"), 8_000, noJitter)).toBe(8_000);
+        expect(computeRetryDelayMs(new Error("transient"), 16_000, noJitter)).toBe(16_000);
+        expect(computeRetryDelayMs(new Error("transient"), 32_000, noJitter)).toBe(RETRY_MAX_DELAY_MS);
+    });
+
+    it("spreads the delay across the full jitter window for a fixed input", () => {
+        expect(computeRetryDelayMs(new Error("transient"), 10_000, () => 0)).toBe(0);
+        expect(computeRetryDelayMs(new Error("transient"), 10_000, () => 0.5)).toBe(5_000);
+    });
+
+    it("honors a server-named retry-after-ms exactly, ignoring jitter", () => {
+        expect(computeRetryDelayMs(apiError503({ "retry-after-ms": "1500" }), 8_000, () => 0.9)).toBe(1_500);
+    });
+
+    it("reads retry-after seconds and an HTTP-date retry-after", () => {
+        expect(computeRetryDelayMs(apiError503({ "retry-after": "2" }), 8_000, () => 1)).toBe(2_000);
+
+        const tenSecondsOut = new Date(Date.now() + 10_000).toUTCString();
+        const ms = computeRetryDelayMs(apiError503({ "retry-after": tenSecondsOut }), 8_000, () => 1);
+        // HTTP dates carry no sub-second precision, so the parsed offset lands a
+        // little under the full 10s window it names.
+        expect(ms).toBeGreaterThan(8_000);
+        expect(ms).toBeLessThanOrEqual(10_000);
+    });
+
+    it("falls back to jitter when the server-named delay is outside the envelope", () => {
+        // Above the ceiling and negative are both treated as absent, so the
+        // jittered exponential governs instead of the verbatim header value.
+        expect(computeRetryDelayMs(apiError503({ "retry-after-ms": "30001" }), 2_000, () => 1)).toBe(2_000);
+        expect(computeRetryDelayMs(apiError503({ "retry-after-ms": "-5" }), 2_000, () => 1)).toBe(2_000);
+    });
+
+    it("reads the retry-after header from an APICallError one cause hop down", () => {
+        const wrapped = new Error("rewrapped by the SDK", { cause: apiError503({ "retry-after-ms": "1200" }) });
+        expect(computeRetryDelayMs(wrapped, 8_000, () => 0.1)).toBe(1_200);
+    });
+});
+
+describe("createAiSdkProvider chat retry", () => {
+    it("retries a connection failure and succeeds on the next attempt", async () => {
+        let attempts = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                attempts += 1;
+                if (attempts === 1) {
+                    throw Object.assign(new TypeError("fetch failed"), {
+                        cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:443"), { code: "ECONNREFUSED" }),
+                    });
+                }
+                return okResult("recovered");
+            }),
+            resolveBilling: async () => ({}),
+        });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        expect(result._unsafeUnwrap().message).toEqual({ role: "assistant", content: [{ type: "text", text: "recovered" }] });
+        expect(attempts).toBe(2);
+        // A single connection retry has no server-named delay, so it sleeps a
+        // real jittered backoff of up to the 2s initial window.
+    }, 10_000);
+
+    it("returns the classified error after exactly one attempt for a non-retryable status", async () => {
+        const cases = [
+            { status: 401, type: "auth" },
+            { status: 402, type: "budget" },
+            { status: 403, type: "tenant-blocked" },
+            { status: 400, type: "provider" },
+        ] as const;
+
+        for (const { status, type } of cases) {
+            let attempts = 0;
+            const provider = createAiSdkProvider({
+                model: fakeModel(async () => {
+                    attempts += 1;
+                    throw Object.assign(new Error(`HTTP ${status}`), { status });
+                }),
+                resolveBilling: async () => ({}),
+            });
+
+            const result = await provider.chat(request, makeSession());
+
+            expect(result.isErr()).toBe(true);
+            if (result.isErr()) {
+                expect(result.error.type).toBe(type);
+                expect(result.error.retryable).toBe(false);
+            }
+            expect(attempts).toBe(1);
+        }
+    });
+
+    it("exhausts retries on a persistent retryable failure and preserves the transient classification", async () => {
+        let attempts = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                attempts += 1;
+                // The 503 reaches classification down the retry wrapper's cause
+                // chain; asserting type/retryable proves it stayed reachable.
+                throw apiError503();
+            }),
+            resolveBilling: async () => ({}),
+        });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(attempts).toBe(1 + RETRY_MAX_RETRIES);
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) {
+            expect(result.error.type).toBe("provider");
+            expect(result.error.retryable).toBe(true);
+        }
+    });
+
+    it("resolves fresh billing headers on every attempt", async () => {
+        let billingInvocations = 0;
+        let attempts = 0;
+        const calls: LanguageModelV4CallOptions[] = [];
+        const provider = createAiSdkProvider({
+            model: fakeModel(async (options) => {
+                calls.push(options);
+                attempts += 1;
+                if (attempts === 1) throw apiError503();
+                return okResult();
+            }),
+            resolveBilling: async () => {
+                billingInvocations += 1;
+                return { "x-billing-attempt": `attempt-${billingInvocations}` };
+            },
+        });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isOk()).toBe(true);
+        expect(calls).toHaveLength(2);
+        expect(calls[1]!.headers).toMatchObject({ "x-billing-attempt": "attempt-2" });
+    });
+});
+
+describe("createAiSdkProvider abort during backoff", () => {
+    it("abandons a pending retry backoff when the signal fires", async () => {
+        let attempts = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                attempts += 1;
+                // A 4s server-named delay makes the backoff long enough that only
+                // the abort — not the delay elapsing — can end the call quickly.
+                throw apiError503({ "retry-after-ms": "4000" });
+            }),
+            resolveBilling: async () => ({}),
+        });
+
+        const controller = new AbortController();
+        const startedAt = Date.now();
+        setTimeout(() => controller.abort(), 50);
+
+        try {
+            const outcome = await provider.chat(request, makeSession(), controller.signal);
+            throw new Error(`expected the abort to reject the call, got a ${outcome.isOk() ? "ok" : "err"} result`);
+        } catch (err) {
+            expect(err).toBeInstanceOf(DOMException);
+            expect((err as DOMException).name).toBe("AbortError");
+        }
+
+        expect(Date.now() - startedAt).toBeLessThan(2_000);
+        expect(attempts).toBe(1);
+    }, 10_000);
+});
+
+describe("createAiSdkProvider chatStream retry", () => {
+    it("retries stream establishment and then streams the recovered deltas", async () => {
+        let attempts = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(
+                async () => okResult(),
+                async () => {
+                    attempts += 1;
+                    if (attempts === 1) return streamErrorsBeforeDelta(apiError503());
+                    return streamResult(["a", "b"]);
+                },
+            ),
+            resolveBilling: async () => ({}),
+        });
+
+        const events = [];
+        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
+
+        expect(attempts).toBe(2);
+        expect(events).toEqual([
+            { type: "text-delta", text: "a" },
+            { type: "text-delta", text: "b" },
+            {
+                type: "done",
+                response: {
+                    message: { role: "assistant", content: [{ type: "text", text: "ab" }] },
+                    finishReason: "stop",
+                    rawFinishReason: "stop",
+                    usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+                },
+            },
+        ]);
+    });
+
+    it("does not retry or re-emit once the first delta has reached the consumer", async () => {
+        let attempts = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(
+                async () => okResult(),
+                async () => {
+                    attempts += 1;
+                    return streamDeltaThenError("a", apiError503());
+                },
+            ),
+            resolveBilling: async () => ({}),
+        });
+
+        const deltas: string[] = [];
+        let threw = false;
+        try {
+            for await (const event of provider.chatStream(request, makeSession())) {
+                if (event.type === "text-delta") deltas.push(event.text);
+            }
+        } catch {
+            threw = true;
+        }
+
+        expect(deltas).toEqual(["a"]);
+        expect(threw).toBe(true);
+        expect(attempts).toBe(1);
+    });
+
+    it("exhausts establishment retries and throws the classified provider error", async () => {
+        let attempts = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(
+                async () => okResult(),
+                async () => {
+                    attempts += 1;
+                    return streamErrorsBeforeDelta(apiError503());
+                },
+            ),
+            resolveBilling: async () => ({}),
+        });
+
+        let caught: unknown;
+        try {
+            for await (const _part of provider.chatStream(request, makeSession())) {
+                // Each establishment attempt errors before any delta, so the body
+                // is never reached; draining runs the retries to exhaustion.
+            }
+        } catch (e) {
+            caught = e;
+        }
+
+        expect(attempts).toBe(1 + RETRY_MAX_RETRIES);
+        expect(isProviderError(caught)).toBe(true);
+        if (isProviderError(caught)) {
+            expect(caught.type).toBe("provider");
+            expect(caught.retryable).toBe(true);
+        }
+    });
+
+    it("retries a doStream promise rejection and then streams the recovered deltas", async () => {
+        let attempts = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(
+                async () => okResult(),
+                async () => {
+                    attempts += 1;
+                    // A rejected doStream promise is the shape a real connection
+                    // failure at establishment takes; streamText defers it past a
+                    // clean first pull, so the envelope surfaces it via the result
+                    // promises rather than the first `textStream` pull.
+                    if (attempts === 1) throw apiError503();
+                    return streamResult(["a", "b"]);
+                },
+            ),
+            resolveBilling: async () => ({}),
+        });
+
+        const events = [];
+        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
+
+        expect(attempts).toBe(2);
+        expect(events).toEqual([
+            { type: "text-delta", text: "a" },
+            { type: "text-delta", text: "b" },
+            {
+                type: "done",
+                response: {
+                    message: { role: "assistant", content: [{ type: "text", text: "ab" }] },
+                    finishReason: "stop",
+                    rawFinishReason: "stop",
+                    usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+                },
+            },
+        ]);
+    });
+
+    it("exhausts retries on a persistently rejecting doStream and throws the classified provider error", async () => {
+        let attempts = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(
+                async () => okResult(),
+                async () => {
+                    attempts += 1;
+                    throw apiError503();
+                },
+            ),
+            resolveBilling: async () => ({}),
+        });
+
+        let caught: unknown;
+        try {
+            for await (const _part of provider.chatStream(request, makeSession())) {
+                // Every attempt rejects, so the body is never reached; draining
+                // runs the retries to exhaustion.
+            }
+        } catch (e) {
+            caught = e;
+        }
+
+        expect(attempts).toBe(1 + RETRY_MAX_RETRIES);
+        expect(isProviderError(caught)).toBe(true);
+        if (isProviderError(caught)) {
+            expect(caught.type).toBe("provider");
+            expect(caught.retryable).toBe(true);
+        }
+    });
+
+    it("does not retry a clean text-less turn and yields only the terminal event", async () => {
+        let attempts = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(
+                async () => okResult(),
+                async () => {
+                    attempts += 1;
+                    return streamWithNoText();
+                },
+            ),
+            resolveBilling: async () => ({}),
+        });
+
+        const events = [];
+        for await (const event of provider.chatStream(request, makeSession())) events.push(event);
+
+        expect(attempts).toBe(1);
+        expect(events).toHaveLength(1);
+        expect(events[0]!.type).toBe("done");
     });
 });
