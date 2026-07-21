@@ -3,10 +3,14 @@ import { createSignal } from "solid-js";
 import { testRender } from "@opentui/solid";
 import { renderFrame } from "../../test_support/tui.ts";
 
+import { size } from "../../lib/design_system.ts";
 import { RunBlock, type RunStepView } from "./run_block.tsx";
 
-/** The rail's window size — the sidebar RUNS embed's `maxSteps`, mirrored so the cases track it. */
-const RAIL_WINDOW = 7;
+/**
+ * The rail's window size, taken from the design-system token the sidebar itself passes rather than
+ * repeated here — the arithmetic these cases assert is only meaningful against the cap that ships.
+ */
+const RAIL_WINDOW = size.railStepRows;
 
 /** A run whose first `done` steps are complete, the next is running, and the rest are queued. */
 function steps(total: number, done: number): RunStepView[] {
@@ -301,6 +305,57 @@ describe("RunBlock parallel steps", () => {
             expect(frame()).toContain("5 earlier steps");
             expect(hasStep(frame(), 9)).toBe(true);
         });
+    });
+});
+
+describe("RunBlock marker click containment", () => {
+    test("a plain marker click is swallowed, but a release carrying a selection still bubbles", async () => {
+        // The wrapper stands in for the ancestors that act on mouse-up: the sidebar RUNS section (opens
+        // the runs picker) and the app root (copy-on-select). A marker click must not reach them; a
+        // selection drag that merely ends on a marker must.
+        let bubbled = 0;
+        const setup = await testRender(
+            () => (
+                <box onMouseUp={() => bubbled++}>
+                    <RunBlock name="cohort-screen" tag="T9S2" done={10} total={20} steps={steps(20, 10)} maxSteps={RAIL_WINDOW} hint={false} heading={false} />
+                </box>
+            ),
+            { width: 40, height: 24 },
+        );
+        try {
+            await setup.renderOnce();
+            const row = (needle: string): { x: number; y: number } => {
+                const lines = setup.captureCharFrame().split("\n");
+                const y = lines.findIndex((l) => l.includes(needle));
+                expect(y).toBeGreaterThanOrEqual(0);
+                return { x: lines[y]!.indexOf(needle), y };
+            };
+
+            const up = row("↑");
+            await setup.mockMouse.click(up.x, up.y);
+            await setup.renderOnce();
+            expect(bubbled).toBe(0);
+
+            // Walk to the top. The final press unmounts the very marker it landed on, so no mouse-up ever
+            // returns to that marker — the gesture that leaves press state remembered on mouse-down
+            // stranded, and with it the next unrelated release wrongly swallowed.
+            while (setup.captureCharFrame().includes("↑")) {
+                const m = row("↑");
+                await setup.mockMouse.click(m.x, m.y);
+                await setup.renderOnce();
+            }
+
+            // A selection drag ending on the surviving marker: the root's copy handler needs this release.
+            const baseline = bubbled;
+            const from = row("S3");
+            const to = row("↓");
+            await setup.mockMouse.drag(from.x, from.y, to.x, to.y);
+            await setup.renderOnce();
+            expect(setup.renderer.getSelection()?.getSelectedText() ?? "").not.toBe("");
+            expect(bubbled).toBe(baseline + 1);
+        } finally {
+            setup.renderer.destroy();
+        }
     });
 });
 

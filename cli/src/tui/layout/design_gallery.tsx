@@ -4,7 +4,7 @@ import { useRenderer } from "@opentui/solid";
 import { okAsync } from "neverthrow";
 import type { DbError, StepExecutionRow } from "@inflexa-ai/harness";
 
-import { GLYPHS, space } from "../../lib/design_system.ts";
+import { GLYPHS, size, space } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
 import { KEYS, chordLabel } from "../keymap.ts";
 import { useDialogBindings, useDialogCancel, useDialogEntry, DialogShowcase } from "../components/dialog/dialog_host.tsx";
@@ -426,14 +426,14 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                 <State n="18" label="sidebar RUNS progress embed — bounded step window, no heading">
                     {/* The sidebar RUNS section renders the newest non-terminal run's progress under
                         that run's own row: heading suppressed (the row above names the run), the same
-                        frontier-positioned step window (maxSteps=7, hint=false) the section passes, while
+                        frontier-positioned step window (the rail step cap, hint=false) the section passes, while
                         the bar and done/total reflect the full run. The elision markers above and below
                         the window name the hidden counts, so the rows on screen always reconcile against
                         done/total — and each one is a click target that slides the window a step its way.
                         Driven from the long-run fixture. */}
                     <text fg={theme().fgMuted}>
                         under the newest run row in the sidebar while it is non-terminal; long runs window their steps behind counted elision markers — click
-                        one to slide the window a step (maxSteps=7, heading off):
+                        one to slide the window a step (rail step cap, heading off):
                     </text>
                     <RunBlock
                         name={mockLongRun.name}
@@ -441,7 +441,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         done={mockLongRun.done}
                         total={mockLongRun.total}
                         steps={longRunSteps}
-                        maxSteps={7}
+                        maxSteps={size.railStepRows}
                         hint={false}
                         heading={false}
                     />

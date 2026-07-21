@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
+import { useRenderer } from "@opentui/solid";
 
 import { theme } from "../theme.ts";
 import { GLYPHS, space, MARKERS } from "../../lib/design_system.ts";
@@ -101,6 +102,8 @@ function stepMark(state: RunStepView["state"]): { glyph: string; role: "success"
  * and the detach/abort affordance.
  */
 export function RunBlock(props: RunBlockProps) {
+    // Read for its selection state alone, on the marker release path — the block renders nothing from it.
+    const renderer = useRenderer();
     // The meter's cell counts. Without `maxSteps` it stays one cell per step — the dialog + gallery full
     // view, where the block owns its whole width. With `maxSteps` (the narrow rail mount, where a
     // 30+-step per-step bar soft-wraps the ~40-column slice) it scales to at most BAR_BUDGET cells,
@@ -201,22 +204,26 @@ export function RunBlock(props: RunBlockProps) {
         setPinnedStart(Math.max(0, Math.min(stepWindow().hiddenBefore + delta, props.steps.length - max)));
     }
 
-    // Whether the in-flight mouse gesture began on one of this block's elision markers. The shift fires on
-    // mouse-DOWN (these are controls, not drag targets, and firing on the press means a selection drag that
-    // merely ends here can never trigger one), so the matching mouse-UP has to be swallowed as well: the
-    // sidebar's RUNS section opens the runs picker on mouse-up, and an un-stopped release would both scroll
-    // the window and pop a dialog over it. A release that did NOT start on a marker is the tail of someone
-    // else's gesture — a text-selection drag crossing the rail — and still bubbles to the root's copy
-    // handler. Mirrors the click-containment bookkeeping the dialog host does for its scrim.
-    let pressedMarker = false;
+    // The shift fires on mouse-DOWN: these are controls, not drag targets, and acting on the press means a
+    // selection drag that merely ends here can never trigger one.
     function pressMarker(delta: number, e: { stopPropagation(): void }): void {
-        pressedMarker = true;
         e.stopPropagation();
         shiftWindow(delta);
     }
+
+    // The matching mouse-UP has to be contained too, because the sidebar's RUNS section opens the runs
+    // picker on mouse-up — an un-stopped release would scroll the window AND pop a dialog over it on the
+    // same press. The one release worth letting through is the tail of a text-selection drag that happened
+    // to end on a marker: the root's copy-on-select handler needs to see it, and the section's own
+    // activation already ignores selection-carrying releases, so letting it bubble cannot open anything.
+    //
+    // Decided from the LIVE SELECTION rather than from press state remembered on mouse-down. A flag can
+    // outlive its gesture: pressing a marker that then reaches the list's end unmounts that very marker,
+    // so no mouse-up ever arrives to clear it, and the next unrelated release landing there would be
+    // swallowed — losing a copy. Reading the selection has no lifetime to get wrong, and mirrors the guard
+    // `openProfileFromSidebar`/`openRunsFromSidebar` already apply on the same gesture.
     function releaseMarker(e: { stopPropagation(): void }): void {
-        if (!pressedMarker) return;
-        pressedMarker = false;
+        if (renderer.getSelection()?.getSelectedText()) return;
         e.stopPropagation();
     }
     return (

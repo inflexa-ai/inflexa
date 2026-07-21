@@ -3,7 +3,7 @@ import { testRender } from "@opentui/solid";
 import { parseColor, rgbToHex, type RGBA } from "@opentui/core";
 import type { JSX } from "solid-js";
 
-import { DEFAULT_THEME_ID, GLYPHS, themes } from "../lib/design_system.ts";
+import { DEFAULT_THEME_ID, GLYPHS, size, themes } from "../lib/design_system.ts";
 import { contrast } from "../test_support/contrast.ts";
 import { setTheme, syntaxStyle, theme } from "./theme.ts";
 import { AskPrompt } from "./components/ask_prompt.tsx";
@@ -263,7 +263,7 @@ const BLOCKS: BlockCase[] = [
                 done={mockLongRun.done}
                 total={mockLongRun.total}
                 steps={mockLongRun.steps}
-                maxSteps={6}
+                maxSteps={size.railStepRows}
                 hint={false}
                 heading={false}
             />
