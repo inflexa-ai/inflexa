@@ -16,7 +16,7 @@ OmniPath is a comprehensive database of molecular interactions (PPI, TF-target, 
 
 Then read it with the reader its format actually calls for — these circulate as CSV, TSV, and R `.rda` depending on the source, and a wrong-format read fails immediately. Match the organism too: a human network over mouse data runs happily and returns meaningless results.
 
-**Be honest when a dataset is absent.** General OmniPath interaction data (PPI, kinase-substrate, ligand-receptor) is not currently part of the reference data available to you. If you resolve it and it is not there, say so and proceed with what the analysis can support — do not silently substitute a different network, and do not fabricate edges.
+**Resolve the network, then read what it says it holds.** The OmniPath interaction set is in the reference inventory as a static bulk export — the same content this web API returns, as a file. It is an opt-in download, so resolve it by what it is before planning on it and expect it may not be staged. Two things about it decide whether your code is correct, and both are stated in its entry rather than here: it carries several organisms in one table and must be filtered to yours, and it has two identifier columns where only one holds gene symbols. If it does not resolve, say so and proceed with what the analysis can support — do not silently substitute a different network, and do not fabricate edges.
 
 Regulon and pathway-weight files are frequently distributed as R `.rda` (this is
 how PROGENy and DoRothEA are published), which pandas cannot open — those need

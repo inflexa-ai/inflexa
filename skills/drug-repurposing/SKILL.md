@@ -25,11 +25,15 @@ Choose the repurposing strategy based on available data:
    - **Input**: ranked gene list from DE analysis
      (sign(log2FC) * -log10(pvalue)), **plus** a set of drug
      perturbation profiles.
-   - **Reference-data caveat**: no drug-perturbation signature
-     dataset (LINCS L1000, CMap build, or equivalent) is provisioned,
-     and the sandbox has no network access to fetch one. Search the
-     workspace for staged perturbation data before planning this
-     strategy. If none is present, say so and switch to a
+   - **Reference-data caveat**: a drug-perturbation signature
+     collection is in the reference inventory as an opt-in download,
+     so resolve it up front and expect it may not be staged. It
+     arrives as directional gene sets — one up set and one down set
+     per experiment — and connectivity is the difference between
+     their two enrichment scores, so pair them by their shared term
+     prefix and never score one alone. Failing that, search the
+     workspace for staged perturbation data. If neither is present,
+     say so and switch to a
      target-, network-, or genetics-based strategy — do not invent a
      signature path, and do not substitute drug-target gene sets for
      perturbation profiles and still call the output a connectivity
@@ -57,12 +61,17 @@ Choose the repurposing strategy based on available data:
    - See `references/repurposing-methods.md` for network proximity
      scoring.
    - **Input**: disease gene set + drug-target mapping + PPI network.
-   - **Reference-data caveat**: no PPI network is provisioned as
-     reference data, and it cannot be downloaded from the sandbox.
-     The network must already be staged in the workspace. If it is
-     not, report the gap rather than constructing a placeholder
-     network — proximity z-scores from an invented graph are
-     meaningless.
+   - **Reference-data caveat**: a genome-scale scored PPI network is
+     in the reference inventory as an opt-in download, so resolve it
+     before planning on it and expect it may not be staged. It is
+     keyed on internal protein identifiers and ships a companion
+     mapping table — read the entry's stated contents rather than
+     assuming symbols. Score it to high confidence before measuring
+     distances: the unfiltered graph is dense enough that proximity
+     stops discriminating. If nothing resolves, and none is staged in
+     the workspace either, report the gap rather than constructing a
+     placeholder network — proximity z-scores from an invented graph
+     are meaningless.
    - **Output**: drugs ranked by proximity z-score.
    - Closer proximity = more likely to modulate disease biology.
 

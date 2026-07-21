@@ -45,13 +45,21 @@ per environment, so confirm what you have before committing to a method.
 | MSigDB Hallmark (H) | First pass, curated, low redundancy (50 gene sets) | The reliable default — human and mouse |
 | Reactome | Detailed pathway hierarchy, good for mechanistic interpretation | Normally available |
 | WikiPathways | Community-curated pathways, per species | Normally available |
-| MSigDB C2:CP | Canonical pathways (Reactome, BioCarta, PID) | Only if available in your environment — do not assume |
-| MSigDB C5:GO | Gene Ontology (BP, CC, MF) -- high redundancy, use with collapse | Only if available in your environment — do not assume |
+| MSigDB C5:GO | Gene Ontology — the mechanism-level step down from hallmark, when "which process" needs a real answer | In the inventory, human and mouse, split into BP / CC / MF |
+| MSigDB C6 oncogenic | Which oncogene or tumour-suppressor perturbation a tumour profile resembles | In the inventory, human only — upstream publishes no mouse counterpart |
+| MSigDB C7 immunologic | Immune cell state, stimulation and activation contrasts | In the inventory, human and mouse |
 | KEGG | Metabolic and signaling pathways with topology | **Not available.** License forbids redistribution, so KEGG is not staged; `enrichKEGG()`, `gseKEGG()`, KEGGREST, and Enrichr's KEGG libraries all need network access and will fail. Use Reactome or WikiPathways instead. |
 
-Start with hallmark unless the question demands finer granularity. If a GO or
-canonical-pathway analysis is required and those collections are not in your
-environment, say so rather than silently substituting a different database.
+Start with hallmark unless the question demands finer granularity. Everything
+above other than KEGG is resolvable from the reference inventory, but like every
+reference dataset it is provisioned per environment — resolve what you need
+before committing to a method, and if it is absent say so rather than silently
+substituting a different database.
+
+GO sets are nested, so a parent and its children share most of their members and
+surface together as a block of correlated hits. Collapse them before reporting a
+count, and pick one branch deliberately: testing BP, CC and MF together triples
+the multiple-testing burden when the question usually names one of them.
 
 ## Redundancy Reduction
 

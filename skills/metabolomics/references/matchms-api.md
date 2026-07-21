@@ -213,7 +213,7 @@ score = mod_cosine.pair(reference, query)
 
 ## Spectral Library Matching Workflow
 
-**Resolve the reference library before you write this script, and check it exists.** No spectral library — MassBank, HMDB, GNPS, MoNA, or any other — is currently in the reference inventory, and there is no network egress to fetch one. Ask for the library by what it is, never by a path or filename: reference data is provisioned per-environment, so the directory and the filename vary and neither is yours to assume.
+**Resolve the reference library before you write this script, and check it exists.** An experimental MS/MS library is in the reference inventory, but as an opt-in download rather than part of a default install — so it is resolvable and may not be staged. Ask for it by what it is, never by a path or filename: reference data is provisioned per-environment, so the directory and the filename vary and neither is yours to assume. Read the resolved entry's stated contents before filtering — it says which records are true fragmentation spectra and which ionisation modes are covered, and both of those filters have to be applied before matching means anything.
 
 If no library is available, **report that plainly and stop the annotation step there** — hand back the preprocessed query spectra and the feature table with m/z, RT, and adduct/isotope annotation, which are complete and useful without compound identifications. Do not invent a library path, do not substitute an unrelated spectrum collection, and do not silently skip matching and present formula guesses as identifications.
 

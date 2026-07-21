@@ -239,9 +239,11 @@ genome_file = "output/genome.txt"
 
 # Alternative: from a FASTA index, if you have a FASTA and its .fai.
 #   cut -f1,2 <resolved>.fai > output/genome.txt
-# The only genome FASTA in the reference inventory is a PGx-scoped GRCh38 bundle
-# shipped as a .tar; the store is read-only, so it must be extracted into your
-# working directory before anything can read it or its index.
+# Genome sequence for human and mouse is in the reference inventory as an opt-in
+# download, and its index ships alongside it — so this route needs no index
+# build, which matters because the store is read-only and an index is written
+# next to the sequence it indexes. Check the entry's stated contig naming first:
+# it does not match the 'chr'-prefixed convention the annotation files here use.
 ```
 
 If you have no BAM and no FASTA index, resolve the staged chromosome-sizes file for your build. If that is absent too, say so and skip the operations that require a genome file — do not invent a chromosome-sizes path.

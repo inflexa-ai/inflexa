@@ -59,11 +59,18 @@ describe("reference-data catalog", () => {
             "wikipathways-rat",
             "msigdb-hallmark-human",
             "msigdb-hallmark-mouse",
+            "msigdb-go-human",
+            "msigdb-go-mouse",
+            "msigdb-oncogenic-human",
+            "msigdb-immunologic-human",
+            "msigdb-immunologic-mouse",
             "collectri-human",
             "progeny-human",
             "progeny-mouse",
             "dorothea-human",
             "dorothea-mouse",
+            "omnipath-interactions",
+            "string-ppi-human",
             "gtex-v8",
             "hpa-proteinatlas",
             "celltypist-immune",
@@ -76,11 +83,17 @@ describe("reference-data catalog", () => {
             "gencode-mouse",
             "ucsc-chrom-sizes-human",
             "ucsc-chrom-sizes-mouse",
+            "ensembl-genome-human",
+            "ensembl-genome-mouse",
             "encode-blacklist-human",
             "encode-blacklist-mouse",
+            "ucsc-liftover-chains-human",
+            "ucsc-liftover-chains-mouse",
             "clinvar-grch38",
             "silva-dada2",
             "unite-dada2",
+            "lincs-l1000-chem-pert",
+            "massbank-spectra",
             "pharmcat-grch38-fasta",
             "cellsnp-common-snps-hg38",
             "eagle-genetic-map-hg38",
@@ -94,6 +107,12 @@ describe("reference-data catalog", () => {
     // hundreds of MB (or GB) the user did not ask for: the all-species NCBI mapping tables, the
     // Reactome mapping TSVs, the 443 MB tonsil reference, the amplicon taxonomy training sets,
     // the 842 MB PharmCAT genome bundle, and the variant-phasing set whose panel alone is 12.4 GB.
+    // Also opt-in on size: the ~800 MB indexed genome sequences, the two interaction networks,
+    // the 137 MB spectral library and the 2.1 GB perturbation-signature collection. And opt-in
+    // on scope rather than size, because they answer
+    // one field's question: the oncogenic and immunologic gene-set collections. The GO sets and
+    // the liftOver chains are deliberately NOT here — a few MB that unblock a whole class of
+    // work is the same trade the chromosome-sizes entries already make.
     it("recommends every dataset except the very large or domain-specific opt-in downloads", () => {
         const notRecommended = REFERENCE_DATA_CATALOG.datasets.filter((dataset) => !dataset.recommendation.recommended).map(({ id }) => id);
 
@@ -101,12 +120,21 @@ describe("reference-data catalog", () => {
             "ncbi-gene2ensembl",
             "ncbi-gene2refseq",
             "reactome-mappings",
+            "msigdb-oncogenic-human",
+            "msigdb-immunologic-human",
+            "msigdb-immunologic-mouse",
+            "omnipath-interactions",
+            "string-ppi-human",
             "azimuth-tonsil",
             "gencode-human",
             "gencode-mouse",
+            "ensembl-genome-human",
+            "ensembl-genome-mouse",
             "clinvar-grch38",
             "silva-dada2",
             "unite-dada2",
+            "lincs-l1000-chem-pert",
+            "massbank-spectra",
             "pharmcat-grch38-fasta",
             "cellsnp-common-snps-hg38",
             "eagle-genetic-map-hg38",
@@ -133,6 +161,12 @@ describe("reference-data catalog", () => {
             "github.com",
             "raw.githubusercontent.com",
             "ftp.ebi.ac.uk",
+            "ftp.ensembl.org",
+            "archive.omnipathdb.org",
+            "string-db.org",
+            "stringdb-downloads.org",
+            "lincsportal.ccs.miami.edu",
+            "lincs-dcic.s3.amazonaws.com",
             "hgdownload.soe.ucsc.edu",
             "www.gencodegenes.org",
             "www.arb-silva.de",
@@ -185,7 +219,7 @@ describe("reference-data catalog", () => {
     // Wrong-species reference data still runs and silently produces wrong numbers, so a
     // single-organism dataset must say which one; multi-species sources correctly omit it.
     it("labels every single-organism dataset with its organism", () => {
-        const multiSpecies = new Set([
+        const organismAgnostic = new Set([
             "ncbi-gene2ensembl",
             "ncbi-gene2refseq",
             "reactome-pathways",
@@ -194,9 +228,13 @@ describe("reference-data catalog", () => {
             // Microbial/fungal community references — a whole domain of life each, not one organism.
             "silva-dada2",
             "unite-dada2",
+            // Human, mouse and rat interactions in one table; upstream publishes no per-organism split.
+            "omnipath-interactions",
+            // Chemistry, not biology: a fragmentation spectrum belongs to a compound, not a species.
+            "massbank-spectra",
         ]);
         for (const dataset of REFERENCE_DATA_CATALOG.datasets) {
-            expect(dataset.organism === undefined).toBe(multiSpecies.has(dataset.id));
+            expect(dataset.organism === undefined).toBe(organismAgnostic.has(dataset.id));
         }
     });
 
@@ -289,17 +327,27 @@ describe("reference-data catalog", () => {
                 "eagle-genetic-map-hg38",
                 "encode-blacklist-human",
                 "encode-blacklist-mouse",
+                "ensembl-genome-human",
+                "ensembl-genome-mouse",
                 "gencode-human",
                 "gencode-mouse",
                 "gtex-v8",
                 "hpa-proteinatlas",
+                "lincs-l1000-chem-pert",
+                "massbank-spectra",
+                "msigdb-go-human",
+                "msigdb-go-mouse",
                 "msigdb-hallmark-human",
                 "msigdb-hallmark-mouse",
+                "msigdb-immunologic-human",
+                "msigdb-immunologic-mouse",
+                "msigdb-oncogenic-human",
                 "ncbi-gene-human",
                 "ncbi-gene-mouse",
                 "ncbi-gene-rat",
                 "ncbi-gene2ensembl",
                 "ncbi-gene2refseq",
+                "omnipath-interactions",
                 "panglaodb-markers",
                 "pharmcat-grch38-fasta",
                 "progeny-human",
@@ -307,8 +355,11 @@ describe("reference-data catalog", () => {
                 "reactome-mappings",
                 "reactome-pathways",
                 "silva-dada2",
+                "string-ppi-human",
                 "ucsc-chrom-sizes-human",
                 "ucsc-chrom-sizes-mouse",
+                "ucsc-liftover-chains-human",
+                "ucsc-liftover-chains-mouse",
                 "uniprot-idmapping-human",
                 "uniprot-idmapping-mouse",
                 "uniprot-idmapping-rat",
