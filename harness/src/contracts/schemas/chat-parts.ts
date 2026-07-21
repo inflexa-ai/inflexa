@@ -115,7 +115,7 @@ export const RunStartedPartSchema = z.object({
 
 // ── DAG State ───────────────────────────────────────────────────────
 
-export const StepStatusSchema = z.enum(["pending", "running", "completed", "failed"]);
+export const StepStatusSchema = z.enum(["pending", "queued", "running", "completed", "failed", "skipped"]);
 
 export const DagStepStateSchema = z
     .object({
