@@ -2,8 +2,8 @@ name: Sandbox Image Acceptance
 
 # Acceptance — the after-build, "as a user" validation (see design.md). It runs on
 # a FRESH machine with none of the builder's affordances and obtains the store the
-# way it is actually consumed: it PULLS the just-published sandbox image for this
-# arch from GHCR and boots it directly (the store is baked at /mnt/libs/current, no
+# way it is actually consumed: it PULLS the published sandbox image for this arch
+# from GHCR and boots it directly (the store is baked at /mnt/libs/current, no
 # mount), then runs the suite (scripts/lib-store-validate). The extracted tarballs
 # are cut from that same image, so validating the image validates the managed
 # mount's content too.
@@ -11,11 +11,27 @@ name: Sandbox Image Acceptance
 # It is NON-GATING: `latest` was already advanced by the build. This run reports a
 # per-arch results table to the step summary and a green/red status for review —
 # it promotes nothing and rolls nothing back.
+#
+# TWO ways in:
+#   * workflow_run — the automatic path, after a *successful* "Build Sandbox Images".
+#     It reads the candidate artifact that build uploaded (exact per-arch image+version).
+#   * workflow_dispatch — the manual path. Because acceptance validates the PUBLISHED
+#     image, it does not need a green build or its artifact: give it a `version`
+#     (default `latest`) and it resolves the arch's top image straight from GHCR,
+#     mirroring the build's own python-r→python fallback. This is what to use when a
+#     build published the images but then failed a later step (e.g. tarball packing),
+#     which makes the run `failure` and skips the automatic path.
 
 on:
   workflow_run:
     workflows: ["Build Sandbox Images"]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Published image version to validate, e.g. 20260721-14213e2. Empty = the current multi-arch :latest."
+        required: false
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}
@@ -26,8 +42,9 @@ permissions:
 
 jobs:
   acceptance:
-    # Only when the build succeeded (a fully-failed build has nothing to check).
-    if: github.event.workflow_run.conclusion == 'success'
+    # Manual runs always proceed; automatic runs only when the build succeeded
+    # (a fully-failed build has no candidate artifact to read).
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     strategy:
       fail-fast: false
       # Arch list — keep in lock-step with the build workflow matrix and its
@@ -45,11 +62,23 @@ jobs:
       packages: read
     env:
       ARCH: ${{ matrix.arch }}
+      IMAGE_PYTHON_R: ghcr.io/${{ github.repository_owner }}/sandbox-python-r
+      IMAGE_PYTHON: ghcr.io/${{ github.repository_owner }}/sandbox-python
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Automatic path only: the artifact carries the exact image+version the build
+      # recorded. Manual runs skip it and resolve from GHCR in the next step.
       - name: Download candidate metadata (from the build run)
+        if: github.event_name == 'workflow_run'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: lib-store-candidate-${{ matrix.arch }}
@@ -61,25 +90,39 @@ jobs:
         id: candidate
         run: |
           set -euo pipefail
-          VERSION=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json'))['version'])")
-          IMAGE=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json')).get('image',''))")
-          if [ -z "$IMAGE" ]; then
-            echo "::notice::No candidate image for linux-${ARCH}; nothing to validate."
-            echo "present=false" >> "$GITHUB_OUTPUT"
-          else
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual: resolve the arch's top image from GHCR, preferring python-r
+            # over python (same ladder the build's top_image uses). An explicit
+            # version pins the per-arch tag; empty falls back to the multi-arch
+            # :latest, which `docker pull` resolves to this runner's arch.
+            VERSION="${{ inputs.version }}"
+            IMAGE=""
+            for repo in "$IMAGE_PYTHON_R" "$IMAGE_PYTHON"; do
+              if [ -n "$VERSION" ]; then cand="${repo}:${VERSION}-${ARCH}"; else cand="${repo}:latest"; fi
+              if docker buildx imagetools inspect "$cand" >/dev/null 2>&1; then IMAGE="$cand"; break; fi
+            done
+            if [ -z "$IMAGE" ]; then
+              echo "::error::No published sandbox-python[-r] image found for version '${VERSION:-latest}' arch '${ARCH}'."
+              exit 1
+            fi
+            [ -z "$VERSION" ] && VERSION=latest
             echo "present=true" >> "$GITHUB_OUTPUT"
             echo "version=$VERSION" >> "$GITHUB_OUTPUT"
             echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-            echo "Candidate for linux-${ARCH}: $VERSION ($IMAGE)"
+            echo "Manual validation target for linux-${ARCH}: $IMAGE"
+          else
+            VERSION=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json'))['version'])")
+            IMAGE=$(python3 -c "import json;print(json.load(open('candidate/linux-${ARCH}.json')).get('image',''))")
+            if [ -z "$IMAGE" ]; then
+              echo "::notice::No candidate image for linux-${ARCH}; nothing to validate."
+              echo "present=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "present=true" >> "$GITHUB_OUTPUT"
+              echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+              echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+              echo "Candidate for linux-${ARCH}: $VERSION ($IMAGE)"
+            fi
           fi
-
-      - name: Log in to GHCR
-        if: steps.candidate.outputs.present == 'true'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull the published sandbox image
         if: steps.candidate.outputs.present == 'true'
