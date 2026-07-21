@@ -2,11 +2,24 @@
 
 R/Bioconductor package for amplicon sequence variant (ASV) inference from 16S and ITS amplicon sequencing data. Resolves exact biological sequences at single-nucleotide resolution without OTU clustering.
 
-> **dada2 is not in this environment's library store.** `library(dada2)` will fail, and with no network egress it cannot be installed at runtime. **Verify before planning any raw-FASTQ workflow around it**, and expect it to be missing. This reference remains correct for the moment dada2 is staged, but do not build a plan on it without checking first.
+> **ASV inference runs; taxonomy assignment is the step that may not.** dada2 is staged,
+> so `filterAndTrim` through `removeBimeraDenovo` executes on raw demultiplexed FASTQ and
+> produces the ASV table, the ASV sequences, and per-step read tracking.
 >
-> **The reachable route is to start downstream of ASV inference.** Everything after the ASV table is fully installed — `phyloseq`, `vegan`, `mia`/`miaViz`, `ANCOMBC`, `ALDEx2`, `Maaslin2`, and Python `biom-format` / `scikit-bio`. If you were handed a feature table (BIOM, a QIIME2 export, or a counts CSV) plus taxonomy, the pack's whole analytical arc — diversity, ordination, PERMANOVA, compositional differential abundance — runs normally. Note also that **no SILVA or UNITE training set is in the reference inventory**, so even with dada2 present, taxonomy assignment from raw reads would not be runnable.
+> `assignTaxonomy` and `addSpecies` are the exception: they need a marker-matched training
+> set. **SILVA (16S/18S) and UNITE (ITS) are in the reference inventory, but as opt-in
+> downloads rather than part of a default install** — so resolve one by what it is before
+> planning on it, and expect that it may not be present. If none is available, run the
+> pipeline through chimera removal and hand back the ASV table, sequences, and read
+> tracking — that is a complete, useful result, and the sequences can be classified later.
+> Report the taxonomy gap explicitly and note that the training set can be provisioned; do
+> not substitute a general-purpose sequence database, do not invent a path to one, and do
+> not drop the step silently.
 >
-> If you were handed raw FASTQ and dada2 is absent, say so plainly, name what would need to be provisioned (dada2 plus a marker-matched training set, or a pre-computed feature table), and stop — do not emit a pipeline that cannot execute, and do not improvise ASV inference from scratch.
+> Everything downstream of the ASV table is also installed — `phyloseq`, `vegan`,
+> `mia`/`miaViz`, `ANCOMBC`, `ALDEx2`, `Maaslin2`, and Python `biom-format` /
+> `scikit-bio` — so a pre-computed feature table remains an equally valid entry point when
+> that is what you were handed.
 
 **Input paths below are placeholders.** `fastq_dir`, `metadata_path`, and the training-set variables stand for inputs you were handed — reached by absolute path beneath the read-only analysis root. Do not assume a directory layout and do not hardcode one; use the paths you were given. Output paths (`output/`, `figures/`) are relative to your working directory and are yours to create.
 
@@ -262,13 +275,13 @@ taxa <- assignTaxonomy(
 
 | You need | Ask for | Standard sources |
 |-|-|-|
-| 16S genus-level taxonomy | A DADA2-formatted taxonomy training FASTA for 16S | SILVA (v138.1 is the common release) |
+| 16S genus-level taxonomy | A DADA2-formatted taxonomy training FASTA for 16S | SILVA |
 | 16S species-level assignment | A DADA2-formatted species-assignment FASTA for 16S | SILVA species assignment |
 | ITS fungal taxonomy | A DADA2-formatted taxonomy training FASTA for ITS | UNITE general release, all eukaryotes |
 
 The data contract matters more than the name. `assignTaxonomy()` needs the **DADA2-formatted training** version of a database: a gzipped FASTA whose headers are semicolon-delimited taxonomy strings from Kingdom down (`Bacteria;Firmicutes;Bacilli;…`), not accession-style headers. `addSpecies()` needs the **species-assignment** version, a different file whose headers are `ID Genus species`. The two are not interchangeable, and passing a plain sequence database to either produces an immediate parse failure or, worse, an all-`NA` taxonomy table. Match the marker region too — SILVA against ITS reads, or UNITE against 16S reads, runs to completion and returns nonsense.
 
-**SILVA and UNITE training sets are not currently in the reference inventory.** If you look and they are not there, report that taxonomy assignment cannot be run and hand back the ASV table, sequences, and read tracking, which are complete and useful without it. Do not invent a path, do not substitute a general-purpose sequence database, and do not drop the taxonomy step silently.
+**SILVA and UNITE training sets are in the reference inventory, but as opt-in downloads rather than part of a default install.** Resolve one before planning on it. If it is not there, report that taxonomy assignment cannot be run and that the training set can be provisioned, then hand back the ASV table, sequences, and read tracking, which are complete and useful without it. Do not invent a path, do not substitute a general-purpose sequence database, and do not drop the taxonomy step silently.
 
 ```r
 # 16S: `silva_train_path` and `silva_species_path` are paths you resolved,
@@ -586,7 +599,7 @@ saveRDS(taxa, "output/taxonomy.rds")
 - **Merge requires sufficient overlap.** If `mergePairs` drops too many reads, the `truncLen` values are too aggressive. Calculate: `fwd_truncLen + rev_truncLen - amplicon_length >= 20` for adequate overlap.
 - **Column names of seqtab are DNA sequences.** The ASV table uses full DNA sequences as column names, not short IDs. Rename to ASV1, ASV2, etc. after the pipeline is complete, preserving the sequence-to-ID mapping.
 - **Reference databases must match the marker.** Use SILVA for 16S, UNITE for ITS. Using the wrong database produces nonsensical taxonomy rather than an error. The reference FASTA must also be the DADA2-formatted training version — semicolon-delimited taxonomy headers, not accession headers — and `addSpecies()` needs the separate species-assignment file, not the training set.
-- **Reference FASTAs are paths, never bare filenames.** `assignTaxonomy(seqtab, "something.fa.gz")` resolves against the working directory and fails there; pass a path resolved from the reference data available to you. There is no network egress, so fetching a training set at runtime is not an option — and SILVA and UNITE training sets are not currently in the reference inventory. When they are absent, report it and deliver the ASV table without taxonomy; never invent a path or quietly skip the step.
+- **Reference FASTAs are paths, never bare filenames.** `assignTaxonomy(seqtab, "something.fa.gz")` resolves against the working directory and fails there; pass a path resolved from the reference data available to you. There is no network egress, so fetching a training set at runtime is not an option: SILVA and UNITE are in the reference inventory, but they are opt-in downloads, so a given environment may not have them staged. When one is absent, report it and deliver the ASV table without taxonomy; never invent a path or quietly skip the step.
 - **Chimera removal removes ASVs, not reads.** `removeBimeraDenovo` removes chimeric sequences but the read count typically drops only 1-10%. If >25% of reads are lost, upstream steps (trimming, error learning) need investigation.
 - **Pool for rare taxa.** `pool = FALSE` (default) processes samples independently and may miss rare sequences. Use `pool = "pseudo"` when detecting low-abundance cross-sample variants matters. Full `pool = TRUE` is memory-intensive for large datasets.
 - **Track reads through every step.** Always build the tracking table (input -> filtered -> denoised -> merged -> nonchim). A sharp drop at any step indicates a problem: large loss at filterAndTrim means poor quality or wrong truncLen; large loss at mergePairs means insufficient overlap; large loss at removeBimeraDenovo means upstream contamination or poor error models.

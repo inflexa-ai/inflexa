@@ -13,7 +13,7 @@ user runs directly.
 
 | Image | Is | Adds | Who runs it |
 |-|-|-|-|
-| [`sandbox-base/`](./sandbox-base) | The lean base: R 4.6.0, Python 3.12, Node 20, and the Go `sandbox-server` that speaks the harness exec protocol. Its `/mnt/libs/current` is **empty**. | — | The **managed** service, which pulls it per node and mounts the per-track library tarballs read-only. Kept lean because a few hundred MB of packages would be a real cold-start tax. |
+| [`sandbox-base/`](./sandbox-base) | The lean base: R 4.6.0, Python 3.12, Node 20, Chromium, and the Go `sandbox-server` that speaks the harness exec protocol. Its `/mnt/libs/current` is **empty**. | — | The **managed** service, which pulls it per node and mounts the per-track library tarballs read-only. Kept lean because a few hundred MB of packages would be a real cold-start tax — Chromium is the one deliberate exception, since the managed path mounts `kaleido` onto this image and would otherwise have nothing to render figures with. |
 | [`sandbox-python/`](./sandbox-python) | `FROM sandbox-base` | The Python libraries, the bioconda CLI tools (samtools, bcftools, bedtools, …), and the Node package(s) (echarts). | OSS users who don't need R. |
 | [`sandbox-python-r/`](./sandbox-python-r) | `FROM sandbox-python` | The R libraries (CRAN, Bioconductor, GitHub). The full analysis environment. | OSS users — the default, most complete variant. |
 

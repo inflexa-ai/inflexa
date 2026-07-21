@@ -2,7 +2,7 @@
 
 Python wrapper around the BEDTools command-line suite. Provides a pythonic interface for genomic interval manipulation with seamless pandas integration.
 
-**Filenames in these examples are placeholders.** `peaks.bed` stands for a file you produced in this step; `genes.gtf` / `genes.bed` stand for reference annotation you must **resolve before you write the script**, asking for it by what it *is* rather than by a path — reference data is provisioned per-environment, so the directory, the filename, and the genome build all vary and none are yours to assume. Pass the resolved absolute path. A genome GTF/BED annotation and a chromosome-sizes file are **not currently in the reference inventory**: if you look and they are not there, report it and proceed with the interval operations that need no annotation, rather than inventing a path or skipping the step silently.
+**Filenames in these examples are placeholders.** `peaks.bed` stands for a file you produced in this step; `genes.gtf` / `genes.bed` stand for reference annotation you must **resolve before you write the script**, asking for it by what it *is* rather than by a path — reference data is provisioned per-environment, so the directory, the filename, and the genome build all vary and none are yours to assume. Pass the resolved absolute path. GENCODE gene annotation and UCSC chromosome-sizes files are **in the reference inventory** — chromosome sizes as a default install, the annotation as an opt-in download. Resolve what you need before writing the script; if it is absent, report it and proceed with the interval operations that need no annotation, rather than inventing a path or skipping the step silently.
 
 ## BedTool Construction
 
@@ -221,7 +221,9 @@ result = (
 
 ## Genome File Requirements
 
-Many operations require a genome file (chromosome sizes). **`pybedtools.chromsizes("hg38")` is not usable here** — it queries UCSC over the network and there is no egress. Derive the genome file from data you already have:
+Many operations require a genome file (chromosome sizes). **`pybedtools.chromsizes("hg38")` is not usable here** — it queries UCSC over the network and there is no egress. Two offline routes, in this order:
+
+**Prefer your own BAM header when you have one.** UCSC chromosome-sizes files are in the reference inventory (hg38 and mm39, installed by default), and resolving one is the right move when you have no aligned reads. But a BAM header is derived from the exact build your intervals were mapped to, so it cannot disagree with them on contig naming or length — whereas a staged file can, silently. If you resolve a staged one, check its build and its `chr` prefixing against your data first.
 
 ```python
 # PREFERRED: generate from a BAM header. Your aligned reads already carry the
@@ -242,7 +244,7 @@ genome_file = "output/genome.txt"
 # working directory before anything can read it or its index.
 ```
 
-If you have neither a BAM nor a FASTA index, say so and skip the operations that require a genome file — do not invent a chromosome-sizes path.
+If you have no BAM and no FASTA index, resolve the staged chromosome-sizes file for your build. If that is absent too, say so and skip the operations that require a genome file — do not invent a chromosome-sizes path.
 
 ## Temporary File Management
 
@@ -264,7 +266,7 @@ atexit.register(pybedtools.cleanup)
 ## Gotchas
 
 - **Input must be sorted** for `merge()`, `complement()`, `genomecov()`, and `cluster()`. Always call `.sort()` first.
-- **Genome file required** for `slop()`, `flank()`, `complement()`, `genomecov()`, and `random()`. Without it you get cryptic errors. Build one from your BAM header (see Genome File Requirements) — the built-in `pybedtools.chromsizes()` lookup needs network egress and always fails here.
+- **Genome file required** for `slop()`, `flank()`, `complement()`, `genomecov()`, and `random()`. Without it you get cryptic errors. Build one from your BAM header, or resolve a staged chromosome-sizes file (see Genome File Requirements) — the built-in `pybedtools.chromsizes()` lookup needs network egress and always fails here.
 - **Coordinate system**: BED is 0-based half-open. GFF/GTF is 1-based inclusive. pybedtools handles this internally but be aware when converting to/from pandas.
 - **Temp files accumulate**: pybedtools creates temporary files for each operation. Call `pybedtools.cleanup()` periodically or register it with `atexit`.
 - **to_dataframe() column naming**: Default column names depend on the number of columns. For non-standard BED files, always pass explicit `names=`.

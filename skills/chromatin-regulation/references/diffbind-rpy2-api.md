@@ -108,14 +108,21 @@ dba_obj = diffbind.dba_contrast(
 dba_obj = diffbind.dba_analyze(
     dba_obj,
     method=diffbind.DBA_DESEQ2,    # DBA_DESEQ2 (default) or DBA_EDGER
-    # bBlacklist / bGreylist default to TRUE. Both need reference data that is
-    # NOT in the inventory here (an ENCODE blacklist region set; GreyListChIP
-    # plus genome annotation), and DiffBind fetches them over the network, which
-    # is blocked — so leaving them on fails the analyze step. Turn them off,
-    # and say in your output that peaks were not blacklist-filtered.
+    # Leave BOTH off here: TRUE makes DiffBind resolve its own reference data over
+    # the network, which is blocked, so the analyze step fails outright. Apply the
+    # blacklist yourself beforehand (see below) — an ENCODE blacklist region set IS
+    # in the inventory. Greylists need GreyListChIP plus control reads and stay off.
     bBlacklist=False,
     bGreylist=False,
 )
+
+# Blacklist-filter explicitly, BEFORE analyze, from the staged region set. Passing
+# DiffBind a DBA_BLACKLIST_* constant would trigger the blocked download; passing a
+# GRanges you loaded yourself does not.
+#   NOTE: rtracklayer's import() is `import_` in rpy2 — `import` is a Python keyword.
+rtracklayer = importr("rtracklayer")
+blacklist_gr = rtracklayer.import_(blacklist_path)   # resolved, build-matched BED
+dba_obj = diffbind.dba_blacklist(dba_obj, blacklist=blacklist_gr, greylist=False)
 
 # Using edgeR instead
 # dba_obj = diffbind.dba_analyze(dba_obj, method=diffbind.DBA_EDGER)
@@ -226,5 +233,5 @@ report_df.to_csv("diffbind_results.csv", index=False)
 - **DiffBind v3 changes**: DiffBind v3+ changed the default analysis engine and normalization. The `dba.normalize()` function is new in v3. Check your installed version.
 - **Contrast direction**: Positive fold change means enriched in group1 (first group in contrast). The naming depends on the order specified in `dba.contrast()`.
 - **Memory**: dba.count() loads all BAM reads overlapping peaks into memory. For large datasets (many samples or broad peaks), this can require substantial RAM.
-- **Blacklists are not available here**: `dba.analyze()` defaults `bBlacklist`/`bGreylist` to TRUE, and DiffBind resolves the ENCODE blacklist and the greylist genome annotation over the network. There is no egress and no runtime install, so the defaults fail the step outright. Pass `bBlacklist=False, bGreylist=False`, and record in your output that differential peaks were not blacklist-filtered — do not point the parameter at an invented path, and do not drop the caveat.
+- **Never let DiffBind resolve its own blacklist**: `dba.analyze()` defaults `bBlacklist`/`bGreylist` to TRUE, and DiffBind fetches the ENCODE blacklist and the greylist genome annotation over the network. There is no egress, so the defaults fail the step outright. Always pass `bBlacklist=False, bGreylist=False`. An ENCODE blacklist region set IS in the reference inventory, so resolve it, load it as a GRanges, and apply it with `dba.blacklist()` before analyzing. Check its build against your peaks first — the mouse blacklist is published for mm10 only, and applying it to GRCm39 coordinates masks the wrong regions without erroring. If no build-matched blacklist is available, proceed unfiltered and record in your output that differential peaks were not blacklist-filtered — do not point the parameter at an invented path, and do not drop the caveat.
 - **minOverlap in dba.count**: Controls the consensus peak set. `minOverlap=2` means a peak must be called in at least 2 samples. Increase for stricter consensus.

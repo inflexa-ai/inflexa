@@ -385,6 +385,29 @@ ENV PIP_TARGET="${INFLEXA_LIB_ROOT}/python/site-packages"
 ENV R_LIBS_USER="${INFLEXA_LIB_ROOT}/r/github"
 ENV NPM_CONFIG_PREFIX="${INFLEXA_LIB_ROOT}/node"
 
+# --- Integration check: this store's kaleido against the base's chromium.
+# The python-builder load check only `import`s each package, and `import kaleido`
+# succeeds whether or not a browser exists — kaleido 1.x resolves one lazily, at the
+# first write_image(). So a missing or broken renderer stays GREEN through the load
+# check and surfaces only when an analysis tries to export a figure. It also cannot
+# be checked in python-builder, which is FROM the bare BASE_IMAGE and has no chromium;
+# this is the first stage where both halves exist. Render for real, as the
+# unprivileged runtime user, and require non-degenerate output.
+RUN <<'PYEOF' cat > /tmp/kaleido-check.py
+import os
+
+import plotly.graph_objects as go
+
+out = "/tmp/kaleido-check.png"
+go.Figure(go.Scatter(x=[1, 2, 3], y=[3, 1, 2])).write_image(out, width=500, height=350)
+size = os.path.getsize(out)
+if size < 1000:
+    raise SystemExit(f"ERROR: kaleido produced a degenerate {size}-byte PNG")
+print(f"kaleido/chromium OK: {size}-byte PNG via {os.environ.get('BROWSER_PATH')}")
+PYEOF
+RUN su sandbox -s /bin/bash -c 'python3 /tmp/kaleido-check.py' \
+    && rm -f /tmp/kaleido-check.py /tmp/kaleido-check.png
+
 USER sandbox
 WORKDIR /workspace
 

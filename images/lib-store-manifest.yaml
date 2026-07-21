@@ -8,414 +8,446 @@ python_version: "3.12"
 base_image: "rocker/r-ver:4.6.0@sha256:6f05a1a8b8c52328f181593923909b01cbfd14c9caea93bf75ddc65e806d8eac"
 
 r:
-  cran:
-    # Core data science / infrastructure
-    - data.table
-    - jsonlite
-    - httr2
-    - yaml
-    - cli
-    - glue
-    - fs
-    - rlang
+    cran:
+        # Core data science / infrastructure
+        - data.table
+        - jsonlite
+        - httr2
+        - yaml
+        - cli
+        - glue
+        - fs
+        - rlang
 
-    # Statistics / modeling
-    - survival
-    - lme4
-    - glmnet
-    - nlme
-    - mgcv
-    - minpack.lm
-    - quadprog
-    - Rfast
+        # Statistics / modeling
+        - survival
+        - lme4
+        - glmnet
+        - nlme
+        - mgcv
+        - minpack.lm
+        - quadprog
+        - Rfast
+        - ashr # DESeq2 lfcShrink(type="ashr") — the contrast= capable shrinkage
+          # backend (apeglm only accepts coef=). Same Suggests gap as apeglm;
+          # CRAN-only, which is why the pair is split across two tracks.
 
-    # Visualization
-    - ggplot2
-    - plotly
-    - pheatmap
-    - corrplot
-    - patchwork
-    - cowplot
-    - reshape2
-    - ComplexUpset
+        # Visualization
+        - ggplot2
+        - plotly
+        - pheatmap
+        - corrplot
+        - patchwork
+        - cowplot
+        - reshape2
+        - ComplexUpset
 
-    # Omics helpers / general multivariate analysis
-    - remotes
-    - optparse
-    - matrixStats
-    - Rcpp
-    - RcppArmadillo
-    - BiocManager
-    - devtools
-    - ggrepel
-    - pROC
-    - vegan
-    - babelgene
-    - msigdbr
-    - tibble
-    - dplyr
-    - tidyr
-    - readr
-    - purrr
-    - stringr
-    - igraph
-    - openxlsx2
-    - ontologyIndex
+        # Omics helpers / general multivariate analysis
+        - remotes
+        - optparse
+        - matrixStats
+        - Rcpp
+        - RcppArmadillo
+        - BiocManager
+        - devtools
+        - ggrepel
+        - pROC
+        - vegan
+        - babelgene
+        - msigdbr
+        - tibble
+        - dplyr
+        - tidyr
+        - readr
+        - purrr
+        - stringr
+        - igraph
+        - openxlsx2
+        - ontologyIndex
 
-    # Transitive CRAN deps needed by Bioconductor packages. Listing them
-    # explicitly ensures r-cran-* debs are installed in the CRAN stage and
-    # end up in /staging/r/cran/ (BiocManager would otherwise pull them
-    # via bspm+apt during the BIOC stage, where they land in
-    # /usr/lib/R/site-library/ and never make it into the tarball).
-    - DBI # AnnotationDbi, RSQLite
-    - RSQLite # AnnotationDbi, ensembldb
-    - XML # biomaRt, many BioC
-    - CVXR # ANCOMBC
-    - DescTools # ANCOMBC
-    - energy # ANCOMBC
-    - rjags # infercnv Imports rjags; rjags's .onLoad dlopens libjags.so.
-      # Listing here pulls r-cran-rjags via r2u, which apt-installs
-      # libjags4 into the build container so the install-time load test
-      # passes. (Runtime libjags is provided by `jags` in sandbox-base.)
-    - otelsdk # Bioc 3.22+ instrumentation: imported by AnnotationDbi,
-      # biomaRt, ensembldb, sva, GSVA, singscore, WGCNA,
-      # minfi, VariantAnnotation, ANCOMBC, Maaslin2, etc.
-      # r-cran-otel (API) is pulled in automatically; r-cran-otelsdk
-      # (runtime/exporter) must be listed or load-time fails.
+        # Transitive CRAN deps needed by Bioconductor packages. Listing them
+        # explicitly ensures r-cran-* debs are installed in the CRAN stage and
+        # end up in /staging/r/cran/ (BiocManager would otherwise pull them
+        # via bspm+apt during the BIOC stage, where they land in
+        # /usr/lib/R/site-library/ and never make it into the tarball).
+        - DBI # AnnotationDbi, RSQLite
+        - RSQLite # AnnotationDbi, ensembldb
+        - XML # biomaRt, many BioC
+        - CVXR # ANCOMBC
+        - DescTools # ANCOMBC
+        - energy # ANCOMBC
+        - emdbook # apeglm Imports it — needed at RUNTIME, so it has to be staged
+          # here rather than picked up mid-BIOC-stage
+        - RcppEigen # apeglm LinkingTo
+        - RcppNumerical # apeglm LinkingTo. Bioconductor has no Linux binaries, so
+          # apeglm compiles from source and needs both header packages present
+          # before the BIOC stage runs.
+        - RcppParallel # dada2 Imports it, and dada2's C++ needs its headers to compile
+        - hwriter # ShortRead (dada2 dep)
+        - latticeExtra # ShortRead (dada2 dep)
+        - rjags # infercnv Imports rjags; rjags's .onLoad dlopens libjags.so.
+          # Listing here pulls r-cran-rjags via r2u, which apt-installs
+          # libjags4 into the build container so the install-time load test
+          # passes. (Runtime libjags is provided by `jags` in sandbox-base.)
+        - otelsdk # Bioc 3.22+ instrumentation: imported by AnnotationDbi,
+          # biomaRt, ensembldb, sva, GSVA, singscore, WGCNA,
+          # minfi, VariantAnnotation, ANCOMBC, Maaslin2, etc.
+          # r-cran-otel (API) is pulled in automatically; r-cran-otelsdk
+          # (runtime/exporter) must be listed or load-time fails.
 
-    # Translational medicine / biomarker analysis
-    - survminer # Publication-ready survival plots, cutpoint optimization
-    - OptimalCutpoints # Cutpoint optimization methods
-    - timeROC # Time-dependent ROC for survival biomarkers
+        # Translational medicine / biomarker analysis
+        - survminer # Publication-ready survival plots, cutpoint optimization
+        - OptimalCutpoints # Cutpoint optimization methods
+        - timeROC # Time-dependent ROC for survival biomarkers
 
-    # PK/PD simulation and population modeling
-    - mrgsolve # ODE-based PK/PD simulation (depends on Rcpp, RcppArmadillo)
-    - nlmixr2 # Nonlinear mixed-effects population PK/PD modeling
-    - pksensi # Global sensitivity analysis for PK models
+        # PK/PD simulation and population modeling
+        - mrgsolve # ODE-based PK/PD simulation (depends on Rcpp, RcppArmadillo)
+        - nlmixr2 # Nonlinear mixed-effects population PK/PD modeling
+        - pksensi # Global sensitivity analysis for PK models
 
-    # Mendelian randomization
-    - MendelianRandomization # MR analysis methods (IVW, Egger, weighted median)
+        # Mendelian randomization
+        - MendelianRandomization # MR analysis methods (IVW, Egger, weighted median)
 
-    # Single-cell — Seurat ecosystem (required by Azimuth, ProjecTILs, copykat)
-    - Seurat
-    - SeuratObject
+        # Single-cell — Seurat ecosystem (required by Azimuth, ProjecTILs, copykat)
+        - Seurat
+        - SeuratObject
 
-  bioconductor:
-    # Core Bioconductor infrastructure
-    - BiocGenerics
-    - S4Vectors
-    - KEGGREST # AnnotationDbi transitive dep
-    - IRanges
-    - BiocParallel
-    - GenomicRanges
-    - SummarizedExperiment
-    - DelayedArray
-    - HDF5Array
+    bioconductor:
+        # Core Bioconductor infrastructure
+        - BiocGenerics
+        - S4Vectors
+        - KEGGREST # AnnotationDbi transitive dep
+        - IRanges
+        - BiocParallel
+        - GenomicRanges
+        - SummarizedExperiment
+        - DelayedArray
+        - HDF5Array
 
-    # Annotation
-    - AnnotationHub
-    - AnnotationDbi
-    - org.Hs.eg.db
-    - org.Mm.eg.db
-    - org.Rn.eg.db
-    - org.Dr.eg.db
-    - org.Cf.eg.db
-    - org.Bt.eg.db
-    - ensembldb
-    - EnsDb.Hsapiens.v86
-    - EnsDb.Mmusculus.v79
-    - biomaRt
+        # Annotation
+        - AnnotationHub
+        - AnnotationDbi
+        - org.Hs.eg.db
+        - org.Mm.eg.db
+        - org.Rn.eg.db
+        - org.Dr.eg.db
+        - org.Cf.eg.db
+        - org.Bt.eg.db
+        - ensembldb
+        - EnsDb.Hsapiens.v86
+        - EnsDb.Mmusculus.v79
+        - biomaRt
 
-    # Differential expression
-    - DESeq2
-    - edgeR
-    - limma
-    - sva
-    - variancePartition
+        # Differential expression
+        - DESeq2
+        - apeglm # DESeq2 lfcShrink(type="apeglm") — the default shrinkage
+          # estimator and the one skills/bulk-transcriptomics prescribes. DESeq2
+          # only Suggests it, so nothing pulls it transitively and every
+          # lfcShrink() call errors without it. Bioconductor-only (no CRAN
+          # mirror); its CRAN-side deps are listed in the transitive block above.
+          # The CRAN half of the pair is `ashr`.
+        - edgeR
+        - limma
+        - sva
+        - variancePartition
 
-    # Pathway / enrichment
-    - GSVA
-    - fgsea
-    - clusterProfiler
-    - EnhancedVolcano
-    - singscore
-    - rrvgo
+        # Pathway / enrichment
+        - GSVA
+        - fgsea
+        - clusterProfiler
+        - EnhancedVolcano
+        - singscore
+        - rrvgo
 
-    # Network
-    - WGCNA
+        # Network
+        - WGCNA
 
-    # Single-cell
-    - SingleCellExperiment
-    - scater
-    - scran
-    - batchelor
-    - zellkonverter
-    - ComplexHeatmap
+        # Single-cell
+        - SingleCellExperiment
+        - scater
+        - scran
+        - batchelor
+        - zellkonverter
+        - ComplexHeatmap
 
-    # Single-cell additions for tumor-immune analyses
-    - infercnv
-    - glmGamPoi
-    # UCell: scGate dep. Pre-install from Bioc to avoid pulling it via
-    # bioconductor.org during the github stage (which has no retry on its own
-    # transitive deps).
-    - UCell
+        # Single-cell additions for tumor-immune analyses
+        - infercnv
+        - glmGamPoi
+        # UCell: scGate dep. Pre-install from Bioc to avoid pulling it via
+        # bioconductor.org during the github stage (which has no retry on its own
+        # transitive deps).
+        - UCell
 
-    # Spatial
-    - BayesSpace
+        # Spatial
+        - BayesSpace
 
-    # CyTOF / mass cytometry
-    - flowCore
-    - CATALYST
-    - FlowSOM
-    - ConsensusClusterPlus
-    - diffcyt
+        # CyTOF / mass cytometry
+        - flowCore
+        - CATALYST
+        - FlowSOM
+        - ConsensusClusterPlus
+        - diffcyt
 
-    # Microarray
-    - oligo
-    - affy
+        # Microarray
+        - oligo
+        - affy
 
-    # Methylation
-    - minfi
-    - ChAMP
-    - DMRcate
-    - missMethyl
-    - EpiDISH
-    - dmrseq
-    - DSS
+        # Methylation
+        - minfi
+        - ChAMP
+        - DMRcate
+        - missMethyl
+        - EpiDISH
+        - dmrseq
+        - DSS
 
-    # Genomics
-    - DiffBind
-    - rtracklayer
-    - Rsamtools
-    - Biostrings
-    - GenomicAlignments
-    - VariantAnnotation
+        # Genomics
+        - DiffBind
+        - rtracklayer
+        - Rsamtools
+        - Biostrings
+        - GenomicAlignments
+        - VariantAnnotation
 
-    # Methylation clock
-    - methylclock
+        # Methylation clock
+        - methylclock
 
-    # Proteomics / metabolomics
-    - MSnbase
-    - Spectra
-    - xcms
-    - CAMERA
-    - DEP
-    - MSstats
-    - MSstatsTMT
+        # Proteomics / metabolomics
+        - MSnbase
+        - Spectra
+        - xcms
+        - CAMERA
+        - DEP
+        - MSstats
+        - MSstatsTMT
 
-    # Multi-omics
-    - mixOmics
-    - CARNIVAL
+        # Multi-omics
+        - mixOmics
+        - CARNIVAL
 
-    # Microbiome
-    - ANCOMBC
-    - ALDEx2
-    - Maaslin2
-    - phyloseq
-    - mia
-    - miaViz
+        # Microbiome
+        - dada2 # The 16S/ITS ENTRY POINT: raw demultiplexed FASTQ -> ASV table.
+          # Everything else in this section is downstream — it consumes an
+          # abundance table and cannot produce one. Without dada2 the amplicon
+          # pack could only be entered with a pre-computed feature table, so a
+          # user arriving with raw reads had nowhere to start.
+        - ShortRead # dada2's FASTQ I/O layer. Listed rather than left transitive
+          # so a break in it surfaces under its own name in the load check
+          # instead of as an opaque dada2 failure.
+        - ANCOMBC
+        - ALDEx2
+        - Maaslin2
+        - phyloseq
+        - mia
+        - miaViz
 
-  github:
-    # Cell type deconvolution
-    - AlmogAngel/xCell2
+    github:
+        # Cell type deconvolution
+        - AlmogAngel/xCell2
 
-    # Immune deconvolution
-    - omnideconv/immunedeconv
+        # Immune deconvolution
+        - omnideconv/immunedeconv
 
-    # CyTOF batch correction
-    - saeyslab/CytoNorm
-    - biosurf/cyCombine
+        # CyTOF batch correction
+        - saeyslab/CytoNorm
+        - biosurf/cyCombine
 
-    # PK/PD simulation
-    - InsightRX/PKPDsim
+        # PK/PD simulation
+        - InsightRX/PKPDsim
 
-    # Mendelian randomization
-    - MRCIEU/TwoSampleMR
+        # Mendelian randomization
+        - MRCIEU/TwoSampleMR
 
-    # Spatial deconvolution
-    - dmcable/spacexr
+        # Spatial deconvolution
+        - dmcable/spacexr
 
-    # Tumor-immune label transfer + classifier substrates
-    # Pin Signac to 1.16.0 — 1.17.0 removed RunChromVAR (chromVAR dropped from
-    # Bioc 3.23), but Azimuth's NAMESPACE still imports it
-    # (satijalab/azimuth#291, unfixed upstream).
-    - stuart-lab/signac@1.16.0
-    - satijalab/azimuth
-    - mojaveazure/seurat-disk
-    - carmonalab/scGate
-    - carmonalab/STACAS
-    - carmonalab/ProjecTILs
+        # Tumor-immune label transfer + classifier substrates
+        # Pin Signac to 1.16.0 — 1.17.0 removed RunChromVAR (chromVAR dropped from
+        # Bioc 3.23), but Azimuth's NAMESPACE still imports it
+        # (satijalab/azimuth#291, unfixed upstream).
+        - stuart-lab/signac@1.16.0
+        - satijalab/azimuth
+        - mojaveazure/seurat-disk
+        - carmonalab/scGate
+        - carmonalab/STACAS
+        - carmonalab/ProjecTILs
 
-    # Malignant cell calling
-    - navinlabcode/copykat
-    - kharchenkolab/numbat
+        # Malignant cell calling
+        - navinlabcode/copykat
+        - kharchenkolab/numbat
 
 python:
-  pip:
-    common:
-      # Core scientific / storage layer
-      - numpy
-      - pandas
-      - scipy
-      # Pin JAX <0.10: JAX 0.10.0 removed xla_pmap_p from jax.extend.core.primitives
-      # but numpyro (pertpy transitive dep) still imports it as of 0.20.1.
-      - "jax<0.10"
-      - pydantic
-      - pyyaml
-      - pyarrow
-      - h5py
-      - zarr
-      - "dask[array,dataframe]"
-      - fsspec
-      - joblib
-      - rpy2
-      # Floor grpcio-tools: orbax-checkpoint (transitive via pertpy → flax) is otherwise
-      # resolved to grpcio-tools 1.30.0, whose setup.py imports the now-unavailable
-      # pkg_resources and fails to build under modern setuptools.
-      - "grpcio-tools>=1.60"
+    pip:
+        common:
+            # Core scientific / storage layer
+            - numpy
+            - pandas
+            - scipy
+            # Pin JAX <0.10: JAX 0.10.0 removed xla_pmap_p from jax.extend.core.primitives
+            # but numpyro (pertpy transitive dep) still imports it as of 0.20.1.
+            - "jax<0.10"
+            - pydantic
+            - pyyaml
+            - pyarrow
+            - h5py
+            - zarr
+            - "dask[array,dataframe]"
+            - fsspec
+            - joblib
+            - rpy2
+            # Floor grpcio-tools: orbax-checkpoint (transitive via pertpy → flax) is otherwise
+            # resolved to grpcio-tools 1.30.0, whose setup.py imports the now-unavailable
+            # pkg_resources and fails to build under modern setuptools.
+            - "grpcio-tools>=1.60"
 
-      # Visualization
-      - matplotlib
-      - seaborn
-      - plotly
-      - kaleido
-      - nbformat
-      - Pillow
-      - upsetplot
+            # Visualization
+            - matplotlib
+            - seaborn
+            - plotly
+            - kaleido # Resolves to 1.x, which no longer embeds a browser — it drives
+              # one over CDP instead. fig.write_image() therefore depends on the
+              # chromium staged in images/sandbox-base/Dockerfile (same arrangement
+              # as rjags above needing `jags` there). Pinning back to <1.0 would
+              # re-embed the browser but strands us on an unmaintained release.
+            - nbformat
+            - Pillow
+            - upsetplot
 
-      # ML / statistics
-      - scikit-learn
-      - "statsmodels>=0.14.5"
-      - formulaic
-      - pingouin
-      - lifelines
-      - scikit-survival
-      - scikit-posthocs
-      - xgboost
-      - shap
-      - optuna
-      - networkx
-      - PyWGCNA
+            # ML / statistics
+            - scikit-learn
+            - "statsmodels>=0.14.5"
+            - formulaic
+            - pingouin
+            - lifelines
+            - scikit-survival
+            - scikit-posthocs
+            - xgboost
+            - shap
+            - optuna
+            - networkx
+            - PyWGCNA
 
-      # Single-cell
-      - anndata
-      - mudata
-      - scanpy
-      - scvi-tools
-      - muon
-      - "decoupler[full]>=2.1.2"
-      - "pydeseq2>=0.5.3"
-      - "gseapy>=1.1.11"
-      - leidenalg
-      - louvain
-      - umap-learn
-      - scikit-misc
-      - pertpy
-      - palantir
-      - scvelo
-      - harmonypy
-      - celltypist
-      - symphonypy
-      - pyscenic
-      - "cellrank>=2"
-      - cell2location
-      - rpds-py
-      - scglue
+            # Single-cell
+            - anndata
+            - mudata
+            - scanpy
+            - scvi-tools
+            - muon
+            - "decoupler[full]>=2.1.2"
+            - "pydeseq2>=0.5.3"
+            - "gseapy>=1.1.11"
+            - leidenalg
+            - louvain
+            - umap-learn
+            - scikit-misc
+            - pertpy
+            - palantir
+            - scvelo
+            - harmonypy
+            - celltypist
+            - symphonypy
+            - pyscenic
+            - "cellrank>=2"
+            - cell2location
+            - rpds-py
+            - scglue
 
-      # Spatial
-      - spatialdata
-      - spatialdata-io
-      - spatialdata-plot
-      - squidpy
-      - xarray
-      - shapely
-      - geopandas
-      - rasterio
+            # Spatial
+            - spatialdata
+            - spatialdata-io
+            - spatialdata-plot
+            - squidpy
+            - xarray
+            - shapely
+            - geopandas
+            - rasterio
 
-      # Genomics
-      - biopython
-      - cyvcf2
-      - pyfaidx
-      - pyranges
-      - pybedtools
-      - pyBigWig
+            # Genomics
+            - biopython
+            - cyvcf2
+            - pyfaidx
+            - pyranges
+            - pybedtools
+            - pyBigWig
 
-      # Immune / flow / mass-spec
-      - scirpy
-      - pytometry
-      - pyteomics
-      - pymzml
-      - matchms
-      # Floor spectrum-utils: unconstrained, the resolver selects 0.4.2, which
-      # requires numba 0.53.1 — whose setup.py hard-rejects Python >=3.10 and so
-      # fails to build on the py3.12 base (both arches). 0.5.0 needs numba >=0.60,
-      # which ships py3.12 wheels.
-      - "spectrum-utils>=0.5"
-      - ms-deisotope
+            # Immune / flow / mass-spec
+            - scirpy # Also the TCR/BCR repertoire track. immunarch is NOT the
+              # counterpart to add here: it is an R/CRAN package, and the PyPI
+              # name is a 0.0.1.dev0 reservation by the same author whose
+              # modules are literally zero bytes. It installs and imports
+              # cleanly, so the load check passes it and packages.txt then
+              # advertises a capability that does not exist — which is why it
+              # sat here undetected. Repertoire work goes through scirpy.
+            - pytometry
+            - pyteomics
+            - pymzml
+            - matchms
+            # Floor spectrum-utils: unconstrained, the resolver selects 0.4.2, which
+            # requires numba 0.53.1 — whose setup.py hard-rejects Python >=3.10 and so
+            # fails to build on the py3.12 base (both arches). 0.5.0 needs numba >=0.60,
+            # which ships py3.12 wheels.
+            - "spectrum-utils>=0.5"
+            - ms-deisotope
 
-      # Microbiome
-      - scikit-bio
-      - biom-format
+            # Microbiome
+            - scikit-bio
+            - biom-format
 
-      # 3D genomics
-      - cooler
-      - cooltools
-      - bioframe
+            # 3D genomics
+            - cooler
+            - cooltools
+            - bioframe
 
-      # Cheminformatics
-      - rdkit
-      - datamol
-      # mordredcommunity, not mordred: upstream mordred 1.2.0 is unmaintained and
-      # still calls `np.float`, removed in NumPy 1.24, so importing it fails on any
-      # current NumPy. The community fork carries the same `mordred` module name,
-      # so imports are unchanged.
-      - mordredcommunity
-      - deepchem[jax]
+            # Cheminformatics
+            - rdkit
+            - datamol
+            # mordredcommunity, not mordred: upstream mordred 1.2.0 is unmaintained and
+            # still calls `np.float`, removed in NumPy 1.24, so importing it fails on any
+            # current NumPy. The community fork carries the same `mordred` module name,
+            # so imports are unchanged.
+            - mordredcommunity
+            - deepchem[jax]
 
-      # Reporting / export
-      - weasyprint
-      - Jinja2
-      - python-pptx
-      - orjson
-      - conorm
-      - matplotlib-venn
-      - adjustText
-      - openpyxl
+            # Reporting / export
+            - weasyprint
+            - Jinja2
+            - python-pptx
+            - orjson
+            - conorm
+            - matplotlib-venn
+            - adjustText
+            - openpyxl
 
-      # Tools
-      - jupytext
-      - pypdf
-      - python-docx
-      - python-pptx
+            # Tools
+            - jupytext
+            - pypdf
+            - python-docx
 
-      # Multi-omics integration (ensures MOFA+ works)
-      - mofapy2
-      - snfpy
+            # Multi-omics integration (ensures MOFA+ works)
+            - mofapy2
+            - snfpy
 
-      # Immune repertoire analysis
-      - immunarch
+            # Pharmacokinetics
+            - pharmpy-core # Population PK modeling utilities
 
-      # Pharmacokinetics
-      - pharmpy-core # Population PK modeling utilities
-
-    # liana is arch-split: amd64 installs liana[extras] (the extras pull
-    # pyscipopt/SCIP, which has no arm64 build); arm64 installs core liana.
-    # The builder installs common + the target arch and strips nothing itself.
-    #
-    # snapatac2 is amd64-only: PyPI ships manylinux x86_64 wheels but no
-    # linux-aarch64 wheel for any version (only macOS arm64), so on the arm64
-    # build uv falls back to compiling its Rust extension from sdist, which
-    # fails under maturin. Same treatment as the arm64-unavailable bioconda tools.
-    amd64:
-      - "liana[extras]"
-      - "snapatac2>=2.7"
-    arm64:
-      - "liana"
+        # liana is arch-split: amd64 installs liana[extras] (the extras pull
+        # pyscipopt/SCIP, which has no arm64 build); arm64 installs core liana.
+        # The builder installs common + the target arch and strips nothing itself.
+        #
+        # snapatac2 is amd64-only: PyPI ships manylinux x86_64 wheels but no
+        # linux-aarch64 wheel for any version (only macOS arm64), so on the arm64
+        # build uv falls back to compiling its Rust extension from sdist, which
+        # fails under maturin. Same treatment as the arm64-unavailable bioconda tools.
+        amd64:
+            - "liana[extras]"
+            - "snapatac2>=2.7"
+        arm64:
+            - "liana"
 
 # Node packages installed into the store's node subtree (a flat list, not
 # arch-split). echarts backs the chart/report rendering path.
 node:
-  - echarts
+    - echarts
 
 # Build-time dependencies (compilers, -dev headers) are in the builder stages of
 # images/sandbox-python/Dockerfile and images/sandbox-python-r/Dockerfile (not
@@ -431,12 +463,12 @@ node:
 # solve fails on a missing package), so they are amd64-only — the same
 # treatment R gets upstream. The builder installs common + the target arch.
 system_tools:
-  common:
-    - samtools
-    - bcftools
-    - tabix
-    - bedtools
-    - vcftools
-    - mageck # CRISPR screen analysis (MAGeCK)
-  amd64:
-    - plink2 # no linux-aarch64 bioconda build
+    common:
+        - samtools
+        - bcftools
+        - tabix
+        - bedtools
+        - vcftools
+        - mageck # CRISPR screen analysis (MAGeCK)
+    amd64:
+        - plink2 # no linux-aarch64 bioconda build
