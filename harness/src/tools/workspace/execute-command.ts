@@ -139,6 +139,7 @@ export function createExecuteCommandTool(deps: ExecuteCommandDeps) {
                         command,
                         exitCode: result.exitCode,
                         durationMs: result.durationMs,
+                        ...(deps.logger ? { logger: deps.logger } : {}),
                         ...(result.provenance ? { provenance: result.provenance } : {}),
                     });
                 } catch (err) {

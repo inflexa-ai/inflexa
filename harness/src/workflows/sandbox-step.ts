@@ -74,6 +74,18 @@ export interface SandboxStepInput {
     readonly runId: string;
     readonly stepId: string;
     readonly agentId: string;
+    /**
+     * Step ids this step declared as dependencies. Load-bearing for lineage:
+     * classification admits a same-run sibling edge only on declaration, so a
+     * collector seeded without this refuses every same-run read — legitimate
+     * declared dependencies included.
+     *
+     * Optional because this is durable DBOS workflow input: a workflow started
+     * under an input shape predating the field recovers without it. Absence
+     * reads as an empty declaration list, which under-captures sibling edges
+     * rather than admitting unstable ones.
+     */
+    readonly dependsOn?: readonly string[];
     /** Topological level — persisted on `cortex_step_executions.wave`. */
     readonly level: number;
     /** User-content prompt the agent receives as its initial message. */
@@ -380,6 +392,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
     const lineageCollector = new ProvenanceCollector({
         stepId: input.stepId,
         runId: input.runId,
+        dependsOn: [...(input.dependsOn ?? [])],
     });
 
     // (2a) sandbox.mint — checkpoint the machine's identity (name + HMAC secret)

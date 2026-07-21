@@ -1222,3 +1222,27 @@ describe("executeAnalysis child seed", () => {
         await expect(runExecuteAnalysisBody(bad, deps)).rejects.toThrow(/missing from planStepById/);
     });
 });
+
+describe("executeAnalysis child input projection", () => {
+    it("carries each step's declared dependencies into the child input", async () => {
+        // The child seeds its lineage collector from this field, and lineage
+        // classification admits a same-run sibling edge only on declaration —
+        // so a dropped projection here silently deletes every upstream edge.
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const { deps } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+            ]),
+        });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
+        expect(result.status).toBe("completed");
+
+        expect(dbosState.childInputs.find((i) => i.stepId === "A")!.dependsOn).toEqual([]);
+        expect(dbosState.childInputs.find((i) => i.stepId === "B")!.dependsOn).toEqual(["A"]);
+    });
+});

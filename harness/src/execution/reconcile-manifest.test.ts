@@ -320,3 +320,90 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
         }
     });
 });
+
+describe("reconcileManifestWithDisk — undeclared sibling reads", () => {
+    test("a vanished undeclared sibling read does not fail the step", async () => {
+        // The reported failure: a concurrently-running step wrote a scratch file,
+        // this step's capture layer observed it, and the writer deleted it before
+        // reconcile. Refusing the edge at classification is what leaves nothing
+        // here to attest — reconcile fails a step only over a *tracked* input.
+        const sessionPath = await mkdtemp(join(tmpdir(), "cortex-reconcile-"));
+        const root = join(sessionPath, RID);
+        const outRel = "output/result.csv";
+        try {
+            await mkdir(join(root, "runs/run-001/de/output"), { recursive: true });
+            await writeFile(join(root, "runs/run-001/de", outRel), "result\n1\n");
+
+            const collector = new ProvenanceCollector({ stepId: "de", runId: "run-001", dependsOn: ["qc"] });
+            feedExecFrame({
+                collector,
+                mountRoot: `/${RID}`,
+                command: ["python3", "scripts/de.py"],
+                exitCode: 0,
+                durationMs: 100,
+                provenance: {
+                    disabled: false,
+                    // `norm` is not declared, and its scratch file was never written
+                    // to this tree — exactly the state reconcile would have hit.
+                    reads: [{ path: `/${RID}/runs/run-001/norm/output/_scratch.csv`, layers: ["inotify"] }],
+                    writes: [{ path: `/${RID}/runs/run-001/de/${outRel}`, layers: ["inotify"] }],
+                    deletes: [],
+                },
+            });
+
+            const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: outRel, size: 0, type: "output", hash: "" }];
+
+            const result = await reconcileManifestWithDisk({
+                workspaceRoot: root,
+                resourceId: RID,
+                runId: "run-001",
+                stepId: "de",
+                agentId: "agent-x",
+                manifest,
+                collector,
+            });
+
+            expect(collector.getTrackedInputs()).toEqual([]);
+            expect(result.manifest).toHaveLength(1);
+            expect(result.manifest[0]!.hash).not.toBe("");
+        } finally {
+            await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+
+    test("the same read, if tracked, is still terminal — the refusal is what avoids it", async () => {
+        // Guards the test above from passing vacuously: force the ref into the
+        // collector the way an admissible classification would, and reconcile
+        // still fails fast. Fail-fast on genuine drift is deliberately retained.
+        const sessionPath = await mkdtemp(join(tmpdir(), "cortex-reconcile-"));
+        const root = join(sessionPath, RID);
+        const outRel = "output/result.csv";
+        try {
+            await mkdir(join(root, "runs/run-001/de/output"), { recursive: true });
+            await writeFile(join(root, "runs/run-001/de", outRel), "result\n1\n");
+
+            const collector = new ProvenanceCollector({ stepId: "de", runId: "run-001", dependsOn: ["qc"] });
+            collector.trackInputAccess(`/${RID}`, "runs/run-001/norm/output/_scratch.csv", null, {
+                source: "upstream",
+                stepId: "norm",
+                runId: "run-001",
+            });
+
+            const manifest: ArtifactManifestEntry[] = [{ stepId: "de", runId: "run-001", path: outRel, size: 0, type: "output", hash: "" }];
+
+            await expect(
+                reconcileManifestWithDisk({
+                    workspaceRoot: root,
+                    resourceId: RID,
+                    runId: "run-001",
+                    stepId: "de",
+                    agentId: "agent-x",
+                    manifest,
+                    collector,
+                }),
+            ).rejects.toThrow(/cannot attest input/);
+        } finally {
+            await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+});

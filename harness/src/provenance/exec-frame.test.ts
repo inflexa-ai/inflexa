@@ -8,6 +8,7 @@ import { describe, expect, test } from "bun:test";
 
 import { ProvenanceCollector } from "./collector.js";
 import { feedExecFrame } from "./exec-frame.js";
+import type { Logger, LogFields } from "../lib/logger.js";
 import type { ProvenanceFrame } from "../sandbox/types.js";
 
 const MOUNT = "/a1";
@@ -149,5 +150,154 @@ describe("feedExecFrame", () => {
             provenance: { disabled: true, reads: [{ path: "/a1/data/x.csv", layers: [] }], writes: [], deletes: [] },
         });
         expect(collector.getDataInputs()).toHaveLength(0);
+    });
+});
+
+/** Captures the refusal records so the drop can be asserted as observable. */
+function recordingLogger(): { logger: Logger; warnings: Array<{ msg: string; fields?: LogFields }> } {
+    const warnings: Array<{ msg: string; fields?: LogFields }> = [];
+    const logger: Logger = {
+        debug: () => {},
+        info: () => {},
+        warn: (msg, fields) => {
+            warnings.push({ msg, ...(fields ? { fields } : {}) });
+        },
+        error: () => {},
+        with: () => logger,
+        named: () => logger,
+        errorFields: () => ({}),
+    };
+    return { logger, warnings };
+}
+
+describe("feedExecFrame — undeclared same-run siblings", () => {
+    test("a sibling read is refused, tracked nowhere, and logged with the step it names", () => {
+        const collector = new ProvenanceCollector({ stepId: "T2S2", runId: "run-9", dependsOn: [] });
+        const { logger, warnings } = recordingLogger();
+
+        feedExecFrame({
+            collector,
+            mountRoot: MOUNT,
+            command: ["python3", "scripts/gsea.py"],
+            exitCode: 0,
+            durationMs: 10,
+            logger,
+            provenance: {
+                disabled: false,
+                reads: [{ path: "/a1/runs/run-9/T5S1/output/_ct_for_r_BRAF.csv", layers: ["inotify"] }],
+                writes: [{ path: "/a1/runs/run-9/T2S2/output/gsea.csv", layers: ["inotify"] }],
+                deletes: [],
+            },
+        });
+
+        expect(collector.getTrackedInputs()).toEqual([]);
+        expect(collector.getRecords()[0]!.inputs).toEqual([]);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]!.fields).toMatchObject({ refStepId: "T5S1", refRunId: "run-9" });
+    });
+
+    test("a frame whose every read is refused still records its command", () => {
+        const collector = new ProvenanceCollector({ stepId: "T2S2", runId: "run-9", dependsOn: [] });
+
+        expect(() =>
+            feedExecFrame({
+                collector,
+                mountRoot: MOUNT,
+                command: ["python3", "scripts/gsea.py"],
+                exitCode: 0,
+                durationMs: 10,
+                provenance: {
+                    disabled: false,
+                    reads: [
+                        { path: "/a1/runs/run-9/T5S1/output/a.csv", layers: ["inotify"] },
+                        { path: "/a1/runs/run-9/T4S1/output/b.csv", layers: ["inotify"] },
+                    ],
+                    writes: [{ path: "/a1/runs/run-9/T2S2/output/gsea.csv", layers: ["inotify"] }],
+                    deletes: [],
+                },
+            }),
+        ).not.toThrow();
+
+        const rec = collector.getRecords()[0]!;
+        expect(rec.outputPath).toBe("output/gsea.csv");
+        expect(rec.producer.type).toBe("command");
+        expect(rec.inputs).toEqual([]);
+    });
+
+    test("a deleted sibling scratch file leaves nothing for reconcile to attest", () => {
+        // The reported failure shape: the reading step never declared the writer,
+        // so no ref exists to be hashed when that file later vanishes. Reconcile
+        // fails a step only over a *tracked* input, so an empty tracked set is
+        // exactly what keeps the step alive.
+        const collector = new ProvenanceCollector({ stepId: "T2S2", runId: "run-9", dependsOn: ["T1S1"] });
+
+        feedExecFrame({
+            collector,
+            mountRoot: MOUNT,
+            command: ["python3", "scripts/gsea.py"],
+            exitCode: 0,
+            durationMs: 10,
+            provenance: {
+                disabled: false,
+                reads: [{ path: "/a1/runs/run-9/T5S1/output/_ct_for_r_BRAF.csv", layers: ["inotify"] }],
+                writes: [],
+                deletes: [],
+            },
+        });
+
+        expect(collector.getTrackedInputs()).toEqual([]);
+    });
+
+    test("a sibling-directory write does not normalize onto this step's keyspace", () => {
+        // Phantom writes are inert only because a sibling path fails the
+        // step-prefix strip and so cannot collide with a real artifact key. If
+        // normalization ever stripped any `runs/*/*/` prefix, a neighbour's write
+        // would shadow this step's own output record.
+        const collector = new ProvenanceCollector({ stepId: "T2S2", runId: "run-9", dependsOn: [] });
+
+        feedExecFrame({
+            collector,
+            mountRoot: MOUNT,
+            command: ["python3", "scripts/gsea.py"],
+            exitCode: 0,
+            durationMs: 10,
+            provenance: {
+                disabled: false,
+                reads: [],
+                writes: [{ path: "/a1/runs/run-9/T5S1/output/gsea.csv", layers: ["inotify"] }],
+                deletes: [],
+            },
+        });
+
+        const paths = collector.getRecords().map((r) => r.outputPath);
+        expect(paths).toEqual(["runs/run-9/T5S1/output/gsea.csv"]);
+        expect(paths).not.toContain("output/gsea.csv");
+    });
+
+    test("a declared dependency's edge is unaffected", () => {
+        const collector = new ProvenanceCollector({ stepId: "de", runId: "run-9", dependsOn: ["qc"] });
+
+        feedExecFrame({
+            collector,
+            mountRoot: MOUNT,
+            command: ["Rscript", "scripts/de.R"],
+            exitCode: 0,
+            durationMs: 10,
+            provenance: {
+                disabled: false,
+                reads: [
+                    { path: "/a1/runs/run-9/qc/output/qc.csv", layers: ["r"] },
+                    { path: "/a1/runs/run-9/norm/output/norm.csv", layers: ["inotify"] },
+                ],
+                writes: [{ path: "/a1/runs/run-9/de/output/de.csv", layers: ["inotify"] }],
+                deletes: [],
+            },
+        });
+
+        const inputs = collector.getRecords()[0]!.inputs;
+        expect(inputs).toHaveLength(1);
+        expect(inputs[0]!.source).toBe("upstream");
+        expect(inputs[0]!.stepId).toBe("qc");
+        expect(inputs[0]!.path).toBe("/a1/runs/run-9/qc/output/qc.csv");
     });
 });
