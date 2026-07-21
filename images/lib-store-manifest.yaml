@@ -111,6 +111,32 @@ r:
         # Single-cell — Seurat ecosystem (required by Azimuth, ProjecTILs, copykat)
         - Seurat
         - SeuratObject
+        - SoupX # Ambient RNA removal, the other half of the pair the single-cell
+          # pack names beside CellBender. Its whole Seurat surface is one import
+          # (Read10X); the algorithm runs on plain Matrix objects, so a Seurat
+          # major bump is unlikely to reach it. Every other dep is already here
+          # because Seurat is.
+
+        # Targeted proteomics panels — both are named by
+        # skills/proteomics/references/olink-somascan-api.md, which calls
+        # importr() on them, so their absence broke a documented entry point
+        # rather than merely narrowing one.
+        - OlinkAnalyze # The costly one: hard-Imports arrow and duckdb, which are
+          # the Explore-HT parquet reader, not optional extras. ~108 MB of the
+          # ~187 MB this group adds. Ships its own example data; no network.
+        - SomaDataIO # Reads SomaScan .adat. Pure R, ~5 MB, everything else it
+          # needs is already present.
+
+        # Surrogate variable analysis for methylation
+        - SmartSVA # Unmaintained since 2017 and it calls an UNEXPORTED sva
+          # internal, getFromNamespace("mono", "sva"), at package top level.
+          # `mono` is present in the sva 3.60.0 that Bioc 3.23 ships, so this
+          # works today; if sva ever drops it, `library(SmartSVA)` fails at load
+          # and the load check reports a DROP rather than letting it fail inside
+          # an analysis. Export is `smartsva.cpp` — plain `smartsva` is commented
+          # out of the NAMESPACE. Note it Depends on sva, so on the amd64 r2u
+          # path sva is pulled into the CRAN stage as well as the Bioc one; the
+          # two resolve to the same version today.
 
     bioconductor:
         # Core Bioconductor infrastructure
@@ -224,6 +250,16 @@ r:
         # Multi-omics
         - mixOmics
         - CARNIVAL
+        - cosmosR # BIOCONDUCTOR-ONLY, and this placement is load-bearing: CRAN
+          # carries a DIFFERENT cosmosR (v1.0, archived 2016, Depends xlsx and so
+          # pulls Java). Moving this to the cran: list does not just fetch the
+          # wrong package — no r-cran-cosmosr deb exists, and the amd64 apt step
+          # is transactional, so one unresolvable name installs nothing, leaves
+          # r/cran empty, and trips the non-empty floor. Its prior-knowledge
+          # network ships in-package (meta_network, ~117k interactions), so
+          # unlike most methods of its kind it needs no download. Pulls dorothea
+          # and bcellViper, which are ExperimentData packages — a Bioc repo class
+          # nothing else here draws from.
 
         # Microbiome
         - dada2 # The 16S/ITS ENTRY POINT: raw demultiplexed FASTQ -> ASV table.
@@ -356,9 +392,18 @@ python:
             - palantir
             - scvelo
             - harmonypy
+            - scanorama # The third integration route the single-cell pack names
+              # beside harmony and scVI. Pure Python; its annoy and fbpca deps
+              # publish no cp312 wheels and compile from source, which the
+              # builder stage already does for louvain.
             - celltypist
             - symphonypy
-            - pyscenic
+            - pyscenic # INERT WITHOUT REFERENCE DATA. GRNBoost2 runs on the
+              # counts alone, but the cisTarget pruning step that makes a regulon
+              # a regulon needs ranking databases and a motif-to-TF table, which
+              # are opt-in downloads (`regulon-motifs` in the harness catalog),
+              # not part of this image. Skipping the pruning leaves raw
+              # co-expression, which is not what pySCENIC is for.
             - "cellrank>=2"
             - cell2location
             - rpds-py
@@ -373,6 +418,14 @@ python:
             - shapely
             - geopandas
             - rasterio
+            # Spatial autocorrelation (Moran's I, Getis-Ord G), which the
+            # spatial pack names as PySAL. Deliberately the two libraries that
+            # provide it rather than the `pysal` umbrella: the umbrella is 23
+            # packages and 74 MB, and most of what it adds is not spatial
+            # statistics — regionalisation, network analysis, GWR, an LP solver.
+            # These two are 13 MB because geopandas and shapely are already here.
+            - libpysal
+            - esda
 
             # Genomics
             - biopython

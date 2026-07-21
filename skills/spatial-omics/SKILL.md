@@ -92,7 +92,8 @@ Testing for spatial expression patterns:
 │   └── Geary's C → sq.gr.spatial_autocorr(adata, mode="geary")
 │       Range: 0 (clustered) to >1 (dispersed), 1 = random
 └── Local autocorrelation (per-spot patterns)
-    └── Local Moran's I via custom computation or PySAL
+    └── Local Moran's I / Getis-Ord G via libpysal (spatial weights) + esda
+        Build weights from the spot coordinates, not from a raster grid
 ```
 
 ### Niche / Microenvironment Analysis

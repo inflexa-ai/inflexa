@@ -73,7 +73,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmagick++-6.q16-9t64 libgsl27 libgslcblas0 \
     # Bayesian inference (required by infercnv for posterior CNV calls)
     jags \
-    # Java (for FastQC and other Java-based tools)
+    # MILP solver, as /usr/bin/cbc. CARNIVAL and cosmosR both fall back to
+    # lpSolve, which they carry as a hard dependency and which their own
+    # documentation calls a testing-only solver that "does not scale well with
+    # large PKNs" — against cosmosR's shipped 117k-interaction network it does
+    # not close. Without a real solver those two are installed rather than
+    # usable. Both take a solver by explicit path, so the skill layer has to
+    # pass /usr/bin/cbc; nothing discovers it.
+    coinor-cbc \
+    # Java. NOTHING IN THE IMAGE CURRENTLY USES IT — no Java tool is in the
+    # manifest, so this is ~150 MB carried for a consumer that has not landed
+    # yet. It is kept because PharmCAT is the intended one and its reference
+    # genome is already catalogued; drop this the moment that stops being true.
     default-jre-headless \
     # Shell utilities. `gpg` is not in the base image (only `gpgv`, which apt uses
     # to verify signatures but cannot dearmor a key); the chromium section below

@@ -142,7 +142,8 @@ Any tissue with reference
 
 ```
 M-values + phenotype + covariates
-  → SVA: sva() or SmartSVA to estimate surrogate variables for hidden confounders
+  → SVA: sva(), or SmartSVA for large probe sets — its export is smartsva.cpp(),
+    not smartsva(), which is defined but deliberately not exported
     → limma model: ~ trait + age + sex + cell_proportions + SVs
       → topTable with BH FDR correction
         → Annotate results with gene/CpG island context
