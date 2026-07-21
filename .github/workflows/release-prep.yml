@@ -60,8 +60,13 @@ jobs:
           version=${out#v}
           branch="release/v$version"
 
+          # Same commit as the bump, so the tag release.yml cuts from this
+          # merge already carries matching citation metadata — and so the
+          # version-guard check on this PR passes on its own merits.
+          .github/citation/sync.sh
+
           git checkout -b "$branch"
-          git add cli/package.json
+          git add cli/package.json CITATION.cff
           git commit -s -m "release: v$version"
           git push origin "$branch"
 
