@@ -26,9 +26,9 @@ QC strategy?
 └── Ambient RNA (optional, pre-loaded)
     └── If raw + filtered matrices available → SoupX (R via rpy2)
         Estimates contamination from the empty-droplet profile, then corrects
-        counts. CellBender is NOT available here — do not plan for it; if the
-        deep generative route is genuinely required, say so rather than
-        presenting SoupX as equivalent.
+        counts. Report the estimated contamination fraction alongside the
+        corrected matrix — a correction whose magnitude goes unstated cannot
+        be judged downstream.
 ```
 
 ### Normalization

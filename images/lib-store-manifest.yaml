@@ -111,11 +111,11 @@ r:
         # Single-cell — Seurat ecosystem (required by Azimuth, ProjecTILs, copykat)
         - Seurat
         - SeuratObject
-        - SoupX # Ambient RNA removal, the other half of the pair the single-cell
-          # pack names beside CellBender. Its whole Seurat surface is one import
-          # (Read10X); the algorithm runs on plain Matrix objects, so a Seurat
-          # major bump is unlikely to reach it. Every other dep is already here
-          # because Seurat is.
+        - SoupX # Ambient RNA removal — the staged route for it, and the only
+          # one the single-cell pack names. Its whole Seurat surface is one
+          # import (Read10X); the algorithm runs on plain Matrix objects, so a
+          # Seurat major bump is unlikely to reach it. Every other dep is
+          # already here because Seurat is.
 
         # Targeted proteomics panels — both are named by
         # skills/proteomics/references/olink-somascan-api.md, which calls
