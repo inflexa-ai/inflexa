@@ -116,7 +116,7 @@ are installed:
 
 When you need gene ID conversion, annotation, or organism databases:
 - **AnnotationDbi** + **org.Hs.eg.db** / **org.Mm.eg.db** / **org.Rn.eg.db** / **org.Dr.eg.db** / **org.Cf.eg.db** / **org.Bt.eg.db**: Map between gene symbols, Entrez IDs, Ensembl IDs, UniProt IDs. Use `mapIds()` or `select()`.
-- **biomaRt**: Query Ensembl BioMart for gene annotations, GO terms, orthologs across species. Use `useMart()`, `getBM()`.
+- **biomaRt**: installed, but it queries Ensembl BioMart over the network and the sandbox has no outbound access — so `useMart()` / `getBM()` will not connect. Do annotation offline instead: `org.*.eg.db` via AnnotationDbi (above), `babelgene` for orthologs, or the ID-mapping tables in the reference inventory. Reach for biomaRt only in an environment where network access is confirmed.
 - **ensembldb** + **EnsDb.Hsapiens.v86** / **EnsDb.Mmusculus.v79**: Gene models with coordinates, transcripts, exons. Use `genes()`, `transcripts()`.
 - **babelgene**: Cross-species gene name conversion (human ↔ mouse ↔ rat). Use `orthologs()`.
 

@@ -159,7 +159,7 @@ Charts use transparent backgrounds, `#f1f5f9` grid lines, `#64748b` axis labels.
 - Do not author your own `<header>` or `<footer>` element. The base owns the hero, footer, CDN tags, theme registration, sortable tables, fade-in observer, and sidebar tracking — populate them via the `header_*` / `footer_left` / `sidebar` blocks.
 - Do not rewrite `report.html.j2` from scratch on iteration. Read the existing file, edit in place. Wholesale rewrites lose context the reader has already seen.
 - Do not fabricate numbers, gene names, p-values, or any datum. Only render values present in the analysis files you read.
-- Do not inline large datasets into HTML. Copy CSV/JSON into the shared assets dir via `copy_to_assets`, fetch client-side from `assets/...`.
+- Do not inline large datasets into HTML. Declare each large CSV/JSON as a report **source** so the report step stages it into the shared assets dir, then fetch it client-side from `assets/...`.
 - Do not put `border-radius` on data cards (stat-card, insight-box, data-table). Square corners + `corner-accents` only. Chart panels are the sole exception.
 - Do not use `font-mono` on headings or body prose. Mono is reserved for labels, tags, badges, data values, gene symbols.
 - Do not load fonts from `fonts.googleapis.com` (CSP blocked). Use `cdn.jsdelivr.net` fontsource, which the base already wires.

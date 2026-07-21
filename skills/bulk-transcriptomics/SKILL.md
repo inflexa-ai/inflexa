@@ -81,9 +81,15 @@ Input data?
 
 - **xCell2** (AlmogAngel/xCell2): Cell type deconvolution from bulk expression data. Estimates 64+ cell type scores from bulk RNA-seq. Use when sample-level cell type composition is needed without single-cell data.
 
-### CLI tools (run as shell commands in the sandbox)
+### CLI tools (upstream FASTQ processing)
 
-- **STAR**: Splice-aware RNA-seq aligner. Use for alignment from FASTQ to BAM.
+These bulk RNA-seq workflows normally begin from a **count matrix** the user
+provides; the sandbox does not guarantee any of the upstream aligners/quantifiers
+below. Before planning a from-FASTQ pipeline around one, confirm it is on `PATH`
+(`which <tool>`) — if it is absent, report that and work from the counts you have
+rather than substituting a different step. Tools that may be available for this:
+
+- **STAR**: Splice-aware RNA-seq aligner. FASTQ → BAM.
 - **subread** (featureCounts): Read counting from BAM to gene-level counts.
 - **kallisto**: Pseudoalignment-based RNA-seq quantification (fast, index-based).
 - **salmon**: Pseudoalignment-based RNA-seq quantification (with bias correction).

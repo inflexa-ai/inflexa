@@ -22,7 +22,7 @@ What this means in practice:
 | Array DMR calling (`DMRcate::cpg.annotate(datatype = "array")`) | **Cannot run.** Resolves probe coordinates from the anno package. |
 | Deconvolution from an existing beta matrix (`EpiDISH`) | **Runs.** Self-contained references, no annotation dependency. |
 | Epigenetic clocks (`methylclock`) | Runs on a beta matrix, but needs clock coefficients — see `references/methylclock-api.md`. |
-| Bisulfite-seq (Bismark → `dmrseq` / `DSS`) | **Runs.** No array annotation involved. |
+| Bisulfite-seq (Bismark → `dmrseq` / `DSS`) | **Downstream only.** `dmrseq`/`DSS` run on a methylation/coverage matrix you already have. The upstream Bismark toolchain (Trim Galore, alignment, dedup, extraction) is not guaranteed in the sandbox — verify those binaries before planning a from-FASTQ run (see §2). |
 
 **How to proceed**: verify the annotation package actually loads before building a pipeline around it. If it does not, say so plainly — name the missing package and the step it blocks — and then do the analysis the data *does* support. A beta or M-value matrix that arrives already processed (from GEO, a collaborator, or an upstream step) still supports DMP testing, deconvolution, clocks, and EWAS modelling; only the probe-to-genome annotation is missing, and results can be reported by CpG ID. Do not silently substitute a different array's annotation, and do not present an unannotated result as though it were annotated.
 
@@ -58,6 +58,12 @@ IDAT files
 - ALWAYS verify the correct array annotation: 450K (`IlluminaHumanMethylation450kanno`) vs EPIC (`IlluminaHumanMethylationEPICanno`) vs EPICv2. Wrong annotation silently produces incorrect results. **None of these packages are staged here** — confirm the one you need loads before starting, and if it does not, report the blocker rather than falling back to another platform's annotation (see Environment Constraint above).
 
 ### 2. Bisulfite Sequencing (WGBS / RRBS)
+
+The alignment stages below rely on the Bismark toolchain (Trim Galore, `bismark`,
+`deduplicate_bismark`, `bismark_methylation_extractor`), which is **not guaranteed
+to be installed** — confirm each binary is on `PATH` before building a from-FASTQ
+pipeline, and if it is absent, report that and start from a coverage/methylation
+matrix instead. The downstream DMR steps (`dmrseq`, `DSS`) run either way.
 
 ```
 FASTQ files

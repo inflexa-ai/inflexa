@@ -151,16 +151,12 @@ communities_greedy = list(greedy_modularity_communities(G, weight="weight"))
 from networkx.algorithms.community import label_propagation_communities
 communities_lp = list(label_propagation_communities(G))
 
-# Louvain (requires python-louvain / community package)
-import community as community_louvain
-partition = community_louvain.best_partition(G, weight="weight", resolution=1.0)
-# partition: dict {node: community_id}
-
-# Convert partition to list of sets (consistent with other methods)
-communities_louvain = {}
-for node, comm_id in partition.items():
-    communities_louvain.setdefault(comm_id, set()).add(node)
-communities_louvain = list(communities_louvain.values())
+# Louvain — networkx ships this built-in, so it works without the standalone
+# python-louvain / community package (which may not be installed; verify, or
+# `pip install python-louvain`, if you specifically need community_louvain).
+from networkx.algorithms.community import louvain_communities
+communities_louvain = louvain_communities(G, weight="weight", resolution=1.0, seed=0)
+# communities_louvain: list of sets of nodes (same shape as the other methods)
 
 # Modularity score
 modularity = nx.community.modularity(G, communities_greedy)
@@ -282,7 +278,7 @@ G_loaded = nx.read_graphml("network.graphml")
 
 - `nx.from_pandas_edgelist()` creates an undirected graph by default. Pass `create_using=nx.DiGraph()` for directed networks.
 - `eigenvector_centrality()` may not converge on disconnected graphs. Either use the largest connected component or increase `max_iter`.
-- The `community` package for Louvain (`community_louvain.best_partition()`) is installed as `python-louvain`, not `community`. Import with `import community as community_louvain`.
+- For Louvain, prefer networkx's built-in `louvain_communities()` (from `networkx.algorithms.community`), which is always available. The standalone `community` package (`community_louvain.best_partition()`, distributed on PyPI as `python-louvain`) may not be present — verify it imports, or `pip install python-louvain`, before relying on it.
 - `spring_layout()` is non-deterministic. Set `seed=` for reproducible layouts.
 - `nx.draw_networkx()` renders to the current matplotlib axes. Always call `plt.close(fig)` afterward to avoid memory leaks when generating many plots.
 - `from_pandas_adjacency()` treats all non-zero entries as edges. For weighted networks, ensure the DataFrame contains the actual weights, not just 0/1.
