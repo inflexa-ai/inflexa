@@ -169,16 +169,10 @@ Guaranteed in the sandbox — rely on these freely:
 - **bedtools**: interval arithmetic (intersect, merge, coverage, closest).
 - **vcftools**: VCF filtering/statistics (`--min-alleles`, `--maf`, `--max-missing`, `--weir-fst-pop`).
 
-May not be present — confirm with `which <tool>` before planning around one, and
-if it is absent, report that rather than substituting a different step:
-
-- **mosdepth**: Fast BAM/CRAM depth calculation (per-base, per-window, per-region).
-- **bwa / minimap2**: Read alignment (`bwa mem` for short reads, `minimap2` for long reads).
-- **picard**: MarkDuplicates, CollectInsertSizeMetrics, ValidateSamFile.
-- **freebayes**: Bayesian variant calling.
-- **seqtk / seqkit**: Sequence file manipulation (subsample, stats, convert).
-- **fastqc / multiqc**: Read quality assessment and report aggregation.
-- **fastp**: All-in-one FASTQ preprocessing (trimming, quality filtering, adapter removal).
+This pack starts from aligned reads or called variants. Alignment, duplicate
+marking, primary variant calling and read QC are upstream of it: if you were
+handed FASTQ, say so and stop rather than planning a step around a tool you
+would have to go looking for.
 
 ## References
 

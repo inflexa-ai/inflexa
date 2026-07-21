@@ -22,7 +22,7 @@ What this means in practice:
 | Array DMR calling (`DMRcate::cpg.annotate(datatype = "array")`) | **Cannot run.** Resolves probe coordinates from the anno package. |
 | Deconvolution from an existing beta matrix (`EpiDISH`) | **Runs.** Self-contained references, no annotation dependency. |
 | Epigenetic clocks (`methylclock`) | Runs on a beta matrix, but needs clock coefficients — see `references/methylclock-api.md`. |
-| Bisulfite-seq (Bismark → `dmrseq` / `DSS`) | **Downstream only.** `dmrseq`/`DSS` run on a methylation/coverage matrix you already have. The upstream Bismark toolchain (Trim Galore, alignment, dedup, extraction) is not guaranteed in the sandbox — verify those binaries before planning a from-FASTQ run (see §2). |
+| Bisulfite-seq (`dmrseq` / `DSS`) | **Downstream only.** Both run on a methylation/coverage matrix you already have; bisulfite read alignment and methylation extraction are upstream of this pack (see §2). |
 
 **How to proceed**: verify the annotation package actually loads before building a pipeline around it. If it does not, say so plainly — name the missing package and the step it blocks — and then do the analysis the data *does* support. A beta or M-value matrix that arrives already processed (from GEO, a collaborator, or an upstream step) still supports DMP testing, deconvolution, clocks, and EWAS modelling; only the probe-to-genome annotation is missing, and results can be reported by CpG ID. Do not silently substitute a different array's annotation, and do not present an unannotated result as though it were annotated.
 
@@ -59,20 +59,17 @@ IDAT files
 
 ### 2. Bisulfite Sequencing (WGBS / RRBS)
 
-The alignment stages below rely on the Bismark toolchain (Trim Galore, `bismark`,
-`deduplicate_bismark`, `bismark_methylation_extractor`), which is **not guaranteed
-to be installed** — confirm each binary is on `PATH` before building a from-FASTQ
-pipeline, and if it is absent, report that and start from a coverage/methylation
-matrix instead. The downstream DMR steps (`dmrseq`, `DSS`) run either way.
+**Entry point: a per-CpG coverage/methylation matrix.** Bisulfite read trimming,
+alignment, deduplication and methylation extraction are upstream of this pack. If
+you were handed raw FASTQ, say so and stop rather than planning those stages.
+
+Given a coverage matrix, the steps that belong here:
 
 ```
-FASTQ files
-  → Trim: Trim Galore (adapter + RRBS-specific trimming with --rrbs flag)
-    → Alignment: Bismark (bowtie2 backend, bisulfite-aware)
-      → Deduplication: Bismark deduplicate_bismark (skip for RRBS — no PCR dedup needed)
-        → Methylation extraction: Bismark bismark_methylation_extractor
-          → Coverage filtering: require >= 5x (WGBS) or >= 10x (RRBS) per CpG
-            → Merge CpG strand information (combine + and - strand)
+Per-CpG coverage/methylation matrix
+  → Coverage filtering: require >= 5x (WGBS) or >= 10x (RRBS) per CpG
+    → Merge CpG strand information (combine + and - strand)
+      → DMR calling: dmrseq or DSS
 ```
 
 - WGBS provides genome-wide coverage; RRBS enriches for CpG islands.
