@@ -96,8 +96,9 @@ Differential or condition-specific peak sets
 
 ```
 
-- Motif enrichment is upstream of this pack: it needs a motif database and a genome
-  FASTA, neither of which is staged. Report the gap rather than planning the step.
+- Motif enrichment is upstream of this pack. Genome sequence is resolvable from the
+  reference inventory, but no motif database is staged and nothing here scans one —
+  so the step cannot be assembled from parts. Report the gap rather than planning it.
 
 ### 6. TF Footprinting
 

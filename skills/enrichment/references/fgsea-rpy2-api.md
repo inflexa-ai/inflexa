@@ -205,7 +205,8 @@ assume:
 |-|-|-|
 | Broad first-pass gene sets | The MSigDB hallmark collection for your organism | 50 low-redundancy sets; the reliable default |
 | Curated pathways | Reactome pathway gene sets; WikiPathways for your organism | Per-species files |
-| GO / oncogenic / immunologic sets | The MSigDB collection you need, *if available* | Do not assume; only hallmark is dependably present |
+| GO sets | The MSigDB GO collection for your organism, naming the branch (BP, CC or MF) | Nested hierarchy — parent and child sets hit together; collapse before counting |
+| Oncogenic / immunologic sets | The MSigDB oncogenic or immunologic collection for your organism | Sets come in directional `_UP`/`_DN` pairs; a hit means "resembles that contrast", so name the contrast |
 
 `gmtPathways()` reads GMT and nothing else: one gene set per line,
 tab-separated, with the set name first, then a description or source URL, then

@@ -480,9 +480,11 @@ def plot_evidence_heatmap(candidate_df, top_n=20):
   unreliable enrichment scores. Report gene set size alongside
   connectivity scores.
 - **Network proximity depends on network quality**: PPI networks have
-  known biases (study bias toward well-characterized proteins). Flag
-  this limitation. No PPI network is provisioned as reference data and
-  none can be downloaded — it must already be in the workspace.
+  known biases (study bias toward well-characterized proteins), and an
+  aggregating network mixes predicted edges with measured ones. Flag
+  both limitations, and report the confidence cutoff you applied — an
+  unfiltered genome-scale graph is dense enough that shortest-path
+  distances stop separating anything.
 - **`nx.all_pairs_shortest_path_length` is O(V²) in memory**: as written
   above it materialises the full distance dictionary, which on a
   genome-scale PPI network (~20k nodes) is hundreds of millions of

@@ -492,7 +492,141 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                         url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Mm/mh.all.v2026.1.Mm.symbols.gmt",
                         format: "gmt",
                         contents:
-                            "Mouse hallmark sets, one per line, tab-separated: set name, source URL, then member gene symbols (MGI). Hallmark only — the C2/C5/C6/C7/C8 collections are not part of this dataset.",
+                            "Mouse hallmark sets, one per line, tab-separated: set name, source URL, then member gene symbols (MGI). Hallmark only; GO, oncogenic and immunologic sets are separate datasets, and the remaining MSigDB collections are not staged at all.",
+                    },
+                ],
+            },
+            {
+                // The only route to GO-based enrichment here: no GAF, no OBO, and no
+                // org.*.eg.db GO mapping is staged anywhere else in this catalog.
+                // Split by branch rather than shipping the combined c5.go, because the
+                // three answer different questions and testing all of them together
+                // triples the multiple-testing burden for an analyst who wanted one.
+                id: "msigdb-go-human",
+                version: "2026.1",
+                title: "MSigDB human GO gene sets",
+                description:
+                    "Gene Ontology gene sets for Homo sapiens from the MSigDB C5 collection (symbols GMT), as three per-branch files: biological process, cellular component, molecular function. The mechanism-level complement to hallmark — hallmark names 50 broad states, these name ~10,500 specific processes, compartments and activities. From the immutable MSigDB 2026.1 human release, roughly 6.6 MB combined.",
+                organism: "human",
+                sourceUrl: "https://data.broadinstitute.org/gsea-msigdb/msigdb/",
+                license: { identifier: "MSigDB-License", url: "https://www.gsea-msigdb.org/gsea/msigdb/license.jsp" },
+                recommendation: { group: "pathways", recommended: true },
+                artifacts: [
+                    {
+                        path: "c5.go.bp.v2026.1.Hs.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/c5.go.bp.v2026.1.Hs.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "7,538 GO Biological Process sets, one per line, tab-separated: set name (GOBP_*), source URL, then member gene symbols (HGNC). The branch to reach for when the question is 'what process changed'. GO is a nested hierarchy, so parent and child sets share most of their members — expect blocks of correlated significant hits rather than independent findings, and collapse them before reporting a count.",
+                    },
+                    {
+                        path: "c5.go.cc.v2026.1.Hs.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/c5.go.cc.v2026.1.Hs.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "1,080 GO Cellular Component sets (GOCC_*), same tab-separated GMT shape and HGNC symbols. Localization rather than activity — the branch that detects a shift in where proteins sit (mitochondrial, ribosomal, cell-surface), which a process-level test often misses entirely.",
+                    },
+                    {
+                        path: "c5.go.mf.v2026.1.Hs.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/c5.go.mf.v2026.1.Hs.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "1,872 GO Molecular Function sets (GOMF_*), same tab-separated GMT shape and HGNC symbols. Biochemical activity of the gene product — binding, catalysis, transport. The narrowest of the three branches and the one whose sets are smallest, so it is the most sensitive to a low gene-count cutoff.",
+                    },
+                ],
+            },
+            {
+                id: "msigdb-go-mouse",
+                version: "2026.1",
+                title: "MSigDB mouse GO gene sets",
+                description:
+                    "Gene Ontology gene sets for Mus musculus from the MSigDB M5 collection (symbols GMT), as three per-branch files: biological process, cellular component, molecular function. From the immutable MSigDB 2026.1 mouse release, roughly 6.9 MB combined. Native mouse annotation with MGI symbols — not the human collection mapped across, so no ortholog step is needed or wanted.",
+                organism: "mouse",
+                sourceUrl: "https://data.broadinstitute.org/gsea-msigdb/msigdb/",
+                license: { identifier: "MSigDB-License", url: "https://www.gsea-msigdb.org/gsea/msigdb/license.jsp" },
+                recommendation: { group: "pathways", recommended: true },
+                artifacts: [
+                    {
+                        path: "m5.go.bp.v2026.1.Mm.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Mm/m5.go.bp.v2026.1.Mm.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "7,781 GO Biological Process sets (GOBP_*), one per line, tab-separated: set name, source URL, then member gene symbols in MGI nomenclature. Nested hierarchy, so parent and child sets overlap heavily. Running this against human symbols matches almost nothing — case differs (Actb vs ACTB) and it fails silently as an empty result, not an error.",
+                    },
+                    {
+                        path: "m5.go.cc.v2026.1.Mm.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Mm/m5.go.cc.v2026.1.Mm.symbols.gmt",
+                        format: "gmt",
+                        contents: "1,067 GO Cellular Component sets (GOCC_*), same GMT shape, MGI symbols. Subcellular localization rather than process.",
+                    },
+                    {
+                        path: "m5.go.mf.v2026.1.Mm.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Mm/m5.go.mf.v2026.1.Mm.symbols.gmt",
+                        format: "gmt",
+                        contents: "1,899 GO Molecular Function sets (GOMF_*), same GMT shape, MGI symbols. Biochemical activity of the gene product.",
+                    },
+                ],
+            },
+            {
+                // Human-only, and that is upstream's shape rather than an omission here:
+                // MSigDB publishes no mouse C6 counterpart (m6 returns 404), because the
+                // signatures are defined from perturbed human cancer cell lines.
+                id: "msigdb-oncogenic-human",
+                version: "2026.1",
+                title: "MSigDB human oncogenic signature gene sets",
+                description:
+                    "The MSigDB C6 oncogenic signatures for Homo sapiens (symbols GMT): 189 gene sets, each the expression response to a defined oncogene or tumour-suppressor perturbation in cancer cell lines. Used to read out which oncogenic pathway looks active in a tumour expression profile, which hallmark cannot resolve. Immutable MSigDB 2026.1 human release, ~206 KB.",
+                organism: "human",
+                sourceUrl: "https://data.broadinstitute.org/gsea-msigdb/msigdb/",
+                license: { identifier: "MSigDB-License", url: "https://www.gsea-msigdb.org/gsea/msigdb/license.jsp" },
+                recommendation: { group: "pathways", recommended: false },
+                artifacts: [
+                    {
+                        path: "c6.all.v2026.1.Hs.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/c6.all.v2026.1.Hs.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "189 sets, one per line, tab-separated: set name, source URL, then member gene symbols (HGNC). Set names encode the perturbation and its direction — a _UP suffix means genes rising when that oncogene is active, _DN means falling — so the two halves of one signature must be read as a pair and never merged. These are empirical cell-line responses, not curated pathways: enrichment says the profile resembles that perturbation, not that the pathway is mechanistically engaged.",
+                    },
+                ],
+            },
+            {
+                id: "msigdb-immunologic-human",
+                version: "2026.1",
+                title: "MSigDB human immunologic signature gene sets",
+                description:
+                    "ImmuneSigDB for Homo sapiens (MSigDB C7, symbols GMT): 4,872 gene sets from published contrasts between immune cell states — cell types, stimulation conditions, and activation timepoints. The reference for interpreting an immune expression signature against what has been observed before. Immutable MSigDB 2026.1 human release, ~6.7 MB. This is the ImmuneSigDB subset; the vaccine-response subset is not staged.",
+                organism: "human",
+                sourceUrl: "https://data.broadinstitute.org/gsea-msigdb/msigdb/",
+                license: { identifier: "MSigDB-License", url: "https://www.gsea-msigdb.org/gsea/msigdb/license.jsp" },
+                recommendation: { group: "pathways", recommended: false },
+                artifacts: [
+                    {
+                        path: "c7.immunesigdb.v2026.1.Hs.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Hs/c7.immunesigdb.v2026.1.Hs.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "4,872 sets, one per line, tab-separated: set name, source URL, then member gene symbols (HGNC). Every set is one side of a specific published two-condition comparison, and the name encodes both arms plus a _UP/_DN direction — so a hit means 'resembles that contrast', and reporting it without naming the contrast's cell type and stimulus is uninterpretable. The set count is large enough that FDR across the whole collection is severe; restrict to a relevant subset by name before testing where the question allows it.",
+                    },
+                ],
+            },
+            {
+                id: "msigdb-immunologic-mouse",
+                version: "2026.1",
+                title: "MSigDB mouse immunologic signature gene sets",
+                description:
+                    "The MSigDB M7 immunologic signature collection for Mus musculus (symbols GMT): 787 gene sets from murine immune cell state and stimulation contrasts. Immutable MSigDB 2026.1 mouse release, ~523 KB. Far smaller than the human collection — mouse has no ImmuneSigDB-scale counterpart, so absence of a match here is weaker evidence than it would be for human.",
+                organism: "mouse",
+                sourceUrl: "https://data.broadinstitute.org/gsea-msigdb/msigdb/",
+                license: { identifier: "MSigDB-License", url: "https://www.gsea-msigdb.org/gsea/msigdb/license.jsp" },
+                recommendation: { group: "pathways", recommended: false },
+                artifacts: [
+                    {
+                        path: "m7.all.v2026.1.Mm.symbols.gmt",
+                        url: "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2026.1.Mm/m7.all.v2026.1.Mm.symbols.gmt",
+                        format: "gmt",
+                        contents:
+                            "787 sets, one per line, tab-separated: set name, source URL, then member gene symbols in MGI nomenclature. Each set is one arm of a published immune contrast with a _UP/_DN direction; name the contrast when reporting a hit. Mouse symbols, so it cannot be run against human data without an ortholog mapping step.",
                     },
                 ],
             },
@@ -595,6 +729,66 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                         format: "rda",
                         contents:
                             "R serialized data frame `dorothea_mm` of TF-target regulons: columns tf, confidence (A-E), target, mor (+1 activating, -1 repressing). Load in R with load(); from Python read it through rpy2. Filter on confidence before use, then rename tf/target/mor to source/target/weight for a decoupler-style network.",
+                    },
+                ],
+            },
+            {
+                // The publisher's static archive of exactly what its web service returns.
+                // OmniPath's documented access route is a REST client, which is unreachable
+                // with egress blocked; this dump is the same content as a file. Sign and
+                // direction are what make it usable as a causal prior — a scored but
+                // unsigned PPI (see the STRING entry) cannot substitute, because a method
+                // that infers which way a signal flowed has nothing to infer from.
+                id: "omnipath-interactions",
+                version: "current",
+                title: "OmniPath signed, directed molecular interaction network",
+                description:
+                    "The OmniPath integrated interaction network as a static bulk export: literature-curated molecular interactions with direction and sign (stimulation or inhibition), the prior-knowledge network causal signalling inference needs. Covers human, mouse and rat in one 95 MB gzipped table. The publisher rebuilds this export in place, so it is verified against what you downloaded rather than a checked-in digest.",
+                sourceUrl: "https://archive.omnipathdb.org/",
+                // OmniPath integrates dozens of upstream resources and states that each one
+                // carries over its own licence, so there is no single identifier to name. A
+                // few components are CC BY-NC; the commercial-use filter exists only as a
+                // REST parameter, so this dump is the unfiltered academic superset.
+                license: { identifier: "LicenseRef-OmniPath-Per-Resource", url: "https://omnipathdb.org/info" },
+                recommendation: { group: "interaction-networks", recommended: false },
+                artifacts: [
+                    {
+                        path: "omnipath_webservice_interactions__latest.tsv.gz",
+                        url: "https://archive.omnipathdb.org/omnipath_webservice_interactions__latest.tsv.gz",
+                        format: "tsv",
+                        contents:
+                            "Gzipped TSV, 37 columns, ~1.95 million rows. MULTI-SPECIES — filter ncbi_tax_id_source and ncbi_tax_id_target to one organism first (9606 human, 10090 mouse, 10116 rat); there is no per-organism file, and leaving it unfiltered silently mixes species into one graph. Use source_genesymbol/target_genesymbol, NOT the source/target columns, which are UniProt accessions: node names have to match the TF-activity vector they will be scored against, and those carry gene symbols. To derive a signed causal network: keep type == 'post_translational', require is_directed, and take is_stimulation XOR is_inhibition, mapping to +1 and -1. Restricting further to the 'omnipath' core column with the consensus_* columns yields roughly 71,000 edges over 7,100 nodes, which is the usual working size; curation_effort >= 2 cuts that to about 15,500 for a high-confidence variant.",
+                    },
+                ],
+            },
+            {
+                // Sized and shaped for network proximity, which needs breadth over precision:
+                // a genome-scale graph where path lengths between a drug's targets and a
+                // disease module are meaningful. Unsigned and undirected, so it cannot serve
+                // as a causal prior — that is the OmniPath entry above.
+                id: "string-ppi-human",
+                version: "12.0",
+                title: "STRING human protein-protein interaction network",
+                description:
+                    "STRING v12.0 functional protein association network for Homo sapiens: every protein pair with a combined confidence score, the genome-scale graph network-proximity methods measure distances over. Roughly 85 MB across two files — the network itself and the identifier mapping it cannot be read without. Immutable v12.0 release.",
+                organism: "human",
+                sourceUrl: "https://string-db.org/cgi/access",
+                license: { identifier: "CC-BY-4.0", url: "https://creativecommons.org/licenses/by/4.0/" },
+                recommendation: { group: "interaction-networks", recommended: false },
+                artifacts: [
+                    {
+                        path: "9606.protein.links.v12.0.txt.gz",
+                        url: "https://stringdb-downloads.org/download/protein.links.v12.0/9606.protein.links.v12.0.txt.gz",
+                        format: "tsv",
+                        contents:
+                            "Gzipped and SPACE-delimited despite the .txt name — a tab-expecting reader parses every row into one column without erroring. Header 'protein1 protein2 combined_score', ~13.7 million rows. Nodes are STRING internal ids ('9606.ENSP00000000233'), which are taxid-prefixed Ensembl protein ids and NOT gene symbols, so this file is unusable on its own: join the info file beside it to get names. Every edge appears twice, once per direction, which an undirected graph constructor collapses for you but a naive edge count will not. Scores are 0-1000 confidence, unsigned and undirected. The conventional high-confidence cut is combined_score >= 700, leaving roughly 237,000 unique edges over 16,200 proteins; the full graph is 6.9 million edges and too dense for distance measures to mean much.",
+                    },
+                    {
+                        path: "9606.protein.info.v12.0.txt.gz",
+                        url: "https://stringdb-downloads.org/download/protein.info.v12.0/9606.protein.info.v12.0.txt.gz",
+                        format: "tsv",
+                        contents:
+                            "Gzipped TSV, ~19,700 rows, header '#string_protein_id preferred_name protein_size annotation'. Mandatory rather than supplementary: preferred_name is the gene symbol for each STRING id in the links file, and without this join the network cannot be connected to a gene list, a drug-target set, or any other dataset here.",
                     },
                 ],
             },
@@ -869,6 +1063,86 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 ],
             },
             {
+                // Ensembl's `dna_index/` directory, NOT the `dna/` one beside it, and that
+                // choice is forced rather than preferential. Every other candidate — UCSC
+                // (plain and analysis set), NCBI's analysis sets, GENCODE, and Ensembl's own
+                // `dna/` — ships plain gzip, which htslib refuses outright ("Cannot index
+                // files compressed with gzip, please use bgzip"). `dna_index/` is the one
+                // upstream publishing BGZF, and the only one publishing the .fai and .gzi
+                // alongside. That second point is the load-bearing one: samtools, bcftools,
+                // bedtools and pyfaidx all build a missing index NEXT TO the FASTA, which a
+                // read-only mount makes impossible — so an upstream-published index is not a
+                // convenience here, it is the difference between usable and inert.
+                id: "ensembl-genome-human",
+                version: "116",
+                title: "Ensembl human reference genome sequence (GRCh38)",
+                description:
+                    "The GRCh38 reference genome sequence for Homo sapiens as BGZF-compressed FASTA with its published faidx and BGZF-block indexes — the genome behind sequence extraction at intervals, VCF left-alignment and normalisation, and CRAM decoding. Ensembl release 116, roughly 848 MB. Contigs are named WITHOUT a 'chr' prefix, the opposite convention from the GENCODE annotation and UCSC chromosome sizes in this catalog; see the artifact notes.",
+                organism: "human",
+                sourceUrl: "https://ftp.ensembl.org/pub/release-116/fasta/homo_sapiens/dna_index/",
+                license: { identifier: "Ensembl-Terms-Of-Use", url: "https://www.ensembl.org/info/about/legal/disclaimer.html" },
+                recommendation: { group: "genome-sequence", recommended: false },
+                artifacts: [
+                    {
+                        path: "Homo_sapiens.GRCh38.dna.toplevel.fa.gz",
+                        url: "https://ftp.ensembl.org/pub/release-116/fasta/homo_sapiens/dna_index/Homo_sapiens.GRCh38.dna.toplevel.fa.gz",
+                        format: "fasta",
+                        contents:
+                            "BGZF-compressed FASTA — block-compressed, so it opens for random access, NOT plain gzip despite the .gz suffix. Contigs are '1', '2', ... 'X', 'Y', 'MT' with NO 'chr' prefix: this matches the ClinVar VCF and the common-SNP site list here, and clashes with the GENCODE GTF, UCSC chromosome sizes and ENCODE blacklist, which are all 'chr'-prefixed. Crossing the two conventions returns empty output without erroring, so strip or add the prefix on the interval side before extracting. This is the 'toplevel' set: 706 contigs and 3.29 Gbp, of which 510 are patch and haplotype scaffolds on top of the 3.10 Gbp primary assembly — restrict to the primary contigs when extra scaffolds would change a result. Ensembl publishes no dna_index build of primary_assembly alone.",
+                    },
+                    {
+                        path: "Homo_sapiens.GRCh38.dna.toplevel.fa.gz.fai",
+                        url: "https://ftp.ensembl.org/pub/release-116/fasta/homo_sapiens/dna_index/Homo_sapiens.GRCh38.dna.toplevel.fa.gz.fai",
+                        format: "fai",
+                        contents:
+                            "Faidx index over the BGZF FASTA, giving each contig's length and offset. Must sit beside the FASTA and is never opened directly. It is staged rather than generated because the reference store is read-only and every reader here writes a missing index next to the source file, which fails with EACCES instead of falling back.",
+                    },
+                    {
+                        path: "Homo_sapiens.GRCh38.dna.toplevel.fa.gz.gzi",
+                        url: "https://ftp.ensembl.org/pub/release-116/fasta/homo_sapiens/dna_index/Homo_sapiens.GRCh38.dna.toplevel.fa.gz.gzi",
+                        format: "gzi",
+                        contents:
+                            "BGZF block index mapping uncompressed offsets to compressed blocks — what turns the .fai's coordinates into a seek without decompressing the whole file. Required alongside the .fai for compressed random access; without it a reader falls back to a linear scan of an 848 MB file per query.",
+                    },
+                ],
+            },
+            {
+                // Mouse toplevel IS the primary assembly here — 61 contigs, no patches or
+                // alts — so unlike human there is nothing to restrict away.
+                id: "ensembl-genome-mouse",
+                version: "116",
+                title: "Ensembl mouse reference genome sequence (GRCm39)",
+                description:
+                    "The GRCm39 reference genome sequence for Mus musculus as BGZF-compressed FASTA with its published faidx and BGZF-block indexes. Ensembl release 116, roughly 730 MB. Build-matched to the GENCODE M39 annotation and mm39 chromosome sizes in this catalog, though named without their 'chr' prefix — and NOT matched to the mm10 ENCODE blacklist, which is a different coordinate space.",
+                organism: "mouse",
+                sourceUrl: "https://ftp.ensembl.org/pub/release-116/fasta/mus_musculus/dna_index/",
+                license: { identifier: "Ensembl-Terms-Of-Use", url: "https://www.ensembl.org/info/about/legal/disclaimer.html" },
+                recommendation: { group: "genome-sequence", recommended: false },
+                artifacts: [
+                    {
+                        path: "Mus_musculus.GRCm39.dna.toplevel.fa.gz",
+                        url: "https://ftp.ensembl.org/pub/release-116/fasta/mus_musculus/dna_index/Mus_musculus.GRCm39.dna.toplevel.fa.gz",
+                        format: "fasta",
+                        contents:
+                            "BGZF-compressed FASTA — block-compressed for random access, NOT plain gzip despite the .gz suffix. Contigs are '1'...'19', 'X', 'Y', 'MT' with NO 'chr' prefix, so they must be reconciled with the 'chr'-prefixed GENCODE M39 GTF and mm39 chromosome sizes before any interval operation; mismatched naming yields empty output rather than an error. Toplevel here is exactly the primary assembly — 61 contigs, 2.73 Gbp, no patch or haplotype scaffolds — so no filtering is needed. Coordinates are GRCm39: mm10/GRCm38 intervals are a different space and must be lifted over, not mixed.",
+                    },
+                    {
+                        path: "Mus_musculus.GRCm39.dna.toplevel.fa.gz.fai",
+                        url: "https://ftp.ensembl.org/pub/release-116/fasta/mus_musculus/dna_index/Mus_musculus.GRCm39.dna.toplevel.fa.gz.fai",
+                        format: "fai",
+                        contents:
+                            "Faidx index over the BGZF FASTA. Must sit beside it and is never opened directly. Staged rather than generated because the reference store is read-only and readers write a missing index next to the source file, failing with EACCES.",
+                    },
+                    {
+                        path: "Mus_musculus.GRCm39.dna.toplevel.fa.gz.gzi",
+                        url: "https://ftp.ensembl.org/pub/release-116/fasta/mus_musculus/dna_index/Mus_musculus.GRCm39.dna.toplevel.fa.gz.gzi",
+                        format: "gzi",
+                        contents:
+                            "BGZF block index pairing with the .fai to make compressed random access possible. Without it every coordinate query degrades to a linear scan of the whole compressed file.",
+                    },
+                ],
+            },
+            {
                 id: "encode-blacklist-human",
                 version: "2",
                 title: "ENCODE blacklist regions, human (hg38)",
@@ -907,6 +1181,64 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                         format: "bed",
                         contents:
                             "Gzipped BED, no header: chrom, start, end, reason label. 'chr'-prefixed mm10/GRCm38 coordinates — NOT mm39. Applying it to GRCm39 intervals silently masks the wrong regions. Subtract rather than intersect: the file lists regions to discard.",
+                    },
+                ],
+            },
+            {
+                // Tiny, and they close a gap the catalog otherwise creates for itself: the
+                // mouse annotation here is GRCm39 while the mouse blacklist is mm10, so the
+                // two cannot be used together without a conversion. Same rationale as the
+                // chromosome-sizes entries — a few hundred KB never justifies opt-in.
+                id: "ucsc-liftover-chains-human",
+                version: "current",
+                title: "UCSC human liftOver chain files (hg19 <-> hg38)",
+                description:
+                    "UCSC alignment chains for converting genomic coordinates between GRCh37/hg19 and GRCh38/hg38, in both directions. What lets an older published interval set, a legacy VCF, or a GEO supplementary table be compared against hg38 work. A few hundred KB. UCSC regenerates these in place, so they are verified against what you downloaded rather than a checked-in digest.",
+                organism: "human",
+                sourceUrl: "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/liftOver/",
+                license: { identifier: "UCSC-Genome-Browser-Data-License", url: "https://genome.ucsc.edu/conditions.html" },
+                recommendation: { group: "genome-annotation", recommended: true },
+                artifacts: [
+                    {
+                        path: "hg19ToHg38.over.chain.gz",
+                        url: "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz",
+                        format: "chain",
+                        contents:
+                            "UCSC chain format, gzipped, 1,278 chain blocks, 'chr'-prefixed on both sides. GUNZIP IT INTO A WRITABLE DIRECTORY BEFORE READING: the standard R chain reader is plain C stdio with no gzip support and rejects a non-local path, so it fails on the staged .gz — loudly, with a header-parse error rather than a wrong result, but it does fail. Conversion is lossy in both directions: intervals in regions that were rearranged between builds drop out entirely, so count what went in against what came out and report the loss rather than assuming a complete mapping.",
+                    },
+                    {
+                        path: "hg38ToHg19.over.chain.gz",
+                        url: "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/liftOver/hg38ToHg19.over.chain.gz",
+                        format: "chain",
+                        contents:
+                            "The reverse direction, gzipped, 25,374 chain blocks — twenty times more fragmented than the forward file, which is real rather than a packaging artefact and means proportionally more intervals split or fail to map going hg38 to hg19. Decompress into a writable directory before reading, as above. Prefer converting the older dataset forward to hg38 over dragging modern data backwards.",
+                    },
+                ],
+            },
+            {
+                id: "ucsc-liftover-chains-mouse",
+                version: "current",
+                title: "UCSC mouse liftOver chain files (mm10 <-> mm39)",
+                description:
+                    "UCSC alignment chains for converting genomic coordinates between GRCm38/mm10 and GRCm39/mm39, in both directions. Directly relevant here: the mouse ENCODE blacklist in this catalog exists only for mm10 while the mouse annotation, chromosome sizes and genome sequence are all GRCm39, and this is what bridges them. Under 100 KB.",
+                organism: "mouse",
+                sourceUrl: "https://hgdownload.soe.ucsc.edu/goldenPath/mm39/liftOver/",
+                license: { identifier: "UCSC-Genome-Browser-Data-License", url: "https://genome.ucsc.edu/conditions.html" },
+                recommendation: { group: "genome-annotation", recommended: true },
+                artifacts: [
+                    {
+                        path: "mm10ToMm39.over.chain.gz",
+                        url: "https://hgdownload.soe.ucsc.edu/goldenPath/mm10/liftOver/mm10ToMm39.over.chain.gz",
+                        format: "chain",
+                        contents:
+                            "UCSC chain format, gzipped, 236 chain blocks, 'chr'-prefixed both sides. Decompress into a writable directory before reading — the standard R chain reader has no gzip support and errors on the staged .gz. This is the direction to use for the mm10-only blacklist: lift it forward to mm39 once, rather than pulling GRCm39 data back to mm10.",
+                    },
+                    {
+                        path: "mm39ToMm10.over.chain.gz",
+                        url: "https://hgdownload.soe.ucsc.edu/goldenPath/mm39/liftOver/mm39ToMm10.over.chain.gz",
+                        format: "chain",
+                        contents:
+                            "The reverse direction, gzipped, 910 chain blocks. Decompress into a writable directory before reading. Needed only when a downstream resource exists for mm10 alone and cannot be lifted forward; otherwise convert toward mm39, which is the build the rest of the mouse data here uses.",
                     },
                 ],
             },
@@ -986,6 +1318,60 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                         format: "tgz",
                         contents:
                             "Gzipped tar holding two FASTAs: sh_general_release_dynamic_all_19.02.2025.fasta (use this one) and a *_dev.fasta variant. Extract to a writable directory first — the store is read-only and dada2 cannot read inside the archive. Headers are pipe-delimited then semicolon-delimited with rank prefixes: '>Abrothallus_subhalei|MT153946|SH1227328.10FU|refs|k__Fungi;p__Ascomycota;...;s__Abrothallus_subhalei'. Matched to ITS: running it against 16S reads completes and returns nonsense.",
+                    },
+                ],
+            },
+            {
+                // Staged as gene sets rather than the Level 5 z-score matrix, because the
+                // consumer scores a ranked list against sets — it never needs the raw matrix,
+                // which is 20-33 GB and unreadable without two companion metadata tables to
+                // recover gene symbols and drug names from bare Entrez ids and BRD accessions.
+                //
+                // From the NIH-funded DCIC's static object storage rather than the smaller
+                // aggregation served through a lab's `?libraryName=` query endpoint: a live
+                // query endpoint is not an artifact, the same reason `progeny-human` is
+                // sourced from a repository file instead of the web service that computes it.
+                id: "lincs-l1000-chem-pert",
+                version: "2021",
+                title: "LINCS L1000 chemical perturbation signatures",
+                description:
+                    "Drug-perturbation transcriptional signatures from the NIH LINCS L1000 programme, as up- and down-regulated gene sets per compound-cell-dose experiment — the reference profiles connectivity scoring queries a disease signature against, to find drugs that reverse it. Roughly 2.1 GB of plain-text gene sets. The distributor states no licence for this derived file; the underlying LINCS data is NIH-funded and published for unrestricted reuse subject to citation, so it is fetched from them directly and never mirrored. Cite Subramanian et al. 2017 (PMID 29195078).",
+                organism: "human",
+                sourceUrl: "https://lincsportal.ccs.miami.edu/",
+                license: { identifier: "LicenseRef-No-Declared-Licence", url: "https://lincsportal.ccs.miami.edu/" },
+                recommendation: { group: "perturbation-signatures", recommended: false },
+                artifacts: [
+                    {
+                        path: "l1000_cp.gmt",
+                        url: "https://lincs-dcic.s3.amazonaws.com/LINCS-sigs-2021/gmt/l1000_cp.gmt",
+                        format: "gmt",
+                        contents:
+                            "Uncompressed GMT, ~2.1 GB, one gene set per line: term name, an EMPTY second field, then member gene symbols. The blank description column is valid GMT and parses normally — do not treat it as malformed. Genes are HGNC symbols, so a ranked query list of symbols needs no identifier conversion. Term names are self-describing and need no metadata table: they encode plate, cell line, well, compound and dose, and end in ' up' or ' down'. That direction suffix is the whole point — connectivity is the enrichment of the up set MINUS the enrichment of the down set, so the two halves of one experiment must be paired by their shared prefix and never scored independently. Chemical perturbagens only ('cp'); genetic knockdown and overexpression signatures are not in this file. Every cell line is human cancer-derived, so a signature is a cell-line response, not a tissue or patient one.",
+                    },
+                ],
+            },
+            {
+                // The one entry here that is chemistry rather than biology, so it carries no
+                // organism: a fragmentation spectrum belongs to a compound, not a species.
+                // Staged uncompressed, which is rare in this catalog and worth relying on —
+                // no extraction step stands between the store and matchms.
+                id: "massbank-spectra",
+                version: "2026.03",
+                title: "MassBank MS/MS reference spectral library",
+                description:
+                    "The MassBank Europe reference library of experimental tandem mass spectra — roughly 139,000 records covering both ionisation modes — for identifying compounds in untargeted metabolomics by matching measured fragmentation against known spectra. This is the terminal annotation step: without a library, feature detection and statistics finish but nothing gets a compound name. Immutable 2026.03 release, ~137 MB, plain uncompressed text. Licensing is per-record and partly non-commercial; see the artifact notes before any commercial use.",
+                sourceUrl: "https://github.com/MassBank/MassBank-data",
+                // No single identifier is honest here: records carry CC BY, CC BY-SA, CC0,
+                // dl-de/by-2-0, and several non-commercial variants, assigned per contributor.
+                license: { identifier: "LicenseRef-MassBank-Per-Record", url: "https://github.com/MassBank/MassBank-data" },
+                recommendation: { group: "spectral-libraries", recommended: false },
+                artifacts: [
+                    {
+                        path: "MassBank_NISTformat.msp",
+                        url: "https://github.com/MassBank/MassBank-data/releases/download/2026.03/MassBank_NISTformat.msp",
+                        format: "msp",
+                        contents:
+                            "Uncompressed NIST-format MSP, ~139,000 records, readable directly by a spectral-matching library with ion mode normalising to positive/negative. Composition: ~117,000 genuine fragmentation spectra (MS2 and deeper) plus ~21,000 MS1 records — FILTER TO MS2 BEFORE MATCHING, because MS1 entries carry no fragments and will either match nothing or match on precursor mass alone and look like a hit. Ion modes are ~97,700 positive and ~41,300 negative; match only within the mode your data was acquired in. Every spectrum is experimentally measured, with no in-silico predictions mixed in, so a match is evidence rather than a model output. LICENCE CAVEAT: the MSP export carries no licence field at all, while the underlying records span CC0, CC BY, share-alike and non-commercial terms, and roughly 30% are non-commercial. Recovering a given record's terms means joining its DB# accession back to the source repository — necessary before redistributing or using a specific identification commercially, not for research use.",
                     },
                 ],
             },

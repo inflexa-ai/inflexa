@@ -34,8 +34,10 @@ Choose the method based on your analytical question and data characteristics:
 - Prior knowledge (kinase-substrate, TF-target, ligand-receptor, enzyme-metabolite) must come
   from an interaction file resolved from the reference data available to you. The **OmniPath**
   web service is unreachable — egress is blocked, so `omnipath.interactions.*.get()` and every
-  `dc.op.*()` loader fail. General interaction data is often not provisioned at all; if it does
-  not resolve, report that and scope the analysis to the networks that are available.
+  `dc.op.*()` loader fail — but the same content is in the reference inventory as a static
+  export, alongside a separate genome-scale scored PPI. Both are opt-in downloads: resolve what
+  you need up front, and if it does not resolve, report that and scope the analysis to the
+  networks that are available.
 - Build a custom cross-omics network from those edges + data-driven correlations.
 - Analyze with **NetworkX** or **igraph**: community detection, centrality, shortest paths.
 - Appropriate when you want to model regulatory or signaling relationships between modalities.
@@ -51,6 +53,13 @@ Choose the method based on your analytical question and data characteristics:
 
 - **CARNIVAL** (R via rpy2): Infers signaling topology from TF/pathway activity scores and prior knowledge network.
   - Requires: activity scores (from decoupler), a prior-knowledge network, perturbation context.
+  - The network must be **signed and directed** — a scored PPI carries neither, so it cannot
+    stand in here however large it is; there is nothing for the method to orient. Resolve a
+    causal interaction set instead, and reduce it to one edge per source/target pair with a
+    single activating-or-inhibiting sign.
+  - Its node names must land in the same identifier space as the activity scores you feed it,
+    which come from TF regulons carrying gene symbols. Interaction sets commonly key on protein
+    accessions as well, so check which column you are taking before building the network.
 - **COSMOS** (R via rpy2): Extends CARNIVAL to bridge signaling and metabolism.
   - Requires: TF activities, metabolite abundances. Unlike CARNIVAL it carries its own
     prior-knowledge network, so nothing external has to be resolved for it.
