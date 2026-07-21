@@ -72,17 +72,38 @@ describe("reference-data catalog", () => {
             "panglaodb-markers",
             "azimuth-pbmc",
             "azimuth-tonsil",
+            "gencode-human",
+            "gencode-mouse",
+            "ucsc-chrom-sizes-human",
+            "ucsc-chrom-sizes-mouse",
+            "encode-blacklist-human",
+            "encode-blacklist-mouse",
+            "clinvar-grch38",
+            "silva-dada2",
+            "unite-dada2",
             "pharmcat-grch38-fasta",
         ]);
     });
 
     // Large or domain-specific downloads are opt-in, so a default `setup` never silently pulls
     // hundreds of MB (or GB) the user did not ask for: the all-species NCBI mapping tables, the
-    // Reactome mapping TSVs, the 443 MB tonsil reference, and the 842 MB PharmCAT genome bundle.
+    // Reactome mapping TSVs, the 443 MB tonsil reference, the amplicon taxonomy training sets,
+    // and the 842 MB PharmCAT genome bundle.
     it("recommends every dataset except the very large or domain-specific opt-in downloads", () => {
         const notRecommended = REFERENCE_DATA_CATALOG.datasets.filter((dataset) => !dataset.recommendation.recommended).map(({ id }) => id);
 
-        expect(notRecommended).toEqual(["ncbi-gene2ensembl", "ncbi-gene2refseq", "reactome-mappings", "azimuth-tonsil", "pharmcat-grch38-fasta"]);
+        expect(notRecommended).toEqual([
+            "ncbi-gene2ensembl",
+            "ncbi-gene2refseq",
+            "reactome-mappings",
+            "azimuth-tonsil",
+            "gencode-human",
+            "gencode-mouse",
+            "clinvar-grch38",
+            "silva-dada2",
+            "unite-dada2",
+            "pharmcat-grch38-fasta",
+        ]);
     });
 
     it("fetches every artifact from an official upstream over https", () => {
@@ -101,6 +122,12 @@ describe("reference-data catalog", () => {
             "www.celltypist.org",
             "github.com",
             "raw.githubusercontent.com",
+            "ftp.ebi.ac.uk",
+            "hgdownload.soe.ucsc.edu",
+            "www.gencodegenes.org",
+            "www.arb-silva.de",
+            "doi.plutof.ut.ee",
+            "s3.hpc.ut.ee",
         ]);
 
         for (const dataset of REFERENCE_DATA_CATALOG.datasets) {
@@ -140,7 +167,16 @@ describe("reference-data catalog", () => {
     // Wrong-species reference data still runs and silently produces wrong numbers, so a
     // single-organism dataset must say which one; multi-species sources correctly omit it.
     it("labels every single-organism dataset with its organism", () => {
-        const multiSpecies = new Set(["ncbi-gene2ensembl", "ncbi-gene2refseq", "reactome-pathways", "reactome-mappings", "panglaodb-markers"]);
+        const multiSpecies = new Set([
+            "ncbi-gene2ensembl",
+            "ncbi-gene2refseq",
+            "reactome-pathways",
+            "reactome-mappings",
+            "panglaodb-markers",
+            // Microbial/fungal community references — a whole domain of life each, not one organism.
+            "silva-dada2",
+            "unite-dada2",
+        ]);
         for (const dataset of REFERENCE_DATA_CATALOG.datasets) {
             expect(dataset.organism === undefined).toBe(multiSpecies.has(dataset.id));
         }
@@ -224,9 +260,14 @@ describe("reference-data catalog", () => {
                 "celltypist-covid19",
                 "celltypist-immune",
                 "celltypist-pan-fetal",
+                "clinvar-grch38",
                 "collectri-human",
                 "dorothea-human",
                 "dorothea-mouse",
+                "encode-blacklist-human",
+                "encode-blacklist-mouse",
+                "gencode-human",
+                "gencode-mouse",
                 "gtex-v8",
                 "hpa-proteinatlas",
                 "msigdb-hallmark-human",
@@ -242,9 +283,13 @@ describe("reference-data catalog", () => {
                 "progeny-mouse",
                 "reactome-mappings",
                 "reactome-pathways",
+                "silva-dada2",
+                "ucsc-chrom-sizes-human",
+                "ucsc-chrom-sizes-mouse",
                 "uniprot-idmapping-human",
                 "uniprot-idmapping-mouse",
                 "uniprot-idmapping-rat",
+                "unite-dada2",
                 "wikipathways-human",
                 "wikipathways-mouse",
                 "wikipathways-rat",

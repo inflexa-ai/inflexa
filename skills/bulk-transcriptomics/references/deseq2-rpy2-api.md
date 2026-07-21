@@ -170,6 +170,16 @@ deseq2.lfcShrink(
 - `ashr`: Supports `contrast=`. Use when you need arbitrary contrasts with shrinkage.
 - `normal`: Legacy method. Supports both `coef=` and `contrast=`.
 
+`apeglm` and `ashr` are separate packages that DESeq2 only Suggests — DESeq2 loading
+does not imply either is present, and on a best-effort build one may be missing while
+the other is not. `normal` is implemented inside DESeq2 and is always available.
+
+If the requested type is unavailable, say so in the analysis output and state which
+type produced the reported numbers — a shrinkage estimator is a methods-section
+detail, so silently falling back would misdescribe the result. Do not drop shrinkage
+altogether to avoid the error: unshrunk log-fold-changes are not comparable to
+shrunk ones, least of all for the low-count genes shrinkage exists to tame.
+
 ## Converting Results to pandas
 
 ```python

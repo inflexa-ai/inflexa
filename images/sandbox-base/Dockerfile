@@ -2,8 +2,12 @@
 # Single image for all sandbox pods. R, Python, and Node packages come
 # from the shared library store mounted at /mnt/libs (not baked in).
 #
-# Size target: 800MB-1.2GB
+# Size: ~2.3GB on arm64, of which the chromium layer is a measured 477MB (see that
+#       section for why the browser is carried here rather than in the variants).
+#       The 800MB-1.2GB target this line used to claim was already stale before
+#       chromium — the image measured ~1.8GB without it.
 # Contains: R 4.6.0, Python 3.12, Node.js 20, runtime system libs, fonts, tools,
+#           chromium (plotly static image export via kaleido),
 #           sandbox-server (Go static binary for HTTP-based command execution)
 
 # Must match lib-store-manifest.yaml base_image. CI passes --build-arg.
@@ -71,8 +75,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jags \
     # Java (for FastQC and other Java-based tools)
     default-jre-headless \
-    # Shell utilities
-    curl ca-certificates git wget unzip file tree bsdmainutils jq \
+    # Shell utilities. `gpg` is not in the base image (only `gpgv`, which apt uses
+    # to verify signatures but cannot dearmor a key); the chromium section below
+    # needs the full tool to convert the PPA's armored key into a keyring.
+    curl ca-certificates git wget unzip file tree bsdmainutils jq gpg \
     # Egress firewall for Docker poll mode: the root entrypoint installs
     # `iptables -P OUTPUT DROP` before dropping to the workload uid. `setpriv`
     # (util-linux) performs that de-privileged exec. iptables is inert unless
@@ -143,6 +149,68 @@ RUN mkdir -p /usr/local/share/fonts \
     && cp /tmp/jetbrains/fonts/ttf/*.ttf /usr/local/share/fonts/ \
     && rm -rf /tmp/jetbrains /tmp/jetbrains.zip \
     && fc-cache -fv
+
+# =============================================================================
+# Chromium — the rendering engine behind plotly static image export (kaleido)
+# =============================================================================
+
+# kaleido <1.0 shipped its own patched Chromium inside the wheel. 1.0 dropped it:
+# the wheel is now a thin CDP client (choreographer) that drives a browser found
+# on the host, so an unpinned `kaleido` in lib-store-manifest.yaml resolves to 1.x
+# and every fig.write_image() fails with ChromeNotFoundError unless a browser is
+# staged here. This is the same rule that puts `jags` in this file for r-cran-rjags:
+# a manifest package's RUNTIME system dependency belongs in the base image.
+#
+# It has to be *this* image, not sandbox-python. The managed service runs
+# sandbox-base directly and mounts the library tarballs (kaleido included) read-only
+# at /mnt/libs, so a browser staged only in the variant images would leave the
+# managed path with kaleido and nothing to render with.
+#
+# Why the xtradeb PPA and not something more obvious:
+#   - Ubuntu noble has no real chromium deb. `chromium`/`chromium-browser` in the
+#     archive is a transitional stub that PreDepends on snapd and installs a snap —
+#     inert in a container.
+#   - Chrome for Testing (what kaleido's own `kaleido_get_chrome` fetches) publishes
+#     linux64 only. This image is published for amd64 AND arm64, so it cannot serve
+#     both.
+#   - Debian's chromium builds against Debian-versioned libs (libjpeg62-turbo,
+#     libflac12, libxnvctrl0) that do not resolve on noble.
+# xtradeb builds chromium natively for noble on both arches, and it is an apt source:
+# signed, with a per-deb SHA-256 in the index, which is stronger provenance than the
+# unsigned CDN zips the alternatives would have meant.
+#
+# COST, deliberately taken: chromium and its dependency closure are a measured 477MB
+# in one layer, on an image the README treats as lean for managed cold-start reasons.
+# Static image export for reports was judged worth it; if that trade is ever
+# revisited, this block and the BROWSER_PATH below are the whole change to undo.
+#
+# The key is pinned by full fingerprint and re-verified after import, so a wrong or
+# substituted keyserver response fails the build rather than silently trusting a key.
+#
+# The PPA is added, used, and then REMOVED in this same layer. Leaving a
+# single-maintainer third-party apt source enabled inside the containment boundary
+# would widen the trusted set for every later apt operation in this image and in any
+# `FROM` extension of it, and nothing after this needs it — the binary is installed.
+# (Consequence, accepted: chromium does not move on `apt-get upgrade` downstream. It
+# moves when this image is rebuilt, which is how every other pin here behaves.)
+ARG CHROMIUM_PPA_FINGERPRINT=5301FA4FD93244FBC6F6149982BB6851C64F6880
+RUN curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${CHROMIUM_PPA_FINGERPRINT}" \
+      | gpg --dearmor -o /usr/share/keyrings/xtradeb-apps.gpg \
+    && gpg --show-keys --with-colons --fingerprint /usr/share/keyrings/xtradeb-apps.gpg \
+      | awk -F: '/^fpr:/{print $10}' | grep -qx "${CHROMIUM_PPA_FINGERPRINT}" \
+    && echo "deb [signed-by=/usr/share/keyrings/xtradeb-apps.gpg] https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu noble main" \
+      > /etc/apt/sources.list.d/xtradeb-apps.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends chromium \
+    && rm -f /etc/apt/sources.list.d/xtradeb-apps.list /usr/share/keyrings/xtradeb-apps.gpg \
+    && rm -rf /var/lib/apt/lists/* \
+    && chromium --version
+
+# choreographer resolves the browser as `os.environ.get("BROWSER_PATH", <PATH search>)`.
+# The PATH search already finds /usr/bin/chromium, but it walks chrome -> chromium ->
+# edge -> brave -> vivaldi and takes the first hit, so it is order-dependent on what
+# else a downstream `FROM` image installs. Setting it explicitly pins the answer.
+ENV BROWSER_PATH=/usr/bin/chromium
 
 # =============================================================================
 # Runtime setup

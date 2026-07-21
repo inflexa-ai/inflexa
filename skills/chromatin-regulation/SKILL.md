@@ -126,7 +126,7 @@ BAM files
 ```
 
 - **deeptools is not installed here** (`bamCoverage`, `computeMatrix`, `plotHeatmap`, `plotProfile` are all absent) and there is no egress to install it. Verify before planning around it; when it is missing, build the same product from what is present: `pysam` or `bedtools genomecov` for binned counts, `pyBigWig` to write the track and to read per-region signal (`values()`, `stats(nBins=...)`), numpy to stack the region-by-bin matrix, matplotlib to draw the heatmap and the column-mean profile. `references/deeptools-cli.md` maps each deeptools step to its substitute.
-- Anchor on your own peak calls by default. TSS-anchored profiles need a gene annotation, and **no GTF/GFF or gene BED is in the reference inventory** — report the gap rather than substituting an arbitrary region set.
+- Anchor on your own peak calls by default. TSS-anchored profiles need a gene annotation; **GENCODE gene annotation is in the reference inventory, as an opt-in download rather than part of a default install**, so resolve it before planning on it and expect it may not be staged. If it is absent, report the gap rather than substituting an arbitrary region set.
 - Always normalize signal (RPKM or CPM) for cross-sample comparisons, whichever route produces the track.
 
 ### 8. scATAC-seq

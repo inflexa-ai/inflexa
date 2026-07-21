@@ -2,21 +2,24 @@
 """Smoke test for the Python `kaleido` package.
 
 Fully self-contained: no input files, no network, no packages beyond kaleido
-itself. kaleido is plotly's static-image exporter and needs BOTH plotly and a
-bundled Chromium backend to actually render an image — so this smoke test is
-deliberately MODEST: it only asserts the package imports and exposes its
-version and exporter surface. It never exports an image (that would spawn
-Chromium). Exits 0 only if every check passes, so it can be used as a pass/fail
-library validator:
+itself. kaleido is plotly's static-image exporter. Exits 0 only if every check
+passes, so it can be used as a pass/fail library validator:
 
     python3 kaleido.py
 
 Install: pip install kaleido   (import name: kaleido)
 
-FLAG — Chromium: real image export (`fig.to_image` / `fig.write_image` via
-plotly, or kaleido's own exporter) launches the bundled Chromium; this test
-intentionally does not do that, so a green run does NOT prove image export
-works end-to-end — only that the package is importable.
+CHROMIUM — this test DOES render. It used to stop at the import, on the reasoning
+that exporting would spawn kaleido's bundled Chromium; that reasoning expired with
+kaleido 1.0, which dropped the bundled browser and now drives an external one over
+CDP. The browser is staged in images/sandbox-base/Dockerfile precisely so this
+works, and the failure it guards against is silent: `import kaleido` succeeds with
+no browser anywhere on the box, and the breakage only shows up when an analysis
+tries to export a figure. Importability is therefore no longer evidence of
+anything, so the render below is the assertion that matters.
+
+It renders from a raw figure DICT rather than a plotly Figure, which keeps the
+"no packages beyond kaleido itself" contract — plotly has its own validator.
 
 FLAG — version API: kaleido's public API changed across major versions. The
 0.x line exposed a scope-based exporter (`kaleido.scopes.plotly.PlotlyScope` /
@@ -86,9 +89,7 @@ def test_version_string_present():
 
 def test_exposes_known_exporter_surface():
     # Accept either the legacy scope-based API or the 1.x Kaleido/calc_fig API
-    # (see the module docstring's version FLAG). We assert only that an
-    # exporter surface EXISTS — we never invoke it, because a real export needs
-    # plotly + the bundled Chromium, which this smoke test deliberately avoids.
+    # (see the module docstring's version FLAG).
     legacy = hasattr(kaleido, "scopes") or hasattr(kaleido, "Scope")
     modern = (
         hasattr(kaleido, "Kaleido")
@@ -100,9 +101,35 @@ def test_exposes_known_exporter_surface():
     assert legacy or modern
 
 
+def test_renders_a_real_png():
+    """Drive an actual browser render and check the bytes are a real PNG.
+
+    This is the check that distinguishes a working exporter from an importable
+    one. A bare `len(img) > 0` would not: assert the PNG magic number so a
+    stub/error payload cannot pass, and a floor on the size so a technically-valid
+    but empty render cannot either.
+    """
+    spec = {
+        "data": [{"type": "scatter", "x": [1, 2, 3], "y": [3, 1, 2]}],
+        "layout": {"title": {"text": "kaleido validator"}, "width": 500, "height": 350},
+    }
+    img = kaleido.calc_fig_sync(spec, opts={"format": "png"})
+    assert img[:8] == b"\x89PNG\r\n\x1a\n", f"not a PNG (first bytes: {img[:8]!r})"
+    assert len(img) > 1000, f"degenerate {len(img)}-byte PNG"
+    print(f"       rendered {len(img)}-byte PNG via {os.environ.get('BROWSER_PATH') or 'PATH-discovered browser'}")
+
+
 run_test("module imports and names itself", test_module_imports_and_names_itself)
 run_test("version string present", test_version_string_present)
 run_test("exposes known exporter surface", test_exposes_known_exporter_surface)
+
+# 1.x-only: the render goes through calc_fig_sync, which the 0.x scope API has no
+# equivalent for. Skip rather than fail blind on a legacy install (the manifest
+# resolves 1.x, so a skip here is itself worth noticing).
+if hasattr(kaleido, "calc_fig_sync"):
+    run_test("renders a real PNG through a browser", test_renders_a_real_png)
+else:
+    print("  note kaleido: pre-1.x install, no calc_fig_sync; skipping the render check")
 
 if failures > 0:
     print(f"FAIL: {failures} test(s) failed")

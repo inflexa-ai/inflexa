@@ -26,7 +26,7 @@ Comprehensive guidelines for amplicon and shotgun metagenomics, with emphasis on
 ```
 Demultiplexed FASTQ
   → DADA2 (R): filterAndTrim → learnErrors → dada → mergePairs → makeSequenceTable → removeBimeraDenovo
-    → ASV table + taxonomy assignment (assignTaxonomy with SILVA 138.1 for 16S, UNITE for ITS)
+    → ASV table + taxonomy assignment (assignTaxonomy with SILVA for 16S, UNITE for ITS)
       → Import into phyloseq (R) for downstream analysis
 
 Alternative: QIIME2 artifacts
@@ -34,11 +34,11 @@ Alternative: QIIME2 artifacts
     → Convert to phyloseq for R-based analysis or pandas DataFrame for Python
 ```
 
-- **DADA2 is not installed in this environment**, and neither is QIIME2 — `library(dada2)` fails and there is no egress to add it. **Verify before planning a raw-FASTQ workflow.** The reachable entry point is a pre-computed feature table: hand-off as BIOM, a QIIME2 export, or a counts matrix plus taxonomy, from which the rest of this pack (phyloseq, vegan, mia, ANCOM-BC2, ALDEx2, MaAsLin2, biom-format, scikit-bio — all installed) runs normally. If you were given raw reads and no ASV caller, report that and name what must be provisioned; do not improvise ASV inference.
+- **DADA2 is installed**, so raw demultiplexed FASTQ is a supported entry point: the chain above runs end to end through `removeBimeraDenovo` and yields an ASV table, the ASV sequences, and per-step read tracking. Taxonomy assignment is the one step that may not complete — it needs a training set, which is a separate question covered below. QIIME2 is **not** installed, so that branch is import-only: bring an exported feature table rather than expecting a `.qza` to be read natively. A pre-computed feature table (BIOM, QIIME2 export, or counts matrix plus taxonomy) is still a perfectly good entry point when that is what you were handed — the rest of this pack (phyloseq, vegan, mia, ANCOM-BC2, ALDEx2, MaAsLin2, biom-format, scikit-bio) runs from it normally.
 - DADA2 produces ASVs (amplicon sequence variants) — single-nucleotide resolution, no OTU clustering needed.
 - ALWAYS inspect the error rate learning plots. Poor error models produce unreliable ASVs.
-- SILVA 138.1 is the standard reference for 16S; UNITE for ITS (fungal).
-- **SILVA and UNITE training sets are not currently in the reference inventory.** Resolve them by what they are before planning on them. If they are absent, report that taxonomy assignment cannot be run and hand back the ASV table, sequences, and read tracking — which are complete and useful without it. Do not invent a path, do not substitute a general-purpose sequence database, and do not drop the taxonomy step silently.
+- SILVA is the standard reference for 16S; UNITE for ITS (fungal). Resolve the release from the inventory rather than assuming a version.
+- **SILVA (16S/18S) and UNITE (ITS) training sets are in the reference inventory, but as opt-in downloads rather than part of a default install** — so they are resolvable, and may or may not actually be present. Resolve them by what they are before planning on them. If they are absent, report that taxonomy assignment cannot be run, say they are available to provision, and hand back the ASV table, sequences, and read tracking — which are complete and useful without it. Do not invent a path, do not substitute a general-purpose sequence database, and do not drop the taxonomy step silently.
 
 ### 2. Shotgun Metagenomics
 
@@ -181,7 +181,7 @@ Present and sufficient for everything downstream of a feature table: `samtools`,
 
 ## References
 
-- `references/dada2-api.md` — DADA2 amplicon sequence variant inference (16S/ITS pipeline). **dada2 is absent here**; the file opens with what that means and where to enter the workflow instead
+- `references/dada2-api.md` — DADA2 amplicon sequence variant inference (16S/ITS pipeline)
 - `references/phyloseq-api.md` — Phyloseq object creation, manipulation, and diversity
 - `references/vegan-api.md` — vegan: beta diversity (vegdist), NMDS (metaMDS), PERMANOVA (adonis2), dispersion (betadisper)
 - `references/ancombc-api.md` — ANCOM-BC2 compositional differential abundance

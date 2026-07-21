@@ -128,7 +128,7 @@ When you need gene ID conversion, annotation, or organism databases:
 
 ### Python
 - **matplotlib** + **seaborn**: Primary plotting (always available)
-- **plotly**: Interactive plots (HTML export via `kaleido`)
+- **plotly**: Interactive plots. HTML export is built in; static PNG/SVG/PDF export goes through `kaleido` (`write_image`)
 - **upsetplot**: UpSet plots for set intersections (enrichment overlap, shared genes)
 - **matplotlib-venn**: Venn diagrams (2-3 set comparisons)
 - **adjustText**: Automatic label positioning to avoid overlap in scatter/volcano plots

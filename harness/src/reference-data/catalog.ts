@@ -785,6 +785,211 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                 ],
             },
             {
+                // Comprehensive rather than `basic`: this is what "the GENCODE annotation" means, and a
+                // silently reduced transcript set is a worse surprise than a larger download.
+                id: "gencode-human",
+                version: "50",
+                title: "GENCODE human gene annotation (GRCh38)",
+                description:
+                    "GENCODE release 50 comprehensive gene annotation for Homo sapiens on GRCh38 — gene, transcript, exon, CDS and UTR features with HGNC symbols and versioned Ensembl identifiers. The annotation behind TSS and promoter definition, nearest-gene assignment, and gene-body overlap. Immutable release, roughly 125 MB gzipped.",
+                organism: "human",
+                sourceUrl: "https://www.gencodegenes.org/human/",
+                license: { identifier: "NOASSERTION", url: "https://www.ensembl.org/info/about/legal/disclaimer.html" },
+                recommendation: { group: "genome-annotation", recommended: false },
+                artifacts: [
+                    {
+                        path: "gencode.v50.annotation.gtf.gz",
+                        url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_50/gencode.v50.annotation.gtf.gz",
+                        format: "gtf",
+                        contents:
+                            "Gzipped GTF on GRCh38, contigs named UCSC-style with the 'chr' prefix ('chr1'), which matches the UCSC chromosome-sizes and ENCODE blacklist entries but NOT the Ensembl/NCBI-style naming ClinVar and the NCBI mapping tables use — intersecting across the two conventions returns zero rows without erroring. Column 9 holds gene_id (versioned Ensembl), gene_type, gene_name. GTF is 1-based inclusive; BED is 0-based half-open.",
+                    },
+                ],
+            },
+            {
+                id: "gencode-mouse",
+                version: "M39",
+                title: "GENCODE mouse gene annotation (GRCm39)",
+                description:
+                    "GENCODE release M39 comprehensive gene annotation for Mus musculus on GRCm39 — gene, transcript, exon, CDS and UTR features with MGI symbols and versioned Ensembl identifiers. Immutable release, roughly 92 MB gzipped. Note the build: GRCm39/mm39, which does NOT match the mm10 ENCODE blacklist.",
+                organism: "mouse",
+                sourceUrl: "https://www.gencodegenes.org/mouse/",
+                license: { identifier: "NOASSERTION", url: "https://www.ensembl.org/info/about/legal/disclaimer.html" },
+                recommendation: { group: "genome-annotation", recommended: false },
+                artifacts: [
+                    {
+                        path: "gencode.vM39.annotation.gtf.gz",
+                        url: "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M39/gencode.vM39.annotation.gtf.gz",
+                        format: "gtf",
+                        contents:
+                            "Gzipped GTF on GRCm39 (mm39), contigs named UCSC-style with the 'chr' prefix. Column 9 holds gene_id (versioned Ensembl), gene_type, gene_name. GTF is 1-based inclusive; BED is 0-based half-open. Coordinates are GRCm39 — mm10/GRCm38 intervals are a different coordinate space and must be lifted over, not mixed.",
+                    },
+                ],
+            },
+            {
+                // Tiny (a few KB) and it unblocks the whole bedtools genome-file family, so the
+                // opt-in rationale — never silently pull hundreds of MB — simply does not apply.
+                id: "ucsc-chrom-sizes-human",
+                version: "hg38",
+                title: "UCSC human chromosome sizes (hg38)",
+                description:
+                    "Chromosome names and lengths for GRCh38/hg38 — the 'genome file' that bedtools slop, flank, complement, genomecov and random require, and that pybedtools' built-in chromsizes() lookup can only obtain over the network. A few kilobytes.",
+                organism: "human",
+                sourceUrl: "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/",
+                license: { identifier: "UCSC-Genome-Browser-Data-License", url: "https://genome.ucsc.edu/license/" },
+                recommendation: { group: "genome-annotation", recommended: true },
+                artifacts: [
+                    {
+                        path: "hg38.chrom.sizes",
+                        url: "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.chrom.sizes",
+                        format: "tsv",
+                        contents:
+                            "Two columns, no header: contig name then length in bp ('chr1\\t248956422'). UCSC 'chr'-prefixed naming, matching the GENCODE and ENCODE blacklist entries. Includes scaffolds and alts alongside the primary chromosomes — filter to the primary set if downstream output should not carry them.",
+                    },
+                ],
+            },
+            {
+                id: "ucsc-chrom-sizes-mouse",
+                version: "mm39",
+                title: "UCSC mouse chromosome sizes (mm39)",
+                description:
+                    "Chromosome names and lengths for GRCm39/mm39 — the 'genome file' bedtools interval operations require. A few kilobytes. Build-matched to the GENCODE M39 annotation, NOT to the mm10 ENCODE blacklist.",
+                organism: "mouse",
+                sourceUrl: "https://hgdownload.soe.ucsc.edu/goldenPath/mm39/bigZips/",
+                license: { identifier: "UCSC-Genome-Browser-Data-License", url: "https://genome.ucsc.edu/license/" },
+                recommendation: { group: "genome-annotation", recommended: true },
+                artifacts: [
+                    {
+                        path: "mm39.chrom.sizes",
+                        url: "https://hgdownload.soe.ucsc.edu/goldenPath/mm39/bigZips/mm39.chrom.sizes",
+                        format: "tsv",
+                        contents:
+                            "Two columns, no header: contig name then length in bp. UCSC 'chr'-prefixed naming. Lengths are GRCm39/mm39 — using them with mm10 intervals produces silently truncated or out-of-bounds coordinates rather than an error.",
+                    },
+                ],
+            },
+            {
+                id: "encode-blacklist-human",
+                version: "2",
+                title: "ENCODE blacklist regions, human (hg38)",
+                description:
+                    "ENCODE blacklist v2 for GRCh38/hg38: the low-mappability and anomalous-high-signal regions that produce artefactual peaks in ChIP-seq, ATAC-seq and CUT&RUN. Excluded before peak calling or differential binding. A few kilobytes.",
+                organism: "human",
+                sourceUrl: "https://github.com/Boyle-Lab/Blacklist",
+                license: { identifier: "GPL-3.0", url: "https://github.com/Boyle-Lab/Blacklist/blob/master/LICENSE" },
+                recommendation: { group: "genome-annotation", recommended: true },
+                artifacts: [
+                    {
+                        path: "hg38-blacklist.v2.bed.gz",
+                        url: "https://raw.githubusercontent.com/Boyle-Lab/Blacklist/master/lists/hg38-blacklist.v2.bed.gz",
+                        format: "bed",
+                        contents:
+                            "Gzipped BED, no header: chrom, start, end, then a reason label ('Low Mappability' or 'High Signal Region'). 'chr'-prefixed hg38 naming. Subtract these intervals from peaks rather than intersecting — the point is exclusion, and the file lists regions to discard, not to keep.",
+                    },
+                ],
+            },
+            {
+                // Upstream ships no mm39 blacklist — v2 stops at mm10 — so this is the one entry in
+                // the mouse set on a different build from the others. Stated everywhere it is visible.
+                id: "encode-blacklist-mouse",
+                version: "2",
+                title: "ENCODE blacklist regions, mouse (mm10)",
+                description:
+                    "ENCODE blacklist v2 for mouse: low-mappability and anomalous-high-signal regions excluded before peak calling. Published for mm10/GRCm38 only — there is no mm39 release — so it is on a DIFFERENT build from the GENCODE M39 annotation and mm39 chromosome sizes. Lift it over to GRCm39, or work in mm10 throughout; do not mix. A few kilobytes.",
+                organism: "mouse",
+                sourceUrl: "https://github.com/Boyle-Lab/Blacklist",
+                license: { identifier: "GPL-3.0", url: "https://github.com/Boyle-Lab/Blacklist/blob/master/LICENSE" },
+                recommendation: { group: "genome-annotation", recommended: true },
+                artifacts: [
+                    {
+                        path: "mm10-blacklist.v2.bed.gz",
+                        url: "https://raw.githubusercontent.com/Boyle-Lab/Blacklist/master/lists/mm10-blacklist.v2.bed.gz",
+                        format: "bed",
+                        contents:
+                            "Gzipped BED, no header: chrom, start, end, reason label. 'chr'-prefixed mm10/GRCm38 coordinates — NOT mm39. Applying it to GRCm39 intervals silently masks the wrong regions. Subtract rather than intersect: the file lists regions to discard.",
+                    },
+                ],
+            },
+            {
+                // ~193 MB and only variant-interpretation workflows need it, so it is opt-in. gnomAD and
+                // dbSNP are deliberately absent: both are far too large to stage this way.
+                id: "clinvar-grch38",
+                version: "current",
+                title: "ClinVar variant clinical significance (GRCh38)",
+                description:
+                    "NCBI ClinVar variant summary as VCF on GRCh38, with its tabix index — clinical significance, review status, and condition names for variant interpretation. NCBI rebuilds this weekly in place, so it is verified against what you downloaded rather than a checked-in digest. Roughly 193 MB.",
+                organism: "human",
+                sourceUrl: "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/",
+                license: { identifier: "NCBI-Molecular-Data-Usage-Policy", url: "https://www.ncbi.nlm.nih.gov/home/about/policies/" },
+                recommendation: { group: "variant-annotation", recommended: false },
+                artifacts: [
+                    {
+                        path: "clinvar.vcf.gz",
+                        url: "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz",
+                        format: "vcf",
+                        contents:
+                            "Bgzipped VCF on GRCh38. Chromosome names carry NO 'chr' prefix ('1', 'X') — the opposite convention from the GENCODE and UCSC entries here, so joining across them without renaming returns zero matches silently. Key INFO fields: CLNSIG (clinical significance), CLNREVSTAT (review status — filter on it, a single-submitter assertion is not a reviewed one), CLNDN (condition), GENEINFO, ALLELEID.",
+                    },
+                    {
+                        path: "clinvar.vcf.gz.tbi",
+                        url: "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz.tbi",
+                        format: "tbi",
+                        contents:
+                            "Tabix index for clinvar.vcf.gz, required for random access by region with pysam/cyvcf2/tabix. Must sit beside the VCF; never opened directly. Without it, region queries fall back to a full scan or fail outright.",
+                    },
+                ],
+            },
+            {
+                // The DADA2-formatted derivative of SILVA, not SILVA itself: assignTaxonomy() parses a
+                // FASTA whose header IS the taxonomy string, which a stock SILVA export is not. ~210 MB
+                // across both files and only amplicon workflows need it, so it is opt-in.
+                id: "silva-dada2",
+                version: "138.2",
+                title: "SILVA 16S/18S taxonomy training set (DADA2-formatted)",
+                description:
+                    "SILVA release 138.2 reformatted as DADA2 taxonomy training data for 16S/18S amplicon classification, covering Bacteria, Archaea and Eukaryota. Two files with different jobs: a genus-level training set for assignTaxonomy() and a separate exact-match species file for addSpecies(). Immutable Zenodo record 14169026, roughly 210 MB combined.",
+                sourceUrl: "https://zenodo.org/records/14169026",
+                license: { identifier: "CC-BY-4.0", url: "https://www.arb-silva.de/silva-license-information/" },
+                recommendation: { group: "amplicon-taxonomy", recommended: false },
+                artifacts: [
+                    {
+                        path: "silva_nr99_v138.2_toGenus_trainset.fa.gz",
+                        url: "https://zenodo.org/records/14169026/files/silva_nr99_v138.2_toGenus_trainset.fa.gz",
+                        format: "fasta",
+                        contents:
+                            "Gzipped FASTA, ~140 MB, for assignTaxonomy(). Each header IS the semicolon-delimited lineage and nothing else — 'Bacteria;Pseudomonadota;Gammaproteobacteria;Enterobacterales;Vibrionaceae;Vibrio;' — ranked Kingdom through Genus with a trailing semicolon. Read it gzipped; do not decompress first. Matched to the 16S/18S rRNA gene: running it against ITS reads completes and returns nonsense.",
+                    },
+                    {
+                        path: "silva_v138.2_assignSpecies.fa.gz",
+                        url: "https://zenodo.org/records/14169026/files/silva_v138.2_assignSpecies.fa.gz",
+                        format: "fasta",
+                        contents:
+                            "Gzipped FASTA, ~70 MB, for addSpecies() only — a different header shape from the training set: accession then binomial, '>AB000390.1.1428 Vibrio halioticoli'. Exact-match species assignment applied to an already-assigned taxonomy table. Passing this to assignTaxonomy(), or the training set to addSpecies(), fails to parse or yields an all-NA table.",
+                    },
+                ],
+            },
+            {
+                // Distributed only as a .tgz behind an opaque UUID URL, so `path` names it here; the
+                // DOI landing page is the citable provenance. ITS-specific, hence opt-in.
+                id: "unite-dada2",
+                version: "2025.02.19",
+                title: "UNITE ITS taxonomy training set for eukaryotes (DADA2-formatted)",
+                description:
+                    "UNITE general FASTA release for eukaryotes (version 19.02.2025) — the DADA2-compatible ITS taxonomy reference for fungal and broader eukaryotic amplicon classification, ~157,000 reference sequences. The all-eukaryote release rather than the fungi-only one, because ITS primers amplify non-fungal eukaryotes and a fungi-only reference forces those reads onto fungal lineages. Roughly 50 MB compressed.",
+                sourceUrl: "https://doi.plutof.ut.ee/doi/10.15156/BIO/3301231",
+                license: { identifier: "CC-BY-4.0", url: "https://creativecommons.org/licenses/by/4.0/" },
+                recommendation: { group: "amplicon-taxonomy", recommended: false },
+                artifacts: [
+                    {
+                        path: "unite_general_release_eukaryotes_2025.02.19.tgz",
+                        url: "https://s3.hpc.ut.ee/plutof-public/original/e861a3d6-54f4-42dc-882a-5f129beac39a.tgz",
+                        format: "tgz",
+                        contents:
+                            "Gzipped tar holding two FASTAs: sh_general_release_dynamic_all_19.02.2025.fasta (use this one) and a *_dev.fasta variant. Extract to a writable directory first — the store is read-only and dada2 cannot read inside the archive. Headers are pipe-delimited then semicolon-delimited with rank prefixes: '>Abrothallus_subhalei|MT153946|SH1227328.10FU|refs|k__Fungi;p__Ascomycota;...;s__Abrothallus_subhalei'. Matched to ITS: running it against 16S reads completes and returns nonsense.",
+                    },
+                ],
+            },
+            {
                 // ~842 MB reference genome bundle, PGx-specific, so it is opt-in rather than a default download.
                 id: "pharmcat-grch38-fasta",
                 version: "GRCh38.p13",
