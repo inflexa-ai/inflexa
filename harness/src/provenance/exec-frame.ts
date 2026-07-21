@@ -11,9 +11,10 @@
  * A read naming a same-run sibling this step never declared is refused here,
  * before it reaches the collector: a ref the collector never holds cannot
  * become an attestation target, so the edge is unrepresentable rather than
- * merely filtered downstream. Every refusal is logged — an edge asserted over
- * a step that was still writing is invisible by nature, so a silent drop would
- * rebuild exactly the blind spot the refusal exists to close.
+ * merely filtered downstream. Each refused path is logged once per step — an
+ * edge asserted over a step that was still writing is invisible by nature, so a
+ * silent drop would rebuild exactly the blind spot the refusal exists to close,
+ * while re-narrating a path already reported adds no fact and buries the rest.
  *
  * Degrades safely: a disabled or absent frame records the command with no
  * inputs and no writes (its outputs fall back to leaves at registration), and a
@@ -80,11 +81,13 @@ export function feedExecFrame(args: FeedExecFrameArgs): void {
         const rel = stripMountPrefix(mountRoot, read.path);
         const classification = classifyReadPath(rel, collector.stepId, collector.runId, collector.dependsOn);
         if (!classification.admissible) {
-            logger.warn("refusing lineage edge to an undeclared same-run sibling", {
-                path: rel,
-                refRunId: classification.refRunId,
-                refStepId: classification.refStepId,
-            });
+            if (collector.claimRefusalNarration(rel)) {
+                logger.warn("refusing lineage edge to an undeclared same-run path", {
+                    path: rel,
+                    refRunId: classification.refRunId,
+                    refStepId: classification.refStepId,
+                });
+            }
             continue;
         }
         commandReads.push(collector.trackInputAccess(mountRoot, rel, null, classification.context));

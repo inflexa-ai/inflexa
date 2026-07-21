@@ -41,7 +41,13 @@ including legitimate declared dependencies.
 
 `dependsOn` SHALL reach the step body through its durable workflow input. The field SHALL be optional, and
 its absence SHALL be treated as an empty declaration list — a workflow recovered under an input shape that
-predates the field under-captures same-run sibling edges rather than admitting unstable ones.
+predates the field under-captures every same-run cross-step edge, declared dependencies included, rather
+than admitting unstable ones.
+
+The parent SHALL project the field from its keyed plan snapshot (`planStepById`) when building each child's
+input, and SHALL throw when the step is absent from it rather than defaulting to an empty list. An empty
+list is indistinguishable from a step that genuinely declared nothing, so a silent default would delete
+every same-run edge the step was entitled to while leaving no record that it did.
 
 After each `execute_command` resolves its `ExecResult`, the workspace `execute_command` tool SHALL feed that
 result's `provenance` frame into the collector via `feedExecFrame` (`src/provenance/exec-frame.ts`).
@@ -49,8 +55,11 @@ result's `provenance` frame into the collector via `feedExecFrame` (`src/provena
 doubled at the boundary so an in-mount name lands on its canonical relative form — classify every read via
 `classifyReadPath(relativePath, stepId, runId, dependsOn)`, call `trackInputAccess` for each read that
 classification admits, and call `recordCommandExecution` once per exec with that exec's own admitted reads
-scoped to its outputs. A read that classification refuses SHALL be dropped and logged, and SHALL NOT be
-tracked. A frame path that does not lie under the mount SHALL ride onto its `InputRef` verbatim, never with
+scoped to its outputs. A read that classification refuses SHALL be dropped and SHALL NOT be tracked. The
+refusal SHALL be logged once per distinct path per step: a refusal reports one fact — a lineage edge that
+will not exist — and that fact does not change when the same file is read again, while reads dedup within a
+frame but not across the many execs a step issues, so an undeduped narration is a steady stream that trains
+a reader to filter away the signal. A frame path that does not lie under the mount SHALL ride onto its `InputRef` verbatim, never with
 the mount root prepended: forging an in-tree name for a foreign path would surface at reconcile as phantom
 drift (a missing file, which fails the step) instead of the out-of-tree read it is (which reconcile drops
 from lineage). Read hashes SHALL be left unset at track time and filled from disk by

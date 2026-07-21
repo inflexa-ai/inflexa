@@ -124,6 +124,25 @@ describe("classifyReadPath", () => {
         expect(classifyReadPath(`runs/${OWN_RUN}/qc/output/qc.csv`, OWN_STEP, OWN_RUN, []).admissible).toBe(false);
     });
 
+    test("a bare step directory reaches the same verdict as a file beneath it", () => {
+        // `opendir` reports the directory without a trailing separator, so these
+        // are ordinary reads. Deciding them off the segment rather than a
+        // `runs/{runId}/{id}/` prefix is what keeps a step from refusing an edge
+        // to itself, or to a dependency it did declare, on every `ls`.
+        expect(contextOf(classifyReadPath(`runs/${OWN_RUN}/${OWN_STEP}`, OWN_STEP, OWN_RUN, DEPS)).source).toBe("artifacts");
+        expect(contextOf(classifyReadPath(`runs/${OWN_RUN}/qc`, OWN_STEP, OWN_RUN, DEPS)).source).toBe("upstream");
+        expect(classifyReadPath(`runs/${OWN_RUN}/norm`, OWN_STEP, OWN_RUN, DEPS).admissible).toBe(false);
+    });
+
+    test("a step id that only prefixes another's does not borrow its verdict", () => {
+        // Segment equality, not `startsWith`: `qc2` shares a prefix with the
+        // declared `qc`, and a prefix match would admit an undeclared sibling.
+        const result = classifyReadPath(`runs/${OWN_RUN}/qc2/output/x.csv`, OWN_STEP, OWN_RUN, DEPS);
+        expect(result.admissible).toBe(false);
+        if (result.admissible) throw new Error("unreachable");
+        expect(result.refStepId).toBe("qc2");
+    });
+
     test("another run's step classifies as prior via path extraction", () => {
         expect(contextOf(classifyReadPath("runs/run-001/de/output/prior.csv", OWN_STEP, OWN_RUN, DEPS))).toEqual({
             source: "prior",
@@ -155,5 +174,15 @@ describe("ProvenanceCollector.trackInputAccess without an explicit context", () 
 
         expect(ref).toBeNull();
         expect(collector.getTrackedInputs()).toEqual([]);
+    });
+});
+
+describe("ProvenanceCollector.claimRefusalNarration", () => {
+    test("a path is claimable once, and each path is claimed independently", () => {
+        const collector = new ProvenanceCollector({ stepId: "de", runId: "run-002" });
+
+        expect(collector.claimRefusalNarration("runs/run-002/norm/output/a.csv")).toBe(true);
+        expect(collector.claimRefusalNarration("runs/run-002/norm/output/a.csv")).toBe(false);
+        expect(collector.claimRefusalNarration("runs/run-002/norm/output/b.csv")).toBe(true);
     });
 });

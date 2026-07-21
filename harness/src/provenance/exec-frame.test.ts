@@ -196,6 +196,30 @@ describe("feedExecFrame — undeclared same-run siblings", () => {
         expect(warnings[0]!.fields).toMatchObject({ refStepId: "T5S1", refRunId: "run-9" });
     });
 
+    test("a path refused across several execs is narrated once for the step", () => {
+        // Reads dedup within a frame but not across them, and a step issues many
+        // execs. Without a step-level claim, a script re-reading one scratch file
+        // in a loop drowns every other refusal in repeats of itself.
+        const collector = new ProvenanceCollector({ stepId: "T2S2", runId: "run-9", dependsOn: [] });
+        const { logger, warnings } = recordingLogger();
+        const feedOnce = (path: string) =>
+            feedExecFrame({
+                collector,
+                mountRoot: MOUNT,
+                command: ["python3", "scripts/gsea.py"],
+                exitCode: 0,
+                durationMs: 10,
+                logger,
+                provenance: { disabled: false, reads: [{ path, layers: ["inotify"] }], writes: [], deletes: [] },
+            });
+
+        feedOnce("/a1/runs/run-9/T5S1/output/scratch.csv");
+        feedOnce("/a1/runs/run-9/T5S1/output/scratch.csv");
+        feedOnce("/a1/runs/run-9/T5S1/output/other.csv");
+
+        expect(warnings.map((w) => w.fields?.["path"])).toEqual(["runs/run-9/T5S1/output/scratch.csv", "runs/run-9/T5S1/output/other.csv"]);
+    });
+
     test("a frame whose every read is refused still records its command", () => {
         const collector = new ProvenanceCollector({ stepId: "T2S2", runId: "run-9", dependsOn: [] });
 
