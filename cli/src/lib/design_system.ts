@@ -740,6 +740,15 @@ export const size = {
     composerMin: 1,
     /** Palette rows visible before it scrolls. */
     paletteRows: 12,
+    /**
+     * Run-step rows the rail's progress embed shows before it windows the list behind its scrollable
+     * elision markers. ODD by requirement, not by taste: the window centres by placing the running step
+     * at `floor(n / 2)`, which is the exact middle row only for an odd count. Lives here as a token
+     * because the sidebar, the gallery exhibit, and the tests that pin the window's arithmetic must all
+     * name the SAME cap — held by hand in four places it has already drifted, and a stale copy silently
+     * measures a window the product never renders.
+     */
+    railStepRows: 7,
 } as const;
 
 /**

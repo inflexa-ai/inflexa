@@ -418,7 +418,7 @@ export function Sidebar(props: SidebarProps) {
                                                             done={progress().done}
                                                             total={progress().total}
                                                             steps={progress().steps}
-                                                            maxSteps={7}
+                                                            maxSteps={size.railStepRows}
                                                             hint={false}
                                                             heading={false}
                                                         />
