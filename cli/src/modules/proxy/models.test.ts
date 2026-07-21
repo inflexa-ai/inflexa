@@ -8,6 +8,7 @@ import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import {
     __resetModelCacheForTest,
     checkModelAccess,
+    conventionalDefaultModel,
     modelMatchesProvider,
     rankModelCandidates,
     readApiKey,
@@ -32,6 +33,22 @@ describe("modelMatchesProvider", () => {
     test("a provider absent from the table matches nothing — never derives an identity, just reports mismatch", () => {
         expect(modelMatchesProvider("deepseek", "some-alias-v2")).toBe(false);
         expect(modelMatchesProvider("deepseek", "deepseek-r1")).toBe(false);
+    });
+});
+
+describe("conventionalDefaultModel", () => {
+    test("known slugs resolve their pre-fill default; slugs without a convention resolve none", () => {
+        expect(conventionalDefaultModel("anthropic")).toBe("claude-sonnet-5");
+        expect(conventionalDefaultModel("openai")).toBe("gpt-5");
+        expect(conventionalDefaultModel("google")).toBe("gemini-2.5-pro");
+        // qwen is in the family table but carries no convention; unknown slugs get no guess at all.
+        expect(conventionalDefaultModel("qwen")).toBeNull();
+        expect(conventionalDefaultModel("deepseek")).toBeNull();
+    });
+
+    test("the direction ban is untouched: a default id never resolves a provider identity", () => {
+        // The lookup is provider→model only; feeding a model id where a slug belongs matches nothing.
+        expect(conventionalDefaultModel("claude-sonnet-5")).toBeNull();
     });
 });
 

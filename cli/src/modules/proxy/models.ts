@@ -32,13 +32,32 @@ export type ModelCandidate = { id: string; created?: number };
  * read id→provider to derive a provider identity: the connection's configured `provider` is the sole
  * identity source, and deriving one from a model id here would fabricate provenance. The `family` column
  * feeds {@link rankModelCandidates}.
+ *
+ * `conventionalDefault` is the CLI's ONLY hardcoded model ids — a declared exception to the otherwise
+ * list-driven election (see the model-connection spec). It exists solely as an editable PRE-FILL for
+ * direct setups whose endpoint serves no `/models` listing (enterprise gateways routinely don't): keyed
+ * on the provider SLUG, not the protocol, because an openai-COMPATIBLE endpoint routinely serves models
+ * outside any slug's family and must get no guess. Never written to config without user confirmation and
+ * a validation request. ROT RISK: these ids go stale on model deprecation — acceptable only because a
+ * stale entry costs one failed setup-time validation and one edit, never a persisted broken config.
+ * Families without a confident convention carry none.
  */
 const MODEL_FAMILIES = [
-    { family: "claude", provider: "anthropic" },
-    { family: "gpt", provider: "openai" },
-    { family: "gemini", provider: "google" },
+    { family: "claude", provider: "anthropic", conventionalDefault: "claude-sonnet-5" },
+    { family: "gpt", provider: "openai", conventionalDefault: "gpt-5" },
+    { family: "gemini", provider: "google", conventionalDefault: "gemini-2.5-pro" },
     { family: "qwen", provider: "qwen" },
 ] as const;
+
+/**
+ * The provider slug's conventional default model id for the direct-setup pre-fill, or `null` when the
+ * slug has no entry (unknown providers get no guess — a free-text prompt instead). Provider→model is
+ * the ALLOWED derivation direction; the id→provider ban above is untouched.
+ */
+export function conventionalDefaultModel(provider: string): string | null {
+    const entry = MODEL_FAMILIES.find((f) => f.provider === provider);
+    return entry !== undefined && "conventionalDefault" in entry ? entry.conventionalDefault : null;
+}
 
 /**
  * Family preference for the default-model rank (claude > gpt > gemini > qwen), the `family` column of

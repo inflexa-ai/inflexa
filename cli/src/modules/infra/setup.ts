@@ -17,7 +17,7 @@ import {
     resolveModelApiKey,
     type ProviderEnvSnapshot,
 } from "../../lib/env.ts";
-import { createCredentialSource, credentialErrorMessage, type CredentialScheme } from "../../lib/credential.ts";
+import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialScheme } from "../../lib/credential.ts";
 import { select, promptText, confirm } from "../../lib/cli.ts";
 import {
     AGENT_NAMES,
@@ -30,6 +30,7 @@ import {
 } from "../harness/config.ts";
 import {
     checkModelAccess,
+    conventionalDefaultModel,
     isProxyCooldown,
     listModelCandidates,
     modelMatchesProvider,
@@ -240,6 +241,9 @@ export async function setup(options: SetupOptions): Promise<void> {
             const detection = detectCredentialHelper();
 
             let direct: DirectConnectionInput;
+            // The credential probe's conclusion, when the credential-source offer ran one: carries the
+            // /models ids and minted token the model step below reuses (no second mint, no second listing).
+            let credentialProbe: CredentialProbeResult | null = null;
             if (process.stdin.isTTY) {
                 direct = await promptDirectConnection(snap, adoptable, detection);
                 // A detected credential-helper setup can supply a refreshing token (a helper command or an
@@ -249,8 +253,11 @@ export async function setup(options: SetupOptions): Promise<void> {
                 // `ANTHROPIC_AUTH_TOKEN`) are Anthropic-specific, so minting one to probe against an
                 // unrelated openai-compatible endpoint would be a confusing, wrong offer.
                 if (effectiveProtocol(direct) === "anthropic" && credentialHelperDetected(detection)) {
-                    const auth = await offerCredentialSource(direct, detection);
-                    if (auth !== null) direct = { ...direct, auth };
+                    const offered = await offerCredentialSource(direct, detection);
+                    if (offered !== null) {
+                        direct = { ...direct, auth: offered.auth };
+                        credentialProbe = offered.probe;
+                    }
                 }
             } else if (adoptable.length > 0) {
                 // Non-interactive self-configure: adopt the detected env with no prompts, applying the
@@ -309,6 +316,13 @@ export async function setup(options: SetupOptions): Promise<void> {
                               "Bedrock/Vertex are not adopted (no direct signer).",
                     "Model API key",
                 );
+            }
+
+            // Direct mode has no model auto-resolve: without an explicit id boot fails `model_required`,
+            // so the interactive flow finishes the job here. A non-TTY run writes nothing — boot's
+            // actionable failure remains the documented contract.
+            if (process.stdin.isTTY) {
+                await collectDirectModelAtSetup(direct, credentialProbe);
             }
         }
 
@@ -1234,47 +1248,164 @@ function effectiveProtocol(direct: DirectConnectionInput): "anthropic" | "openai
 export type CredentialProbeError = { readonly message: string };
 
 /**
- * Validate a credential source before it is persisted: run it ONCE — surfacing a command/env failure as its
- * own cause — then make a cheap authenticated `GET {baseURL}/models` under the resolved
- * scheme, so a wrong scheme or endpoint surfaces as an HTTP/auth failure at setup, not on first chat. The
- * anthropic wire's `/models` needs a version header even on GET, added when the protocol is anthropic.
+ * A probe conclusion the caller must act on (the ok channel — failure means a DEFINITE bad
+ * configuration, see {@link probeCredentialSource}). `pass` carries the `/models` ids when that rung
+ * answered 2xx (they seed the model prompt's pre-fill) and `validatedModel` when the authoritative ping
+ * confirmed a specific id end-to-end (so the model step can skip re-validating the same pick).
+ * `ambiguous` is the save-anyway path: the endpoint answered something a standards-shaped client cannot
+ * classify (enterprise gateways signal auth failures with non-standard statuses, e.g. 500), so the user
+ * — shown the status and body — decides. Both carry the minted credential so later setup steps (the
+ * model validation) reuse it instead of re-running the helper.
+ */
+export type CredentialProbeResult =
+    | { readonly outcome: "pass"; readonly listedModels: string[] | null; readonly validatedModel: string | null; readonly cred: Credential }
+    | { readonly outcome: "ambiguous"; readonly status: number; readonly excerpt: string; readonly cred: Credential };
+
+/** The wire headers a direct request sends under a resolved credential: the scheme's auth header, plus the version header the anthropic wire requires. */
+function wireHeaders(cred: Credential, protocol: "anthropic" | "openai-compatible"): Headers {
+    const headers = new Headers();
+    if (cred.scheme === "bearer") headers.set("authorization", `Bearer ${cred.token}`);
+    else headers.set("x-api-key", cred.token);
+    // The Anthropic Messages API requires a version header on every request, GET /models included.
+    if (protocol === "anthropic") headers.set("anthropic-version", "2023-06-01");
+    return headers;
+}
+
+/** The `/models` ids of a 2xx listing body, or `null` when the body is not the shared `{ data: [{ id }] }` shape. */
+const probeModelsSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
+
+/**
+ * How the authoritative message ping concluded. `model_not_found` is a PASS for a credential probe (the
+ * request cleared auth and routing — everything a credential probe asserts) but a rejection for a model
+ * validation; the two callers map it themselves.
+ */
+export type MessagePingOutcome =
+    | { readonly kind: "pass" }
+    | { readonly kind: "model_not_found"; readonly excerpt: string }
+    | { readonly kind: "auth_rejected"; readonly status: number }
+    | { readonly kind: "ambiguous"; readonly status: number; readonly excerpt: string }
+    | { readonly kind: "unreachable"; readonly url: string; readonly detail: string };
+
+/**
+ * True only for a RECOGNIZABLE model-not-found error body: the Anthropic shape (`error.type ===
+ * "not_found_error"` whose message names the model — a bare not_found_error is also what a wrong URL
+ * path returns, and reading that as "model wrong" would wave a broken endpoint through) or the
+ * OpenAI-style `error.code === "model_not_found"`. Anything else stays unclassified — the conservative
+ * read keeps the user in control via the ambiguous/save-anyway path.
+ */
+function isModelNotFoundBody(text: string): boolean {
+    try {
+        const parsed: unknown = JSON.parse(text); // endpoint error body — shape-narrowed below
+        if (typeof parsed !== "object" || parsed === null) return false;
+        const error = (parsed as Record<string, unknown>).error;
+        if (typeof error !== "object" || error === null) return false;
+        const { type, code, message } = error as Record<string, unknown>;
+        if (code === "model_not_found") return true;
+        return type === "not_found_error" && typeof message === "string" && message.toLowerCase().includes("model");
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * The authoritative probe rung: a `max_tokens: 1` message POST shaped by the connection's protocol —
+ * the one request that tests a NECESSARY condition of the connection (an endpoint that cannot serve it
+ * cannot chat, whatever else answers). ~10 tokens, sent only from interactive setup with the progress
+ * line naming the spend.
+ */
+export async function pingMessagesEndpoint(
+    baseURL: string,
+    protocol: "anthropic" | "openai-compatible",
+    cred: Credential,
+    model: string,
+    doFetch: (url: string, init: RequestInit) => Promise<Response> = fetch,
+): Promise<MessagePingOutcome> {
+    const root = baseURL.replace(/\/+$/, "");
+    const url = protocol === "anthropic" ? `${root}/messages` : `${root}/chat/completions`;
+    const headers = wireHeaders(cred, protocol);
+    headers.set("content-type", "application/json");
+    let response: Response;
+    try {
+        response = await doFetch(url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }),
+        });
+    } catch (cause) {
+        return { kind: "unreachable", url, detail: cause instanceof Error ? cause.message : String(cause) };
+    }
+    if (response.ok) return { kind: "pass" };
+    if (response.status === 401 || response.status === 403) return { kind: "auth_rejected", status: response.status };
+    const excerpt = (await response.text().catch(() => "")).slice(0, 300);
+    if (isModelNotFoundBody(excerpt)) return { kind: "model_not_found", excerpt };
+    return { kind: "ambiguous", status: response.status, excerpt };
+}
+
+/**
+ * Validate a credential source before it is persisted, with a PROBE LADDER in which `GET
+ * {baseURL}/models` is opportunistic and the message ping is authoritative: enterprise gateways
+ * routinely serve ONLY the message route, so a missing/broken `/models` must never read as a broken
+ * credential. Run the source ONCE — surfacing a command/env failure as its own cause — then:
+ *
+ * 1. `GET {baseURL}/models` under the resolved scheme. 2xx passes (its ids seed the model pre-fill);
+ *    401/403 fails with the scheme hint; an unreachable endpoint fails with the URL hint.
+ * 2. Any other listing outcome (404, 405, 5xx …) escalates to {@link pingMessagesEndpoint} with
+ *    `pingModel`: 2xx or a definite model-not-found passes (the latter proves auth + routing, which is
+ *    all a credential probe asserts); 401/403 and unreachable fail as above; anything else returns the
+ *    `ambiguous` outcome for the caller's save-anyway decision.
+ *
  * `doFetch` is injectable for tests; production uses global `fetch`.
  */
 export async function probeCredentialSource(
     baseURL: string,
     protocol: "anthropic" | "openai-compatible",
     auth: ModelAuthConfig,
+    pingModel: string,
     doFetch: (url: string, init: RequestInit) => Promise<Response> = fetch,
-): Promise<Result<void, CredentialProbeError>> {
+): Promise<Result<CredentialProbeResult, CredentialProbeError>> {
     const cred = await createCredentialSource(auth).get();
     if (cred.isErr()) {
         return err({
             message: `The credential ${auth.kind === "command" ? "command" : "source"} did not produce a token: ${credentialErrorMessage(cred.error)}.`,
         });
     }
-
-    const headers = new Headers();
-    if (cred.value.scheme === "bearer") headers.set("authorization", `Bearer ${cred.value.token}`);
-    else headers.set("x-api-key", cred.value.token);
-    // The Anthropic Messages API requires a version header even on GET /models.
-    if (protocol === "anthropic") headers.set("anthropic-version", "2023-06-01");
+    const rejected = (status: number): CredentialProbeError => ({
+        message: `The endpoint rejected the credential (HTTP ${status}). Check the ${cred.value.scheme} scheme and that the source mints a valid token for ${baseURL}.`,
+    });
 
     const url = `${baseURL.replace(/\/+$/, "")}/models`;
     let response: Response;
     try {
-        response = await doFetch(url, { method: "GET", headers });
+        response = await doFetch(url, { method: "GET", headers: wireHeaders(cred.value, protocol) });
     } catch (cause) {
         return err({ message: `Could not reach the endpoint ${url}: ${cause instanceof Error ? cause.message : String(cause)}. Check the endpoint URL.` });
     }
-    if (response.status === 401 || response.status === 403) {
-        return err({
-            message: `The endpoint rejected the credential (HTTP ${response.status}). Check the ${cred.value.scheme} scheme and that the source mints a valid token for ${baseURL}.`,
-        });
+    if (response.status === 401 || response.status === 403) return err(rejected(response.status));
+    if (response.ok) {
+        // A listing that answers but does not parse still validated the credential — the ids are a bonus.
+        let listedModels: string[] | null;
+        try {
+            const parsed = probeModelsSchema.safeParse(await response.json());
+            listedModels = parsed.success ? parsed.data.data.map((m) => m.id) : null;
+        } catch {
+            listedModels = null;
+        }
+        return ok({ outcome: "pass", listedModels, validatedModel: null, cred: cred.value });
     }
-    if (!response.ok) {
-        return err({ message: `The endpoint ${url} returned HTTP ${response.status}. Check the endpoint URL exposes a /models route.` });
+
+    const ping = await pingMessagesEndpoint(baseURL, protocol, cred.value, pingModel, doFetch);
+    switch (ping.kind) {
+        case "pass":
+            return ok({ outcome: "pass", listedModels: null, validatedModel: pingModel, cred: cred.value });
+        case "model_not_found":
+            return ok({ outcome: "pass", listedModels: null, validatedModel: null, cred: cred.value });
+        case "auth_rejected":
+            return err(rejected(ping.status));
+        case "unreachable":
+            return err({ message: `Could not reach the endpoint ${ping.url}: ${ping.detail}. Check the endpoint URL.` });
+        case "ambiguous":
+            return ok({ outcome: "ambiguous", status: ping.status, excerpt: ping.excerpt, cred: cred.value });
     }
-    return ok(undefined);
 }
 
 /** Shorten a command for a menu label so a long helper path does not wrap the clack box. */
@@ -1288,10 +1419,17 @@ function truncateCommand(s: string, max = 44): string {
  * own explicitly-labeled choice, both always editable — the `ANTHROPIC_AUTH_TOKEN` env bearer (when
  * set), or declines to the static-key path. The managed helper is never run before the user has seen
  * and confirmed the exact command in the editable prompt. The chosen source is VALIDATED (run once +
- * auth probe) before it is returned; a probe failure reports the likely cause and returns `null`
- * (falling back to the static key). Returns the token-free `auth` block, or `null`.
+ * the probe ladder) before it is returned; a DEFINITE probe failure (auth rejection, unreachable,
+ * mint failure) reports the likely cause and returns `null` (falling back to the static key), while an
+ * AMBIGUOUS outcome — a non-standard status like the 500-for-bad-token some gateways emit — shows the
+ * endpoint's answer and lets the user save anyway rather than silently discarding a possibly-working
+ * source. Returns the token-free `auth` block with the probe conclusion (listing ids for the model
+ * pre-fill, the minted credential for later validation), or `null`.
  */
-async function offerCredentialSource(direct: DirectConnectionInput, detection: CredentialHelperDetection): Promise<ModelAuthConfig | null> {
+async function offerCredentialSource(
+    direct: DirectConnectionInput,
+    detection: CredentialHelperDetection,
+): Promise<{ auth: ModelAuthConfig; probe: CredentialProbeResult } | null> {
     const options: { value: string; label: string }[] = [];
     if (detection.userHelperCommand !== null) {
         options.push({
@@ -1342,16 +1480,169 @@ async function offerCredentialSource(direct: DirectConnectionInput, detection: C
     }
 
     const s = clackSpinner();
-    s.start("Validating the credential source");
-    const probe = await probeCredentialSource(direct.baseURL, effectiveProtocol(direct), auth);
+    s.start("Validating the credential source (may send one 1-token test message)");
+    // The ping needs SOME model id; the provider-conventional default is the best guess, and a
+    // model-not-found answer still passes (the probe asserts auth + routing, not the model). This offer
+    // only runs on the anthropic wire, so a custom provider slug falls back to the anthropic family's
+    // entry — the table stays the single home of conventional ids; the literal is an unreachable
+    // backstop for the type system, not a real guess.
+    const pingModel = conventionalDefaultModel(direct.provider) ?? conventionalDefaultModel("anthropic") ?? "unknown";
+    const probe = await probeCredentialSource(direct.baseURL, effectiveProtocol(direct), auth, pingModel);
     if (probe.isErr()) {
         s.error("Credential source validation failed");
         log.error(probe.error.message);
         log.warn("Not writing the credential source — falling back to a static API key. Re-run `inflexa setup` to try again.");
         return null;
     }
+    if (probe.value.outcome === "ambiguous") {
+        s.stop("Credential source validation was inconclusive");
+        log.warn(
+            `The endpoint answered the test message with HTTP ${probe.value.status}${probe.value.excerpt !== "" ? `:\n  ${probe.value.excerpt}` : "."}\n` +
+                "Enterprise gateways often use non-standard statuses, so the source may still work.",
+        );
+        if (!(await confirm("Save the credential source anyway?"))) {
+            log.warn("Not writing the credential source — falling back to a static API key. Re-run `inflexa setup` to try again.");
+            return null;
+        }
+        return { auth, probe: probe.value };
+    }
     s.stop("Credential source validated");
-    return auth;
+    return { auth, probe: probe.value };
+}
+
+/**
+ * The seams {@link collectDirectModel} drives, injectable so the validation verdict mapping, the
+ * re-prompt loop, and the save-anyway policy are unit-testable without clack or a network — mirrors
+ * {@link selectDefaultModel}'s deps pattern. Production assembly: {@link collectDirectModelAtSetup}.
+ */
+export type DirectModelDeps = {
+    /** The editable pre-fill (three-tier precedence, computed by the assembly); "" = no guess. */
+    prefill: string;
+    /** The id the credential probe already validated end-to-end, or null; a matching pick skips re-validation. */
+    validatedModel: string | null;
+    /** Prompt for the model id; `retryDetail` carries the endpoint's rejection to show above a re-prompt. */
+    promptModel: (prefill: string, retryDetail: string | null) => Promise<string>;
+    /** The protocol-shaped 1-token validation, or null when no credential is at hand (persist unvalidated). */
+    validate: ((model: string) => Promise<MessagePingOutcome>) | null;
+    /** The save-anyway decision for a validation outcome that neither passed nor definitely rejected. */
+    confirmSave: (model: string, detail: string) => Promise<boolean>;
+    /** Persist the id to BOTH user-facing agents. */
+    writeBoth: (model: string) => Result<void, ConfigError>;
+    warn: (message: string) => void;
+    success: (message: string) => void;
+};
+
+/**
+ * Collect and persist the direct connection's model id — the piece without which boot fails
+ * `model_required`. The confirmed id is validated when a credential is at hand: a definite
+ * model-not-found re-prompts with the endpoint's own rejection (endpoints often name their served ids
+ * there); an outcome the validation cannot classify (auth-rejected, unreachable, non-standard status)
+ * offers save-anyway — declining re-prompts; a pass — or no validation capability at all — persists to
+ * BOTH agents (the cliproxy election's explicit-pick semantics). A write failure only warns: setup's
+ * real work is already done, and the model-switch commands can persist the pick later.
+ */
+export async function collectDirectModel(deps: DirectModelDeps): Promise<void> {
+    let retryDetail: string | null = null;
+    for (;;) {
+        const model = (await deps.promptModel(deps.prefill, retryDetail)).trim();
+        retryDetail = null;
+        if (model === "") continue;
+        if (deps.validate !== null && model !== deps.validatedModel) {
+            const outcome = await deps.validate(model);
+            if (outcome.kind === "model_not_found") {
+                retryDetail = outcome.excerpt !== "" ? outcome.excerpt : "the endpoint reports it cannot serve this model";
+                continue;
+            }
+            if (outcome.kind !== "pass") {
+                const detail =
+                    outcome.kind === "unreachable"
+                        ? outcome.detail
+                        : `HTTP ${outcome.status}${outcome.kind === "ambiguous" && outcome.excerpt !== "" ? `: ${outcome.excerpt}` : ""}`;
+                if (!(await deps.confirmSave(model, detail))) continue;
+            }
+        }
+        deps.writeBoth(model).match(
+            () => deps.success(`Model "${model}" set for both agents.`),
+            (e) => deps.warn(`Could not save the model selection: ${e.type}. Set it later with the model-switch commands.`),
+        );
+        return;
+    }
+}
+
+/**
+ * The model prompt's pre-fill (spec precedence): the top-RANKED listed id when the endpoint's listing
+ * answered → the provider-conventional default → "" (free text, no guess). Pure, so the precedence is
+ * unit-testable without a prompt or a network.
+ */
+export function directModelPrefill(listed: string[] | null, provider: string): string {
+    const ranked = listed !== null && listed.length > 0 ? rankModelCandidates(listed.map((id) => ({ id }))) : [];
+    return ranked[0] ?? conventionalDefaultModel(provider) ?? "";
+}
+
+/** One `/models` listing attempt for the static-key pre-fill; any failure (non-2xx, parse, network) degrades to null — never an error. */
+async function fetchDirectListing(baseURL: string, protocol: "anthropic" | "openai-compatible", cred: Credential): Promise<string[] | null> {
+    try {
+        const response = await fetch(`${baseURL.replace(/\/+$/, "")}/models`, { method: "GET", headers: wireHeaders(cred, protocol) });
+        if (!response.ok) return null;
+        const parsed = probeModelsSchema.safeParse(await response.json());
+        return parsed.success ? parsed.data.data.map((m) => m.id) : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Production assembly of {@link collectDirectModel} for the interactive direct path. The validation
+ * credential is the probe's minted token when an auth block was configured (no second helper run), else
+ * the static env key under the protocol's conventional header (`x-api-key` on the anthropic wire, bearer
+ * on openai-compatible — what the SDK sends at chat time); absent both, the pick persists unvalidated
+ * (boot and first chat surface problems actionably). Pre-fill precedence (spec): the endpoint's ranked
+ * `/models` listing — from the probe, or one attempt of our own on the static-key path — then the
+ * provider-conventional default, then empty free text.
+ */
+async function collectDirectModelAtSetup(direct: DirectConnectionInput, probe: CredentialProbeResult | null): Promise<void> {
+    const protocol = effectiveProtocol(direct);
+    const envKey = resolveModelApiKey(direct.provider);
+    const cred: Credential | null = probe?.cred ?? (envKey !== undefined ? { token: envKey, scheme: protocol === "anthropic" ? "x-api-key" : "bearer" } : null);
+
+    let listed = probe !== null && probe.outcome === "pass" ? probe.listedModels : null;
+    if (listed === null && probe === null && cred !== null) {
+        listed = await fetchDirectListing(direct.baseURL, protocol, cred);
+    }
+    const prefill = directModelPrefill(listed, direct.provider);
+
+    await collectDirectModel({
+        prefill,
+        validatedModel: probe !== null && probe.outcome === "pass" ? probe.validatedModel : null,
+        promptModel: async (pf, retryDetail) => {
+            if (retryDetail !== null) log.error(`The endpoint rejected the model:\n  ${retryDetail}`);
+            const entered = await promptText("Model id the endpoint serves (required for chat)", {
+                ...(pf !== "" && { defaultValue: pf, placeholder: pf }),
+                validate: (v) => (v.trim() === "" && pf === "" ? "Enter a model id." : undefined),
+            });
+            // Empty submit keeps the pre-filled default (the offerGatewayAdoption convention).
+            return entered.trim() === "" ? pf : entered.trim();
+        },
+        validate:
+            cred !== null
+                ? async (model) => {
+                      const s = clackSpinner();
+                      s.start(`Validating "${model}" (sends one 1-token test message)`);
+                      const outcome = await pingMessagesEndpoint(direct.baseURL, protocol, cred, model);
+                      if (outcome.kind === "pass") s.stop(`Model "${model}" validated`);
+                      else if (outcome.kind === "model_not_found") s.stop(`The endpoint does not serve "${model}"`);
+                      else s.stop("Model validation was inconclusive");
+                      return outcome;
+                  }
+                : null,
+        confirmSave: async (model, detail) => {
+            log.warn(`Could not confirm the model: ${detail}`);
+            return confirm(`Save "${model}" anyway?`);
+        },
+        writeBoth: (model) => writeAgentModel("conversation", model).andThen(() => writeAgentModel("sandbox", model)),
+        warn: (message) => log.warn(message),
+        success: (message) => log.success(message),
+    });
 }
 
 /**

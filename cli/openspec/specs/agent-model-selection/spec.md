@@ -55,6 +55,15 @@ a re-derived variant of it —
 marking each agent's current model. When listing fails (endpoint down, unsupported), the picker
 SHALL degrade to free-text model entry rather than blocking the switch.
 
+In direct mode the listing and validation requests SHALL authenticate the way the chat path does:
+when the connection carries an `auth` block, the credential is resolved through the configured
+credential source and sent under its configured scheme (`bearer` sends `Authorization: Bearer` and
+no `x-api-key`; `x-api-key` the reverse) — never the static environment key, and never a scheme
+the configuration does not name. Only when no `auth` block exists does the static env-key
+resolution supply the credential with today's per-protocol headers. A credential-source resolution
+failure is an EXPECTED listing/validation outcome and follows the existing degradation paths
+(listing → free-text entry; validation → inconclusive-accept), never a crash.
+
 A committed selection — listed or free-text — SHALL be accessibility-validated before persisting
 when the connection protocol is `anthropic` (the unbilled `count_tokens` check, bounded, with
 the dialog in its busy state while checking): a definite `not_found_error` SHALL keep the dialog
@@ -81,6 +90,13 @@ immediately, independent of when the runtime applies it.
 - **WHEN** the connection is direct-anthropic with the `/v1`-terminated `baseURL` chat requires
 - **THEN** the listing request targets `{baseURL}/models` and succeeds — the picker auto-lists on
   the exact configuration under which chat works
+
+#### Scenario: The picker authenticates with the configured credential source
+
+- **WHEN** the connection is direct-anthropic with a `bearer` command `auth` block and the user
+  opens the picker
+- **THEN** the listing request carries `Authorization: Bearer <minted token>` and no `x-api-key`
+  header, and a commit-time `count_tokens` validation for the selection authenticates identically
 
 #### Scenario: An inaccessible pick is rejected in-dialog, not persisted
 

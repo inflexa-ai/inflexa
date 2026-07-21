@@ -2,6 +2,8 @@ import { type Result, ok, err } from "neverthrow";
 import { z } from "zod";
 
 import { env, resolveModelApiKey } from "../../lib/env.ts";
+import { createCredentialSource, type Credential, type CredentialError } from "../../lib/credential.ts";
+import { type ModelAuthConfig } from "../../lib/config.ts";
 import { readApiKey, checkModelAccess, type ChatSetupError, type ModelAccess } from "../proxy/models.ts";
 import { resolveModelConnection, type ResolvedModelConnection } from "./config.ts";
 
@@ -56,6 +58,8 @@ export type ListModelsSeams = {
      * (INFLEXA_MODEL_API_KEY, else the provider-conventional variable). Real: {@link resolveModelApiKey}.
      */
     readonly readModelApiKey: (provider: string) => string | undefined;
+    /** Resolve the connection's configured `auth` block to a wire credential. Real: `createCredentialSource(auth).get()`. */
+    readonly resolveAuthCredential: (auth: ModelAuthConfig) => Promise<Result<Credential, CredentialError>>;
     /** Issue the GET request with the mode-specific headers. Real: `fetch(url, { headers })`. */
     readonly fetch: (url: string, headers: Record<string, string>) => Promise<Response>;
 };
@@ -64,8 +68,21 @@ const realSeams: ListModelsSeams = {
     resolveConnection: resolveModelConnection,
     readProxyKey: readApiKey,
     readModelApiKey: resolveModelApiKey,
+    resolveAuthCredential: (auth) => createCredentialSource(auth).get(),
     fetch: (url, headers) => fetch(url, { headers }),
 };
+
+/**
+ * The wire headers a resolved credential sends on a direct request: the header its SCHEME names —
+ * `bearer` → `Authorization`, `x-api-key` → `x-api-key`; the configuration's fact, not the protocol's —
+ * plus the version header the anthropic wire requires on every request. This is what lets the picker
+ * surfaces authenticate the way the chat path does against a bearer-only gateway: the pre-auth-block
+ * assumption "direct anthropic = x-api-key" is exactly what such a gateway rejects.
+ */
+function credentialHeaders(cred: Credential, protocol: "anthropic" | "openai-compatible"): Record<string, string> {
+    const auth: Record<string, string> = cred.scheme === "bearer" ? { Authorization: `Bearer ${cred.token}` } : { "x-api-key": cred.token };
+    return protocol === "anthropic" ? { ...auth, "anthropic-version": ANTHROPIC_VERSION } : auth;
+}
 
 /** The endpoint + auth headers to enumerate models for `connection`, or a `key_missing` when the credential is absent. */
 async function requestFor(
@@ -78,6 +95,14 @@ async function requestFor(
         const keyResult = await seams.readProxyKey();
         if (keyResult.isErr()) return err({ type: "key_missing" });
         return ok({ url: `${env.cliproxyApiUrl}/models`, headers: { Authorization: `Bearer ${keyResult.value}` } });
+    }
+    // A configured `auth` block supersedes the static env key — the same precedence the chat path
+    // applies — and its scheme decides the wire header. A source that cannot resolve (helper failed,
+    // var unset) is the same expected degradation as a missing key: the picker falls to free text.
+    if (connection.auth !== undefined) {
+        const cred = await seams.resolveAuthCredential(connection.auth);
+        if (cred.isErr()) return err({ type: "key_missing" });
+        return ok({ url: `${connection.baseURL}/models`, headers: credentialHeaders(cred.value, connection.protocol) });
     }
     const key = seams.readModelApiKey(connection.provider);
     if (!key) return err({ type: "key_missing" });
@@ -168,6 +193,8 @@ export type ValidateSelectionSeams = {
     readonly readProxyKey: () => Promise<Result<string, ChatSetupError>>;
     /** The direct-mode secret for the connection's provider. Real: {@link resolveModelApiKey}. */
     readonly readModelApiKey: (provider: string) => string | undefined;
+    /** Resolve the connection's configured `auth` block to a wire credential. Real: `createCredentialSource(auth).get()`. */
+    readonly resolveAuthCredential: (auth: ModelAuthConfig) => Promise<Result<Credential, CredentialError>>;
     /** The cliproxy accessibility verdict — request + mapping owned by proxy/models.ts. Real: {@link checkModelAccess}. */
     readonly checkModelAccess: (apiKey: string, modelId: string, signal?: AbortSignal) => Promise<ModelAccess>;
     /** Issue the direct-anthropic `count_tokens` POST. Real: `fetch`. */
@@ -178,6 +205,7 @@ const realValidateSeams: ValidateSelectionSeams = {
     resolveConnection: resolveModelConnection,
     readProxyKey: readApiKey,
     readModelApiKey: resolveModelApiKey,
+    resolveAuthCredential: (auth) => createCredentialSource(auth).get(),
     checkModelAccess,
     fetch: (url, init) => fetch(url, init),
 };
@@ -212,8 +240,19 @@ export async function validateModelSelection(modelId: string, seams: ValidateSel
     // Direct mode: only the Anthropic protocol has the unbilled count_tokens route (design D4); an
     // openai-compatible endpoint has no cheap check, so its selection commits as before.
     if (connection.protocol !== "anthropic") return "inconclusive";
-    const key = seams.readModelApiKey(connection.provider);
-    if (!key) return "inconclusive";
+    // The configured `auth` block supersedes the static env key (the chat path's precedence), its scheme
+    // deciding the wire header; an unresolvable source means validation is simply unavailable →
+    // inconclusive, the same fail-open as a missing key (the picker must never lose its switch capability).
+    let authHeaders: Record<string, string>;
+    if (connection.auth !== undefined) {
+        const cred = await seams.resolveAuthCredential(connection.auth);
+        if (cred.isErr()) return "inconclusive";
+        authHeaders = credentialHeaders(cred.value, "anthropic");
+    } else {
+        const key = seams.readModelApiKey(connection.provider);
+        if (!key) return "inconclusive";
+        authHeaders = { "x-api-key": key, "anthropic-version": ANTHROPIC_VERSION };
+    }
 
     let res: Response;
     // fetch throws on a dead endpoint or an aborted/timed-out signal; any throw is inconclusive, so a flaky
@@ -221,7 +260,7 @@ export async function validateModelSelection(modelId: string, seams: ValidateSel
     try {
         res = await seams.fetch(`${connection.baseURL}/messages/count_tokens`, {
             method: "POST",
-            headers: { "x-api-key": key, "anthropic-version": ANTHROPIC_VERSION, "content-type": "application/json" },
+            headers: { ...authHeaders, "content-type": "application/json" },
             body: JSON.stringify({ model: modelId, messages: [{ role: "user", content: "ping" }] }),
             signal: AbortSignal.timeout(VALIDATE_TIMEOUT_MS),
         });
