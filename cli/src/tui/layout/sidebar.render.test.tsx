@@ -423,3 +423,85 @@ describe("Sidebar Section header merge vs stacked fallback", () => {
         expect(frame).toContain("proj"); // stacked on its own full line below the label
     });
 });
+
+// The embed's elision markers are click targets that scroll its step window, and they sit INSIDE the
+// RUNS Section — whose own mouse-up opens the runs picker. opentui propagates mouse events, so without
+// containment every scroll click would also pop a dialog over the rail. These pin both halves: the
+// marker click is swallowed, and an ordinary click elsewhere in the section still opens the picker.
+describe("Sidebar RUNS progress embed — window scroll containment", () => {
+    // Twelve steps with the frontier at s8: past the rail window's break-even point, and hiding steps on
+    // BOTH sides, so each marker renders and can be clicked.
+    function longRunSteps(): StepExecutionRow[] {
+        return [
+            ...["s1", "s2", "s3", "s4", "s5", "s6", "s7"].map((id) => stepRow(id, "completed" as const)),
+            stepRow("s8", "running"),
+            ...["s9", "s10", "s11", "s12"].map((id) => stepRow(id, "pending" as const)),
+        ];
+    }
+
+    function runsNode(onOpenRuns: () => void) {
+        const ws = {
+            analysis: null,
+            sessionId: "no-such-session",
+            workingDir: "/x",
+            project: null,
+            openDialog: () => {},
+            closeDialog: () => {},
+            openSession: () => {},
+            quit: async () => {},
+        } as Workspace;
+        return () => (
+            <WorkspaceContext.Provider value={ws}>
+                <box width="100%" height="100%">
+                    <Sidebar messageCount={() => 0} onOpenRuns={onOpenRuns} />
+                </box>
+            </WorkspaceContext.Provider>
+        );
+    }
+
+    test("clicking an elision marker scrolls the window and does NOT open the runs picker", async () => {
+        let opened = 0;
+        await refreshSidebarData("A", seams(null, [runRow({ status: "running" })], longRunSteps()));
+        const setup = await testRender(
+            runsNode(() => opened++),
+            { width: 44, height: 34 },
+        );
+        try {
+            await setup.renderOnce();
+            expect(setup.captureCharFrame()).toContain("4 earlier steps");
+
+            const lines = setup.captureCharFrame().split("\n");
+            const y = lines.findIndex((l) => l.includes(GLYPHS.arrowUp));
+            expect(y).toBeGreaterThanOrEqual(0);
+            await setup.mockMouse.click(lines[y]!.indexOf(GLYPHS.arrowUp), y);
+            await setup.renderOnce();
+
+            // The window moved one step earlier...
+            expect(setup.captureCharFrame()).toContain("3 earlier steps");
+            // ...and the section's activation never fired, so no picker covered the rail.
+            expect(opened).toBe(0);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("containment is narrow — a click elsewhere in the RUNS section still opens the picker", async () => {
+        let opened = 0;
+        await refreshSidebarData("A", seams(null, [runRow({ status: "running" })], longRunSteps()));
+        const setup = await testRender(
+            runsNode(() => opened++),
+            { width: 44, height: 34 },
+        );
+        try {
+            await setup.renderOnce();
+            const lines = setup.captureCharFrame().split("\n");
+            const y = lines.findIndex((l) => l.includes("RUNS"));
+            expect(y).toBeGreaterThanOrEqual(0);
+            await setup.mockMouse.click(lines[y]!.indexOf("RUNS"), y);
+            await setup.renderOnce();
+            expect(opened).toBe(1);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
