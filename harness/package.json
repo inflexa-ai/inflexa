@@ -40,6 +40,7 @@
         "prepare": "tsc -p tsconfig.json",
         "prepublishOnly": "bun run build && bun run smoke",
         "smoke": "node scripts/smoke.mjs",
+        "test:full": "bash scripts/test-full.sh",
         "typecheck": "tsc --noEmit"
     },
     "dependencies": {

@@ -6,19 +6,20 @@
  *
  *  1. Override: `CORTEX_TEST_PG_URL` is a libpq-style connection string and
  *     no container is started — the helper just connects. This is how the
- *     full suite runs: the `just test` recipe starts ONE container, exports
- *     `CORTEX_TEST_PG_URL`, and removes it on exit. It is also how you point
- *     tests at a `just up` dev Postgres for tight iteration.
+ *     full suite runs: `bun run test:full` (scripts/test-full.sh) starts ONE
+ *     container, exports `CORTEX_TEST_PG_URL`, and removes it on exit; CI does
+ *     the same with a `services:` container. It is also how you point tests at
+ *     an already-running dev Postgres for tight iteration.
  *
  *  2. Fallback: with no `CORTEX_TEST_PG_URL`, a testcontainers-managed
  *     container is launched on the first `getTestPool()` call. Cold start
  *     is ~3s; the `ryuk` sidecar reaps it on process exit.
  *
- * Why the recipe owns the container for the full suite: Bun isolates module
+ * Why the runner owns the container for the full suite: Bun isolates module
  * state per test file, so a module-level singleton here is NOT shared across
  * the ~130 test files — each would spin its own container. A real OS-process
- * env var (`CORTEX_TEST_PG_URL`, exported by the recipe before `bun test`)
- * IS inherited by every file, so all of them connect to the one container.
+ * env var (`CORTEX_TEST_PG_URL`, exported before `bun test`) IS inherited by
+ * every file, so all of them connect to the one container.
  *
  * Each test should call `withSchema(testName)` to get a `{ pool, drop }`
  * pair and `afterEach(drop)` to tear it down.

@@ -13,12 +13,11 @@
  *    `cortex_target_assessments.progress` via a single `DBOS.runStep`.
  *
  * Why one file: DBOS `registerWorkflow` is process-global and rejected once
- * the engine launches. The rig's launch is lazy inside `setupDbosForTests`,
- * so module-top registrations across multiple test files would race the
- * first file's launch and surface as `DBOSConflictingRegistrationError`.
- * `just test-workflow` runs each DBOS test file in its own `bun test`
- * invocation to dodge that — co-locating both suites in one file keeps the
- * file count down without changing that contract.
+ * the engine launches. Each DBOS test file reopens the registration window at
+ * module load (`if (DBOS.isInitialized()) await DBOS.shutdown()` below) so the
+ * whole suite runs in a single `bun test` process; co-locating both suites in
+ * one file keeps the file count — and the number of launch/relaunch cycles —
+ * down without changing that contract.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
