@@ -210,15 +210,30 @@ from the fragment. A track that loaded **zero** packages SHALL fail the build
 After the load check, the build SHALL emit a **coverage report** — a table of,
 per architecture × track, the wanted / loaded / missing package counts and names.
 The report SHALL diff the loaded set against the last published manifest. A
-package that was published for `linux/amd64` and is now missing SHALL be reported
-as a regression and SHALL fail the build; a package that never built for
-`linux/arm64` SHALL be reported informationally and SHALL NOT fail the build.
+package that was published for `linux/amd64`, is still requested by the manifest,
+and is now missing SHALL be reported as a regression and SHALL fail the build; a
+package that never built for `linux/arm64` SHALL be reported informationally and
+SHALL NOT fail the build.
+
+A previously-published package that the manifest **no longer requests** SHALL be
+reported as *dropped* rather than as a regression, on every architecture, and
+SHALL NOT fail the build. Removing a package from the manifest necessarily
+removes it — and any transitive dependency that came in with it — from the next
+published set, so treating that as breakage would make every intentional removal
+require a baseline reset before it could ship. Drops SHALL be printed by name, so
+an unintended removal is reviewable rather than silent.
 
 #### Scenario: A silent amd64 drop is a regression
 
-- **GIVEN** a package present in the last published `linux/amd64` manifest that no longer loads
+- **GIVEN** a package present in the last published `linux/amd64` manifest, still requested by the manifest, that no longer loads
 - **WHEN** the coverage report runs
 - **THEN** it is flagged as a regression and the build fails
+
+#### Scenario: An intentional removal is not a regression
+
+- **GIVEN** a package present in the last published `linux/amd64` manifest that the manifest no longer requests
+- **WHEN** the coverage report runs
+- **THEN** it is listed by name as dropped and the build does not fail
 
 #### Scenario: A missing arm64 package is tolerated
 

@@ -273,8 +273,20 @@ r:
         - carmonalab/ProjecTILs
 
         # Malignant cell calling
-        - navinlabcode/copykat
-        - kharchenkolab/numbat
+        - navinlabcode/copykat # Expression-only: aneuploid vs diploid from a
+          # genes x cells UMI matrix, no external inputs. infercnv is the other
+          # expression-based route.
+        - kharchenkolab/numbat # Haplotype-aware, so unlike the two above it is
+          # NOT self-sufficient: its preprocessing shells out to cellsnp-lite and
+          # eagle2 (both in system_tools, eagle2 amd64-only) and reads a phasing
+          # panel, a common-SNP site list and a recombination map from the
+          # reference store — the `variant-phasing` group in the harness catalog.
+          # All three are opt-in downloads, so a default install has the package
+          # but not the data, and the run stops at the pileup step. That is the
+          # intended shape: the planner is told to ask for a missing load-bearing
+          # reference rather than plan around it, and these entries are what make
+          # that request answerable. What numbat buys over copykat is tolerance of
+          # hyper- and hypodiploid genomes, where a median-ploidy baseline misleads.
 
 python:
     pip:
@@ -464,11 +476,35 @@ node:
 # treatment R gets upstream. The builder installs common + the target arch.
 system_tools:
     common:
-        - samtools
-        - bcftools
+        # samtools and bcftools are PINNED because cellsnp-lite below caps htslib,
+        # and it caps it differently per arch: no cellsnp-lite build accepts htslib
+        # >= 1.24, and the aarch64 build stops at < 1.23 where linux-64 reaches
+        # < 1.24. One micromamba solve resolves htslib once, so leaving these
+        # unpinned does not fail — it silently walks samtools back to a different
+        # version on each arch. 1.22.1/1.22 is the highest pair satisfying both, so
+        # the two arches ship identical versions rather than diverging quietly.
+        - samtools=1.22.1
+        - bcftools=1.22
         - tabix
         - bedtools
         - vcftools
         - mageck # CRISPR screen analysis (MAGeCK)
+        - cellsnp-lite # Allele pileup at common SNP sites — the first half of
+          # haplotype-aware single-cell CNV calling, whose phasing half is eagle2
+          # below. Apache-2.0, self-contained, and built for both arches.
     amd64:
         - plink2 # no linux-aarch64 bioconda build
+        - eagle2 # no linux-aarch64 bioconda build (linux-64 + osx-64 only), so
+          # haplotype-aware CNV calling is amd64-only. Building it for aarch64
+          # means compiling the GPLv3 source against htslib/boost/openblas in a
+          # builder stage — a stage, not a manifest line. Its executable is named
+          # `eagle`, not `eagle2`; see `binaries` below.
+
+    # Conda package name -> the executable it installs, for the packages where the
+    # two differ. Everything else is probed under its own name. This exists because
+    # the install step needs the PACKAGE name while the load check and the coverage
+    # report need the BINARY name: eagle2 installs `bin/eagle`, so probing it as
+    # `eagle2` would drop a tool that is present and working out of packages.txt,
+    # and packages.txt is the only thing that tells an agent the tool exists.
+    binaries:
+        eagle2: eagle

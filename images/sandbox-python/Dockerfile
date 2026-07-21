@@ -263,11 +263,20 @@ print(' '.join(g['common'] + g.get(os.environ.get('TARGETARCH', 'amd64'), [])))"
 # conda bin so tools like fastqc find their bundled java — appended AFTER the
 # system dirs so the load check's `python3` below stays the system 3.12 (which
 # carries pyyaml), never conda's 3.11.
+#
+# What is probed is the BINARY, which the manifest entry only usually names: an
+# entry may carry a conda version pin (`samtools=1.22.1`) and a package may
+# install an executable under another name (`eagle2` -> `eagle`, via the
+# manifest's `binaries` map). Probing the raw entry would drop a working tool
+# from the fragment, and the fragment is what tells an agent the tool is there.
 ENV PATH="${PATH}:${INFLEXA_LIB_ROOT}/conda/bin"
 RUN TOOLS=$(python3 -c "\
-import yaml, os; \
+import yaml, os, re; \
 g = yaml.safe_load(open('/tmp/manifest.yaml'))['system_tools']; \
-print('\n'.join(g['common'] + g.get(os.environ.get('TARGETARCH', 'amd64'), [])))" 2>/dev/null) \
+b = g.get('binaries') or {}; \
+specs = g['common'] + g.get(os.environ.get('TARGETARCH', 'amd64'), []); \
+names = [re.split(r'[=<>!~\s]', s.strip(), maxsplit=1)[0] for s in specs]; \
+print('\n'.join(b.get(n, n) for n in names))" 2>/dev/null) \
     && ok=""; failed=""; \
     for tool in $TOOLS; do \
       if command -v "$tool" >/dev/null 2>&1; then \

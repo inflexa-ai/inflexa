@@ -1010,6 +1010,91 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     },
                 ],
             },
+            {
+                // The three variant-phasing entries below are one capability, not three
+                // independent datasets: haplotype-aware single-cell CNV calling needs a
+                // common-SNP site list to pile up against, a recombination map, and a phased
+                // reference panel, and is unreachable if any one is absent. They are grouped
+                // so a caller that finds one finds the set.
+                //
+                // Sites-only, so it carries genotypes for nobody — safe to stage despite
+                // deriving from 1000 Genomes phase 3.
+                id: "cellsnp-common-snps-hg38",
+                version: "phase3",
+                title: "Common SNP site list for single-cell allele pileup (GRCh38)",
+                description:
+                    "The 1000 Genomes phase 3 common-variant site list (allele frequency > 5%) distributed by the cellsnp-lite project, ~7.4 million biallelic SNVs and roughly 92 MB. Restricts a single-cell allele pileup to sites informative for phasing rather than calling variants de novo across the whole genome. Genotypes are inferred from the pileup itself, so no donor genotype data is needed. The distributor publishes no explicit licence for the packaged list; the underlying 1000 Genomes call set is unrestricted.",
+                organism: "human",
+                sourceUrl: "https://sourceforge.net/projects/cellsnp/files/SNPlist/",
+                license: { identifier: "IGSR-unrestricted", url: "https://www.internationalgenome.org/IGSR_disclaimer" },
+                recommendation: { group: "variant-phasing", recommended: false },
+                artifacts: [
+                    {
+                        path: "genome1K.phase3.SNP_AF5e2.chr1toX.hg38.vcf.gz",
+                        url: "https://sourceforge.net/projects/cellsnp/files/SNPlist/genome1K.phase3.SNP_AF5e2.chr1toX.hg38.vcf.gz/download",
+                        format: "vcf",
+                        contents:
+                            "BGZF-compressed sites-only VCFv4.1: no sample columns and no genotypes, one record per common SNV with an AF INFO field. Contigs are 1-22 and X with NO 'chr' prefix — the opposite convention from the phasing panel it is used alongside, so a pileup and a panel joined without renaming return zero overlap silently. The header still carries b37 provenance (##reference=hs37d5, assembly=b37) because only the coordinates were lifted; the coordinates themselves are genuinely GRCh38. Pass it as the pileup's target-region list, not as a variant call set.",
+                    },
+                ],
+            },
+            {
+                // Distributed inside the 225 MB Eagle release tarball as well; this standalone
+                // copy is byte-identical, so the tarball is not staged.
+                id: "eagle-genetic-map-hg38",
+                version: "2.4.1",
+                title: "Eagle v2 genetic recombination map (GRCh38)",
+                description:
+                    "Genome-wide recombination map published with Eagle v2.4.1, ~56 MB, giving the genetic (centimorgan) position of physical coordinates. Statistical phasing needs it to weigh how likely two nearby alleles are to travel together; the phaser refuses to run on VCF/BCF input without one. Distributed as software with the GPLv3 Eagle release, though the map tables themselves carry no separate licence statement.",
+                organism: "human",
+                sourceUrl: "https://alkesgroup.broadinstitute.org/Eagle/",
+                license: { identifier: "GPL-3.0-or-later", url: "https://alkesgroup.broadinstitute.org/Eagle/" },
+                recommendation: { group: "variant-phasing", recommended: false },
+                artifacts: [
+                    {
+                        path: "genetic_map_hg38_withX.txt.gz",
+                        url: "https://storage.googleapis.com/broad-alkesgroup-public/Eagle/downloads/tables/genetic_map_hg38_withX.txt.gz",
+                        format: "tsv",
+                        contents:
+                            "Gzipped space-delimited table, ~3.28 million rows, header 'chr position COMBINED_rate(cM/Mb) Genetic_Map(cM)'. Chromosomes are numeric 1-22 plus 23 for X — not 'chrN', and not 'X'. Keep the build token in the filename: numbat's preprocessing infers the genome build by testing this path for the substring 'hg19', so a copy renamed without it is silently treated as GRCh38. Read it gzipped.",
+                    },
+                ],
+            },
+            {
+                // numbat's preprocessing reads this as `{paneldir}/chr{N}.genotypes.bcf`, but the
+                // 20190312 release is published as bgzipped VCF and the installer stages bytes
+                // verbatim — so a `bcftools view -Ob` pass into a writable directory is part of
+                // using it, not an optional optimisation. Each artifact's contents says so.
+                // Autosomes only: phasing is driven per chromosome over 1..22 and never reads X
+                // or Y, so the sex chromosomes in the upstream directory are deliberately not
+                // staged. ~12.4 GB, the largest entry in this catalog by an order of magnitude.
+                id: "1000g-phasing-panel-hg38",
+                version: "20190312",
+                title: "1000 Genomes phased haplotype reference panel (GRCh38)",
+                description:
+                    "The 1000 Genomes Project GRCh38 phased call set (2,548 samples, biallelic SNVs and indels, SHAPEIT2-integrated release 20190312) — the haplotype reference statistical phasing compares against. Autosomes 1-22 as 22 bgzipped VCFs plus tabix indexes, roughly 12.4 GB total, so this is opt-in and slow to install: budget an hour or more. Published as VCF, while phasing tools expect BCF; see the artifact notes for the one conversion step that implies.",
+                organism: "human",
+                sourceUrl: "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000_genomes_project/release/20190312_biallelic_SNV_and_INDEL/",
+                license: { identifier: "IGSR-unrestricted", url: "https://www.internationalgenome.org/IGSR_disclaimer" },
+                recommendation: { group: "variant-phasing", recommended: false },
+                // 22 autosomes x (call set + index). Written as a fold rather than 44 literal
+                // blocks: the entries differ only by chromosome number, and spelling them out
+                // would bury that in repetition without adding a single fact.
+                artifacts: Array.from({ length: 22 }, (_unused, index) => index + 1).flatMap((chromosome) => [
+                    {
+                        path: `chr${chromosome}.genotypes.vcf.gz`,
+                        url: `https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000_genomes_project/release/20190312_biallelic_SNV_and_INDEL/ALL.chr${chromosome}.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz`,
+                        format: "vcf",
+                        contents: `Phased genotypes for chromosome ${chromosome}, 2,548 samples, bgzipped VCF. Contig IDs ARE 'chr'-prefixed ('chr${chromosome}'), unlike the common-SNP site list used with it. Phasing tools want BCF: convert once into a writable directory with 'bcftools view -Ob' and name the output chr${chromosome}.genotypes.bcf, which is the layout haplotype-aware callers expect to find beside its siblings. The store is read-only, so the conversion cannot be written back here, and re-converting per step wastes the whole cost.`,
+                    },
+                    {
+                        path: `chr${chromosome}.genotypes.vcf.gz.tbi`,
+                        url: `https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000_genomes_project/release/20190312_biallelic_SNV_and_INDEL/ALL.chr${chromosome}.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz.tbi`,
+                        format: "tbi",
+                        contents: `Tabix index for chr${chromosome}.genotypes.vcf.gz. Must sit beside the call set; never opened directly. Reading the VCF without it forces a full scan, and the conversion to BCF needs it to address regions.`,
+                    },
+                ]),
+            },
         ],
     }),
 );

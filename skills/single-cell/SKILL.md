@@ -81,6 +81,42 @@ Annotation approach?
     └── sc.tl.rank_genes_groups per cluster → match to known markers
 ```
 
+### Malignant Cell Calling (tumour samples)
+
+```
+Separating tumour from normal cells in a tumour sample. Two routes, and the
+cheap one is usually right.
+
+Expression-only (copykat, or infercnv) — DEFAULT
+└── Needs only the genes x cells count matrix you already have.
+    Infers copy number relative to the sample's median ploidy, so it
+    assumes most cells are near-diploid.
+    └── Report the aneuploid/diploid call per cell; carry it as an obs
+        column and use it to split downstream analyses, never to silently
+        drop cells.
+
+Haplotype-aware — ONLY when the median-ploidy assumption is unsafe
+├── Reach for it when the tumour is expected hyper- or hypodiploid, or when
+│   an expression-only call disagrees with known karyotype. It resolves
+│   allele imbalance instead of assuming a diploid baseline.
+├── Costs much more than a count matrix. It needs:
+│   ├── aligned reads per cell (a barcoded BAM), NOT just the count matrix
+│   └── phasing reference data — a phased haplotype reference panel, a
+│       common-SNP site list, and a genetic recombination map, all for the
+│       sample's genome build
+└── Resolve the phasing references from the reference data available to
+    you. Do NOT assume they are installed: they are large opt-in downloads
+    and a default environment has none of them.
+    ├── Read each entry's own notes before using it — one of them needs a
+    │   one-off preparation step into writable space, and the store is
+    │   read-only. The inventory states what; do not guess.
+    ├── Site list and panel disagree on chromosome naming. Check both and
+    │   reconcile, or the overlap is silently empty.
+    └── If any of the three is absent, say which one and fall back to the
+        expression-only route — state that you did and why. Never
+        substitute a different genome build.
+```
+
 ### Differential Expression
 
 ```

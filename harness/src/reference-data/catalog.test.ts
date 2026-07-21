@@ -82,13 +82,16 @@ describe("reference-data catalog", () => {
             "silva-dada2",
             "unite-dada2",
             "pharmcat-grch38-fasta",
+            "cellsnp-common-snps-hg38",
+            "eagle-genetic-map-hg38",
+            "1000g-phasing-panel-hg38",
         ]);
     });
 
     // Large or domain-specific downloads are opt-in, so a default `setup` never silently pulls
     // hundreds of MB (or GB) the user did not ask for: the all-species NCBI mapping tables, the
     // Reactome mapping TSVs, the 443 MB tonsil reference, the amplicon taxonomy training sets,
-    // and the 842 MB PharmCAT genome bundle.
+    // the 842 MB PharmCAT genome bundle, and the variant-phasing set whose panel alone is 12.4 GB.
     it("recommends every dataset except the very large or domain-specific opt-in downloads", () => {
         const notRecommended = REFERENCE_DATA_CATALOG.datasets.filter((dataset) => !dataset.recommendation.recommended).map(({ id }) => id);
 
@@ -103,6 +106,9 @@ describe("reference-data catalog", () => {
             "silva-dada2",
             "unite-dada2",
             "pharmcat-grch38-fasta",
+            "cellsnp-common-snps-hg38",
+            "eagle-genetic-map-hg38",
+            "1000g-phasing-panel-hg38",
         ]);
     });
 
@@ -128,6 +134,13 @@ describe("reference-data catalog", () => {
             "www.arb-silva.de",
             "doi.plutof.ut.ee",
             "s3.hpc.ut.ee",
+            "ftp.1000genomes.ebi.ac.uk",
+            "alkesgroup.broadinstitute.org",
+            // SourceForge resolves a project download through two cross-host redirects to a
+            // mirror carrying an expiring signed token. Only the canonical sourceforge.net URL
+            // belongs in the catalog: the downloader follows the chain and re-checks https on
+            // whatever finally served it, and a pinned mirror URL would expire.
+            "sourceforge.net",
         ]);
 
         for (const dataset of REFERENCE_DATA_CATALOG.datasets) {
@@ -255,8 +268,10 @@ describe("reference-data catalog", () => {
         expect(resolveReferenceInstallPlan(["fixture-only"])._unsafeUnwrapErr()).toMatchObject({
             unknownId: "fixture-only",
             availableIds: [
+                "1000g-phasing-panel-hg38",
                 "azimuth-pbmc",
                 "azimuth-tonsil",
+                "cellsnp-common-snps-hg38",
                 "celltypist-covid19",
                 "celltypist-immune",
                 "celltypist-pan-fetal",
@@ -264,6 +279,7 @@ describe("reference-data catalog", () => {
                 "collectri-human",
                 "dorothea-human",
                 "dorothea-mouse",
+                "eagle-genetic-map-hg38",
                 "encode-blacklist-human",
                 "encode-blacklist-mouse",
                 "gencode-human",
