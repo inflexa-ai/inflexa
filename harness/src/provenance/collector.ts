@@ -81,7 +81,7 @@ export interface InputClassificationContext {
  */
 export type ReadClassification =
     | { readonly admissible: true; readonly context: InputClassificationContext }
-    | { readonly admissible: false; readonly refRunId?: string; readonly refStepId?: string };
+    | { readonly admissible: false; readonly refRunId: string; readonly refStepId: string };
 
 /**
  * Build classification context for a file read using known step metadata.
@@ -99,41 +99,44 @@ export function classifyReadPath(relativePath: string, ownStepId: string, ownRun
         return { admissible: true, context: { source: "data" } };
     }
 
-    // Own artifacts: runs/{ownRunId}/{ownStepId}/...
-    const ownPrefix = `runs/${ownRunId}/${ownStepId}/`;
-    if (relativePath.startsWith(ownPrefix)) {
-        return { admissible: true, context: { source: "artifacts", stepId: ownStepId, runId: ownRunId } };
-    }
-
-    // Upstream dependencies: runs/{ownRunId}/{depStepId}/...
-    if (dependsOn) {
-        for (const depStepId of dependsOn) {
-            const upstreamPrefix = `runs/${ownRunId}/${depStepId}/`;
-            if (relativePath.startsWith(upstreamPrefix)) {
-                return { admissible: true, context: { source: "upstream", stepId: depStepId, runId: ownRunId } };
-            }
-        }
-    }
-
-    // Same-run sibling this step never declared. It carries no ordering
-    // guarantee relative to this step: its directory is mounted read-write in
-    // its own container and may be mid-write, or hold a scratch file deleted
-    // before this step reconciles, so nothing observed there is a stable
-    // artifact this step can be said to have consumed. Declaration is the
-    // available proof of stability — the scheduler admits a step only once
-    // every declared dependency has completed, and a completed step never
-    // writes into its tree again. An absent `dependsOn` therefore refuses
-    // every sibling: absence of the declaration is not evidence of stability.
-    //
-    // The step id is extracted only to attribute the refusal in diagnostics;
-    // unlike the prior-run branch below, it feeds no classification.
+    // Everything under this run resolves off ONE segment — the first one after
+    // the run id, which names the step owning that subtree. It is read once and
+    // compared, rather than each case prefix-matching `runs/{runId}/{id}/`
+    // independently, because a trailing separator is not guaranteed to be
+    // present: an `opendir` of a step directory surfaces the bare name. Under
+    // per-case prefixes every such directory read misses its own case and lands
+    // on the refusal below — a step refusing an edge to itself, or to a
+    // dependency it did declare.
     const ownRunPrefix = `runs/${ownRunId}/`;
     if (relativePath.startsWith(ownRunPrefix)) {
         const afterRun = relativePath.slice(ownRunPrefix.length);
         const slashIdx = afterRun.indexOf("/");
-        const stepId = slashIdx > 0 ? afterRun.slice(0, slashIdx) : afterRun;
-        if (stepId) {
-            return { admissible: false, refRunId: ownRunId, refStepId: stepId };
+        const head = slashIdx >= 0 ? afterRun.slice(0, slashIdx) : afterRun;
+
+        if (head === ownStepId) {
+            return { admissible: true, context: { source: "artifacts", stepId: ownStepId, runId: ownRunId } };
+        }
+        if (dependsOn?.includes(head)) {
+            return { admissible: true, context: { source: "upstream", stepId: head, runId: ownRunId } };
+        }
+        // A same-run step this one never declared. It carries no ordering
+        // guarantee relative to this step: its directory is mounted read-write in
+        // its own container and may be mid-write, or hold a scratch file deleted
+        // before this step reconciles, so nothing observed there is a stable
+        // artifact this step can be said to have consumed. Declaration is the
+        // available proof of stability — the scheduler admits a step only once
+        // every declared dependency has completed, and a completed step never
+        // writes into its tree again. An absent `dependsOn` therefore refuses
+        // every sibling: absence of the declaration is not evidence of stability.
+        //
+        // `head` is the refusal's diagnostic attribution only; unlike the
+        // prior-run branch below it feeds no classification. It is a step id for
+        // any path that descends into a subtree, and a best guess for a bare
+        // name, which the run directory also admits for its own run-scoped files
+        // (`runs/{runId}/synthesis.json`) — indistinguishable from a step
+        // directory by path alone, and refused either way.
+        if (head) {
+            return { admissible: false, refRunId: ownRunId, refStepId: head };
         }
     }
 
@@ -185,6 +188,9 @@ export class ProvenanceCollector {
     /** Command execution records, keyed by output path (relative to /artifacts). */
     private readonly commandRecords = new Map<string, ProvenanceRecord>();
 
+    /** Refused read paths already narrated, so the same edge is reported once per step. */
+    private readonly narratedRefusals = new Set<string>();
+
     constructor(opts: ProvenanceCollectorOptions) {
         this.stepId = opts.stepId;
         this.runId = opts.runId;
@@ -198,6 +204,23 @@ export class ProvenanceCollector {
      */
     setInputFileIdMap(map: Map<string, string>): void {
         this.inputFileIdMap = map;
+    }
+
+    /**
+     * Claim the right to narrate a refused read, true only the first time this
+     * step sees the path.
+     *
+     * A refusal reports one fact — a lineage edge that will not exist — and the
+     * fact does not change when the same file is read again. Reads dedup within
+     * one frame but not across them, and a step issues many execs against a tree
+     * whose watch set spans the whole analysis, so an undeduped narration is a
+     * steady stream rather than an exception. The signal exists to be noticed;
+     * emitting it at that volume is what teaches a reader to filter it away.
+     */
+    claimRefusalNarration(relativePath: string): boolean {
+        if (this.narratedRefusals.has(relativePath)) return false;
+        this.narratedRefusals.add(relativePath);
+        return true;
     }
 
     /**

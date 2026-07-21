@@ -321,6 +321,26 @@ function userFacingStepFailure(errorClass: "agent_loop" | "lineage_attestation")
     return errorClass === "lineage_attestation" ? "Step results could not be finalized." : "Step failed during execution.";
 }
 
+/**
+ * Build the step's lineage collector from its durable input. The agent loop
+ * feeds each exec's provenance frame into it; post-step registration reads the
+ * resulting input/script edges. Reconstructed deterministically on replay — the
+ * frames it consumes are cached recv outputs and the command strings are cached
+ * LLM tool-use (see the harness-thread-store and harness-durable-runtime specs).
+ *
+ * Split out of the body, and taking only the fields it reads, so the seeding is
+ * exercisable without a live workflow: `dependsOn` is what makes a same-run edge
+ * admissible at all, so a collector built without it silently erases every
+ * legitimate declared-dependency edge while leaving each layer's own tests green.
+ */
+export function createLineageCollector(input: Pick<SandboxStepInput, "stepId" | "runId" | "dependsOn">): ProvenanceCollector {
+    return new ProvenanceCollector({
+        stepId: input.stepId,
+        runId: input.runId,
+        dependsOn: [...(input.dependsOn ?? [])],
+    });
+}
+
 // ── The child workflow body ───────────────────────────────────────────
 
 /**
@@ -384,16 +404,7 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
     const session = forSubAgent(input.runSession, input.agentId);
     const writePrefix = deps.resolveWritePrefix(input);
 
-    // One lineage collector per step. The agent loop feeds each exec's
-    // provenance frame into it; post-step registration reads the resulting
-    // input/script edges. Reconstructed deterministically on replay — the
-    // frames it consumes are cached recv outputs and the command strings are
-    // cached LLM tool-use (see the harness-thread-store and harness-durable-runtime specs).
-    const lineageCollector = new ProvenanceCollector({
-        stepId: input.stepId,
-        runId: input.runId,
-        dependsOn: [...(input.dependsOn ?? [])],
-    });
+    const lineageCollector = createLineageCollector(input);
 
     // (2a) sandbox.mint — checkpoint the machine's identity (name + HMAC secret)
     // BEFORE it is spawned (see the harness-sandbox-exec spec). Durable-before-create is what makes (2b)

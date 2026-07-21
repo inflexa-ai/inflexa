@@ -125,21 +125,29 @@ not admissible. Re-reading the same `mountPath:relativePath` SHALL return the al
 - **WHEN** `trackInputAccess(mountPath, "runs/run-002/norm/output/norm.csv", null)` is called without a context
 - **THEN** no `InputRef` is tracked and the tracked-input set is unchanged
 
-### Requirement: classifyReadPath resolves five classification branches by prefix
+### Requirement: classifyReadPath resolves five classification branches in order
 
 `classifyReadPath(relativePath, ownStepId, ownRunId, dependsOn?)` SHALL return a discriminated outcome:
 either an **admissible** classification carrying an `InputClassificationContext`, or an explicit
-**not-admissible** outcome carrying the producing step's scraped `runId`/`stepId` for diagnostics.
+**not-admissible** outcome carrying the producing step's scraped `runId`/`stepId` for diagnostics. Both
+fields SHALL be present on every refusal.
 
 It SHALL resolve in order:
 
 1. path under `data/` or `dataprofile/` → admissible `{ source: "data" }`
-2. path under `runs/{ownRunId}/{ownStepId}/` → admissible `{ source: "artifacts", stepId: ownStepId, runId: ownRunId }`
-3. path under `runs/{ownRunId}/{depStepId}/` for a `depStepId` in `dependsOn` → admissible `{ source: "upstream", stepId: depStepId, runId: ownRunId }`
-4. any other path under `runs/{ownRunId}/` → a same-run sibling this step did not declare → **not admissible**, carrying the step id extracted from the path and `ownRunId`
+2. path under `runs/{ownRunId}/` whose first following segment equals `ownStepId` → admissible `{ source: "artifacts", stepId: ownStepId, runId: ownRunId }`
+3. path under `runs/{ownRunId}/` whose first following segment equals a `depStepId` in `dependsOn` → admissible `{ source: "upstream", stepId: depStepId, runId: ownRunId }`
+4. any other path under `runs/{ownRunId}/` with a non-empty first segment → a same-run step this one did not declare → **not admissible**, carrying that segment and `ownRunId`
 5. any other path under `runs/` → a prior run: extract the run and step ids from the path → admissible `{ source: "prior", stepId, runId }`
 
 Anything else SHALL classify as admissible `{ source: "data" }`.
+
+Branches 2–4 SHALL compare the whole segment following `runs/{ownRunId}/`, not a `runs/{ownRunId}/{id}/`
+prefix. A trailing separator is not guaranteed to be present — an `opendir` of a step directory is reported
+by the capture layers as the bare name — so a prefix test sends every such directory read past its own
+branch and onto the refusal, making a step refuse an edge to itself or to a dependency it did declare.
+Segment equality also keeps a step id that merely prefixes another (`qc` against `qc2`) from borrowing its
+verdict.
 
 Branch 4 refuses because an undeclared sibling has no ordering guarantee relative to this step. Its
 directory is mounted read-write in its own container and may be mid-write, or hold a scratch file that is
@@ -147,7 +155,9 @@ deleted before this step reconciles, so nothing observed there is a stable artif
 to have consumed. Declaration is the available proof of stability: the scheduler admits a step only when
 every `depends_on` entry has completed, and a completed step never writes into its tree again. The step id
 extracted in branch 4 SHALL be used only to attribute the refusal in diagnostics — it feeds no
-classification.
+classification. That attribution is exact for a path descending into a subtree and a best guess for a bare
+name, which the run directory also admits for its own run-scoped files (`runs/{runId}/synthesis.json`):
+those are indistinguishable from a step directory by path alone, and refused either way.
 
 An absent or empty `dependsOn` SHALL therefore refuse every same-run sibling read. Absence of the
 declaration is not evidence of stability, and admitting on absence is how an unstable read becomes an
@@ -182,6 +192,18 @@ attested edge.
 - **GIVEN** step `de` in run `run-002` classified with no `dependsOn` argument
 - **WHEN** classifying `runs/run-002/qc/output/qc.csv`
 - **THEN** the result is not admissible — absence of the declaration fails closed rather than admitting
+
+#### Scenario: A bare step directory reaches the same verdict as a file beneath it
+
+- **GIVEN** step `de` in run `run-002` with `dependsOn: ["qc"]`
+- **WHEN** classifying the directory names `runs/run-002/de`, `runs/run-002/qc`, and `runs/run-002/norm`
+- **THEN** they resolve to `artifacts`, `upstream`, and not-admissible respectively — the same verdicts their contained files receive
+
+#### Scenario: A step id that only prefixes a declared one is not admitted
+
+- **GIVEN** step `de` in run `run-002` with `dependsOn: ["qc"]`
+- **WHEN** classifying `runs/run-002/qc2/output/x.csv`
+- **THEN** the result is not admissible with `refStepId: "qc2"` — `qc2` is a distinct step, not the declared `qc`
 
 #### Scenario: Prior-run read classified via path extraction
 

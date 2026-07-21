@@ -329,6 +329,10 @@ export function buildChildInput(args: {
     if (!resources) {
         throw new Error(`executeAnalysis: step "${stepId}" missing from resourcesByStepId — every step must declare resources`);
     }
+    const planStep = input.planStepById[stepId];
+    if (!planStep) {
+        throw new Error(`executeAnalysis: step "${stepId}" missing from planStepById — every step must carry its plan data`);
+    }
     return {
         analysisId: input.analysisId,
         runId,
@@ -336,9 +340,12 @@ export function buildChildInput(args: {
         agentId: input.agentByStepId[stepId] ?? "scientific-executor",
         // Carried into the child because lineage classification admits a same-run
         // sibling edge only when the sibling was declared here — the scheduler's
-        // ordering guarantee attaches to this list and nothing else. A step absent
-        // from `steps` contributes no declarations, so its sibling reads are refused.
-        dependsOn: input.steps.find((s) => s.id === stepId)?.depends_on ?? [],
+        // ordering guarantee attaches to this list and nothing else. Read from the
+        // keyed plan snapshot rather than scanning `steps`, and thrown for rather
+        // than defaulted: an empty list is indistinguishable from a step that
+        // genuinely declared nothing, and it silently deletes every same-run edge
+        // the step was entitled to.
+        dependsOn: planStep.depends_on,
         level,
         prompt,
         parentWorkflowId: workflowId,
