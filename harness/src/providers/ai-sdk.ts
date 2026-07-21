@@ -7,6 +7,8 @@ import { ResultAsync, err, ok, type Result } from "neverthrow";
 
 import { scopeWorkloadId, type AgentSession } from "../auth/types.js";
 import type { ResolveBilling } from "../billing/resolver.js";
+import { createNoopLogger } from "../lib/console-logger.js";
+import type { Logger } from "../lib/logger.js";
 import { classifyProviderError, type ProviderError, toProviderError } from "./errors.js";
 import type { ChatProvider, ChatRequest, ChatResponse, ChatStreamEvent, ChatUsage, FetchLike, ProviderCapabilities } from "./types.js";
 
@@ -26,6 +28,7 @@ export interface AiSdkProviderDeps {
     readonly model: LanguageModel;
     readonly resolveBilling: ResolveBilling;
     readonly capabilities?: Partial<ProviderCapabilities>;
+    readonly logger?: Logger;
 }
 
 /**
@@ -60,6 +63,7 @@ export type AiSdkProviderConfig =
 export interface ConfiguredAiSdkProviderDeps {
     readonly config: AiSdkProviderConfig;
     readonly resolveBilling: ResolveBilling;
+    readonly logger?: Logger;
 }
 
 function workloadOf(session: AgentSession): string {
@@ -149,24 +153,68 @@ export function computeRetryDelayMs(error: unknown, exponentialBackoffDelay: num
 }
 
 /**
+ * Marks a failure that came from the `ResolveBilling` seam rather than the model
+ * wire. The retry envelope's budget is sized for model-provider outages; the
+ * billing seam is a separate system whose failure must surface immediately, not
+ * after a multi-minute retry window — even when the underlying failure is
+ * connection-shaped and would otherwise read as retryable. The original throwable
+ * rides on `cause` so the outer catch can hand it to `toProviderError` unchanged
+ * and classify it byte-identically to a billing failure raised outside the
+ * envelope (right down to the surfaced message).
+ */
+class BillingSeamFailure extends Error {
+    constructor(cause: unknown) {
+        super("billing resolution failed", { cause });
+        this.name = "BillingSeamFailure";
+    }
+}
+
+/**
+ * Resolve attribution headers for one attempt, tagging any non-abort failure as
+ * a `BillingSeamFailure` so the retry envelope fails fast on it. An abort is
+ * rethrown raw so it stays on the abort control-flow path.
+ */
+async function resolveBillingHeaders(resolveBilling: ResolveBilling, session: AgentSession) {
+    try {
+        return await resolveBilling(session);
+    } catch (e) {
+        if (isAbortError(e)) throw e;
+        throw new BillingSeamFailure(e);
+    }
+}
+
+/** Unwrap a billing-seam failure to the original throwable for classification. */
+function unwrapForClassification(e: unknown): unknown {
+    return e instanceof BillingSeamFailure ? e.cause : e;
+}
+
+/**
  * Wrap a single wire attempt in the harness retry envelope. Built per call so
  * the caller's `AbortSignal` reaches the primitive: it rethrows abort errors
  * without retrying and cancels its own backoff sleep when the signal fires, so
  * the retried closure adds no abort handling of its own. `shouldRetry` defers to
- * the harness retryability taxonomy, and a non-retryable first failure is
- * rethrown untouched — preserving the exact throwable `toProviderError`
+ * the harness retryability taxonomy — but never retries a `BillingSeamFailure`,
+ * whose fail-fast is the whole point of the marker — and a non-retried first
+ * failure is rethrown untouched, preserving the exact throwable the outer catch
  * classifies. `createRetryError` carries the last real failure on `cause` so
  * that, once retries are exhausted, `toProviderError`'s status walk reaches the
- * true HTTP status instead of stopping at a synthetic wrapper.
+ * true HTTP status instead of stopping at a synthetic wrapper. The attempt
+ * counter is per-instance because each call builds its own retry.
  */
-function createRetry(signal: AbortSignal | undefined) {
+function createRetry(signal: AbortSignal | undefined, logger: Logger) {
+    let retryCount = 0;
     return retryWithExponentialBackoff({
         maxRetries: RETRY_MAX_RETRIES,
         initialDelayInMs: RETRY_INITIAL_DELAY_MS,
         backoffFactor: RETRY_BACKOFF_FACTOR,
         abortSignal: signal,
-        shouldRetry: (e) => classifyProviderError(e).retryable,
-        getDelayInMs: ({ error, exponentialBackoffDelay }) => computeRetryDelayMs(error, exponentialBackoffDelay),
+        shouldRetry: (e) => !(e instanceof BillingSeamFailure) && classifyProviderError(e).retryable,
+        getDelayInMs: ({ error, exponentialBackoffDelay }) => {
+            const delayMs = computeRetryDelayMs(error, exponentialBackoffDelay);
+            retryCount += 1;
+            logger.debug("retrying provider call", { attempt: retryCount, delayMs, ...logger.errorFields(error) });
+            return delayMs;
+        },
         createRetryError: ({ message, errors }) => new Error(message, { cause: errors[errors.length - 1] }),
     });
 }
@@ -248,15 +296,16 @@ function sanitizeMessages(messages: readonly ModelMessage[]): ModelMessage[] {
 
 export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
     const capabilities: ProviderCapabilities = { toolCalling: deps.capabilities?.toolCalling ?? true };
+    const logger = (deps.logger ?? createNoopLogger()).named("providers.ai-sdk");
 
     function chat(req: ChatRequest, session: AgentSession, signal?: AbortSignal): ResultAsync<ChatResponse, ProviderError> {
         const run = async (): Promise<Result<ChatResponse, ProviderError>> => {
-            const retry = createRetry(signal);
+            const retry = createRetry(signal, logger);
             try {
                 const result = await retry(async () => {
                     // Attribution headers are time-limited; resolving them inside the
                     // retried closure keeps them fresh across a multi-minute window.
-                    const headers = await deps.resolveBilling(session);
+                    const headers = await resolveBillingHeaders(deps.resolveBilling, session);
                     return generateText({
                         model: deps.model,
                         system: req.system,
@@ -275,14 +324,14 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
                 return ok(responseFromGenerate(result));
             } catch (e) {
                 if (isAbortError(e) || signal?.aborted) throw e;
-                return err(toProviderError(e, workloadOf(session)));
+                return err(toProviderError(unwrapForClassification(e), workloadOf(session)));
             }
         };
         return new ResultAsync(run());
     }
 
     async function* chatStream(req: ChatRequest, session: AgentSession, signal?: AbortSignal): AsyncIterable<ChatStreamEvent> {
-        const retry = createRetry(signal);
+        const retry = createRetry(signal, logger);
         try {
             // Retry covers only stream establishment: streamText defers wire errors
             // to consumption, so a failure is not visible until the stream is read.
@@ -293,7 +342,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
             // Resolving billing inside the closure keeps attribution headers fresh
             // per attempt.
             const opened = await retry(async () => {
-                const headers = await deps.resolveBilling(session);
+                const headers = await resolveBillingHeaders(deps.resolveBilling, session);
                 const result = streamText({
                     model: deps.model,
                     system: req.system,
@@ -355,7 +404,7 @@ export function createAiSdkProvider(deps: AiSdkProviderDeps): ChatProvider {
             yield { type: "done", response };
         } catch (e) {
             if (isAbortError(e) || signal?.aborted) throw e;
-            throw toProviderError(e, workloadOf(session));
+            throw toProviderError(unwrapForClassification(e), workloadOf(session));
         }
     }
 
@@ -377,7 +426,12 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
             apiKey: config.apiKey,
             fetch: config.fetch as typeof fetch | undefined,
         });
-        return createAiSdkProvider({ model: provider.chat(config.model), resolveBilling: deps.resolveBilling, capabilities: config.capabilities });
+        return createAiSdkProvider({
+            model: provider.chat(config.model),
+            resolveBilling: deps.resolveBilling,
+            capabilities: config.capabilities,
+            logger: deps.logger,
+        });
     }
 
     const provider = createOpenAICompatible({
@@ -386,5 +440,10 @@ export function createConfiguredAiSdkProvider(deps: ConfiguredAiSdkProviderDeps)
         apiKey: config.apiKey,
         fetch: config.fetch as typeof fetch | undefined,
     });
-    return createAiSdkProvider({ model: provider.chatModel(config.model), resolveBilling: deps.resolveBilling, capabilities: config.capabilities });
+    return createAiSdkProvider({
+        model: provider.chatModel(config.model),
+        resolveBilling: deps.resolveBilling,
+        capabilities: config.capabilities,
+        logger: deps.logger,
+    });
 }

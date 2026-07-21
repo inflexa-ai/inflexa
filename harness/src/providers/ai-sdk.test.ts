@@ -10,7 +10,15 @@ import type {
 } from "@ai-sdk/provider";
 
 import { makeSession } from "./__fixtures__/session.js";
-import { computeRetryDelayMs, createAiSdkProvider, createConfiguredAiSdkProvider, RETRY_MAX_DELAY_MS, RETRY_MAX_RETRIES } from "./ai-sdk.js";
+import {
+    computeRetryDelayMs,
+    createAiSdkProvider,
+    createConfiguredAiSdkProvider,
+    RETRY_BACKOFF_FACTOR,
+    RETRY_INITIAL_DELAY_MS,
+    RETRY_MAX_DELAY_MS,
+    RETRY_MAX_RETRIES,
+} from "./ai-sdk.js";
 import { isProviderError } from "./errors.js";
 import type { ChatRequest } from "./types.js";
 
@@ -783,5 +791,103 @@ describe("createAiSdkProvider chatStream retry", () => {
         expect(attempts).toBe(1);
         expect(events).toHaveLength(1);
         expect(events[0]!.type).toBe("done");
+    });
+});
+
+describe("retry policy constants", () => {
+    // The behavioral tests above assert attempt counts self-referentially (e.g.
+    // `1 + RETRY_MAX_RETRIES`), so a drifted constant would keep the whole suite
+    // green while silently changing the spec'd envelope. Pin the values directly.
+    it("match the specified envelope", () => {
+        expect(RETRY_MAX_RETRIES).toBe(10);
+        expect(RETRY_INITIAL_DELAY_MS).toBe(2_000);
+        expect(RETRY_BACKOFF_FACTOR).toBe(2);
+        expect(RETRY_MAX_DELAY_MS).toBe(30_000);
+    });
+});
+
+describe("createAiSdkProvider billing resolution fail-fast", () => {
+    // A connection-shaped failure is retryable by nature (its `retryable: true`
+    // flag says so), but the billing seam is a different system from the model
+    // wire: its failure must surface immediately rather than consume the retry
+    // envelope. The single resolver invocation — not the flag — is the assertion.
+    it("does not retry a connection-shaped billing failure and never calls the model", async () => {
+        let generateCalls = 0;
+        let billingInvocations = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                generateCalls += 1;
+                return okResult();
+            }),
+            resolveBilling: async () => {
+                billingInvocations += 1;
+                throw Object.assign(new TypeError("fetch failed"), {
+                    cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:443"), { code: "ECONNREFUSED" }),
+                });
+            },
+        });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) expect(result.error.type).toBe("provider");
+        expect(generateCalls).toBe(0);
+        expect(billingInvocations).toBe(1);
+    });
+
+    it("classifies a billing 402 as budget after a single resolver call", async () => {
+        let generateCalls = 0;
+        let billingInvocations = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(async () => {
+                generateCalls += 1;
+                return okResult();
+            }),
+            resolveBilling: async () => {
+                billingInvocations += 1;
+                throw Object.assign(new Error("payment required"), { status: 402 });
+            },
+        });
+
+        const result = await provider.chat(request, makeSession());
+
+        expect(result.isErr()).toBe(true);
+        if (result.isErr()) expect(result.error.type).toBe("budget");
+        expect(generateCalls).toBe(0);
+        expect(billingInvocations).toBe(1);
+    });
+
+    it("fails a stream fast on a billing failure without opening the stream", async () => {
+        let streamCalls = 0;
+        let billingInvocations = 0;
+        const provider = createAiSdkProvider({
+            model: fakeModel(
+                async () => okResult(),
+                async () => {
+                    streamCalls += 1;
+                    return streamResult(["a"]);
+                },
+            ),
+            resolveBilling: async () => {
+                billingInvocations += 1;
+                throw Object.assign(new TypeError("fetch failed"), {
+                    cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:443"), { code: "ECONNREFUSED" }),
+                });
+            },
+        });
+
+        let caught: unknown;
+        try {
+            for await (const _event of provider.chatStream(request, makeSession())) {
+                // Establishment fails at billing before any event is produced.
+            }
+        } catch (e) {
+            caught = e;
+        }
+
+        expect(isProviderError(caught)).toBe(true);
+        if (isProviderError(caught)) expect(caught.type).toBe("provider");
+        expect(streamCalls).toBe(0);
+        expect(billingInvocations).toBe(1);
     });
 });

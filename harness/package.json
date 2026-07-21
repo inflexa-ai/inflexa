@@ -47,7 +47,7 @@
         "@ai-sdk/anthropic": "^4.0.15",
         "@ai-sdk/openai-compatible": "^3.0.10",
         "@ai-sdk/provider": "^4.0.3",
-        "@ai-sdk/provider-utils": "^5.0.10",
+        "@ai-sdk/provider-utils": "5.0.10",
         "@anthropic-ai/sdk": "^0.107.0",
         "@dbos-inc/dbos-sdk": "^4.23.6",
         "@kubernetes/client-node": "^1.4.0",

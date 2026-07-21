@@ -6,6 +6,7 @@
  */
 
 import type { ResolveBilling } from "../billing/resolver.js";
+import type { Logger } from "../lib/logger.js";
 import { createConfiguredAiSdkProvider } from "./ai-sdk.js";
 import type { ChatProvider, FetchLike } from "./types.js";
 
@@ -15,6 +16,7 @@ export interface AnthropicProviderDeps {
     readonly model: string;
     readonly resolveBilling: ResolveBilling;
     readonly fetch?: FetchLike;
+    readonly logger?: Logger;
 }
 
 /**
@@ -26,6 +28,7 @@ export interface AnthropicProviderDeps {
 export function createAnthropicProvider(deps: AnthropicProviderDeps): ChatProvider {
     return createConfiguredAiSdkProvider({
         resolveBilling: deps.resolveBilling,
+        logger: deps.logger,
         config: {
             kind: "anthropic",
             baseURL: deps.baseURL,
