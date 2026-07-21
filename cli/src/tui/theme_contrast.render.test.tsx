@@ -17,7 +17,7 @@ import { RunCardBlock } from "./components/run_card_block.tsx";
 import { ThinkingBlock } from "./components/thinking_block.tsx";
 import { ToolBlock } from "./components/tool_block.tsx";
 import { Welcome } from "./components/welcome.tsx";
-import { mockAskPrompts, mockFileEdit, mockPlanCard, mockRun, mockRunCard, mockThinking, mockToolCall } from "./layout/design_gallery_fixtures.ts";
+import { mockAskPrompts, mockFileEdit, mockLongRun, mockPlanCard, mockRun, mockRunCard, mockThinking, mockToolCall } from "./layout/design_gallery_fixtures.ts";
 
 // End-to-end guard for RENDERED contrast. captureCharFrame() gives characters only, so it cannot see
 // this defect class — the failure is a COLOR, not a missing glyph. The test harness's captureSpans()
@@ -250,6 +250,25 @@ const BLOCKS: BlockCase[] = [
         name: "RunBlock",
         node: () => <RunBlock name={mockRun.name} tag={mockRun.tag} done={mockRun.done} total={mockRun.total} steps={mockRun.steps} />,
         until: mockRun.tag,
+    },
+    {
+        // The windowed rail mount renders spans the full mount never does — the elision markers naming
+        // the hidden step counts. They carry information, so they must clear the 4.5:1 TEXT floor; the
+        // sweep only reaches them when the fixture is long enough for the window to engage.
+        name: "RunBlock (windowed)",
+        node: () => (
+            <RunBlock
+                name={mockLongRun.name}
+                tag={mockLongRun.tag}
+                done={mockLongRun.done}
+                total={mockLongRun.total}
+                steps={mockLongRun.steps}
+                maxSteps={6}
+                hint={false}
+                heading={false}
+            />
+        ),
+        until: "earlier",
     },
     {
         name: "DiffBlock",

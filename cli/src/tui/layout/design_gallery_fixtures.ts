@@ -308,9 +308,14 @@ export const mockRun: Run = {
 };
 
 /**
- * MOCK sample: a long run whose step count exceeds the chat sticky row's window (`maxSteps=6`), so the
- * gallery exhibit shows the window engaging — centered on the frontier (the first non-done step),
- * clamped to the ends — while the bar and `done/total` still reflect the full 12-step run.
+ * MOCK sample: a long run whose step count clears the rail window's break-even point (`maxSteps=7`), so
+ * the gallery exhibit shows the window engaging — centred on the frontier (the first non-done step),
+ * clamped to the ends, bracketed by the clickable elision markers naming the hidden counts — while the
+ * bar and `done/total` still reflect the full 12-step run. Twelve steps, not nine: a run only a step or
+ * two over the cap renders whole (the markers would cost more rows than they save), so a shorter fixture
+ * would exhibit the unwindowed state and silently stop covering the window at all. The frontier sits far
+ * enough in that steps are hidden on BOTH sides, which is what lets the exhibit show scrolling either
+ * way — and the single step hidden below also exercises the marker's singular wording.
  */
 export const mockLongRun: Run = {
     id: "mock-long-run",

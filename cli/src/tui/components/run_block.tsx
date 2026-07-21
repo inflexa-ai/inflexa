@@ -1,4 +1,4 @@
-import { For } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
 
 import { theme } from "../theme.ts";
 import { GLYPHS, space, MARKERS } from "../../lib/design_system.ts";
@@ -38,24 +38,54 @@ export type RunBlockProps = {
      */
     heading?: boolean;
     /**
-     * Cap on how many step rows to render at once. When the run has MORE steps than this, the list
-     * shows a WINDOW of `maxSteps` rows centered on the frontier of work (the first step that is not
-     * yet done), clamped to the list ends. The progress bar and `done/total` always reflect the FULL
-     * run — only the step list is windowed. Absent → the whole list renders (the runs dialog keeps its
-     * complete view). Exists because the chat's sticky progress row sits in a fixed slice of the chat
-     * column: a long run must not grow the row without bound, and the window keeps it anchored to where
-     * work actually is.
+     * Cap on how many step rows to render at once. When the run has enough steps that windowing
+     * actually saves rows, the list shows a WINDOW of `maxSteps` rows over the steps, centred on the
+     * earliest step still running and thereafter positioned by the reader — each elision marker names
+     * how many steps are hidden on its side AND slides the window one step that way when clicked. The
+     * window returns to the work whenever the set of running steps changes. The progress bar and
+     * `done/total` always reflect the FULL run — only the step list is windowed.
+     * Absent → the whole list renders and the markers never appear (the runs dialog keeps its complete,
+     * non-interactive view). Exists for the narrow rail mount, where a long run must not grow the embed
+     * without bound.
+     *
+     * Prefer an ODD value: the window centres by placing the frontier at `floor(maxSteps / 2)`, which is
+     * the exact middle row only when the count is odd.
      */
     maxSteps?: number;
 };
 
 /**
+ * The step list's visible slice plus how many steps the window elides on each side. Both counts zero
+ * means the whole list is rendered. The counts are what the elision markers report, so a hidden step is
+ * never merely absent — the reader can always reconcile the rows on screen against `done/total`.
+ */
+type StepWindow = {
+    /** The steps to render, in order. */
+    steps: RunStepView[];
+    /** How many steps precede the slice. */
+    hiddenBefore: number;
+    /** How many steps follow the slice. */
+    hiddenAfter: number;
+};
+
+/**
  * Cell budget for the progress meter in the narrow (windowed) mount. The default meter is one cell per
- * step, which soft-wraps the ~40-column sticky slice once a run passes ~30 steps; when `maxSteps`
- * signals that narrow mount the meter is scaled to at most this many cells instead. ~20 keeps it
- * comfortably inside the rail while still reading as a proportional bar.
+ * step, which soft-wraps the ~40-column rail once a run passes ~30 steps; when `maxSteps` signals that
+ * narrow mount the meter is scaled to at most this many cells instead. ~20 keeps it comfortably inside
+ * the rail while still reading as a proportional bar.
  */
 const BAR_BUDGET = 20;
+
+/**
+ * An elision marker's text — `4 earlier steps` / `1 more step`. Named counts, not a bare `…`: the
+ * marker's job is to let the reader reconcile the visible rows against `done/total` and see where the
+ * window sits, neither of which a shape-only ellipsis can do. Painted in the muted TEXT tier by its
+ * caller (not the `fgSubtle` decoration tier) because it carries information and must clear the 4.5:1
+ * floor; the directional arrow is a separate accent span, so it is not part of this string.
+ */
+function elisionLabel(count: number, word: "earlier" | "more"): string {
+    return `${count} ${word} step${count === 1 ? "" : "s"}`;
+}
 
 /** The themed glyph + color role for a step's state. */
 function stepMark(state: RunStepView["state"]): { glyph: string; role: "success" | "warning" | "error" | "fgSubtle" } {
@@ -72,7 +102,7 @@ function stepMark(state: RunStepView["state"]): { glyph: string; role: "success"
  */
 export function RunBlock(props: RunBlockProps) {
     // The meter's cell counts. Without `maxSteps` it stays one cell per step — the dialog + gallery full
-    // view, where the block owns its whole width. With `maxSteps` (the narrow sticky mount, where a
+    // view, where the block owns its whole width. With `maxSteps` (the narrow rail mount, where a
     // 30+-step per-step bar soft-wraps the ~40-column slice) it scales to at most BAR_BUDGET cells,
     // `filled` proportional to done/total. A partially-done run is clamped to [1, cells−1] so mid-flight
     // work never paints as fully filled or fully empty — an honest signal beats a rounding artifact.
@@ -89,18 +119,106 @@ export function RunBlock(props: RunBlockProps) {
         const c = barCells();
         return GLYPHS.bar.repeat(Math.max(0, c.total - c.filled));
     };
+    // Where the reader has scrolled the window to, or null while it tracks the frontier on its own. The
+    // rail re-reads the ledger every few seconds and hands this block a fresh steps array each tick; a
+    // window that recentred on every tick would drag the list out from under someone reading the earlier
+    // steps, so a click pins the position and only the two releases below let go of it.
+    const [pinnedStart, setPinnedStart] = createSignal<number | null>(null);
+
+    // The anchor the window centres on: the FIRST RUNNING step, because a plan's steps run in parallel
+    // waves and several can be in flight at once. Anchoring on the earliest of them is what keeps a
+    // still-running step on screen when a LATER sibling finishes — with the naive "first step that is not
+    // done" rule, `[done, running, running, done]` collapsing to `[done, running, done, done]` would
+    // leave the anchor on the finished sibling's side and scroll the work that is still live out of view.
+    // Falls back to the first not-yet-done step between waves (nothing running, work still pending), and
+    // to the tail once every step is done.
+    //
+    // A MEMO, not a plain accessor, and that is load-bearing for every reader below. `on(deps, fn)` runs
+    // `fn` whenever a signal `deps` touched changes — it never diffs what `deps` returned — and the rail
+    // hands this block a freshly-minted props object on every poll. Reading `props.steps` through a bare
+    // accessor would therefore fire the release effects several times a minute and silently undo the
+    // reader's scrolling. A memo re-computes just as often but only NOTIFIES on a real change.
+    const anchorIndex = createMemo((): number => {
+        const running = props.steps.findIndex((s) => s.state === "running");
+        if (running !== -1) return running;
+        const pending = props.steps.findIndex((s) => s.state !== "done");
+        return pending === -1 ? props.steps.length - 1 : pending;
+    });
+
+    // What "the run's in-flight work" is, as a comparable value: every running step, plus the anchor so a
+    // wave boundary with nothing running still counts as movement. The whole SET matters, not just the
+    // anchor — when one of several parallel steps finishes, the anchor can stay put while the work
+    // genuinely changed, and that is exactly a moment the reader wants to be looking at the run again.
+    const activityKey = createMemo((): string => {
+        const running: number[] = [];
+        for (const [i, step] of props.steps.entries()) if (step.state === "running") running.push(i);
+        return `${anchorIndex()}|${running.join(",")}`;
+    });
+
+    // Release 1 — the work moved. Snapping back to it is the point of the embed: it is a live progress
+    // readout first and a browser second, so when the steps it exists to report change, the window
+    // returns to them rather than stranding the reader on history they scrolled to minutes ago.
+    createEffect(on(activityKey, () => setPinnedStart(null), { defer: true }));
+
+    // Release 2 — a different run took over. The sidebar's progress embed is NOT keyed, so when one run
+    // succeeds another the same block instance is handed the new run's props rather than being remounted
+    // — without this the previous run's scroll position would carry onto a different run's steps. Memoed
+    // for the same reason as the frontier: the tag string is re-read every poll but rarely changes.
+    const runTag = createMemo((): string => props.tag);
+    createEffect(on(runTag, () => setPinnedStart(null), { defer: true }));
+
     // The visible slice of the step list. Full list unless `maxSteps` caps it; then a window of that
-    // many rows centered on the frontier — the first not-yet-done step — clamped so it never runs past
-    // either end. When every step is done the frontier is the tail, so the window shows the run's end.
-    const windowedSteps = (): RunStepView[] => {
+    // many rows over the steps, clamped so it never runs past either end. Its default position centres
+    // the anchor — with an odd `maxSteps` it lands on the exact middle row, so parallel siblings running
+    // just after it are on screen too — and once the reader clicks an elision marker it sits wherever
+    // they left it until a release above fires.
+    const stepWindow = (): StepWindow => {
         const all = props.steps;
         const max = props.maxSteps;
-        if (max === undefined || all.length <= max) return all;
-        const frontier = all.findIndex((s) => s.state !== "done");
-        const pivot = frontier === -1 ? all.length - 1 : frontier;
-        const start = Math.max(0, Math.min(pivot - Math.floor(max / 2), all.length - max));
-        return all.slice(start, start + max);
+        const whole: StepWindow = { steps: all, hiddenBefore: 0, hiddenAfter: 0 };
+        if (max === undefined || all.length <= max) return whole;
+        const auto = Math.max(0, Math.min(anchorIndex() - Math.floor(max / 2), all.length - max));
+        // Each elided side spends a row on its marker, so a window only earns its place when those
+        // markers occupy fewer rows than the steps they stand in for. Windowing 8 steps into 7 costs a
+        // marker row to hide a single labelled step — the same height, strictly less information — and
+        // that near-miss is the common case: an ordinary plan lands just over the cap. Below the
+        // break-even point the whole list is the better render, so the cap engages only once it pays.
+        // Measured at the AUTO position, never the pinned one, so scrolling can never change whether the
+        // window exists — a click must move the window, not make it collapse into the full list.
+        const markerRows = (auto > 0 ? 1 : 0) + (all.length - (auto + max) > 0 ? 1 : 0);
+        if (max + markerRows >= all.length) return whole;
+        const start = Math.max(0, Math.min(pinnedStart() ?? auto, all.length - max));
+        return { steps: all.slice(start, start + max), hiddenBefore: start, hiddenAfter: all.length - (start + max) };
     };
+
+    // Slide the window by `delta` steps, clamped to the list. `hiddenBefore` IS the current start, so the
+    // shift composes off whatever is on screen whether the window is still auto-positioned or already
+    // pinned. Every rendered marker is actionable by construction — a marker only exists when that side
+    // hides something — so no click can be a no-op and no disabled state is needed.
+    function shiftWindow(delta: number): void {
+        const max = props.maxSteps;
+        if (max === undefined) return;
+        setPinnedStart(Math.max(0, Math.min(stepWindow().hiddenBefore + delta, props.steps.length - max)));
+    }
+
+    // Whether the in-flight mouse gesture began on one of this block's elision markers. The shift fires on
+    // mouse-DOWN (these are controls, not drag targets, and firing on the press means a selection drag that
+    // merely ends here can never trigger one), so the matching mouse-UP has to be swallowed as well: the
+    // sidebar's RUNS section opens the runs picker on mouse-up, and an un-stopped release would both scroll
+    // the window and pop a dialog over it. A release that did NOT start on a marker is the tail of someone
+    // else's gesture — a text-selection drag crossing the rail — and still bubbles to the root's copy
+    // handler. Mirrors the click-containment bookkeeping the dialog host does for its scrim.
+    let pressedMarker = false;
+    function pressMarker(delta: number, e: { stopPropagation(): void }): void {
+        pressedMarker = true;
+        e.stopPropagation();
+        shiftWindow(delta);
+    }
+    function releaseMarker(e: { stopPropagation(): void }): void {
+        if (!pressedMarker) return;
+        pressedMarker = false;
+        e.stopPropagation();
+    }
     return (
         <box flexDirection="column" paddingBottom={space.sm}>
             {(props.heading ?? true) ? (
@@ -114,7 +232,23 @@ export function RunBlock(props: RunBlockProps) {
                 <Fg role="fgSubtle">{empty()}</Fg> <Fg role="fgMuted">{`${props.done}/${props.total}`}</Fg>
             </text>
             <box paddingLeft={space.md} flexDirection="column" border={["left"]} borderColor={theme().border}>
-                <For each={windowedSteps()}>
+                {/* The elision markers bracket the window so a truncated list never reads as a complete
+                one — the rule the runs picker already follows for its 100-run cap: truncation is stated,
+                never silent. They are also the window's scroll control: each click slides it one step
+                toward that side, so the same row that admits what is hidden is the thing that reveals it,
+                and the two counts double as the position indicator. The accent-colored arrow is the
+                codebase's established "this row is clickable" affordance (see `OpenableCardBlock`).
+                `selectable={false}` because these are buttons, not prose: the renderer's text selection
+                would otherwise highlight the label on every press, which reads as the click having done
+                something other than what it did. The STEP rows stay selectable — those are content a
+                reader may legitimately want to copy. */}
+                <Show when={stepWindow().hiddenBefore > 0}>
+                    <text selectable={false} onMouseDown={(e) => pressMarker(-1, e)} onMouseUp={releaseMarker}>
+                        <Fg role="accent">{`${GLYPHS.arrowUp} `}</Fg>
+                        <Fg role="fgMuted">{elisionLabel(stepWindow().hiddenBefore, "earlier")}</Fg>
+                    </text>
+                </Show>
+                <For each={stepWindow().steps}>
                     {(step) => {
                         const m = stepMark(step.state);
                         return (
@@ -125,6 +259,12 @@ export function RunBlock(props: RunBlockProps) {
                         );
                     }}
                 </For>
+                <Show when={stepWindow().hiddenAfter > 0}>
+                    <text selectable={false} onMouseDown={(e) => pressMarker(1, e)} onMouseUp={releaseMarker}>
+                        <Fg role="accent">{`${GLYPHS.arrowDown} `}</Fg>
+                        <Fg role="fgMuted">{elisionLabel(stepWindow().hiddenAfter, "more")}</Fg>
+                    </text>
+                </Show>
             </box>
             {(props.hint ?? true) ? <text fg={theme().fgMuted}>esc detach {GLYPHS.middot} ctrl+c abort</text> : null}
         </box>

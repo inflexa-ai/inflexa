@@ -426,10 +426,14 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                 <State n="18" label="sidebar RUNS progress embed — bounded step window, no heading">
                     {/* The sidebar RUNS section renders the newest non-terminal run's progress under
                         that run's own row: heading suppressed (the row above names the run), the same
-                        frontier-centered step window (maxSteps=6, hint=false) the section passes, while
-                        the bar and done/total reflect the full run. Driven from the long-run fixture. */}
+                        frontier-positioned step window (maxSteps=7, hint=false) the section passes, while
+                        the bar and done/total reflect the full run. The elision markers above and below
+                        the window name the hidden counts, so the rows on screen always reconcile against
+                        done/total — and each one is a click target that slides the window a step its way.
+                        Driven from the long-run fixture. */}
                     <text fg={theme().fgMuted}>
-                        under the newest run row in the sidebar while it is non-terminal; long runs window their steps (maxSteps=6, heading off):
+                        under the newest run row in the sidebar while it is non-terminal; long runs window their steps behind counted elision markers — click
+                        one to slide the window a step (maxSteps=7, heading off):
                     </text>
                     <RunBlock
                         name={mockLongRun.name}
@@ -437,7 +441,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         done={mockLongRun.done}
                         total={mockLongRun.total}
                         steps={longRunSteps}
-                        maxSteps={6}
+                        maxSteps={7}
                         hint={false}
                         heading={false}
                     />
