@@ -126,6 +126,9 @@ describe("runModelCommit — validate then persist-or-report", () => {
             resolveConnection: () => ({ mode: "direct", provider: "openai", baseURL: "https://api.example.com/v1", protocol: "openai-compatible", agents: {} }),
             readProxyKey: async () => ok("sk-proxy"),
             readModelApiKey: () => "sk-direct",
+            resolveAuthCredential: () => {
+                throw new Error("resolveAuthCredential must not be called without an auth block");
+            },
             checkModelAccess: async () => {
                 checked++;
                 return "served";

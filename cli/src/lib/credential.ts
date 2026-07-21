@@ -87,6 +87,30 @@ async function runCredentialCommand(command: string): Promise<Result<string, Cre
     }
 }
 
+/**
+ * The self-described expiry (epoch ms) of a JWT-shaped raw token, or `null` when the token carries none
+ * we can read. Reads the `exp` claim (seconds) from the base64url payload of a JWS compact form
+ * (`header.payload.signature`); every failure — not JWT-shaped, wrong segment count, undecodable payload,
+ * missing/non-numeric `exp` — degrades to `null` (no self-described expiry), NEVER an error: the token is
+ * presumed valid and ages off the configured/default TTL instead, mirroring how an unparseable
+ * ExecCredential timestamp degrades.
+ */
+function jwtExpiryMs(token: string): number | null {
+    // eyJ = base64url of `{"` — the invariant prefix of every JWT header. Anything else is opaque.
+    if (!token.startsWith("eyJ")) return null;
+    const segments = token.split(".");
+    if (segments.length !== 3) return null;
+    try {
+        // Sound: length checked === 3 above, so segments[1] exists.
+        const payload: unknown = JSON.parse(Buffer.from(segments[1]!, "base64url").toString("utf8")); // decoded claim set — shape-narrowed below
+        if (typeof payload !== "object" || payload === null) return null;
+        const exp = (payload as Record<string, unknown>).exp;
+        return typeof exp === "number" && Number.isFinite(exp) ? exp * 1000 : null;
+    } catch {
+        return null;
+    }
+}
+
 /** Parse a credential command's stdout into a {@link Credential} per the configured format. */
 function parseCommandCredential(
     command: string,
@@ -114,7 +138,17 @@ function parseCommandCredential(
     }
     const token = stdout.trim(); // raw: the whole stdout IS the token, minus the trailing newline — apiKeyHelper parity
     if (token === "") return err({ type: "command_empty_output", command });
-    // A raw token describes no lifetime, so it ages off ttlMs (or the apiKeyHelper-default window) and is re-minted on expiry.
+    // A raw JWT ages off its own `exp` claim, and the EARLIEST of `exp` and `ttlMs` wins: `exp` is a hard
+    // fact while `ttlMs` is only a refresh cadence, and a helper that serves CACHED tokens can hand out a
+    // token with far less remaining lifetime than any fixed TTL assumes — holding past `exp` fails hard on
+    // gateways that reject with a non-401 status (the reactive refresh never fires there). An `exp` already
+    // in the past still yields the credential: the next get() re-mints, so a helper serving nearly-dead
+    // cached tokens degrades to per-request minting, never a failure loop.
+    const selfDescribed = jwtExpiryMs(token);
+    if (selfDescribed !== null) {
+        return ok({ token, scheme, expiresAt: ttlMs !== undefined ? Math.min(selfDescribed, Date.now() + ttlMs) : selfDescribed });
+    }
+    // An opaque raw token describes no lifetime, so it ages off ttlMs (or the apiKeyHelper-default window) and is re-minted on expiry.
     return ok({ token, scheme, expiresAt: Date.now() + (ttlMs ?? DEFAULT_RAW_TOKEN_TTL_MS) });
 }
 

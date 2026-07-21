@@ -95,6 +95,57 @@ describe("createCredentialSource", () => {
         expect((await source.get())._unsafeUnwrap().token).toBe("tok-2");
     });
 
+    /** A command printing a raw JWT (unsigned; only the payload shape matters) with the given claim set. */
+    function jwtCommand(claims: Record<string, unknown>): string {
+        const jwt = `${Buffer.from('{"alg":"none","typ":"JWT"}').toString("base64url")}.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.sig`;
+        return `printf '%s' '${jwt}'`;
+    }
+
+    test("a raw JWT ages off its own exp claim instead of the default TTL", async () => {
+        const exp = Math.floor(Date.now() / 1000) + 90; // 90s out — far inside the 5-min default window
+        const source = createCredentialSource({ kind: "command", command: jwtCommand({ exp }), scheme: "bearer" });
+        const cred = (await source.get())._unsafeUnwrap();
+        expect(cred.expiresAt).toBe(exp * 1000);
+    });
+
+    test("the earliest of exp and ttlMs wins in both directions", async () => {
+        const farExp = Math.floor(Date.now() / 1000) + 3_600;
+        const capped = (
+            await createCredentialSource({ kind: "command", command: jwtCommand({ exp: farExp }), scheme: "bearer", ttlMs: 60_000 }).get()
+        )._unsafeUnwrap();
+        // ttlMs (60s) is nearer than exp (1h): the cadence bound applies.
+        expect(capped.expiresAt).toBeLessThanOrEqual(Date.now() + 60_000);
+        const nearExp = Math.floor(Date.now() / 1000) + 60;
+        const floor = (
+            await createCredentialSource({ kind: "command", command: jwtCommand({ exp: nearExp }), scheme: "bearer", ttlMs: 3_600_000 }).get()
+        )._unsafeUnwrap();
+        // exp (60s) is nearer than ttlMs (1h): the hard fact wins — ttlMs can never extend a hold past exp.
+        expect(floor.expiresAt).toBe(nearExp * 1000);
+    });
+
+    test("a JWT-shaped token without a readable exp falls back to the default TTL", async () => {
+        // Undecodable payload segment (not base64url JSON) — degrades to opaque-raw semantics, no error.
+        const source = createCredentialSource({ kind: "command", command: `printf 'eyJhbGciOiJub25lIn0.!!!not-json!!!.sig'`, scheme: "bearer" });
+        const cred = (await source.get())._unsafeUnwrap();
+        expect(cred.expiresAt).toBeGreaterThan(Date.now());
+        const noExp = (await createCredentialSource({ kind: "command", command: jwtCommand({ sub: "user" }), scheme: "bearer" }).get())._unsafeUnwrap();
+        expect(noExp.expiresAt).toBeGreaterThan(Date.now());
+    });
+
+    test("a past exp still yields the credential, and the next get() re-mints", async () => {
+        const file = join(tmpdir(), `cred-jwt-${randomUUIDv7()}`);
+        scratch.push(file);
+        // Counter-suffixed sub claim proves re-mint; exp is 60s in the PAST on every mint.
+        const exp = Math.floor(Date.now() / 1000) - 60;
+        const header = Buffer.from('{"alg":"none","typ":"JWT"}').toString("base64url");
+        const command = `printf x >> '${file}'; n=$(wc -c < '${file}' | tr -d ' \\n'); p=$(printf '{"exp":${exp},"n":%s}' "$n" | base64 | tr '+/' '-_' | tr -d '=\\n'); printf '%s.%s.sig' '${header}' "$p"`;
+        const source = createCredentialSource({ kind: "command", command, scheme: "bearer" });
+        const first = (await source.get())._unsafeUnwrap();
+        expect(first.expiresAt).toBe(exp * 1000); // expired at mint — returned anyway, marked expired
+        const second = (await source.get())._unsafeUnwrap();
+        expect(second.token).not.toBe(first.token); // aged out immediately ⇒ per-request re-mint, never a stale hold
+    });
+
     test("exec-credential format rejects non-ExecCredential JSON with an actionable error", async () => {
         const result = await createCredentialSource({
             kind: "command",

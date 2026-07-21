@@ -11,7 +11,9 @@ import {
     credentialHelperDetected,
     detectCredentialHelperFrom,
     detectedAdoptable,
+    collectDirectModel,
     detectedGatewayURL,
+    directModelPrefill,
     ensureLiveCredential,
     explicitPostgresFields,
     hasProviderCredential,
@@ -26,6 +28,7 @@ import {
     setup,
     warnStalePins,
     writeDirectConnection,
+    type DirectModelDeps,
     type ProbeAttempt,
 } from "./setup.ts";
 import { type PostgresConnection } from "./postgres_types.ts";
@@ -202,53 +205,239 @@ describe("detectedGatewayURL", () => {
 // The setup validation probe (design D6): run the source once, then a cheap authenticated GET {baseURL}/models.
 // A stubbed fetch drives the HTTP outcomes; the credential command is a real deterministic shell command.
 describe("probeCredentialSource", () => {
-    function recordFetch(status: number): { doFetch: (url: string, init: RequestInit) => Promise<Response>; calls: { url: string; headers: Headers }[] } {
-        const calls: { url: string; headers: Headers }[] = [];
+    /** A recording fetch serving per-route responses; keys are URL path suffixes. Unmapped routes 404. */
+    function routeFetch(routes: Record<string, () => Response>): {
+        doFetch: (url: string, init: RequestInit) => Promise<Response>;
+        calls: { url: string; method: string; headers: Headers; body: string | null }[];
+    } {
+        const calls: { url: string; method: string; headers: Headers; body: string | null }[] = [];
         return {
             calls,
             doFetch: (url, init) => {
-                calls.push({ url, headers: new Headers(init.headers) });
-                return Promise.resolve(new Response(null, { status }));
+                calls.push({ url, method: init.method ?? "GET", headers: new Headers(init.headers), body: typeof init.body === "string" ? init.body : null });
+                const route = Object.keys(routes).find((suffix) => url.endsWith(suffix));
+                return Promise.resolve(route !== undefined ? routes[route]!() : new Response(null, { status: 404 }));
             },
         };
     }
 
-    test("a raw-token command + a 200 endpoint validates, sending the token as x-api-key with the anthropic version header", async () => {
-        const { doFetch, calls } = recordFetch(200);
+    test("a 2xx /models validates, sends the scheme + version headers, and returns the listed ids", async () => {
+        const { doFetch, calls } = routeFetch({ "/models": () => Response.json({ data: [{ id: "claude-sonnet-5" }, { id: "claude-haiku-4-5" }] }) });
         const result = await probeCredentialSource(
             "https://api.anthropic.com/v1",
             "anthropic",
             { kind: "command", command: "printf tok-123", scheme: "x-api-key" },
+            "claude-sonnet-5",
             doFetch,
         );
-        expect(result.isOk()).toBe(true);
+        const value = result._unsafeUnwrap();
+        expect(value.outcome).toBe("pass");
+        if (value.outcome === "pass") {
+            expect(value.listedModels).toEqual(["claude-sonnet-5", "claude-haiku-4-5"]);
+            expect(value.validatedModel).toBeNull(); // rung 1 validated the credential, not a model
+        }
+        expect(calls).toHaveLength(1);
         expect(calls[0]!.url).toBe("https://api.anthropic.com/v1/models");
         expect(calls[0]!.headers.get("x-api-key")).toBe("tok-123");
         expect(calls[0]!.headers.get("anthropic-version")).toBe("2023-06-01");
     });
 
-    test("a 401 fails the probe with a message naming the scheme (the bad-config gate)", async () => {
-        const { doFetch } = recordFetch(401);
+    test("a 401 on /models fails the probe with a message naming the scheme (the bad-config gate)", async () => {
+        const { doFetch } = routeFetch({ "/models": () => new Response(null, { status: 401 }) });
         const result = await probeCredentialSource(
             "https://gw.corp/v1",
             "openai-compatible",
             { kind: "command", command: "printf gw-tok", scheme: "bearer" },
+            "gpt-5",
             doFetch,
         );
         expect(result._unsafeUnwrapErr().message).toContain("bearer");
     });
 
+    test("a 404 /models escalates to the messages ping; a 200 ping passes with the model validated (the enterprise-gateway shape)", async () => {
+        const { doFetch, calls } = routeFetch({
+            "/models": () => new Response(null, { status: 404 }),
+            "/messages": () => Response.json({ type: "message" }),
+        });
+        const result = await probeCredentialSource(
+            "https://gw.corp/v1",
+            "anthropic",
+            { kind: "command", command: "printf gw-tok", scheme: "bearer" },
+            "claude-sonnet-5",
+            doFetch,
+        );
+        const value = result._unsafeUnwrap();
+        expect(value.outcome).toBe("pass");
+        if (value.outcome === "pass") expect(value.validatedModel).toBe("claude-sonnet-5");
+        // The ping is protocol-shaped: POST {baseURL}/messages, bearer + version headers, max_tokens 1.
+        expect(calls[1]!.url).toBe("https://gw.corp/v1/messages");
+        expect(calls[1]!.method).toBe("POST");
+        expect(calls[1]!.headers.get("authorization")).toBe("Bearer gw-tok");
+        expect(calls[1]!.headers.get("x-api-key")).toBeNull();
+        expect(calls[1]!.headers.get("anthropic-version")).toBe("2023-06-01");
+        expect(JSON.parse(calls[1]!.body!)).toEqual({ model: "claude-sonnet-5", max_tokens: 1, messages: [{ role: "user", content: "ping" }] });
+    });
+
+    test("an openai-compatible ping targets /chat/completions", async () => {
+        const { doFetch, calls } = routeFetch({
+            "/models": () => new Response(null, { status: 404 }),
+            "/chat/completions": () => Response.json({ choices: [] }),
+        });
+        const result = await probeCredentialSource(
+            "https://gw.corp/v1",
+            "openai-compatible",
+            { kind: "command", command: "printf gw-tok", scheme: "bearer" },
+            "gpt-5",
+            doFetch,
+        );
+        expect(result._unsafeUnwrap().outcome).toBe("pass");
+        expect(calls[1]!.url).toBe("https://gw.corp/v1/chat/completions");
+        expect(calls[1]!.headers.get("anthropic-version")).toBeNull();
+    });
+
+    test("a definite model-not-found on the ping still passes the CREDENTIAL probe (auth + routing proven)", async () => {
+        const { doFetch } = routeFetch({
+            "/models": () => new Response(null, { status: 404 }),
+            "/messages": () => Response.json({ error: { type: "not_found_error", message: "model: nope-1" } }, { status: 404 }),
+        });
+        const result = await probeCredentialSource(
+            "https://gw.corp/v1",
+            "anthropic",
+            { kind: "command", command: "printf gw-tok", scheme: "bearer" },
+            "nope-1",
+            doFetch,
+        );
+        const value = result._unsafeUnwrap();
+        expect(value.outcome).toBe("pass");
+        if (value.outcome === "pass") expect(value.validatedModel).toBeNull(); // the model itself was NOT validated
+    });
+
+    test("a 401 on the ping fails; a non-standard rejection (500 invalid token) is AMBIGUOUS with the excerpt", async () => {
+        const auth = { kind: "command", command: "printf gw-tok", scheme: "bearer" } as const;
+        const unauthorized = routeFetch({ "/models": () => new Response(null, { status: 404 }), "/messages": () => new Response(null, { status: 401 }) });
+        expect((await probeCredentialSource("https://gw.corp/v1", "anthropic", auth, "m", unauthorized.doFetch))._unsafeUnwrapErr().message).toContain(
+            "bearer",
+        );
+        const weird = routeFetch({
+            "/models": () => new Response(null, { status: 404 }),
+            "/messages": () => new Response("invalid token", { status: 500 }),
+        });
+        const value = (await probeCredentialSource("https://gw.corp/v1", "anthropic", auth, "m", weird.doFetch))._unsafeUnwrap();
+        expect(value.outcome).toBe("ambiguous");
+        if (value.outcome === "ambiguous") {
+            expect(value.status).toBe(500);
+            expect(value.excerpt).toBe("invalid token");
+        }
+    });
+
     test("a credential that produces no token fails BEFORE any fetch (the command/env cause)", async () => {
-        const { doFetch, calls } = recordFetch(200);
+        const { doFetch, calls } = routeFetch({ "/models": () => new Response(null, { status: 200 }) });
         // `true` exits 0 with empty stdout → command_empty_output, so the endpoint is never contacted.
         const result = await probeCredentialSource(
             "https://api.anthropic.com/v1",
             "anthropic",
             { kind: "command", command: "true", scheme: "x-api-key" },
+            "claude-sonnet-5",
             doFetch,
         );
         expect(result.isErr()).toBe(true);
         expect(calls).toHaveLength(0);
+    });
+});
+
+describe("directModelPrefill", () => {
+    test("the ranked listing wins over the conventional default, which wins over the empty free-text prompt", () => {
+        // gpt ranks below claude in the family preference, so the claude id is the top-ranked pre-fill.
+        expect(directModelPrefill(["gpt-5", "claude-sonnet-5"], "anthropic")).toBe("claude-sonnet-5");
+        expect(directModelPrefill(null, "anthropic")).toBe("claude-sonnet-5");
+        expect(directModelPrefill([], "google")).toBe("gemini-2.5-pro");
+        // No listing and no convention for the slug: no guess at all.
+        expect(directModelPrefill(null, "my-corp-gateway")).toBe("");
+    });
+});
+
+describe("collectDirectModel", () => {
+    /** Deps whose collaborators record; overrides shape each case. */
+    function harness(overrides: Partial<DirectModelDeps> = {}): { deps: DirectModelDeps; written: string[]; prompts: (string | null)[] } {
+        const written: string[] = [];
+        const prompts: (string | null)[] = [];
+        const deps: DirectModelDeps = {
+            prefill: "claude-sonnet-5",
+            validatedModel: null,
+            promptModel: (prefill, retryDetail) => {
+                prompts.push(retryDetail);
+                return Promise.resolve(prefill);
+            },
+            validate: () => Promise.resolve({ kind: "pass" }),
+            confirmSave: () => Promise.resolve(false),
+            writeBoth: (model) => {
+                written.push(model);
+                return ok(undefined);
+            },
+            warn: () => {},
+            success: () => {},
+            ...overrides,
+        };
+        return { deps, written, prompts };
+    }
+
+    test("a validated pick persists to both agents via the injected write", async () => {
+        const { deps, written } = harness();
+        await collectDirectModel(deps);
+        expect(written).toEqual(["claude-sonnet-5"]);
+    });
+
+    test("a pick matching the probe-validated model skips re-validation", async () => {
+        let validations = 0;
+        const { deps, written } = harness({
+            validatedModel: "claude-sonnet-5",
+            validate: () => {
+                validations += 1;
+                return Promise.resolve({ kind: "pass" });
+            },
+        });
+        await collectDirectModel(deps);
+        expect(validations).toBe(0);
+        expect(written).toEqual(["claude-sonnet-5"]);
+    });
+
+    test("no validation capability persists the pick unvalidated", async () => {
+        const { deps, written } = harness({ validate: null });
+        await collectDirectModel(deps);
+        expect(written).toEqual(["claude-sonnet-5"]);
+    });
+
+    test("a definite model-not-found re-prompts with the endpoint's rejection, then the corrected pick persists", async () => {
+        const entries = ["nope-1", "claude-sonnet-5"];
+        const { deps, written, prompts } = harness({
+            promptModel: (_prefill, retryDetail) => {
+                prompts.push(retryDetail);
+                return Promise.resolve(entries.shift()!);
+            },
+            validate: (model) =>
+                Promise.resolve(model === "nope-1" ? { kind: "model_not_found", excerpt: `{"error":{"message":"model: nope-1"}}` } : { kind: "pass" }),
+        });
+        await collectDirectModel(deps);
+        expect(written).toEqual(["claude-sonnet-5"]);
+        expect(prompts).toEqual([null, `{"error":{"message":"model: nope-1"}}`]); // the rejection rides into the re-prompt
+    });
+
+    test("an ambiguous validation persists on save-anyway and re-prompts on decline", async () => {
+        const accepted = harness({
+            validate: () => Promise.resolve({ kind: "ambiguous", status: 500, excerpt: "invalid token" }),
+            confirmSave: () => Promise.resolve(true),
+        });
+        await collectDirectModel(accepted.deps);
+        expect(accepted.written).toEqual(["claude-sonnet-5"]);
+
+        let declines = 1;
+        const declined = harness({
+            validate: () => Promise.resolve({ kind: "ambiguous", status: 500, excerpt: "invalid token" }),
+            confirmSave: () => Promise.resolve(declines-- <= 0), // decline once, accept the retry
+        });
+        await collectDirectModel(declined.deps);
+        expect(declined.prompts).toHaveLength(2);
+        expect(declined.written).toEqual(["claude-sonnet-5"]);
     });
 });
 

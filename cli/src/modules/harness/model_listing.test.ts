@@ -18,12 +18,18 @@ function seamsFor(opts: {
     // the test hands back a reader whose Result is in RETURN position.
     readProxyKey?: () => Promise<Result<string, ChatSetupError>>;
     modelApiKey?: string | undefined;
+    resolveAuthCredential?: ListModelsSeams["resolveAuthCredential"];
     fetch: (url: string, headers: Record<string, string>) => Promise<Response>;
 }): ListModelsSeams {
     return {
         resolveConnection: () => opts.connection,
         readProxyKey: opts.readProxyKey ?? (async () => ok("sk-proxy")),
         readModelApiKey: () => opts.modelApiKey,
+        resolveAuthCredential:
+            opts.resolveAuthCredential ??
+            (() => {
+                throw new Error("resolveAuthCredential must not be called without an auth block");
+            }),
         fetch: opts.fetch,
     };
 }
@@ -85,6 +91,48 @@ describe("listConnectionModels — per-mode request shape", () => {
         expect(result._unsafeUnwrap()).toEqual(["claude-sonnet-4-5"]);
         expect(rec.calls[0]?.url).toBe("https://api.anthropic.com/v1/models");
         expect(rec.calls[0]?.headers).toEqual({ "x-api-key": "sk-ant", "anthropic-version": "2023-06-01" });
+    });
+
+    test("a configured bearer auth block authenticates the listing like the chat path — Authorization, never x-api-key", async () => {
+        const rec = recordingFetch(() => Promise.resolve(modelsResponse(["claude-sonnet-5"])));
+        const result = await listConnectionModels(
+            seamsFor({
+                connection: {
+                    mode: "direct",
+                    provider: "anthropic",
+                    baseURL: "https://gw.corp/v1",
+                    protocol: "anthropic",
+                    auth: { kind: "command", command: "corp token", scheme: "bearer" },
+                    agents: {},
+                },
+                // The env key is ALSO set: the auth block must supersede it (the chat path's precedence).
+                modelApiKey: "sk-env-must-not-be-used",
+                resolveAuthCredential: async () => ok({ token: "gw-jwt", scheme: "bearer" }),
+                fetch: rec.fetch,
+            }),
+        );
+        expect(result._unsafeUnwrap()).toEqual(["claude-sonnet-5"]);
+        expect(rec.calls[0]?.headers).toEqual({ Authorization: "Bearer gw-jwt", "anthropic-version": "2023-06-01" });
+    });
+
+    test("an unresolvable auth source degrades to key_missing (free-text picker), issuing no request", async () => {
+        const rec = recordingFetch(() => Promise.reject(new Error("must not fetch")));
+        const result = await listConnectionModels(
+            seamsFor({
+                connection: {
+                    mode: "direct",
+                    provider: "anthropic",
+                    baseURL: "https://gw.corp/v1",
+                    protocol: "anthropic",
+                    auth: { kind: "command", command: "corp token", scheme: "bearer" },
+                    agents: {},
+                },
+                resolveAuthCredential: async () => err({ type: "command_exit_nonzero", command: "corp token", exitCode: 1, stderr: "idp down" }),
+                fetch: rec.fetch,
+            }),
+        );
+        expect(result._unsafeUnwrapErr()).toEqual({ type: "key_missing" });
+        expect(rec.calls).toHaveLength(0);
     });
 });
 
@@ -175,6 +223,7 @@ function validateSeamsFor(opts: {
     connection: ResolvedModelConnection;
     readProxyKey?: () => Promise<Result<string, ChatSetupError>>;
     modelApiKey?: string | undefined;
+    resolveAuthCredential?: ValidateSelectionSeams["resolveAuthCredential"];
     checkModelAccess?: (apiKey: string, modelId: string, signal?: AbortSignal) => Promise<ModelAccess>;
     fetch?: (url: string, init: RequestInit) => Promise<Response>;
 }): ValidateSelectionSeams {
@@ -182,6 +231,11 @@ function validateSeamsFor(opts: {
         resolveConnection: () => opts.connection,
         readProxyKey: opts.readProxyKey ?? (async () => ok("sk-proxy")),
         readModelApiKey: () => opts.modelApiKey,
+        resolveAuthCredential:
+            opts.resolveAuthCredential ??
+            (() => {
+                throw new Error("resolveAuthCredential must not be called without an auth block");
+            }),
         checkModelAccess:
             opts.checkModelAccess ??
             (() => {
@@ -254,6 +308,42 @@ describe("validateModelSelection — per-mode commit validation", () => {
         expect(calls[0]?.url).toBe("https://api.anthropic.com/v1/messages/count_tokens");
         expect(calls[0]?.init.method).toBe("POST");
         expect(calls[0]?.init.headers).toMatchObject({ "x-api-key": "sk-ant", "anthropic-version": "2023-06-01" });
+    });
+
+    test("a configured bearer auth block authenticates count_tokens like the chat path, superseding the env key", async () => {
+        const calls: { url: string; init: RequestInit }[] = [];
+        const result = await validateModelSelection(
+            "claude-sonnet-5",
+            validateSeamsFor({
+                connection: { ...DIRECT_ANTHROPIC, auth: { kind: "command", command: "corp token", scheme: "bearer" } },
+                modelApiKey: "sk-env-must-not-be-used",
+                resolveAuthCredential: async () => ok({ token: "gw-jwt", scheme: "bearer" }),
+                fetch: async (url, init) => {
+                    calls.push({ url, init });
+                    return new Response("{}", { status: 200 });
+                },
+            }),
+        );
+        expect(result).toBe("served");
+        expect(calls[0]?.init.headers).toMatchObject({ Authorization: "Bearer gw-jwt", "anthropic-version": "2023-06-01" });
+        expect((calls[0]?.init.headers as Record<string, string>)["x-api-key"]).toBeUndefined();
+    });
+
+    test("an unresolvable auth source is inconclusive — the switch commits, no request is issued", async () => {
+        let fetched = 0;
+        const result = await validateModelSelection(
+            "claude-sonnet-5",
+            validateSeamsFor({
+                connection: { ...DIRECT_ANTHROPIC, auth: { kind: "env", var: "CORP_TOKEN", scheme: "bearer" } },
+                resolveAuthCredential: async () => err({ type: "env_var_unset", var: "CORP_TOKEN" }),
+                fetch: async () => {
+                    fetched++;
+                    return new Response("{}", { status: 200 });
+                },
+            }),
+        );
+        expect(result).toBe("inconclusive");
+        expect(fetched).toBe(0);
     });
 
     test("direct-anthropic 404 with a not_found_error body is not_found", async () => {
