@@ -41,6 +41,17 @@ def canon(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name.strip().lower())
 
 
+def canon_loose(name: str) -> str:
+    """canon() with separators removed entirely.
+
+    The github track states its wants as repo basenames (`seurat-disk`) while the
+    store records R package directory names (`SeuratDisk`) — those differ by
+    separator as well as case, so canon() alone does not reconcile them. Used only
+    to decide whether a package is still wanted; never to name one.
+    """
+    return re.sub(r"[-_.]+", "", name.strip().lower())
+
+
 def canon_pip(spec: str) -> str:
     """pip spec -> canonical distribution name (strip version/extras/markers)."""
     return canon(re.split(r"[<>=!~;\[\s]", spec.strip())[0])
@@ -51,6 +62,17 @@ def want_for(manifest: dict, arch: str) -> dict[str, list[str]]:
     r = manifest.get("r", {}) or {}
     pip = manifest.get("python", {}).get("pip", {}) or {}
     tools = manifest.get("system_tools", {}) or {}
+    # The conda fragment records BINARY names, so the wishlist has to be expressed
+    # in the same vocabulary: strip any version pin off the manifest entry, then
+    # map it through `binaries` for the packages whose executable is named
+    # differently. Comparing raw entries would report a present tool as forever
+    # missing (and, against a published baseline, as a regression).
+    binaries = tools.get("binaries", {}) or {}
+
+    def tool_binary(spec: str) -> str:
+        name = re.split(r"[=<>!~\s]", spec.strip(), maxsplit=1)[0]
+        return binaries.get(name, name)
+
     return {
         "cran": list(r.get("cran", []) or []),
         "bioconductor": list(r.get("bioconductor", []) or []),
@@ -58,7 +80,7 @@ def want_for(manifest: dict, arch: str) -> dict[str, list[str]]:
         # package dir names, so per-name missing is approximate for this track.
         "github": [g.split("/")[-1].split("@")[0] for g in (r.get("github", []) or [])],
         "python": [canon_pip(s) for s in (pip.get("common", []) or []) + (pip.get(arch, []) or [])],
-        "conda": list((tools.get("common", []) or []) + (tools.get(arch, []) or [])),
+        "conda": [tool_binary(s) for s in (tools.get("common", []) or []) + (tools.get(arch, []) or [])],
         # node is a flat top-level list of package names in the manifest.
         "node": list(manifest.get("node", []) or []),
     }
@@ -123,10 +145,11 @@ def main() -> int:
             print(f"coverage: ignoring unreadable previous coverage ({e})", file=sys.stderr)
 
     print(f"\n## Coverage report — linux/{args.arch}\n")
-    print("| Track | Want | Loaded | Missing | Regressions |")
-    print("|-|-|-|-|-|")
+    print("| Track | Want | Loaded | Missing | Regressions | Dropped |")
+    print("|-|-|-|-|-|-|")
 
     regressions: dict[str, list[str]] = {}
+    drops: dict[str, list[str]] = {}
     coverage_tracks: dict[str, dict] = {}
     for track in FRAGMENTS:
         w = want.get(track, [])
@@ -138,16 +161,36 @@ def main() -> int:
             missing = []
         else:
             missing = sorted(x for x in w if canon(x) not in got_canon)
-        # Regression: a package present in the previous published loaded set for
-        # this arch that no longer loads now.
+
+        # A package that used to load and no longer does splits two ways, and the
+        # difference is whether the manifest still asks for it.
+        #
+        #   regressed — still wanted, so this is the silent breakage the gate exists
+        #               to catch: it fails the build on amd64.
+        #   dropped   — no longer wanted. Either it was deliberately removed from the
+        #               manifest, or it was a transitive dep that left with its
+        #               parent. Neither is a defect, and failing on them would mean
+        #               every intentional removal needs a baseline reset before it
+        #               could ship. Reported, never fatal.
+        #
+        # Matching a previously-loaded name against the wishlist accepts either
+        # canonical form, because the github track's two vocabularies differ by
+        # separator (see canon_loose). Erring toward "still wanted" errs toward
+        # failing the build, which is the safe direction for a gate.
+        want_keys = {canon(x) for x in w} | {canon_loose(x) for x in w}
         prev = previous.get(track, [])
-        regressed = sorted(p for p in prev if canon(p) not in got_canon)
+        gone = [p for p in prev if canon(p) not in got_canon]
+        regressed = sorted(p for p in gone if canon(p) in want_keys or canon_loose(p) in want_keys)
+        dropped = sorted(p for p in gone if p not in regressed)
         if regressed:
             regressions[track] = regressed
+        if dropped:
+            drops[track] = dropped
         coverage_tracks[track] = {"want": len(w), "loaded": got}
         miss_str = str(len(missing)) + (f" ({', '.join(missing[:6])}{'…' if len(missing) > 6 else ''})" if missing else "")
         reg_str = str(len(regressed)) + (f" ({', '.join(regressed[:6])}{'…' if len(regressed) > 6 else ''})" if regressed else "")
-        print(f"| {track} | {len(w)} | {len(got)} | {miss_str} | {reg_str} |")
+        drop_str = str(len(dropped)) + (f" ({', '.join(dropped[:6])}{'…' if len(dropped) > 6 else ''})" if dropped else "")
+        print(f"| {track} | {len(w)} | {len(got)} | {miss_str} | {reg_str} | {drop_str} |")
 
     if args.out:
         try:
@@ -158,10 +201,20 @@ def main() -> int:
             return 2
         print(f"\nWrote coverage baseline to {args.out}")
 
+    # Announced even though it never fails the build: a drop is how an intentional
+    # removal looks, but it is also how an accidental one looks, and the only thing
+    # separating them is whether someone meant to edit the manifest. Printing the
+    # names is what makes that reviewable instead of silent.
+    if drops:
+        total = sum(len(v) for v in drops.values())
+        print(f"\ncoverage: {total} package(s) no longer wanted by the manifest and no longer loaded — treated as intentional, not a regression.")
+        for track, pkgs in drops.items():
+            print(f"  {track}: {', '.join(pkgs)}")
+
     if regressions:
         total = sum(len(v) for v in regressions.values())
         if args.arch == "amd64":
-            print(f"\ncoverage: {total} amd64 REGRESSION(s) — packages that used to load no longer do. Failing.", file=sys.stderr)
+            print(f"\ncoverage: {total} amd64 REGRESSION(s) — still in the manifest, used to load, no longer do. Failing.", file=sys.stderr)
             for track, pkgs in regressions.items():
                 print(f"  {track}: {', '.join(pkgs)}", file=sys.stderr)
             return 1
