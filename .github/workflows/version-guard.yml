@@ -76,3 +76,14 @@ jobs:
               exit 1
               ;;
           esac
+
+      # CITATION.cff restates cli/package.json's version as citation metadata,
+      # and it is what GitHub's "Cite this repository" button renders — so a
+      # stale value ships as a wrong citation rather than as a broken build,
+      # which no other check would catch. Zenodo archives this file off the tag
+      # too, but derives its own record version from the tag name and ignores
+      # the version key, so this guard serves the GitHub citation box and human
+      # readers, not the DOI. Checked unconditionally, not only on bump PRs,
+      # because the drift can equally arrive from an edit to CITATION.cff.
+      - name: Check CITATION.cff is in step with cli/package.json
+        run: .github/citation/sync.sh --check
