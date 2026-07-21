@@ -27,6 +27,13 @@ Choose the method based on your data type and analytical goal:
    - Use **pySCENIC** for TF-target regulon identification (GRNBoost2 + cisTarget motif pruning).
    - Outputs regulons (TF + target gene sets) and per-cell regulon activity scores (AUCell).
    - Computationally expensive: limit to top 2000-3000 HVGs, use multiprocessing.
+   - **The motif-pruning step reads reference data that is an opt-in download.** Resolve
+     the cisTarget motif rankings and the motif-to-TF annotation for your organism from
+     the reference data available to you BEFORE committing to this route, and match their
+     versions to each other — a mismatched pair prunes everything away and returns empty
+     regulons without erroring. If they are absent, say so and either use the decoupler
+     route below or report co-expression modules AS modules. Unpruned GRNBoost2 output is
+     not a regulon set, and presenting it as one is the failure this guards against.
 
 4. **TF activity scoring (fast, per-cell)**
    - Use **decoupler** with **CollecTRI** regulon resource.

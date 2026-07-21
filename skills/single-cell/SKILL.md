@@ -24,7 +24,11 @@ QC strategy?
 │   ├── Single sample → scrublet (via sc.pp.scrublet or sc.external.pp.scrublet)
 │   └── Multiple samples / higher accuracy → SOLO (scvi-tools, deep generative)
 └── Ambient RNA (optional, pre-loaded)
-    └── If raw + filtered matrices available → CellBender or SoupX
+    └── If raw + filtered matrices available → SoupX (R via rpy2)
+        Estimates contamination from the empty-droplet profile, then corrects
+        counts. CellBender is NOT available here — do not plan for it; if the
+        deep generative route is genuinely required, say so rather than
+        presenting SoupX as equivalent.
 ```
 
 ### Normalization
@@ -300,7 +304,7 @@ See CyTOF Output Conventions above.
 ### Python (scRNA-seq / snRNA-seq)
 
 - **cellrank** (>=2): Cell fate probability and driver gene identification. Builds on scVelo velocity or pseudotime. Use `cr.kernels.VelocityKernel` or `cr.kernels.PseudotimeKernel`, then `cr.estimators.GPCCA` for macrostates.
-- **pyscenic**: Gene regulatory network inference. Identifies TF regulons (TF + target genes). Use `GRNBoost2` for co-expression, `cisTarget` for motif enrichment. Computationally heavy.
+- **pyscenic**: Gene regulatory network inference. Identifies TF regulons (TF + target genes). Use `GRNBoost2` for co-expression, `cisTarget` for motif enrichment. Computationally heavy. `cisTarget` additionally needs motif ranking databases and a motif-to-TF annotation resolved from the reference data available to you — an opt-in download that may not be staged, so check before planning the pruning step.
 - **pytometry**: FCS file reading into AnnData for lightweight exploration. For production CyTOF analysis, use the CATALYST + FlowSOM + diffcyt R stack instead.
 
 ### R (scRNA-seq, via rpy2)

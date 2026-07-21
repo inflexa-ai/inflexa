@@ -201,6 +201,7 @@ RUN PYTHONPATH=${INFLEXA_LIB_ROOT}/python/site-packages \
     MPLCONFIGDIR=${INFLEXA_LIB_ROOT}/python/site-packages/matplotlib_config \
     bash -c '\
     if [ "$(uname -m)" = aarch64 ]; then export NUMBA_CPU_NAME=generic; fi; \
+    mkdir -p "$MPLCONFIGDIR"; \
     ok=0; fail=0; \
     for pkg in numba matplotlib scanpy seaborn pertpy scvi cell2location; do \
       if python3 -c "import $pkg; print(f\"$pkg OK\")" 2>&1; then \
@@ -260,9 +261,9 @@ print(' '.join(g['common'] + g.get(os.environ.get('TARGETARCH', 'amd64'), [])))"
 # Best-effort load check — every manifest tool that resolves on PATH goes into
 # the fragment (a canned --version call is logged for visibility); missing tools
 # are dropped. Floor: zero resolved tools fails the build. PATH must include the
-# conda bin so tools like fastqc find their bundled java — appended AFTER the
-# system dirs so the load check's `python3` below stays the system 3.12 (which
-# carries pyyaml), never conda's 3.11.
+# conda bin so a tool that ships its own runtime can find it — appended AFTER
+# the system dirs so the load check's `python3` below stays the system 3.12
+# (which carries pyyaml), never conda's 3.11.
 #
 # What is probed is the BINARY, which the manifest entry only usually names: an
 # entry may carry a conda version pin (`samtools=1.22.1`) and a package may
@@ -359,6 +360,26 @@ COPY --from=conda-builder ${INFLEXA_LIB_ROOT}/conda ${INFLEXA_LIB_ROOT}/conda
 COPY --from=conda-builder ${INFLEXA_LIB_ROOT}/conda.packages.txt ${INFLEXA_LIB_ROOT}/conda.packages.txt
 COPY --from=node-builder ${INFLEXA_LIB_ROOT}/node ${INFLEXA_LIB_ROOT}/node
 COPY --from=node-builder ${INFLEXA_LIB_ROOT}/node.packages.txt ${INFLEXA_LIB_ROOT}/node.packages.txt
+
+# Move the pre-warmed matplotlib font cache out of the store and into the
+# workload user's home, where matplotlib will actually look for it.
+#
+# The builder warms it under MPLCONFIGDIR inside the store, which is the only
+# writable place at build time — but nothing sets MPLCONFIGDIR at runtime, so
+# matplotlib resolves $HOME/.cache/matplotlib instead, finds it empty, and
+# rebuilds the font list in every container. Pointing MPLCONFIGDIR at the store
+# does NOT fix that: matplotlib requires the directory to be writable, and on a
+# read-only one it warns and falls back to a fresh temp dir, which is the same
+# rebuild plus a warning per import. So the cache has to be copied somewhere the
+# uid-1000 workload owns. numba needs no equivalent — it resolves a cache
+# locator per function and already lands in $HOME/.cache.
+#
+# MPLCONFIGDIR is then set explicitly for the same reason sandbox-base declares
+# HOME explicitly: the runtime reaches uid 1000 by setpriv or a numeric
+# runAsUser, so a passwd-derived home is not dependable.
+COPY --from=python-builder --chown=sandbox:sandbox \
+     ${INFLEXA_LIB_ROOT}/python/site-packages/matplotlib_config /home/sandbox/.cache/matplotlib
+ENV MPLCONFIGDIR=/home/sandbox/.cache/matplotlib
 
 # The refresh helper — re-derives /mnt/libs/current/packages.txt from the present
 # per-track fragments (and, for a FROM-extension image, from what is actually

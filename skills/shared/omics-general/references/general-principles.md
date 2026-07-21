@@ -99,8 +99,17 @@ modality-specific tool already handles random effects (e.g., MaAsLin2 for metage
 - Provides consensus scoring across CellPhoneDB, NATMI, SingleCellSignalR, etc.
 
 ### Gene Regulatory Network Inference
-- **pySCENIC** / **SCENIC+** (for combined RNA + ATAC)
-- **CellOracle** for GRN-based perturbation simulation
+- **pySCENIC** — co-expression (GRNBoost2) then motif pruning (cisTarget). The pruning
+  step is what separates a regulon from a co-expression module, and it reads reference
+  data that is an opt-in download: resolve it first, and if it is absent say so rather
+  than reporting unpruned modules as regulons.
+- **decoupler** with a TF-target regulon resource, when the goal is scoring known
+  regulon activity rather than discovering regulons. Much cheaper, and its reference
+  data is a small download rather than a large one.
+- SCENIC+ and CellOracle are **not available here** and should not be planned for.
+  Neither installs in this environment, and SCENIC+ is additionally licensed for
+  non-commercial academic use only. For RNA+ATAC or perturbation questions, state the
+  limitation rather than substituting a tool that cannot run.
 
 ### Trajectory / Pseudotime Inference
 - **scVelo** for RNA velocity (when spliced/unspliced info is available)

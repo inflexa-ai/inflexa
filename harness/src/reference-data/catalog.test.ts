@@ -85,6 +85,8 @@ describe("reference-data catalog", () => {
             "cellsnp-common-snps-hg38",
             "eagle-genetic-map-hg38",
             "1000g-phasing-panel-hg38",
+            "cistarget-hg38",
+            "cistarget-mm10",
         ]);
     });
 
@@ -109,6 +111,8 @@ describe("reference-data catalog", () => {
             "cellsnp-common-snps-hg38",
             "eagle-genetic-map-hg38",
             "1000g-phasing-panel-hg38",
+            "cistarget-hg38",
+            "cistarget-mm10",
         ]);
     });
 
@@ -141,6 +145,7 @@ describe("reference-data catalog", () => {
             // belongs in the catalog: the downloader follows the chain and re-checks https on
             // whatever finally served it, and a pinned mirror URL would expire.
             "sourceforge.net",
+            "resources.aertslab.org",
         ]);
 
         for (const dataset of REFERENCE_DATA_CATALOG.datasets) {
@@ -275,6 +280,8 @@ describe("reference-data catalog", () => {
                 "celltypist-covid19",
                 "celltypist-immune",
                 "celltypist-pan-fetal",
+                "cistarget-hg38",
+                "cistarget-mm10",
                 "clinvar-grch38",
                 "collectri-human",
                 "dorothea-human",

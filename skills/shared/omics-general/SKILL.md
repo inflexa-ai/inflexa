@@ -80,7 +80,8 @@ When receiving input data, detect the format before processing:
 - **Pathway enrichment**: decoupler with gene sets or pathway weights from the reference store; gseapy for GSEA/ORA
 - **TF activity**: decoupler with a TF-target regulon network from the reference store
 - **Cell-cell communication**: LIANA+
-- **GRN inference**: pySCENIC / SCENIC+
+- **GRN inference**: pySCENIC — its motif-pruning step needs cisTarget reference data,
+  which is an opt-in download and may not be staged; check before planning around it
 - **Trajectory**: scVelo, CellRank, Palantir
 - **Clustering**: Leiden (preferred over Louvain)
 - **Batch correction**: scVI (complex), Harmony (moderate), ComBat (bulk)

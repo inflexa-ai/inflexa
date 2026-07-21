@@ -52,7 +52,14 @@ Choose the method based on your analytical question and data characteristics:
 - **CARNIVAL** (R via rpy2): Infers signaling topology from TF/pathway activity scores and prior knowledge network.
   - Requires: activity scores (from decoupler), a prior-knowledge network, perturbation context.
 - **COSMOS** (R via rpy2): Extends CARNIVAL to bridge signaling and metabolism.
-  - Requires: TF activities, metabolite abundances, a prior-knowledge network plus metabolic networks.
+  - Requires: TF activities, metabolite abundances. Unlike CARNIVAL it carries its own
+    prior-knowledge network, so nothing external has to be resolved for it.
+- **Both take a solver by explicit path, and the default is not the one you want.** Each
+  falls back to a pure-R solver its own documentation describes as suitable for testing
+  only — it will not close on a full-size network, and the symptom is a run that never
+  finishes rather than an error. A real MILP solver is installed; pass its path
+  explicitly, because neither package discovers one. If you did not set it, say so when
+  reporting the result, since a filtered-down network is a different claim.
 - These methods are computationally intensive and require careful prior knowledge curation.
 - Both hinge on a prior-knowledge network that cannot be fetched at run time. Confirm one
   resolves from the reference data available to you *before* planning either step.

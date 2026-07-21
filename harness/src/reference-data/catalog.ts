@@ -1095,6 +1095,76 @@ export const REFERENCE_DATA_CATALOG: ReferenceDataCatalog = deepFreeze(
                     },
                 ]),
             },
+            {
+                // What makes a pySCENIC regulon a regulon rather than a co-expression module:
+                // the motif-pruning step reads these and nothing substitutes for them. Rankings
+                // and annotation must come from the SAME version — the directory says
+                // `mc_v10_clust` and the annotation says `v10nr_clust`, which are the same
+                // release under two spellings, and pairing across releases yields empty regulons
+                // without erroring. Two window sizes ship because the choice is analytical, not a
+                // default: 500bp/100bp is promoter-proximal, 10kbp is distal-inclusive.
+                id: "cistarget-hg38",
+                version: "v10-clust",
+                title: "cisTarget motif rankings and annotations (human, hg38)",
+                description:
+                    "The motif-ranking databases and motif-to-TF annotation that gene regulatory network inference needs to prune co-expression modules down to motif-supported regulons. Human hg38, RefSeq r80, v10 clustered motif collection — two ranking databases at different regulatory window sizes plus the annotation table that maps each motif to its transcription factors. Roughly 723 MB combined. The publisher states no licence for this data, so it is fetched from them directly and never mirrored.",
+                organism: "human",
+                sourceUrl: "https://resources.aertslab.org/cistarget/",
+                license: { identifier: "LicenseRef-No-Declared-Licence", url: "https://resources.aertslab.org/cistarget/" },
+                recommendation: { group: "regulatory-networks", recommended: false },
+                artifacts: [
+                    {
+                        path: "hg38_500bp_up_100bp_down_full_tx_v10_clust.genes_vs_motifs.rankings.feather",
+                        url: "https://resources.aertslab.org/cistarget/databases/homo_sapiens/hg38/refseq_r80/mc_v10_clust/gene_based/hg38_500bp_up_100bp_down_full_tx_v10_clust.genes_vs_motifs.rankings.feather",
+                        format: "feather",
+                        contents:
+                            "Feather v2, ~313 MB: genes x motifs, each cell the rank of that gene for that motif. Promoter-proximal window (500bp upstream to 100bp downstream of the TSS) — the conservative choice, and the one to prefer when a regulon should reflect direct promoter binding. Must be a *.rankings.feather; the *.scores.feather files served beside these are inputs for building databases and produce nothing useful here.",
+                    },
+                    {
+                        path: "hg38_10kbp_up_10kbp_down_full_tx_v10_clust.genes_vs_motifs.rankings.feather",
+                        url: "https://resources.aertslab.org/cistarget/databases/homo_sapiens/hg38/refseq_r80/mc_v10_clust/gene_based/hg38_10kbp_up_10kbp_down_full_tx_v10_clust.genes_vs_motifs.rankings.feather",
+                        format: "feather",
+                        contents:
+                            "Feather v2, ~311 MB: same genes x motifs rank matrix as its sibling, scored over a 10 kbp window either side of the TSS. Admits distal regulatory elements, so it recovers more targets and more false positives than the promoter-proximal database. Pick one deliberately and say which; running both and merging is not a defined operation.",
+                    },
+                    {
+                        path: "motifs-v10nr_clust-nr.hgnc-m0.001-o0.0.tbl",
+                        url: "https://resources.aertslab.org/cistarget/motif2tf/motifs-v10nr_clust-nr.hgnc-m0.001-o0.0.tbl",
+                        format: "tsv",
+                        contents:
+                            "13-column TAB-separated table despite the .tbl extension — read it as TSV, not as a fixed-width or custom format. Maps each motif id to the transcription factors it represents, with the evidence class (direct annotation vs inferred by orthology or motif similarity) that lets a caller keep only directly-annotated motifs. Gene symbols are HGNC, so this is the human file; the MGI-suffixed sibling is mouse and pairing it with hg38 rankings silently matches nothing.",
+                    },
+                ],
+            },
+            {
+                // The mouse counterpart, kept as its own dataset so an installer takes one
+                // organism rather than both. Note mm39 does not exist upstream: mm10 is current.
+                id: "cistarget-mm10",
+                version: "v10-clust",
+                title: "cisTarget motif rankings and annotations (mouse, mm10)",
+                description:
+                    "Mouse mm10 counterpart of the human cisTarget set — one ranking database plus the MGI motif-to-TF annotation, for pruning co-expression modules into motif-supported regulons. RefSeq r80, v10 clustered motif collection, roughly 589 MB. mm10 is the current build here; there is no mm39 release. The publisher states no licence for this data, so it is fetched from them directly and never mirrored.",
+                organism: "mouse",
+                sourceUrl: "https://resources.aertslab.org/cistarget/",
+                license: { identifier: "LicenseRef-No-Declared-Licence", url: "https://resources.aertslab.org/cistarget/" },
+                recommendation: { group: "regulatory-networks", recommended: false },
+                artifacts: [
+                    {
+                        path: "mm10_10kbp_up_10kbp_down_full_tx_v10_clust.genes_vs_motifs.rankings.feather",
+                        url: "https://resources.aertslab.org/cistarget/databases/mus_musculus/mm10/refseq_r80/mc_v10_clust/gene_based/mm10_10kbp_up_10kbp_down_full_tx_v10_clust.genes_vs_motifs.rankings.feather",
+                        format: "feather",
+                        contents:
+                            "Feather v2: genes x motifs rank matrix for mouse mm10, 10 kbp either side of the TSS. Must be a *.rankings.feather, not the *.scores.feather served beside it. Pair only with the MGI annotation below and only with mouse counts — running human rankings over mouse data completes and returns nonsense.",
+                    },
+                    {
+                        path: "motifs-v10nr_clust-nr.mgi-m0.001-o0.0.tbl",
+                        url: "https://resources.aertslab.org/cistarget/motif2tf/motifs-v10nr_clust-nr.mgi-m0.001-o0.0.tbl",
+                        format: "tsv",
+                        contents:
+                            "13-column TAB-separated table despite the .tbl extension. Maps motif ids to mouse transcription factors with their evidence class, symbols in MGI nomenclature. The HGNC-suffixed sibling is the human file; crossing the two against the wrong rankings matches nothing and reports no error.",
+                    },
+                ],
+            },
         ],
     }),
 );
