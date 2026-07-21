@@ -69,6 +69,21 @@ export interface InputClassificationContext {
 }
 
 /**
+ * The outcome of classifying one read: an input edge the step may assert, or
+ * an explicit refusal naming the producing step it would have pointed at.
+ *
+ * A refusal is a value rather than a thrown error or a `data` classification.
+ * Throwing would fail an exec over bookkeeping, and reclassifying as `data`
+ * would launder a sibling's scratch file into an attestable analysis-level
+ * input — a different fabrication, not a fix. The scraped ids ride along
+ * because they are the only thing that makes a drop attributable to a
+ * producing step in a log record.
+ */
+export type ReadClassification =
+    | { readonly admissible: true; readonly context: InputClassificationContext }
+    | { readonly admissible: false; readonly refRunId?: string; readonly refStepId?: string };
+
+/**
  * Build classification context for a file read using known step metadata.
  *
  * Uses prefix matching against structured metadata — no path segment
@@ -79,15 +94,15 @@ export interface InputClassificationContext {
  * any dependsOn entry), this falls back to path extraction — see the
  * prior-run branch below for why.
  */
-export function classifyReadPath(relativePath: string, ownStepId: string, ownRunId: string, dependsOn?: string[]): InputClassificationContext {
+export function classifyReadPath(relativePath: string, ownStepId: string, ownRunId: string, dependsOn?: string[]): ReadClassification {
     if (relativePath.startsWith("data/") || relativePath.startsWith("dataprofile/")) {
-        return { source: "data" };
+        return { admissible: true, context: { source: "data" } };
     }
 
     // Own artifacts: runs/{ownRunId}/{ownStepId}/...
     const ownPrefix = `runs/${ownRunId}/${ownStepId}/`;
     if (relativePath.startsWith(ownPrefix)) {
-        return { source: "artifacts", stepId: ownStepId, runId: ownRunId };
+        return { admissible: true, context: { source: "artifacts", stepId: ownStepId, runId: ownRunId } };
     }
 
     // Upstream dependencies: runs/{ownRunId}/{depStepId}/...
@@ -95,21 +110,30 @@ export function classifyReadPath(relativePath: string, ownStepId: string, ownRun
         for (const depStepId of dependsOn) {
             const upstreamPrefix = `runs/${ownRunId}/${depStepId}/`;
             if (relativePath.startsWith(upstreamPrefix)) {
-                return { source: "upstream", stepId: depStepId, runId: ownRunId };
+                return { admissible: true, context: { source: "upstream", stepId: depStepId, runId: ownRunId } };
             }
         }
     }
 
-    // Same-run sibling step. dependsOn only drives topo-sort ordering, not
-    // read authorization, so a read outside dependsOn is still a valid
-    // upstream input — just extract the stepId from the path.
+    // Same-run sibling this step never declared. It carries no ordering
+    // guarantee relative to this step: its directory is mounted read-write in
+    // its own container and may be mid-write, or hold a scratch file deleted
+    // before this step reconciles, so nothing observed there is a stable
+    // artifact this step can be said to have consumed. Declaration is the
+    // available proof of stability — the scheduler admits a step only once
+    // every declared dependency has completed, and a completed step never
+    // writes into its tree again. An absent `dependsOn` therefore refuses
+    // every sibling: absence of the declaration is not evidence of stability.
+    //
+    // The step id is extracted only to attribute the refusal in diagnostics;
+    // unlike the prior-run branch below, it feeds no classification.
     const ownRunPrefix = `runs/${ownRunId}/`;
     if (relativePath.startsWith(ownRunPrefix)) {
         const afterRun = relativePath.slice(ownRunPrefix.length);
         const slashIdx = afterRun.indexOf("/");
         const stepId = slashIdx > 0 ? afterRun.slice(0, slashIdx) : afterRun;
         if (stepId) {
-            return { source: "upstream", stepId, runId: ownRunId };
+            return { admissible: false, refRunId: ownRunId, refStepId: stepId };
         }
     }
 
@@ -123,11 +147,11 @@ export function classifyReadPath(relativePath: string, ownStepId: string, ownRun
         const priorRunId = parts[1];
         const priorStepId = parts[2];
         if (priorRunId && priorStepId) {
-            return { source: "prior", stepId: priorStepId, runId: priorRunId };
+            return { admissible: true, context: { source: "prior", stepId: priorStepId, runId: priorRunId } };
         }
     }
 
-    return { source: "data" };
+    return { admissible: true, context: { source: "data" } };
 }
 
 // ── Collector ───────────────────────────────────────────────────────
@@ -187,14 +211,26 @@ export class ProvenanceCollector {
      * @param hash - SHA-256 hash of the file content, or null if file no longer exists
      * @param context - Explicit classification context from the caller. When provided,
      *   the collector uses it directly instead of classifying from the path.
+     * @returns the tracked ref, or `null` when the caller supplied no context and the
+     *   path classifies as inadmissible — an undeclared same-run sibling, which must
+     *   not become an attestation target.
      */
-    trackInputAccess(mountPath: string, relativePath: string, hash: string | null, context?: InputClassificationContext): InputRef {
+    trackInputAccess(mountPath: string, relativePath: string, hash: string | null, context: InputClassificationContext): InputRef;
+    trackInputAccess(mountPath: string, relativePath: string, hash: string | null): InputRef | null;
+    trackInputAccess(mountPath: string, relativePath: string, hash: string | null, context?: InputClassificationContext): InputRef | null {
         const key = `${mountPath}:${relativePath}`;
         const existing = this.inputAccesses.get(key);
         if (existing) return existing;
 
         // Use explicit context if provided, otherwise fall back to path classification
-        const classification = context ?? classifyReadPath(relativePath, this.stepId, this.runId, this.dependsOn);
+        let classification: InputClassificationContext;
+        if (context) {
+            classification = context;
+        } else {
+            const classified = classifyReadPath(relativePath, this.stepId, this.runId, this.dependsOn);
+            if (!classified.admissible) return null;
+            classification = classified.context;
+        }
         // A still-absolute `relativePath` is a report the caller could not
         // relativize — it names somewhere outside the mount. It rides verbatim:
         // prepending the mount root would forge an in-tree name for a foreign

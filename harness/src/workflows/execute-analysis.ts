@@ -334,6 +334,11 @@ export function buildChildInput(args: {
         runId,
         stepId,
         agentId: input.agentByStepId[stepId] ?? "scientific-executor",
+        // Carried into the child because lineage classification admits a same-run
+        // sibling edge only when the sibling was declared here — the scheduler's
+        // ordering guarantee attaches to this list and nothing else. A step absent
+        // from `steps` contributes no declarations, so its sibling reads are refused.
+        dependsOn: input.steps.find((s) => s.id === stepId)?.depends_on ?? [],
         level,
         prompt,
         parentWorkflowId: workflowId,

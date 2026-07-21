@@ -10,7 +10,7 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { ProvenanceCollector } from "./collector.js";
+import { classifyReadPath, ProvenanceCollector } from "./collector.js";
 import type { ArtifactRecord } from "../execution/artifact-record.js";
 
 const RUN = "run-001";
@@ -65,5 +65,95 @@ describe("ProvenanceCollector.recordFileToolWrite", () => {
         expect(rec.producer).toEqual({ type: "file_tool", tool: "edit_file", timestamp: "2026-07-13T00:00:00.000Z" });
         expect(rec.inputs).toEqual([]);
         expect(rec.outputPath).toBe("output/x.csv");
+    });
+});
+
+describe("classifyReadPath", () => {
+    const OWN_STEP = "de";
+    const OWN_RUN = "run-002";
+    const DEPS = ["qc"];
+
+    /** Narrow to the admissible arm so a branch regression fails loudly here
+     *  rather than as an undefined-property read further down the assertion. */
+    function contextOf(result: ReturnType<typeof classifyReadPath>) {
+        if (!result.admissible) throw new Error("expected an admissible classification");
+        return result.context;
+    }
+
+    test("data and dataprofile reads classify as data with no step or run", () => {
+        expect(contextOf(classifyReadPath("data/inputs/Lab/counts.csv", OWN_STEP, OWN_RUN, DEPS))).toEqual({ source: "data" });
+        expect(contextOf(classifyReadPath("dataprofile/summary.json", OWN_STEP, OWN_RUN, DEPS))).toEqual({ source: "data" });
+    });
+
+    test("the step's own tree classifies as artifacts", () => {
+        expect(contextOf(classifyReadPath(`runs/${OWN_RUN}/${OWN_STEP}/output/results.csv`, OWN_STEP, OWN_RUN, DEPS))).toEqual({
+            source: "artifacts",
+            stepId: OWN_STEP,
+            runId: OWN_RUN,
+        });
+    });
+
+    test("a declared dependency classifies as upstream", () => {
+        expect(contextOf(classifyReadPath(`runs/${OWN_RUN}/qc/output/qc.csv`, OWN_STEP, OWN_RUN, DEPS))).toEqual({
+            source: "upstream",
+            stepId: "qc",
+            runId: OWN_RUN,
+        });
+    });
+
+    test("a declared dependency wins over the sibling branch that also matches its prefix", () => {
+        // Both the declared-dependency branch and the same-run sibling branch
+        // match `runs/{ownRunId}/qc/...`. Ordering is what makes the declared one
+        // admissible; if the sibling branch ever ran first every legitimate
+        // same-run edge would silently become a refusal.
+        const result = classifyReadPath(`runs/${OWN_RUN}/qc/logs/run.log`, OWN_STEP, OWN_RUN, DEPS);
+        expect(result.admissible).toBe(true);
+        expect(contextOf(result).source).toBe("upstream");
+    });
+
+    test("an undeclared same-run sibling is refused and names the producing step", () => {
+        const result = classifyReadPath(`runs/${OWN_RUN}/norm/output/norm.csv`, OWN_STEP, OWN_RUN, DEPS);
+        expect(result.admissible).toBe(false);
+        if (result.admissible) throw new Error("unreachable");
+        expect(result.refStepId).toBe("norm");
+        expect(result.refRunId).toBe(OWN_RUN);
+    });
+
+    test("absent or empty dependsOn refuses every same-run sibling", () => {
+        expect(classifyReadPath(`runs/${OWN_RUN}/qc/output/qc.csv`, OWN_STEP, OWN_RUN).admissible).toBe(false);
+        expect(classifyReadPath(`runs/${OWN_RUN}/qc/output/qc.csv`, OWN_STEP, OWN_RUN, []).admissible).toBe(false);
+    });
+
+    test("another run's step classifies as prior via path extraction", () => {
+        expect(contextOf(classifyReadPath("runs/run-001/de/output/prior.csv", OWN_STEP, OWN_RUN, DEPS))).toEqual({
+            source: "prior",
+            stepId: "de",
+            runId: "run-001",
+        });
+    });
+
+    test("an unrecognized path falls back to data", () => {
+        expect(contextOf(classifyReadPath("reports/r1/index.html", OWN_STEP, OWN_RUN, DEPS))).toEqual({ source: "data" });
+    });
+});
+
+describe("ProvenanceCollector.trackInputAccess without an explicit context", () => {
+    test("tracks an admissible path", () => {
+        const collector = new ProvenanceCollector({ stepId: "de", runId: "run-002", dependsOn: ["qc"] });
+
+        const ref = collector.trackInputAccess("/a1", "runs/run-002/qc/output/qc.csv", null);
+
+        if (ref === null) throw new Error("expected a declared dependency to be tracked");
+        expect(collector.getTrackedInputs()).toHaveLength(1);
+        expect(ref.source).toBe("upstream");
+    });
+
+    test("tracks nothing when the path classifies as inadmissible", () => {
+        const collector = new ProvenanceCollector({ stepId: "de", runId: "run-002", dependsOn: ["qc"] });
+
+        const ref = collector.trackInputAccess("/a1", "runs/run-002/norm/output/norm.csv", null);
+
+        expect(ref).toBeNull();
+        expect(collector.getTrackedInputs()).toEqual([]);
     });
 });
