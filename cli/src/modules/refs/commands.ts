@@ -36,12 +36,14 @@ export type ReferenceDownloadOptions = {
 
 /** Setup-specific reference selection. */
 export type ReferenceSetupOptions = {
-    /** Explicit ids from `setup --refs`; absent means offer interactively. */
+    /** Explicit ids from `setup --refs`; absent means offer interactively (or default to recommended when headless). */
     readonly ids?: readonly string[];
     /** Explicit consent for a scripted transfer. */
     readonly yes?: boolean;
     /** Whether setup is attached to an interactive terminal. */
     readonly interactive: boolean;
+    /** Matching catalog/plan seam for offline tests, mirroring the download path. */
+    readonly source?: ReferenceCatalogSource;
 };
 
 /** A selection was cancelled before transfer. */
@@ -106,11 +108,17 @@ async function chooseIds(catalog: ReferenceDataCatalog): Promise<readonly string
             ...(dataset.recommendation.recommended ? { hint: "recommended" } : {}),
         });
     }
+    // Preselect the recommended datasets so an accept-all (untouched picker → Enter) installs a
+    // working set — the packs the enrichment/network/single-cell skills are built on — rather than
+    // nothing. `recommended` is the only signal the catalog carries about what a real install looks
+    // like; without seeding it here the flag is a cosmetic hint and the default selection is empty.
+    const recommended = catalog.datasets.filter((dataset) => dataset.recommendation.recommended).map((dataset) => dataset.id);
     const selected = await groupMultiselect({
         message: "Reference datasets to download",
         required: false,
         selectableGroups: true,
         options: grouped,
+        ...(recommended.length > 0 ? { initialValues: recommended } : {}),
     });
     return isCancel(selected) ? undefined : selected;
 }
@@ -327,27 +335,59 @@ export async function runReferenceSetup(options: ReferenceSetupOptions): Promise
             log.info(`Reference selection was not downloaded without explicit consent.\n  Re-run setup with --refs ${options.ids.join(",")} --yes.`);
             return ok(undefined);
         }
-        const downloaded = await downloadReferences({ ids: options.ids, yes: options.yes, interactive: options.interactive });
+        const downloaded = await downloadReferences({
+            ids: options.ids,
+            yes: options.yes,
+            interactive: options.interactive,
+            ...(options.source === undefined ? {} : { source: options.source }),
+        });
         return downloaded.map(() => undefined);
     }
-    if (!options.interactive) {
-        log.info(`Reference store: ${env.refsDir}\n  Install catalog data later with \`inflexa refs download <id...> --yes\`.`);
-        return ok(undefined);
-    }
-    const inspection = await inspectReferenceStore(env.refsDir);
+    const activeCatalog = options.source?.catalog ?? REFERENCE_DATA_CATALOG;
+    const inspection = await inspectReferenceStore(env.refsDir, options.source?.catalog);
     if (inspection.isErr()) return err(inspection.error);
-    const offered = inspection.value.datasets.filter((item) => item.state !== "installed").map((item) => item.dataset.id);
+    const offered = inspection.value.datasets.filter((item) => item.state !== "installed");
     if (offered.length === 0) {
         log.info("Reference store ready; no missing catalog datasets to offer.");
         return ok(undefined);
     }
+    // `--refs` omitted on a headless terminal used to install nothing, so an unattended setup left the
+    // enrichment/network/single-cell skills with no data to stand on. Default to the catalog's
+    // recommended set instead — the only signal for what a working install looks like — while still
+    // gating the transfer on the same explicit `--yes` consent every other download path requires.
+    if (!options.interactive) {
+        const recommendedOffered = offered.filter((item) => item.dataset.recommendation.recommended).map((item) => item.dataset.id);
+        if (recommendedOffered.length === 0) {
+            log.info(`Reference store: ${env.refsDir}\n  Install catalog data later with \`inflexa refs download <id...> --yes\`.`);
+            return ok(undefined);
+        }
+        if (!options.yes) {
+            log.info(
+                `Reference store: ${env.refsDir}\n  ${recommendedOffered.length} recommended dataset(s) are the default install but need explicit consent.\n  Re-run setup with --yes, or \`inflexa refs download ${recommendedOffered.join(" ")} --yes\`.`,
+            );
+            return ok(undefined);
+        }
+        const downloaded = await downloadReferences({
+            ids: recommendedOffered,
+            yes: true,
+            interactive: false,
+            ...(options.source === undefined ? {} : { source: options.source }),
+        });
+        return downloaded.map(() => undefined);
+    }
     let chosen: readonly string[] | undefined;
     try {
-        chosen = await chooseIds({ ...REFERENCE_DATA_CATALOG, datasets: REFERENCE_DATA_CATALOG.datasets.filter((dataset) => offered.includes(dataset.id)) });
+        const offeredIds = new Set(offered.map((item) => item.dataset.id));
+        chosen = await chooseIds({ ...activeCatalog, datasets: activeCatalog.datasets.filter((dataset) => offeredIds.has(dataset.id)) });
     } catch (cause) {
         return err({ type: "download_failed", message: "Reference selection prompt failed.", cause });
     }
     if (chosen === undefined || chosen.length === 0) return ok(undefined);
-    const downloaded = await downloadReferences({ ids: chosen, yes: options.yes, interactive: true });
+    const downloaded = await downloadReferences({
+        ids: chosen,
+        yes: options.yes,
+        interactive: true,
+        ...(options.source === undefined ? {} : { source: options.source }),
+    });
     return downloaded.map(() => undefined);
 }
