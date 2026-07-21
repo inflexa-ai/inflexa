@@ -159,10 +159,17 @@ Rare variant analysis
 
 ### CLI tools (run as shell commands)
 
+Guaranteed in the sandbox — rely on these freely:
+
 - **samtools**: view, sort, index, flagstat, idxstats, depth, mpileup.
 - **bcftools**: view, filter, query, stats, norm, merge, annotate, consensus.
 - **tabix**: Index and query tabular genomic data (VCF, BED, GFF).
+- **bedtools**: interval arithmetic (intersect, merge, coverage, closest).
 - **vcftools**: VCF filtering/statistics (`--min-alleles`, `--maf`, `--max-missing`, `--weir-fst-pop`).
+
+May not be present — confirm with `which <tool>` before planning around one, and
+if it is absent, report that rather than substituting a different step:
+
 - **mosdepth**: Fast BAM/CRAM depth calculation (per-base, per-window, per-region).
 - **bwa / minimap2**: Read alignment (`bwa mem` for short reads, `minimap2` for long reads).
 - **picard**: MarkDuplicates, CollectInsertSizeMetrics, ValidateSamFile.
