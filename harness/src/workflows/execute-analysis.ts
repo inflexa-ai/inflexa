@@ -30,11 +30,16 @@
  *       completion
  *     - await child results via `getResult` (these are themselves cached
  *       in DBOS, so parent recovery does NOT re-run completed children)
- *  3. Fail-fast cascade
- *     - on the first non-resumable child failure (or on external parent
- *       cancel): stop scheduling, then
- *       `Promise.allSettled(handles.map(h => DBOS.cancelWorkflow(h.workflowID)))`
- *     - each cancelled child tears down its sandbox in its own terminal path
+ *  3. Failure isolation
+ *     - a child settling `failed`/`blocked` (or throwing for a non-budget
+ *       cause) dooms only its transitive dependents: they can never become
+ *       dependency-satisfied, are marked `skipped` on the dag-state part, and
+ *       are never dispatched. In-flight siblings and independent ready steps
+ *       continue; the loop drains and the run finalises (typically `partial`).
+ *     - the halt cascade (cancel in-flight via
+ *       `Promise.allSettled(handles.map(h => DBOS.cancelWorkflow(h.workflowID)))`,
+ *       stop scheduling) survives only for the budget paths: a
+ *       `budget_exceeded` settlement and the `neverFits` plan-validation guard.
  *  4. Pause cascade (402)
  *     - on a child cancelling itself with `budget_exceeded`: cancel siblings
  *       then self-cancel the parent to `CANCELLED` (NOT `ERROR` — ERROR
@@ -584,7 +589,7 @@ export async function runExecuteAnalysisBody(input: ExecuteAnalysisInput, deps: 
         atMs: startedAtMs,
     });
 
-    // (2-4) Scheduler loop + fail-fast + pause cascade.
+    // (2-4) Scheduler loop + failure isolation + pause cascade.
     const final = await runSchedulerLoop({
         input,
         runId,
@@ -750,19 +755,55 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
 
     const budgetExceededChildIds = new Set<string>();
 
-    // Child workflow ids the parent itself cancelled (fail-fast / budget cascade). Their `getResult`
+    // Child workflow ids the parent itself cancelled (budget / neverFits halt cascade). Their `getResult`
     // rejects with a DBOS cancellation error and lands in the settlement error branch — but the step was
     // CANCELED by us, not failed on its own merits. Keyed here (deterministic: `cancelInFlight` runs the
     // same way on a replay) so that branch records it as canceled everywhere, matching how a child that
     // returns a graceful `{status:"canceled"}` is already handled.
     const canceledByParent = new Set<string>();
 
-    const stepRuntime = new Map<string, { status: "pending" | "queued" | "running" | "completed" | "failed"; durationMs?: number; error?: string }>();
+    const stepRuntime = new Map<
+        string,
+        { status: "pending" | "queued" | "running" | "completed" | "failed" | "skipped"; durationMs?: number; error?: string }
+    >();
     for (const step of input.steps) {
         stepRuntime.set(step.id, { status: "pending" });
     }
 
-    let failFast = false;
+    // Reverse adjacency over the static plan — who depends on whom.
+    const dependentsByStepId = new Map<string, string[]>();
+    for (const step of input.steps) {
+        for (const dep of step.depends_on) {
+            const list = dependentsByStepId.get(dep);
+            if (list) list.push(step.id);
+            else dependentsByStepId.set(dep, [step.id]);
+        }
+    }
+
+    /**
+     * Mark every transitive dependent of a failed/blocked step `skipped` in the
+     * dag snapshot: a failed step never enters `completed`, so its dependents
+     * can never become dependency-satisfied and will never be dispatched.
+     * Stream-only — ledger rows stay `pending` until the terminal sweep flips
+     * them to `skipped`. Dependents of an unfinished step are necessarily
+     * `pending` (never queued/running); an already-`skipped` one is not
+     * re-walked.
+     */
+    const markDependentsSkipped = (failedStepId: string): void => {
+        const stack = [...(dependentsByStepId.get(failedStepId) ?? [])];
+        while (stack.length > 0) {
+            const id = stack.pop()!;
+            if (stepRuntime.get(id)!.status === "pending") {
+                stepRuntime.set(id, { status: "skipped" });
+                stack.push(...(dependentsByStepId.get(id) ?? []));
+            }
+        }
+    };
+
+    // Halts scheduling entirely — reserved for the budget paths (a
+    // `budget_exceeded` settlement, the `neverFits` guard). An ordinary step
+    // failure does NOT set it: it dooms only that step's transitive dependents.
+    let halted = false;
     let budgetExceeded = false;
     let failureReason: string | null = null;
 
@@ -792,19 +833,27 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
 
     const dbosParentId = DBOS.workflowID ?? workflowId;
     const dispatchReady = async (): Promise<void> => {
-        if (failFast) return;
+        if (halted) return;
         const inFlightStepIds = new Set([...inFlight.values()].map((h) => h.stepId));
+        // A settled-but-not-completed step (failed / blocked / canceled) is not
+        // in `completed` and not in flight, so `scheduleReady` would offer it
+        // again — filter it out of the candidate list. This also stops its
+        // declared resources from weighing against the budget: settled steps
+        // hold no capacity.
+        const candidates = input.steps.filter((s) => !failed.has(s.id) && !canceled.has(s.id));
         let admit: readonly string[];
         let queuedChanged = false;
         if (input.budget) {
-            const scheduled = scheduleReady(input.steps, completed, inFlightStepIds, {
+            const scheduled = scheduleReady(candidates, completed, inFlightStepIds, {
                 budget: input.budget,
                 resourcesByStepId: input.resourcesByStepId,
             });
             if (scheduled.neverFits.length > 0) {
                 // An over-budget step can never be admitted — plan-time validation
                 // makes this unreachable for new plans; stored plans fail loudly
-                // instead of waiting forever. Standard fail-fast follows.
+                // instead of waiting forever. The stored plan is invalid against
+                // this machine, so the run halts outright — unlike an ordinary
+                // step failure, which dooms only its dependents.
                 for (const stepId of scheduled.neverFits) {
                     const r = input.resourcesByStepId[stepId];
                     const declared = r ? `${r.cpu} CPU / ${r.memoryGb} GB` : "undeclared";
@@ -814,7 +863,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                         error: `step resources (${declared}) exceed the machine budget (${input.budget.cpu} CPU / ${input.budget.memoryGb} GB)`,
                     });
                 }
-                failFast = true;
+                halted = true;
                 failureReason = `step "${scheduled.neverFits[0]}" exceeds the machine resource budget`;
                 await cancelInFlight(inFlight, "fail_fast", canceledByParent);
                 await emitDagSnapshot();
@@ -828,7 +877,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             }
             admit = scheduled.admit;
         } else {
-            admit = scheduleReady(input.steps, completed, inFlightStepIds);
+            admit = scheduleReady(candidates, completed, inFlightStepIds);
         }
         if (admit.length === 0) {
             if (queuedChanged) await emitDagSnapshot();
@@ -912,7 +961,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 const isBudgetCancel = childWasBudgetExceeded || r.error === "budget_exceeded";
                 if (isBudgetCancel && !budgetExceeded) {
                     budgetExceeded = true;
-                    failFast = true;
+                    halted = true;
                     failureReason = "budget_exceeded";
                     await cancelInFlight(inFlight, "budget_exceeded", canceledByParent);
                 }
@@ -925,30 +974,30 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
                 stepDurationMs = r.durationMs ?? undefined;
                 await emitDagSnapshot();
             } else {
-                // failed or blocked — a blocker (see the harness-sandbox-agents spec) fails fast exactly like a
-                // failure: the step declared it cannot deliver, so its dependents can
-                // never run. Same cancel-siblings + stop-scheduling path.
+                // failed or blocked — a blocker (see the harness-sandbox-agents spec)
+                // is treated exactly like a failure: the step declared it cannot
+                // deliver, so only its transitive dependents can never run. In-flight
+                // siblings and independent ready steps continue; the dispatch round
+                // below also lets a budget-held step claim the freed capacity.
                 failed.add(settled.stepId);
-                if (!failFast) {
-                    failFast = true;
-                    failureReason = r.error ?? (r.status === "blocked" ? "step_blocked" : "step_failed");
-                    await cancelInFlight(inFlight, "fail_fast", canceledByParent);
-                }
+                failureReason ??= r.error ?? (r.status === "blocked" ? "step_blocked" : "step_failed");
                 stepRuntime.set(settled.stepId, {
                     status: "failed",
                     durationMs: r.durationMs ?? undefined,
                     error: r.error ?? (r.status === "blocked" ? "step_blocked" : "step_failed"),
                 });
+                markDependentsSkipped(settled.stepId);
                 stepStatus = "failed";
                 stepDurationMs = r.durationMs ?? undefined;
                 await emitDagSnapshot();
+                await dispatchReady();
             }
         } else if (canceledByParent.has(settled.childId)) {
-            // The child threw because the PARENT cancelled it (fail-fast / budget cascade), not because
-            // it failed on its own — its `getResult` rejects with a DBOS cancellation error. Record it as
-            // canceled, mirroring the graceful `{status:"canceled"}` branch above so the `canceled` set,
-            // the terminal result, and the `step_completed` provenance all agree. No failFast / cancel
-            // cascade here: the run is already failing fast (that is why this child was cancelled).
+            // The child threw because the PARENT cancelled it (budget / neverFits halt cascade), not
+            // because it failed on its own — its `getResult` rejects with a DBOS cancellation error.
+            // Record it as canceled, mirroring the graceful `{status:"canceled"}` branch above so the
+            // `canceled` set, the terminal result, and the `step_completed` provenance all agree. No
+            // halt / cancel cascade here: the run is already halted (that is why this child was cancelled).
             canceled.add(settled.stepId);
             stepRuntime.set(settled.stepId, {
                 // `stepRuntime` (the DAG snapshot) has no canceled tier; the graceful-cancel branch above
@@ -960,17 +1009,23 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             stepDurationMs = undefined;
             await emitDagSnapshot();
         } else {
+            // The child threw on its own (not a parent-driven cancel). A
+            // budget_exceeded throw still halts the run — the pause cascade is a
+            // money decision, not a DAG one. Any other throw is treated exactly
+            // like a step failure: dependents doomed, siblings continue.
             failed.add(settled.stepId);
-            const cause: "budget_exceeded" | "fail_fast" = childWasBudgetExceeded || isBudgetExceeded(settled.err) ? "budget_exceeded" : "fail_fast";
-            if (cause === "budget_exceeded" && !budgetExceeded) {
-                budgetExceeded = true;
-                failFast = true;
-                failureReason = "budget_exceeded";
-            } else if (!failFast) {
-                failFast = true;
-                failureReason = settled.err instanceof Error ? settled.err.message : String(settled.err);
+            const isBudgetThrow = childWasBudgetExceeded || isBudgetExceeded(settled.err);
+            if (isBudgetThrow) {
+                if (!budgetExceeded) {
+                    budgetExceeded = true;
+                    halted = true;
+                    failureReason = "budget_exceeded";
+                }
+                await cancelInFlight(inFlight, "budget_exceeded", canceledByParent);
+            } else {
+                failureReason ??= settled.err instanceof Error ? settled.err.message : String(settled.err);
+                markDependentsSkipped(settled.stepId);
             }
-            await cancelInFlight(inFlight, cause, canceledByParent);
             stepRuntime.set(settled.stepId, {
                 status: "failed",
                 error: settled.err instanceof Error ? settled.err.message : String(settled.err),
@@ -979,6 +1034,7 @@ async function runSchedulerLoop(args: SchedulerLoopArgs): Promise<SchedulerLoopO
             // A child that settled by throwing carries no durable duration.
             stepDurationMs = undefined;
             await emitDagSnapshot();
+            if (!isBudgetThrow) await dispatchReady();
         }
 
         // One `step_completed` provenance emission per settled child — this

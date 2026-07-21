@@ -23,9 +23,7 @@ genuine errors but runs no output-count "wrongness" heuristic. Because the
 deliverables contract plus the blocker make inline-narrate-and-stop the wrong
 move, the post-step summarizers keep drawing on the agent's transcript and also
 gain a scoped `read_file` to ground every claim in the actual persisted outputs.
-
 ## Requirements
-
 ### Requirement: Code-defined sandbox agents in a directory structure
 
 The harness SHALL define every sandbox agent under `harness/src/agents/sandbox/`.
@@ -180,17 +178,19 @@ step's deliverable is its persisted files. Calling `report_blocker` SHALL record
 after `runAgent`. `blocked` SHALL be a distinct terminal step status — separate
 from `failed` and `completed` — carrying the reason to the
 `cortex_step_executions.blocked_reason` column, a `data-step-blocked` run-event
-part, and the step return. A step blocker SHALL fail-fast, cancelling in-flight
-siblings exactly like a failure. The harness SHALL NOT infer failure from
-output/artifact counts: a legitimately-empty step (no files, no blocker, clean
-finish) SHALL stay `completed`.
+part, and the step return. The parent scheduler SHALL treat a blocker exactly
+like a step failure: only the blocked step's transitive dependents become
+unreachable, while in-flight siblings and independent ready steps continue
+(see the harness-durable-runtime capability). The harness SHALL NOT infer
+failure from output/artifact counts: a legitimately-empty step (no files, no
+blocker, clean finish) SHALL stay `completed`.
 
 #### Scenario: Blocker yields a distinct blocked status
 
 - **GIVEN** a step agent that calls `report_blocker({ reason })` and stops
 - **WHEN** the workflow body reads the blocker holder after the loop
 - **THEN** the step SHALL terminate with status `blocked`, persisting the reason to `blocked_reason` and emitting a `data-step-blocked` part
-- **AND** the step SHALL fail-fast, cancelling in-flight siblings
+- **AND** in-flight siblings SHALL NOT be cancelled; only the blocked step's transitive dependents are never dispatched
 
 #### Scenario: Empty step is not auto-failed
 
@@ -229,3 +229,4 @@ on empty output or a loop throw — a summary failure SHALL NOT fail the step.
 - **WHEN** the summary loop returns empty final text or throws
 - **THEN** `generateStepSummary` SHALL return `undefined`
 - **AND** the workflow body SHALL proceed without marking the step failed
+

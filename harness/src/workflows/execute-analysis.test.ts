@@ -6,14 +6,16 @@
  * design contract that don't require a real DBOS engine or a Postgres
  * testcontainer:
  *
- *   10.7  Fail-fast cascade — B raises ERROR; A/C cancelled; charge=error,
- *         mandate=workflow-failed.
+ *   10.7  Failure isolation — B fails; A/C continue and complete; nothing
+ *         is cancelled; the run lands partial (charge=ok). Only B's
+ *         transitive dependents are doomed (marked skipped, never
+ *         dispatched).
  *   10.8  External cancel — operator cancels child mid-flight; cascade
  *         reaps siblings; charge=canceled, mandate=workflow-canceled.
  *   10.10 Stream emission — every UI part flows through `emitStreamPart`;
  *         `cortex_runs.parts` is never touched (the fake pool would surface
  *         a write).
- *   10.11 Terminal billing close — charge closed on success, fail-fast,
+ *   10.11 Terminal billing close — charge closed on success, failure,
  *         external-cancel, and 402 pause paths (one assertion per).
  *   10.14 collectAndComplete writes nothing to a conversation thread (no
  *         dep calls thread-writing helpers — the test asserts on the
@@ -334,65 +336,44 @@ function input(steps: Array<{ id: string; depends_on?: readonly string[] }>, bud
     };
 }
 
-// ── 10.7 Fail-fast cascade ───────────────────────────────────────────
+// ── 10.7 Failure isolation ───────────────────────────────────────────
 
 describe("executeAnalysis body", () => {
-    it("10.7 fail-fast: B errors → A and C cancelled; charge=error, mandate=failed", async () => {
+    it("10.7 failure isolation: B fails → A and C run to completion; status partial, charge=ok", async () => {
         const pool = makeFakePool();
-        // Real-world dispatch: A/B/C race; B fails fast; parent cancels A & C
-        // in-flight. Their `getResult` then returns the canceled result. Model
-        // that by configuring A/C as canceled (sibling cancel = no
-        // budget_exceeded marker).
+        // A/B/C dispatch together; B fails on its own merits. Nothing depends
+        // on B, so A and C keep running and complete — the parent cancels
+        // nothing.
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
-                [
-                    "A",
-                    {
-                        status: "canceled",
-                        durationMs: 1,
-                        finishReason: null,
-                        error: null,
-                    },
-                ],
-                [
-                    "B",
-                    {
-                        status: "failed",
-                        durationMs: 1,
-                        finishReason: null,
-                        error: "boom",
-                    },
-                ],
-                [
-                    "C",
-                    {
-                        status: "canceled",
-                        durationMs: 1,
-                        finishReason: null,
-                        error: null,
-                    },
-                ],
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["B", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }],
+                ["C", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
             ]),
         });
 
         const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }, { id: "C" }]), deps);
 
-        // Fail-fast → status "failed" (no siblings completed).
-        expect(result.status).toBe("failed");
-        expect(record.chargeCloseCalls).toEqual([{ reason: "error" }]);
-        expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-failed" }]);
+        expect(result.status).toBe("partial");
+        expect([...result.completedSteps].sort()).toEqual(["A", "C"]);
+        expect(result.failedSteps).toEqual(["B"]);
+        // No sibling was cancelled.
+        expect(dbosState.cancelled.size).toBe(0);
+        expect(record.chargeCloseCalls).toEqual([{ reason: "ok" }]);
+        expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-completed" }]);
         expect(suspendWrites(pool)).toEqual([]);
         const terminal = record.emittedParts.find((p) => p.type === "data-run-failed" || p.type === "data-run-completed");
-        expect(terminal?.type).toBe("data-run-failed");
+        expect(terminal?.type).toBe("data-run-completed");
+        expect((terminal as { status?: string } | undefined)?.status).toBe("partial");
     });
 
-    it("blocked fail-fast: B blocked → A and C cancelled; status failed", async () => {
+    it("blocked isolation: B blocked → A and C still complete; only B's dependents are doomed", async () => {
         const pool = makeFakePool();
         const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([
-                ["A", { status: "canceled", durationMs: 1, finishReason: null, error: null }],
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
                 [
                     "B",
                     {
@@ -402,17 +383,109 @@ describe("executeAnalysis body", () => {
                         error: "required input file missing",
                     },
                 ],
-                ["C", { status: "canceled", durationMs: 1, finishReason: null, error: null }],
+                ["C", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                // D intentionally has no configured result: if it were ever
+                // dispatched the startWorkflow mock would throw and fail the test.
+            ]),
+        });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }, { id: "C" }, { id: "D", depends_on: ["B"] }]), deps);
+
+        expect(result.status).toBe("partial");
+        expect(result.failedSteps).toContain("B");
+        expect([...result.completedSteps].sort()).toEqual(["A", "C"]);
+        expect(dbosState.cancelled.size).toBe(0);
+        expect(dbosState.childInputs.map((i) => i.stepId)).not.toContain("D");
+        expect(record.chargeCloseCalls).toEqual([{ reason: "ok" }]);
+    });
+
+    it("failure isolation: a diamond plan continues its independent branch; doomed dependents show skipped", async () => {
+        const pool = makeFakePool();
+        const events: RunProvenanceEvent[] = [];
+        // A → B → D and A → C → E. B fails while C is in flight: D is doomed
+        // (never dispatched — no configured result, so the startWorkflow mock
+        // would throw), C completes, then E dispatches and completes.
+        const { deps, record } = makeDeps({
+            pool,
+            emitProvenance: (e) => events.push(e),
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["B", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }],
+                ["C", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["E", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+            ]),
+        });
+
+        const result = await runExecuteAnalysisBody(
+            input([
+                { id: "A" },
+                { id: "B", depends_on: ["A"] },
+                { id: "C", depends_on: ["A"] },
+                { id: "D", depends_on: ["B"] },
+                { id: "E", depends_on: ["C"] },
+            ]),
+            deps,
+        );
+
+        expect(result.status).toBe("partial");
+        expect([...result.completedSteps].sort()).toEqual(["A", "C", "E"]);
+        expect(result.failedSteps).toEqual(["B"]);
+        expect(dbosState.cancelled.size).toBe(0);
+        expect(dbosState.childInputs.map((i) => i.stepId)).not.toContain("D");
+
+        // The failure settlement marks D skipped in the very same dag emission
+        // that shows B failed, while C (independent, still in flight) runs on.
+        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{
+            steps: Array<{ id: string; status: string }>;
+        }>;
+        const afterFailure = dagParts.find((p) => p.steps.some((s) => s.id === "B" && s.status === "failed"))!;
+        expect(afterFailure.steps.find((s) => s.id === "D")!.status).toBe("skipped");
+        expect(afterFailure.steps.find((s) => s.id === "C")!.status).toBe("running");
+        const last = dagParts[dagParts.length - 1]!;
+        expect(last.steps.find((s) => s.id === "D")!.status).toBe("skipped");
+
+        // Stream-only doom-marking: D's ledger row is touched by the pending
+        // seed and the terminal sweep, never mid-run.
+        const sweeps = pool.queries.filter((q) => q.text.includes("SET status = 'skipped'"));
+        expect(sweeps.length).toBe(1);
+
+        // Surviving siblings settle with their own provenance; D emits nothing.
+        const stepStatusById = new Map(events.flatMap((e) => (e.type === "step_completed" ? [[e.stepId, e.status] as const] : [])));
+        expect(stepStatusById.get("C")).toBe("completed");
+        expect(stepStatusById.get("E")).toBe("completed");
+        expect(stepStatusById.has("D")).toBe(false);
+
+        // Every emitted part — including dag-states carrying "skipped" — passes
+        // the published wire schema the react-client parser runs.
+        for (const part of record.emittedParts) {
+            const parsed = CortexChatPartSchema.safeParse(part);
+            expect(
+                parsed.success,
+                `emitted part ${JSON.stringify(part)} does not conform to CortexChatPartSchema: ` + (parsed.success ? "" : JSON.stringify(parsed.error.issues)),
+            ).toBe(true);
+        }
+    });
+
+    it("multiple independent failures: run lands partial with the FIRST failure as the run-level reason", async () => {
+        const pool = makeFakePool();
+        const { deps } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "failed", durationMs: 1, finishReason: null, error: "first boom" }],
+                ["B", { status: "failed", durationMs: 1, finishReason: null, error: "second boom" }],
+                ["C", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
             ]),
         });
 
         const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }, { id: "C" }]), deps);
 
-        expect(result.status).toBe("failed");
-        expect(result.failedSteps).toContain("B");
-        expect(record.chargeCloseCalls).toEqual([{ reason: "error" }]);
-        const terminal = record.emittedParts.find((p) => p.type === "data-run-failed" || p.type === "data-run-completed");
-        expect(terminal?.type).toBe("data-run-failed");
+        expect(result.status).toBe("partial");
+        expect([...result.failedSteps].sort()).toEqual(["A", "B"]);
+        expect(result.completedSteps).toEqual(["C"]);
+        // Run-level failureReason is the first failure in settlement order; the
+        // per-step detail lives on the step ledger and the dag snapshot.
+        const statusWrite = pool.queries.find((q) => /UPDATE cortex_runs\s+SET status/.test(q.text) && q.values?.[0] === "partial");
+        expect(statusWrite?.values?.[2]).toBe("first boom");
     });
 
     // ── waitFirst: multi-child completion ──────────────────────────────
@@ -490,6 +563,29 @@ describe("executeAnalysis body", () => {
         const last = dagParts[dagParts.length - 1]!;
         expect(last.steps[0]!.status).toBe("failed");
         expect(last.steps[0]!.error).toContain("machine budget");
+    });
+
+    it("budget admission: a failed step frees capacity for a held step", async () => {
+        const pool = makeFakePool();
+        const { deps, record } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }],
+                ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+            ]),
+        });
+
+        // The budget fits one step at a time: A runs, B queues. A's failure must
+        // free the declared capacity and admit B in the same settlement round.
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B" }], { cpu: 2, memoryGb: 4 }), deps);
+
+        expect(result.status).toBe("partial");
+        expect(result.completedSteps).toEqual(["B"]);
+        expect(result.failedSteps).toEqual(["A"]);
+        const dagParts = record.emittedParts.filter((p) => p.type === "data-dag-state") as Array<{ steps: Array<{ id: string; status: string }> }>;
+        const statusesOf = (id: string) => dagParts.map((p) => p.steps.find((s) => s.id === id)!.status);
+        expect(statusesOf("B")).toContain("queued");
+        expect(statusesOf("B")).toContain("running");
     });
 
     it("no budget in the workflow input keeps the legacy full fan-out", async () => {
@@ -826,18 +922,21 @@ describe("executeAnalysis body", () => {
         expect(seeds[0]!.text).toContain("ON CONFLICT (run_id, step_id) DO NOTHING");
     });
 
-    it("fail-fast sweeps still-pending rows to skipped", async () => {
+    it("unreachable dependents are swept to skipped; an all-failed run closes charge=error", async () => {
         const pool = makeFakePool({
             "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
         });
-        const { deps } = makeDeps({
+        const { deps, record } = makeDeps({
             pool,
             childResults: new Map<string, SandboxStepResult | Error>([["A", { status: "failed", durationMs: 1, finishReason: null, error: "boom" }]]),
         });
 
-        // B depends on A and is never dispatched — exactly the row the sweep must reap.
+        // B depends on the failed A and is never dispatched — exactly the row
+        // the terminal sweep must reap. Nothing completed, so the run is failed.
         const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
         expect(result.status).toBe("failed");
+        expect(record.chargeCloseCalls).toEqual([{ reason: "error" }]);
+        expect(record.mandateRevokeCalls).toEqual([{ reason: "workflow-failed" }]);
 
         const sweeps = pool.queries.filter((q) => q.text.includes("SET status = 'skipped'"));
         expect(sweeps.length).toBe(1);
@@ -977,7 +1076,8 @@ describe("executeAnalysis body", () => {
         const pool = makeFakePool();
         const events: RunProvenanceEvent[] = [];
         // A/B/C dispatch together at level 0; D depends on the failing B. A
-        // completes, B fails (fail-fast cancels the in-flight C), and C settles
+        // completes, B fails (siblings are NOT cancelled — C's canceled result
+        // models an operator cancel landing on C mid-flight), and C settles
         // canceled. D is never dispatched because its dependency failed.
         const { deps } = makeDeps({
             pool,
