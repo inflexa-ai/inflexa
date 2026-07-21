@@ -106,10 +106,6 @@ modality-specific tool already handles random effects (e.g., MaAsLin2 for metage
 - **decoupler** with a TF-target regulon resource, when the goal is scoring known
   regulon activity rather than discovering regulons. Much cheaper, and its reference
   data is a small download rather than a large one.
-- SCENIC+ and CellOracle are **not available here** and should not be planned for.
-  Neither installs in this environment, and SCENIC+ is additionally licensed for
-  non-commercial academic use only. For RNA+ATAC or perturbation questions, state the
-  limitation rather than substituting a tool that cannot run.
 
 ### Trajectory / Pseudotime Inference
 - **scVelo** for RNA velocity (when spliced/unspliced info is available)

@@ -43,17 +43,17 @@ Alternative: QIIME2 artifacts
 ### 2. Shotgun Metagenomics
 
 ```
-FASTQ (host-decontaminated, QC'd)
-  → Taxonomic profiling: MetaPhlAn 4
-    → Species-level relative abundances (marker gene-based)
-  → Functional profiling: HUMAnN 3
-    → Gene family and pathway abundances (UniRef + MetaCyc)
-      → Import into phyloseq or pandas for downstream analysis
+Taxonomic abundance table (species-level relative abundances)
+  → Import into phyloseq or pandas
+    → Diversity and differential-abundance sections below
+
+Functional abundance table (gene families / pathway abundances)
+  → Import into pandas
+    → Differential pathway analysis below
 ```
 
-- **MetaPhlAn 4 and HUMAnN 3 are not installed here**, and their marker/UniRef databases are not in the reference inventory. Verify before planning; expect to be handed profiler *output* (a MetaPhlAn abundance table, a HUMAnN pathway table) rather than running the profilers yourself. Those tables feed the diversity and differential-abundance sections directly.
-- MetaPhlAn 4 is the preferred taxonomic profiler. It uses clade-specific markers, not read mapping to full genomes.
-- HUMAnN 3 provides pathway-level functional profiles. Use stratified output to see per-species contributions.
+- **Entry point is a profiled table, not reads.** Taxonomic and functional profiling of shotgun FASTQ happens upstream; expect to be handed its output. If you were given raw shotgun reads, say so and stop.
+- Profiler output is relative abundance, so it is compositional — carry that through to the differential methods rather than treating it as counts.
 
 ### 3. Alpha Diversity
 
@@ -117,20 +117,13 @@ Longitudinal / repeated measures / complex covariates
 ### 6. Functional Profiling
 
 ```
-Shotgun metagenomics data
-  → HUMAnN 3: gene families (UniRef90) + pathway abundances (MetaCyc)
-    → Regroup to KO, EC, or Pfam with humann_regroup_table
-    → Normalize: copies per million (CPM)
-      → Differential pathway analysis: same compositional-aware methods as taxonomic data
-
-16S amplicon data (no shotgun available)
-  → PICRUSt2 (predicted metagenome from 16S)
-    → Infer gene content from reference genomes of detected taxa
-    → Lower confidence than direct shotgun — flag as "predicted"
+Functional abundance table (gene families + pathway abundances)
+  → Normalize: copies per million (CPM)
+    → Differential pathway analysis: same compositional-aware methods as taxonomic data
 ```
 
-- HUMAnN 3 output is already compositional (relative abundance). Use the same differential methods.
-- PICRUSt2 predictions are only as good as the reference genome database. Report NSTI scores as quality metric.
+- Functional profiles arrive already compositional (relative abundance). Use the same differential methods as for taxonomic data.
+- If a functional table was inferred from 16S rather than measured from shotgun reads, it is a prediction — say so in the output and do not present it alongside measured abundances without that distinction.
 
 ### 7. Rarefaction
 
@@ -171,13 +164,9 @@ Should I rarefy?
 
 ### CLI Tools
 
-**The raw-read tools this pack names are not installed here** — `kraken2`, `bracken`, `kneaddata`, MetaPhlAn, HUMAnN, PICRUSt2, QIIME2, and `cutadapt` are all absent, and with no egress none can be added at runtime. They describe the canonical upstream pipeline, which normally runs before data reaches you. Probe (`command -v <binary>`) before planning any step that needs one, and report the gap rather than emitting commands that cannot execute.
+`samtools`, `bcftools`, `bedtools`, `tabix` — sufficient for everything downstream of a feature table.
 
-- **kraken2 + bracken** (absent): taxonomic classification for shotgun data — kraken2 for read classification, bracken for species/genus abundance re-estimation. Also needs a prebuilt index, which is not in the reference inventory either.
-- **kneaddata** (absent): host decontamination and QC for shotgun FASTQ, run before profiling.
-- **sra-tools** (absent): no network access regardless. Data must be provided as input files.
-
-Present and sufficient for everything downstream of a feature table: `samtools`, `bcftools`, `bedtools`, `tabix`.
+**Entry points.** Amplicon (16S/ITS) starts from demultiplexed FASTQ and runs end to end here via dada2. Shotgun metagenomics starts from a **profiled abundance table**: taxonomic and functional profiling of shotgun reads is upstream of this pack, so if you were handed raw shotgun FASTQ, say so and stop rather than planning a profiling step.
 
 ## References
 

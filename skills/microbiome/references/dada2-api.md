@@ -537,37 +537,11 @@ seqtab <- makeSequenceTable(dadaFs)
 
 DADA2 does not remove primers. If primers are still in the reads (common for ITS), remove them before `filterAndTrim`.
 
-**`cutadapt` is not installed here**, and no-egress means it cannot be added at runtime. Probe before planning on it (`Sys.which("cutadapt")` from R, or `command -v cutadapt`) and expect nothing back. What to do instead, in order:
+Primer removal happens inside dada2 here, not through an external trimming tool. In order of preference:
 
 1. **Fixed-length primers at the read start (the usual 16S case): use `filterAndTrim(trimLeft = c(nchar(FWD), nchar(REV)))`.** This is dada2's own facility, needs no external tool, and is the standard recommendation when primers sit at a constant offset. It is a complete solution for that case, not a workaround.
-2. **Variable-position primers or read-through (the usual ITS case): there is no installed substitute.** ITS amplicons vary in length, so primers can appear anywhere and the reverse-complement can read through into the far primer — which is exactly why cutadapt is used. `trimLeft` cannot express this. Report the blocker and name what is needed (cutadapt, or reads with primers already removed) rather than applying a fixed trim to ITS data, which silently mangles a fraction of the reads.
+2. **Variable-position primers or read-through (the usual ITS case): stop and report.** ITS amplicons vary in length, so primers can appear at any offset and the reverse-complement can read through into the far primer. `trimLeft` cannot express that, and applying a fixed trim to ITS data silently mangles a fraction of the reads. Say that primer-trimmed reads are required and stop — do not fixed-trim ITS as an approximation.
 3. **Check whether primers are even present.** Sequencing cores frequently deliver primer-trimmed reads. Count primer occurrences in a few files before assuming trimming is needed — if they are already gone, the whole step disappears.
-
-The block below is retained for the case where cutadapt is staged.
-
-```r
-# Using cutadapt -- external tool, NOT installed in this environment;
-# verify with Sys.which("cutadapt") before running any of this.
-# Forward primer: CTTGGTCATTTAGAGGAAGTAA (ITS1f)
-# Reverse primer: GCTGCGTTCTTCATCGATGC (ITS2)
-
-# From R, call cutadapt via system()
-FWD <- "CTTGGTCATTTAGAGGAAGTAA"
-REV <- "GCTGCGTTCTTCATCGATGC"
-REV_RC <- dada2::rc(REV)
-FWD_RC <- dada2::rc(FWD)
-
-for (i in seq_along(fnFs)) {
-  system2("cutadapt", args = c(
-    "-g", FWD, "-a", REV_RC,
-    "-G", REV, "-A", FWD_RC,
-    "--discard-untrimmed",
-    "-o", nopFs[i], "-p", nopRs[i],
-    fnFs[i], fnRs[i]
-  ))
-}
-# Then run filterAndTrim on nopFs/nopRs (primer-removed files)
-```
 
 ## Exporting Results
 
@@ -595,7 +569,7 @@ saveRDS(taxa, "output/taxonomy.rds")
 - **ITS must not use truncLen.** ITS amplicons have variable length. Truncating to a fixed length cuts real biological sequence. Use `truncLen = 0` and rely on `maxEE` and `minLen` filtering only.
 - **Always inspect error rate plots.** Call `plotErrors()` after `learnErrors()` and check that estimated rates (black line) track observed rates (black dots) and decrease monotonically with quality. A bad error model silently produces unreliable ASVs.
 - **maxN must be 0.** DADA2 does not accept ambiguous bases. If input reads contain N bases, `filterAndTrim` with `maxN = 0` (the default) removes them.
-- **Primers must be removed before DADA2.** DADA2 does not handle primer removal. If primers are in the reads (especially ITS data), use cutadapt first. Residual primers cause spurious ASVs.
+- **Primers must be removed before DADA2.** Residual primers cause spurious ASVs. For fixed-offset primers use `trimLeft`; for ITS, where offsets vary, require primer-trimmed reads as input rather than approximating with a fixed trim.
 - **Merge requires sufficient overlap.** If `mergePairs` drops too many reads, the `truncLen` values are too aggressive. Calculate: `fwd_truncLen + rev_truncLen - amplicon_length >= 20` for adequate overlap.
 - **Column names of seqtab are DNA sequences.** The ASV table uses full DNA sequences as column names, not short IDs. Rename to ASV1, ASV2, etc. after the pipeline is complete, preserving the sequence-to-ID mapping.
 - **Reference databases must match the marker.** Use SILVA for 16S, UNITE for ITS. Using the wrong database produces nonsensical taxonomy rather than an error. The reference FASTA must also be the DADA2-formatted training version — semicolon-delimited taxonomy headers, not accession headers — and `addSpecies()` needs the separate species-assignment file, not the training set.
