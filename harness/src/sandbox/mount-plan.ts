@@ -121,7 +121,54 @@ function libStoreEnv(): Record<string, string> {
     };
 }
 
-export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores): MountPlan {
+/**
+ * The container directories the sandbox's inotify watcher may observe: the
+ * **immutable** set, enumerated.
+ *
+ * `data/` is staged before the run, this step's own tree is written by this
+ * step alone, and a step observed `completed` will never write again — so
+ * nothing under these paths churns while the watcher runs. Every other step of
+ * the run has its own directory mounted read-write in its own container and
+ * mutates it freely, so watching a sibling that is still running attributes
+ * that sibling's scratch churn to this step's exec frame. Completion, not
+ * `dependsOn`, is the criterion: the scheduler already guarantees a declared
+ * dependency completed, so the declared set is a strict subset of this one, and
+ * a read of a completed sibling the step never declared is one classification
+ * admits.
+ *
+ * An enumeration rather than one covering root because the analysis mount is
+ * flat: the only directory that contains all of these is the mount root, and
+ * that root contains every running sibling's tree as well. A path that does not
+ * exist in the container (a completed sibling that produced no tree) is the
+ * watcher's to skip — provenance never fails a command.
+ */
+function immutableWatchDirs(args: {
+    readonlyTreePath: string;
+    writableStepPath: string | undefined;
+    runId: string;
+    stepId: string;
+    completedSiblingStepIds: readonly string[];
+}): string[] {
+    const dirs = new Set<string>([`${args.readonlyTreePath}/data`]);
+    if (args.writableStepPath) dirs.add(args.writableStepPath);
+    for (const siblingStepId of args.completedSiblingStepIds) {
+        // A step is not its own sibling — its tree is already listed, and on a
+        // retry of a step whose prior attempt completed it would arrive here too.
+        if (siblingStepId === args.stepId) continue;
+        dirs.add(`${args.readonlyTreePath}/${stepTail(args.runId, siblingStepId)}`);
+    }
+    return [...dirs];
+}
+
+/**
+ * `completedSiblingStepIds` are the step ids of the SAME run observed
+ * `completed` when this sandbox is created. They are a parameter rather than
+ * something this function looks up: the plan is a pure function of its inputs,
+ * and a query inside it would give sandbox creation a hidden I/O dependency its
+ * tests could not express. Empty means "watch no sibling" — under-capture,
+ * which is the conservative direction.
+ */
+export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores, completedSiblingStepIds: readonly string[] = []): MountPlan {
     const { analysisId, runId, stepId, readOnly } = coords;
     // `analysisId` becomes the RO mount point `/{analysisId}` even in read-only
     // mode (where `stepTail` — which validates runId/stepId — is not reached).
@@ -137,7 +184,15 @@ export function buildMountPlan(coords: MountPlanCoords, stores: MountPlanStores)
         refsPath: stores.refs ? REFS_CONTAINER_PATH : undefined,
         stepSubdirs: readOnly ? [] : STEP_SUBDIRS,
         env: {
-            PROVENANCE_WATCH_DIRS: readonlyTreePath,
+            PROVENANCE_WATCH_DIRS: immutableWatchDirs({ readonlyTreePath, writableStepPath, runId, stepId, completedSiblingStepIds }).join(","),
+            // The in-container hooks (Python audit hook, R hooks, LD_PRELOAD
+            // interposer) intercept only their own process's opens, so they
+            // cannot observe another container's writes and need no narrowing.
+            // Keeping their filter at the mount root is what leaves a command's
+            // own cross-step or prior-run read capturable where inotify does not
+            // watch — classification, not capture scope, decides whether such a
+            // read may assert lineage.
+            PROVENANCE_DATA_PREFIXES: readonlyTreePath,
             ...(stores.libs ? libStoreEnv() : {}),
         },
     };

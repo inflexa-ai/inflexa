@@ -96,6 +96,26 @@ export const ProvenanceFrameSchema = z.object({
      * future invalidation mapping.
      */
     deletes: z.array(ProvenanceFrameEntrySchema).default([]),
+    /**
+     * Present only when the sandbox's inotify walk stopped adding watches at
+     * its budget, leaving directories unobserved. Capture past that point is
+     * partial, and the sandbox's own warning never leaves the container — so
+     * the fact rides the frame, where the host can log it against the run.
+     */
+    watchBudget: z
+        .object({
+            /** The watcher's cap on watched directories. */
+            limit: z.number(),
+            /** Watches actually added before the cap was hit. */
+            watched: z.number(),
+            /**
+             * Directories the walk reached and refused to watch. A floor, not
+             * an exact count: each refusal also skips that directory's subtree,
+             * which the walk therefore never enumerates.
+             */
+            unwatchedDirs: z.number(),
+        })
+        .optional(),
 });
 export type ProvenanceFrame = z.infer<typeof ProvenanceFrameSchema>;
 
@@ -237,6 +257,15 @@ export interface CreateSandboxMeta {
     /** Enforced read-only: provision with no read-write step mount, only the
      *  read-only analysis tree. Used by the ephemeral executor. */
     readOnly?: boolean;
+    /**
+     * Step ids of the same run observed `completed` when this sandbox is
+     * created — the siblings whose directories are immutable and can therefore
+     * be inotify-watched without folding another step's churn into this step's
+     * exec frames (see `buildMountPlan`). Resolved by `createSandboxClient` so
+     * the mount plan stays a pure function of its inputs; absent means "watch
+     * no sibling", which under-captures rather than over-attributes.
+     */
+    completedSiblingStepIds?: readonly string[];
 }
 
 /**

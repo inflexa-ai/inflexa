@@ -30,7 +30,7 @@ import { CortexChatPartSchema } from "@inflexa-ai/harness/contracts/schemas/chat
 
 import { makeLocalAuth } from "../auth/local-auth-context.js";
 
-import { runExecuteAnalysisBody } from "./execute-analysis.js";
+import { buildChildInput, runExecuteAnalysisBody } from "./execute-analysis.js";
 import type { ExecuteAnalysisDeps, ExecuteAnalysisInput, RunProvenanceEvent } from "./execute-analysis.js";
 import type { SandboxStepInput, SandboxStepResult } from "./sandbox-step.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
@@ -1120,5 +1120,45 @@ describe("executeAnalysis child seed", () => {
 
         const bad: ExecuteAnalysisInput = { ...input([{ id: "A" }]), planStepById: {} };
         await expect(runExecuteAnalysisBody(bad, deps)).rejects.toThrow(/missing from planStepById/);
+    });
+});
+
+// ── Declared dependencies on the child's durable input ───────────────
+
+describe("executeAnalysis child dependsOn", () => {
+    it("dispatches each child with the dependency ids the scheduler gated it on", async () => {
+        const pool = makeFakePool({
+            "SELECT run_id, analysis_id, thread_id, workflow_name, workflow_id": [{ attempt_count: 0 }],
+        });
+        const { deps } = makeDeps({
+            pool,
+            childResults: new Map<string, SandboxStepResult | Error>([
+                ["A", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+                ["B", { status: "complete", durationMs: 1, finishReason: "stop", error: null }],
+            ]),
+        });
+
+        const result = await runExecuteAnalysisBody(input([{ id: "A" }, { id: "B", depends_on: ["A"] }]), deps);
+        expect(result.status).toBe("completed");
+
+        // A root step declares nothing — an EMPTY declaration, which the child
+        // must be able to tell apart from the absent field of a workflow
+        // recovered from before the field existed.
+        expect(dbosState.childInputs.find((i) => i.stepId === "A")!.dependsOn).toEqual([]);
+        expect(dbosState.childInputs.find((i) => i.stepId === "B")!.dependsOn).toEqual(["A"]);
+    });
+
+    it("leaves dependsOn unset for a step absent from the plan DAG rather than declaring it empty", () => {
+        const base = input([{ id: "A", depends_on: ["Z"] }]);
+        const child = buildChildInput({
+            input: { ...base, steps: [] },
+            stepId: "A",
+            level: 0,
+            runId: "run-test",
+            workflowId: "wf-1",
+            prompt: "seed",
+        });
+
+        expect(child.dependsOn).toBeUndefined();
     });
 });

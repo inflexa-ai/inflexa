@@ -13,9 +13,17 @@ Lineage is content-attested and fail-fast (see the artifact-manifest spec). The
 sandbox provenance frame is path-only: it names the files a
 command read and wrote but never carries their bytes, so input refs arrive with
 empty hashes. `reconcileManifestWithDisk` fills those hashes from disk just
-before registration (inputs are immutable for the step — the analysis tree is
-mounted read-only), and an input that cannot be hashed is terminal rather than
+before registration, and an input that cannot be hashed is terminal rather than
 registered hashless (see the artifact-manifest spec for the reconcile rules).
+
+Deferring the hash to reconcile is sound only because every input it attests is
+stable by then. The read-only mount does not establish that: it bounds what
+*this* step may write, while every other step of the run has its own directory
+mounted read-write and mutates it freely, scratch files included. What makes an
+input stable is that the step producing it has finished — which is why a lineage
+edge is admissible only when the producing step was observed `completed` at the
+moment the reading exec was submitted, and why a concurrently running sibling
+contributes no edge in either direction.
 
 This is the OSS view of the seam. The OSS build exposes the `ArtifactRegistry`
 interface with `createNoopArtifactRegistry` as its local default; the live

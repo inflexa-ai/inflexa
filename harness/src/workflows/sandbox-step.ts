@@ -76,6 +76,20 @@ export interface SandboxStepInput {
     readonly agentId: string;
     /** Topological level — persisted on `cortex_step_executions.wave`. */
     readonly level: number;
+    /**
+     * The plan's declared upstream step ids, seeded into this step's
+     * `ProvenanceCollector` so lineage diagnostics can tell a *declared* edge
+     * from a merely *observed* one. It is not the admissibility gate — step
+     * completion is — so nothing may start reading it as authorization.
+     *
+     * MUST stay optional. DBOS persists this interface as the workflow's input
+     * row, and a workflow already in flight was persisted without the field: it
+     * has to deserialize and recover. Absence therefore means "declared
+     * dependencies unknown", which is NOT an empty declaration and must never
+     * widen what a read may be classified as — it only costs the
+     * declared-vs-observed distinction in diagnostics.
+     */
+    readonly dependsOn?: readonly string[];
     /** User-content prompt the agent receives as its initial message. */
     readonly prompt: string;
     /**
@@ -377,9 +391,19 @@ async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxStepDeps
     // input/script edges. Reconstructed deterministically on replay — the
     // frames it consumes are cached recv outputs and the command strings are
     // cached LLM tool-use (see the harness-thread-store and harness-durable-runtime specs).
+    //
+    // `dependsOn` seeds the declared-vs-observed distinction only; admissibility
+    // is gated on step completion, not on declaration. An input recovered from
+    // before the field existed carries none, and that stays `undefined` rather
+    // than collapsing to `[]` — "declared dependencies unknown" must not reach
+    // the collector wearing the shape of "declared nothing".
+    if (input.dependsOn === undefined) {
+        logger.warn("step input carries no declared dependencies — lineage edges cannot be attributed to a declared dependency");
+    }
     const lineageCollector = new ProvenanceCollector({
         stepId: input.stepId,
         runId: input.runId,
+        dependsOn: input.dependsOn === undefined ? undefined : [...input.dependsOn],
     });
 
     // (2a) sandbox.mint — checkpoint the machine's identity (name + HMAC secret)

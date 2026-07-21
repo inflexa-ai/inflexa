@@ -1,16 +1,21 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
-// The watch dir as provenanceWatchDirs builds it: absolute, trailing slash.
-const testWatchDir = "/019f6a20-1a3b-7000-a942-ae871e5de040/"
+// The analysis mount root as provenanceDataPrefixes builds it: absolute,
+// trailing slash.
+const testDataPrefix = "/019f6a20-1a3b-7000-a942-ae871e5de040/"
 
 func newTestTracker() *ProvenanceTracker {
 	return &ProvenanceTracker{
-		watchDirs: []string{testWatchDir},
-		ops:       make(map[string]map[string]map[string]bool),
+		// Watch dirs are deliberately narrower than the prefix bound: what a
+		// hook may report is not what inotify watches.
+		watchDirs:    []string{testDataPrefix + "data/", testDataPrefix + "runs/r1/T3S1/"},
+		dataPrefixes: []string{testDataPrefix},
+		ops:          make(map[string]map[string]map[string]bool),
 	}
 }
 
@@ -61,6 +66,60 @@ func TestRecordOp_KeepsInTreeRead(t *testing.T) {
 	got := recordedPaths(pt, "read")
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("in-tree read must survive; want [%s], got %v", want, got)
+	}
+}
+
+func TestRecordOp_KeepsAReadOutsideTheWatchDirs(t *testing.T) {
+	// A hook intercepts its own process's open, so a read under a tree no
+	// watcher covers — a step that completed after this sandbox started — is
+	// still the command's own read. Whether it may assert lineage is the host's
+	// decision at classification; dropping it here would make it undecidable.
+	pt := newTestTracker()
+	want := "/019f6a20-1a3b-7000-a942-ae871e5de040/runs/r1/norm/output/norm.csv"
+	pt.recordOp("read", want, "ld_preload")
+
+	got := recordedPaths(pt, "read")
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("a hook-reported read outside the watch dirs must survive; want [%s], got %v", want, got)
+	}
+}
+
+func TestEnv_DataPrefixesAreNotDerivedFromWatchDirs(t *testing.T) {
+	pt := newTestTracker()
+
+	var got string
+	for _, kv := range pt.Env() {
+		if strings.HasPrefix(kv, "PROVENANCE_DATA_PREFIXES=") {
+			got = strings.TrimPrefix(kv, "PROVENANCE_DATA_PREFIXES=")
+		}
+	}
+
+	if got != testDataPrefix {
+		t.Fatalf("hooks must filter on the mount root, not the watch dirs; want %q, got %q", testDataPrefix, got)
+	}
+}
+
+func TestProvenanceWatchDirs_SkipsAConfiguredDirThatDoesNotExist(t *testing.T) {
+	// A completed sibling that produced no tree, or a read-only sandbox with no
+	// step tree, are ordinary — capture is best-effort and never fails a command.
+	present := t.TempDir()
+	t.Setenv("PROVENANCE_WATCH_DIRS", present+","+present+"/never-created")
+
+	got := provenanceWatchDirs()
+
+	if len(got) != 1 || got[0] != present+"/" {
+		t.Fatalf("only the existing dir must be watched; got %v", got)
+	}
+}
+
+func TestProvenanceDataPrefixes_ReadsItsOwnVariable(t *testing.T) {
+	t.Setenv("PROVENANCE_WATCH_DIRS", "/an-1/data,/an-1/runs/r1/T3S1")
+	t.Setenv("PROVENANCE_DATA_PREFIXES", "/an-1")
+
+	got := provenanceDataPrefixes()
+
+	if len(got) != 1 || got[0] != "/an-1/" {
+		t.Fatalf("data prefixes must come from PROVENANCE_DATA_PREFIXES with a trailing slash; got %v", got)
 	}
 }
 

@@ -53,7 +53,15 @@ type ProvenanceEntry struct {
 type ProvenanceTracker struct {
 	socketPath string
 	rlogPath   string
-	watchDirs  []string
+	// Directories inotify walks. Narrow, and the only layer that needs to be:
+	// inotify is the sole layer watching the shared filesystem, so it is the
+	// sole layer that can observe another container's writes.
+	watchDirs []string
+	// Prefixes bounding what any layer may report — the analysis mount root.
+	// Configured independently of watchDirs and never derived from them: the
+	// in-container hooks intercept only their own process's opens, so a
+	// command's own read of a path no watcher covers still reaches the frame.
+	dataPrefixes []string
 
 	// Socket listener
 	listener net.PacketConn
@@ -71,13 +79,14 @@ type ProvenanceTracker struct {
 // ── Constructor / lifecycle ────────────────────────────────────
 
 // NewProvenanceTracker creates a tracker with a unique socket path.
-func NewProvenanceTracker(id string, watchDirs []string) *ProvenanceTracker {
+func NewProvenanceTracker(id string, watchDirs, dataPrefixes []string) *ProvenanceTracker {
 	socketPath := fmt.Sprintf("/tmp/prov-%s.sock", id)
 	pt := &ProvenanceTracker{
-		socketPath: socketPath,
-		rlogPath:   socketPath + ".rlog",
-		watchDirs:  watchDirs,
-		stopCh:     make(chan struct{}),
+		socketPath:   socketPath,
+		rlogPath:     socketPath + ".rlog",
+		watchDirs:    watchDirs,
+		dataPrefixes: dataPrefixes,
+		stopCh:       make(chan struct{}),
 		ops: map[string]map[string]map[string]bool{
 			"read":   {},
 			"write":  {},
@@ -112,11 +121,28 @@ func (pt *ProvenanceTracker) Start() error {
 	return nil
 }
 
-// provenanceResult holds the three operation arrays.
+// provenanceResult holds the three operation arrays and, when the inotify walk
+// ran out of watch budget, the signal that capture was partial.
 type provenanceResult struct {
-	Reads   []ProvenanceEntry
-	Writes  []ProvenanceEntry
-	Deletes []ProvenanceEntry
+	Reads       []ProvenanceEntry
+	Writes      []ProvenanceEntry
+	Deletes     []ProvenanceEntry
+	WatchBudget *watchBudgetSignal
+}
+
+// watchBudgetSignal reports that the inotify walk stopped adding watches at its
+// cap, leaving directories unobserved. It rides the exec's provenance frame
+// because the watcher's own log line never leaves the container: without it,
+// degraded capture is indistinguishable from a step that touched nothing.
+// Never a failure — capture is best-effort and this accompanies a normal exec.
+type watchBudgetSignal struct {
+	// The cap the walk stopped at.
+	Limit int `json:"limit"`
+	// Watches added before the cap was reached.
+	Watched int `json:"watched"`
+	// Directories the walk reached and refused. A floor, not an exact count:
+	// each refusal also skips that directory's subtree, which is never walked.
+	UnwatchedDirs int `json:"unwatchedDirs"`
 }
 
 // Stop drains remaining messages, reads the R log file, and cleans up.
@@ -164,9 +190,10 @@ func (pt *ProvenanceTracker) Stop() provenanceResult {
 	}
 
 	return provenanceResult{
-		Reads:   buildList(pt.ops["read"]),
-		Writes:  buildList(pt.ops["write"]),
-		Deletes: buildList(pt.ops["delete"]),
+		Reads:       buildList(pt.ops["read"]),
+		Writes:      buildList(pt.ops["write"]),
+		Deletes:     buildList(pt.ops["delete"]),
+		WatchBudget: pt.inotify.budget(),
 	}
 }
 
@@ -194,9 +221,14 @@ func (pt *ProvenanceTracker) Env() []string {
 		env = append(env, "LD_PRELOAD="+ldPreloadPath)
 	}
 
-	// Pass watch dirs to hooks for prefix matching
-	if len(pt.watchDirs) > 0 {
-		env = append(env, "PROVENANCE_DATA_PREFIXES="+strings.Join(pt.watchDirs, ":"))
+	// The hooks filter by prefix on the paths their own process opens, so they
+	// carry the mount root rather than the watch dirs: an LD_PRELOAD interposer
+	// and interpreter-level hooks cannot see another container's writes, and
+	// narrowing them would drop a legitimate cross-step or prior-run read the
+	// command itself performed. Whether such a read may assert lineage is the
+	// host's decision at classification, not this filter's.
+	if len(pt.dataPrefixes) > 0 {
+		env = append(env, "PROVENANCE_DATA_PREFIXES="+strings.Join(pt.dataPrefixes, ":"))
 	}
 
 	return env
@@ -250,12 +282,13 @@ func (pt *ProvenanceTracker) parseDatagram(data []byte) {
 	pt.recordOp(op, dg.Path, dg.Layer)
 }
 
-// underWatchDir reports whether a cleaned absolute path lies within one of the
-// watch dirs. Entries carry a trailing slash, so this also excludes a watch dir
-// itself — a read of the mount root is a directory, never an attestable file.
-func underWatchDir(path string, dirs []string) bool {
-	for _, d := range dirs {
-		if strings.HasPrefix(path, d) {
+// underDataPrefix reports whether a cleaned absolute path lies within one of
+// the configured data prefixes. Entries carry a trailing slash, so this also
+// excludes a prefix root itself — a read of the mount root is a directory,
+// never an attestable file.
+func underDataPrefix(path string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(path, p) {
 			return true
 		}
 	}
@@ -265,14 +298,16 @@ func underWatchDir(path string, dirs []string) bool {
 func (pt *ProvenanceTracker) recordOp(op, path, layer string) {
 	// Canonicalize and re-check here, the one point every layer converges on:
 	// each hook filters by string prefix on whatever path its caller passed,
-	// which need not be canonical. "/{id}/.." literally starts with the watch
-	// dir "/{id}/" yet names its parent, so it survives the hook's filter and
+	// which need not be canonical. "/{id}/.." literally starts with the prefix
+	// "/{id}/" yet names its parent, so it survives the hook's filter and
 	// reaches the host as a tracked read that resolves above the mount root —
 	// which the host cannot attest, and fails the step over. Filtering on the
 	// cleaned path makes each hook's own check an optimization and this the
-	// boundary.
+	// boundary. The bound is the data prefixes, not the watch dirs: a report
+	// from a hook is admissible anywhere under the mount, and only inotify is
+	// confined to the watched trees — by what it is able to observe at all.
 	path = filepath.Clean(path)
-	if !underWatchDir(path, pt.watchDirs) {
+	if !underDataPrefix(path, pt.dataPrefixes) {
 		// A dropped report never reaches the host, so nothing over there can
 		// account for it — this line is the only trace of a hook-filter leak.
 		if sandboxLogLevel == logLevelDebug {
@@ -322,6 +357,9 @@ func (pt *ProvenanceTracker) readRlog() {
 type inotifyWatcher interface {
 	start(watchDirs []string)
 	stop()
+	// budget reports exhaustion of the watch cap, or nil when the walk fit
+	// inside it. Read after stop(), so the walk has finished writing it.
+	budget() *watchBudgetSignal
 }
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -331,28 +369,59 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// provenanceWatchDirs returns the list of directories to watch for file reads.
-// Configured via PROVENANCE_WATCH_DIRS env var (comma-separated). Defaults to /data.
+// provenanceWatchDirs returns the directories inotify walks, from
+// PROVENANCE_WATCH_DIRS (comma-separated absolute paths, default /data). The
+// host enumerates the trees that cannot change under the running command — the
+// analysis data tree, this step's own tree, and the tree of every step already
+// completed — so a directory a concurrent step is still writing is absent by
+// construction.
+//
+// A configured dir that does not exist is skipped, not an error: a completed
+// step that produced no tree and a read-only sandbox with no step tree are both
+// ordinary, and provenance never fails a command.
 func provenanceWatchDirs() []string {
 	raw := os.Getenv("PROVENANCE_WATCH_DIRS")
 	if raw == "" {
 		raw = "/data"
 	}
-	dirs := strings.Split(raw, ",")
-	// Only return directories that exist
 	var result []string
-	for _, d := range dirs {
-		d = strings.TrimSpace(d)
-		if d == "" {
-			continue
-		}
-		// Ensure trailing slash for prefix matching
-		if !strings.HasSuffix(d, "/") {
-			d += "/"
-		}
+	for _, d := range normalizePathList(raw, ",") {
 		if info, err := os.Stat(strings.TrimSuffix(d, "/")); err == nil && info.IsDir() {
 			result = append(result, d)
 		}
+	}
+	return result
+}
+
+// provenanceDataPrefixes returns the prefixes bounding what any layer may
+// report, from PROVENANCE_DATA_PREFIXES (colon-separated, matching the form the
+// hooks themselves parse; default /data).
+//
+// Read from its own variable rather than derived from the watch dirs, and
+// deliberately not existence-filtered: the prefixes are the mount root, and a
+// stat that failed would silently discard every report the layers send.
+func provenanceDataPrefixes() []string {
+	raw := os.Getenv("PROVENANCE_DATA_PREFIXES")
+	if raw == "" {
+		raw = "/data"
+	}
+	return normalizePathList(raw, ":")
+}
+
+// normalizePathList splits a separated list of absolute paths and gives each a
+// trailing slash, which is what makes a prefix comparison exclude the directory
+// itself and refuse a sibling whose name merely starts the same.
+func normalizePathList(raw, sep string) []string {
+	var result []string
+	for _, p := range strings.Split(raw, sep) {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if !strings.HasSuffix(p, "/") {
+			p += "/"
+		}
+		result = append(result, p)
 	}
 	return result
 }

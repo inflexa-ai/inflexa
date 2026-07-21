@@ -215,7 +215,7 @@ function createMarkExecActive(deps: SandboxAgentDeps): (execId: string) => Promi
  *  `readOnly` mode the write_file/edit_file pair is omitted; execute_command
  *  and the read tools stay. */
 function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] {
-    const { step, sandboxClient, workspaceFs, pool, embedding, lineageCollector } = deps;
+    const { step, sandboxClient, workspaceFs, pool, embedding, lineageCollector, logger } = deps;
     // Registry tagging is a best-effort watchdog backstop (`run-exec.ts` already
     // swallows a throw here); fold a `DbError` into a no-op so a registry write
     // failure neither fails the exec nor surfaces as an unhandled rejection.
@@ -258,7 +258,17 @@ function buildWorkspaceTools(deps: SandboxAgentDeps, readOnly: boolean): Tool[] 
             deadlineMs: step.deadlineMs,
             defaultCwd: sandboxWorkingDir,
             markExecActive,
-            ...(lineageCollector ? { lineageCollector, mountRoot: `/${step.analysisId}` } : {}),
+            // `pool` and `analysisId` ride with the collector because they exist
+            // solely to snapshot which producing steps have completed — the
+            // admissibility gate for a lineage edge. Without them the tool runs
+            // fail-closed: no fabricated sibling edges, but no sibling lineage
+            // at all, so they belong to exactly the construction sites that
+            // asked for a collector.
+            ...(lineageCollector ? { lineageCollector, mountRoot: `/${step.analysisId}`, pool, analysisId: step.analysisId } : {}),
+            // The degraded-snapshot path reports at error level; an unwired
+            // logger would route that to the no-op sink and make a total loss of
+            // sibling lineage indistinguishable from having none to record.
+            ...(logger ? { logger } : {}),
         }),
         ...mutateTools,
         createReadFileTool(workspaceFs, hostWorkingDir),

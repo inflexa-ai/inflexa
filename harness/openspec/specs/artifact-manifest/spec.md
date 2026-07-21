@@ -23,9 +23,13 @@ SHA-256 hashes from disk at `reconcileManifestWithDisk` for **every surviving
 output** and **every tracked input**, and registers those. Output hashes must be
 re-read because outputs mutate during the step (a long-running script flushes
 after the frame fires; an atomic-rename swaps content under a stable byte count);
-input hashes can be read from disk now because inputs are immutable for the
-step's lifetime (the analysis tree is mounted read-only; the only writable mount
-is the step's own directory). This makes the registered hash equal `sha256sum` of
+input hashes can be read from disk now because every input reconcile attests is
+stable by then — staged `data`, the step's own directory, and a producing step
+that had already `completed` when the reading exec was submitted. Read-only
+mounting is not what secures this: it bounds what *this* step may write, while
+every sibling has its own directory mounted read-write and churns it freely. An
+edge to a step that had not completed is refused at classification, so it never
+becomes an attestation target. This makes the registered hash equal `sha256sum` of
 the bytes the sync target receives at upload time. The reconcile/register/sync
 stages are pulled out of the best-effort net: a tracked input **file** that is
 missing at reconcile, and a registry rejection, are **terminal** — they fail the

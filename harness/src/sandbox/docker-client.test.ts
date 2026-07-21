@@ -277,7 +277,8 @@ describe("docker createSandbox — transport modes", () => {
         const sandbox = sandboxOf(created)!;
         const env = envMapOf(sandbox);
         expect(env.SANDBOX_CALLBACK_SECRET).toBe(ref.callbackSecret);
-        expect(env.PROVENANCE_WATCH_DIRS).toBe("/an-1");
+        expect(env.PROVENANCE_WATCH_DIRS).toBe("/an-1/data,/an-1/runs/run-1/step-a");
+        expect(env.PROVENANCE_DATA_PREFIXES).toBe("/an-1");
         expect(env.R_LIBS_SITE).toContain("/mnt/libs/current/r/");
 
         expect(sandbox.workingDir).toBe("/an-1/runs/run-1/step-a");
@@ -349,7 +350,27 @@ describe("docker createSandbox — mounts and platform", () => {
         expect(sandbox.binds.some((b) => b.includes("/mnt/libs"))).toBe(false);
         expect(env.R_LIBS_SITE).toBeUndefined();
         expect(env.NODE_PATH).toBeUndefined();
-        expect(env.PROVENANCE_WATCH_DIRS).toBe("/an-1");
+        expect(env.PROVENANCE_WATCH_DIRS).toBe("/an-1/data,/an-1/runs/run-1/step-a");
+    });
+
+    test("completed siblings on the meta become watch dirs; the mount root never does", async () => {
+        const { docker, created } = stubDocker();
+        const ops = createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            cortexBaseUrl: "https://x",
+            resolveWorkspaceRoot: (id) => join("/sessions", id),
+            docker,
+            fetch: okFetch,
+            registerSandbox: async () => {},
+        });
+
+        (await ops.createSandbox({ ...META, completedSiblingStepIds: ["qc"] }, mintSandboxIdentity("run-1")))._unsafeUnwrap();
+
+        const env = envMapOf(sandboxOf(created)!);
+        expect(env.PROVENANCE_WATCH_DIRS.split(",")).toEqual(["/an-1/data", "/an-1/runs/run-1/step-a", "/an-1/runs/run-1/qc"]);
+        // The sibling's tree is watched, but the container still binds only its
+        // own step dir read-write — capture scope is not a mount change.
+        expect(sandboxOf(created)!.binds).toEqual(["/sessions/an-1:/an-1:ro", "/sessions/an-1/runs/run-1/step-a:/an-1/runs/run-1/step-a:rw"]);
     });
 
     test("forwards the configured platform into createContainer options", async () => {

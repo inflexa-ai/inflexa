@@ -324,12 +324,19 @@ export function buildChildInput(args: {
     if (!resources) {
         throw new Error(`executeAnalysis: step "${stepId}" missing from resourcesByStepId — every step must declare resources`);
     }
+    // Declared dependencies, read off `steps` — the same normalized DAG the
+    // scheduler gated this dispatch on, so the child cannot disagree with the
+    // parent about what was declared. A step absent from that DAG is never
+    // dispatched; were one ever to be, leaving the field unset hands the child
+    // "unknown" instead of a fabricated empty declaration.
+    const declaredDependencies = input.steps.find((s) => s.id === stepId)?.depends_on;
     return {
         analysisId: input.analysisId,
         runId,
         stepId,
         agentId: input.agentByStepId[stepId] ?? "scientific-executor",
         level,
+        dependsOn: declaredDependencies,
         prompt,
         parentWorkflowId: workflowId,
         resources,

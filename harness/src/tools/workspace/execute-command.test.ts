@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
+import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { makeToolContext } from "../__fixtures__/tool-context.js";
 import type { SandboxClient } from "../../sandbox/client.js";
+import type { ToolContext } from "../define-tool.js";
 import type { CreateSandboxMeta, ExecEmit, ExecResult, SandboxRef, SubmitExecBody } from "../../sandbox/types.js";
 import { createExecuteCommandTool } from "./execute-command.js";
 
@@ -264,5 +266,79 @@ describe("execute_command tool", () => {
 
         await tool.execute({ command: ["ls"], cwd: "/analysis-001/data" }, ctx);
         expect(client.submits[1]!.body.cwd).toBe("/analysis-001/data");
+    });
+
+    it("records a watch-budget exhaustion carried on the frame against the run", async () => {
+        // The sandbox's own warning about the exhausted walk never leaves the
+        // container, so without this record degraded capture is indistinguishable
+        // from an exec that touched nothing.
+        const client = makeFakeClient({
+            result: {
+                execId: "",
+                exitCode: 0,
+                stdout: "",
+                stderr: "",
+                durationMs: 5,
+                timedOut: false,
+                provenance: { disabled: false, reads: [], writes: [], deletes: [], watchBudget: { limit: 1000, watched: 1000, unwatchedDirs: 4 } },
+            },
+        });
+        const logger = createCapturingLogger();
+        const tool = createExecuteCommandTool({
+            sandboxClient: client,
+            sandbox: makeSandboxRef(),
+            workflowId: "wf1",
+            stepId: "step1",
+            nextFunctionId: () => "fn1",
+            deadlineMs: () => 9_999_999,
+            defaultCwd: DEFAULT_CWD,
+            logger,
+        });
+        const { ctx } = makeToolContext();
+        const runScoped: ToolContext = { ...ctx, session: { ...ctx.session, runFrame: { runId: "run-abc", stepId: "step1" } } };
+
+        const out = (await tool.execute({ command: ["ls"] }, runScoped))._unsafeUnwrap();
+
+        expect(out.status).toBe("ok");
+        const warns = logger.records.filter((r) => r.level === "warn");
+        expect(warns).toHaveLength(1);
+        expect(warns[0]!.fields).toMatchObject({
+            execId: "wf1:step1:fn1",
+            stepId: "step1",
+            runId: "run-abc",
+            watchLimit: 1000,
+            watchedDirs: 1000,
+            unwatchedDirs: 4,
+        });
+    });
+
+    it("says nothing when the walk fit inside the watch budget", async () => {
+        const client = makeFakeClient({
+            result: {
+                execId: "",
+                exitCode: 0,
+                stdout: "",
+                stderr: "",
+                durationMs: 5,
+                timedOut: false,
+                provenance: { disabled: false, reads: [], writes: [], deletes: [] },
+            },
+        });
+        const logger = createCapturingLogger();
+        const tool = createExecuteCommandTool({
+            sandboxClient: client,
+            sandbox: makeSandboxRef(),
+            workflowId: "wf1",
+            stepId: "step1",
+            nextFunctionId: () => "fn1",
+            deadlineMs: () => 9_999_999,
+            defaultCwd: DEFAULT_CWD,
+            logger,
+        });
+        const { ctx } = makeToolContext();
+
+        await tool.execute({ command: ["ls"] }, ctx);
+
+        expect(logger.records).toEqual([]);
     });
 });

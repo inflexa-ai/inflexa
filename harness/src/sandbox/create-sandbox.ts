@@ -18,12 +18,13 @@ import { join } from "node:path";
 import type { V1Toleration } from "@kubernetes/client-node";
 import type { Pool } from "pg";
 
+import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { clampResources, type ResourceLimits } from "../config/resource-limits.js";
 import { stepWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { tryMutation } from "../lib/db-result.js";
 import { unwrapOrThrow } from "../lib/result.js";
-import { clearSandboxRef, setSandboxRef } from "../state/index.js";
+import { clearSandboxRef, queryCompletedStepsByAnalysis, setSandboxRef } from "../state/index.js";
 import { awaitExec, type AwaitExecOptions } from "./await-exec.js";
 import type { SandboxClient } from "./client.js";
 import { createDockerSandboxOps } from "./docker-client.js";
@@ -172,6 +173,39 @@ export async function precreateStepTree(
     }
 }
 
+/**
+ * Step ids of this step's own run whose executions are already `completed` —
+ * the trees `buildMountPlan` may hand the container as watch dirs.
+ *
+ * Resolved here rather than inside the mount plan: this is the composition edge
+ * that already owns I/O (it pre-creates the step tree and writes the registry),
+ * so the plan below it stays a pure function of its inputs. Scoped to the
+ * step's own run because a watch dir is a path under `runs/{runId}/`; reads of
+ * another run's step reach the frame through the in-container hooks, whose
+ * prefix filter is the whole mount.
+ *
+ * A failed query narrows the watch set instead of failing sandbox creation:
+ * provenance is best-effort, and the command's own reads under an unwatched
+ * tree are still reported by the hooks.
+ *
+ * Exported for tests.
+ */
+export async function resolveCompletedSiblings(pool: Pool, meta: CreateSandboxMeta, logger: Logger): Promise<string[]> {
+    const queried = await queryCompletedStepsByAnalysis(pool, meta.analysisId);
+    return queried.match(
+        (pairs) => pairs.filter((pair) => pair.runId === meta.runId && pair.stepId !== meta.stepId).map((pair) => pair.stepId),
+        (error) => {
+            logger.warn("completed-sibling lookup failed — provisioning the sandbox with no sibling watch dirs (provenance under-captures)", {
+                analysisId: meta.analysisId,
+                runId: meta.runId,
+                stepId: meta.stepId,
+                ...logger.errorFields(error),
+            });
+            return [];
+        },
+    );
+}
+
 export function createSandboxClient(config: CreateSandboxClientConfig): SandboxClient {
     const backend = config.backend ?? config.env.backend;
     const transport = config.transport ?? "poll";
@@ -257,7 +291,8 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
             }
             // Clamp to cluster ceilings so the pod is always quota-admissible.
             const resources = clampResources(meta.resources, config.resourceLimits);
-            return unwrapOrThrow(await ops.createSandbox({ ...meta, resources }, identity));
+            const completedSiblingStepIds = await resolveCompletedSiblings(config.pool, meta, config.logger ?? createNoopLogger());
+            return unwrapOrThrow(await ops.createSandbox({ ...meta, resources, completedSiblingStepIds }, identity));
         },
         submitExec: async (ref, body) => submitExec(ref, body, config.submitDeps),
         awaitExec: (ref, execId, emit, deadline) => awaitExec(ref, execId, emit, deadline, composeAwaitOptions(config.awaitOptions, transport, isAlive)),

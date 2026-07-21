@@ -69,65 +69,134 @@ export interface InputClassificationContext {
 }
 
 /**
- * Build classification context for a file read using known step metadata.
+ * Membership key for the completed-step snapshot.
  *
- * Uses prefix matching against structured metadata — no path segment
- * extraction. The caller knows its own stepId/runId and its upstream
- * dependencies (dependsOn).
- *
- * For prior-run reads (paths under runs/ that don't match own run or
- * any dependsOn entry), this falls back to path extraction — see the
- * prior-run branch below for why.
+ * Step ids are directory names in the workspace layout, so neither id can
+ * contain the separator and the flattened key is as precise as the pair.
  */
-export function classifyReadPath(relativePath: string, ownStepId: string, ownRunId: string, dependsOn?: string[]): InputClassificationContext {
+export function completedStepKey(runId: string, stepId: string): string {
+    return `${runId}/${stepId}`;
+}
+
+/**
+ * Analysis-scoped snapshot: producing steps observed `completed` when the
+ * reading exec was submitted, keyed by `completedStepKey`. It spans the whole
+ * analysis rather than one run because a producing step is admissible on its
+ * own completion, whichever run it belongs to.
+ */
+export type CompletedSteps = ReadonlySet<string>;
+
+/**
+ * The outcome of classifying one read: either an input edge the step may
+ * assert, or an explicit refusal that carries the producing step it names.
+ *
+ * The refusal is a value, not a thrown error and not a `data` classification:
+ * an inadmissible read is noise the step observed but did not consume, so it
+ * must be droppable without failing the exec and without being mistaken for a
+ * real input. The scraped ids ride along because they are the only thing that
+ * makes the drop attributable to a producing step in a log record.
+ */
+export type ReadClassification =
+    | { readonly admissible: true; readonly context: InputClassificationContext }
+    | { readonly admissible: false; readonly refRunId?: string; readonly refStepId?: string };
+
+/**
+ * Admit an edge to a producing step only on that step's own completion.
+ *
+ * An undefined `completedSteps` is an absent observation, not an empty one,
+ * and both fail closed: with nothing to test membership against, no producing
+ * step can be shown to have finished, and asserting the edge anyway is how a
+ * fabricated lineage record gets written.
+ */
+function gateProducingStep(source: "upstream" | "prior", runId: string, stepId: string, completedSteps?: CompletedSteps): ReadClassification {
+    if (completedSteps?.has(completedStepKey(runId, stepId))) {
+        return { admissible: true, context: { source, stepId, runId } };
+    }
+    return { admissible: false, refRunId: runId, refStepId: stepId };
+}
+
+/**
+ * Classify a file read against the reading step's own coordinates.
+ *
+ * Branches resolve by prefix, and every branch naming a *producing* step — a
+ * declared `dependsOn` sibling, any other same-run sibling, or a step of
+ * another run — is admitted only when that step is in `completedSteps`. A step
+ * that has not completed is still writing its own directory, so nothing
+ * observed there is a stable artifact this step can be said to have consumed;
+ * an artifact is stable because the step that wrote it finished, not because
+ * its run finished, which is why one predicate decides all three branches and
+ * `cortex_runs` is never consulted.
+ *
+ * `completedSteps` is a parameter rather than a lookup so classification stays
+ * pure: the set is snapshotted once, before the exec is submitted, and the
+ * same snapshot replays to the same lineage.
+ */
+export function classifyReadPath(
+    relativePath: string,
+    ownStepId: string,
+    ownRunId: string,
+    dependsOn?: string[],
+    completedSteps?: CompletedSteps,
+): ReadClassification {
     if (relativePath.startsWith("data/") || relativePath.startsWith("dataprofile/")) {
-        return { source: "data" };
+        return { admissible: true, context: { source: "data" } };
     }
 
     // Own artifacts: runs/{ownRunId}/{ownStepId}/...
     const ownPrefix = `runs/${ownRunId}/${ownStepId}/`;
     if (relativePath.startsWith(ownPrefix)) {
-        return { source: "artifacts", stepId: ownStepId, runId: ownRunId };
+        return { admissible: true, context: { source: "artifacts", stepId: ownStepId, runId: ownRunId } };
     }
 
-    // Upstream dependencies: runs/{ownRunId}/{depStepId}/...
+    // Declared upstream dependency: runs/{ownRunId}/{depStepId}/...
+    // Declaration names the edge but does not license it — the scheduler's
+    // ordering guarantee is what usually makes a dependency complete, and a
+    // dependency that somehow has not completed has the same unfinalized
+    // outputs as any other in-flight sibling.
     if (dependsOn) {
         for (const depStepId of dependsOn) {
             const upstreamPrefix = `runs/${ownRunId}/${depStepId}/`;
             if (relativePath.startsWith(upstreamPrefix)) {
-                return { source: "upstream", stepId: depStepId, runId: ownRunId };
+                return gateProducingStep("upstream", ownRunId, depStepId, completedSteps);
             }
         }
     }
 
-    // Same-run sibling step. dependsOn only drives topo-sort ordering, not
-    // read authorization, so a read outside dependsOn is still a valid
-    // upstream input — just extract the stepId from the path.
+    // Same-run sibling. A sibling this step never declared can still be a
+    // genuine input — `dependsOn` orders the schedule, it does not enumerate
+    // reads — so completion, not declaration, decides: until the sibling
+    // completes, its directory holds work in progress rather than an artifact
+    // that could have been consumed. The step id exists only in the path here:
+    // the read matches neither this step's own ids nor a `dependsOn` entry, so
+    // path segments are the only source for the identity the outcome carries,
+    // and the same scraped id is both the key the gate tests and the name a
+    // rejection is attributed to.
     const ownRunPrefix = `runs/${ownRunId}/`;
     if (relativePath.startsWith(ownRunPrefix)) {
         const afterRun = relativePath.slice(ownRunPrefix.length);
         const slashIdx = afterRun.indexOf("/");
         const stepId = slashIdx > 0 ? afterRun.slice(0, slashIdx) : afterRun;
         if (stepId) {
-            return { source: "upstream", stepId, runId: ownRunId };
+            return gateProducingStep("upstream", ownRunId, stepId, completedSteps);
         }
     }
 
-    // Prior-run fallback: a read under `runs/{otherRunId}/...` that is neither
-    // this step's own run nor a `dependsOn` entry carries no step metadata
-    // linking it, so the path segments are the only source for the
-    // `{source: "prior", runId, stepId}` classification. This is the one place
-    // the provenance system extracts identity from path segments.
+    // Another run's step: a read under `runs/{otherRunId}/...` matches neither
+    // this step's own run nor a `dependsOn` entry, so the path segments are the
+    // only source for the `{source: "prior", runId, stepId}` identity — and the
+    // pair scraped here is the pair the gate looks up, so a same-run step of
+    // the same name cannot admit it. Path extraction is confined to this branch
+    // and the same-run sibling branch above; no other branch reads segments.
     if (relativePath.startsWith("runs/")) {
         const parts = relativePath.split("/");
         const priorRunId = parts[1];
         const priorStepId = parts[2];
         if (priorRunId && priorStepId) {
-            return { source: "prior", stepId: priorStepId, runId: priorRunId };
+            return gateProducingStep("prior", priorRunId, priorStepId, completedSteps);
         }
     }
 
-    return { source: "data" };
+    return { admissible: true, context: { source: "data" } };
 }
 
 // ── Collector ───────────────────────────────────────────────────────
@@ -187,14 +256,27 @@ export class ProvenanceCollector {
      * @param hash - SHA-256 hash of the file content, or null if file no longer exists
      * @param context - Explicit classification context from the caller. When provided,
      *   the collector uses it directly instead of classifying from the path.
+     * @returns the tracked ref, or `null` when the caller supplied no context and the
+     *   path resolves to a producing step — the collector holds no completed-step
+     *   snapshot, so it cannot show that step finished (see the fallback below).
      */
-    trackInputAccess(mountPath: string, relativePath: string, hash: string | null, context?: InputClassificationContext): InputRef {
+    trackInputAccess(mountPath: string, relativePath: string, hash: string | null, context: InputClassificationContext): InputRef;
+    trackInputAccess(mountPath: string, relativePath: string, hash: string | null): InputRef | null;
+    trackInputAccess(mountPath: string, relativePath: string, hash: string | null, context?: InputClassificationContext): InputRef | null {
         const key = `${mountPath}:${relativePath}`;
         const existing = this.inputAccesses.get(key);
         if (existing) return existing;
 
-        // Use explicit context if provided, otherwise fall back to path classification
-        const classification = context ?? classifyReadPath(relativePath, this.stepId, this.runId, this.dependsOn);
+        // Use explicit context if provided, otherwise fall back to path
+        // classification. The collector holds no completed-step snapshot — that
+        // is observed per exec, at submit time, by the caller that classifies —
+        // so the fallback cannot admit an edge to any producing step and refuses
+        // every same-run sibling and prior-run read. Tracking one anyway would
+        // make an unobserved step an attestation target of this one.
+        const fallback = context ? null : classifyReadPath(relativePath, this.stepId, this.runId, this.dependsOn);
+        const classification = context ?? (fallback?.admissible === true ? fallback.context : null);
+        if (classification === null) return null;
+
         // A still-absolute `relativePath` is a report the caller could not
         // relativize — it names somewhere outside the mount. It rides verbatim:
         // prepending the mount root would forge an in-tree name for a foreign

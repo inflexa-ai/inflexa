@@ -206,6 +206,38 @@ export function queryStepsByRun(pool: Querier, runId: string): ResultAsync<StepE
     });
 }
 
+/**
+ * The `(runId, stepId)` pairs in an analysis whose producing step has finished
+ * writing — the admissibility snapshot provenance classifies sibling and
+ * prior-run reads against.
+ *
+ * `completed` is the only admissible status, deliberately narrower than
+ * "terminal": `failed`, `canceled`, and `skipped` steps never finalized their
+ * outputs, so anything left in their directories is work in progress rather
+ * than an artifact another step can be said to have consumed.
+ *
+ * Scoped to the analysis, not the run, because what makes an output stable is
+ * that the step writing it finished — not which run it belongs to. One
+ * predicate therefore answers both the same-run sibling and the prior-run
+ * question, so `cortex_runs` (whose `partial`/`failed`/`canceled` count as
+ * terminal) is never consulted. `idx_cortex_step_exec_analysis` serves it.
+ */
+export function queryCompletedStepsByAnalysis(pool: Querier, analysisId: string): ResultAsync<{ runId: string; stepId: string }[], DbError> {
+    return tryQuery("stepExecutions.queryCompletedStepsByAnalysis", async () => {
+        const result = await pool.query({
+            text: `SELECT run_id, step_id
+          FROM cortex_step_executions
+          WHERE analysis_id = $1 AND status = 'completed'
+          ORDER BY run_id, step_id`,
+            values: [analysisId],
+        });
+        return result.rows.map((row: Record<string, unknown>) => ({
+            runId: row.run_id as string,
+            stepId: row.step_id as string,
+        }));
+    });
+}
+
 function mapStepExecutionRow(row: Record<string, unknown>): StepExecutionRow {
     return {
         runId: row.run_id as string,

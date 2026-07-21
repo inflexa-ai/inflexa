@@ -9,5 +9,6 @@ func newInotifyWatcher(_ *ProvenanceTracker) inotifyWatcher {
 	return &stubInotifyWatcher{}
 }
 
-func (w *stubInotifyWatcher) start(_ []string) {}
-func (w *stubInotifyWatcher) stop()            {}
+func (w *stubInotifyWatcher) start(_ []string)           {}
+func (w *stubInotifyWatcher) stop()                      {}
+func (w *stubInotifyWatcher) budget() *watchBudgetSignal { return nil }

@@ -65,6 +65,9 @@ type provenancePayload struct {
 	Reads    []ProvenanceEntry `json:"reads,omitempty"`
 	Writes   []ProvenanceEntry `json:"writes,omitempty"`
 	Deletes  []ProvenanceEntry `json:"deletes,omitempty"`
+	// Set only when the inotify walk ran out of watch budget, so an exec whose
+	// capture was complete carries no signal at all.
+	WatchBudget *watchBudgetSignal `json:"watchBudget,omitempty"`
 }
 
 // executor wires the dedup table to the result-delivery path. One executor per
@@ -163,6 +166,7 @@ func (e *executor) run(req execSubmitRequest, traceID string) {
 	provTracker := NewProvenanceTracker(
 		fmt.Sprintf("%s-%d", sanitizeForFilename(req.ExecID), time.Now().UnixNano()),
 		provenanceWatchDirs(),
+		provenanceDataPrefixes(),
 	)
 	provenanceDisabled := false
 	if err := provTracker.Start(); err != nil {
@@ -235,10 +239,11 @@ func (e *executor) run(req execSubmitRequest, traceID string) {
 
 	provResult := provTracker.Stop()
 	prov := &provenancePayload{
-		Disabled: provenanceDisabled,
-		Reads:    provResult.Reads,
-		Writes:   provResult.Writes,
-		Deletes:  provResult.Deletes,
+		Disabled:    provenanceDisabled,
+		Reads:       provResult.Reads,
+		Writes:      provResult.Writes,
+		Deletes:     provResult.Deletes,
+		WatchBudget: provResult.WatchBudget,
 	}
 
 	stdout := stdoutBuilder.String()

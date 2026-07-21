@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
-import { insertStepExecution, queryStepsByRun, seedStepExecutions, updateStepExecution } from "./step-executions.js";
+import { insertStepExecution, queryCompletedStepsByAnalysis, queryStepsByRun, seedStepExecutions, updateStepExecution } from "./step-executions.js";
 import { createBlockerHolder, createReportBlockerTool } from "../tools/sandbox/report-blocker.js";
 import type { ToolContext } from "../tools/define-tool.js";
 
@@ -143,6 +143,79 @@ describe("step-executions: pending seeding", () => {
         (await seedStepExecutions(pool, []))._unsafeUnwrap();
         const rows = (await queryStepsByRun(pool, "run-empty"))._unsafeUnwrap();
         expect(rows).toHaveLength(0);
+    });
+});
+
+describe("step-executions: completed-step snapshot", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    const ANALYSIS = "analysis-gate";
+    const OTHER_ANALYSIS = "analysis-unrelated";
+
+    type TerminalStatus = "completed" | "failed" | "skipped" | "canceled" | "blocked";
+
+    async function seedStep(runId: string, stepId: string, analysisId: string, status: TerminalStatus | "running"): Promise<void> {
+        (await insertStepExecution(pool, { runId, stepId, analysisId, wave: 0, agentId: "scientific-executor" }))._unsafeUnwrap();
+        if (status !== "running") {
+            (await updateStepExecution(pool, runId, stepId, { status, durationMs: 1 }))._unsafeUnwrap();
+        }
+    }
+
+    beforeAll(async () => {
+        const ctx = await withSchema("step_exec_completed");
+        pool = ctx.pool;
+        drop = ctx.drop;
+
+        // One row per status, so the query has to discriminate rather than
+        // merely return everything terminal.
+        await seedStep("run-a", "a-running", ANALYSIS, "running");
+        await seedStep("run-a", "a-completed", ANALYSIS, "completed");
+        await seedStep("run-a", "a-failed", ANALYSIS, "failed");
+        await seedStep("run-a", "a-skipped", ANALYSIS, "skipped");
+        await seedStep("run-a", "a-canceled", ANALYSIS, "canceled");
+        await seedStep("run-a", "a-blocked", ANALYSIS, "blocked");
+        (
+            await seedStepExecutions(pool, [{ runId: "run-a", stepId: "a-pending", analysisId: ANALYSIS, wave: 0, agentId: "scientific-executor" }])
+        )._unsafeUnwrap();
+
+        // A prior run over the same analysis.
+        await seedStep("run-b", "b-completed", ANALYSIS, "completed");
+        await seedStep("run-b", "b-failed", ANALYSIS, "failed");
+
+        await seedStep("run-c", "c-completed", OTHER_ANALYSIS, "completed");
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("returns only completed pairs", async () => {
+        const pairs = (await queryCompletedStepsByAnalysis(pool, ANALYSIS))._unsafeUnwrap();
+
+        expect(pairs).toEqual([
+            { runId: "run-a", stepId: "a-completed" },
+            { runId: "run-b", stepId: "b-completed" },
+        ]);
+    });
+
+    it("includes completed steps from other runs of the same analysis", async () => {
+        const pairs = (await queryCompletedStepsByAnalysis(pool, ANALYSIS))._unsafeUnwrap();
+
+        expect(pairs).toContainEqual({ runId: "run-b", stepId: "b-completed" });
+    });
+
+    it("excludes another analysis's completed steps", async () => {
+        const pairs = (await queryCompletedStepsByAnalysis(pool, ANALYSIS))._unsafeUnwrap();
+        expect(pairs.map((p) => p.stepId)).not.toContain("c-completed");
+
+        const otherPairs = (await queryCompletedStepsByAnalysis(pool, OTHER_ANALYSIS))._unsafeUnwrap();
+        expect(otherPairs).toEqual([{ runId: "run-c", stepId: "c-completed" }]);
+    });
+
+    it("returns an empty set for an analysis with no rows", async () => {
+        const pairs = (await queryCompletedStepsByAnalysis(pool, "analysis-absent"))._unsafeUnwrap();
+        expect(pairs).toEqual([]);
     });
 });
 

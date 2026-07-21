@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createCapturingLogger } from "../__tests__/setup/logger.js";
-import { ProvenanceCollector } from "../provenance/collector.js";
+import { completedStepKey, ProvenanceCollector } from "../provenance/collector.js";
 import { feedExecFrame } from "../provenance/exec-frame.js";
 import { reconcileManifestWithDisk } from "./reconcile-manifest.js";
 import { computeSha256File } from "../lib/fs-helpers.js";
@@ -37,6 +37,11 @@ async function setup(opts: { writeUpstream: boolean }) {
     feedExecFrame({
         collector,
         mountRoot: `/${RID}`,
+        // `qc` completed before this exec was submitted, so its output is an
+        // admissible upstream input — the precondition every reconcile case
+        // below assumes. Without it the read is refused at classification and
+        // never reaches attestation, which is a different test entirely.
+        completedSteps: new Set([completedStepKey("run-001", "qc")]),
         command: ["python3", "scripts/de.py"],
         exitCode: 0,
         durationMs: 100,
