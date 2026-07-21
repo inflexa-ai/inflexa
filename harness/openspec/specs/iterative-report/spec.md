@@ -96,11 +96,16 @@ result without running the builder.
 The report-builder agent SHALL be a non-plannable in-process agent (not a member
 of the sandbox-agent catalog) driven by `runToTerminal` over `passthroughStep`.
 Its roster SHALL be the four custom report tools (`build_report`,
-`submit_report`, `mint_preview_url`, `preview_snapshot`) plus the in-process
-`versionFs` surface (`write_file`, `edit_file`, `read_file`, `mkdir`), all
-constructed inside the runner so they share one closure-captured `outcome` cell
-and the iteration's version-dir paths. The agent SHALL NOT have `execute_command`
-or any sandbox/Python build path, and SHALL have no workspace discovery tools.
+`submit_report`, `mint_preview_url`, `preview_snapshot`), the in-process
+`versionFs` surface (`write_file`, `edit_file`, `read_file`, `mkdir`), and the
+read-only skill tools (`skill_search`, `skill_read`) scoped to the `report-html`
+pack — all constructed inside the runner so the report/version tools share one
+closure-captured `outcome` cell and the iteration's version-dir paths. The skill
+tools SHALL be constructed via `createSkillTools({ skillsDir, skills:
+["report-html"] })` so the design-system reference the builder prompt directs the
+model to read (`skill_read("report-html", "references/design-system.md")`) is
+actually reachable. The agent SHALL NOT have `execute_command` or any
+sandbox/Python build path, and SHALL have no workspace discovery tools.
 
 #### Scenario: The builder finalizes only through submit_report
 
@@ -111,6 +116,12 @@ or any sandbox/Python build path, and SHALL have no workspace discovery tools.
 
 - **WHEN** the report-builder needs to render the template
 - **THEN** it calls the `build_report` tool (in-process Nunjucks) — there is no `execute_command` and no `python build.py` to invoke
+
+#### Scenario: The builder can read the report-html skill pack
+
+- **GIVEN** the report-builder prompt directs the model to `skill_read` the `report-html` design-system reference
+- **WHEN** the model calls `skill_read("report-html", "references/design-system.md")`
+- **THEN** the call resolves against the declared `report-html` pack rather than failing as an undeclared skill or an unavailable tool
 
 ### Requirement: Version directories are managed Cortex-side with shared assets and rollback
 
@@ -189,3 +200,4 @@ on failure it SHALL emit `data-report-preview-failed`
 
 - **WHEN** `submit_report` records a success for version N
 - **THEN** `iterate_report` emits a `data-report-preview` part carrying the title, `v{N}/index.html` preview path, and format, and returns `{ previewId, version: N, previewPath }`
+

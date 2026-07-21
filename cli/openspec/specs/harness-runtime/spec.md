@@ -8,33 +8,25 @@ The embedding seam between the cli and `@inflexa-ai/harness`: a lazy, process-si
 The system SHALL provide a composition module that boots the embedded harness runtime
 on first use and reuses it for the remainder of the process (module singleton). Boot
 SHALL sequence: ensure Postgres readiness (via the infra module); **in callback
-transport mode only**, start the exec-callback listener; initialize the cortex
-schema; sweep this executor's pending ephemeral workflows (a direct pre-launch cancel
-— launching first would let recovery re-dispatch sandboxes for chat turns that no
-longer exist); then register the durable workflows and build the conversation agent
-through the harness composition root (`assembleCoreRuntime`) — which owns the
-child-before-parent workflow ordering and registers the sandbox-step,
-execute-analysis, target-assessment, data-profile, and ephemeral workflows in one
-pass — plus the sandbox-hygiene scheduled workflows, then launch DBOS, so every
-registration lands in one pre-launch cohort. The CLI runs in **poll** transport mode
-by default, in which the sandbox is polled for results and no callback listener is
-bound. The target-assessment workflow is registered deliberately untriggerable: no
-cli surface launches it, which is harmless (never launched → never recovered) and
-recorded so it is not mistaken for dead wiring. The booted runtime handle SHALL
-expose the assembled conversation agent. Passive flows (bare `inflexa` launch, TUI
-startup) SHALL NOT boot the runtime. A second boot request SHALL return the existing
-runtime without
+transport mode only**, start the exec-callback listener; register the durable
+workflows with their fully-realized deps — the child sandbox-step workflow BEFORE the
+execute-analysis parent (the parent's deps close over the registered child callable),
+plus the data-profile workflow and the sandbox-hygiene scheduled workflows — then
+launch DBOS, so every registration lands in one pre-launch cohort. The CLI runs in
+**poll** transport mode by default, in which the sandbox is polled for results and no
+callback listener is bound. Passive flows (bare `inflexa` launch, TUI startup) SHALL
+NOT boot the runtime. A second boot request SHALL return the existing runtime without
 re-registering or re-launching.
 
 #### Scenario: First trigger boots the runtime (poll mode, the default)
 
-- **WHEN** a data-profile, analysis-run, or chat launch is requested and the runtime has not been booted
-- **THEN** Postgres readiness is ensured, the ephemeral sweep runs, all workflows register through the composition root (sandbox-step before execute-analysis), and DBOS launches — in that order — and NO callback listener is bound
+- **WHEN** a data-profile or analysis-run launch is requested and the runtime has not been booted
+- **THEN** Postgres readiness is ensured, all workflows are registered (sandbox-step before execute-analysis), and DBOS launches — in that order — and NO callback listener is bound
 
 #### Scenario: Callback mode additionally binds the listener
 
 - **WHEN** the runtime boots in callback transport mode
-- **THEN** the exec-callback listener starts after Postgres readiness and before the schema init
+- **THEN** the exec-callback listener starts after Postgres readiness and before registration
 
 #### Scenario: Subsequent triggers reuse the runtime
 
@@ -48,13 +40,8 @@ re-registering or re-launching.
 
 #### Scenario: One registration cohort
 
-- **WHEN** the runtime boots and DBOS recovery resumes an in-flight workflow of any registered kind (profile, run parent, run child, ephemeral)
+- **WHEN** the runtime boots and DBOS recovery resumes an in-flight workflow of any registered kind (profile, run parent, run child)
 - **THEN** the workflow is found by its registered name — no workflow the cli can trigger is registered after launch
-
-#### Scenario: Stale ephemeral work is swept, not re-dispatched
-
-- **WHEN** a prior process died leaving a pending ephemeral workflow row and a new boot occurs
-- **THEN** the sweep cancels the row before DBOS launch and recovery does not start a sandbox for it
 
 ### Requirement: Local realizations for every data-profile dependency
 
@@ -367,7 +354,6 @@ The realization SHALL be memoized through `workspaceRootForAnalysisId` (see path
 - **WHEN** the resolver resolves the new analysis's root
 - **THEN** the root is the same path, and it holds none of the deleted analysis's artifacts
 
-
 ### Requirement: The composition root realizes the tool-approval gateway
 
 The embedded-runtime boot SHALL construct the harness ask gateway from the app
@@ -387,3 +373,4 @@ pending asks orphaned by a prior process are expired before any new turn runs.
 - **GIVEN** a prior process that died with a pending ask in the ledger
 - **WHEN** the runtime boots
 - **THEN** the sweep marks it expired before the first turn can run
+
