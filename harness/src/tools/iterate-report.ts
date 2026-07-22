@@ -372,6 +372,15 @@ export const submitReportInputSchema = z
     })
     .refine((data) => !(data.report !== undefined && data.sources), {
         message: "Top-level `sources` is for iteration mode. For creation, put sources inside the brief's `sources`.",
+    })
+    // `previewId` names the report the change text applies to. Without one there
+    // is nothing to iterate, and the tool would mint a fresh id — an id the
+    // caller never chose, which its own refusal would then quote back as though
+    // it were a real report worth retrying against.
+    .refine((data) => !(data.modifications !== undefined && data.previewId === undefined), {
+        message:
+            "Iterating with `modifications` requires the `previewId` of the report to change — take it from that report's preview card. " +
+            "To build a new report instead, pass a `report` brief and no `previewId`.",
     });
 
 type ReportBrief = z.infer<typeof ReportBriefSchema>;
@@ -537,13 +546,23 @@ type SubmitReportOutput =
  * object, received string" describes a problem this function already solved, and
  * would send the model chasing it instead of the fields actually missing. A brief
  * that does not decode at all keeps its original failure.
+ *
+ * `validated` is the value the returned issues are addressed to, which is the
+ * repaired brief whenever repair happened. An issue's `path` indexes into that
+ * value alone, so a diagnostic that walks the path — `hintForZodIssue` — must be
+ * handed the same value; walking a decoded field's path into the still-encoded
+ * original resolves nothing and silently yields no hint.
  */
-function acceptBrief(report: unknown): ReturnType<typeof ReportBriefSchema.safeParse> {
+function acceptBrief(report: unknown): {
+    readonly parsed: ReturnType<typeof ReportBriefSchema.safeParse>;
+    readonly validated: unknown;
+} {
     const direct = ReportBriefSchema.safeParse(report);
-    if (direct.success) return direct;
+    if (direct.success) return { parsed: direct, validated: report };
 
     const repaired = repairToolInput(report, direct.error);
-    return repaired === undefined ? direct : ReportBriefSchema.safeParse(repaired);
+    if (repaired === undefined) return { parsed: direct, validated: report };
+    return { parsed: ReportBriefSchema.safeParse(repaired), validated: repaired };
 }
 
 /**
@@ -574,14 +593,14 @@ export function createReportSubmitTool(deps: SubmitReportDeps): Tool {
             // (the validate_plan trade) — never a thrown error.
             let brief: ReportBrief | undefined;
             if (input.report !== undefined) {
-                const parsed = acceptBrief(input.report);
+                const { parsed, validated } = acceptBrief(input.report);
                 if (!parsed.success) {
                     return ok({
                         ok: false as const,
                         issues: parsed.error.issues.map((i) => ({
                             path: i.path.join(".") || "(root)",
                             message: i.message,
-                            hint: hintForZodIssue(i, input.report),
+                            hint: hintForZodIssue(i, validated),
                         })),
                         hint: "The `report` brief did not match the schema. Call `plan_report` for the full schema, fix the fields named in `issues`, and resubmit.",
                     });
@@ -602,13 +621,16 @@ export function createReportSubmitTool(deps: SubmitReportDeps): Tool {
             const metaPathAbs = join(previewRootAbs, PREVIEW_META_FILE);
 
             // Iteration carries no brief: the builder's entire input is the change
-            // text plus the previous version's template. A previewId with no
-            // version behind it would therefore hand it a change request and
-            // nothing to change, and it would silently author a fresh v1 while
-            // being told the previous template is already in its working
-            // directory. The check is a directory read and precedes access
-            // minting, asset staging, and the builder, so a bad id costs no model
-            // turns and leaves no partial state.
+            // text plus the base version's template. A base that is not on disk
+            // therefore hands it a change request and nothing to change, and it
+            // authors a fresh version while being told the previous template is
+            // already in its working directory. Two ways to reach that state — a
+            // preview holding no version at all, and a `baseVersion` naming one
+            // that was never written — so the base is resolved here exactly as the
+            // runner resolves it (`baseVersion ?? latest`) and both are refused.
+            // The check is a directory read and precedes access minting, asset
+            // staging, and the builder, so a bad id costs no model turns and
+            // leaves no partial state.
             if (!brief) {
                 let versionDirs: string[] = [];
                 try {
@@ -616,11 +638,19 @@ export function createReportSubmitTool(deps: SubmitReportDeps): Tool {
                 } catch {
                     /* no preview root — indistinguishable from one holding no versions */
                 }
-                if (latestPreviewVersion(versionDirs) === 0) {
-                    const reason =
+                const latestVersion = latestPreviewVersion(versionDirs);
+                let reason: string | undefined;
+                if (latestVersion === 0) {
+                    reason =
                         `No report exists under previewId '${previewId}', so there is nothing to modify. ` +
                         "Create the report first by calling `submit_report` with a `report` brief and no `previewId`, " +
                         "or retry with the `previewId` shown on the preview card of the report you meant to change.";
+                } else if (input.baseVersion !== undefined && !versionDirs.includes(`v${input.baseVersion}`)) {
+                    reason =
+                        `Preview '${previewId}' has no version ${input.baseVersion} to branch from — its latest version is ${latestVersion}. ` +
+                        "Retry with a `baseVersion` that exists, or omit `baseVersion` to branch from the latest version.";
+                }
+                if (reason !== undefined) {
                     await ctx.emit({
                         type: "data-report-preview-failed",
                         data: {

@@ -101,6 +101,16 @@ describe("submitReportInputSchema", () => {
         const result = submitReportInputSchema.safeParse({ previewId: "prv-abc12345", format: "pdf", modifications: "tweak it" });
         expect(result.success).toBe(false);
     });
+
+    // An iteration names the report it changes. Accepting one without a
+    // previewId leaves the tool minting an id nobody asked for and reporting it
+    // back as the id that failed.
+    test("rejects modifications without a previewId", () => {
+        const result = submitReportInputSchema.safeParse({ modifications: "Add a QC chart." });
+        expect(result.success).toBe(false);
+        const message = result.success ? "" : result.error.issues.map((i) => i.message).join(" ");
+        expect(message).toContain("previewId");
+    });
 });
 
 // ── plan_report — the just-in-time authoring contract ───────────────
@@ -288,6 +298,36 @@ describe("createReportSubmitTool execute", () => {
         expect(paths).not.toContain("(root)");
     });
 
+    // Repair decodes the outer brief but does not recurse, so a field that was
+    // encoded a second time fails on the decoded object. The issue's path indexes
+    // that decoded object — walking it into the original string resolves nothing,
+    // and the model is told a field is the wrong type with no word on why.
+    test("a nested double-encoding is diagnosed against the decoded brief", async () => {
+        const { workspaceRoot, resourceId } = await setupWorkspace();
+        const tool = makeSubmitTool(stubProvider(), workspaceRoot);
+
+        const input = submitReportInputSchema.parse({
+            report: JSON.stringify({
+                title: "QC Report",
+                audience: "Analysts",
+                sources: [],
+                sections: JSON.stringify([{ type: "narrative", title: "Intro", intent: "Hero", content: { prose: "Welcome." } }]),
+            }),
+        });
+        const result = await tool.execute(
+            input,
+            makeCtx(() => {}, resourceId),
+        );
+
+        const value = result._unsafeUnwrap() as { ok?: false; issues?: Array<{ path: string; hint?: string }> };
+        expect(value.ok).toBe(false);
+        const sectionsIssue = (value.issues ?? []).find((i) => i.path === "sections");
+        expect(sectionsIssue).toBeDefined();
+        expect(typeof sectionsIssue?.hint).toBe("string");
+        expect(sectionsIssue?.hint).toContain("JSON-encoded string");
+        expect(sectionsIssue?.hint).toContain("array");
+    });
+
     test("a non-JSON string brief keeps its original failure", async () => {
         const { workspaceRoot, resourceId } = await setupWorkspace();
         const tool = makeSubmitTool(stubProvider(), workspaceRoot);
@@ -403,6 +443,76 @@ describe("createReportSubmitTool execute", () => {
         expect(value.version).toBe(0);
         expect(value.error).toContain(previewId);
         expect(await pathExists(join(workspaceRoot, "previews", previewId, "v1"))).toBe(false);
+    });
+
+    // `baseVersion` picks the template the builder edits, so a version that was
+    // never written reaches the same dead end as an unknown previewId: a change
+    // request, no base template, and an instruction not to rewrite.
+    test("iterating with a baseVersion above the latest version is refused and builds nothing", async () => {
+        const { workspaceRoot, resourceId } = await setupWorkspace();
+        const previewId = "prv-ahead";
+        const previewRoot = join(workspaceRoot, "previews", previewId);
+        await mkdir(join(previewRoot, "v1"), { recursive: true });
+        await writeFile(join(previewRoot, "v1", "report.html.j2"), "<html><body>v1 template</body></html>", "utf8");
+
+        // A provider with no `chat`: had the check not fired, the builder would
+        // have run against this instead of returning the refusal.
+        const tool = makeSubmitTool(stubProvider(), workspaceRoot);
+
+        const events: Array<{ type: string; data?: { version?: number } }> = [];
+        const input = submitReportInputSchema.parse({ previewId, baseVersion: 7, modifications: "Add a QC chart." });
+        const result = await tool.execute(
+            input,
+            makeCtx((e) => {
+                events.push(e as { type: string });
+            }, resourceId),
+        );
+
+        expect(result.isOk()).toBe(true);
+        const value = result._unsafeUnwrap() as { version: number; previewPath: string; error?: string };
+        expect(value.version).toBe(0);
+        expect(value.previewPath).toBe("");
+        // Names the version asked for and the one that exists, so the next call
+        // can be corrected without another probe.
+        expect(value.error).toContain("version 7");
+        expect(value.error).toContain("latest version is 1");
+
+        expect(await pathExists(join(previewRoot, "v8"))).toBe(false);
+        expect(await pathExists(join(previewRoot, "v2"))).toBe(false);
+
+        const failed = events.find((e) => e.type === "data-report-preview-failed");
+        expect(failed?.data?.version).toBe(0);
+    });
+
+    test("iterating with an in-range baseVersion branches from that version's template", async () => {
+        const { workspaceRoot, resourceId } = await setupWorkspace();
+        const previewId = "prv-branch";
+        const previewRoot = join(workspaceRoot, "previews", previewId);
+        await mkdir(join(previewRoot, "v1"), { recursive: true });
+        await writeFile(join(previewRoot, "v1", "report.html.j2"), "<html><body>v1 template</body></html>", "utf8");
+        await mkdir(join(previewRoot, "v2"), { recursive: true });
+        await writeFile(join(previewRoot, "v2", "report.html.j2"), "<html><body>v2 template</body></html>", "utf8");
+
+        const provider = scriptedProvider([
+            makeMessage([toolUseBlock("w1", "write_file", { path: "index.html", content: "<html><body>v3</body></html>" })], "tool_use"),
+            makeMessage([toolUseBlock("s1", "submit_report", { notes: [] })], "tool_use"),
+            makeMessage([textBlock("done")], "end_turn"),
+        ]);
+        const tool = makeSubmitTool(provider, workspaceRoot);
+
+        const input = submitReportInputSchema.parse({ previewId, baseVersion: 1, modifications: "Go back to the v1 layout." });
+        const result = await tool.execute(
+            input,
+            makeCtx(() => {}, resourceId),
+        );
+
+        const value = result._unsafeUnwrap() as { version: number; previewPath: string; error?: string };
+        expect(value.error).toBeUndefined();
+        // The new version still lands above the latest; only the template it
+        // starts from comes from the requested base.
+        expect(value.version).toBe(3);
+        expect(value.previewPath).toBe("v3/index.html");
+        expect(await readFile(join(previewRoot, "v3", "report.html.j2"), "utf8")).toContain("v1 template");
     });
 
     test("a pdf request is refused at the input boundary and adds no version", async () => {
