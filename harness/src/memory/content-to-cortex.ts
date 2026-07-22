@@ -24,6 +24,7 @@
 import type { ModelMessage } from "ai";
 import type { CortexMessage, CortexPart } from "@inflexa-ai/harness/contracts/message.js";
 
+import { isInterruptedMessage } from "./ai-sdk-message-storage.js";
 import type { ToolCardResolver } from "./reconstruct-cards.js";
 import type { StoredMessage } from "./thread-history.js";
 
@@ -61,9 +62,11 @@ async function rowToParts(message: StoredMessage["message"], resolveCard?: ToolC
 
 /**
  * Map stored messages (oldest-first) to `CortexMessage[]`. Rows that produce
- * no renderable parts are dropped, and consecutive same-role rows are coalesced
+ * no renderable parts are dropped, and consecutive assistant rows are coalesced
  * into one message. The first row's `seq` becomes the stable message id.
  * `resolveCard` (optional) reconstructs display cards from `tool_use` blocks.
+ * A row carrying the interruption marker sets `interrupted: true` on the message
+ * it lands in, including when coalesced into an assistant run.
  *
  * Coalescing mirrors the live SSE shape. The agent loop persists each assistant
  * step (typically a single `tool_use`) as its own row, and the `tool_result`
@@ -74,6 +77,11 @@ async function rowToParts(message: StoredMessage["message"], resolveCard?: ToolC
  * tool call, which the UI renders as a stack of single-tool boxes. Merging the
  * run restores the one-bubble-per-turn shape (and lets the UI collapse the tool
  * calls into one group) regardless of how the loop split the turn into rows.
+ *
+ * Coalescing is assistant-only. User rows never legitimately split into a run —
+ * adjacent `user` rows arise only from turns that persisted no reply (an aborted
+ * turn's lone user message followed by the next turn's), and merging them would
+ * fabricate one bubble from two messages the user sent separately.
  */
 export async function contentToCortexMessages(messages: readonly StoredMessage[], resolveCard?: ToolCardResolver): Promise<CortexMessage[]> {
     const out: CortexMessage[] = [];
@@ -81,13 +89,17 @@ export async function contentToCortexMessages(messages: readonly StoredMessage[]
         const parts = await rowToParts(message.message, resolveCard);
         if (parts.length === 0) continue;
         const role = message.message.role === "tool" ? "assistant" : (message.message.role as CortexMessage["role"]);
+        const interrupted = isInterruptedMessage(message.message);
 
         const prev = out[out.length - 1];
-        if (prev && prev.role === role) {
+        if (prev && prev.role === role && role === "assistant") {
             prev.parts.push(...parts);
+            if (interrupted) prev.interrupted = true;
             continue;
         }
-        out.push({ id: String(message.seq), role, parts });
+        const cortex: CortexMessage = { id: String(message.seq), role, parts };
+        if (interrupted) cortex.interrupted = true;
+        out.push(cortex);
     }
     return out;
 }

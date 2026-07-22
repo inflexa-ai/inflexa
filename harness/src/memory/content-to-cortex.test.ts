@@ -8,7 +8,7 @@ import type { Pool } from "pg";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { insertPlan } from "../state/plans.js";
 import { insertRun } from "../state/runs.js";
-import { envelopeMessage } from "./ai-sdk-message-storage.js";
+import { envelopeMessage, markInterruptedMessage } from "./ai-sdk-message-storage.js";
 import { contentToCortexMessages } from "./content-to-cortex.js";
 import { createCardResolver } from "./reconstruct-cards.js";
 import { createThreadHistory, type StoredMessage, type ThreadHistory } from "./thread-history.js";
@@ -121,6 +121,57 @@ describe("contentToCortexMessages", () => {
     it("converts a bare-string content row to a single text part", async () => {
         const cortex = await contentToCortexMessages([stored(0, { role: "user", content: "hello" })]);
         expect(cortex).toEqual([{ id: "0", role: "user", parts: [{ type: "text", text: "hello" }] }]);
+    });
+
+    it("keeps adjacent user rows as two separate messages, never one merged bubble", async () => {
+        // Two consecutive user rows arise from an aborted turn's lone user message
+        // followed by the next turn's user message; merging them would fabricate a
+        // message the user never sent.
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "user", content: "first question" }),
+            stored(1, { role: "user", content: "second question" }),
+        ]);
+        expect(cortex).toEqual([
+            { id: "0", role: "user", parts: [{ type: "text", text: "first question" }] },
+            { id: "1", role: "user", parts: [{ type: "text", text: "second question" }] },
+        ]);
+    });
+
+    it("sets interrupted:true on a coalesced assistant run when any row carries the marker", async () => {
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "assistant", content: [{ type: "text", text: "step one" }] }),
+            stored(1, markInterruptedMessage({ role: "assistant", content: [{ type: "text", text: "cut off here" }] })),
+        ]);
+
+        expect(cortex).toHaveLength(1);
+        expect(cortex[0]!.role).toBe("assistant");
+        expect(cortex[0]!.interrupted).toBe(true);
+        // The run still coalesces into one bubble carrying both rows' parts.
+        expect(cortex[0]!.parts).toEqual([
+            { type: "text", text: "step one" },
+            { type: "text", text: "cut off here" },
+        ]);
+    });
+
+    it("sets interrupted:true on a standalone marked assistant message", async () => {
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "user", content: "go" }),
+            stored(1, markInterruptedMessage({ role: "assistant", content: "partial reply" })),
+        ]);
+
+        expect(cortex[1]!.interrupted).toBe(true);
+        expect(cortex[1]!.parts).toEqual([{ type: "text", text: "partial reply" }]);
+    });
+
+    it("omits the interrupted field entirely on unmarked messages", async () => {
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "user", content: "hi" }),
+            stored(1, { role: "assistant", content: [{ type: "text", text: "hello" }] }),
+        ]);
+
+        expect(cortex).toHaveLength(2);
+        expect("interrupted" in cortex[0]!).toBe(false);
+        expect("interrupted" in cortex[1]!).toBe(false);
     });
 
     it("reconstructs a display card from a tool-call block via resolveCard", async () => {
