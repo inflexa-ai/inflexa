@@ -17,10 +17,14 @@ import {
     createReferenceDownloadProgress,
     downloadReferences,
     offeredReferenceCatalog,
+    onDemandReferenceNote,
+    onDemandReferencePanel,
     parseReferenceIds,
     plainProgressSink,
-    referencePresetPrompt,
-    resolveReferencePreset,
+    referenceNoteFloats,
+    referencePickerBulkSelection,
+    referencePickerModel,
+    referenceSelectionDisclosure,
     runReferenceSetup,
     runRefsList,
     runRefsVerify,
@@ -376,97 +380,135 @@ describe("reference json output", () => {
     });
 });
 
-/** A multi-dataset offer with mixed recommendations — the shape a preset actually resolves against. */
-function presetCatalog(recommended: readonly string[]): ReferenceDataCatalog {
+/** A multi-dataset offer with mixed recommendations — the shape the picker actually resolves against. */
+function pickerCatalog(recommended: readonly string[], ids: readonly string[] = ["alpha", "beta", "gamma"]): ReferenceDataCatalog {
     const base = catalog([FILE_ARTIFACT]).datasets[0];
     if (base === undefined) throw new Error("fixture catalog lost its dataset");
     return {
         version: REFERENCE_DATA_CATALOG_VERSION,
-        datasets: ["alpha", "beta", "gamma"].map((id) => ({
+        datasets: ids.map((id) => ({
             ...base,
             id,
             title: id,
-            recommendation: { group: "testing", recommended: recommended.includes(id) },
+            recommendation: { group: id === "gamma" ? "second" : "testing", recommended: recommended.includes(id) },
         })),
     };
 }
 
-/** A picker that never opens — every preset except `custom` must resolve without one. */
-const unusedPicker = async (): Promise<readonly string[]> => {
-    throw new Error("the per-dataset picker must not open for this preset");
-};
-
-describe("reference selection presets", () => {
-    test("each preset resolves against the offered datasets", async () => {
-        const offered = presetCatalog(["alpha", "gamma"]);
-        expect(await resolveReferencePreset("all", offered, { pick: unusedPicker })).toEqual(["alpha", "beta", "gamma"]);
-        expect(await resolveReferencePreset("recommended", offered, { pick: unusedPicker })).toEqual(["alpha", "gamma"]);
-        expect(await resolveReferencePreset("none", offered, { pick: unusedPicker, announce: () => {} })).toEqual([]);
+describe("reference selection picker", () => {
+    test("the model lists every offered dataset, grouped in catalog order", () => {
+        const model = referencePickerModel(pickerCatalog(["alpha"]));
+        expect(Object.keys(model.groups)).toEqual(["testing", "second"]);
+        expect(model.groups["testing"]?.map((entry) => entry.value)).toEqual(["alpha", "beta"]);
+        expect(model.groups["second"]?.map((entry) => entry.value)).toEqual(["gamma"]);
+        // Every row states what it costs, which is the whole reason the listing is the primary view.
+        expect(model.groups["testing"]?.[0]?.label).toBe("alpha (1 file)");
+        expect(model.groups["testing"]?.[0]?.hint).toBe("recommended");
+        expect(model.groups["testing"]?.[1]?.hint).toBeUndefined();
+        expect(model.everything).toEqual(["alpha", "beta", "gamma"]);
+        expect(model.recommended).toEqual(["alpha"]);
     });
 
-    test("the recommended preset resolves to nothing rather than widening when none are recommended", async () => {
-        const offered = presetCatalog([]);
-        const announced: string[] = [];
-        expect(await resolveReferencePreset("recommended", offered, { pick: unusedPicker, announce: (m) => announced.push(m) })).toEqual([]);
-        // Silently installing all three would be the tempting fallback and the wrong one — a preset
-        // must never plan more than its name says.
-        expect(announced).toEqual([ON_DEMAND_REFERENCE_NOTE]);
+    test("each bulk key replaces the selection outright", () => {
+        const model = referencePickerModel(pickerCatalog(["alpha", "gamma"]));
+        expect(referencePickerBulkSelection("a", model)).toEqual(["alpha", "beta", "gamma"]);
+        expect(referencePickerBulkSelection("n", model)).toEqual([]);
+        expect(referencePickerBulkSelection("r", model)).toEqual(["alpha", "gamma"]);
+        // Shift-held is the same intent, and every other key belongs to the prompt.
+        expect(referencePickerBulkSelection("R", model)).toEqual(["alpha", "gamma"]);
+        expect(referencePickerBulkSelection(" ", model)).toBeUndefined();
+        expect(referencePickerBulkSelection("j", model)).toBeUndefined();
+        expect(referencePickerBulkSelection(undefined, model)).toBeUndefined();
     });
 
-    test("the per-dataset escape opens only for the custom preset and passes its selection through", async () => {
-        const offered = presetCatalog(["alpha"]);
-        expect(await resolveReferencePreset("custom", offered, { pick: async () => ["beta"] })).toEqual(["beta"]);
-    });
-
-    test("a cancelled picker declines, which is distinct from picking nothing", async () => {
-        const offered = presetCatalog(["alpha"]);
-        const announced: string[] = [];
-        const cancelled = await resolveReferencePreset("custom", offered, { pick: async () => undefined, announce: (m) => announced.push(m) });
-        expect(cancelled).toBeUndefined();
-        // A cancellation is not an answer to "how do I get one later?", so it says nothing.
-        expect(announced).toEqual([]);
-
-        const emptied = await resolveReferencePreset("custom", offered, { pick: async () => [], announce: (m) => announced.push(m) });
-        expect(emptied).toEqual([]);
-        expect(announced).toEqual([ON_DEMAND_REFERENCE_NOTE]);
-    });
-
-    test("the prompt opens on recommended when there is something to recommend", () => {
-        const prompt = referencePresetPrompt(presetCatalog(["alpha", "gamma"]));
-        expect(prompt.initialValue).toBe("recommended");
-        expect(prompt.options.map((option) => option.value)).toEqual(["recommended", "all", "none", "custom"]);
-        expect(prompt.options[0]?.hint).toBe("2 datasets · 2 files of upstream-determined size");
-    });
-
-    test("an offered set with nothing recommended opens on nothing, never on everything", () => {
+    test("the recommended key is inert, never destructive, when nothing offered is recommended", () => {
         // The state a second `inflexa setup` run reaches once the recommended datasets are installed:
-        // only optional ones are still offered. clack resolves an initial value it cannot find by
-        // falling back to the first option, so naming an absent entry here would open the prompt
-        // pre-armed on "Everything" and turn an unexamined Enter into the largest possible download.
-        const prompt = referencePresetPrompt(presetCatalog([]));
-        expect(prompt.options.map((option) => option.value)).toEqual(["all", "none", "custom"]);
-        expect(prompt.initialValue).toBe("none");
+        // only optional ones are still offered. Resolving to `[]` here would make a key labelled
+        // "recommended" behave as "none" and silently discard whatever the user had ticked.
+        const model = referencePickerModel(pickerCatalog([]));
+        expect(model.recommended).toEqual([]);
+        expect(referencePickerBulkSelection("r", model)).toBeUndefined();
+        expect(referencePickerBulkSelection("n", model)).toEqual([]);
     });
 
-    test("the prompt never opens on an entry it does not offer, and never on everything", () => {
-        for (const recommended of [["alpha", "beta", "gamma"], ["alpha"], []]) {
-            const prompt = referencePresetPrompt(presetCatalog(recommended));
-            const values = prompt.options.map((option) => option.value);
-            // The invariant that makes the fallback above unreachable rather than merely unlikely.
-            expect(values).toContain(prompt.initialValue);
-            expect(prompt.initialValue).not.toBe("all");
+    test("the legend keeps the recommended key visible, annotated rather than dropped", () => {
+        // The reported defect was the recommended option vanishing from the prompt when the offered
+        // set carried no recommendation — indistinguishable, to the reader, from a lost feature.
+        expect(referencePickerModel(pickerCatalog(["alpha"])).footer).toBe("↑/↓ move · space toggle · a all · r recommended · n none · enter confirm");
+        // Nothing recommended and nothing withheld: the offer genuinely has none to give.
+        expect(referencePickerModel(pickerCatalog([])).footer).toBe("↑/↓ move · space toggle · a all · r recommended (none offered) · n none · enter confirm");
+    });
+
+    test("an empty recommended key names the install that emptied it", () => {
+        // "none offered" is true but unhelpful when the reason is a prior success — the count is what
+        // answers the question the reader actually has, which is where the recommended ones went.
+        const withheld = pickerCatalog(["one", "two"], ["one", "two", "three"]).datasets;
+        expect(referencePickerModel(pickerCatalog([]), withheld).footer).toBe(
+            "↑/↓ move · space toggle · a all · r recommended (2 already installed) · n none · enter confirm",
+        );
+        // It counts the recommended installs, not every install: those are different numbers whenever
+        // an optional dataset is installed too, and only the recommended ones explain this key.
+        expect(referencePickerModel(pickerCatalog([]), pickerCatalog([], ["one"]).datasets).footer).toContain("r recommended (none offered)");
+        // An offer that still has recommendations to give is never annotated at all.
+        expect(referencePickerModel(pickerCatalog(["alpha"]), withheld).footer).toContain("r recommended ·");
+    });
+
+    test("the disclosure names what the listing omits", () => {
+        expect(referenceSelectionDisclosure([])).toEqual([]);
+        expect(referenceSelectionDisclosure(pickerCatalog([], ["one"]).datasets)).toEqual(["1 dataset is already installed and intact — not listed below."]);
+        expect(referenceSelectionDisclosure(pickerCatalog([], ["one", "two"]).datasets)).toEqual([
+            "2 datasets are already installed and intact — not listed below.",
+        ]);
+    });
+
+    test("the on-demand note names both routes to a later download", () => {
+        // Asserted against the copy rather than one layout of it: the prose is wrapped to a width, so
+        // any phrase longer than a few words is split by a line break in some rendering of it.
+        const prose = ON_DEMAND_REFERENCE_NOTE.replace(/\s+/g, " ");
+        // The command keeps its own unwrapped line in every layout, so this one is asserted verbatim.
+        expect(ON_DEMAND_REFERENCE_NOTE).toContain("  inflexa refs download <id>");
+        // The agent route is only honest because `refs download` is registered `approval`, so the
+        // agent proposes the command and the user approves it — the note must promise exactly that.
+        expect(prose).toContain("asks you to approve the download");
+        // It frames the choice instead of consoling an empty one, so it must read as guidance offered
+        // before the fact rather than as a reply to a decision already taken.
+        expect(prose).toContain("taking none now is a real choice");
+    });
+
+    test("the note wraps to whatever width it is given, and never breaks the command", () => {
+        for (const width of [36, 40, 74]) {
+            const lines = onDemandReferenceNote(width);
+            expect(Math.max(...lines.map((line) => line.length))).toBeLessThanOrEqual(width);
+            // A wrapped command is an uncopyable command, so its line survives every layout intact.
+            expect(lines).toContain("  inflexa refs download <id>");
         }
     });
 
-    test("the take-nothing note names both routes to a later download", () => {
-        expect(ON_DEMAND_REFERENCE_NOTE).toContain("inflexa refs download");
-        // The agent route is only honest because `refs download` is registered `approval`, so the
-        // agent proposes the command and the user approves it — the note must promise exactly that.
-        expect(ON_DEMAND_REFERENCE_NOTE).toContain("agent");
-        expect(ON_DEMAND_REFERENCE_NOTE).toContain("approve");
+    test("the floating note is a closed box of exactly the width it was asked for", () => {
+        const panel = onDemandReferencePanel(40);
+        // Uniform width is what lets the renderer pad rows to one column and get a straight edge.
+        expect(new Set(panel.map((line) => line.length))).toEqual(new Set([42]));
+        expect(panel[0]?.startsWith("╭─ No rush ")).toBe(true);
+        expect(panel[0]?.endsWith("╮")).toBe(true);
+        expect(panel[panel.length - 1]).toBe(`╰${"─".repeat(40)}╯`);
+        // Every interior line opens and closes on a border glyph — the invariant the renderer relies
+        // on to colour the frame by position without touching the text between.
+        for (const line of panel.slice(1, -1)) {
+            expect(line.startsWith("│")).toBe(true);
+            expect(line.endsWith("│")).toBe(true);
+        }
+        expect(panel.join("\n")).toContain("inflexa refs download <id>");
     });
 
-    test("setup offers only what is missing, so an intact dataset is outside every preset", async () => {
+    test("the note floats only where the listing keeps a usable width", () => {
+        // The panel plus its gap and the guide rail claim 49 columns; below that the listing would be
+        // squeezed harder than the note is worth, so the note goes back above the list.
+        expect(referenceNoteFloats(105)).toBe(true);
+        expect(referenceNoteFloats(104)).toBe(false);
+        expect(referenceNoteFloats(80)).toBe(false);
+    });
+
+    test("setup offers only what is missing, so an intact dataset is outside every bulk key", async () => {
         seedIntactInstall();
         const fixture = singleFileSource.catalog;
         const inspection = (await inspectReferenceStore(env.refsDir, fixture))._unsafeUnwrap();
@@ -474,8 +516,14 @@ describe("reference selection presets", () => {
 
         const offered = offeredReferenceCatalog(fixture, inspection);
         expect(offered.datasets).toEqual([]);
-        // "Everything" over an intact store plans nothing rather than re-fetching what is already there.
-        expect(await resolveReferencePreset("all", offered, { pick: unusedPicker, announce: () => {} })).toEqual([]);
+        const withheld = inspection.datasets.map((item) => item.dataset);
+        // "Select everything" over an intact store plans nothing rather than re-fetching what is
+        // already there, and the disclosure is what stops that reading as an empty prompt.
+        expect(referencePickerBulkSelection("a", referencePickerModel(offered, withheld))).toEqual([]);
+        expect(referenceSelectionDisclosure(withheld)).toEqual(["1 dataset is already installed and intact — not listed below."]);
+        // The fixture's one dataset is recommended, so installing it reproduces the reported state end
+        // to end: an offer with nothing left to recommend, now accounted for rather than unexplained.
+        expect(referencePickerModel(offered, withheld).footer).toContain("r recommended (1 already installed)");
     });
 });
 
