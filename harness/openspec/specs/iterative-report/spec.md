@@ -2,19 +2,23 @@
 
 ## Purpose
 
-Define iterative report authoring: the conversation agent's `iterate_report`
-tool and the in-process report-builder loop it drives. Reports are built
+Define iterative report authoring: the conversation agent's `plan_report` +
+`submit_report` tools (`plan_report` delivers the brief schema just-in-time so a
+~12k contract does not ride every turn; `submit_report` does the work) and the
+in-process report-builder loop they drive. Reports are built
 **entirely inside the Cortex Node process** — there is no sandbox pod and no
 `python build.py`. The report-builder is a non-plannable in-process agent driven
 by `runToTerminal` over a `passthroughStep` (see the harness-agent-loop spec):
 its file IO is the in-process `versionFs` tool roster, its rendering is Node-side
 Nunjucks (`build_report` → `renderReport`), and its visual self-check is a single
-headless-Chrome screenshot (`preview_snapshot`). The builder's LLM calls flow
+headless-Chrome screenshot (`preview_snapshot`) — available only where the
+injected `PreviewPublisher` can mint a preview URL, so a deployment without one
+builds reports the builder never sees. The builder's LLM calls flow
 through the `ChatProvider` seam under a `forSubAgent` session, so billing resolves
 lazily at the call site — no sandbox, no ALS, no fetch-patch.
 
 The split exists so the agent that *has* the analysis context curates the report
-and the agent that *renders* it never has to discover anything. `iterate_report`
+and the agent that *renders* it never has to discover anything. `submit_report`
 runs a Cortex-side pre-flight that stages every declared source into the
 preview's shared `assets/` dir (parsing CSV/TSV header, first rows, and row
 count into the brief) and hands the report-builder a complete brief — fully
@@ -33,7 +37,7 @@ build, or submit failure it emits `data-report-preview-failed`. The hosted previ
 surface is reached only through the injected `PreviewPublisher` seam (the OSS default
 returns "unavailable" so reports still build without a hosted preview).
 ## Requirements
-### Requirement: iterate_report exposes mutually-exclusive creation and iteration modes
+### Requirement: submit_report exposes mutually-exclusive creation and iteration modes
 
 The conversation agent SHALL submit report briefs through `submit_report` (with
 `plan_report` delivering the brief schema just-in-time), and the input SHALL
@@ -93,12 +97,12 @@ string — the builder reads the prior template and applies it surgically.
 
 #### Scenario: Iteration carries only modification text
 
-- **WHEN** the agent calls `iterate_report` with an existing `previewId` and a `modifications` string
+- **WHEN** the agent calls `submit_report` with an existing `previewId` and a `modifications` string
 - **THEN** the report-builder receives the prior version's `report.html.j2` plus the change text, and applies only the requested changes rather than rewriting
 
 ### Requirement: Pre-flight stages sources and cross-checks creation briefs
 
-Before invoking the builder, `iterate_report` SHALL copy every declared source
+Before invoking the builder, `submit_report` SHALL copy every declared source
 into the preview's shared `assets/` dir and enrich the brief with each asset's
 kind, size, columns, head rows, and row count. For a creation brief it SHALL
 verify that every section asset reference (`figure.imageAsset`,
@@ -113,18 +117,28 @@ result without running the builder.
 
 ### Requirement: Iteration against an unknown preview is refused before any work
 
-The submitting tool SHALL verify, on an iteration call, that the named
-`previewId` resolves to an existing preview holding at least one version, and
-SHALL refuse the call with an actionable error when it does not. Iteration mode
-(`modifications` without a `report`) carries no brief — the builder's entire
-input is the change text plus the previous version's template.
+The submitting tool SHALL verify, on an iteration call, that the version it will
+actually branch from exists, and SHALL refuse the call with an actionable error
+when it does not. Iteration mode (`modifications` without a `report`) carries no
+brief — the builder's entire input is the change text plus the previous version's
+template — so a base that does not exist leaves it a change request and nothing
+to change, while the prompt asserts the prior template is already in its working
+directory.
+
+Verifying the resolved base rather than mere existence is what makes the check
+sufficient. The base is `baseVersion` when supplied and the latest version
+otherwise, and the runner tolerates a missing base template silently, so a
+`previewId` that holds versions still reaches the builder empty-handed when
+`baseVersion` names one of them that does not exist.
+
+`modifications` SHALL additionally require a `previewId` at the input boundary.
+Iteration without one cannot identify a report to change; accepting it mints a
+fresh id whose only appearance is in the refusal that follows, which reads as an
+id the caller is meant to reuse.
 
 The refusal SHALL happen before minting preview access, staging any source, or
-starting the report-builder, so an unknown id costs no model turns. Without this
-check the run silently produces a fresh `v1` with no base template while the
-builder is instructed that the previous template "is already in your working
-directory" and forbidden from rewriting it — leaving it with a change request and
-nothing to change.
+starting the report-builder, so a bad reference costs no model turns and leaves
+no partial state.
 
 #### Scenario: Iterating an unknown preview id is refused
 
@@ -142,6 +156,23 @@ nothing to change.
 - **GIVEN** a preview whose latest version is 2
 - **WHEN** the agent calls `submit_report` with `modifications` for that `previewId`
 - **THEN** the check passes and version 3 is produced from version 2's template
+
+#### Scenario: Branching from a version that does not exist is refused
+
+- **GIVEN** a preview whose latest version is 1
+- **WHEN** the agent calls `submit_report` with `modifications` and `baseVersion: 7`
+- **THEN** the call fails with an error naming both the requested version and the latest that exists, no version directory is created, and the report-builder is never started
+
+#### Scenario: Branching from an earlier existing version still succeeds
+
+- **GIVEN** a preview holding versions 1 and 2
+- **WHEN** the agent calls `submit_report` with `modifications` and `baseVersion: 1`
+- **THEN** version 3 is produced from version 1's template rather than version 2's
+
+#### Scenario: Iteration without a previewId is refused at the boundary
+
+- **WHEN** the agent calls `submit_report` with `modifications` and no `previewId`
+- **THEN** input validation rejects the call, and no preview id is generated for it
 
 ### Requirement: The report-builder runs in-process via runToTerminal, with no sandbox or Python
 
@@ -294,7 +325,7 @@ and that every referenced local asset path resolves on disk, returning
 `problems[]` when any check fails. Only on success does it record the terminal
 outcome (with optional `notes`). The runner SHALL additionally apply a
 phantom-success guard — treating a claimed success whose `index.html` is missing
-or empty as a failure. On a recorded success `iterate_report` SHALL emit a
+or empty as a failure. On a recorded success `submit_report` SHALL emit a
 `data-report-preview` part `{ id, previewId, version, title, previewPath, format }`;
 on failure it SHALL emit `data-report-preview-failed`
 `{ id, previewId, version, reason, errorKind }`.
@@ -307,7 +338,7 @@ on failure it SHALL emit `data-report-preview-failed`
 #### Scenario: A clean submit emits data-report-preview
 
 - **WHEN** `submit_report` records a success for version N
-- **THEN** `iterate_report` emits a `data-report-preview` part carrying the title, `v{N}/index.html` preview path, and format, and returns `{ previewId, version: N, previewPath }`
+- **THEN** `submit_report` emits a `data-report-preview` part carrying the title, `v{N}/index.html` preview path, and format, and returns `{ previewId, version: N, previewPath }`
 
 
 ### Requirement: Agent-facing copy names only capabilities that exist

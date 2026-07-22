@@ -97,9 +97,39 @@ describe("reportBuilderPrompt", () => {
         // stated in this prompt is unfalsifiable and drifts from the seam in
         // silence. The prompt states no lifetime at all.
         expect(reportBuilderPrompt).not.toMatch(/\bTTLs?\b/i);
-        expect(reportBuilderPrompt).not.toMatch(/\d+\s*-?\s*(?:secs?|seconds?|mins?|minutes?|hrs?|hours?|days?)\b/i);
+
+        // What is pinned is a stated *access lifetime*, not durations as a
+        // class — so a figure only offends when lifetime vocabulary sits
+        // beside it. The builder legitimately describes its own timing ("waits
+        // up to N seconds for the theme-ready signal"), and a guard that
+        // tripped on those would be met by deleting it rather than scoping it,
+        // costing the lifetime check itself.
+        expect(statedAccessLifetimes(reportBuilderPrompt)).toEqual([]);
     });
 });
+
+/** Any "N units of time" figure, whatever it is a figure about. */
+const DURATION_FIGURE = /\d+\s*-?\s*(?:secs?|seconds?|mins?|minutes?|hrs?|hours?|days?)\b/gi;
+
+/** Vocabulary that makes a duration a claim about how long access stays good. */
+const LIFETIME_VOCABULARY = /\b(?:ttls?|expir\w*|valid|lifetime|lasts?|good for|access window)\b/i;
+
+/** How far either side of a figure still counts as the same sentence. */
+const CLAIM_WINDOW = 48;
+
+/**
+ * Excerpts of `text` where a duration figure sits next to lifetime vocabulary
+ * — i.e. reads as a promise about how long preview access lasts. Returned as
+ * excerpts rather than a boolean so a failure shows the offending sentence.
+ */
+function statedAccessLifetimes(text: string): string[] {
+    return [...text.matchAll(DURATION_FIGURE)]
+        .map((match) => {
+            const start = match.index ?? 0;
+            return text.slice(Math.max(0, start - CLAIM_WINDOW), start + match[0].length + CLAIM_WINDOW);
+        })
+        .filter((excerpt) => LIFETIME_VOCABULARY.test(excerpt));
+}
 
 /** Ids from `vocabulary` that appear in `text` on word boundaries, sorted. */
 function mentionedToolIds(text: string, vocabulary: ReadonlySet<string>): string[] {
