@@ -124,6 +124,10 @@ export interface ThreadHistory {
  * A turn starts on a `user` message. In AI SDK message terms tool results
  * are `tool`-role messages, so a mid-turn tool continuation never carries
  * the `user` role and cannot open a turn.
+ *
+ * The SQL twin in `retractLastTurn` — the `message_envelope->'message'->>'role'
+ * = 'user'` boundary predicate — must define the same turn start as this does,
+ * one over stored envelopes and one over live `ModelMessage`s. Keep them in step.
  */
 function isGenuineUserStart(message: ModelMessage): boolean {
     return message.role === "user";
@@ -371,7 +375,11 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
                     // whether the thread has any rows at all. The boundary is the
                     // greatest `seq` whose stored envelope is a user-role message — a
                     // turn starts on a user message, mirroring `isGenuineUserStart`, and
-                    // `tool`-role continuations never open one. `has_rows` separates the
+                    // `tool`-role continuations never open one. The coupling is
+                    // test-guarded: an append-then-retract round-trip fails loudly (the
+                    // just-appended turn reads back as `no-user-turn` instead of
+                    // `retracted`) the moment this envelope path drifts from what
+                    // `isGenuineUserStart` reads on the live message. `has_rows` separates the
                     // two nothing-to-delete cases: an empty thread (`empty-thread`) from
                     // one holding only non-user rows (`no-user-turn`, anomalous data we
                     // refuse rather than empty). `MAX(seq)` aggregates the bigint column;
