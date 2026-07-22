@@ -662,13 +662,15 @@ function isEmptyAssistantShell(assistantId: string | null): boolean {
 }
 
 /**
- * Whether the just-sent message can still be retracted for editing: a turn is busy and its assistant
- * has produced nothing (see {@link isEmptyAssistantShell}). The retract up-arrow binding reads this for
- * its `enabled`, and {@link retract} re-checks it after the abort settles (a delta can race the press).
- * Read inside a tracking scope for reactivity.
+ * Whether the just-sent message can still be retracted for editing: a turn is busy, its assistant has
+ * produced nothing (see {@link isEmptyAssistantShell}), and no retract is already in flight. The retract
+ * up-arrow binding reads this for its `enabled`, and {@link retract} re-checks it after the abort settles
+ * (a delta can race the press). Folding {@link retractInFlight} in here disables the binding for the whole
+ * retract sequence, so a second up-arrow during the settlement window cannot re-enter and run the durable
+ * removal a second time. Read inside a tracking scope for reactivity.
  */
 export function canRetract(): boolean {
-    return chatStatus() === "busy" && isEmptyAssistantShell(currentAssistantId);
+    return chatStatus() === "busy" && isEmptyAssistantShell(currentAssistantId) && !retractInFlight;
 }
 
 /**
@@ -995,6 +997,15 @@ let turnStartedAt = 0;
 // of which session is mounted), so `resetHotState` deliberately does not clear it.
 const pendingRetract = new Set<string>();
 
+// True from the moment an in-flight `retract` passes its entry gate until its `finally`. Folded into
+// `canRetract` so the up-arrow binding disables for the whole sequence, and re-checked at `retract`'s
+// own entry so a concurrent second call is a no-op. This flag — NOT the generation token — is what makes
+// the durable tail removal run at most once: `runDurableRetract` is deliberately left un-token-gated so a
+// session swap mid-retract cannot cancel it (the orphan must still be removed), which leaves re-entry as
+// the one remaining path that would reach it twice — the second removal deleting the thread's NEW,
+// already-answered tail after the first press removed the orphan. Guarding entry closes that path.
+let retractInFlight = false;
+
 /**
  * Clear all hot state for an in-place session swap: cancel any in-flight request, drop the streamed
  * buffer, the error, the messages, and the per-turn adapter state, and return the status to idle.
@@ -1143,24 +1154,32 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
     const chat = createStreamingChat(runtime.conversation.provider, (text) => void emitForTurn({ type: "text-delta", text }));
     const session = buildChatSession("tui-chat", opts.analysisId, opts.sessionId);
 
-    const outcome = await seams.runChatTurn({
-        pool: runtime.pool,
-        conversationAgent: runtime.conversationAgent,
-        chat,
-        history: createThreadHistory(runtime.pool),
-        session,
-        emit: emitForTurn,
-        signal: myTurn.signal,
-        // Bind the ask seam to THIS turn's scope: a `ctx.ask` tool pauses on the runtime gateway
-        // carrying the turn's analysis/thread, its abort signal, and its guarded emit sink, so the
-        // gateway's `data-ask` emissions and its poll ride the same signal and sink as every other
-        // turn event (a swap/reset that supersedes the turn drops them at `emitForTurn`).
-        ask: (req) => runtime.askGateway.ask(req, { analysisId: opts.analysisId, threadId: opts.sessionId, signal: myTurn.signal, emit: emitForTurn }),
-        analysisId: opts.analysisId,
-        // The pg thread binds 1:1 to the session, so a plan launched here stamps its run.
-        threadId: opts.sessionId,
-        userInput: opts.userText,
-    });
+    // The engine is contractually non-rejecting — every failure returns a `TurnOutcome`. But `turnSettled`
+    // is awaited by the retract path, so this promise MUST settle on EVERY exit: a contract-violating throw
+    // that skipped `settleTurn` below would hang a waiting retract forever with the status stuck busy. Catch
+    // a rejection, synthesize the established `failed` outcome — carrying the throw (typed `unknown`, since a
+    // throw carries anything) as its `cause` — and fall through to the SAME settle + failure handling as a
+    // real `failed` outcome, so the UI shows the failure banner rather than hanging.
+    const outcome: TurnOutcome = await seams
+        .runChatTurn({
+            pool: runtime.pool,
+            conversationAgent: runtime.conversationAgent,
+            chat,
+            history: createThreadHistory(runtime.pool),
+            session,
+            emit: emitForTurn,
+            signal: myTurn.signal,
+            // Bind the ask seam to THIS turn's scope: a `ctx.ask` tool pauses on the runtime gateway
+            // carrying the turn's analysis/thread, its abort signal, and its guarded emit sink, so the
+            // gateway's `data-ask` emissions and its poll ride the same signal and sink as every other
+            // turn event (a swap/reset that supersedes the turn drops them at `emitForTurn`).
+            ask: (req) => runtime.askGateway.ask(req, { analysisId: opts.analysisId, threadId: opts.sessionId, signal: myTurn.signal, emit: emitForTurn }),
+            analysisId: opts.analysisId,
+            // The pg thread binds 1:1 to the session, so a plan launched here stamps its run.
+            threadId: opts.sessionId,
+            userInput: opts.userText,
+        })
+        .catch((cause: unknown): TurnOutcome => ({ kind: "failed", cause }));
 
     // Settle the retained turn promise BEFORE the supersession guard: a retract IS a superseding writer
     // (it claimed the token to abort this turn) and must still observe this outcome — it awaits
@@ -1328,70 +1347,83 @@ async function runDurableRetract(pool: Pool, threadId: string, myRetract: number
  * the token makes this a first-class store writer: a session swap that supersedes it mid-sequence drops
  * every remaining store write and the composer seed, while the durable removal — committed at the
  * keypress and thread-scoped — still completes against the old thread.
+ *
+ * Re-entrant-safe: {@link retractInFlight} guards entry, so a second press during the settlement window
+ * is a no-op. That guard, not the generation token, is what keeps the durable removal once-only — the
+ * token deliberately does NOT gate the durable step (a swap must not cancel it), so re-entry would be the
+ * only way to run it twice (see the flag's declaration).
  */
 export async function retract(seedComposer: (text: string) => void, seams: RetractSeams = realRetractSeams): Promise<void> {
-    // The binding gates on `canRetract`, but re-check so a stray or racing call is still safe.
+    // The binding gates on `canRetract`, but re-check so a stray or racing call is still safe. This runs
+    // BEFORE `retractInFlight` is set, so a first press sees its own flag clear and proceeds while a second
+    // press during the settlement window sees the flag (folded into `canRetract`) and bails here.
     if (!canRetract()) return;
+    retractInFlight = true;
+    try {
+        const runtime = seams.runtime();
+        const settled = turnSettled;
+        const assistantId = currentAssistantId;
+        const threadId = currentSessionId;
+        const startedAt = turnStartedAt;
+        if (!runtime || !settled || !assistantId || !threadId) return;
 
-    const runtime = seams.runtime();
-    const settled = turnSettled;
-    const assistantId = currentAssistantId;
-    const threadId = currentSessionId;
-    const startedAt = turnStartedAt;
-    if (!runtime || !settled || !assistantId || !threadId) return;
+        // The user message opening this turn sits directly before the assistant placeholder: capture its id
+        // (to splice) and its text (to seed the composer) before the abort can move anything.
+        const assistantIdx = messages.findIndex((m) => m.id === assistantId);
+        const userMsg = assistantIdx > 0 ? messages[assistantIdx - 1] : undefined;
+        if (!userMsg || userMsg.role !== "user") return;
+        const userId = userMsg.id;
+        const firstPart = userMsg.parts[0];
+        const originalText = firstPart?.type === "text" ? firstPart.text : "";
 
-    // The user message opening this turn sits directly before the assistant placeholder: capture its id
-    // (to splice) and its text (to seed the composer) before the abort can move anything.
-    const assistantIdx = messages.findIndex((m) => m.id === assistantId);
-    const userMsg = assistantIdx > 0 ? messages[assistantIdx - 1] : undefined;
-    if (!userMsg || userMsg.role !== "user") return;
-    const userId = userMsg.id;
-    const firstPart = userMsg.parts[0];
-    const originalText = firstPart?.type === "text" ? firstPart.text : "";
+        // Claim the store-write token: the retract becomes a first-class store writer a later load or
+        // session swap can supersede, and the aborted turn's own `finishTurn` drops at `send`'s C1 guard —
+        // so the teardown below is the sole writer for this turn.
+        const myRetract = ++loadGeneration;
 
-    // Claim the store-write token: the retract becomes a first-class store writer a later load or
-    // session swap can supersede, and the aborted turn's own `finishTurn` drops at `send`'s C1 guard —
-    // so the teardown below is the sole writer for this turn.
-    const myRetract = ++loadGeneration;
+        // Fire the turn's abort so the engine unwinds and its unconditional `appendTurn` lands.
+        abortController?.abort();
 
-    // Fire the turn's abort so the engine unwinds and its unconditional `appendTurn` lands.
-    abortController?.abort();
+        // Await settlement — the append has run by the time the engine returns, so the durable removal below
+        // targets the just-appended orphan rather than racing ahead of it.
+        const outcome = await settled;
 
-    // Await settlement — the append has run by the time the engine returns, so the durable removal below
-    // targets the just-appended orphan rather than racing ahead of it.
-    const outcome = await settled;
-
-    // A text delta (or any part) can race the keypress. If output landed, DOWNGRADE to a plain
-    // interrupt: keep the message, run the normal settle (flush + interrupted marker + idle) via
-    // `finishTurn`, and remove nothing. Token-gated — a swap mid-await already cleared and re-owns the store.
-    if (!isEmptyAssistantShell(assistantId)) {
-        if (loadGeneration === myRetract) {
-            finishTurn(outcome, assistantId, startedAt);
-            closeTurnState();
-            notify({ kind: "info", text: "Kept your message — the assistant had already started answering." });
+        // A text delta (or any part) can race the keypress. If output landed, DOWNGRADE to a plain
+        // interrupt: keep the message, run the normal settle (flush + interrupted marker + idle) via
+        // `finishTurn`, and remove nothing. Token-gated — a swap mid-await already cleared and re-owns the store.
+        if (!isEmptyAssistantShell(assistantId)) {
+            if (loadGeneration === myRetract) {
+                finishTurn(outcome, assistantId, startedAt);
+                closeTurnState();
+                notify({ kind: "info", text: "Kept your message — the assistant had already started answering." });
+            }
+            return;
         }
-        return;
-    }
 
-    // A genuine no-output retract. Splice the live store + return to idle (token-gated: a swap mid-await
-    // already cleared it). `closeTurnState` nulls the emit sink FIRST so a late straggler event cannot
-    // re-append to the message being removed.
-    if (loadGeneration === myRetract) {
-        closeTurnState();
-        spliceRetractedTurn(userId, assistantId);
-        setChatStatus("idle");
-    }
+        // A genuine no-output retract. Splice the live store + return to idle (token-gated: a swap mid-await
+        // already cleared it). `closeTurnState` nulls the emit sink FIRST so a late straggler event cannot
+        // re-append to the message being removed.
+        if (loadGeneration === myRetract) {
+            closeTurnState();
+            spliceRetractedTurn(userId, assistantId);
+            setChatStatus("idle");
+        }
 
-    // The durable removal runs even when a swap superseded the UI writes (committed at the keypress,
-    // thread-scoped) — but only when this turn's append actually landed an orphan to remove.
-    if (turnAppendLanded(outcome)) {
-        await runDurableRetract(runtime.pool, threadId, myRetract, seams);
-    }
+        // The durable removal runs even when a swap superseded the UI writes (committed at the keypress,
+        // thread-scoped) — but only when this turn's append actually landed an orphan to remove.
+        if (turnAppendLanded(outcome)) {
+            await runDurableRetract(runtime.pool, threadId, myRetract, seams);
+        }
 
-    // Seed the composer with the original text — even on a durable fault (the user still gets their text
-    // back). Dropped only when a swap superseded the sequence.
-    if (loadGeneration === myRetract) {
-        seedComposer(originalText);
+        // Seed the composer with the original text — even on a durable fault (the user still gets their text
+        // back). Dropped only when a swap superseded the sequence.
+        if (loadGeneration === myRetract) {
+            seedComposer(originalText);
+        }
+    } finally {
+        // Clear the in-flight guard on EVERY exit (early return, throw, or normal completion) so a later
+        // legitimate retract is never permanently wedged. This `finally` is the flag's sole owner.
+        retractInFlight = false;
     }
 }
 
