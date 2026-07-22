@@ -77,13 +77,38 @@ Resuming a partial transfer SHALL be attempted only for a `pinned` artifact. An 
 - **WHEN** a partial `.part` exists for an `unpinned` artifact
 - **THEN** the CLI discards it and fetches the whole file again rather than appending to bytes the upstream may have since replaced
 
+### Requirement: Reference datasets transfer with bounded concurrency
+
+The installer SHALL transfer several datasets at once under a fixed concurrency cap, defaulting to four, and SHALL expose that cap on its dependency edge so a caller can pin it. Concurrency SHALL apply across datasets; artifacts within one dataset MAY remain sequential.
+
+Concurrency SHALL NOT weaken any existing guarantee: each dataset SHALL stage into installer-owned storage that no other concurrent dataset can read, write, or delete, and SHALL activate atomically with its receipt written last, exactly as a serial install does. The staging isolation SHALL hold even when the caller supplies a fixed attempt identifier, since a shared attempt directory would let one dataset's cleanup destroy another's staged files.
+
+The installed result SHALL be reported in plan order regardless of completion order, and a failure SHALL report the lowest-ordered failing dataset rather than whichever failed first in time. After a failure the installer SHALL start no further datasets, SHALL allow already-started ones to settle, and SHALL leave every other dataset either fully activated or untouched.
+
+#### Scenario: Several datasets transfer at once
+
+- **WHEN** an install plan contains more datasets than the concurrency cap
+- **THEN** at most the cap are in flight at any moment, and every dataset is installed
+
+#### Scenario: Concurrent staging cannot collide
+
+- **WHEN** datasets install concurrently under a caller-supplied fixed attempt identifier
+- **THEN** each dataset stages in its own directory, and every dataset activates with the bytes it downloaded
+
+#### Scenario: Output does not depend on scheduling
+
+- **WHEN** datasets complete in an order other than the plan's
+- **THEN** the installed result is reported in plan order, and a failing plan reports the lowest-ordered failure
+
 ### Requirement: Reference transfers report combined progress
 
 While reference artifacts are transferring, the CLI SHALL show one combined readout for the whole plan carrying: the number of artifacts completed out of the planned artifact total, the cumulative bytes downloaded so far, and the current transfer rate. The readout SHALL cover the entire selection, not one dataset or one file at a time.
 
-The installer SHALL expose progress as a headless seam on its dependency edge — an optional reporter alongside the existing `fetch`/clock/attempt seams — and SHALL emit artifact-started, byte-delta, and artifact-completed events through it. All terminal rendering SHALL live in the command layer; the installer SHALL contain no presentation. Reporting SHALL NOT alter install semantics: staging, verification, activation, receipts, and the `Result` contract SHALL be identical whether or not a reporter is supplied, and a reporter that throws SHALL be contained so it can never fail a download.
+The installer SHALL expose progress as a headless seam on its dependency edge — an optional reporter alongside the existing `fetch`/clock/attempt seams — and SHALL emit artifact-started, byte-delta, and artifact-completed events through it. Byte-delta events SHALL identify the artifact they belong to, so that deltas from concurrent transfers are attributed correctly rather than accumulating onto whichever artifact started most recently. All terminal rendering SHALL live in the command layer; the installer SHALL contain no presentation. Reporting SHALL NOT alter install semantics: staging, verification, activation, receipts, and the `Result` contract SHALL be identical whether or not a reporter is supplied, and a reporter that throws SHALL be contained so it can never fail a download.
 
-Because the catalog pins no sizes, the CLI SHALL NOT invent a plan-wide byte total, a percentage of bytes, or an estimated time remaining. The planned artifact count is the only legitimate denominator. An upstream `Content-Length`, when present and parseable as a positive finite integer, MAY refine the readout for the artifact currently in flight; its absence SHALL be treated as the normal case and SHALL degrade the readout rather than blocking or misreporting it.
+Because the catalog pins no sizes, the CLI SHALL NOT invent a plan-wide byte total, a percentage of bytes, or an estimated time remaining. The planned artifact count is the only legitimate denominator. Upstream-declared sizes, when present and parseable as positive finite integers, MAY refine the readout for the artifacts currently in flight; their absence SHALL be treated as the normal case and SHALL degrade the readout rather than blocking or misreporting it.
+
+The readout SHALL report how many artifacts are in flight. When every in-flight artifact declared a size, it MAY additionally report the bytes received and the sizes declared across that active set, labelled so it reads as a statement about the artifacts currently transferring and never as a plan total. When any in-flight artifact declared no size, the byte fraction SHALL be omitted rather than summed over a partial denominator.
 
 The transfer rate SHALL be measured over a trailing window rather than averaged over the whole run, and SHALL be omitted from the readout entirely — never rendered as `NaN`, `Infinity`, or a placeholder zero — until enough samples exist to state it.
 
@@ -97,6 +122,16 @@ Every byte quantity the CLI prints SHALL be rendered through one shared formatte
 
 - **WHEN** a selection of several datasets is transferring
 - **THEN** one readout reports artifacts completed out of the planned total, the cumulative bytes downloaded, and the current rate, advancing as each artifact finishes
+
+#### Scenario: The readout reports the in-flight set, not one file
+
+- **WHEN** several artifacts are transferring at once and each declared a size
+- **THEN** the readout reports how many are in flight together with the bytes received and declared across exactly that set, and drops the fraction once any in-flight artifact declared no size
+
+#### Scenario: Concurrent byte deltas are attributed to their own artifact
+
+- **WHEN** byte deltas from two concurrent transfers interleave
+- **THEN** each artifact's in-flight bytes reflect only its own deltas, and the cumulative total reflects both
 
 #### Scenario: An upstream that reports no size never becomes a fabricated total
 
@@ -112,11 +147,6 @@ Every byte quantity the CLI prints SHALL be rendered through one shared formatte
 
 - **WHEN** no bytes arrive for longer than the sampling window
 - **THEN** the rate segment decays out of the readout rather than continuing to display the last rate the connection sustained
-
-#### Scenario: A declared size refines only the artifact in flight
-
-- **WHEN** the upstream declares a size for the artifact currently transferring
-- **THEN** the readout adds that artifact's transferred-of-declared bytes, and drops the segment when the artifact completes or when the next artifact declares no size
 
 #### Scenario: A plan with nothing to fetch shows no readout
 
