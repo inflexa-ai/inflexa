@@ -85,6 +85,7 @@ describe("runReportIteration (closure-state outcome)", () => {
                 pool: NO_POOL,
                 model: "anthropic/test",
                 templatesDir: "/templates",
+                skillsDir: "/skills",
                 chrome: {},
             },
             {
@@ -154,6 +155,7 @@ describe("runReportIteration (closure-state outcome)", () => {
                 pool: NO_POOL,
                 model: "anthropic/test",
                 templatesDir: "/templates",
+                skillsDir: "/skills",
                 chrome: {},
             },
             {
@@ -228,6 +230,7 @@ describe("runReportIteration (closure-state outcome)", () => {
                 pool: NO_POOL,
                 model: "anthropic/test",
                 templatesDir: "/templates",
+                skillsDir: "/skills",
                 chrome: {},
             },
             {
@@ -303,6 +306,7 @@ describe("runReportIteration (closure-state outcome)", () => {
                 pool: NO_POOL,
                 model: "anthropic/test",
                 templatesDir: "/templates",
+                skillsDir: "/skills",
                 chrome: {},
             },
             {

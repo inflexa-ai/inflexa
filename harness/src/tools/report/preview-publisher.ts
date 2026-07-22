@@ -14,6 +14,28 @@
 export type PreviewMintResult =
     { ok: true; data: { baseUrl: string; token: string; expiresAt: string } } | { ok: false; status?: number; error: { message?: string } };
 
+/** The not-ok arm of the seam's result — what a failed mint is allowed to carry. */
+export type PreviewMintFailure = Extract<PreviewMintResult, { ok: false }>;
+
+/**
+ * Renders a failed mint as the line an agent reads back from a preview tool.
+ *
+ * The failure shape is sparse by design: a realization with no HTTP transport
+ * behind it supplies neither a status nor, necessarily, a message. Naming a
+ * field the seam left unset would put the literal `status=undefined` in front
+ * of the model, so the message carries only what actually arrived. This lives
+ * beside the type because its whole job is to honour that type's optionality —
+ * every tool holding the seam owes the same message, and one of them owning
+ * the wording would make the others depend on a peer for a seam-wide concern.
+ */
+export function describeMintFailure(failure: PreviewMintFailure): string {
+    const detail: string[] = [];
+    if (failure.status !== undefined) detail.push(`status=${failure.status}`);
+    const message = failure.error.message?.trim();
+    if (message) detail.push(message);
+    return detail.length > 0 ? `preview-access mint failed: ${detail.join(" ")}` : "preview-access mint failed";
+}
+
 export interface PreviewPublisher {
     mintPreviewAccess(resourceId: string, previewId: string): Promise<PreviewMintResult>;
 }

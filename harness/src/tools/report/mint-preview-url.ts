@@ -14,7 +14,7 @@ import { ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import { defineTool, type Tool, type ToolError } from "../define-tool.js";
-import type { PreviewPublisher } from "./preview-publisher.js";
+import { describeMintFailure, type PreviewPublisher } from "./preview-publisher.js";
 
 type MintPreviewUrlOutput = { ok: false; error: string } | { ok: true; url: string; expiresAt: string };
 
@@ -50,7 +50,7 @@ export function createMintPreviewUrlTool(state: MintPreviewUrlToolState): Tool {
             if (!result.ok) {
                 return ok({
                     ok: false as const,
-                    error: `preview-access mint failed: status=${result.status} ${result.error.message ?? ""}`.trim(),
+                    error: describeMintFailure(result),
                 });
             }
             const url = `${result.data.baseUrl.replace(/\/?$/, "/")}v${version}/index.html?t=${result.data.token}`;

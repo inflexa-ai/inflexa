@@ -24,7 +24,7 @@ import { defineTool, type Tool, type ToolError } from "../define-tool.js";
 import { withPage, type ChromeConfig } from "../../lib/chrome.js";
 import { createNoopLogger } from "../../lib/console-logger.js";
 import type { Logger } from "../../lib/logger.js";
-import type { PreviewMintResult, PreviewPublisher } from "./preview-publisher.js";
+import { describeMintFailure, type PreviewPublisher } from "./preview-publisher.js";
 import type { PreviewUrlCell } from "./mint-preview-url.js";
 
 type PreviewSnapshotOutput =
@@ -54,23 +54,6 @@ export interface PreviewSnapshotToolState {
     readonly chrome: ChromeConfig;
     /** Operational logging seam; omitted falls back to no-op. */
     readonly logger?: Logger;
-}
-
-/** The not-ok arm of the seam's result — what a failed mint is allowed to carry. */
-type PreviewMintFailure = Extract<PreviewMintResult, { ok: false }>;
-
-/**
- * The seam's failure shape is sparse by design: a realization with no HTTP
- * transport behind it supplies neither a status nor, necessarily, a message.
- * Naming a field the seam left unset would put the literal `status=undefined`
- * in front of the model, so the message carries only what actually arrived.
- */
-function describeMintFailure(failure: PreviewMintFailure): string {
-    const detail: string[] = [];
-    if (failure.status !== undefined) detail.push(`status=${failure.status}`);
-    const message = failure.error.message?.trim();
-    if (message) detail.push(message);
-    return detail.length > 0 ? `preview-access mint failed: ${detail.join(" ")}` : "preview-access mint failed";
 }
 
 export function createPreviewSnapshotTool(state: PreviewSnapshotToolState): Tool {
