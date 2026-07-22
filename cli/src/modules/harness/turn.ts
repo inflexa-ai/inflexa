@@ -44,8 +44,9 @@ import { enterChatTurn } from "./agent_switch.ts";
  * - `ok` — the loop finished; `fallbackText` is `finalText(result.messages)`,
  *   the turn's final assistant text (a streamed surface suppresses it as a
  *   duplicate; a delta-less surface renders it).
- * - `aborted` — the turn-scoped signal fired mid-run; `runAgent` threw its
- *   AbortError before returning, so only `[userMessage]` was persisted.
+ * - `aborted` — the turn-scoped signal fired mid-run; the run resolves with an
+ *   "aborted" finish carrying its partial transcript, so the engine persists
+ *   `[userMessage, ...partial]` (an empty partial degenerates to `[userMessage]`).
  * - `failed` — `runAgent` threw for a non-abort reason; `cause` is the raw throw.
  * - `prepare_failed` — `prepareChatTurn` threw (e.g. Postgres unreachable).
  * - `thread_gone` — the thread belongs to another analysis (an absent id is re-created
@@ -80,7 +81,7 @@ export type RunChatTurnArgs = {
     readonly session: AgentSession;
     /** The surface's event sink — loop/tool/data events flow here during `runAgent`. */
     readonly emit: EmitFn;
-    /** Turn-scoped cancellation — the caller aborts it; on abort the engine persists `[userMessage]`. */
+    /** Turn-scoped cancellation — the caller aborts it; on abort the engine persists `[userMessage, ...partial]` from the resolved run. */
     readonly signal: AbortSignal;
     /**
      * The per-turn user-approval binding a `ctx.ask` tool pauses on. The caller
@@ -141,12 +142,12 @@ type RunPhase = { readonly kind: "ok"; readonly fallbackText: string } | { reado
  * Run one chat turn headlessly: `prepareChatTurn` (ownership check, title seed,
  * status load, message assembly) → `runAgent` on the streaming provider under the
  * turn-scoped signal → UNCONDITIONAL `appendTurn`. The append runs on every
- * `runAgent`-reaching path so the turn persists even through an abort/throw: on a
- * clean return that is `[userMessage, ...loopOutput]`; on abort/throw only
- * `[userMessage]`, because `runAgent` throws BEFORE returning its message array
- * (the AbortError propagates out of the streaming provider), leaving the partial
- * loop output structurally unavailable — though whatever streamed before the
- * abort is already on the surface.
+ * `runAgent`-reaching path so the turn persists even through an abort/throw. A
+ * clean return persists `[userMessage, ...loopOutput]`. An interrupted run resolves
+ * with an "aborted" finish and its partial transcript, so the same
+ * `[userMessage, ...partial]` shape persists — an empty partial degenerating to
+ * `[userMessage]`. A throw that never reached the streaming wrapper (the defensive
+ * abort path, or a genuine failure) persists `[userMessage]` alone.
  *
  * Returns a {@link TurnOutcome}; the caller renders it. No sink, no clack, no
  * console here — presentation is entirely the transport's concern.
@@ -183,15 +184,24 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
             seams.run(conversationAgent, initial, session, { provider: chat, signal, emit, runStep: passthroughStep, ...(ask ? { ask } : {}) }),
             (e): unknown => e,
         ).match(
-            (result): { readonly phase: RunPhase; readonly toPersist: ModelMessage[] } => ({
-                phase: { kind: "ok", fallbackText: finalText(result.messages) },
-                toPersist: [userMessage, ...result.messages.slice(initial.length)],
-            }),
-            // `runAgent` threw. Classify as an abort ONLY when the throw is the AbortError the streaming
-            // provider re-throws verbatim (`streaming-chat.ts` re-throws it as control flow, name
-            // "AbortError" — a DOMException, which IS an `Error` instance under bun/node) AND our own signal
-            // is aborted. A provider failure that merely RACED a Ctrl+C would otherwise be swallowed as an
-            // abort and never logged; everything but a genuine abort stays `failed`, carrying its cause.
+            (result): { readonly phase: RunPhase; readonly toPersist: ModelMessage[] } => {
+                // An interrupted run resolves here — the streaming wrapper surfaces the abort as a
+                // `finish.reason` of "aborted" carrying the partial transcript, not as a throw — so its
+                // partial loop output is persisted with the same shape a clean turn uses. An empty partial
+                // degenerates to `[userMessage]`, matching the no-output retract window's durable behavior.
+                const toPersist = [userMessage, ...result.messages.slice(initial.length)];
+                return result.finish.reason === "aborted"
+                    ? { phase: { kind: "aborted" }, toPersist }
+                    : { phase: { kind: "ok", fallbackText: finalText(result.messages) }, toPersist };
+            },
+            // `runAgent` threw rather than resolving. For an abort this is the DEFENSIVE path — one that
+            // never reached the streaming wrapper (e.g. the signal fired before the first model call), so
+            // no resolved "aborted" finish carried a partial and only the user message survives here.
+            // Classify as an abort ONLY when the throw is an AbortError (a DOMException named "AbortError",
+            // which IS an `Error` instance under bun/node — so the name check keys on that, not on
+            // `instanceof AbortError`) AND our own signal is aborted. A provider failure that merely RACED a
+            // Ctrl+C would otherwise be swallowed as an abort and never logged; everything but a genuine
+            // abort stays `failed`, carrying its cause.
             (cause): { readonly phase: RunPhase; readonly toPersist: ModelMessage[] } => {
                 const aborted = signal.aborted && cause instanceof Error && cause.name === "AbortError";
                 return {

@@ -618,6 +618,36 @@ describe("the interrupted marker on an aborted turn", () => {
     });
 });
 
+describe("the interrupted marker survives a transcript reload", () => {
+    const emptyPage = (total: number): MessagePage => ({ messages: [], total, page: 0, perPage: 200, hasMore: false });
+    // A reconstructed transcript: a user turn, then the interrupted assistant turn carrying its partial —
+    // the durable `interrupted` field is what the reload must re-derive onto the UI message.
+    const interruptedTranscript = (): CortexMsg[] =>
+        [
+            { id: "u1", role: "user", parts: [{ type: "text", text: "?" }] },
+            { id: "a1", role: "assistant", parts: [{ type: "text", text: "partial answer" }], interrupted: true },
+        ] as unknown as CortexMsg[];
+
+    test("a loaded transcript flags the marked message and leaves the unmarked one clean", async () => {
+        const loadSeams: LoadSeams = {
+            runtime: () => stubRuntime,
+            loadPage: () => okAsync(emptyPage(2)),
+            toCortex: async () => interruptedTranscript(),
+        };
+        await loadMessages(SID, AID, loadSeams);
+
+        expect(messages.length).toBe(2);
+        // The user turn carries no marker; the interrupted assistant turn renders exactly what the live
+        // abort showed — the muted marker, re-derived from the persisted field.
+        expect(messages[0]?.role).toBe("user");
+        expect(messages[0]?.interrupted).toBeUndefined();
+        expect(messages[1]?.role).toBe("assistant");
+        expect(messages[1]?.interrupted).toBe(true);
+        const part = messages[1]?.parts.find((p) => p.type === "text");
+        expect(part?.type === "text" ? part.text : undefined).toBe("partial answer");
+    });
+});
+
 // The retract is a first-class store writer (it claims the generation token), so it must supersede a
 // transcript load the same way `send` does — mirrors the load-vs-turn interleaving in conversation.test.ts.
 describe("a transcript load resolving mid-retract", () => {
