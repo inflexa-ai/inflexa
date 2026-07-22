@@ -10,28 +10,46 @@ import { interruptHintLabel } from "./keymap.ts";
 // keeps the cases independent of the user's live `app.interrupt` binding.
 const KEY = "esc";
 
+/** The one state where the interrupt binding is genuinely live: busy turn, stream pane focused, nothing stacked. */
+const REACHABLE = { busy: true, insertMode: false, dialogOpen: false, askDocked: false, armed: false, key: KEY };
+
 describe("interruptHintFor — the interrupt-hint visibility gate", () => {
     test("busy + NORMAL mode → the resting hint is present", () => {
         // The default reachable state: a turn is busy and the stream pane holds focus, so the interrupt
         // binding is live and the hint honestly advertises it.
-        expect(interruptHintFor({ busy: true, insertMode: false, armed: false, key: KEY })).toEqual({ label: `${KEY} interrupt`, armed: false });
+        expect(interruptHintFor(REACHABLE)).toEqual({ label: `${KEY} interrupt`, armed: false });
     });
 
     test("busy + INSERT mode → no hint (the interrupt binding is unreachable there)", () => {
-        // The bug this gate fixes: post-submit the composer is focused (INSERT) and esc only switches modes,
-        // so the hint must be absent rather than promise an interrupt.
-        expect(interruptHintFor({ busy: true, insertMode: true, armed: false, key: KEY })).toBeUndefined();
+        // Post-submit the composer is focused (INSERT) and esc only switches modes, so the hint must be
+        // absent rather than promise an interrupt.
+        expect(interruptHintFor({ ...REACHABLE, insertMode: true })).toBeUndefined();
     });
 
-    test("idle → no hint regardless of mode", () => {
-        expect(interruptHintFor({ busy: false, insertMode: false, armed: false, key: KEY })).toBeUndefined();
-        expect(interruptHintFor({ busy: false, insertMode: true, armed: false, key: KEY })).toBeUndefined();
+    test("busy + a stacked dialog → no hint (the dialog owns esc)", () => {
+        // A dialog takes focus off the composer, so the INSERT gate alone would let the hint through — but
+        // the interrupt layer is inert under a modal and esc cancels the dialog instead.
+        expect(interruptHintFor({ ...REACHABLE, dialogOpen: true })).toBeUndefined();
     });
 
-    test("armed → the confirm wording, still only in NORMAL mode", () => {
-        expect(interruptHintFor({ busy: true, insertMode: false, armed: true, key: KEY })).toEqual({ label: `${KEY} again to interrupt`, armed: true });
-        // Armed does not override the INSERT gate — an armed window while the composer is focused shows nothing.
-        expect(interruptHintFor({ busy: true, insertMode: true, armed: true, key: KEY })).toBeUndefined();
+    test("busy + a docked ask → no hint (the prompt owns esc)", () => {
+        // Same shape as the dialog case: an active approval prompt focuses itself, so the composer is
+        // unfocused while esc belongs to the prompt (back-to-choices), not the interrupt.
+        expect(interruptHintFor({ ...REACHABLE, askDocked: true })).toBeUndefined();
+    });
+
+    test("idle → no hint regardless of where focus sits", () => {
+        expect(interruptHintFor({ ...REACHABLE, busy: false })).toBeUndefined();
+        expect(interruptHintFor({ ...REACHABLE, busy: false, insertMode: true })).toBeUndefined();
+        expect(interruptHintFor({ ...REACHABLE, busy: false, dialogOpen: true })).toBeUndefined();
+    });
+
+    test("armed → the confirm wording, and armed never overrides a reachability gate", () => {
+        expect(interruptHintFor({ ...REACHABLE, armed: true })).toEqual({ label: `${KEY} again to interrupt`, armed: true });
+        // An armed window is still only advertised where the second press can actually land.
+        expect(interruptHintFor({ ...REACHABLE, armed: true, insertMode: true })).toBeUndefined();
+        expect(interruptHintFor({ ...REACHABLE, armed: true, dialogOpen: true })).toBeUndefined();
+        expect(interruptHintFor({ ...REACHABLE, armed: true, askDocked: true })).toBeUndefined();
     });
 });
 

@@ -1,4 +1,4 @@
-import { ResultAsync } from "neverthrow";
+import { ResultAsync, okAsync } from "neverthrow";
 import {
     createThreadHistory,
     finalText,
@@ -241,4 +241,49 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
  */
 export function retractTailTurn(pool: Pool, threadId: string): ResultAsync<RetractOutcome, DbError> {
     return createThreadHistory(pool).retractLastTurn(threadId);
+}
+
+/**
+ * The outcome of {@link healTailOrphan}: whatever the tail retract reported, plus the one verdict only
+ * the heal can reach — the tail is a real, answered turn, so there is no orphan and nothing was touched.
+ */
+export type HealOutcome = RetractOutcome | { readonly kind: "not-orphaned" };
+
+/**
+ * Injectable store edge so {@link healTailOrphan}'s three verdicts are unit-testable offline (no
+ * Postgres) — mirrors {@link ChatTurnSeams}. Production callers omit the trailing argument and get the
+ * real `createThreadHistory`; tests pass a fake thread store staged at the tail shape under test.
+ */
+export type HealSeams = {
+    /** Build the thread store over the pool. Real: `createThreadHistory`. */
+    readonly history: (pool: Pool) => ThreadHistory;
+};
+
+const realHealSeams: HealSeams = { history: createThreadHistory };
+
+/**
+ * Remove a thread's tail turn ONLY IF it still looks like the orphan a failed retract left behind — a
+ * turn holding exactly one message, the user's, with no assistant reply.
+ *
+ * The check exists because the fault that schedules a heal is ambiguous about what it left on disk. A
+ * retract commits in one transaction, but a `COMMIT` whose acknowledgement is lost (a connection dropped
+ * at exactly the wrong moment) surfaces as a `DbError` from a transaction the server actually applied. A
+ * blind retry would then take a SECOND turn off the tail — the previous, fully-answered exchange —
+ * silently destroying real history to undo something already undone. Re-reading the tail first turns
+ * that into a no-op: if the orphan is gone, the tail is an answered turn and the heal declines.
+ *
+ * Two whole-thread reads (`loadPage` reads every row and slices by turn, so the first call is what
+ * yields the turn count the second one indexes with) are affordable precisely because this path is
+ * reached only after a database fault, never on a healthy retract.
+ */
+export function healTailOrphan(pool: Pool, threadId: string, seams: HealSeams = realHealSeams): ResultAsync<HealOutcome, DbError> {
+    const history = seams.history(pool);
+    return history.loadPage(threadId, 0, 1).andThen((first) => {
+        if (first.total === 0) return okAsync<HealOutcome, DbError>({ kind: "empty-thread" });
+        return history.loadPage(threadId, first.total - 1, 1).andThen((tail) => {
+            const only = tail.messages.length === 1 ? tail.messages[0] : undefined;
+            if (!only || only.message.role !== "user") return okAsync<HealOutcome, DbError>({ kind: "not-orphaned" });
+            return history.retractLastTurn(threadId);
+        });
+    });
 }

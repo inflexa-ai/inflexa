@@ -80,7 +80,7 @@ Because focus is always on some widget, the dialog host's focus save/restore SHA
 
 The chat's `StatusBar` SHALL additionally accept an OPTIONAL workspace-path segment, rendered as a muted ` | <path>` segment immediately after the state segment — part of the left-flowing segments, NOT the right-aligned hints region. `app.tsx` SHALL pass it only when the terminal width is at or above the design-system breakpoint token (`size.breakpointWide`), sourcing the value from the workspace store's `workingDir` with the home directory contracted to `~`; below the breakpoint the prop is absent and the path renders in the sidebar instead (see the sidebar requirement). `StatusBar` itself stays dumb — it renders whatever path string it is given and keeps its no-domain-imports rule.
 
-The chat's right hints region SHALL be state-aware for the interrupt affordance: while a turn is busy AND the chat is in NORMAL mode (composer blurred — the one state where the interrupt binding is reachable) it SHALL include the interrupt hint, and while the interrupt is armed the label SHALL flip to its "again to interrupt" form with a visually distinct (accent) treatment. When idle, or while the composer holds focus, no interrupt hint renders — a hint promising a press the focused layer would consume is worse than none, and the abort-chord hint still covers INSERT. The label SHALL derive from the live `app.interrupt` binding (`chordLabel`, never hand-written), and both the label and the armed state SHALL arrive from `app.tsx` as data — `StatusBar` keeps its no-domain-imports rule.
+The chat's right hints region SHALL be state-aware for the interrupt affordance: while a turn is busy AND the interrupt binding is reachable it SHALL include the interrupt hint, and while the interrupt is armed the label SHALL flip to its "again to interrupt" form with a visually distinct (accent) treatment. Reachable means the stream pane holds focus — so the hint SHALL be absent whenever focus sits elsewhere while the turn runs: the composer (INSERT), a stacked dialog, or a docked approval prompt, each of which owns the chord for its own purpose. When idle, no interrupt hint renders. A hint promising a press the focused layer would consume is worse than none, and the abort-chord hint still covers those states. The label SHALL derive from the live `app.interrupt` binding (`chordLabel`, never hand-written), and both the label and the armed state SHALL arrive from `app.tsx` as data — `StatusBar` keeps its no-domain-imports rule.
 
 #### Scenario: Shows analysis name and live state
 
@@ -116,6 +116,11 @@ The chat's right hints region SHALL be state-aware for the interrupt affordance:
 
 - **WHEN** a turn is streaming while the composer holds focus (INSERT)
 - **THEN** no interrupt hint renders (the abort-chord hint still shows)
+
+#### Scenario: A stacked dialog or docked ask keeps the hint honest
+
+- **WHEN** a turn is streaming while a dialog is open or an approval prompt is docked
+- **THEN** no interrupt hint renders, because that surface owns the chord
 
 #### Scenario: Arming flips the hint
 

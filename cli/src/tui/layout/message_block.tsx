@@ -127,8 +127,9 @@ export function MessageBlock(props: MessageBlockProps) {
             <text fg={theme()[props.role === "user" ? MARKERS.you.role : MARKERS.assistant.role]}>
                 <Bold>{props.role === "user" ? `${MARKERS.you.glyph} You` : `${MARKERS.assistant.glyph} Inflexa`}</Bold>
                 <Fg role="fgMuted">{meta()}</Fg>
-                {/* Muted suffix marking a turn the user interrupted after it began streaming — plain ASCII so
-                it never touches the fixed gutter; the enclosing <text> already resolves an explicit fg. */}
+                {/* Muted suffix marking a turn the user interrupted after it began streaming. It rides the
+                header row, never the fixed gutter, so its separator can be the same registry middot the
+                meta uses; the enclosing <text> already resolves an explicit fg. */}
                 <Show when={props.interrupted}>
                     <Fg role="fgMuted">{` ${GLYPHS.middot} interrupted`}</Fg>
                 </Show>

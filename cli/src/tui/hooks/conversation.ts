@@ -21,7 +21,7 @@ import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setu
 import { workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
 import { isSubAgentEvent, readAskPart, readPlanCard, readRunCard } from "../../modules/harness/chat_printer.ts";
 import { readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "../../modules/harness/artifact_open.ts";
-import { buildChatSession, retractTailTurn, runChatTurn, type TurnOutcome } from "../../modules/harness/turn.ts";
+import { buildChatSession, healTailOrphan, retractTailTurn, runChatTurn, type HealOutcome, type TurnOutcome } from "../../modules/harness/turn.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { leaderSeq, sequenceLabel } from "../keymap.ts";
 import { harnessRuntime } from "./boot.ts";
@@ -1001,7 +1001,10 @@ let turnStartedAt = 0;
 // Keyed by thread id (== session id); SURVIVES a session swap (the orphan is on that thread regardless
 // of which session is mounted), so `resetHotState` deliberately does not clear it. The retention is
 // unbounded by design: an entry for a thread never sent to again lives for the process lifetime —
-// accepted, since the cost is one string per abandoned thread.
+// accepted, since the cost is one string per abandoned thread. It does NOT survive the process: an
+// orphan whose heal never got a send to ride on stays on the thread, where it reads as an unanswered
+// question — harmless context, which is why the heal is an opportunistic retry rather than durable
+// bookkeeping of its own.
 const pendingRetract = new Set<string>();
 
 // True from the moment an in-flight `retract` passes its entry gate until its `finally`. Folded into
@@ -1069,14 +1072,15 @@ export type SendSeams = {
      */
     readonly reloadTranscript?: (sessionId: string, analysisId: string) => Promise<void>;
     /**
-     * Durable tail-turn retract, used only to HEAL a pending removal a prior retract left for this
-     * thread — retried once before this send appends (see {@link retract}). Defaults to the embedder's
-     * {@link retractTailTurn} over the turn's pool; tests inject a fake to observe the heal offline.
+     * Guarded heal of a pending removal a prior retract left for this thread — retried once before this
+     * send appends (see {@link retract}). Defaults to {@link healTailOrphan}, which re-reads the tail and
+     * declines unless it is still the lone user turn the failed retract left; tests inject a fake to
+     * observe the heal offline.
      */
-    readonly retractTurn?: (pool: Pool, threadId: string) => ResultAsync<RetractOutcome, DbError>;
+    readonly healRetract?: (pool: Pool, threadId: string) => ResultAsync<HealOutcome, DbError>;
 };
 
-const realSendSeams: SendSeams = { runtime: harnessRuntime, runChatTurn, retractTurn: retractTailTurn };
+const realSendSeams: SendSeams = { runtime: harnessRuntime, runChatTurn, healRetract: healTailOrphan };
 
 /**
  * Send a user turn through the shared harness turn engine. Owns the turn-scoped
@@ -1116,14 +1120,19 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
     const myTurnLoad = ++loadGeneration;
 
     // Heal a pending durable retract for this thread before this turn appends: a prior retract's tail
-    // removal faulted transiently, leaving an orphan turn on the thread. Retry it ONCE — success removes
+    // removal faulted, possibly leaving an orphan turn on the thread. Retry it ONCE — success removes
     // the orphan; a second failure just proceeds (an unanswered orphan is harmless context, and a
     // transient database fault must never wedge the conversation). Rare by construction: the flag is set
-    // only by a failed retract.
+    // only by a failed retract. The retry goes through the GUARDED heal, which declines when the tail is
+    // an answered turn — the failure that scheduled it cannot tell a rolled-back retract from one whose
+    // commit landed but lost its acknowledgement, and only the second read distinguishes them.
     if (pendingRetract.has(opts.sessionId)) {
         pendingRetract.delete(opts.sessionId);
-        await (seams.retractTurn ?? retractTailTurn)(runtime.pool, opts.sessionId).match(
-            () => {},
+        await (seams.healRetract ?? healTailOrphan)(runtime.pool, opts.sessionId).match(
+            (result) => {
+                if (result.kind !== "retracted")
+                    getLogger("chat").debug({ threadId: opts.sessionId, kind: result.kind }, "pending retract heal removed nothing");
+            },
             (e) => getLogger("chat").debug({ err: e, threadId: opts.sessionId }, "pending retract heal failed; proceeding with send"),
         );
         // The heal is awaited work inside this token-claimed sequence, so the swap re-check after it is
@@ -1354,10 +1363,11 @@ async function runDurableRetract(pool: Pool, threadId: string, myRetract: number
  * this; `seedComposer` is the widget seam the UI supplies to put the original text back in the composer
  * (cursor placement is the widget's job), keeping this hook free of renderable refs.
  *
- * Sequence (D-order): claim the store-write token → `abort()` → await the turn's settlement →
- * re-validate the no-output window. A racing delta downgrades to a plain interrupt (message kept,
- * notice, nothing removed). Otherwise splice the live store, run the durable tail retract — SKIPPED
- * when no orphan landed (append faulted, or a prepare/thread bail) — and seed the composer. Claiming
+ * Sequence: claim the store-write token → `abort()` → await the turn's settlement → re-validate the
+ * no-output window. A racing delta downgrades to a plain interrupt (message kept, notice, nothing
+ * removed). Otherwise run the durable tail retract — SKIPPED when no orphan landed (append faulted, or a
+ * prepare/thread bail) — and only then splice the live store and seed the composer, so the transcript
+ * and the composer move together rather than either side of a database round-trip. Claiming
  * the token makes this a first-class store writer: a session swap that supersedes it mid-sequence drops
  * every remaining store write and the composer seed, while the durable removal — committed at the
  * keypress and thread-scoped — still completes against the old thread.
@@ -1414,25 +1424,28 @@ export async function retract(seedComposer: (text: string) => void, seams: Retra
             return;
         }
 
-        // A genuine no-output retract. Splice the live store + return to idle (token-gated: a swap mid-await
-        // already cleared it). `closeTurnState` nulls the emit sink FIRST so a late straggler event cannot
-        // re-append to the message being removed.
-        if (loadGeneration === myRetract) {
-            closeTurnState();
-            spliceRetractedTurn(userId, assistantId);
-            setChatStatus("idle");
-        }
-
-        // The durable removal runs even when a swap superseded the UI writes (committed at the keypress,
-        // thread-scoped) — but only when this turn's append actually landed an orphan to remove.
+        // A genuine no-output retract. The durable removal goes FIRST, while the transcript still shows the
+        // message and the status still reads busy, so that the whole visible transition — message gone,
+        // text back in the composer, idle — lands as one step below. Splicing first would instead put the
+        // latency of a database round-trip between "your message disappeared" and "here it is back",
+        // leaving the user staring at an empty focused composer and a transcript missing what they just
+        // sent, with no indication which way it is going to resolve. The removal is thread-scoped and
+        // already committed to at the keypress, so it runs even when a swap supersedes the UI writes —
+        // but only when this turn's append actually landed an orphan to remove.
         if (turnAppendLanded(outcome)) {
             await runDurableRetract(runtime.pool, threadId, myRetract, seams);
         }
 
-        // Seed the composer with the original text — even on a durable fault (the user still gets their text
-        // back). Dropped only when a swap superseded the sequence.
+        // The visible half, token-gated: a swap during the removal above already cleared the store and
+        // re-owns the surface, and the composer is shared across sessions, so seeding then would drop this
+        // session's text into the swapped-in one. `closeTurnState` nulls the emit sink FIRST so a late
+        // straggler event cannot re-append to the message being removed. The seed is a request, not a
+        // command — the widget declines it if the user has started typing (see `retractLayer`).
         if (loadGeneration === myRetract) {
+            closeTurnState();
+            spliceRetractedTurn(userId, assistantId);
             seedComposer(originalText);
+            setChatStatus("idle");
         }
     } finally {
         // Clear the in-flight guard on EVERY exit (early return, throw, or normal completion) so a later

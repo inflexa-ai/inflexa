@@ -82,11 +82,16 @@ export type RetractLayerDeps = {
  *
  * Live ONLY while the composer is empty AND the retract window holds (a busy turn that has produced
  * nothing; the hook owns that gate via `canRetract`). Gated to an EMPTY buffer so a non-empty composer
- * disables the binding and `up` falls through to the textarea's own cursor movement, and so the seed can
- * never overwrite text the user has typed. Its own layer (not folded into the clear-input/scroll-mode
- * layer) so the empty+retractable gate does not also disable those. `setText` leaves the caret at offset
- * 0, so `gotoBufferEnd` lands it after the seeded text ready to edit. Idle up-arrow stays inert here,
- * leaving the chord free for future recall.
+ * disables the binding and `up` falls through to the textarea's own cursor movement. Its own layer (not
+ * folded into the clear-input/scroll-mode layer) so the empty+retractable gate does not also disable
+ * those. `setText` leaves the caret at offset 0, so `gotoBufferEnd` lands it after the seeded text ready
+ * to edit. Idle up-arrow stays inert here, leaving the chord free for future recall.
+ *
+ * The seed re-checks emptiness rather than trusting the gate that armed it: a retract spans an abort, a
+ * turn settlement, and a durable removal, and the composer stays focused across all of it, so the user
+ * may have started typing a replacement in the meantime. Their keystrokes outrank a restoration they no
+ * longer want, so a touched buffer declines the seed instead of being overwritten by it. Deciding that
+ * here keeps the hook free of renderable refs — it asks, the widget answers.
  */
 export function retractLayer(deps: RetractLayerDeps): LayerConfig {
     const target = deps.target;
@@ -99,8 +104,9 @@ export function retractLayer(deps: RetractLayerDeps): LayerConfig {
                 chord: KEYS.up,
                 run: () =>
                     void deps.conversation.retract((t) => {
-                        target?.setText(t);
-                        target?.gotoBufferEnd();
+                        if (!target || target.plainText !== "") return;
+                        target.setText(t);
+                        target.gotoBufferEnd();
                     }),
                 desc: "Retract message",
                 group: "Chat",
@@ -158,13 +164,31 @@ export function interruptLayer(deps: InterruptLayerDeps): LayerConfig {
 /**
  * Derive the status-bar interrupt affordance from the live turn state, or `undefined` when it must not
  * show. Pure over its inputs so both `App`'s `interruptHint` thunk and its unit coverage exercise ONE
- * derivation. Present only while a turn is `busy` AND the chat is in NORMAL mode (`insertMode` false, the
- * stream pane holds focus): the interrupt binding is reachable only there, so showing the hint while the
- * composer is focused (INSERT) would advertise a key that merely switches modes. The label + armed styling
- * come from {@link interruptHintLabel} (the shared wording source).
+ * derivation, and the label + armed styling come from {@link interruptHintLabel} (the shared wording).
+ *
+ * The hint is a PROMISE about a key, so it may only appear where {@link interruptLayer} is actually
+ * live: a turn is busy and the stream pane holds focus. Everything else here is a way that focus can sit
+ * somewhere else while the turn is still busy, each of which owns the interrupt chord for its own
+ * purpose — the composer switches INSERT→NORMAL, a stacked dialog cancels, a docked ask goes back to its
+ * choices. Advertising an interrupt in any of them names a key that does something else entirely.
+ *
+ * A live text selection is the one exclusion NOT gated here, deliberately. `selectionClearLayer` outranks
+ * the interrupt and consumes the press, so the hint is momentarily wrong — but the selection is read off
+ * the renderer rather than a signal, so folding it in would make the hint depend on a value this
+ * derivation is never re-run for, trading a brief over-promise for an arbitrarily stale one. The case is
+ * self-correcting in the direction that matters: the press clears the selection, and the next one
+ * behaves exactly as the hint says.
  */
-export function interruptHintFor(opts: { busy: boolean; insertMode: boolean; armed: boolean; key: string }): { label: string; armed: boolean } | undefined {
-    if (!opts.busy || opts.insertMode) return undefined;
+export function interruptHintFor(opts: {
+    busy: boolean;
+    insertMode: boolean;
+    dialogOpen: boolean;
+    askDocked: boolean;
+    armed: boolean;
+    key: string;
+}): { label: string; armed: boolean } | undefined {
+    if (!opts.busy) return undefined;
+    if (opts.insertMode || opts.dialogOpen || opts.askDocked) return undefined;
     return { label: interruptHintLabel(opts.key, opts.armed), armed: opts.armed };
 }
 
@@ -625,15 +649,17 @@ export function App(props: AppProps) {
     };
 
     // The interrupt affordance for the status bar's right hints region, derived from the live
-    // `app.interrupt` binding + the armed signal so it can never drift from the real key: absent when idle
-    // OR while the composer is focused (INSERT — the interrupt binding is pane-focus-gated and unreachable
-    // there, so the hint would over-promise), the muted resting hint while a turn is busy in NORMAL mode,
-    // and the accented "again to interrupt" form once a first press has armed the window. The gate + wording
-    // live in the pure {@link interruptHintFor}. Passed to StatusBar as plain data — it stays domain-free.
+    // `app.interrupt` binding + the armed signal so it can never drift from the real key: the muted resting
+    // hint while the interrupt is genuinely reachable, the accented "again to interrupt" form once a first
+    // press has armed the window, and nothing at all otherwise. Every input is a reactive read, so the thunk
+    // re-derives whenever any of them moves; the gate + wording live in the pure {@link interruptHintFor}.
+    // Passed to StatusBar as plain data — it stays domain-free.
     const interruptHint = (): { label: string; armed: boolean } | undefined =>
         interruptHintFor({
             busy: chatStatus() === "busy",
             insertMode: composerFocused(),
+            dialogOpen: dialogIsOpen(),
+            askDocked: activeAsk() !== null,
             armed: conversation.interruptArmed(),
             key: keybindLabel("app.interrupt"),
         });

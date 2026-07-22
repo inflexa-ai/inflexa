@@ -110,6 +110,39 @@ describe("up-arrow retract layer (rendered, real keyboard bus)", () => {
         }
     });
 
+    test("a buffer typed into during the retract declines the seed rather than being overwritten", async () => {
+        // The gate that armed the retract saw an empty composer, but the retract spans an abort, a turn
+        // settlement, and a durable removal with the composer still focused — long enough for the user to
+        // start typing a replacement. The seed is a request the widget may refuse, and here it must.
+        let ta!: TextareaRenderable;
+        const controls: RetractControls = {
+            conversation: {
+                canRetract: () => true,
+                retract: async (seed) => {
+                    // Stand in for the user typing while the durable half of the retract is in flight.
+                    ta.setText("a replacement typed mid-retract");
+                    seed("original text");
+                },
+            },
+            onFallthrough: () => {},
+            onRef: (r) => (ta = r),
+        };
+        const setup = await testRender(() => <RetractHarness {...controls} />, { width: 40, height: 10 });
+        const settle = makeSettle(setup);
+        try {
+            await settle();
+            expect(ta.plainText).toBe("");
+
+            setup.mockInput.pressArrow("up");
+            await settle();
+
+            // The user's own keystrokes won — the restoration did not clobber them.
+            expect(ta.plainText).toBe("a replacement typed mid-retract");
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
     test("non-empty buffer: the binding is disabled and up falls through", async () => {
         let ta!: TextareaRenderable;
         let retractCalls = 0;

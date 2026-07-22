@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { okAsync, errAsync, type ResultAsync } from "neverthrow";
 import type { AgentChat, AgentDefinition, DbError, EmitFn, ModelMessage, Pool, ThreadHistory } from "@inflexa-ai/harness";
 
-import { buildChatSession, runChatTurn, type ChatTurnSeams, type TurnOutcome } from "./turn.ts";
+import { buildChatSession, healTailOrphan, runChatTurn, type ChatTurnSeams, type TurnOutcome } from "./turn.ts";
 
 // The engine is exercised entirely offline: the `prepare`/`run` harness edges are
 // injected as fakes (no Postgres, no model, no credits — the BootSeams pattern),
@@ -158,5 +158,81 @@ describe("runChatTurn", () => {
             expect(outcome.fallbackText).toBe("the answer");
             expect(outcome.appendError).toEqual(DB_ERROR);
         }
+    });
+});
+
+// --- healTailOrphan ---------------------------------------------------------
+
+/**
+ * A `ThreadHistory` staged at one tail shape: `loadPage` reports `turns.length` as the turn count and
+ * returns the addressed turn's rows, so the heal's two reads see a real thread without a Postgres. Every
+ * `retractLastTurn` is counted, which is the whole point — the guard's job is to not call it.
+ */
+function stagedHistory(turns: ModelMessage[][]): { history: ThreadHistory; retracts: () => number } {
+    let retracts = 0;
+    const history: ThreadHistory = {
+        appendTurn: () => okAsync(undefined),
+        loadRecent: () => okAsync(turns.flat()),
+        loadPage: (_threadId, page, perPage) => {
+            const turn = turns[page] ?? [];
+            return okAsync({
+                messages: turn.map((message, seq) => ({ seq, envelope: { kind: "ai-sdk-model-message" as const, aiSdkMajor: 7 as const, message }, message })),
+                total: turns.length,
+                page,
+                perPage,
+                hasMore: page + 1 < turns.length,
+            });
+        },
+        retractLastTurn: () => {
+            retracts++;
+            return okAsync({ kind: "retracted", messages: turns[turns.length - 1]?.length ?? 0 });
+        },
+    };
+    return { history, retracts: () => retracts };
+}
+
+describe("healTailOrphan", () => {
+    test("removes the tail when it is still the lone user turn a failed retract left", async () => {
+        const { history, retracts } = stagedHistory([[userMessage, assistantMessage], [userMessage]]);
+
+        const outcome = (await healTailOrphan(pool, THREAD_ID, { history: () => history }))._unsafeUnwrap();
+
+        expect(outcome).toEqual({ kind: "retracted", messages: 1 });
+        expect(retracts()).toBe(1);
+    });
+
+    test("declines when the tail is an answered turn — the retract it is healing already landed", async () => {
+        // The failure that scheduled a heal cannot distinguish a rolled-back retract from one whose commit
+        // landed but lost its acknowledgement. In the second case the orphan is already gone and the tail is
+        // real history; a blind retry would delete it. This is the assertion that stops that.
+        const { history, retracts } = stagedHistory([
+            [userMessage, assistantMessage],
+            [userMessage, assistantMessage],
+        ]);
+
+        const outcome = (await healTailOrphan(pool, THREAD_ID, { history: () => history }))._unsafeUnwrap();
+
+        expect(outcome).toEqual({ kind: "not-orphaned" });
+        expect(retracts()).toBe(0);
+    });
+
+    test("declines a multi-row tail turn that merely opens on a user message", async () => {
+        // A turn carrying tool traffic but no final assistant text is still an answered turn, not an orphan:
+        // the orphan an aborted turn leaves is exactly one row.
+        const toolResult: ModelMessage = {
+            role: "tool",
+            content: [{ type: "tool-result", toolCallId: "t1", toolName: "search", output: { type: "text", value: "{}" } }],
+        };
+        const { history, retracts } = stagedHistory([[userMessage, assistantMessage, toolResult]]);
+
+        expect((await healTailOrphan(pool, THREAD_ID, { history: () => history }))._unsafeUnwrap()).toEqual({ kind: "not-orphaned" });
+        expect(retracts()).toBe(0);
+    });
+
+    test("reports empty-thread without a second read when the thread holds nothing", async () => {
+        const { history, retracts } = stagedHistory([]);
+
+        expect((await healTailOrphan(pool, THREAD_ID, { history: () => history }))._unsafeUnwrap()).toEqual({ kind: "empty-thread" });
+        expect(retracts()).toBe(0);
     });
 });
