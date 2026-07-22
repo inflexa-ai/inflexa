@@ -87,9 +87,19 @@ export async function contentToCortexMessages(messages: readonly StoredMessage[]
     const out: CortexMessage[] = [];
     for (const message of messages) {
         const parts = await rowToParts(message.message, resolveCard);
-        if (parts.length === 0) continue;
-        const role = message.message.role === "tool" ? "assistant" : (message.message.role as CortexMessage["role"]);
+        // The marker is read before the zero-parts drop so the flag can never be lost to it:
+        // a marked row carries an interruption fact regardless of whether it renders any parts.
+        // When such a row contributes no bubble of its own, the interruption belongs to the
+        // assistant run it trailed, so fold the flag onto the previous emitted assistant.
         const interrupted = isInterruptedMessage(message.message);
+        if (parts.length === 0) {
+            if (interrupted) {
+                const prev = out[out.length - 1];
+                if (prev && prev.role === "assistant") prev.interrupted = true;
+            }
+            continue;
+        }
+        const role = message.message.role === "tool" ? "assistant" : (message.message.role as CortexMessage["role"]);
 
         const prev = out[out.length - 1];
         if (prev && prev.role === role && role === "assistant") {

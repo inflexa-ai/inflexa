@@ -57,6 +57,10 @@ export function createStreamingChat(provider: ChatProvider, onText: (text: strin
                     // the error channel: the interactive turn persists the partial.
                     const aborted = (e instanceof DOMException || e instanceof Error) && e.name === "AbortError";
                     if (aborted) {
+                        // A complete response already in hand beats a partial reconstruction: if the
+                        // stream had yielded its terminal `done` before the abort threw, that whole
+                        // response is authoritative, so return it rather than the assembled deltas.
+                        if (final !== undefined) return ok(final);
                         return ok({ message: { role: "assistant", content: partial }, finishReason: "aborted" });
                     }
                     return err(toProviderError(e, workload));

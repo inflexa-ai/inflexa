@@ -222,6 +222,21 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         provider.chat({ system: agent.systemPrompt, messages, tools: {}, toolChoice: "none", providerOptions }, session, signal),
     );
     addChatUsage(usage, wrapUp.usage);
+
+    if (wrapUp.finishReason === "aborted") {
+        // An abort during the tool-less wrap-up is still the user cutting the turn — the
+        // same event the in-loop path handles — so it gets the identical treatment: keep a
+        // partial only when it carries content, and stamp the marker on the last assistant
+        // this run produced. Reporting it as a plain cap-out would hide the interruption
+        // from every downstream reader; `cappedOut` stays true because the loop genuinely
+        // exhausted its iterations, while the reason carries the abort.
+        if (assistantHasContent(wrapUp.message)) messages.push(wrapUp.message);
+        markLastLoopAssistant(messages, initial.length);
+        await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
+        recordAgentRun({ agentId: agent.id, iterations, cappedOut: true, usage });
+        return { messages, finish: { reason: "aborted", cappedOut: true, truncationRecoveries } };
+    }
+
     messages.push(wrapUp.message);
     await emit({ type: "iteration", source, index: agent.maxIterations, final: true });
     recordAgentRun({ agentId: agent.id, iterations, cappedOut: true, usage });
