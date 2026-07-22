@@ -39,7 +39,8 @@ function sha(bytes: string): string {
 
 /**
  * Catalog fixtures. Every test here stops before the transfer (no ids, no consent, declined, or an
- * unknown id), so no `fetch` seam is needed — nothing in this file may ever reach an upstream.
+ * unknown id) — but the pre-transfer size sweep runs *before* consent, so any test that reaches the
+ * confirmation prompt must pass a `fetch` seam. Nothing in this file may ever reach an upstream.
  */
 function catalog(artifacts: ReferenceDataCatalog["datasets"][number]["artifacts"]): ReferenceDataCatalog {
     return {
@@ -75,6 +76,14 @@ function source(value: ReferenceDataCatalog): ReferenceCatalogSource {
 }
 
 const singleFileSource = source(catalog([FILE_ARTIFACT]));
+
+/** A publisher that declares `bytes` for every artifact, or nothing at all when given `undefined`. */
+function declaring(bytes: number | undefined): (input: string | URL | Request, init?: RequestInit) => Promise<Response> {
+    return async () => new Response(null, { headers: bytes === undefined ? {} : { "content-length": String(bytes) } });
+}
+
+/** A publisher no probe can reach — the sweep must treat it as unsized, never as a failure. */
+const unreachable = async (): Promise<Response> => Promise.reject(new Error("no route to host"));
 
 /** Activate the pinned fixture on disk exactly as a completed install would leave it. */
 function seedIntactInstall(): void {
@@ -166,14 +175,65 @@ describe("reference command policy", () => {
             ids: ["demo"],
             interactive: true,
             source: singleFileSource,
+            fetch: declaring(4_194_304),
             confirmDownload: async (question) => {
                 questions.push(question);
                 return false;
             },
         });
         expect(result._unsafeUnwrap()).toMatchObject({ declined: true, installed: [] });
-        expect(questions).toEqual([`Download 1 file of upstream-determined size of reference data into ${env.refsDir}?`]);
+        // Consent quotes the measured size, so the decision is made against bytes rather than a count.
+        expect(questions).toEqual([`Download 1 file, 4.0 MB of reference data into ${env.refsDir}?`]);
         expect(await Bun.file(env.refsDir).exists()).toBe(false);
+    });
+
+    test("consent falls back to the file count when no publisher will state a size", async () => {
+        const questions: string[] = [];
+        await downloadReferences({
+            ids: ["demo"],
+            interactive: true,
+            source: singleFileSource,
+            fetch: unreachable,
+            confirmDownload: async (question) => {
+                questions.push(question);
+                return false;
+            },
+        });
+        // An unreachable publisher is not an error — the plan degrades to exactly what it said before
+        // any sweep existed, and the download would still have been allowed to proceed.
+        expect(questions).toEqual([`Download 1 file of upstream-determined size of reference data into ${env.refsDir}?`]);
+    });
+
+    test("a partly sized plan is quoted as a floor, never as a total", async () => {
+        const questions: string[] = [];
+        await downloadReferences({
+            ids: ["demo"],
+            interactive: true,
+            source: source(catalog([FILE_ARTIFACT, MUTABLE_ARTIFACT])),
+            fetch: async (input) => (String(input).endsWith("/file") ? new Response(null, { headers: { "content-length": "1048576" } }) : unreachable()),
+            confirmDownload: async (question) => {
+                questions.push(question);
+                return false;
+            },
+        });
+        expect(questions).toEqual([`Download 2 files, at least 1.0 MB (1 whose upstream did not state a size) of reference data into ${env.refsDir}?`]);
+    });
+
+    test("a scripted refusal is decided without asking any publisher", async () => {
+        // The run cannot proceed for lack of consent, so sizing it would spend network on a plan that
+        // is about to be rejected — and the message is one scripts match on.
+        let asked = 0;
+        const result = await downloadReferences({
+            ids: ["demo"],
+            interactive: false,
+            source: singleFileSource,
+            fetch: async () => {
+                asked += 1;
+                return new Response(null);
+            },
+        });
+        expect(result._unsafeUnwrapErr().message).toBe("Downloading 1 file of upstream-determined size requires explicit consent; re-run with --yes.");
+        expect(asked).toBe(0);
     });
 
     test("headless setup creates the public/user namespace but downloads nothing without selection", async () => {
@@ -555,7 +615,7 @@ describe("combined download progress", () => {
 
     test("the readout counts files and accumulates measured bytes", () => {
         const { sink, snapshots } = recordingSink();
-        const readout = createReferenceDownloadProgress(2, sink);
+        const readout = createReferenceDownloadProgress(2, { sink });
         if (readout === undefined) throw new Error("a two-artifact plan must produce a readout");
 
         readout.report({ type: "artifact_started", datasetId: "demo", path: "a.txt", declaredBytes: 2048 });
@@ -570,9 +630,62 @@ describe("combined download progress", () => {
         expect(last?.path).toBe("a.txt");
     });
 
+    test("a measured plan gives the readout a denominator", () => {
+        const { sink, snapshots } = recordingSink();
+        const readout = createReferenceDownloadProgress(2, { sink, plan: { bytes: 8_388_608, sized: 2, unsized: 0 } });
+        if (readout === undefined) throw new Error("a two-artifact plan must produce a readout");
+
+        readout.report({ type: "artifact_started", datasetId: "demo", path: "a.txt", declaredBytes: 4_194_304 });
+        readout.report({ type: "artifact_bytes", datasetId: "demo", path: "a.txt", bytes: 4_194_304 });
+        readout.report({ type: "artifact_completed", datasetId: "demo", path: "a.txt", bytes: 4_194_304 });
+        readout.finish();
+
+        expect(snapshots[0]?.line).toBe("0/2 files · 0 B/8.0 MB");
+        expect(snapshots[snapshots.length - 1]?.line).toBe("1/2 files · 4.0 MB/8.0 MB");
+    });
+
+    test("a partly measured plan marks its denominator a floor", () => {
+        const { sink, snapshots } = recordingSink();
+        const readout = createReferenceDownloadProgress(3, { sink, plan: { bytes: 1_048_576, sized: 2, unsized: 1 } });
+        if (readout === undefined) throw new Error("a three-artifact plan must produce a readout");
+
+        readout.report({ type: "artifact_bytes", datasetId: "demo", path: "a.txt", bytes: 1_048_576 });
+        readout.report({ type: "artifact_completed", datasetId: "demo", path: "a.txt", bytes: 1_048_576 });
+        readout.finish();
+        // The `+` is the whole qualification: without it a sum over two of three artifacts reads as
+        // the plan's total, and a transfer that sails past it looks broken rather than under-measured.
+        expect(snapshots[snapshots.length - 1]?.line).toBe("1/3 files · 1.0 MB/1.0 MB+");
+    });
+
+    test("a plan nobody could size keeps the readout exactly as it was", () => {
+        const { sink, snapshots } = recordingSink();
+        const readout = createReferenceDownloadProgress(2, { sink, plan: { bytes: 0, sized: 0, unsized: 2 } });
+        if (readout === undefined) throw new Error("a two-artifact plan must produce a readout");
+
+        readout.report({ type: "artifact_bytes", datasetId: "demo", path: "a.txt", bytes: 12 });
+        readout.report({ type: "artifact_completed", datasetId: "demo", path: "a.txt", bytes: 12 });
+        readout.finish();
+        // Never "12 B/0 B": a total nobody stated is absent, not zero.
+        expect(snapshots[snapshots.length - 1]?.line).toBe("1/2 files · 12 B");
+    });
+
+    test("with a plan total the in-flight segment drops its byte fraction", () => {
+        const { sink, snapshots } = recordingSink();
+        const readout = createReferenceDownloadProgress(2, { sink, plan: { bytes: 4_194_304, sized: 2, unsized: 0 } });
+        if (readout === undefined) throw new Error("a two-artifact plan must produce a readout");
+
+        readout.report({ type: "artifact_started", datasetId: "demo", path: "a.txt", declaredBytes: 2_097_152 });
+        readout.report({ type: "artifact_started", datasetId: "demo", path: "b.txt", declaredBytes: 2_097_152 });
+        const line = snapshots[snapshots.length - 1]?.line;
+        // Two byte pairs on one line, the smaller describing a subset, is the ambiguity the "in flight"
+        // label was introduced to prevent — and the plan total is the better of the two.
+        expect(line).toBe("0/2 files · 0 B/4.0 MB · 2 in flight");
+        readout.finish();
+    });
+
     test("the completed count saturates at the planned total when a transfer outruns its estimate", () => {
         const { sink, snapshots } = recordingSink();
-        const readout = createReferenceDownloadProgress(1, sink);
+        const readout = createReferenceDownloadProgress(1, { sink });
         if (readout === undefined) throw new Error("a one-artifact plan must produce a readout");
 
         readout.report({ type: "artifact_completed", datasetId: "demo", path: "a.txt", bytes: 10 });
@@ -585,7 +698,7 @@ describe("combined download progress", () => {
 
     test("no rate is stated before the sample window can support one", () => {
         const { sink, snapshots } = recordingSink();
-        const readout = createReferenceDownloadProgress(1, sink);
+        const readout = createReferenceDownloadProgress(1, { sink });
         if (readout === undefined) throw new Error("a one-artifact plan must produce a readout");
 
         // Every event lands within the same instant, so no window has accumulated: the rate segment
@@ -598,7 +711,7 @@ describe("combined download progress", () => {
 
     test("nothing in the readout is a fabricated total", () => {
         const { sink, snapshots } = recordingSink();
-        const readout = createReferenceDownloadProgress(3, sink);
+        const readout = createReferenceDownloadProgress(3, { sink });
         if (readout === undefined) throw new Error("a three-artifact plan must produce a readout");
 
         readout.report({ type: "artifact_started", datasetId: "demo", path: "a.txt" });
@@ -636,7 +749,7 @@ describe("progress readout teardown", () => {
         let thrown: unknown;
         const { stdout } = await capture(async () => {
             try {
-                await downloadReferences({ ids: ["demo"], yes: true, interactive: false, source: explodingSource });
+                await downloadReferences({ ids: ["demo"], yes: true, interactive: false, source: explodingSource, fetch: declaring(64) });
             } catch (cause) {
                 thrown = cause;
             }
@@ -652,7 +765,7 @@ describe("progress readout teardown", () => {
 describe("progress readout without a terminal", () => {
     test("paints one line per completed artifact and never an escape sequence", async () => {
         const { stdout } = await capture(async () => {
-            const readout = createReferenceDownloadProgress(2, plainProgressSink());
+            const readout = createReferenceDownloadProgress(2, { sink: plainProgressSink() });
             if (readout === undefined) throw new Error("a two-artifact plan must produce a readout");
             readout.report({ type: "artifact_started", datasetId: "demo", path: "a.txt", declaredBytes: 2048 });
             readout.report({ type: "artifact_bytes", datasetId: "demo", path: "a.txt", bytes: 1024 });
@@ -681,7 +794,7 @@ describe("progress readout without a terminal", () => {
 describe("in-flight artifact reporting", () => {
     test("a declared size is reported as a measured fraction, and only while that file is open", () => {
         const { sink, snapshots } = recordingSink();
-        const readout = createReferenceDownloadProgress(2, sink);
+        const readout = createReferenceDownloadProgress(2, { sink });
         if (readout === undefined) throw new Error("a two-artifact plan must produce a readout");
 
         readout.report({ type: "artifact_started", datasetId: "demo", path: "a.txt", declaredBytes: 4096 });
@@ -708,7 +821,7 @@ describe("in-flight artifact reporting", () => {
 
     test("concurrent transfers aggregate over exactly the open set", () => {
         const { sink, snapshots } = recordingSink();
-        const readout = createReferenceDownloadProgress(4, sink);
+        const readout = createReferenceDownloadProgress(4, { sink });
         if (readout === undefined) throw new Error("a four-artifact plan must produce a readout");
 
         readout.report({ type: "artifact_started", datasetId: "alpha", path: "a.txt", declaredBytes: 1024 });
@@ -731,7 +844,7 @@ describe("in-flight artifact reporting", () => {
 
     test("interleaved deltas land on their own artifact, never on the one that started last", () => {
         const { sink, snapshots } = recordingSink();
-        const readout = createReferenceDownloadProgress(2, sink);
+        const readout = createReferenceDownloadProgress(2, { sink });
         if (readout === undefined) throw new Error("a two-artifact plan must produce a readout");
 
         readout.report({ type: "artifact_started", datasetId: "alpha", path: "a.txt", declaredBytes: 8192 });
@@ -757,7 +870,7 @@ describe("transfer rate", () => {
     test("a rate appears once the window supports one, and decays away when the transfer stalls", () => {
         setSystemTime(new Date(START));
         const { sink, snapshots } = recordingSink();
-        const readout = createReferenceDownloadProgress(2, sink);
+        const readout = createReferenceDownloadProgress(2, { sink });
         if (readout === undefined) throw new Error("a two-artifact plan must produce a readout");
 
         readout.report({ type: "artifact_bytes", datasetId: "demo", path: "b.txt", bytes: 1_048_576 });

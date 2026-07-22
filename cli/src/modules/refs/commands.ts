@@ -6,6 +6,7 @@ import {
     limitOptions,
     log,
     progress,
+    spinner,
     S_BAR,
     S_BAR_END,
     S_BAR_H,
@@ -30,9 +31,12 @@ import {
     ensureReferenceStore,
     inspectReferenceStore,
     installReferenceDatasets,
+    measureReferenceDownload,
     referenceDownloadEstimate,
     verifyReferenceDatasets,
     type ReferenceDownloadEstimate,
+    type ReferenceDownloadSize,
+    type ReferenceSizeProbeDeps,
     type ReferenceDownloadProgress,
     type ReferenceInstallOutcome,
     type ReferenceCatalogSource,
@@ -54,6 +58,12 @@ export type ReferenceDownloadOptions = {
     readonly source?: ReferenceCatalogSource;
     /** Confirmation seam for text-command tests; defaults to the shared terminal prompt. */
     readonly confirmDownload?: (question: string) => Promise<boolean>;
+    /**
+     * Fetch seam for the pre-transfer size sweep and the transfer itself; defaults to the runtime
+     * fetch. Tests must supply one — the sweep runs before consent, so a test that stops at the
+     * confirmation prompt would otherwise reach a real publisher.
+     */
+    readonly fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 };
 
 /** Setup-specific reference selection. */
@@ -105,6 +115,35 @@ function renderError(error: ReferenceProvisionError): string {
 
 function renderEstimate(estimate: ReferenceDownloadEstimate): string {
     return formatFileCount(estimate.artifactsToFetch);
+}
+
+/**
+ * The plan as a phrase, sharpened by however much the publishers were willing to say. Three states,
+ * because partial knowledge is common — 14 of the catalog's artifacts decline to state a size — and
+ * rounding it up into a confident total is the failure this sweep exists to prevent.
+ */
+export function renderDownloadPlan(estimate: ReferenceDownloadEstimate, measured: ReferenceDownloadSize): string {
+    const files = `${estimate.artifactsToFetch} file${estimate.artifactsToFetch === 1 ? "" : "s"}`;
+    if (measured.sized === 0) return renderEstimate(estimate);
+    if (measured.unsized === 0) return `${files}, ${measured.bytes.formatBytes()}`;
+    return `${files}, at least ${measured.bytes.formatBytes()} (${measured.unsized} whose upstream did not state a size)`;
+}
+
+/**
+ * Ask the publishers what the plan costs, narrating the wait on a real terminal. The sweep is bounded
+ * and cannot fail, so there is nothing to handle here — a plan nobody could size renders exactly as
+ * it did before the sweep existed.
+ */
+async function measureDownloadPlan(estimate: ReferenceDownloadEstimate, deps: ReferenceSizeProbeDeps): Promise<ReferenceDownloadSize> {
+    if (estimate.artifacts.length === 0) return { bytes: 0, sized: 0, unsized: 0 };
+    const narrate = isTTY(process.stdout) && !isCI();
+    const spin = narrate ? spinner() : undefined;
+    spin?.start(`Checking the size of ${estimate.artifactsToFetch} file${estimate.artifactsToFetch === 1 ? "" : "s"} with the publishers`);
+    try {
+        return await measureReferenceDownload(estimate.artifacts, deps);
+    } finally {
+        spin?.stop("Sizes checked");
+    }
 }
 
 /** One catalog dataset, as the rest of this file talks about it. */
@@ -521,10 +560,17 @@ export type ReferenceDownloadProgressReporter = {
  * Pass `sink` to render somewhere other than this process's terminal (tests do); by default the
  * animated bar is used only on a real interactive terminal, and captured output gets plain lines.
  */
-export function createReferenceDownloadProgress(totalArtifacts: number, sink?: ReferenceProgressSink): ReferenceDownloadProgressReporter | undefined {
+export function createReferenceDownloadProgress(
+    totalArtifacts: number,
+    options: { readonly sink?: ReferenceProgressSink; readonly plan?: ReferenceDownloadSize } = {},
+): ReferenceDownloadProgressReporter | undefined {
     if (!Number.isFinite(totalArtifacts) || totalArtifacts <= 0) return undefined;
     const total = Math.floor(totalArtifacts);
-    const painter = sink ?? (isTTY(process.stdout) && !isCI() ? clackProgressSink(total) : plainProgressSink());
+    const painter = options.sink ?? (isTTY(process.stdout) && !isCI() ? clackProgressSink(total) : plainProgressSink());
+    // The measured plan total, once — `undefined` whenever the publishers sized nothing, which is the
+    // same state the readout had before any sweep existed. Marked a floor while anything went unsized,
+    // so a partial sum is never painted as a total.
+    const planned = options.plan !== undefined && options.plan.sized > 0 ? `/${options.plan.bytes.formatBytes()}${options.plan.unsized > 0 ? "+" : ""}` : "";
 
     let completed = 0;
     let bytes = 0;
@@ -566,6 +612,10 @@ export function createReferenceDownloadProgress(totalArtifacts: number, sink?: R
         if (inFlight.size === 0) return "";
         const active = [...inFlight.values()];
         const label = ` · ${active.length} in flight`;
+        // The fraction existed to give the byte count some context while the plan had no total. With
+        // a measured total on the line, a second byte pair describing only a subset is the very
+        // ambiguity the "in flight" label was introduced to prevent.
+        if (planned !== "") return label;
         if (!active.every((artifact) => artifact.declared !== undefined)) return label;
         const received = active.reduce((total, artifact) => total + artifact.bytes, 0);
         // `?? 0` is unreachable — the `every` above proves each `declared` is present — and is used
@@ -576,7 +626,7 @@ export function createReferenceDownloadProgress(totalArtifacts: number, sink?: R
 
     function snapshot(now: number = Date.now()): ReferenceProgressSnapshot {
         const rate = rateBytesPerSecond(now);
-        const line = `${completed}/${total} files · ${bytes.formatBytes()}${rate === undefined ? "" : ` · ${rate.formatBytes()}/s`}${renderInFlight()}`;
+        const line = `${completed}/${total} files · ${bytes.formatBytes()}${planned}${rate === undefined ? "" : ` · ${rate.formatBytes()}/s`}${renderInFlight()}`;
         return { line, completed, total, ...(path === undefined ? {} : { path }) };
     }
 
@@ -682,18 +732,22 @@ export async function downloadReferences(
 
     const estimate = await referenceDownloadEstimate(ids, env.refsDir, options.source ?? undefined, install);
     if (estimate.isErr()) return err(estimate.error);
-    const size = renderEstimate(estimate.value);
-    console.log(`Reference download plan: ${size} to fetch from the upstream publishers.`);
+    // Refused before the sweep, not after: a scripted run that cannot proceed for lack of consent
+    // should spend no network on sizing a plan it is about to reject, and its message is one scripts
+    // match on, so it keeps the count-only wording the catalog alone can produce.
+    if (!options.yes && !interactive) {
+        return err({
+            type: "download_failed",
+            message: `Downloading ${renderEstimate(estimate.value)} requires explicit consent; re-run with --yes.`,
+        });
+    }
+    const measured = await measureDownloadPlan(estimate.value, options.fetch === undefined ? {} : { fetch: options.fetch });
+    const plan = renderDownloadPlan(estimate.value, measured);
+    console.log(`Reference download plan: ${plan} to fetch from the upstream publishers.`);
     if (!options.yes) {
-        if (!interactive) {
-            return err({
-                type: "download_failed",
-                message: `Downloading ${size} requires explicit consent; re-run with --yes.`,
-            });
-        }
         let confirmed: boolean;
         try {
-            confirmed = await (options.confirmDownload ?? confirm)(`Download ${size} of reference data into ${env.refsDir}?`);
+            confirmed = await (options.confirmDownload ?? confirm)(`Download ${plan} of reference data into ${env.refsDir}?`);
         } catch (cause) {
             return err({ type: "download_failed", message: "Reference download confirmation failed.", cause });
         }
@@ -703,7 +757,7 @@ export async function downloadReferences(
     }
     // Built only after consent, so nothing is drawn for a transfer the user has not agreed to, and
     // absent entirely when the plan fetches nothing.
-    const readout = createReferenceDownloadProgress(estimate.value.artifactsToFetch);
+    const readout = createReferenceDownloadProgress(estimate.value.artifactsToFetch, { plan: measured });
     let installed: Result<ReferenceInstallOutcome, ReferenceProvisionError> | undefined;
     try {
         installed = await installReferenceDatasets(
@@ -711,6 +765,7 @@ export async function downloadReferences(
             {
                 root: env.refsDir,
                 ...(options.source === undefined ? {} : { source: options.source }),
+                ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
                 ...(readout === undefined ? {} : { onProgress: readout.report }),
             },
             install,

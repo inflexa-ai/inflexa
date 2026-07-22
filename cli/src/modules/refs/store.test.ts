@@ -13,6 +13,7 @@ import {
     buildReferenceVerifyDocument,
     inspectReferenceStore,
     installReferenceDatasets,
+    measureReferenceDownload,
     referenceDownloadEstimate,
     referenceStorePaths,
     verifyReferenceDatasets,
@@ -216,7 +217,10 @@ describe("installation", () => {
         expect(readdirSync(paths.staging)).toEqual([]);
         expect((await inspectReferenceStore(path, fixture))._unsafeUnwrap().datasets[0]?.state).toBe("installed");
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]?.state).toBe("valid");
-        expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toEqual({ artifactsToFetch: 0 });
+        expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toMatchObject({
+            artifactsToFetch: 0,
+            artifacts: expect.objectContaining({ length: 0 }),
+        });
 
         // An intact install is skipped: the upstream below serves entirely different bytes, so a clean
         // `ok` with zero bytes downloaded and the file left unchanged is the proof it was never contacted.
@@ -364,7 +368,10 @@ describe("self-healing installs", () => {
         // `refs list` state is deliberately cheap (size-only), so it still reads as installed — but the
         // install gate hashes, so the damage must be seen and healed rather than skipped.
         expect((await inspectReferenceStore(path, fixture))._unsafeUnwrap().datasets[0]?.state).toBe("installed");
-        expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toEqual({ artifactsToFetch: 1 });
+        expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toMatchObject({
+            artifactsToFetch: 1,
+            artifacts: expect.objectContaining({ length: 1 }),
+        });
         expect((await verifyReferenceDatasets(path, ["demo"], source(fixture)))._unsafeUnwrap()[0]?.state).toBe("modified");
 
         const healed = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(ARTIFACTS) });
@@ -547,17 +554,29 @@ describe("download estimate", () => {
 
         // The catalog knows no sizes and there is no resume to net out, so the estimate is a count of
         // the artifacts a fresh install would fetch — never going to the network to size them.
-        expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toEqual({ artifactsToFetch: 2 });
+        expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toMatchObject({
+            artifactsToFetch: 2,
+            artifacts: expect.objectContaining({ length: 2 }),
+        });
 
         // A leftover partial nets out nothing now: the installer always refetches the whole artifact.
         mkdirSync(paths.downloads, { recursive: true });
         writeFileSync(join(paths.downloads, `${sha("demo/2026.07/a.txt")}.part`), "al");
-        expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toEqual({ artifactsToFetch: 2 });
+        expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toMatchObject({
+            artifactsToFetch: 2,
+            artifacts: expect.objectContaining({ length: 2 }),
+        });
 
         const installed = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(files) });
         expect(installed.isOk()).toBe(true);
-        expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toEqual({ artifactsToFetch: 0 });
-        expect((await referenceDownloadEstimate(["demo"], path, source(fixture), { force: true }))._unsafeUnwrap()).toEqual({ artifactsToFetch: 2 });
+        expect((await referenceDownloadEstimate(["demo"], path, source(fixture)))._unsafeUnwrap()).toMatchObject({
+            artifactsToFetch: 0,
+            artifacts: expect.objectContaining({ length: 0 }),
+        });
+        expect((await referenceDownloadEstimate(["demo"], path, source(fixture), { force: true }))._unsafeUnwrap()).toMatchObject({
+            artifactsToFetch: 2,
+            artifacts: expect.objectContaining({ length: 2 }),
+        });
         expect((await referenceDownloadEstimate(["unknown"], path, source(fixture)))._unsafeUnwrapErr().type).toBe("unknown_dataset");
     });
 });
@@ -943,5 +962,142 @@ describe("bounded-concurrency installs", () => {
         });
 
         expect(result._unsafeUnwrapErr().message).toContain("alpha.txt");
+    });
+});
+
+/** An artifact list shaped like a plan's, since only the urls are probed. */
+function artifacts(count: number): { path: string; url: string; format: string; contents: string }[] {
+    return Array.from({ length: count }, (_unused, index) => ({
+        path: `a${index}.txt`,
+        url: `https://upstream.test/a${index}.txt`,
+        format: "txt",
+        contents: "fixture",
+    }));
+}
+
+describe("reference download sizing", () => {
+    test("sums what the publishers declare and counts what they do not", async () => {
+        const sizes: Record<string, string | undefined> = { "a0.txt": "1024", "a1.txt": "2048", "a2.txt": undefined };
+        const measured = await measureReferenceDownload(artifacts(3), {
+            fetch: async (input) => {
+                const path = String(input).replace("https://upstream.test/", "");
+                const length = sizes[path];
+                return new Response(null, { headers: length === undefined ? {} : { "content-length": length } });
+            },
+        });
+        expect(measured).toEqual({ bytes: 3072, sized: 2, unsized: 1 });
+    });
+
+    test("probes with HEAD, so a size sweep never pulls a body", async () => {
+        const methods: (string | undefined)[] = [];
+        await measureReferenceDownload(artifacts(2), {
+            fetch: async (_input, init) => {
+                methods.push(init?.method);
+                return new Response(null, { headers: { "content-length": "10" } });
+            },
+        });
+        expect(methods).toEqual(["HEAD", "HEAD"]);
+    });
+
+    test("a content-encoded response declares nothing, because those bytes are not the ones that land", async () => {
+        // The publisher is not lying — it is describing the encoded entity — but the runtime inflates
+        // the body before it reaches the stream this code counts, so accepting the header would make
+        // the readout show more received than declared. Reproduced against data.broadinstitute.org.
+        const measured = await measureReferenceDownload(artifacts(1), {
+            fetch: async () => new Response(null, { headers: { "content-length": "20551", "content-encoding": "gzip" } }),
+        });
+        expect(measured).toEqual({ bytes: 0, sized: 0, unsized: 1 });
+
+        // An explicit `identity` coding is the absence of one, so its length still counts.
+        const identity = await measureReferenceDownload(artifacts(1), {
+            fetch: async () => new Response(null, { headers: { "content-length": "20551", "content-encoding": "identity" } }),
+        });
+        expect(identity).toEqual({ bytes: 20551, sized: 1, unsized: 0 });
+    });
+
+    test("no probe outcome is a failure: errors, refusals, and nonsense all mean unsized", async () => {
+        const behaviours: Record<string, () => Promise<Response>> = {
+            "a0.txt": () => Promise.reject(new Error("connection reset")),
+            "a1.txt": async () => new Response("no", { status: 405, statusText: "Method Not Allowed" }),
+            "a2.txt": async () => new Response(null, { headers: { "content-length": "-5" } }),
+            "a3.txt": async () => new Response(null, { headers: { "content-length": "not a number" } }),
+            "a4.txt": async () => new Response(null, { headers: { "content-length": "512" } }),
+        };
+        const measured = await measureReferenceDownload(artifacts(5), {
+            fetch: (input) => {
+                const path = String(input).replace("https://upstream.test/", "");
+                const behaviour = behaviours[path];
+                if (behaviour === undefined) throw new Error(`unexpected probe: ${path}`);
+                return behaviour();
+            },
+        });
+        // One good answer survives four different ways of learning nothing, and none of them threw.
+        expect(measured).toEqual({ bytes: 512, sized: 1, unsized: 4 });
+    });
+
+    test("an empty plan is measured without asking anyone", async () => {
+        let asked = 0;
+        const measured = await measureReferenceDownload([], {
+            fetch: async () => {
+                asked += 1;
+                return new Response(null);
+            },
+        });
+        expect(measured).toEqual({ bytes: 0, sized: 0, unsized: 0 });
+        expect(asked).toBe(0);
+    });
+
+    test("probes are bounded by the configured concurrency", async () => {
+        const state = { active: 0, peak: 0 };
+        await measureReferenceDownload(artifacts(24), {
+            concurrency: 4,
+            fetch: async () => {
+                state.active += 1;
+                state.peak = Math.max(state.peak, state.active);
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                state.active -= 1;
+                return new Response(null, { headers: { "content-length": "1" } });
+            },
+        });
+        // Bounded, and actually parallel — a peak of 1 would mean the queue serialized the sweep.
+        expect(state.peak).toBeLessThanOrEqual(4);
+        expect(state.peak).toBeGreaterThan(1);
+    });
+
+    test("an unusable concurrency request falls back instead of reaching p-queue", async () => {
+        // p-queue's setter throws a TypeError below 1 or on a non-number, and this function has no
+        // error channel to carry that out — an unusable request must be corrected, never forwarded.
+        for (const concurrency of [Number.NaN, 0, -3, 0.5]) {
+            const measured = await measureReferenceDownload(artifacts(2), {
+                concurrency,
+                fetch: async () => new Response(null, { headers: { "content-length": "8" } }),
+            });
+            expect(measured).toEqual({ bytes: 16, sized: 2, unsized: 0 });
+        }
+    });
+
+    test("every probe shares one signal, so the budget bounds the sweep and not each request", async () => {
+        const signals = new Set<AbortSignal | null | undefined>();
+        await measureReferenceDownload(artifacts(6), {
+            fetch: async (_input, init) => {
+                signals.add(init?.signal);
+                return new Response(null, { headers: { "content-length": "4" } });
+            },
+        });
+        expect(signals.size).toBe(1);
+        expect([...signals][0]).toBeInstanceOf(AbortSignal);
+    });
+
+    test("a sweep that runs out of budget reports unsized rather than hanging or failing", async () => {
+        const measured = await measureReferenceDownload(artifacts(3), {
+            budgetMs: 20,
+            fetch: (_input, init) =>
+                new Promise((resolve, reject) => {
+                    const signal = init?.signal;
+                    // Model a publisher that never answers: only the shared deadline ends this.
+                    signal?.addEventListener("abort", () => reject(new Error("aborted")));
+                }),
+        });
+        expect(measured).toEqual({ bytes: 0, sized: 0, unsized: 3 });
     });
 });
