@@ -43,6 +43,37 @@ export const HARNESS_PROVIDER_NAMESPACE = "cortex";
 /** The {@link HARNESS_PROVIDER_NAMESPACE} key marking a message the loop synthesized rather than one a human sent. */
 export const SYNTHETIC_MESSAGE_KEY = "synthetic";
 
+/** The {@link HARNESS_PROVIDER_NAMESPACE} key marking an assistant message whose production a client abort cut off. */
+export const INTERRUPTED_MESSAGE_KEY = "interrupted";
+
+/**
+ * Return a copy of `message` carrying the interruption marker in the harness namespace.
+ *
+ * The marker lives in {@link HARNESS_PROVIDER_NAMESPACE} for the same reason the synthetic marker does:
+ * it is the only field of a `ModelMessage` that survives the loop → {@link envelopeMessage} → stored-row
+ * round trip, so a reader of stored rows can still tell an interrupted reply apart. It rides the
+ * **assistant** role, which is not a turn boundary, so no boundary reader (`isGenuineUserStart`, the
+ * tail-retract predicate, window snapping) can observe it. Any existing `providerOptions` namespace is
+ * preserved — a signed thinking signature or cache directive on the same message must not be dropped — so
+ * this merges into the harness namespace rather than replacing the whole `providerOptions`.
+ */
+export function markInterruptedMessage(message: ModelMessage): ModelMessage {
+    const existingOptions = message.providerOptions ?? {};
+    const existingHarness = existingOptions[HARNESS_PROVIDER_NAMESPACE] ?? {};
+    return {
+        ...message,
+        providerOptions: {
+            ...existingOptions,
+            [HARNESS_PROVIDER_NAMESPACE]: { ...existingHarness, [INTERRUPTED_MESSAGE_KEY]: true },
+        },
+    };
+}
+
+/** Whether a client abort cut off this message's production (see {@link markInterruptedMessage}); an absent key reads as not interrupted. */
+export function isInterruptedMessage(message: ModelMessage): boolean {
+    return message.providerOptions?.[HARNESS_PROVIDER_NAMESPACE]?.[INTERRUPTED_MESSAGE_KEY] === true;
+}
+
 /**
  * Build a `user` message the agent loop synthesized — today, the nudge that continues a reply the model
  * truncated at its output-token limit.

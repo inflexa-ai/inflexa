@@ -61,7 +61,16 @@ export interface ChatUsage {
 
 export interface ChatResponse {
     readonly message: Extract<ModelMessage, { role: "assistant" }>;
-    readonly finishReason: FinishReason;
+    /**
+     * The terminal reason for this reply. `"aborted"` is produced ONLY by the
+     * streaming wrapper (`createStreamingChat`), which resolves a client abort
+     * with the partial assistant text assembled from the deltas it already
+     * forwarded. The non-streaming `ChatProvider.chat` never yields `"aborted"`:
+     * it propagates a client abort as a throw, because durable workflow loops —
+     * the non-streaming provider's callers — record cancellation only when it
+     * surfaces as a thrown exception.
+     */
+    readonly finishReason: FinishReason | "aborted";
     readonly rawFinishReason?: string;
     readonly usage?: ChatUsage;
 }

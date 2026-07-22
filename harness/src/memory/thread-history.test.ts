@@ -5,7 +5,7 @@ import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type Met
 import type { Pool } from "pg";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
-import { syntheticUserMessage } from "./ai-sdk-message-storage.js";
+import { isInterruptedMessage, markInterruptedMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
 import { countTokens } from "./count-tokens.js";
 import { __resetThreadHistoryMetricsForTest, createThreadHistory, EVICTION_BLOCK_TURNS, type ThreadHistory } from "./thread-history.js";
 
@@ -566,5 +566,37 @@ describe("retractLastTurn", () => {
         const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
         expect(loaded).toEqual(turn);
         assertValidSequence(loaded);
+    });
+});
+
+// --- interruption marker round-trip -----------------------------------------
+
+describe("interruption marker round-trip", () => {
+    it("survives appendTurn and reads back as interrupted on the assistant row only", async () => {
+        const marked = markInterruptedMessage(assistantText("a partial reply cut off"));
+        const turn = [userText("a question"), marked];
+        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+
+        const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        expect(loaded).toHaveLength(2);
+        // The marker survives the store round-trip byte-identically...
+        expect(loaded[1]).toEqual(marked);
+        // ...and the helper reports interrupted on the assistant row, not the user row.
+        expect(isInterruptedMessage(loaded[1]!)).toBe(true);
+        expect(isInterruptedMessage(loaded[0]!)).toBe(false);
+    });
+
+    it("retracts a marked-tail turn identically to an unmarked one", async () => {
+        const turn1 = [userText("question one"), assistantText("answer one")];
+        const turn2 = [userText("question two"), markInterruptedMessage(assistantText("an interrupted answer two"))];
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+
+        // The marker rides the assistant row — a non-boundary role — so the turn
+        // opens on its single user message and comes off whole, exactly as an
+        // unmarked turn does, leaving turn1 intact as the tail.
+        const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        expect(outcome).toEqual({ kind: "retracted", messages: 2 });
+        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn1);
     });
 });
