@@ -874,6 +874,23 @@ describe("bounded-concurrency installs", () => {
         expect(state.peak).toBe(1);
     });
 
+    test("an unusable concurrency request installs on the default instead of throwing", async () => {
+        const ids = ["alpha", "beta"];
+        const fixture = multiDatasetCatalog(ids);
+
+        // p-queue's setter throws a TypeError below 1 or on a non-number, which would leave this
+        // Result-returning call as an exception rather than an `err`. Every shape must still install.
+        for (const concurrency of [Number.NaN, 0, -3, 1.5]) {
+            const result = await installReferenceDatasets(ids, {
+                root: root(),
+                source: source(fixture),
+                fetch: serveConcurrently(datasetFixtures(ids), { active: 0, peak: 0 }),
+                concurrency,
+            });
+            expect(result._unsafeUnwrap().installed.map((installed) => installed.id)).toEqual(ids);
+        }
+    });
+
     test("a caller-supplied attempt id no longer means a shared staging root", async () => {
         const path = root();
         const fixture = multiDatasetCatalog(IDS);
