@@ -173,6 +173,49 @@ describe("retract during the no-output window", () => {
         expect(currentNotice()).toBe(noticeBefore);
     });
 
+    test("the visible transition lands as one step, after the durable removal — never split across it", async () => {
+        // Ordering, not just outcome. The transcript losing the message, the text coming back, and the
+        // return to idle are one perceptual event; a database round-trip between any two of them leaves the
+        // user looking at a half-applied state (message gone, composer empty, still spinning) with no clue
+        // which way it will resolve. Park the durable removal and assert NOTHING visible has moved yet.
+        const { sendP, release } = startBusyTurn({ kind: "aborted" });
+        expect(canRetract()).toBe(true);
+
+        const seed = seedCell();
+        let releaseDurable!: () => void;
+        const durableGate = new Promise<void>((r) => {
+            releaseDurable = r;
+        });
+        let durableReached!: () => void;
+        const durableWasReached = new Promise<void>((r) => {
+            durableReached = r;
+        });
+        const retractSeams: RetractSeams = {
+            runtime: () => stubRuntime,
+            retractTurn: () => {
+                durableReached();
+                return ResultAsync.fromSafePromise(durableGate.then(() => ({ kind: "retracted" as const, messages: 1 })));
+            },
+        };
+        const retractP = retract(seed.set, retractSeams);
+        release();
+        await durableWasReached;
+
+        // Mid-removal: the message is still on screen, the composer untouched, the turn still busy.
+        expect(messages.length).toBe(2);
+        expect(seed.get()).toBeNull();
+        expect(chatStatus()).toBe("busy");
+
+        releaseDurable();
+        await retractP;
+        await sendP;
+
+        // And then all three move together.
+        expect(messages.length).toBe(0);
+        expect(seed.get()).toBe("original text");
+        expect(chatStatus()).toBe("idle");
+    });
+
     test("a delta racing the abort settlement downgrades to a plain interrupt", async () => {
         // The engine aborts, but a delta lands AFTER the retract fired the abort and BEFORE the turn
         // settles — so the re-validation sees produced output and keeps the message.
@@ -308,7 +351,7 @@ describe("retract during the no-output window", () => {
         const healSeams: SendSeams = {
             runtime: () => stubRuntime,
             runChatTurn: async (): Promise<TurnOutcome> => ({ kind: "ok", fallbackText: "answer" }),
-            retractTurn: (_pool, threadId) => {
+            healRetract: (_pool, threadId) => {
                 healCalls++;
                 expect(threadId).toBe(THREAD);
                 return errAsync(dbErr);
@@ -353,7 +396,7 @@ describe("retract during the no-output window", () => {
         const healSeams: SendSeams = {
             runtime: () => stubRuntime,
             runChatTurn: async (): Promise<TurnOutcome> => ({ kind: "ok", fallbackText: "answer" }),
-            retractTurn: () => {
+            healRetract: () => {
                 healReached();
                 return ResultAsync.fromSafePromise(healGate.then(() => ({ kind: "retracted" as const, messages: 1 })));
             },

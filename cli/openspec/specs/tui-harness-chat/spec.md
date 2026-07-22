@@ -111,14 +111,21 @@ reload renders only what the thread holds.
 The chat SHALL let the user retract the just-sent message for editing while a turn is in flight and
 the assistant has produced nothing — no text delta, no tool part, no card part, only the pre-minted
 empty assistant placeholder. The retract SHALL: claim the store generation token, abort the turn,
-await the turn's settlement, re-validate that nothing was produced, remove the user message and the
-assistant placeholder from the live store, remove the persisted user turn from the pg thread via the
-harness tail-turn retract, and seed the composer with the original message text (cursor at end). The
+await the turn's settlement, re-validate that nothing was produced, remove the persisted user turn from
+the pg thread via the harness tail-turn retract, and only then remove the user message and the assistant
+placeholder from the live store and seed the composer with the original message text (cursor at end).
+The visible half SHALL land as one step after the durable half, never split across it — a transcript
+that has dropped the message while the composer is still empty is a half-applied state the user cannot
+interpret. Seeding SHALL be declined when the composer is no longer empty, so text typed during the
+retract is never overwritten by the restoration. The
 durable retract SHALL be skipped when the aborted turn's append faulted (the thread's tail is then an
 earlier turn that must not be removed); a database fault from the retract itself SHALL surface as an
-error notice while the composer stays seeded, and the failed removal SHALL be retained and retried
+error notice while the composer is still seeded, and the failed removal SHALL be retained and retried
 once before the next send on that thread — a second failure SHALL let the send proceed rather than
-block the conversation. Once the first delta or part has landed, the retract
+block the conversation. The retry SHALL first re-read the thread's tail and remove it only if it is
+still a lone user turn: the fault that scheduled the retry cannot distinguish a retract that rolled
+back from one whose commit landed but lost its acknowledgement, and a blind retry in the second case
+would delete a real, answered turn. Once the first delta or part has landed, the retract
 affordance SHALL be inert. If output lands between the trigger and the abort settling, the action
 SHALL downgrade to a plain interrupt (message kept) with a notice. A plain interrupt SHALL NOT
 retract — the kept user message remains context for the next turn.
@@ -152,6 +159,16 @@ retract — the kept user message remains context for the next turn.
 
 - **WHEN** a pending removal exists for the thread and the user sends again
 - **THEN** the removal is retried before the new turn appends, and a second failure lets the send proceed
+
+#### Scenario: The heal declines when the orphan is already gone
+
+- **WHEN** a pending removal exists but the thread's tail is an answered turn (the faulted retract had in fact committed)
+- **THEN** nothing is removed and the send proceeds
+
+#### Scenario: Typing during a retract survives it
+
+- **WHEN** the user types into the composer while the retract's durable removal is in flight
+- **THEN** their text stays and the original message is not restored over it
 
 ### Requirement: Turn failures are observable
 
