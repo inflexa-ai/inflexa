@@ -25,6 +25,7 @@ import {
     referencePickerBulkSelection,
     referencePickerModel,
     referenceSelectionDisclosure,
+    renderPlanCaveat,
     runReferenceSetup,
     runRefsList,
     runRefsVerify,
@@ -216,7 +217,10 @@ describe("reference command policy", () => {
                 return false;
             },
         });
-        expect(questions).toEqual([`Download 2 files, at least 1.0 MB (1 whose upstream did not state a size) of reference data into ${env.refsDir}?`]);
+        // The caveat is its own sentence on the plan line above; wedging it between the quantity and
+        // "of reference data" made the question unreadable.
+        expect(questions).toEqual([`Download 2 files, at least 1.0 MB of reference data into ${env.refsDir}?`]);
+        expect(renderPlanCaveat({ bytes: 1_048_576, sized: 1, unsized: 1 })).toBe(" 1 file did not report a size, so the total is a lower bound.");
     });
 
     test("a scripted refusal is decided without asking any publisher", async () => {
@@ -542,6 +546,20 @@ describe("reference selection picker", () => {
             // A wrapped command is an uncopyable command, so its line survives every layout intact.
             expect(lines).toContain("  inflexa refs download <id>");
         }
+    });
+
+    test("an indented block keeps its indent on every line it wraps onto", () => {
+        // `split(" ")` turns leading spaces into empty tokens the accumulator swallows, so a block
+        // narrow enough to be returned untouched today would come back flush left the moment the copy
+        // outgrew the panel — silently, and only in the layout that wrapped it.
+        const wrapped = onDemandReferenceNote(20);
+        // Only the command block is indented, so every indented line is one of its wrapped pieces.
+        const indented = wrapped.filter((line) => line.startsWith("  "));
+        expect(indented.length).toBeGreaterThan(1);
+        expect(indented.join(" ").replace(/\s+/g, " ").trim()).toBe("inflexa refs download <id>");
+        for (const line of indented) expect(line.length).toBeLessThanOrEqual(20);
+        // Wrapping splits on whitespace runs, so no line is left blank or double-spaced by the split.
+        expect(wrapped.every((line) => !line.includes("   "))).toBe(true);
     });
 
     test("the floating note is a closed box of exactly the width it was asked for", () => {
@@ -888,5 +906,73 @@ describe("transfer rate", () => {
         expect(snapshots[snapshots.length - 1]?.line).toBe("1/2 files · 3.0 MB");
 
         readout.finish();
+    });
+});
+
+/**
+ * Replace the global fetch with one that records and refuses, returning the restore. Any call that
+ * lands here is a call that would have left the machine, which is the whole assertion.
+ */
+function sealGlobalFetch(escaped: string[]): () => void {
+    const real = globalThis.fetch;
+    // Borrowing `preconnect` off the real implementation keeps the replacement structurally complete,
+    // so installing it needs no cast — Bun's `typeof fetch` carries that property.
+    globalThis.fetch = Object.assign(
+        async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+            escaped.push(`${init?.method ?? "GET"} ${String(input)}`);
+            throw new Error("a sealed setup must never reach the global fetch");
+        },
+        { preconnect: real.preconnect },
+    );
+    return () => {
+        globalThis.fetch = real;
+    };
+}
+
+describe("reference setup seams", () => {
+    test("a consented setup can be sealed off the network entirely", async () => {
+        // Regression: `ReferenceSetupOptions` carried a catalog seam but no fetch seam, so this exact
+        // call reached the real internet twice — a HEAD from the pre-consent size sweep and a GET from
+        // the transfer — with no way for a caller to prevent it.
+        const escaped: string[] = [];
+        const restore = sealGlobalFetch(escaped);
+        const seen: string[] = [];
+        try {
+            await runReferenceSetup({
+                interactive: false,
+                ids: ["demo"],
+                yes: true,
+                source: singleFileSource,
+                fetch: async (input, init) => {
+                    seen.push(`${init?.method ?? "GET"} ${String(input)}`);
+                    return new Response("alpha", { headers: { "content-length": "5" } });
+                },
+            });
+        } finally {
+            restore();
+        }
+
+        expect(escaped).toEqual([]);
+        // Both network users are seamed: the sweep's HEAD and the installer's GET.
+        expect(seen).toEqual(["HEAD https://upstream.test/file", "GET https://upstream.test/file"]);
+    });
+
+    test("the seam reaches the interactive path too, where the sweep runs before consent", async () => {
+        const escaped: string[] = [];
+        const restore = sealGlobalFetch(escaped);
+        try {
+            // `--refs` supplied, so no picker opens; consent is explicit, so the sweep runs and the
+            // transfer follows — the interactive shape of the same two calls.
+            await runReferenceSetup({
+                interactive: true,
+                ids: ["demo"],
+                yes: true,
+                source: singleFileSource,
+                fetch: async () => new Response("alpha", { headers: { "content-length": "5" } }),
+            });
+        } finally {
+            restore();
+        }
+        expect(escaped).toEqual([]);
     });
 });

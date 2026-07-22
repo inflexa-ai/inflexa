@@ -21,7 +21,7 @@ import {
 } from "@clack/prompts";
 import { REFERENCE_DATA_CATALOG, type ReferenceDataCatalog } from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
-import { stripVTControlCharacters, styleText } from "node:util";
+import { styleText } from "node:util";
 
 import { confirm } from "../../lib/cli.ts";
 import { env } from "../../lib/env.ts";
@@ -76,6 +76,12 @@ export type ReferenceSetupOptions = {
     readonly interactive: boolean;
     /** Matching catalog/plan seam for offline tests, mirroring the download path. */
     readonly source?: ReferenceCatalogSource;
+    /**
+     * Fetch seam, forwarded to every download this drives. Present for the same reason the catalog
+     * seam is: without it a test of setup's consented paths has no way to stay off the network, since
+     * the size sweep runs before consent and the transfer follows it.
+     */
+    readonly fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 };
 
 /** A selection was cancelled before transfer. */
@@ -118,15 +124,30 @@ function renderEstimate(estimate: ReferenceDownloadEstimate): string {
 }
 
 /**
- * The plan as a phrase, sharpened by however much the publishers were willing to say. Three states,
- * because partial knowledge is common — 14 of the catalog's artifacts decline to state a size — and
- * rounding it up into a confident total is the failure this sweep exists to prevent.
+ * The plan as a noun phrase, sharpened by however much the publishers were willing to say — three
+ * states, because partial knowledge is common (14 of the catalog's artifacts decline to state a size)
+ * and rounding it up into a confident total is the failure this sweep exists to prevent.
+ *
+ * Deliberately carries no parenthetical. This phrase is embedded mid-sentence in both the plan line
+ * and the confirmation question ("Download <plan> of reference data into …?"), and an aside wedged
+ * between the quantity and the words that govern it makes both unreadable. What qualifies the number
+ * is a sentence of its own: {@link renderPlanCaveat}.
  */
 export function renderDownloadPlan(estimate: ReferenceDownloadEstimate, measured: ReferenceDownloadSize): string {
     const files = `${estimate.artifactsToFetch} file${estimate.artifactsToFetch === 1 ? "" : "s"}`;
     if (measured.sized === 0) return renderEstimate(estimate);
     if (measured.unsized === 0) return `${files}, ${measured.bytes.formatBytes()}`;
-    return `${files}, at least ${measured.bytes.formatBytes()} (${measured.unsized} whose upstream did not state a size)`;
+    return `${files}, at least ${measured.bytes.formatBytes()}`;
+}
+
+/**
+ * Why the plan's byte figure is a floor, as a standalone sentence, or `""` when it is not one. Read
+ * beside {@link renderDownloadPlan}: together they say "at least 8.2 GB" and then explain the "at
+ * least", which the phrase alone cannot do without breaking the sentence it sits in.
+ */
+export function renderPlanCaveat(measured: ReferenceDownloadSize): string {
+    if (measured.sized === 0 || measured.unsized === 0) return "";
+    return ` ${measured.unsized} file${measured.unsized === 1 ? "" : "s"} did not report a size, so the total is a lower bound.`;
 }
 
 /**
@@ -138,11 +159,24 @@ async function measureDownloadPlan(estimate: ReferenceDownloadEstimate, deps: Re
     if (estimate.artifacts.length === 0) return { bytes: 0, sized: 0, unsized: 0 };
     const narrate = isTTY(process.stdout) && !isCI();
     const spin = narrate ? spinner() : undefined;
-    spin?.start(`Checking the size of ${estimate.artifactsToFetch} file${estimate.artifactsToFetch === 1 ? "" : "s"} with the publishers`);
+    const files = `${estimate.artifactsToFetch} file${estimate.artifactsToFetch === 1 ? "" : "s"}`;
+    spin?.start(`Checking the size of ${files} with the publishers`);
+    let measured: ReferenceDownloadSize | undefined;
     try {
-        return await measureReferenceDownload(estimate.artifacts, deps);
+        measured = await measureReferenceDownload(estimate.artifacts, deps);
+        return measured;
     } finally {
-        spin?.stop("Sizes checked");
+        // The closing line reports what was actually learned. A flat "Sizes checked" over a sweep where
+        // every publisher declined would contradict the plan line printed immediately below it.
+        spin?.stop(
+            measured === undefined
+                ? "Size check ended early"
+                : measured.sized === 0
+                  ? "No publisher stated a size"
+                  : measured.unsized === 0
+                    ? `Sized all ${files}`
+                    : `Sized ${measured.sized} of ${estimate.artifactsToFetch} files`,
+        );
     }
 }
 
@@ -169,21 +203,29 @@ const ON_DEMAND_REFERENCE_BLOCKS: readonly string[] = [
     "Or just say what you need in chat: the agent works out which dataset that is and asks you to approve the download.",
 ];
 
-/** Greedy wrap to `width` columns. Any block already narrow enough is emitted untouched, which is
- * what keeps the command line above from being reflowed into the prose around it. */
+/**
+ * Greedy wrap to `width` columns, preserving the block's own indentation on every line it produces.
+ *
+ * The indent is lifted off before splitting rather than left in the word stream: `split(" ")` turns
+ * leading spaces into empty tokens that the accumulator swallows, so an indented block that wrapped
+ * would come back flush left — silently, and only once the copy grew past the width. Today the one
+ * indented block (the command) fits and is returned untouched, which is what keeps it copy-pasteable;
+ * this makes that a property of the function rather than of the current copy's length.
+ */
 function wrapBlock(text: string, width: number): readonly string[] {
     if (text.length <= width) return [text];
+    const indent = text.slice(0, text.length - text.trimStart().length);
     const lines: string[] = [];
     let line = "";
-    for (const word of text.split(" ")) {
+    for (const word of text.trim().split(/\s+/)) {
         if (line.length === 0) line = word;
-        else if (line.length + 1 + word.length <= width) line += ` ${word}`;
+        else if (indent.length + line.length + 1 + word.length <= width) line += ` ${word}`;
         else {
-            lines.push(line);
+            lines.push(indent + line);
             line = word;
         }
     }
-    if (line.length > 0) lines.push(line);
+    if (line.length > 0) lines.push(indent + line);
     return lines;
 }
 
@@ -345,8 +387,10 @@ export function referenceSelectionDisclosure(withheld: readonly ReferenceDataset
  * left edge holds still while the listing scrolls underneath it. Rows are extended when the panel is
  * the taller of the two, which keeps the box closed on an offer of only a few datasets.
  *
- * Padding is measured on the stripped text because the rows carry colour: their `.length` counts
- * escape bytes the terminal never draws, and padding to that would step the panel left row by row.
+ * Padding is measured with `Bun.stringWidth`, which reports the columns a terminal will actually draw:
+ * it discounts the colour escapes the rows carry, counts an East Asian glyph as the two cells it
+ * occupies, and counts a combining mark as none. `.length` is wrong on all three — it would step the
+ * panel left by one cell per escape byte and right by one per wide character.
  */
 function beside(rows: readonly string[], panel: readonly string[], gutter: number): readonly string[] {
     const height = Math.max(rows.length, panel.length);
@@ -362,7 +406,7 @@ function beside(rows: readonly string[], panel: readonly string[], gutter: numbe
                 : index === panel.length - 1
                   ? styleText("cyan", note)
                   : `${styleText("cyan", S_BAR)}${note.slice(1, -1)}${styleText("cyan", S_BAR)}`;
-        return `${row}${" ".repeat(Math.max(PICKER_PANEL_GAP, gutter - stripVTControlCharacters(row).length))}${painted}`;
+        return `${row}${" ".repeat(Math.max(PICKER_PANEL_GAP, gutter - Bun.stringWidth(row)))}${painted}`;
     });
 }
 
@@ -743,7 +787,7 @@ export async function downloadReferences(
     }
     const measured = await measureDownloadPlan(estimate.value, options.fetch === undefined ? {} : { fetch: options.fetch });
     const plan = renderDownloadPlan(estimate.value, measured);
-    console.log(`Reference download plan: ${plan} to fetch from the upstream publishers.`);
+    console.log(`Reference download plan: ${plan} to fetch from the upstream publishers.${renderPlanCaveat(measured)}`);
     if (!options.yes) {
         let confirmed: boolean;
         try {
@@ -947,6 +991,7 @@ export async function runReferenceSetup(options: ReferenceSetupOptions): Promise
             yes: options.yes,
             interactive: options.interactive,
             ...(options.source === undefined ? {} : { source: options.source }),
+            ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
         });
         return downloaded.map(() => undefined);
     }
@@ -979,6 +1024,7 @@ export async function runReferenceSetup(options: ReferenceSetupOptions): Promise
             yes: true,
             interactive: false,
             ...(options.source === undefined ? {} : { source: options.source }),
+            ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
         });
         return downloaded.map(() => undefined);
     }
@@ -997,6 +1043,7 @@ export async function runReferenceSetup(options: ReferenceSetupOptions): Promise
         yes: options.yes,
         interactive: true,
         ...(options.source === undefined ? {} : { source: options.source }),
+        ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     });
     return downloaded.map(() => undefined);
 }
