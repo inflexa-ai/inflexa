@@ -22,16 +22,20 @@ declare global {
 Number.prototype.formatBytes = function (this: number): string {
     if (!Number.isFinite(this)) return "0 B";
     const bytes = Math.max(0, this);
-    // Decide the whole-bytes branch on the ROUNDED value, not the raw one: rounding only after the
-    // `< 1024` check lets 1023.6 print a nonsensical "1024 B". Rounding first keeps the threshold and
-    // the rendered number in agreement, so 1023.6 crosses into the next unit and reads "1.0 KB".
+    // Every tier picks its unit from the value it would actually PRINT, not the raw one. Comparing the
+    // raw value against the next step instead lets a number that rounds up at the top of a range stay
+    // in that range and render a unit that does not exist: 1023.6 as "1024 B", or 1048575 — a byte
+    // short of a megabyte — as "1024.0 KB".
     const wholeBytes = Math.round(bytes);
     if (wholeBytes < 1024) return `${wholeBytes} B`;
-    if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
-    if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+    let scaled = bytes / 1024;
+    for (const unit of ["KB", "MB"] as const) {
+        if (Number(scaled.toFixed(1)) < 1024) return `${scaled.toFixed(1)} ${unit}`;
+        scaled /= 1024;
+    }
     // GB is deliberately the top unit: a terabyte-scale readout would be a reference store gone wrong,
     // and "1536.0 GB" stays honest where a TB step would quietly make it look ordinary.
-    return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+    return `${scaled.toFixed(1)} GB`;
 };
 
 export {};
