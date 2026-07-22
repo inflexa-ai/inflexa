@@ -3,8 +3,9 @@ import type { ModelMessage, ToolResultPart } from "ai";
 import { err, ok } from "neverthrow";
 import { z } from "zod";
 
-import { isSyntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
+import { isInterruptedMessage, isSyntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
+import type { ChatResponse } from "../providers/types.js";
 import { AskRejectedError } from "../tools/approval/contract.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
 import { makeMessage, scriptedProvider, type ScriptedProvider, textBlock, thinkingBlock, toolUseBlock } from "./__fixtures__/scripted-provider.js";
@@ -433,6 +434,86 @@ describe("runAgent — max_tokens recovery", () => {
         expect(isSyntheticUserMessage(messages[0]!)).toBe(false);
         expect(finish.reason).toBe("stop");
         expect(finish.truncationRecoveries).toBe(1);
+    });
+});
+
+// ── aborted terminal path ───────────────────────────────────────────
+
+/**
+ * An aborted reply as the streaming wrapper produces it: finish reason
+ * `"aborted"` and a `string`-content assistant message holding the partial
+ * (empty when the abort beat the first delta).
+ */
+function abortedReply(partial: string): ChatResponse {
+    return { message: { role: "assistant", content: partial }, finishReason: "aborted" };
+}
+
+describe("runAgent — aborted terminal path", () => {
+    it("returns the partial reply, marked interrupted, on a mid-stream abort", async () => {
+        const provider = scriptedProvider([abortedReply("a partial answer the user cut off")]);
+
+        const { messages, finish } = await runAgent(agentDef([]), GO, makeSession(), opts(provider));
+
+        expect(finish.reason).toBe("aborted");
+        // [user, assistant(partial)] — the partial joined the transcript.
+        expect(messages).toHaveLength(2);
+        const last = messages.at(-1)!;
+        expect(last.role).toBe("assistant");
+        expect(last.content).toBe("a partial answer the user cut off");
+        // The partial carries the interruption marker.
+        expect(isInterruptedMessage(last)).toBe(true);
+    });
+
+    it("leaves the transcript at the initial prefix on an abort before any delta", async () => {
+        const provider = scriptedProvider([abortedReply("")]);
+
+        const { messages, finish } = await runAgent(agentDef([]), GO, makeSession(), opts(provider));
+
+        expect(finish.reason).toBe("aborted");
+        // No empty assistant shell appended — the transcript is exactly the initial messages.
+        expect(messages).toEqual([...GO]);
+        // Nothing beyond the initial prefix, so nothing is marked.
+        expect(messages.some((m) => m.role === "assistant" && isInterruptedMessage(m))).toBe(false);
+    });
+
+    it("keeps the transcript valid and marks the tool-calling step when the abort lands during tool execution", async () => {
+        // The tool honors the signal by throwing; the chat path wires no fatal
+        // predicate, so the throw becomes an error tool result, the tool message
+        // completes, and the FOLLOWING model call resolves aborted-empty.
+        const boom = defineTool({
+            id: "boom",
+            description: "Honors the abort signal by throwing.",
+            inputSchema: z.object({}),
+            execute: async () => {
+                throw new Error("aborted mid-tool");
+            },
+        });
+        const provider = scriptedProvider([makeMessage([toolUseBlock("tu-1", "boom", {})], "tool_use"), abortedReply("")]);
+
+        const { messages, finish } = await runAgent(agentDef([boom]), GO, makeSession(), opts(provider));
+
+        expect(finish.reason).toBe("aborted");
+        // [user, assistant(tool_use), tool(error result)] — the aborted-empty reply added nothing.
+        expect(messages).toHaveLength(3);
+
+        // The marker rides the tool-calling assistant step, not the tool row.
+        const toolCallStep = messages[1]!;
+        expect(toolCallStep.role).toBe("assistant");
+        expect(isInterruptedMessage(toolCallStep)).toBe(true);
+
+        // The tool message completes the call — no dangling tool_use.
+        const results = toolResultParts(messages[2]);
+        expect(results.map((r) => r.toolCallId)).toEqual(["tu-1"]);
+        expect(isErrorResult(results[0]!)).toBe(true);
+    });
+
+    it("does not mark a cleanly-stopped reply", async () => {
+        const provider = scriptedProvider([makeMessage([textBlock("done")], "end_turn")]);
+
+        const { messages, finish } = await runAgent(agentDef([]), GO, makeSession(), opts(provider));
+
+        expect(finish.reason).toBe("stop");
+        expect(isInterruptedMessage(messages.at(-1)!)).toBe(false);
     });
 });
 

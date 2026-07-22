@@ -3,7 +3,7 @@ import type { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
-import { syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
+import { markInterruptedMessage, syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { classifyProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../providers/prompt-cache.js";
 import { resultStep } from "./run-step.js";
@@ -14,7 +14,7 @@ import { addChatUsage, recordAgentRun, type AgentRunUsage } from "./metrics.js";
 import type { AgentDefinition, EmitFn, EventSource, LoopMessage, RunStep } from "./types.js";
 
 export interface AgentFinish {
-    readonly reason: FinishReason | "max_iterations" | "denied";
+    readonly reason: FinishReason | "aborted" | "max_iterations" | "denied";
     readonly cappedOut: boolean;
     readonly truncationRecoveries: number;
 }
@@ -138,7 +138,20 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
         };
         const reply = await resultStep(runStep)(formatStepName.llm(i), () => provider.chat(request, session, signal));
         addChatUsage(usage, reply.usage);
-        messages.push(reply.message);
+
+        if (reply.finishReason === "aborted") {
+            // An interrupted turn keeps whatever the model produced before the cut, but
+            // never an empty shell: a partial with no content adds no message, so a
+            // no-output abort leaves the transcript at the initial prefix. The marker
+            // then rides the last assistant message this run produced — the partial when
+            // it has content, or the tool-calling step when the abort landed mid-dispatch
+            // — an assistant role no turn-boundary reader observes. "aborted" is not
+            // "tool-calls", so this falls into the terminal return below.
+            if (assistantHasContent(reply.message)) messages.push(reply.message);
+            markLastLoopAssistant(messages, initial.length);
+        } else {
+            messages.push(reply.message);
+        }
 
         const toolCalls = toolCallParts(reply.message);
         if (reply.finishReason === "length") {
@@ -218,6 +231,28 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
 function toolCallParts(message: Extract<ModelMessage, { role: "assistant" }>): ToolCallPart[] {
     if (typeof message.content === "string") return [];
     return message.content.filter((part): part is ToolCallPart => part.type === "tool-call");
+}
+
+/** Whether an aborted partial carries any content worth persisting — an empty partial contributes no message. */
+function assistantHasContent(message: Extract<ModelMessage, { role: "assistant" }>): boolean {
+    return message.content.length > 0;
+}
+
+/**
+ * Stamp the interruption marker on the last assistant message the loop produced
+ * this run — an index at or beyond the `initial` prefix — replacing the slot with
+ * a marked copy so the mark rides into `appendTurn` and the stored row. When the
+ * turn produced no assistant message beyond `initial` (a no-output abort on a
+ * fresh turn), there is nothing to mark and the transcript is left untouched.
+ */
+function markLastLoopAssistant(messages: LoopMessage[], initialCount: number): void {
+    for (let idx = messages.length - 1; idx >= initialCount; idx--) {
+        const message = messages[idx]!;
+        if (message.role === "assistant") {
+            messages[idx] = markInterruptedMessage(message);
+            return;
+        }
+    }
 }
 
 async function dispatchTools(
