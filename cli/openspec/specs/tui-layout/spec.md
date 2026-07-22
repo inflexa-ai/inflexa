@@ -80,6 +80,8 @@ Because focus is always on some widget, the dialog host's focus save/restore SHA
 
 The chat's `StatusBar` SHALL additionally accept an OPTIONAL workspace-path segment, rendered as a muted ` | <path>` segment immediately after the state segment — part of the left-flowing segments, NOT the right-aligned hints region. `app.tsx` SHALL pass it only when the terminal width is at or above the design-system breakpoint token (`size.breakpointWide`), sourcing the value from the workspace store's `workingDir` with the home directory contracted to `~`; below the breakpoint the prop is absent and the path renders in the sidebar instead (see the sidebar requirement). `StatusBar` itself stays dumb — it renders whatever path string it is given and keeps its no-domain-imports rule.
 
+The chat's right hints region SHALL be state-aware for the interrupt affordance: while a turn is busy it SHALL include the interrupt hint, and while the interrupt is armed the label SHALL flip to its "again to interrupt" form with a visually distinct (accent) treatment; when idle no interrupt hint renders. The label SHALL derive from the live `app.interrupt` binding (`chordLabel`, never hand-written), and both the label and the armed state SHALL arrive from `app.tsx` as data — `StatusBar` keeps its no-domain-imports rule.
+
 #### Scenario: Shows analysis name and live state
 
 - **WHEN** a chat is open and the assistant is streaming
@@ -104,6 +106,16 @@ The chat's `StatusBar` SHALL additionally accept an OPTIONAL workspace-path segm
 
 - **WHEN** the chat renders on a terminal below `size.breakpointWide` columns
 - **THEN** the status bar shows no path segment (the sidebar carries the path)
+
+#### Scenario: Busy shows the interrupt hint
+
+- **WHEN** a turn is streaming and the interrupt is not armed
+- **THEN** the right hints region shows the interrupt hint labeled from the live binding
+
+#### Scenario: Arming flips the hint
+
+- **WHEN** the user presses esc in the chat's NORMAL mode during a turn
+- **THEN** the hint flips to its "again to interrupt" form for the armed window, then reverts when the window lapses or the turn ends
 
 ### Requirement: Fixed-gutter message block
 
