@@ -320,10 +320,19 @@ describe the same failure differently.
 ### Requirement: submit_report is the postcondition gate and emits the preview part
 
 `submit_report` SHALL be the only signal that finalizes a version: it validates
-that `index.html` exists and is non-empty, contains no unrendered Jinja markers,
-and that every referenced local asset path resolves on disk, returning
-`problems[]` when any check fails. Only on success does it record the terminal
-outcome (with optional `notes`). The runner SHALL additionally apply a
+that `report.html.j2` exists, that `index.html` exists and is non-empty, contains
+no unrendered Jinja markers, and that every referenced local asset path resolves
+on disk, returning `problems[]` when any check fails. Only on success does it
+record the terminal outcome (with optional `notes`).
+
+Requiring the template is what makes a persisted version safe to branch from. A
+builder can write `index.html` directly and satisfy every output-shaped check
+without ever rendering a template — the prompt names that an anti-pattern but
+prose cannot enforce it. Such a version survives, and a later iteration branching
+from it copies nothing forward, handing the next builder a change request, no
+template, and an instruction not to start over. The gate therefore refuses it,
+which is also what lets the iteration precondition check only that the base
+version directory exists. The runner SHALL additionally apply a
 phantom-success guard — treating a claimed success whose `index.html` is missing
 or empty as a failure. On a recorded success `submit_report` SHALL emit a
 `data-report-preview` part `{ id, previewId, version, title, previewPath, format }`;
@@ -334,6 +343,12 @@ on failure it SHALL emit `data-report-preview-failed`
 
 - **WHEN** `index.html` still contains `{{ … }}` or `{% … %}` markers
 - **THEN** `submit_report` returns `problems[]`, does not record success, and the agent must fix and re-submit
+
+#### Scenario: A hand-written index.html without a template is refused
+
+- **GIVEN** a version directory holding a non-empty `index.html` and no `report.html.j2`
+- **WHEN** the builder calls `submit_report`
+- **THEN** it returns `problems[]` naming the missing template, does not record success, and the version is not finalized
 
 #### Scenario: A clean submit emits data-report-preview
 

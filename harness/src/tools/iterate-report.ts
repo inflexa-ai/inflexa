@@ -373,6 +373,15 @@ export const submitReportInputSchema = z
     .refine((data) => !(data.report !== undefined && data.sources), {
         message: "Top-level `sources` is for iteration mode. For creation, put sources inside the brief's `sources`.",
     })
+    // `baseVersion` names a version to branch from, and a creation call has
+    // none. Left admissible it is not inert: the base-existence guard below is
+    // scoped to iteration, so the value reaches the runner unchecked and numbers
+    // a brand-new report `v{baseVersion + 1}`.
+    .refine((data) => !(data.report !== undefined && data.baseVersion !== undefined), {
+        message:
+            "`baseVersion` is for iteration mode — a new report has no earlier version to branch from. " +
+            "To build on an existing version, pass `modifications` plus that report's `previewId` instead of a `report` brief.",
+    })
     // `previewId` names the report the change text applies to. Without one there
     // is nothing to iterate, and the tool would mint a fresh id — an id the
     // caller never chose, which its own refusal would then quote back as though
@@ -611,9 +620,7 @@ export function createReportSubmitTool(deps: SubmitReportDeps): Tool {
             const { resourceId } = scopeResource(ctx.session.scope);
             const analysisRoot = deps.resolveWorkspaceRoot(resourceId);
 
-            // Zod fills the default at parse time but the static type keeps it
-            // optional — re-apply so the runner sees a concrete value.
-            const format: "html" | "pdf" = input.format ?? "html";
+            const format = input.format;
 
             const previewId = input.previewId ?? `prv-${randomUUID().slice(0, 8)}`;
             const previewRootAbs = join(analysisRoot, previewDir(previewId));
@@ -628,9 +635,26 @@ export function createReportSubmitTool(deps: SubmitReportDeps): Tool {
             // preview holding no version at all, and a `baseVersion` naming one
             // that was never written — so the base is resolved here exactly as the
             // runner resolves it (`baseVersion ?? latest`) and both are refused.
+            // Scoping to iteration is exact, not incidental: the input schema
+            // refuses `baseVersion` alongside a brief, so a creation call carries
+            // no base to resolve.
             // The check is a directory read and precedes access minting, asset
             // staging, and the builder, so a bad id costs no model turns and
             // leaves no partial state.
+            //
+            // A version directory implies its `report.html.j2`, so the directory
+            // read is the whole check and no template stat is needed. What holds
+            // that up is the builder's own finalize gate
+            // (`tools/report/submit-report.ts`), which refuses a version whose
+            // `report.html.j2` is absent; a version the gate never accepted is
+            // never recorded, and the runner removes the directory it created.
+            // Relaxing that gate is what would make this check insufficient.
+            //
+            // The read may also sit outside `withPreviewLock`: nothing in the
+            // report path removes an existing version, so a concurrent iteration
+            // can only add, and a base seen here is still there when the runner
+            // takes the lock. Introducing version deletion makes that ordering
+            // load-bearing.
             if (!brief) {
                 let versionDirs: string[] = [];
                 try {

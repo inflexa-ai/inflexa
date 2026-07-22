@@ -3,6 +3,7 @@
  * `data-report-preview` until this tool writes the success outcome.
  *
  * Checks:
+ *   - report.html.j2 exists at versionDir/ — the report itself
  *   - index.html exists at versionDir/ with size > 0
  *   - no unrendered `{{ … }}` or `{% … %}` left in the output
  *   - all referenced asset paths resolve to files on disk
@@ -38,8 +39,9 @@ export function createSubmitReportTool(state: SubmitReportToolState): Tool {
     return defineTool({
         id: "submit_report",
         description:
-            "Declare the report ready. Validates index.html exists, has no " +
-            "unrendered Jinja, and that all referenced asset paths resolve. " +
+            "Declare the report ready. Validates report.html.j2 and index.html " +
+            "exist, that the output has no unrendered Jinja, and that all " +
+            "referenced asset paths resolve. " +
             "You MUST call this to finish — the runner ignores any other claim " +
             "of success. Returns problems[] when checks fail; fix and re-submit. " +
             "Use `notes` to surface caveats to the caller (e.g. sections rendered " +
@@ -60,7 +62,28 @@ export function createSubmitReportTool(state: SubmitReportToolState): Tool {
         execute: async (input) => {
             const problems: string[] = [];
 
-            // 1. index.html exists and is non-empty
+            // 1. report.html.j2 exists — the report itself, as opposed to the
+            // artifact rendered from it. Nothing downstream re-derives this: a
+            // version that is finalized without a template persists as one, and
+            // the next iteration copies a template that isn't there, then tells
+            // the builder to edit it in place. Checked first because an absent
+            // template is the cause the checks below can only report symptoms of.
+            const templatePath = join(state.versionDir, "report.html.j2");
+            let hasTemplate: boolean;
+            try {
+                hasTemplate = (await stat(templatePath)).isFile();
+            } catch {
+                hasTemplate = false;
+            }
+            if (!hasTemplate) {
+                problems.push(
+                    "report.html.j2 is missing — a report is authored as report.html.j2 and " +
+                        "rendered into index.html by build_report; a hand-written index.html is " +
+                        "not a report. Write the template, then call build_report.",
+                );
+            }
+
+            // 2. index.html exists and is non-empty
             const indexPath = join(state.versionDir, "index.html");
             let html: string;
             try {
@@ -75,7 +98,7 @@ export function createSubmitReportTool(state: SubmitReportToolState): Tool {
                 return ok({ ok: false, problems });
             }
 
-            // 2. No unrendered Jinja markers
+            // 3. No unrendered Jinja markers
             if (UNRENDERED_JINJA.test(html)) {
                 const match = html.match(UNRENDERED_JINJA);
                 problems.push(
@@ -84,7 +107,7 @@ export function createSubmitReportTool(state: SubmitReportToolState): Tool {
                 );
             }
 
-            // 3. Asset reference resolution
+            // 4. Asset reference resolution
             const refs = extractLocalRefs(html);
             for (const ref of refs) {
                 const resolved = resolveLocalRef(ref, state.versionDir, state.assetsDir);
