@@ -4,5 +4,6 @@
 // Side-effect imports only — adding an ext file here is the whole registration.
 import "./date.ext.ts";
 import "./json.ext.ts";
+import "./number.ext.ts";
 import "./promise.ext.ts";
 import "./response.ext.ts";

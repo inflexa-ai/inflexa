@@ -17,6 +17,7 @@ import {
     referenceStorePaths,
     verifyReferenceDatasets,
     type ReferenceCatalogSource,
+    type ReferenceDownloadProgress,
     type ReferenceStoreInspection,
     type ReferenceVerification,
 } from "./store.ts";
@@ -110,6 +111,16 @@ function serve(files: readonly Fixture[], asked: Asked[] = []): (input: string |
         const body = bodies.get(target);
         if (body === undefined) return new Response("missing", { status: 404, statusText: "Not Found" });
         return new Response(body);
+    };
+}
+
+/** An upstream that declares each body's length, as a well-behaved one does for a fixed-size file. */
+function serveWithContentLength(files: readonly Fixture[]): (input: string | URL | Request) => Promise<Response> {
+    const bodies = new Map(files.map((file) => [url(file.path), file.body]));
+    return async (input) => {
+        const body = bodies.get(String(input));
+        if (body === undefined) return new Response("missing", { status: 404, statusText: "Not Found" });
+        return new Response(body, { headers: { "content-length": String(Buffer.byteLength(body)) } });
     };
 }
 
@@ -411,6 +422,115 @@ describe("verification", () => {
             path: "a.txt",
             state: "missing",
         });
+    });
+});
+
+describe("transfer progress reporting", () => {
+    const FILES: readonly Fixture[] = [
+        { path: "nested/a.txt", body: "alpha" },
+        { path: "b.txt", body: "beta" },
+    ];
+
+    test("reports every artifact's start, bytes, and completion in transfer order", async () => {
+        const path = root();
+        const fixture = catalog(FILES);
+        const events: ReferenceDownloadProgress[] = [];
+
+        const result = await installReferenceDatasets(["demo"], {
+            root: path,
+            source: source(fixture),
+            fetch: serveWithContentLength(FILES),
+            onProgress: (event) => events.push(event),
+        });
+        expect(result._unsafeUnwrap().installed[0]?.bytesDownloaded).toBe(9);
+
+        // Artifacts transfer sequentially, so the stream is strictly start → bytes… → completed per
+        // artifact; a renderer accumulating byte deltas must land on the same total the receipt records.
+        expect(events.filter((event) => event.type !== "artifact_bytes")).toEqual([
+            { type: "artifact_started", datasetId: "demo", path: "nested/a.txt", declaredBytes: 5 },
+            { type: "artifact_completed", datasetId: "demo", path: "nested/a.txt", bytes: 5 },
+            { type: "artifact_started", datasetId: "demo", path: "b.txt", declaredBytes: 4 },
+            { type: "artifact_completed", datasetId: "demo", path: "b.txt", bytes: 4 },
+        ]);
+        const streamed = events.reduce((total, event) => (event.type === "artifact_bytes" ? total + event.bytes : total), 0);
+        expect(streamed).toBe(9);
+    });
+
+    test("an upstream that declares no size still reports a start, and installs identically", async () => {
+        const path = root();
+        const fixture = catalog(FILES);
+        const events: ReferenceDownloadProgress[] = [];
+
+        const result = await installReferenceDatasets(["demo"], {
+            root: path,
+            source: source(fixture),
+            // `serve` sets no content-length — the normal case for a chunked or on-the-fly-compressed
+            // upstream, and the reason the readout can never be a percentage of a known total.
+            fetch: serve(FILES),
+            onProgress: (event) => events.push(event),
+        });
+        expect(result._unsafeUnwrap().installed[0]?.bytesDownloaded).toBe(9);
+
+        const started = events.filter((event) => event.type === "artifact_started");
+        expect(started).toHaveLength(2);
+        expect(started.every((event) => !("declaredBytes" in event))).toBe(true);
+    });
+
+    test("no artifact is reported as completed when its transfer fails", async () => {
+        const path = root();
+        const fixture = catalog(FILES);
+        const events: ReferenceDownloadProgress[] = [];
+
+        const result = await installReferenceDatasets(["demo"], {
+            root: path,
+            source: source(fixture),
+            fetch: serve([]), // every artifact 404s
+            onProgress: (event) => events.push(event),
+        });
+        expect(result.isErr()).toBe(true);
+        expect(events).toEqual([]);
+    });
+
+    test("a throwing observer cannot fail the install or change what it produces", async () => {
+        const quiet = root();
+        const noisy = root();
+        const fixture = catalog(FILES);
+        const stamp = { now: () => new Date("2026-07-14T12:00:00.000Z"), attemptId: () => "attempt" };
+
+        const baseline = await installReferenceDatasets(["demo"], { root: quiet, source: source(fixture), fetch: serve(FILES), ...stamp });
+        const observed = await installReferenceDatasets(["demo"], {
+            root: noisy,
+            source: source(fixture),
+            fetch: serve(FILES),
+            ...stamp,
+            onProgress: () => {
+                throw new Error("renderer exploded");
+            },
+        });
+
+        expect(observed._unsafeUnwrap()).toEqual(baseline._unsafeUnwrap());
+        const receipt = (store: string): unknown => JSON.parse(readFileSync(join(referenceStorePaths(store).receipts, "demo.json"), "utf8"));
+        expect(receipt(noisy)).toEqual(receipt(quiet));
+        expect((await verifyReferenceDatasets(noisy, ["demo"], source(fixture)))._unsafeUnwrap()[0]?.state).toBe("valid");
+    });
+
+    test("an intact dataset is skipped without emitting any progress", async () => {
+        const path = root();
+        const fixture = catalog(FILES);
+        const first = await installReferenceDatasets(["demo"], { root: path, source: source(fixture), fetch: serve(FILES) });
+        expect(first.isOk()).toBe(true);
+
+        const events: ReferenceDownloadProgress[] = [];
+        const repeated = await installReferenceDatasets(["demo"], {
+            root: path,
+            source: source(fixture),
+            fetch: serve(FILES),
+            onProgress: (event) => events.push(event),
+        });
+        expect(repeated._unsafeUnwrap().installed[0]?.bytesDownloaded).toBe(0);
+        // The zero-artifact plan a renderer must not draw a bar for: nothing was fetched, so nothing
+        // was reported.
+        expect(events).toEqual([]);
     });
 });
 
