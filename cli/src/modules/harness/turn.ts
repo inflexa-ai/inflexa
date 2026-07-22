@@ -25,8 +25,8 @@ import { enterChatTurn } from "./agent_switch.ts";
 // The headless chat turn engine. One transport-free sequence —
 // `prepareChatTurn → runAgent → unconditional appendTurn` — shared by BOTH the
 // clack/stdout REPL (`chat.ts`) and the TUI chat hook, so neither carries a
-// private copy of the prepare→run→append body (chat-command spec: "one turn
-// engine serves both surfaces"). This module does NO terminal output: it takes
+// private copy of the prepare→run→append body: one turn engine serves both
+// surfaces. This module does NO terminal output: it takes
 // the primitives it needs, drives the harness, and returns a discriminated
 // `TurnOutcome`. Presentation (sink lines, store writes, spinners) is the
 // caller's job entirely. Every harness symbol comes from the package barrel —
