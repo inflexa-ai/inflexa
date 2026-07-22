@@ -1,5 +1,6 @@
 import { ResultAsync } from "neverthrow";
 import {
+    createThreadHistory,
     finalText,
     makeLocalAuth,
     passthroughStep,
@@ -14,6 +15,7 @@ import {
     type EmitFn,
     type ModelMessage,
     type Pool,
+    type RetractOutcome,
     type ThreadHistory,
 } from "@inflexa-ai/harness";
 
@@ -226,4 +228,17 @@ export async function runChatTurn(args: RunChatTurnArgs, seams: ChatTurnSeams = 
     } finally {
         leaveChatTurn();
     }
+}
+
+/**
+ * Remove a thread's most recent turn durably — the tail-turn half of a TUI retract. Built over
+ * `createThreadHistory(pool)`, the SAME factory {@link runChatTurn}'s caller wires as its `history`,
+ * so the retract rides the exact pool the turn appended through rather than introducing a parallel
+ * store concept (the factory is a stateless closure over the pool, so a fresh instance is equivalent —
+ * mirroring how the transcript-load path builds one per read). Returns the harness {@link RetractOutcome}
+ * (or a `DbError`) verbatim for the caller to reduce: `retracted` removed the orphan, while
+ * `empty-thread`/`no-user-turn` removed nothing.
+ */
+export function retractTailTurn(pool: Pool, threadId: string): ResultAsync<RetractOutcome, DbError> {
+    return createThreadHistory(pool).retractLastTurn(threadId);
 }

@@ -10,22 +10,24 @@ import {
     type DbError,
     type EmitFn,
     type Pool,
+    type RetractOutcome,
     type ThreadHistory,
 } from "@inflexa-ai/harness";
 
 import { describeCause, findAuthCause } from "../../lib/cause.ts";
+import { getLogger } from "../../lib/log.ts";
 import { resolveModelConnection } from "../../modules/harness/config.ts";
 import { MODEL_API_KEY_VAR, providerKindForSlug } from "../../modules/infra/setup.ts";
 import { workspaceRootForAnalysisId } from "../../modules/analysis/output.ts";
 import { isSubAgentEvent, readAskPart, readPlanCard, readRunCard } from "../../modules/harness/chat_printer.ts";
 import { readFileReference, readPresentation, readReportPreview, readReportPreviewFailed } from "../../modules/harness/artifact_open.ts";
-import { buildChatSession, runChatTurn, type TurnOutcome } from "../../modules/harness/turn.ts";
+import { buildChatSession, retractTailTurn, runChatTurn, type TurnOutcome } from "../../modules/harness/turn.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { leaderSeq, sequenceLabel } from "../keymap.ts";
 import { harnessRuntime } from "./boot.ts";
 import { clearAsks, pushAsk, settleAsk } from "./asks.ts";
 import { notify } from "./notice.ts";
-import { setChatStatus } from "./status.ts";
+import { chatStatus, setChatStatus } from "./status.ts";
 import type { AskCardPart, OpenableCardPart, OpenableEntry, Part, PlanCardPart, PresentationPart, TextPart, ToolCallPart } from "../../types/session.ts";
 
 // The chat's hot state — the message list, the in-flight streaming buffer, and the last error —
@@ -44,6 +46,13 @@ export type UIMessage = {
     parts: Part[];
     /** Assistant-only turn duration in ms, set when the turn finishes; undefined otherwise. */
     durationMs?: number;
+    /**
+     * Live-only marker: an aborted turn streamed output into this assistant message before the user
+     * interrupted it. Set on an interrupted turn that produced content (a message block renders a muted
+     * "interrupted" suffix); never set on a no-output abort (that empty shell is dropped instead), and
+     * never persisted — an aborted turn stores no assistant message, so a reload never carries it.
+     */
+    interrupted?: boolean;
 };
 
 // The most-recent turns the UI mounts. Layout cost scales with mounted message count (the scrollbox
@@ -86,6 +95,44 @@ export function messageCount(): number {
 /** Set (or clear with `null`) the error banner text. Called by the send path and app-level guards. */
 export function setError(msg: string | null): void {
     setErrorMsg(msg);
+}
+
+// ── Interrupt double-press window ────────────────────────────────────────────────────────────────
+//
+// The chat's interrupt is a double press: a first key arms a short window, a second within it fires
+// the turn's abort. The window lives here (not in the keymap) so the same lifecycle that ends a turn
+// clears it, and the status hint can render the armed state reactively. The keys themselves, and the
+// busy/NORMAL-mode gating, are the UI layer's — this hook owns only the armed FLAG and its timer.
+
+/** How long a first interrupt press keeps the double-press window armed before a second must fire it. */
+export const INTERRUPT_ARM_WINDOW_MS = 5000;
+
+const [interruptArmed, setInterruptArmed] = createSignal(false);
+/** True while a first interrupt press has armed the double-press window — read reactively for the hint. */
+export { interruptArmed };
+
+let interruptArmTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Arm (or refresh) the interrupt double-press window: the UI's first-press binding calls this, and a
+ * second press within {@link INTERRUPT_ARM_WINDOW_MS} fires {@link abort}. A fresh press restarts the
+ * timer; the timer is `.unref`'d so a pending window never keeps the process alive at shutdown.
+ */
+export function armInterrupt(): void {
+    if (interruptArmTimer) clearTimeout(interruptArmTimer);
+    setInterruptArmed(true);
+    interruptArmTimer = setTimeout(() => {
+        interruptArmTimer = null;
+        setInterruptArmed(false);
+    }, INTERRUPT_ARM_WINDOW_MS);
+    interruptArmTimer.unref();
+}
+
+/** Disarm the interrupt window (a turn ended, or the window lapsed unfired). Idempotent. */
+function disarmInterrupt(): void {
+    if (interruptArmTimer) clearTimeout(interruptArmTimer);
+    interruptArmTimer = null;
+    setInterruptArmed(false);
 }
 
 // Per-turn adapter state. `currentAssistantId` is the message every harness event appends parts to;
@@ -578,6 +625,49 @@ function dropEmptyAssistant(assistantId: string): void {
 }
 
 /**
+ * Flag the assistant message an aborted turn streamed output into as `interrupted` — a live-only
+ * marker a message block renders as a muted suffix. Only ever called for an aborted turn that produced
+ * content (a no-output abort drops the shell instead), so the flag never rides an empty message. A
+ * fresh field write via `produce` so Solid reconciles the edit; no-op if the message is gone.
+ */
+function markInterrupted(assistantId: string): void {
+    setMessages(
+        produce((msgs) => {
+            const msg = msgs.find((m) => m.id === assistantId);
+            if (msg) msg.interrupted = true;
+        }),
+    );
+}
+
+/**
+ * Whether the in-flight assistant has produced NOTHING yet: no streamed text, no open tool, and its
+ * only part is the pre-minted empty text segment {@link startAssistantTurn} mints. The structural half
+ * of {@link canRetract}, reused by {@link finishTurn}'s abort branch to decide whether an aborted turn
+ * left an empty shell to drop. Reads the reactive `streamText`/`messages`, so it re-evaluates in a
+ * tracking scope; `openTools` is a plain read (it only ever changes alongside a store write that has
+ * already re-triggered the scope).
+ */
+function isEmptyAssistantShell(assistantId: string | null): boolean {
+    if (!assistantId) return false;
+    if (streamText() !== "") return false;
+    if (openTools.size > 0) return false;
+    const msg = messages.find((m) => m.id === assistantId);
+    if (!msg || msg.parts.length !== 1) return false;
+    const only = msg.parts[0];
+    return only?.type === "text" && only.text === "";
+}
+
+/**
+ * Whether the just-sent message can still be retracted for editing: a turn is busy and its assistant
+ * has produced nothing (see {@link isEmptyAssistantShell}). The retract up-arrow binding reads this for
+ * its `enabled`, and {@link retract} re-checks it after the abort settles (a delta can race the press).
+ * Read inside a tracking scope for reactivity.
+ */
+export function canRetract(): boolean {
+    return chatStatus() === "busy" && isEmptyAssistantShell(currentAssistantId);
+}
+
+/**
  * The banner line for a failed turn. An auth-kind provider failure gets a dedicated remedy because
  * the generic rendering buries the one fact that matters — a human has to re-authenticate: in
  * cliproxy mode that names the configured provider and the two ways back in (relaunch, where the
@@ -615,6 +705,8 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
     // turn. Each terminal re-emit already settled its own entry during the turn; this is the final
     // sweep for the abort/failure path where a terminal re-emission may never arrive.
     clearAsks();
+    // The turn is ending — clear any armed interrupt window so it never carries into idle or the next turn.
+    disarmInterrupt();
     switch (outcome.kind) {
         case "ok":
             // An empty buffer means no delta arrived since the last seal, so the FINAL assistant
@@ -637,9 +729,18 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
             setChatStatus("idle");
             return;
         case "aborted":
-            commitStream();
-            drainOpenTools();
-            stampDuration(assistantId, startedAt);
+            // An aborted turn that produced nothing leaves NO empty assistant shell — the user message
+            // alone stands, matching the reload (an abort persists no assistant message). One that
+            // streamed output flushes it and carries a live-only `interrupted` marker. Either way
+            // `aborted` returns to idle with no error banner — the user cancelled, not a failure.
+            if (isEmptyAssistantShell(assistantId)) {
+                dropEmptyAssistant(assistantId);
+            } else {
+                commitStream();
+                drainOpenTools();
+                stampDuration(assistantId, startedAt);
+                markInterrupted(assistantId);
+            }
             reportAppendError(outcome.appendError);
             setChatStatus("idle");
             return;
@@ -876,6 +977,20 @@ export async function loadMessages(sessionId: string, analysisId: string, seams:
 // controller's lifetime is owned alongside the state it cancels.
 let abortController: AbortController | null = null;
 
+// The in-flight turn's settlement, retained so a retract can await it: the engine's `appendTurn` runs
+// before the outcome returns, so awaiting the outcome IS awaiting the durable append (the retract must
+// remove the just-appended orphan, never race ahead of it), and the outcome carries the append fault
+// that decides the durable step. Null when no turn is in flight. The RESOLVING side is a local closure
+// in `send`, so a swap nulling this module ref never strands a waiter mid-await.
+let turnSettled: Promise<TurnOutcome> | null = null;
+// The in-flight turn's start timestamp, retained so the retract's downgrade path can hand `finishTurn`
+// the duration base `send` otherwise owns as a local.
+let turnStartedAt = 0;
+// Threads whose durable tail-retract faulted and must be retried once before the next send appends.
+// Keyed by thread id (== session id); SURVIVES a session swap (the orphan is on that thread regardless
+// of which session is mounted), so `resetHotState` deliberately does not clear it.
+const pendingRetract = new Set<string>();
+
 /**
  * Clear all hot state for an in-place session swap: cancel any in-flight request, drop the streamed
  * buffer, the error, the messages, and the per-turn adapter state, and return the status to idle.
@@ -898,8 +1013,14 @@ export function resetHotState(): void {
     currentSessionId = null;
     currentAnalysisId = null;
     openTools.clear();
+    // Forget the superseded turn's settlement/duration bases; the send that owns them still resolves
+    // its own local promise, so a retract already awaiting it is never stranded by this null.
+    turnSettled = null;
+    turnStartedAt = 0;
     // Drop any pending asks so a swap/abort mid-decision never leaves a stale docked prompt.
     clearAsks();
+    // Clear any armed interrupt window — a swap ends the turn it belonged to.
+    disarmInterrupt();
     setStreamPartId(null);
     setStreamText("");
     setErrorMsg(null);
@@ -925,9 +1046,15 @@ export type SendSeams = {
      * load seams; tests inject a fake so the convergent reload is observable offline.
      */
     readonly reloadTranscript?: (sessionId: string, analysisId: string) => Promise<void>;
+    /**
+     * Durable tail-turn retract, used only to HEAL a pending removal a prior retract left for this
+     * thread — retried once before this send appends (see {@link retract}). Defaults to the embedder's
+     * {@link retractTailTurn} over the turn's pool; tests inject a fake to observe the heal offline.
+     */
+    readonly retractTurn?: (pool: Pool, threadId: string) => ResultAsync<RetractOutcome, DbError>;
 };
 
-const realSendSeams: SendSeams = { runtime: harnessRuntime, runChatTurn };
+const realSendSeams: SendSeams = { runtime: harnessRuntime, runChatTurn, retractTurn: retractTailTurn };
 
 /**
  * Send a user turn through the shared harness turn engine. Owns the turn-scoped
@@ -957,6 +1084,19 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
         return;
     }
 
+    // Heal a pending durable retract for this thread before this turn appends: a prior retract's tail
+    // removal faulted transiently, leaving an orphan turn on the thread. Retry it ONCE — success removes
+    // the orphan; a second failure just proceeds (an unanswered orphan is harmless context, and a
+    // transient database fault must never wedge the conversation). Runs before the store write, so no
+    // generation-token re-check is owed. Rare by construction: the flag is set only by a failed retract.
+    if (pendingRetract.has(opts.sessionId)) {
+        pendingRetract.delete(opts.sessionId);
+        await (seams.retractTurn ?? retractTailTurn)(runtime.pool, opts.sessionId).match(
+            () => {},
+            (e) => getLogger("chat").debug({ err: e, threadId: opts.sessionId }, "pending retract heal failed; proceeding with send"),
+        );
+    }
+
     // Claim the store-write token BEFORE the first store write. `Chat` fires `loadMessages` the instant
     // boot reaches `ready` — the same instant `handleSubmit`'s gate opens — so a message pre-typed during
     // the boot animation lands while that load is still awaiting its page read. Without this claim the
@@ -976,6 +1116,15 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
     // The controller instance is this turn's token. Captured once; the module `abortController`
     // may be reassigned/nulled by a swap or reset while this turn is in flight.
     const myTurn = abortController;
+
+    // Retain this turn's settlement + duration base so a retract can await the engine (the `appendTurn`
+    // lands before the outcome returns) and decide the durable step. `settleTurn` is a LOCAL closure so
+    // it resolves the waiter regardless of a swap nulling the module `turnSettled` mid-flight.
+    let settleTurn!: (o: TurnOutcome) => void;
+    turnSettled = new Promise<TurnOutcome>((resolve) => {
+        settleTurn = resolve;
+    });
+    turnStartedAt = startedAt;
 
     // Every event this turn produces — streamed deltas, tool lifecycle, cards — passes through here.
     // Once a swap/reset supersedes the turn (`abortController !== myTurn`), late events are dropped at
@@ -1009,11 +1158,17 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
         userInput: opts.userText,
     });
 
+    // Settle the retained turn promise BEFORE the supersession guard: a retract IS a superseding writer
+    // (it claimed the token to abort this turn) and must still observe this outcome — it awaits
+    // `turnSettled` to read the append fault and decide the durable step. `settleTurn` is the local
+    // closure, so this resolves even when a swap has nulled the module `turnSettled`.
+    settleTurn(outcome);
+
     // C1: the turn was superseded while the engine unwound — drop the outcome whole. Its `appendError`
     // toast is dropped too: it would otherwise fire over the new session's UI, and the persistence
     // fault is already reflected on the old thread's state, not the surface's. The token re-check is
     // the same rule from the other producer's side: any store-writing operation started after this turn
-    // owns the store now.
+    // owns the store now — a retract that claimed the token takes over this turn's teardown entirely.
     if (abortController !== myTurn || loadGeneration !== myTurnLoad) return;
 
     finishTurn(outcome, assistantId, startedAt);
@@ -1028,6 +1183,8 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
     currentAssistantId = null;
     currentSessionId = null;
     currentAnalysisId = null;
+    turnSettled = null;
+    turnStartedAt = 0;
 
     // Retry a transcript load THIS turn superseded. `Chat` fires the initial load at the boot-ready
     // edge — the same instant the submit gate opens — so a message pre-typed while booting bumps
@@ -1044,6 +1201,189 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
 /** Cancel the in-flight chat request, if any (the abort keybinding). */
 export function abort(): void {
     abortController?.abort();
+}
+
+/**
+ * Splice a retracted turn's user message and its empty assistant placeholder out of the live store,
+ * clearing the streaming signals that pointed at the placeholder. The retract-path mirror of
+ * {@link dropEmptyAssistant}: `canRetract` guaranteed the assistant held only its empty text part, so
+ * removing both leaves the transcript exactly as it stood before the send.
+ */
+function spliceRetractedTurn(userId: string, assistantId: string): void {
+    setStreamPartId(null);
+    setStreamText("");
+    setMessages(
+        produce((msgs) => {
+            for (let i = msgs.length - 1; i >= 0; i--) {
+                const id = msgs[i]!.id;
+                if (id === assistantId || id === userId) msgs.splice(i, 1);
+            }
+        }),
+    );
+}
+
+/**
+ * Close the emit sink + per-turn adapter state after a retract took over teardown. `send`'s own
+ * cleanup was skipped (its C1 guard dropped once the retract claimed the token), so the retract closes
+ * the sink here: nulling `abortController` drops any late straggler event at `emitForTurn`, and the
+ * adapter ids are cleared so nothing dangles at the removed turn. Mirrors `send`'s post-turn cleanup.
+ */
+function closeTurnState(): void {
+    disarmInterrupt();
+    abortController = null;
+    currentAssistantId = null;
+    currentSessionId = null;
+    currentAnalysisId = null;
+    openTools.clear();
+    turnSettled = null;
+    turnStartedAt = 0;
+}
+
+/**
+ * Whether the aborted turn actually LANDED an orphan turn on the thread — the precondition for running
+ * the durable retract. `ok`/`aborted`/`failed` reach `runAgent` and append unconditionally, so their
+ * orphan is on the tail iff the append did not fault; `prepare_failed`/`thread_gone` bail BEFORE
+ * `appendTurn`, so no orphan exists. Removing the tail when none of this turn's rows are there would
+ * delete an EARLIER turn's real history — hence the gate.
+ */
+function turnAppendLanded(outcome: TurnOutcome): boolean {
+    switch (outcome.kind) {
+        case "ok":
+        case "aborted":
+        case "failed":
+            return outcome.appendError === undefined;
+        case "prepare_failed":
+        case "thread_gone":
+            return false;
+        default: {
+            const _exhaustive: never = outcome;
+            throw new Error(`unhandled turn outcome: ${JSON.stringify(_exhaustive)}`);
+        }
+    }
+}
+
+/**
+ * Injectable edges so {@link retract}'s durable half is unit-testable offline — mirrors {@link SendSeams}.
+ * Production callers omit the trailing argument and get the real booted runtime + the embedder's tail
+ * retract; tests pass a fake `retractTurn` resolving on their schedule.
+ */
+export type RetractSeams = {
+    /** The booted runtime handle, or `null` when boot is not ready. Real: {@link harnessRuntime}. */
+    readonly runtime: () => HarnessRuntime | null;
+    /** Remove the thread's tail turn durably. Real: {@link retractTailTurn} over the turn's pool. */
+    readonly retractTurn: (pool: Pool, threadId: string) => ResultAsync<RetractOutcome, DbError>;
+};
+
+const realRetractSeams: RetractSeams = { runtime: harnessRuntime, retractTurn: retractTailTurn };
+
+/**
+ * Run the durable tail removal and reduce its outcome. `retracted` removed the orphan; `empty-thread`/
+ * `no-user-turn` removed nothing (the append never landed, or an anomalous tail) — a benign no-op with
+ * a debug log, never surfaced. A `DbError` is retained as a pending retry for the thread (the next send
+ * heals it) and surfaced as an error notice — token-gated, since a swap that superseded the UI writes
+ * has already moved the surface on. The conversation is never blocked on it.
+ */
+async function runDurableRetract(pool: Pool, threadId: string, myRetract: number, seams: RetractSeams): Promise<void> {
+    await seams.retractTurn(pool, threadId).match(
+        (result) => {
+            switch (result.kind) {
+                case "retracted":
+                    return;
+                case "empty-thread":
+                case "no-user-turn":
+                    getLogger("chat").debug({ threadId, kind: result.kind }, "tail retract removed nothing");
+                    return;
+                default: {
+                    const _exhaustive: never = result;
+                    throw new Error(`unhandled retract outcome: ${JSON.stringify(_exhaustive)}`);
+                }
+            }
+        },
+        (e) => {
+            pendingRetract.add(threadId);
+            if (loadGeneration === myRetract) notify({ kind: "error", text: `Could not retract the message from the thread (${e.type}).` });
+        },
+    );
+}
+
+/**
+ * Take back the just-sent message for editing while the turn is in flight and the assistant has
+ * produced nothing (see {@link canRetract}). The up-arrow binding gates on `canRetract` and invokes
+ * this; `seedComposer` is the widget seam the UI supplies to put the original text back in the composer
+ * (cursor placement is the widget's job), keeping this hook free of renderable refs.
+ *
+ * Sequence (D-order): claim the store-write token → `abort()` → await the turn's settlement →
+ * re-validate the no-output window. A racing delta downgrades to a plain interrupt (message kept,
+ * notice, nothing removed). Otherwise splice the live store, run the durable tail retract — SKIPPED
+ * when no orphan landed (append faulted, or a prepare/thread bail) — and seed the composer. Claiming
+ * the token makes this a first-class store writer: a session swap that supersedes it mid-sequence drops
+ * every remaining store write and the composer seed, while the durable removal — committed at the
+ * keypress and thread-scoped — still completes against the old thread.
+ */
+export async function retract(seedComposer: (text: string) => void, seams: RetractSeams = realRetractSeams): Promise<void> {
+    // The binding gates on `canRetract`, but re-check so a stray or racing call is still safe.
+    if (!canRetract()) return;
+
+    const runtime = seams.runtime();
+    const settled = turnSettled;
+    const assistantId = currentAssistantId;
+    const threadId = currentSessionId;
+    const startedAt = turnStartedAt;
+    if (!runtime || !settled || !assistantId || !threadId) return;
+
+    // The user message opening this turn sits directly before the assistant placeholder: capture its id
+    // (to splice) and its text (to seed the composer) before the abort can move anything.
+    const assistantIdx = messages.findIndex((m) => m.id === assistantId);
+    const userMsg = assistantIdx > 0 ? messages[assistantIdx - 1] : undefined;
+    if (!userMsg || userMsg.role !== "user") return;
+    const userId = userMsg.id;
+    const firstPart = userMsg.parts[0];
+    const originalText = firstPart?.type === "text" ? firstPart.text : "";
+
+    // Claim the store-write token: the retract becomes a first-class store writer a later load or
+    // session swap can supersede, and the aborted turn's own `finishTurn` drops at `send`'s C1 guard —
+    // so the teardown below is the sole writer for this turn.
+    const myRetract = ++loadGeneration;
+
+    // Fire the turn's abort so the engine unwinds and its unconditional `appendTurn` lands.
+    abortController?.abort();
+
+    // Await settlement — the append has run by the time the engine returns, so the durable removal below
+    // targets the just-appended orphan rather than racing ahead of it.
+    const outcome = await settled;
+
+    // A text delta (or any part) can race the keypress. If output landed, DOWNGRADE to a plain
+    // interrupt: keep the message, run the normal settle (flush + interrupted marker + idle) via
+    // `finishTurn`, and remove nothing. Token-gated — a swap mid-await already cleared and re-owns the store.
+    if (!isEmptyAssistantShell(assistantId)) {
+        if (loadGeneration === myRetract) {
+            finishTurn(outcome, assistantId, startedAt);
+            closeTurnState();
+            notify({ kind: "info", text: "Kept your message — the assistant had already started answering." });
+        }
+        return;
+    }
+
+    // A genuine no-output retract. Splice the live store + return to idle (token-gated: a swap mid-await
+    // already cleared it). `closeTurnState` nulls the emit sink FIRST so a late straggler event cannot
+    // re-append to the message being removed.
+    if (loadGeneration === myRetract) {
+        closeTurnState();
+        spliceRetractedTurn(userId, assistantId);
+        setChatStatus("idle");
+    }
+
+    // The durable removal runs even when a swap superseded the UI writes (committed at the keypress,
+    // thread-scoped) — but only when this turn's append actually landed an orphan to remove.
+    if (turnAppendLanded(outcome)) {
+        await runDurableRetract(runtime.pool, threadId, myRetract, seams);
+    }
+
+    // Seed the composer with the original text — even on a durable fault (the user still gets their text
+    // back). Dropped only when a swap superseded the sequence.
+    if (loadGeneration === myRetract) {
+        seedComposer(originalText);
+    }
 }
 
 /** One openable the `o` binding or the "Browse artifacts…" picker can act on: the analysis scope + the entry. */

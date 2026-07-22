@@ -54,6 +54,7 @@ function recordingHistory(append: () => ResultAsync<void, DbError> = () => okAsy
         },
         loadRecent: () => okAsync([]),
         loadPage: () => okAsync({ messages: [], total: 0, page: 1, perPage: 200, hasMore: false }),
+        retractLastTurn: () => okAsync({ kind: "empty-thread" }),
     };
     return { history, appended };
 }
