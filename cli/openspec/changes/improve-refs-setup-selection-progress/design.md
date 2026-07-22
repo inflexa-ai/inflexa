@@ -76,8 +76,13 @@ Alternatives considered: attaching a `data` listener to the readable (fights `pi
 The renderer in `commands.ts` owns all formatting. The denominator is the artifact count from the existing estimate — a number the CLI already computes and already shows before consent. Bytes and rate are measurements, so they are stated as such:
 
 ```
-Downloading references  ▪▪▪▪▪▪▪▪░░░░░░░  12/38 files · 1.4 GB · 8.2 MB/s
+Downloading references  ▪▪▪▪▪▪▪▪░░░░░░░  12/38 files · 1.4 GB · 8.2 MB/s · file 240.0 MB/3.1 GB
 ```
+
+The trailing `file` segment appears only while the artifact in flight declared a `Content-Length`. It
+is the one place a declared size can honestly be spent, and it earns its width: with 38 files of
+wildly different sizes, a single multi-gigabyte download otherwise leaves the file counter — the only
+denominator there is — motionless for minutes.
 
 The bar in that sketch is illustrative only — it is drawn by clack's `progress()` under its `style` option, not composed here. (`GLYPHS` in `lib/design_system.ts` governs the opentui TUI, not the clack prompt surface, so the readout mints no glyph vocabulary of its own.)
 
@@ -89,6 +94,8 @@ Two count edges are decided here rather than left to the renderer:
 - **The completed count is clamped to the planned total.** The estimate and the installer both decide "already intact" by digest, but they decide it at different moments, so a dataset damaged in between can add fetches the estimate did not predict. The counter saturates at the total rather than rendering `39/38`, and the final summary — which reports what was actually installed — remains the authoritative record.
 
 Rate is sampled over a trailing window, not averaged over the run, so it tracks what the connection is doing now instead of being dragged by a slow start. The concrete constants, fixed here so the readout is reproducible: samples of cumulative bytes are kept for the last **3 seconds**, rate = Δbytes ÷ Δtime across that window, the rate segment appears only once the window spans at least **1 second** and holds two usable samples, and `message(…)` refreshes at most every **100 ms** regardless of how fast chunks arrive. When Δtime is zero or no sample qualifies, the rate segment is omitted entirely rather than rendered as `0 B/s`, `NaN`, or `Infinity`.
+
+A stall needs two mechanisms, because a stalled stream is defined by the absence of the events that would otherwise drive the readout. The rate's staleness is judged against the wall clock rather than against the newest sample, so a window whose last sample has aged out yields no rate at all; and an unref'd interval repaints on the window's period, so the stale rate actually leaves the screen instead of merely being absent from a snapshot nobody asked for. Together they make a stalled transfer read as stalled — file counter still, byte total still, no rate — rather than as a connection still moving at whatever it managed last.
 
 ### Non-TTY degrades to plain lines
 
@@ -108,7 +115,7 @@ Non-finite and negative inputs clamp to `0 B` the way `Date.relativeAge` clamps 
 
 - **A preset hides which datasets were chosen.** → The consent question still states the plan (file count and destination) before any transfer, and `all`/`recommended` are named in the confirmation, so nothing is installed without a stated plan. The picker escape remains for users who want to see and choose each entry.
 - **"Press Enter installs the recommended set" stops being true.** → Intended, and the only behavior removal in this change. The implicit default *is* the reported problem, so it cannot survive; what survives is the outcome. `recommended` is the first entry and the select's initial value, so an untouched prompt plus Enter still plans the recommended set — now as a visible, named choice rather than 32 pre-ticked boxes. Nothing else about the flow is removed: the picker, the consent question, `--refs`, and the headless path all keep their current behavior.
-- **A rate readout on a stalled connection reads as motion.** → The rate is windowed, so a stall decays to nothing and the segment disappears rather than freezing at a stale number; the file counter is the honest progress signal.
+- **A rate readout on a stalled connection reads as motion.** → The rate is windowed against the wall clock and repainted on a timer, so a stall decays to nothing and the segment disappears rather than freezing at a stale number; the file counter is the honest progress signal.
 - **Per-chunk callbacks add work to the hot path.** → The reporter does arithmetic and a throttled string build; rendering is time-throttled independently of chunk arrival.
 - **A throwing reporter could break an install.** → Reporter invocation is guarded inside the installer; a failed render is dropped, never surfaced as a download failure.
 - **`Content-Length` is often absent** (gzip-on-the-fly upstreams, chunked responses). → Treated as the normal case: absence removes the in-flight refinement and changes nothing else about the readout.

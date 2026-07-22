@@ -203,7 +203,7 @@ export async function resolveReferencePreset(
  * Trailing window the transfer rate is measured over. Long enough that one slow chunk does not read
  * as a stall, short enough that the number describes the connection now rather than its whole history.
  */
-const PROGRESS_RATE_WINDOW_MS = 3_000;
+export const PROGRESS_RATE_WINDOW_MS = 3_000;
 /** Minimum span the window must cover before a rate is stated at all — below it the number is noise. */
 const PROGRESS_RATE_MIN_SPAN_MS = 1_000;
 /** Floor between redraws, so a fast connection spends its time transferring rather than repainting. */
@@ -262,9 +262,11 @@ function clackProgressSink(total: number): ReferenceProgressSink {
 
 /**
  * The captured-log readout: one line per completed artifact. Byte deltas paint nothing — a line per
- * chunk would bury the surrounding output in a log nobody can read.
+ * chunk would bury the surrounding output in a log nobody can read. Exported because the terminal
+ * check that selects it cannot be reached from a test process, and an untested log format is one
+ * that silently grows escape codes.
  */
-function plainProgressSink(): ReferenceProgressSink {
+export function plainProgressSink(): ReferenceProgressSink {
     return {
         start: (snapshot) => console.log(`Downloading ${snapshot.total} reference file${snapshot.total === 1 ? "" : "s"}…`),
         refresh: () => undefined,
@@ -299,14 +301,22 @@ export function createReferenceDownloadProgress(totalArtifacts: number, sink?: R
     let bytes = 0;
     let path: string | undefined;
     let lastRefreshAt = 0;
+    // The in-flight artifact's own progress, kept apart from the plan totals: it is the only place a
+    // declared size can honestly be used, since the plan's later files have not been requested yet.
+    let inFlightBytes = 0;
+    let inFlightDeclared: number | undefined;
     // Cumulative-byte samples inside the window. Sampling is throttled with the redraw, so this holds
     // tens of entries rather than one per chunk.
     const samples: { at: number; bytes: number }[] = [];
 
-    function rateBytesPerSecond(): number | undefined {
+    function rateBytesPerSecond(now: number): number | undefined {
         const first = samples[0];
         const last = samples[samples.length - 1];
         if (first === undefined || last === undefined) return undefined;
+        // A stalled transfer emits nothing, so the newest sample simply ages. Reading its age against
+        // `now` — rather than against the last sample — is what makes the rate decay to nothing
+        // instead of freezing at whatever the connection was doing before it stopped.
+        if (now - last.at > PROGRESS_RATE_WINDOW_MS) return undefined;
         const span = last.at - first.at;
         // Both guards matter: a window that has not filled yet would state a rate off one burst, and
         // a zero span would divide by zero. Either way the honest readout is no rate at all.
@@ -315,13 +325,21 @@ export function createReferenceDownloadProgress(totalArtifacts: number, sink?: R
         return moved > 0 ? (moved / span) * 1000 : undefined;
     }
 
-    function snapshot(): ReferenceProgressSnapshot {
-        const rate = rateBytesPerSecond();
-        const line = `${completed}/${total} files · ${bytes.formatBytes()}${rate === undefined ? "" : ` · ${rate.formatBytes()}/s`}`;
+    function snapshot(now: number = Date.now()): ReferenceProgressSnapshot {
+        const rate = rateBytesPerSecond(now);
+        // The in-flight fraction is a measurement against a size the upstream declared, not an
+        // invented total — and it is what keeps a single multi-gigabyte file from reading as a
+        // frozen bar when the file counter cannot move for minutes at a time.
+        const file = inFlightDeclared === undefined ? "" : ` · file ${inFlightBytes.formatBytes()}/${inFlightDeclared.formatBytes()}`;
+        const line = `${completed}/${total} files · ${bytes.formatBytes()}${rate === undefined ? "" : ` · ${rate.formatBytes()}/s`}${file}`;
         return { line, completed, total, ...(path === undefined ? {} : { path }) };
     }
 
     painter.start(snapshot());
+    // Nothing else repaints a stalled transfer: byte events are the only other trigger, and a stall
+    // is precisely their absence. Unref'd so a hung download never holds the process open on its own.
+    const heartbeat = setInterval(() => painter.refresh(snapshot()), PROGRESS_RATE_WINDOW_MS);
+    heartbeat.unref();
 
     return {
         report: (event) => {
@@ -329,24 +347,31 @@ export function createReferenceDownloadProgress(totalArtifacts: number, sink?: R
             switch (event.type) {
                 case "artifact_started":
                     path = event.path;
-                    painter.refresh(snapshot());
+                    inFlightBytes = 0;
+                    inFlightDeclared = event.declaredBytes;
+                    painter.refresh(snapshot(now));
                     return;
                 case "artifact_bytes": {
                     bytes += event.bytes;
+                    inFlightBytes += event.bytes;
                     if (now - lastRefreshAt < PROGRESS_REFRESH_MS) return;
                     lastRefreshAt = now;
                     samples.push({ at: now, bytes });
                     while (samples.length > 1 && now - (samples[0]?.at ?? now) > PROGRESS_RATE_WINDOW_MS) samples.shift();
-                    painter.refresh(snapshot());
+                    painter.refresh(snapshot(now));
                     return;
                 }
                 case "artifact_completed":
                     path = event.path;
+                    // Dropped rather than carried to the next file: a declared size describes the
+                    // artifact that declared it, and the next one may declare none at all.
+                    inFlightDeclared = undefined;
+                    inFlightBytes = 0;
                     // Clamped, not incremented blindly: the estimate and the installer each decide
                     // "already intact" by digest at different moments, so a dataset damaged in between
                     // adds fetches the plan never predicted. The final summary stays authoritative.
                     completed = Math.min(completed + 1, total);
-                    painter.advance(snapshot());
+                    painter.advance(snapshot(now));
                     return;
                 default: {
                     const unreachable: never = event;
@@ -354,7 +379,13 @@ export function createReferenceDownloadProgress(totalArtifacts: number, sink?: R
                 }
             }
         },
-        finish: (failure) => painter.finish(snapshot(), failure),
+        finish: (failure) => {
+            clearInterval(heartbeat);
+            // The plan is over, so an in-flight fraction would describe a file that is no longer
+            // moving — the closing line reports the totals only.
+            inFlightDeclared = undefined;
+            painter.finish(snapshot(), failure);
+        },
     };
 }
 

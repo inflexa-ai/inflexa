@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -13,10 +13,12 @@ import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import {
     ON_DEMAND_REFERENCE_NOTE,
+    PROGRESS_RATE_WINDOW_MS,
     createReferenceDownloadProgress,
     downloadReferences,
     offeredReferenceCatalog,
     parseReferenceIds,
+    plainProgressSink,
     resolveReferencePreset,
     runReferenceSetup,
     runRefsList,
@@ -537,5 +539,92 @@ describe("combined download progress", () => {
             expect(line).not.toContain("Infinity");
             expect(line).not.toContain("/3 files ·  of ");
         }
+    });
+});
+
+describe("progress readout without a terminal", () => {
+    test("paints one line per completed artifact and never an escape sequence", async () => {
+        const { stdout } = await capture(async () => {
+            const readout = createReferenceDownloadProgress(2, plainProgressSink());
+            if (readout === undefined) throw new Error("a two-artifact plan must produce a readout");
+            readout.report({ type: "artifact_started", datasetId: "demo", path: "a.txt", declaredBytes: 2048 });
+            readout.report({ type: "artifact_bytes", bytes: 1024 });
+            readout.report({ type: "artifact_bytes", bytes: 1024 });
+            readout.report({ type: "artifact_completed", datasetId: "demo", path: "a.txt", bytes: 2048 });
+            readout.report({ type: "artifact_started", datasetId: "demo", path: "b.txt" });
+            readout.report({ type: "artifact_bytes", bytes: 512 });
+            readout.report({ type: "artifact_completed", datasetId: "demo", path: "b.txt", bytes: 512 });
+            readout.finish();
+        });
+
+        // A byte delta paints nothing: an opening line, one line per completed artifact, one closing
+        // line. Anything more would be a line per chunk in a captured log.
+        expect(stdout.split("\n").filter(Boolean)).toEqual([
+            "Downloading 2 reference files…",
+            "  1/2 files · 2.0 KB — a.txt",
+            "  2/2 files · 2.5 KB — b.txt",
+            "Downloaded 2/2 files · 2.5 KB",
+        ]);
+        // Every ANSI sequence opens with ESC, so its absence is the whole claim: nothing cursor-like
+        // reaches a stream that is not a terminal.
+        expect(stdout.includes("\u001b")).toBe(false);
+    });
+});
+
+describe("in-flight artifact size", () => {
+    test("a declared size is reported as a measured fraction, and only while that file is moving", () => {
+        const { sink, snapshots } = recordingSink();
+        const readout = createReferenceDownloadProgress(2, sink);
+        if (readout === undefined) throw new Error("a two-artifact plan must produce a readout");
+
+        readout.report({ type: "artifact_started", datasetId: "demo", path: "a.txt", declaredBytes: 4096 });
+        readout.report({ type: "artifact_bytes", bytes: 1024 });
+        expect(snapshots[snapshots.length - 1]?.line).toBe("0/2 files · 1.0 KB · file 1.0 KB/4.0 KB");
+
+        readout.report({ type: "artifact_completed", datasetId: "demo", path: "a.txt", bytes: 4096 });
+        // The fraction belongs to the file that declared it, so it leaves with that file.
+        expect(snapshots[snapshots.length - 1]?.line).toBe("1/2 files · 1.0 KB");
+
+        // An upstream that declares nothing is the normal case, and it simply contributes no fraction.
+        readout.report({ type: "artifact_started", datasetId: "demo", path: "b.txt" });
+        readout.report({ type: "artifact_bytes", bytes: 2048 });
+        readout.report({ type: "artifact_completed", datasetId: "demo", path: "b.txt", bytes: 2048 });
+        // Those 2 KB arrived inside the redraw throttle, so they painted nothing at the time — but a
+        // throttled repaint must never be a lost byte, and the completion line proves they counted.
+        expect(snapshots[snapshots.length - 1]?.line).toBe("2/2 files · 3.0 KB");
+
+        readout.finish();
+        expect(snapshots[snapshots.length - 1]?.line).toBe("2/2 files · 3.0 KB");
+    });
+});
+
+describe("transfer rate", () => {
+    const START = new Date("2026-07-22T00:00:00.000Z").getTime();
+
+    afterEach(() => {
+        setSystemTime();
+    });
+
+    test("a rate appears once the window supports one, and decays away when the transfer stalls", () => {
+        setSystemTime(new Date(START));
+        const { sink, snapshots } = recordingSink();
+        const readout = createReferenceDownloadProgress(2, sink);
+        if (readout === undefined) throw new Error("a two-artifact plan must produce a readout");
+
+        readout.report({ type: "artifact_bytes", bytes: 1_048_576 });
+        expect(snapshots[snapshots.length - 1]?.line).not.toContain("/s");
+
+        // Two samples, 2s apart, 2 MiB apart: the window now supports a rate.
+        setSystemTime(new Date(START + 2_000));
+        readout.report({ type: "artifact_bytes", bytes: 2_097_152 });
+        expect(snapshots[snapshots.length - 1]?.line).toBe("0/2 files · 3.0 MB · 1.0 MB/s");
+
+        // Nothing arrives for longer than the window. The next repaint must not restate a rate the
+        // connection is no longer sustaining — a frozen number reads as motion that is not happening.
+        setSystemTime(new Date(START + 2_000 + PROGRESS_RATE_WINDOW_MS + 1));
+        readout.report({ type: "artifact_completed", datasetId: "demo", path: "a.txt", bytes: 3_145_728 });
+        expect(snapshots[snapshots.length - 1]?.line).toBe("1/2 files · 3.0 MB");
+
+        readout.finish();
     });
 });
