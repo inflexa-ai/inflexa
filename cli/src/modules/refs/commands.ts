@@ -1,6 +1,26 @@
-import { groupMultiselect, isCI, isCancel, isTTY, log, progress, select } from "@clack/prompts";
+import { getColumns, GroupMultiSelectPrompt } from "@clack/core";
+import {
+    isCI,
+    isCancel,
+    isTTY,
+    limitOptions,
+    log,
+    progress,
+    S_BAR,
+    S_BAR_END,
+    S_BAR_H,
+    S_CHECKBOX_ACTIVE,
+    S_CHECKBOX_INACTIVE,
+    S_CHECKBOX_SELECTED,
+    S_CORNER_BOTTOM_LEFT,
+    S_CORNER_BOTTOM_RIGHT,
+    S_CORNER_TOP_LEFT,
+    S_CORNER_TOP_RIGHT,
+    symbol,
+} from "@clack/prompts";
 import { REFERENCE_DATA_CATALOG, type ReferenceDataCatalog } from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
+import { stripVTControlCharacters, styleText } from "node:util";
 
 import { confirm } from "../../lib/cli.ts";
 import { env } from "../../lib/env.ts";
@@ -87,162 +107,325 @@ function renderEstimate(estimate: ReferenceDownloadEstimate): string {
     return formatFileCount(estimate.artifactsToFetch);
 }
 
-/** The up-front choice, resolved against whatever set of datasets the caller is offering. */
-export type ReferencePreset = "recommended" | "all" | "none" | "custom";
+/** One catalog dataset, as the rest of this file talks about it. */
+export type ReferenceDatasetEntry = ReferenceDataCatalog["datasets"][number];
+
+/** Heading of the note that sits beside the picker. */
+const ON_DEMAND_REFERENCE_TITLE = "No rush";
 
 /**
- * What to tell someone who takes nothing now. Both routes are real: `refs download` is a registered
- * command, and it is classified `approval` in the command registry, so the conversation agent can
- * propose exactly that argv through `run_inflexa` and the user approves it in chat. The agent offers
- * the download — it never performs one unattended, and the wording promises nothing more than that.
+ * How to get references later, as unwrapped paragraphs — the note is laid out twice at two different
+ * widths (beside the list, or above it on a narrow terminal), so the copy is stored once and wrapped
+ * at render time rather than hand-broken for one of them.
+ *
+ * Both routes are real: `refs download` is a registered command, and it is classified `approval` in
+ * the command registry, so the conversation agent can propose exactly that argv through `run_inflexa`
+ * and the user approves it in chat. The agent offers the download — it never performs one unattended,
+ * and the wording promises nothing more than that.
  */
-export const ON_DEMAND_REFERENCE_NOTE =
-    "No references now — nothing here needs them until an analysis does.\n" +
-    "  Grab one whenever you want with `inflexa refs download <id>`,\n" +
-    "  or just tell the agent what you need: it picks the dataset and asks you to approve the download.";
+const ON_DEMAND_REFERENCE_BLOCKS: readonly string[] = [
+    "Reference data is only needed once an analysis asks for it, so taking none now is a real choice — not a skipped step.",
+    "Add any of them whenever you like:",
+    "  inflexa refs download <id>",
+    "Or just say what you need in chat: the agent works out which dataset that is and asks you to approve the download.",
+];
 
-/** The per-dataset escape: the full grouped listing, opening with nothing selected. */
-async function pickDatasets(catalog: ReferenceDataCatalog): Promise<readonly string[] | undefined> {
-    // Present the picker as labelled categories rather than one flat wall: the catalog already
-    // carries `recommendation.group` per dataset, so grouping is purely presentational. Group
-    // insertion order follows first appearance in the catalog (which is ordered by group), and
-    // toggling a group header selects every dataset under it — clack returns only the leaf ids,
-    // never the group label, so the strict resolver downstream never sees a phantom id.
-    const grouped: Record<string, { value: string; label: string; hint?: string }[]> = {};
+/** Greedy wrap to `width` columns. Any block already narrow enough is emitted untouched, which is
+ * what keeps the command line above from being reflowed into the prose around it. */
+function wrapBlock(text: string, width: number): readonly string[] {
+    if (text.length <= width) return [text];
+    const lines: string[] = [];
+    let line = "";
+    for (const word of text.split(" ")) {
+        if (line.length === 0) line = word;
+        else if (line.length + 1 + word.length <= width) line += ` ${word}`;
+        else {
+            lines.push(line);
+            line = word;
+        }
+    }
+    if (line.length > 0) lines.push(line);
+    return lines;
+}
+
+/** The note as prose wrapped to `width`, with a blank line between paragraphs. */
+export function onDemandReferenceNote(width: number): readonly string[] {
+    return ON_DEMAND_REFERENCE_BLOCKS.flatMap((block, index) => [...(index === 0 ? [] : [""]), ...wrapBlock(block, width)]);
+}
+
+/**
+ * The note as a bordered panel `width` columns wide inside its border, ready to be painted down the
+ * right-hand side of the picker. Returned unstyled so the layout is assertable as plain text; the
+ * renderer colours it, relying on every interior line starting and ending with a border glyph.
+ */
+export function onDemandReferencePanel(width: number): readonly string[] {
+    const head = `${S_BAR_H} ${ON_DEMAND_REFERENCE_TITLE} `;
+    const blank = `${S_BAR}${" ".repeat(width)}${S_BAR}`;
+    return [
+        `${S_CORNER_TOP_LEFT}${head}${S_BAR_H.repeat(Math.max(0, width - head.length))}${S_CORNER_TOP_RIGHT}`,
+        blank,
+        ...onDemandReferenceNote(width - 4).map((line) => `${S_BAR}  ${line.padEnd(width - 2)}${S_BAR}`),
+        blank,
+        `${S_CORNER_BOTTOM_LEFT}${S_BAR_H.repeat(width)}${S_CORNER_BOTTOM_RIGHT}`,
+    ];
+}
+
+/**
+ * The note as one prose string, for the terminals too narrow to float it beside the list. Wrapped a
+ * little under the 80-column floor so the guide bars clack prefixes it with still fit.
+ */
+export const ON_DEMAND_REFERENCE_NOTE = onDemandReferenceNote(74).join("\n");
+
+/**
+ * The bulk-selection keys. Each replaces the selection outright, which is what makes the picker
+ * viable as the only selection surface: reaching a large set costs one keystroke, and so does
+ * abandoning one. Letters are free — the only keys clack reserves beyond navigation are vim's
+ * `k`/`j`/`h`/`l` (`settings.aliases`), and this prompt has no type-ahead to compete with.
+ */
+const PICKER_KEY_ALL = "a";
+const PICKER_KEY_NONE = "n";
+const PICKER_KEY_RECOMMENDED = "r";
+
+/** Prompt title, shared by the picker and the tests that assert on its frame. */
+const PICKER_MESSAGE = "Reference datasets to download";
+
+/** Visible columns of the guide clack draws to the left of every prompt line (`S_BAR` plus two). */
+const PICKER_RAIL_COLUMNS = 3;
+/** Content columns inside the floating note's border. */
+const PICKER_PANEL_WIDTH = 40;
+/** Blank columns between the longest listing row and the note's left border. */
+const PICKER_PANEL_GAP = 4;
+/** Listing columns the note refuses to squeeze below; under this it is printed above the list instead. */
+const PICKER_PANEL_MIN_LIST = 56;
+
+/**
+ * Whether a terminal `columns` wide can carry the note beside the listing rather than above it.
+ * Floating it is the better read — the note stays visible while scrolling and costs no vertical
+ * space — but only while the listing keeps enough width to state a dataset's title and file count on
+ * one line. Below that the note goes back above the list, where narrowness costs nothing.
+ */
+export function referenceNoteFloats(columns: number): boolean {
+    return columns >= PICKER_RAIL_COLUMNS + PICKER_PANEL_MIN_LIST + PICKER_PANEL_GAP + PICKER_PANEL_WIDTH + 2;
+}
+
+/** One dataset row in the picker. */
+export type ReferencePickerEntry = {
+    /** Catalog id — the only thing the picker returns. */
+    readonly value: string;
+    /** Row text: the dataset's title and what it costs to fetch. */
+    readonly label: string;
+    /** Parenthesised annotation, when the dataset carries one. */
+    readonly hint?: string;
+};
+
+/** Everything the picker renders from and every bulk key resolves against. */
+export type ReferencePickerModel = {
+    /** Catalog group label to its offered datasets, both in catalog order. */
+    readonly groups: Readonly<Record<string, readonly ReferencePickerEntry[]>>;
+    /** Every offered id — what the select-everything key selects. */
+    readonly everything: readonly string[];
+    /** The recommended ids among them; empty when nothing offered carries a recommendation. */
+    readonly recommended: readonly string[];
+    /** The key legend under the list, annotated when the recommended key has nothing to select. */
+    readonly footer: string;
+};
+
+/**
+ * Build the picker's contents for the datasets `catalog` is offering, with `withheld` naming what the
+ * caller kept out of it — already installed and intact — so the legend can account for a recommended
+ * key that has nothing left to select.
+ *
+ * Grouping is purely presentational — the catalog already carries `recommendation.group` per dataset
+ * — and group insertion order follows first appearance, which is catalog order. Toggling a group
+ * header selects every dataset under it; clack returns only the leaf ids, never the group label, so
+ * the strict resolver downstream never sees a phantom id.
+ */
+export function referencePickerModel(catalog: ReferenceDataCatalog, withheld: readonly ReferenceDatasetEntry[] = []): ReferencePickerModel {
+    const groups: Record<string, ReferencePickerEntry[]> = {};
     for (const dataset of catalog.datasets) {
-        (grouped[dataset.recommendation.group] ??= []).push({
+        (groups[dataset.recommendation.group] ??= []).push({
             value: dataset.id,
-            label: `${dataset.title} (${formatDatasetSize(dataset)})`,
+            // A bare file count, not the "of upstream-determined size" phrasing the listing and the
+            // consent line carry: repeated down a list this long it wraps rows and says nothing the
+            // one place it matters — the plan shown before consent — does not already say.
+            label: `${dataset.title} (${dataset.artifacts.length} file${dataset.artifacts.length === 1 ? "" : "s"})`,
             ...(dataset.recommendation.recommended ? { hint: "recommended" } : {}),
         });
     }
-    // Deliberately no `initialValues`. Someone who came this far past three one-keystroke presets is
-    // here to name datasets, and seeding the recommended set would put them back where the presets
-    // exist to rescue them from: unpicking 32 boxes to arrive at a smaller install.
-    const selected = await groupMultiselect({
-        message: "Pick the reference datasets to download",
+    const recommended = catalog.datasets.filter((dataset) => dataset.recommendation.recommended).map((dataset) => dataset.id);
+    // The recommended key stays in the legend even when it can select nothing, annotated instead of
+    // hidden: an offered set with no recommendation is the ordinary consequence of having installed
+    // the recommended datasets already, and silently dropping the option is precisely what made that
+    // successful state read as a missing feature. The annotation names that cause where it applies —
+    // "already installed" answers the question "so where did they go?", which "none offered" leaves
+    // hanging — and falls back to the neutral wording only when the offer genuinely has none to give.
+    const installedRecommended = withheld.filter((dataset) => dataset.recommendation.recommended).length;
+    const recommendedNote = recommended.length > 0 ? "" : installedRecommended > 0 ? ` (${installedRecommended} already installed)` : " (none offered)";
+    const recommendedKey = `${PICKER_KEY_RECOMMENDED} recommended${recommendedNote}`;
+    return {
+        groups,
+        everything: catalog.datasets.map((dataset) => dataset.id),
+        recommended,
+        footer: `↑/↓ move · space toggle · ${PICKER_KEY_ALL} all · ${recommendedKey} · ${PICKER_KEY_NONE} none · enter confirm`,
+    };
+}
+
+/**
+ * Resolve one keystroke into the selection it establishes, or `undefined` when the key is not a bulk
+ * action and the picker's own handling should stand.
+ *
+ * The recommended key is inert rather than empty when nothing offered is recommended. A key labelled
+ * "recommended" that wipes the selection is a trap, and "select none" already has its own key, so
+ * the honest reading of "there is nothing to recommend here" is that the key does nothing.
+ */
+export function referencePickerBulkSelection(char: string | undefined, model: ReferencePickerModel): readonly string[] | undefined {
+    switch (char?.toLowerCase()) {
+        case PICKER_KEY_ALL:
+            return model.everything;
+        case PICKER_KEY_NONE:
+            return [];
+        case PICKER_KEY_RECOMMENDED:
+            return model.recommended.length === 0 ? undefined : model.recommended;
+        default:
+            return undefined;
+    }
+}
+
+/**
+ * What the listing is leaving out, as lines to print above it. Why the recommended key may have
+ * nothing to select is deliberately *not* repeated here — the legend annotates that key directly,
+ * which is where someone looking for the missing option is already looking.
+ */
+export function referenceSelectionDisclosure(withheld: readonly ReferenceDatasetEntry[]): readonly string[] {
+    if (withheld.length === 0) return [];
+    return [`${withheld.length} dataset${withheld.length === 1 ? " is" : "s are"} already installed and intact — not listed below.`];
+}
+
+/**
+ * Paint `panel` down the right of `rows`, every row padded to the same `gutter` column so the note's
+ * left edge holds still while the listing scrolls underneath it. Rows are extended when the panel is
+ * the taller of the two, which keeps the box closed on an offer of only a few datasets.
+ *
+ * Padding is measured on the stripped text because the rows carry colour: their `.length` counts
+ * escape bytes the terminal never draws, and padding to that would step the panel left row by row.
+ */
+function beside(rows: readonly string[], panel: readonly string[], gutter: number): readonly string[] {
+    const height = Math.max(rows.length, panel.length);
+    return Array.from({ length: height }, (_unused, index) => {
+        const row = rows[index] ?? "";
+        const note = panel[index];
+        if (note === undefined) return row;
+        // Every interior line of the panel opens and closes on a border glyph by construction, so
+        // colouring those two positions colours the frame without touching the text between them.
+        const painted =
+            index === 0
+                ? styleText(["cyan", "bold"], note)
+                : index === panel.length - 1
+                  ? styleText("cyan", note)
+                  : `${styleText("cyan", S_BAR)}${note.slice(1, -1)}${styleText("cyan", S_BAR)}`;
+        return `${row}${" ".repeat(Math.max(PICKER_PANEL_GAP, gutter - stripVTControlCharacters(row).length))}${painted}`;
+    });
+}
+
+/**
+ * The selection surface: clack's grouped multiselect, constructed directly rather than through
+ * `groupMultiselect`, which builds the prompt, hands it a render closure, and returns `.prompt()` —
+ * leaving no instance to bind keys to. `updateSettings({aliases})` is no substitute: it remaps keys
+ * onto the existing action set and cannot introduce a new one.
+ *
+ * Only the composition is local. The glyphs, the sliding window, the wrapping, and the state symbol
+ * all remain clack's, so the picker keeps looking like every other prompt in the wizard.
+ */
+async function pickDatasets(model: ReferencePickerModel, panel: readonly string[] | undefined): Promise<readonly string[] | undefined> {
+    // Reserved so `limitOptions` wraps rows before the note rather than under it, and so every row can
+    // be padded to the same column — a panel whose left edge moves with the longest visible row would
+    // shift on every keystroke that changes the window.
+    const reserved = panel === undefined ? PICKER_RAIL_COLUMNS : PICKER_RAIL_COLUMNS + PICKER_PANEL_GAP + PICKER_PANEL_WIDTH + 2;
+    const gutter = getColumns(process.stdout) - PICKER_PANEL_WIDTH - 2 - PICKER_RAIL_COLUMNS;
+    const prompt = new GroupMultiSelectPrompt<ReferencePickerEntry>({
+        // Copied into mutable arrays: clack's option type is not readonly, and the model is immutable
+        // data precisely so it can be asserted on without a terminal.
+        options: Object.fromEntries(Object.entries(model.groups).map(([group, entries]) => [group, [...entries]])),
+        // Deliberately empty. The bulk keys make any starting point one keystroke away, and an
+        // untouched prompt plus Enter should install nothing rather than gigabytes.
+        initialValues: [],
         required: false,
         selectableGroups: true,
-        options: grouped,
+        render() {
+            const heading = `${symbol(this.state)}  ${PICKER_MESSAGE}\n`;
+            const selected = this.value ?? [];
+            if (this.state === "submit" || this.state === "cancel") {
+                // A count, not the labels clack would list: the offered set reaches into the dozens,
+                // and the confirmation that follows states the file count this resolves to anyway.
+                const chosen = this.options.filter((option) => option.group !== true && selected.includes(option.value)).length;
+                const summary =
+                    this.state === "cancel" ? "cancelled" : chosen === 0 ? "nothing selected" : `${chosen} dataset${chosen === 1 ? "" : "s"} selected`;
+                return `${heading}${styleText("gray", S_BAR)}  ${styleText("dim", summary)}`;
+            }
+            const rail = styleText("cyan", S_BAR);
+            const rows = limitOptions({
+                options: this.options,
+                cursor: this.cursor,
+                columnPadding: reserved,
+                // The heading is one row and the legend two.
+                rowPadding: 3,
+                style: (option, active): string => {
+                    const isGroup = option.group === true;
+                    const ticked = isGroup ? this.isGroupSelected(String(option.value)) : selected.includes(option.value);
+                    const box = ticked
+                        ? styleText("green", S_CHECKBOX_SELECTED)
+                        : active
+                          ? styleText("cyan", S_CHECKBOX_ACTIVE)
+                          : styleText("dim", S_CHECKBOX_INACTIVE);
+                    // Leaves hang off a rail their last member closes, which is how clack draws a
+                    // group: the next entry being a header (or nothing) marks the end of this one.
+                    const next = this.options[this.options.indexOf(option) + 1];
+                    const stem = isGroup ? "" : styleText("dim", `${next === undefined || next.group === true ? S_BAR_END : S_BAR} `);
+                    const text = `${option.label}${option.hint === undefined ? "" : ` (${option.hint})`}`;
+                    return `${stem}${box} ${active ? text : styleText("dim", text)}`;
+                },
+            })
+                // Split back into physical lines: `limitOptions` returns one entry per option, and a
+                // row too long for the window carries its own newlines, so entries are not lines and
+                // anything painted beside them has to be aligned against what the terminal will show.
+                .join("\n")
+                .split("\n");
+            const body = (panel === undefined ? rows : beside(rows, panel, gutter)).map((line) => `${rail}  ${line}`).join("\n");
+            return `${heading}${body}\n${rail}  ${styleText("dim", model.footer)}\n${styleText("cyan", S_BAR_END)}\n`;
+        },
     });
+
+    prompt.on("key", (char) => {
+        const selection = referencePickerBulkSelection(char, model);
+        // No repaint here: `Prompt.onKeypress` emits `key` and then renders unconditionally, so the
+        // frame drawn for this very keystroke already reflects the new value.
+        if (selection !== undefined) prompt.value = [...selection];
+    });
+
+    const selected = await prompt.prompt();
     return isCancel(selected) ? undefined : selected;
 }
 
-/** One entry of the preset prompt. */
-export type ReferencePresetOption = {
-    /** Preset this entry chooses. */
-    readonly value: ReferencePreset;
-    /** Entry text. */
-    readonly label: string;
-    /** Counts, or what the preset defers to later. */
-    readonly hint: string;
-};
-
-/** The preset prompt's entries and the one it opens on. */
-export type ReferencePresetPrompt = {
-    /** Entries in display order; the first is what an unmatched initial value would land on. */
-    readonly options: readonly ReferencePresetOption[];
-    /** The entry the cursor starts on. Always one of `options`. */
-    readonly initialValue: ReferencePreset;
-};
-
 /**
- * Build the preset prompt for the datasets `catalog` is offering.
+ * Frame the choice, then take it. `withheld` is what the caller kept out of `catalog` — already
+ * installed and intact — and exists so the listing's omissions are stated rather than inferred.
  *
- * The initial value is derived from the entries that actually exist rather than named ahead of them,
- * and that is load-bearing: clack resolves an unmatched `initialValue` with
- * `findIndex(...) === -1 ? 0 : index`, so naming an absent entry silently arms whatever sits first —
- * "Everything". An offered set with nothing recommended is ordinary (re-running setup once the
- * recommended datasets are installed leaves only the optional ones), so that path would have opened
- * the prompt pre-armed on the maximal install and turned an unexamined Enter into the largest
- * possible download. When there is nothing to recommend the prompt opens on "Nothing for now"
- * instead: a default that installs nothing costs one keystroke to undo, one that installs everything
- * costs a transfer.
+ * `undefined` means cancelled, and stays distinct from an empty selection.
  */
-export function referencePresetPrompt(catalog: ReferenceDataCatalog): ReferencePresetPrompt {
-    const recommended = catalog.datasets.filter((dataset) => dataset.recommendation.recommended).map((dataset) => dataset.id);
-    const artifactsIn = (ids: readonly string[]): number => {
-        const selected = new Set(ids);
-        return catalog.datasets.filter((dataset) => selected.has(dataset.id)).reduce((total, dataset) => total + dataset.artifacts.length, 0);
-    };
-    const everything = catalog.datasets.map((dataset) => dataset.id);
-
-    return {
-        options: [
-            // Recommended leads when it exists: it is the working set the enrichment, network, and
-            // single-cell skills are built on, so an untouched prompt plus Enter still plans the
-            // install most people want — now as a named choice rather than 32 pre-ticked boxes.
-            ...(recommended.length > 0
-                ? [
-                      {
-                          value: "recommended" as const,
-                          label: "Recommended",
-                          hint: `${recommended.length} datasets · ${formatFileCount(artifactsIn(recommended))}`,
-                      },
-                  ]
-                : []),
-            { value: "all", label: "Everything", hint: `${everything.length} datasets · ${formatFileCount(artifactsIn(everything))}` },
-            { value: "none", label: "Nothing for now", hint: "fetch them later, on demand" },
-            { value: "custom", label: "Choose specific datasets…", hint: "pick from the full list" },
-        ],
-        initialValue: recommended.length > 0 ? "recommended" : "none",
-    };
-}
-
-async function chooseIds(catalog: ReferenceDataCatalog): Promise<readonly string[] | undefined> {
-    if (catalog.datasets.length === 0) return [];
-    const prompt = referencePresetPrompt(catalog);
-    const preset = await select<ReferencePreset>({
-        message: "Reference datasets to download",
-        initialValue: prompt.initialValue,
-        // Spread into a mutable array: clack's option type is not readonly, and the prompt is built
-        // as immutable data so it can be asserted on without a terminal.
-        options: [...prompt.options],
-    });
-    if (isCancel(preset)) return undefined;
-    return resolveReferencePreset(preset, catalog, { pick: () => pickDatasets(catalog) });
-}
-
-/**
- * Turn a chosen preset into the ids it selects, against the datasets `catalog` is offering. Pure but
- * for the two injected effects: `pick` opens the per-dataset escape (only `custom` reaches it), and
- * `announce` says how to get references later whenever the outcome is an empty selection. Both are
- * parameters so the resolution can be exercised without a terminal. `undefined` means cancelled, and
- * is distinct from an empty selection.
- */
-export async function resolveReferencePreset(
-    preset: ReferencePreset,
-    catalog: ReferenceDataCatalog,
-    deps: { readonly pick: () => Promise<readonly string[] | undefined>; readonly announce?: (message: string) => void },
-): Promise<readonly string[] | undefined> {
-    const chosen = await (async (): Promise<readonly string[] | undefined> => {
-        switch (preset) {
-            case "all":
-                return catalog.datasets.map((dataset) => dataset.id);
-            case "recommended":
-                // Never widened to everything when the offered set carries no recommendation: a
-                // preset that quietly installs more than its name says is worse than one that
-                // installs nothing, and "nothing" is a state this flow already handles.
-                return catalog.datasets.filter((dataset) => dataset.recommendation.recommended).map((dataset) => dataset.id);
-            case "none":
-                return [];
-            case "custom":
-                return deps.pick();
-            default: {
-                const unreachable: never = preset;
-                throw new Error(`unhandled reference preset: ${String(unreachable)}`);
-            }
-        }
-    })();
-
-    if (chosen === undefined) return undefined;
-    // Same note for an explicit "none" and for a picker submitted empty — the outcome is identical,
-    // and someone who lands there by either route needs the same answer to "so how do I get one?".
-    // Called through a wrapper rather than passed as a bare reference: clack happens to define
-    // `log.info` as an arrow, but a bare reference would break silently the day it becomes a method
-    // that needs its receiver.
-    if (chosen.length === 0) (deps.announce ?? ((message: string) => log.info(message)))(ON_DEMAND_REFERENCE_NOTE);
-    return chosen;
+async function chooseIds(catalog: ReferenceDataCatalog, withheld: readonly ReferenceDatasetEntry[]): Promise<readonly string[] | undefined> {
+    const disclosure = referenceSelectionDisclosure(withheld);
+    if (catalog.datasets.length === 0) {
+        // Nothing left to offer. Say why: an empty offer with no explanation is the state that sent
+        // someone looking for an option that had quietly resolved to nothing.
+        if (disclosure.length > 0) log.info(disclosure.join("\n"));
+        return [];
+    }
+    // Decided once, here, rather than independently by the printer and the renderer — two width
+    // checks a resize could disagree about would print the note twice or not at all.
+    const floats = referenceNoteFloats(getColumns(process.stdout));
+    const preamble = floats ? disclosure : [...disclosure, ON_DEMAND_REFERENCE_NOTE];
+    if (preamble.length > 0) log.info(preamble.join("\n"));
+    return pickDatasets(referencePickerModel(catalog, withheld), floats ? onDemandReferencePanel(PICKER_PANEL_WIDTH) : undefined);
 }
 
 /**
@@ -461,6 +644,7 @@ export async function downloadReferences(
 ): Promise<Result<ReferenceInstallOutcome | DeclinedReferenceDownload, ReferenceProvisionError>> {
     const catalog = options.source?.catalog ?? REFERENCE_DATA_CATALOG;
     const interactive = options.interactive ?? process.stdin.isTTY;
+    const install = { force: options.force ?? false };
     let ids = options.ids;
     if (ids.length === 0) {
         if (!interactive) {
@@ -474,9 +658,21 @@ export async function downloadReferences(
                     .join(", ")}`,
             });
         }
+        // Offer what is not already there, so the picker never advertises work the estimate will
+        // net back out. A forced run is the exception: it genuinely re-fetches an intact install, and
+        // withholding those would leave `--force` with no ids unable to reach the dataset it exists
+        // to repair.
+        let offered = catalog;
+        let withheld: readonly ReferenceDatasetEntry[] = [];
+        if (!install.force) {
+            const inspection = await inspectReferenceStore(env.refsDir, options.source?.catalog);
+            if (inspection.isErr()) return err(inspection.error);
+            offered = offeredReferenceCatalog(catalog, inspection.value);
+            withheld = inspection.value.datasets.filter((item) => item.state === "installed").map((item) => item.dataset);
+        }
         let chosen: readonly string[] | undefined;
         try {
-            chosen = await chooseIds(catalog);
+            chosen = await chooseIds(offered, withheld);
         } catch (cause) {
             return err({ type: "download_failed", message: "Reference selection prompt failed.", cause });
         }
@@ -484,7 +680,6 @@ export async function downloadReferences(
         ids = chosen;
     }
 
-    const install = { force: options.force ?? false };
     const estimate = await referenceDownloadEstimate(ids, env.refsDir, options.source ?? undefined, install);
     if (estimate.isErr()) return err(estimate.error);
     const size = renderEstimate(estimate.value);
@@ -734,7 +929,10 @@ export async function runReferenceSetup(options: ReferenceSetupOptions): Promise
     }
     let chosen: readonly string[] | undefined;
     try {
-        chosen = await chooseIds(offeredReferenceCatalog(activeCatalog, inspection.value));
+        chosen = await chooseIds(
+            offeredReferenceCatalog(activeCatalog, inspection.value),
+            inspection.value.datasets.filter((item) => item.state === "installed").map((item) => item.dataset),
+        );
     } catch (cause) {
         return err({ type: "download_failed", message: "Reference selection prompt failed.", cause });
     }
