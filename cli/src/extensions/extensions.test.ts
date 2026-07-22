@@ -142,7 +142,7 @@ describe("Number.prototype.formatBytes", () => {
 
     test("each unit steps at 1024 of the one below it", () => {
         expect((1024).formatBytes()).toBe("1.0 KB"); // the bytes→KB boundary
-        expect((1024 ** 2 - 1).formatBytes()).toBe("1024.0 KB"); // upper edge of the KB range
+        expect((1_048_064).formatBytes()).toBe("1023.5 KB"); // upper edge of the KB range
         expect((1024 ** 2).formatBytes()).toBe("1.0 MB"); // the KB→MB boundary
         expect((37_748_736).formatBytes()).toBe("36.0 MB");
         expect((1024 ** 3).formatBytes()).toBe("1.0 GB"); // the MB→GB boundary
@@ -153,8 +153,12 @@ describe("Number.prototype.formatBytes", () => {
         expect((1024 ** 4).formatBytes()).toBe("1024.0 GB");
     });
 
-    test("a fractional count just below a step rounds into the next unit, not to 1024 B", () => {
+    test("a count that rounds up at the top of a range promotes instead of printing a unit that does not exist", () => {
+        // Each of these is a hair under the next unit, so one-decimal rounding would carry it to
+        // "1024" in its own unit — a reading no scale uses.
         expect((1023.6).formatBytes()).toBe("1.0 KB");
+        expect((1024 ** 2 - 1).formatBytes()).toBe("1.0 MB");
+        expect((1024 ** 3 - 1).formatBytes()).toBe("1.0 GB");
     });
 
     test("clamps a negative count to 0 B", () => {
