@@ -120,6 +120,34 @@ The harness chat provider seam SHALL expose AI SDK-backed non-streaming and stre
 - **WHEN** the streaming provider entry point is consumed to completion
 - **THEN** it yields text deltas followed by exactly one terminal event carrying the complete response
 
+### Requirement: A client abort resolves the streaming chat with the accumulated partial
+
+The streaming `AgentChat` wrapper SHALL, when the client abort signal ends the underlying stream, resolve successfully with a `ChatResponse` whose finish reason is `"aborted"` and whose assistant message carries exactly the text deltas already forwarded — it SHALL NOT re-throw the abort and SHALL NOT route it through the provider-error channel. An abort that fires before any delta arrived SHALL resolve the same way with an empty assistant message. The wrapper's abort recognition SHALL be at least as wide as the underlying provider's abort re-throw gate (an abort-named error OR an already-aborted client signal): a transport failure that lands while the client signal is aborted SHALL resolve as the abort — the user's interrupt outranks a raced failure, and surfacing it as an error would drop the partial and blame the user's own action. `ChatResponse.finishReason` SHALL admit `"aborted"` alongside the AI SDK finish reasons, and the non-streaming `ChatProvider.chat` SHALL continue to propagate a client abort as a throw — `"aborted"` is producible only by the streaming wrapper, so durable workflow loops (which run on the non-streaming provider) keep their cancellation-by-throw semantics.
+
+#### Scenario: An abort mid-stream yields the partial text
+
+- **GIVEN** a streaming chat whose model has emitted several text deltas
+- **WHEN** the client abort signal fires and the stream throws its abort
+- **THEN** `chat` resolves with finish reason `"aborted"` and an assistant message containing exactly the concatenated deltas already forwarded
+
+#### Scenario: An abort before the first delta yields an empty partial
+
+- **GIVEN** a streaming chat call whose abort signal is already aborted (or fires before any delta)
+- **WHEN** the stream throws its abort
+- **THEN** `chat` resolves with finish reason `"aborted"` and an assistant message with no content
+
+#### Scenario: A transport failure racing the abort resolves as the abort
+
+- **GIVEN** a streaming chat whose underlying stream throws a non-abort failure while the client signal is already aborted
+- **WHEN** `chat` consumes the throw
+- **THEN** it resolves with finish reason `"aborted"` and the deltas already forwarded — no `ProviderError` for the user's own interrupt
+
+#### Scenario: A non-abort stream failure still reaches the error channel
+
+- **GIVEN** a streaming chat whose underlying stream throws a non-abort SDK failure with the client signal not aborted
+- **WHEN** `chat` consumes the throw
+- **THEN** it returns `err(ProviderError)` exactly as before — the abort resolution narrows only the abort case
+
 ### Requirement: Every provider call requires a Session
 
 AI SDK chat/model calls and `EmbeddingProvider.embed` SHALL each require an `AgentSession` parameter, so the same provider runtime serves a live request and a durable workflow run. No code path SHALL issue an LLM or embedding call without a session. The session SHALL NOT carry resolved attribution headers; those SHALL be resolved at the call site through the injected `ResolveBilling` seam and applied by the provider wrapper.
