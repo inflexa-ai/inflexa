@@ -13,7 +13,7 @@ import {
     type SubmitReportDeps,
 } from "./iterate-report.js";
 import { passthroughStep } from "../loop/run-step.js";
-import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
+import { makeMessage, scriptedProvider, textBlock, toolUseBlock, type ToolUseBlock } from "../loop/__fixtures__/scripted-provider.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ChatProvider } from "../providers/types.js";
 import type { ToolContext } from "./define-tool.js";
@@ -78,6 +78,13 @@ describe("submitReportInputSchema", () => {
     test("rejects creation with a top-level sources array", () => {
         const result = submitReportInputSchema.safeParse({ report: { anything: true }, sources: [{ path: "runs/r/output/x.csv" }] });
         expect(result.success).toBe(false);
+    });
+
+    test("rejects creation with a baseVersion", () => {
+        const result = submitReportInputSchema.safeParse({ report: { anything: true }, baseVersion: 2 });
+        expect(result.success).toBe(false);
+        const message = result.success ? "" : result.error.issues.map((i) => i.message).join(" ");
+        expect(message).toContain("baseVersion");
     });
 
     test("rejects previewId containing path traversal segments", () => {
@@ -168,11 +175,11 @@ describe("createReportSubmitTool execute", () => {
         await mkdir(join(workspaceRoot, "runs", "r", "output"), { recursive: true });
         await writeFile(join(workspaceRoot, "runs", "r", "output", "data.csv"), "gene,value\nBRCA1,3\nTP53,5\n", "utf8");
 
-        // Script the builder to write index.html directly and finalize via its
-        // own submit_report — keeps the assertion on submit_report's wrapper
-        // behaviour, not on Nunjucks rendering.
+        // Script the builder to write the template and its rendered output
+        // directly, then finalize via its own submit_report — keeps the
+        // assertion on submit_report's wrapper behaviour, not on Nunjucks.
         const provider = scriptedProvider([
-            makeMessage([toolUseBlock("w1", "write_file", { path: "index.html", content: "<html><body>OK</body></html>" })], "tool_use"),
+            makeMessage(builderWrites("<html><body>OK</body></html>"), "tool_use"),
             makeMessage([toolUseBlock("s1", "submit_report", { notes: ["shipped clean"] })], "tool_use"),
             makeMessage([textBlock("done")], "end_turn"),
         ]);
@@ -254,7 +261,7 @@ describe("createReportSubmitTool execute", () => {
         await writeFile(join(workspaceRoot, "runs", "r", "output", "data.csv"), "gene,value\nBRCA1,3\n", "utf8");
 
         const provider = scriptedProvider([
-            makeMessage([toolUseBlock("w1", "write_file", { path: "index.html", content: "<html><body>OK</body></html>" })], "tool_use"),
+            makeMessage(builderWrites("<html><body>OK</body></html>"), "tool_use"),
             makeMessage([toolUseBlock("s1", "submit_report", {})], "tool_use"),
             makeMessage([textBlock("done")], "end_turn"),
         ]);
@@ -348,6 +355,7 @@ describe("createReportSubmitTool execute", () => {
         const previewId = "prv-iter";
         const v1Dir = join(workspaceRoot, "previews", previewId, "v1");
         await mkdir(v1Dir, { recursive: true });
+        await writeFile(join(v1Dir, "report.html.j2"), "<html><body>v1 template</body></html>", "utf8");
         await writeFile(join(v1Dir, "index.html"), "<html>v1</html>", "utf8");
 
         const provider = scriptedProvider([
@@ -520,6 +528,7 @@ describe("createReportSubmitTool execute", () => {
         const previewId = "prv-pdf";
         const v1Dir = join(workspaceRoot, "previews", previewId, "v1");
         await mkdir(v1Dir, { recursive: true });
+        await writeFile(join(v1Dir, "report.html.j2"), "<html><body>v1 template</body></html>", "utf8");
         await writeFile(join(v1Dir, "index.html"), "<html>v1</html>", "utf8");
 
         const parsed = submitReportInputSchema.safeParse({ previewId, format: "pdf", modifications: "Re-render it as a PDF." });
@@ -535,6 +544,7 @@ describe("createReportSubmitTool execute", () => {
         const previewId = "prv-legacy";
         const previewRoot = join(workspaceRoot, "previews", previewId);
         await mkdir(join(previewRoot, "v1"), { recursive: true });
+        await writeFile(join(previewRoot, "v1", "report.html.j2"), "<html><body>v1 template</body></html>", "utf8");
         await writeFile(join(previewRoot, "v1", "index.html"), "<html>v1</html>", "utf8");
         await writeFile(join(previewRoot, "preview-meta.json"), JSON.stringify({ title: "Legacy QC Report", audience: "Analysts", format: "pdf" }), "utf8");
 
@@ -583,6 +593,21 @@ describe("stagedAssetsBlock", () => {
 // ── helpers ─────────────────────────────────────────────────────────
 
 const denyAsk = new UnavailableAsk();
+
+/**
+ * What a builder authoring a fresh version leaves on disk: the report itself
+ * (`report.html.j2`) and the `index.html` rendered from it. Both are required —
+ * the builder's own `submit_report` gate refuses a version carrying no
+ * template. The template is a stub because these tests assert the wrapper's
+ * behaviour, not Nunjucks rendering. An ITERATION needs no such write: the
+ * runner copies the base version's template into the new version dir.
+ */
+function builderWrites(html: string): ToolUseBlock[] {
+    return [
+        toolUseBlock("t1", "write_file", { path: "report.html.j2", content: "<html><body>stub template</body></html>" }),
+        toolUseBlock("w1", "write_file", { path: "index.html", content: html }),
+    ];
+}
 
 function stubProvider(): ChatProvider {
     return {} as ChatProvider;

@@ -98,12 +98,9 @@ describe("reportBuilderPrompt", () => {
         // silence. The prompt states no lifetime at all.
         expect(reportBuilderPrompt).not.toMatch(/\bTTLs?\b/i);
 
-        // What is pinned is a stated *access lifetime*, not durations as a
-        // class — so a figure only offends when lifetime vocabulary sits
-        // beside it. The builder legitimately describes its own timing ("waits
-        // up to N seconds for the theme-ready signal"), and a guard that
-        // tripped on those would be met by deleting it rather than scoping it,
-        // costing the lifetime check itself.
+        // A figure offends only when the sentence around it says access ends;
+        // the builder's own timing copy is not a lifetime claim. See
+        // `LIFETIME_VOCABULARY` for why the trigger is worded the way it is.
         expect(statedAccessLifetimes(reportBuilderPrompt)).toEqual([]);
     });
 });
@@ -111,8 +108,30 @@ describe("reportBuilderPrompt", () => {
 /** Any "N units of time" figure, whatever it is a figure about. */
 const DURATION_FIGURE = /\d+\s*-?\s*(?:secs?|seconds?|mins?|minutes?|hrs?|hours?|days?)\b/gi;
 
-/** Vocabulary that makes a duration a claim about how long access stays good. */
-const LIFETIME_VOCABULARY = /\b(?:ttls?|expir\w*|valid|lifetime|lasts?|good for|access window)\b/i;
+/**
+ * Vocabulary that makes a nearby duration a claim about how long access stays
+ * good. What the requirement pins is a *stated access lifetime* matching the
+ * value the code requests — not duration figures as a class, which the builder
+ * has every reason to state about itself.
+ *
+ * The trigger is therefore verb sense, not subject noun. Keying on
+ * preview/access nouns is the obvious reading and the wrong one: the builder's
+ * own timing copy names `preview_snapshot` and says what it waits for, so a
+ * noun rule flags the tool describing itself — and a guard that fires on honest
+ * copy is met by deleting it rather than scoping it, costing the lifetime check
+ * entirely. A lifetime claim says access *ends*: it expires, stops working,
+ * closes, is gone, no longer works, holds only until some moment — or it bounds
+ * the span outright (valid for, good for, lasts). Copy about what a call does
+ * while it runs says the tool *waits*, and reaches for none of those.
+ *
+ * Being a keyword list, this is a floor and not a proof: phrasing outside it
+ * ("your link dies at the 15-minute mark") reads as a lifetime to a model and
+ * passes here. What it holds is the accidental path — copy edited back toward a
+ * concrete figure in the words people reach for first — which is the
+ * reintroduction nothing else in the build stands behind.
+ */
+const LIFETIME_VOCABULARY =
+    /\b(?:ttls?|expir\w*|valid|invalid\w*|lifetime|lasts?|good for|access window|until|gone|no longer|cease\w*|close[sd]?|stop(?:s|ped)? working|revoke\w*|unavailable)\b/i;
 
 /** How far either side of a figure still counts as the same sentence. */
 const CLAIM_WINDOW = 48;

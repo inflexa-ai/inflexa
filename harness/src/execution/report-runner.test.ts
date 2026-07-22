@@ -46,14 +46,18 @@ describe("runReportIteration (closure-state outcome)", () => {
         const previewId = "prv-success";
 
         // Script the report-builder to:
-        //   1. write_file(report.html.j2) — populate index.html via build_report
-        //      below. To keep the test independent of Nunjucks, we instead seed
-        //      index.html directly from a write_file call against `index.html`.
+        //   1. write_file(report.html.j2) — the report itself, which
+        //      submit_report requires — plus index.html seeded directly rather
+        //      than rendered, keeping the test independent of Nunjucks.
         //   2. submit_report({notes}) — terminal write into the closure outcome.
         //   3. end_turn with a final text block.
         const provider = scriptedProvider([
             makeMessage(
                 [
+                    toolUseBlock("t1", "write_file", {
+                        path: "report.html.j2",
+                        content: "<html><body>stub template</body></html>",
+                    }),
                     toolUseBlock("w1", "write_file", {
                         path: "index.html",
                         content: "<html><body>OK</body></html>",
@@ -199,14 +203,20 @@ describe("runReportIteration (closure-state outcome)", () => {
         const { workspaceRoot, resourceId } = await setupSession();
         const previewId = "prv-collide";
 
-        // Seed an existing v1 with a non-empty index.html.
+        // Seed an existing v1 with a template and a non-empty index.html.
         const v1Dir = join(workspaceRoot, "previews", previewId, "v1");
         await mkdir(v1Dir, { recursive: true });
+        await writeFile(join(v1Dir, "report.html.j2"), "<html><body>v1 template</body></html>", "utf8");
         await writeFile(join(v1Dir, "index.html"), "<html>v1</html>", "utf8");
 
+        // `baseVersion: 0` copies no template in, so the builder authors one.
         const provider = scriptedProvider([
             makeMessage(
                 [
+                    toolUseBlock("t1", "write_file", {
+                        path: "report.html.j2",
+                        content: "<html><body>stub template</body></html>",
+                    }),
                     toolUseBlock("w1", "write_file", {
                         path: "index.html",
                         content: "<html><body>v2</body></html>",
@@ -269,6 +279,10 @@ describe("runReportIteration (closure-state outcome)", () => {
         const provider = scriptedProvider([
             makeMessage(
                 [
+                    toolUseBlock("t1", "write_file", {
+                        path: "report.html.j2",
+                        content: "<html><body>stub template</body></html>",
+                    }),
                     toolUseBlock("w1", "write_file", {
                         path: "index.html",
                         content: "<html><body>seed</body></html>",
