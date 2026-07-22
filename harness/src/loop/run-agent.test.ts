@@ -517,6 +517,51 @@ describe("runAgent — aborted terminal path", () => {
     });
 });
 
+describe("runAgent — aborted wrap-up path", () => {
+    // A provider that never stops asking for tools in-loop — burning every iteration —
+    // and, when handed the empty wrap-up tool set, resolves an abort carrying `partial`.
+    function abortsAtWrapUp(partial: string): ScriptedProvider {
+        return scriptedProvider((callIndex, request) =>
+            request.tools !== undefined && Object.keys(request.tools).length === 0
+                ? abortedReply(partial)
+                : makeMessage([toolUseBlock(`tu-${callIndex}`, "echo", { label: "x" })], "tool_use"),
+        );
+    }
+
+    it("reports aborted with cappedOut and marks the partial when the wrap-up call aborts", async () => {
+        const provider = abortsAtWrapUp("a partial the user cut off at the cap");
+
+        const { messages, finish } = await runAgent(agentDef([echoTool()], 3), GO, makeSession(), opts(provider));
+
+        // The abort during the tool-less wrap-up is reported as aborted; the loop still
+        // genuinely exhausted its iterations, so cappedOut stays true.
+        expect(finish.reason).toBe("aborted");
+        expect(finish.cappedOut).toBe(true);
+
+        // The partial joined the transcript as the tail and carries the interruption marker.
+        const last = messages.at(-1)!;
+        expect(last.role).toBe("assistant");
+        expect(last.content).toBe("a partial the user cut off at the cap");
+        expect(isInterruptedMessage(last)).toBe(true);
+    });
+
+    it("pushes nothing on an empty wrap-up abort and marks the last tool-calling step", async () => {
+        const provider = abortsAtWrapUp("");
+
+        const { messages, finish } = await runAgent(agentDef([echoTool()], 3), GO, makeSession(), opts(provider));
+
+        expect(finish.reason).toBe("aborted");
+        expect(finish.cappedOut).toBe(true);
+
+        // No empty assistant shell appended — the tail is the final tool-result message.
+        expect(messages.at(-1)!.role).toBe("tool");
+
+        // The marker rides the last assistant step the loop produced (the final tool-calling step).
+        const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant")!;
+        expect(isInterruptedMessage(lastAssistant)).toBe(true);
+    });
+});
+
 // ── finish signal on a clean stop ───────────────────────────────────
 
 describe("runAgent — finish signal", () => {

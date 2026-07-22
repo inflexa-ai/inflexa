@@ -586,6 +586,29 @@ describe("interruption marker round-trip", () => {
         expect(isInterruptedMessage(loaded[0]!)).toBe(false);
     });
 
+    it("snaps a window over a marked-tail turn exactly as over an unmarked one", async () => {
+        const turn1 = [
+            userText("question that needs a tool call"),
+            assistantToolUse("toolu_a", "search_gene", { symbol: "EGFR" }),
+            userToolResult("toolu_a", JSON.stringify({ hits: 3 })),
+            assistantText("answer grounded in the tool result"),
+        ];
+        const turn2 = [userText("a simple follow-up question"), markInterruptedMessage(assistantText("a simple follow-up answer"))];
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+
+        // The marker rides a non-boundary assistant role and does not change any
+        // message's content, so the window snaps past turn1's tool_result-only user
+        // message to turn2's genuine user start — exactly as an unmarked tail would —
+        // and the marker survives on the returned assistant message.
+        const budget = turnCost(turn2) + countTokens(turn1[3]!.content);
+        const loaded = (await history.loadRecent(THREAD, budget))._unsafeUnwrap();
+
+        expect(loaded).toEqual(turn2);
+        assertValidSequence(loaded);
+        expect(isInterruptedMessage(loaded[1]!)).toBe(true);
+    });
+
     it("retracts a marked-tail turn identically to an unmarked one", async () => {
         const turn1 = [userText("question one"), assistantText("answer one")];
         const turn2 = [userText("question two"), markInterruptedMessage(assistantText("an interrupted answer two"))];

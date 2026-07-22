@@ -32,6 +32,19 @@ function throwingStreamFake(deltas: readonly string[], toThrow: unknown): ChatPr
     };
 }
 
+/** A `ChatProvider` whose `chatStream` yields the deltas, then the terminal `done`, then throws. */
+function doneThenThrowStreamFake(deltas: readonly string[], final: ChatResponse, toThrow: unknown): ChatProvider {
+    return {
+        capabilities: { toolCalling: true },
+        chat: () => okAsync(final),
+        chatStream: async function* (): AsyncIterable<ChatStreamEvent> {
+            for (const text of deltas) yield { type: "text-delta", text };
+            yield { type: "done", response: final };
+            throw toThrow;
+        },
+    };
+}
+
 describe("createStreamingChat", () => {
     it("forwards every text delta in order and returns the final Message", async () => {
         const final = makeMessage([textBlock("hello world")], "end_turn");
@@ -101,6 +114,19 @@ describe("createStreamingChat", () => {
         expect(result.finishReason).toBe("aborted");
         expect(result.message).toEqual({ role: "assistant", content: "" });
         expect(seen).toEqual([]);
+    });
+
+    it("returns the complete response when done arrives before an abort throw", async () => {
+        const final = makeMessage([textBlock("the whole answer")], "end_turn");
+        const abort = new DOMException("The operation was aborted.", "AbortError");
+        const streaming = createStreamingChat(doneThenThrowStreamFake(["the whole ", "answer"], final, abort), () => {});
+
+        const result = (await streaming.chat(REQUEST, makeSession()))._unsafeUnwrap();
+
+        // A complete response already in hand wins over a partial reconstruction, and the
+        // terminal finish reason is untouched by the late abort.
+        expect(result).toBe(final);
+        expect(result.finishReason).toBe("stop");
     });
 
     it("returns a provider err when the stream throws a non-abort failure", async () => {

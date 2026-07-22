@@ -153,6 +153,28 @@ describe("contentToCortexMessages", () => {
         ]);
     });
 
+    it("folds interrupted onto the prior assistant run when a marked row renders no parts", async () => {
+        // A marked assistant row whose only content is non-renderable (a reasoning block)
+        // drops to zero parts, but the interruption is a real fact that must land on the
+        // assistant run it trailed rather than vanish with the dropped row.
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "assistant", content: [{ type: "text", text: "step one" }] }),
+            stored(
+                1,
+                markInterruptedMessage({
+                    role: "assistant",
+                    content: [{ type: "reasoning", text: "cut off mid-thought", providerOptions: { anthropic: { signature: "sig" } } }],
+                }),
+            ),
+        ]);
+
+        expect(cortex).toHaveLength(1);
+        expect(cortex[0]!.role).toBe("assistant");
+        expect(cortex[0]!.interrupted).toBe(true);
+        // The reasoning-only row contributes no parts; the run keeps only the rendered text.
+        expect(cortex[0]!.parts).toEqual([{ type: "text", text: "step one" }]);
+    });
+
     it("sets interrupted:true on a standalone marked assistant message", async () => {
         const cortex = await contentToCortexMessages([
             stored(0, { role: "user", content: "go" }),
