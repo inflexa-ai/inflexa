@@ -1,6 +1,6 @@
 ## 1. Remove the PDF promise
 
-- [x] 1.1 Narrow the `format` input enum in `submitReportInputSchema` (`src/tools/iterate-report.ts`) to `"html"` only, keeping `"html"` as the default, and update its `.describe()` so it no longer invites a PDF request
+- [x] 1.1 Narrow the `format` input enum in `submitReportInputSchema` (`src/tools/iterate-report.ts`) to `"html"` only, keeping `"html"` as the default, and remove the PDF invitation from both its `.describe()` and the `submit_report` tool description above it
 - [x] 1.2 Leave the `"html" | "pdf"` unions on `PreviewMeta`, `ReportRunnerOptions.format`, and `PreviewPart.format` untouched, and note at `ReportRunnerOptions.format` that only `"html"` is reachable from the tool boundary
 - [x] 1.3 Remove the PDF claim from the report guidance in `src/prompts/conversation.ts`
 - [x] 1.4 Test: `format: "pdf"` is rejected by `submitReportInputSchema` and no preview version is created
@@ -35,7 +35,7 @@
 ## 5. Correct the four stale capability claims
 
 - [x] 5.1 Remove `grep` from the tool list in `src/prompts/report-builder.ts` so the prompt names exactly the roster `createVersionFsTools` returns
-- [x] 5.2 Remove the skipped-oversized-source example from the builder `submit_report` description (`src/tools/report/submit-report.ts`), since pre-flight hard-fails the whole call and no skip occurs
+- [x] 5.2 Remove the skipped-oversized-source example from the builder `submit_report` description AND from the `notes` field's `.describe()` (`src/tools/report/submit-report.ts`) — pre-flight hard-fails the whole call, so no skip occurs and the schema the model reads must not offer one
 - [x] 5.3 Remove the "15-min TTL" figure from the `mint_preview_url` description (`src/tools/report/mint-preview-url.ts`); the harness sets no TTL on this path and echoes the seam's `expiresAt`
 - [x] 5.4 Remove `theme.css` from the design-system material named in `buildCreationPrompt` (`src/tools/iterate-report.ts`), leaving only material the builder can reach through its tools
 
@@ -46,3 +46,10 @@
 - [x] 6.3 Run `bun run format:file` on every changed file under `src/`
 - [x] 6.4 Re-read each changed description and prompt line against its implementation, confirming no remaining claim outruns the code
 - [x] 6.5 Validate the change with `openspec validate harden-report-tool-surface --type change --strict`
+
+## 7. Verification follow-ups
+
+- [x] 7.1 Pin the copy requirement with a test: derive the roster from `createVersionFsTools` and assert `reportBuilderPrompt` names exactly those tools, plus that `grep`, `theme.css`, and a specific TTL figure stay absent. Review alone is the mechanism that already missed all four claims — commit `fea90fb` swept for this class and did not touch this file
+- [x] 7.2 Lift the mint-failure message composition to one shared home and use it in `mint_preview_url` as well, which still renders `status=undefined` against the OSS seam; widen the spec scenario to bind both tools
+- [x] 7.3 Fix the nine type errors in `src/tools/iterate-report.test.ts` and `src/execution/report-runner.test.ts` that `tsconfig.json`'s `src/**/*.test.ts` exclusion hides
+- [x] 7.4 Record as deferred, not fixed: the remaining 49 type errors in other test files and the tsconfig `types`/exclusion change needed to enforce them; and the untested `preview_snapshot` success path, which needs a real browser and is unreachable while the OSS seam returns unavailable

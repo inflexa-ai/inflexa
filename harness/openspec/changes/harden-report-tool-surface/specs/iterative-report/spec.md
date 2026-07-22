@@ -53,8 +53,12 @@ rather than throwing.
 An unavailable seam SHALL additionally be reported through the injected `Logger`,
 because it means the build's only visual verification step did not run — a
 condition an operator must be able to see without reading the model transcript.
-The returned message SHALL name only fields the seam actually supplied; an absent
-HTTP status SHALL be omitted rather than interpolated.
+
+A mint failure surfaced to the model SHALL name only fields the seam actually
+supplied; an absent HTTP status SHALL be omitted rather than interpolated. This
+binds every tool that surfaces one — `mint_preview_url` as well as
+`preview_snapshot` — through a single shared composition, so the two cannot
+describe the same failure differently.
 
 #### Scenario: Snapshot reports console and network problems
 
@@ -70,8 +74,14 @@ HTTP status SHALL be omitted rather than interpolated.
 #### Scenario: A mint failure without a status omits the field
 
 - **GIVEN** a mint failure carrying no HTTP status
-- **WHEN** `preview_snapshot` composes its error message
+- **WHEN** either `preview_snapshot` or `mint_preview_url` composes its error message
 - **THEN** the message names the failure reason and contains no `status=undefined` text
+
+#### Scenario: A mint failure carrying a status keeps it
+
+- **GIVEN** a mint failure carrying an HTTP status
+- **WHEN** either preview tool composes its error message
+- **THEN** the status appears in the message, so the omission above is a response to absence rather than a fixed string
 
 ## ADDED Requirements
 

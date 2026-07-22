@@ -17,6 +17,7 @@ import { makeMessage, scriptedProvider, textBlock, toolUseBlock } from "../loop/
 import { makeSession } from "../providers/__fixtures__/session.js";
 import type { ChatProvider } from "../providers/types.js";
 import type { ToolContext } from "./define-tool.js";
+import { UnavailableAsk } from "./approval/contract.js";
 import type { PreviewPublisher } from "./report/preview-publisher.js";
 import { UnavailablePreviewPublisher } from "./report/preview-publisher.js";
 
@@ -185,7 +186,9 @@ describe("createReportSubmitTool execute", () => {
         });
         const result = await tool.execute(
             input,
-            makeCtx((e) => events.push(e as { type: string }), resourceId),
+            makeCtx((e) => {
+                events.push(e as { type: string });
+            }, resourceId),
         );
 
         expect(result.isOk()).toBe(true);
@@ -367,7 +370,9 @@ describe("createReportSubmitTool execute", () => {
         const input = submitReportInputSchema.parse({ previewId: "prv-nosuch", modifications: "Add a QC chart." });
         const result = await tool.execute(
             input,
-            makeCtx((e) => events.push(e as { type: string }), resourceId),
+            makeCtx((e) => {
+                events.push(e as { type: string });
+            }, resourceId),
         );
 
         expect(result.isOk()).toBe(true);
@@ -434,7 +439,9 @@ describe("createReportSubmitTool execute", () => {
         const input = submitReportInputSchema.parse({ previewId, modifications: "Add a QC chart." });
         const result = await tool.execute(
             input,
-            makeCtx((e) => events.push(e as { type: string }), resourceId),
+            makeCtx((e) => {
+                events.push(e as { type: string });
+            }, resourceId),
         );
 
         expect(result.isOk()).toBe(true);
@@ -465,6 +472,8 @@ describe("stagedAssetsBlock", () => {
 
 // ── helpers ─────────────────────────────────────────────────────────
 
+const denyAsk = new UnavailableAsk();
+
 function stubProvider(): ChatProvider {
     return {} as ChatProvider;
 }
@@ -480,6 +489,7 @@ function makeSubmitTool(provider: ChatProvider, workspaceRoot = "/sessions") {
         resolveWorkspaceRoot: () => workspaceRoot,
         model: "anthropic/test",
         templatesDir: "/templates",
+        skillsDir: "/skills",
         chrome: {},
         createPreviewPublisher: async () => stubPreviews(),
     };
@@ -492,6 +502,10 @@ function makeCtx(emit: ToolContext["emit"], resourceId = "analysis-r"): ToolCont
         signal: new AbortController().signal,
         emit,
         runStep: passthroughStep,
+        // A unit test has no interactive surface, so the shipped deny-by-default
+        // realization is the honest one: a tool that asks here is rejected rather
+        // than left waiting on something that can never answer.
+        ask: (request) => denyAsk.ask(request),
     };
 }
 
