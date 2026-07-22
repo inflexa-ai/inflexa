@@ -236,6 +236,11 @@ export const KEYBIND_DEFAULTS = {
     "app.toggle-sidebar": "ctrl+b",
     "app.abort": "ctrl+c",
     "app.clear-input": "ctrl+u",
+    // Double-press interrupt, live only while a turn is busy and the chat is the main focus in NORMAL
+    // mode: the first press arms a short window, a second within it fires the turn's abort. Defaults to
+    // esc — which is a deliberate no-op in that layer otherwise — so the interrupt claims it without
+    // colliding with any other esc owner (dialog dismiss, selection-clear, the composer's INSERT→NORMAL).
+    "app.interrupt": "esc",
     "app.leader": "ctrl+x",
     // Opens the most recent openable artifact card. A bare printable, so it lives in the NORMAL-mode
     // (scroll-pane-focused) layer only — never active while the composer holds focus.

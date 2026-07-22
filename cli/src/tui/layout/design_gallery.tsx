@@ -6,7 +6,7 @@ import type { DbError, StepExecutionRow } from "@inflexa-ai/harness";
 
 import { GLYPHS, size, space } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
-import { KEYS, chordLabel } from "../keymap.ts";
+import { KEYS, chordLabel, keybindLabel } from "../keymap.ts";
 import { useDialogBindings, useDialogCancel, useDialogEntry, DialogShowcase } from "../components/dialog/dialog_host.tsx";
 import { DialogPanel } from "../components/dialog/dialog_panel.tsx";
 import { PromptDialog } from "../components/dialog/prompt_dialog.tsx";
@@ -28,6 +28,7 @@ import { OpenableCardBlock } from "../components/openable_card_block.tsx";
 import { PlanCardBlock } from "../components/plan_card_block.tsx";
 import { AskPrompt } from "../components/ask_prompt.tsx";
 import { MessageBlock } from "./message_block.tsx";
+import { StatusBar } from "./status_bar.tsx";
 import { Bold, Italic, Underline, Dim, Reverse, Fg } from "../components/emphasis.tsx";
 import { TextArea } from "../components/text_area.tsx";
 import { TextInput } from "../components/text_input.tsx";
@@ -100,6 +101,10 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
     }));
     const runSteps = mockRun.steps.map((s) => ({ label: s.label, state: s.state }));
     const longRunSteps = mockLongRun.steps.map((s) => ({ label: s.label, state: s.state }));
+    // The live interrupt chord, so the hint exhibits below name the real key rather than a hardcoded one.
+    const interruptKey = keybindLabel("app.interrupt");
+    // The chat's real right-hints set, reused verbatim by both interrupt-hint exhibits below.
+    const chatHints = [keybindLabel("app.command-palette"), keybindLabel("app.toggle-sidebar"), keybindLabel("app.abort")];
     return (
         <DialogPanel title="Design system — stream blocks" size="xl" footer={`${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}>
             <ScrollPane focusOnMount={false} onRef={(r) => dialog?.setInitialFocus(r)} flexGrow={1} width="100%" paddingTop={space.sm}>
@@ -555,6 +560,33 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     />
                     <text fg={theme().fgMuted}>transcript ask cards — pending then each terminal status (reconciled in place by ask id):</text>
                     <MessageBlock index={1} role="assistant" parts={mockAskCards} streamPartId={noStreamId} streamText={noStreamText} />
+                </State>
+                <State n="22" label="interrupt affordance — interrupted marker + status-bar hint (busy / armed)">
+                    <text fg={theme().fgMuted}>interrupted assistant turn — a muted "interrupted" marker follows the meta on the header row:</text>
+                    <MessageBlock index={1} role="user" parts={[mockUserText]} streamPartId={noStreamId} streamText={noStreamText} />
+                    <MessageBlock
+                        index={2}
+                        role="assistant"
+                        durationMs={1830}
+                        interrupted
+                        parts={[mockAssistantText]}
+                        streamPartId={noStreamId}
+                        streamText={noStreamText}
+                    />
+                    <text fg={theme().fgMuted}>status-bar interrupt hint — busy, unarmed (the muted resting form, after the right hints):</text>
+                    <StatusBar
+                        title="inflexa"
+                        state={{ text: `${GLYPHS.circleHalf} thinking${GLYPHS.ellipsis}`, tone: "warn" }}
+                        hints={chatHints}
+                        interruptHint={{ label: `${interruptKey} interrupt`, armed: false }}
+                    />
+                    <text fg={theme().fgMuted}>status-bar interrupt hint — armed (the accented "again to interrupt" form):</text>
+                    <StatusBar
+                        title="inflexa"
+                        state={{ text: `${GLYPHS.circleHalf} thinking${GLYPHS.ellipsis}`, tone: "warn" }}
+                        hints={chatHints}
+                        interruptHint={{ label: `${interruptKey} again to interrupt`, armed: true }}
+                    />
                 </State>
             </ScrollPane>
         </DialogPanel>

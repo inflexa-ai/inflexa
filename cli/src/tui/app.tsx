@@ -414,6 +414,31 @@ export function App(props: AppProps) {
         ],
     }));
 
+    // Up-arrow retracts the just-sent message back into the composer — but ONLY while the composer is
+    // empty and the retract window holds (a busy turn that has produced nothing; the hook owns that gate).
+    // Gated to an EMPTY buffer so a non-empty composer disables the binding and `up` falls through to the
+    // textarea's own cursor movement, and so the seed can never overwrite text the user has typed. Its own
+    // layer (not folded into the clear-input/scroll-mode layer above) so the empty+retractable gate does
+    // not also disable those. `setText` leaves the caret at offset 0, so `gotoBufferEnd` lands it after the
+    // seeded text ready to edit. Idle up-arrow stays inert here, leaving the chord free for future recall.
+    useBindings(() => ({
+        mode: MODE_BASE,
+        target: textareaRef,
+        enabled: textareaRef?.plainText === "" && conversation.canRetract(),
+        bindings: [
+            {
+                chord: KEYS.up,
+                run: () =>
+                    void conversation.retract((t) => {
+                        textareaRef?.setText(t);
+                        textareaRef?.gotoBufferEnd();
+                    }),
+                desc: "Retract message",
+                group: "Chat",
+            },
+        ],
+    }));
+
     // NORMAL-mode companion layer, live while the stream's pane is focused: returning to INSERT is
     // chat-specific (dialog panes have no input to return to), so it lives here, not in ScrollPane.
     // esc while the pane is focused matches no binding and the native scrollbox handler has no
@@ -426,6 +451,32 @@ export function App(props: AppProps) {
             { chord: { key: "i" }, run: () => textareaRef?.focus(), desc: "Insert mode", group: "Input" },
             { chord: KEYS.enter, run: () => textareaRef?.focus(), desc: "Focus input", group: "Input" },
             { chord: resolveKeybind("artifact.open-latest"), run: openLatestArtifact, desc: "Open latest artifact", group: "Artifacts" },
+        ],
+    }));
+
+    // Double-press interrupt, live only while a turn is busy and the stream pane holds focus (NORMAL
+    // mode): the first press arms a short window, a second within it fires the turn's abort (the hook
+    // disarms on finishTurn). A separate layer from the i/enter/o keys above so its busy gate does not
+    // disable those. Dialog gating is structural — MODE_BASE suspends under a modal AND a stacked dialog
+    // steals the pane's focus, so the layer is doubly inert while a dialog is open. A live text selection
+    // is excluded two ways: the higher-priority `selectionClearLayer` (priority 50 vs this layer's 0) owns
+    // the esc press first and returns handled, so the interrupt never observes it, and the explicit
+    // `enabled` selection check keeps it disarmed regardless of that ordering. Idle → disabled, so esc in
+    // NORMAL stays the deliberate no-op it is today.
+    useBindings(() => ({
+        mode: MODE_BASE,
+        target: scrollPaneRef,
+        enabled: chatStatus() === "busy" && !renderer.getSelection()?.getSelectedText(),
+        bindings: [
+            {
+                chord: resolveKeybind("app.interrupt"),
+                run: () => {
+                    if (conversation.interruptArmed()) conversation.abort();
+                    else conversation.armInterrupt();
+                },
+                desc: "Interrupt turn (again to confirm)",
+                group: "Chat",
+            },
         ],
     }));
 
@@ -495,6 +546,17 @@ export function App(props: AppProps) {
               : { text: `${GLYPHS.circle} ready`, tone: "success" };
     };
 
+    // The interrupt affordance for the status bar's right hints region, derived from the live
+    // `app.interrupt` binding + the armed signal so it can never drift from the real key: absent when
+    // idle, the muted resting hint while a turn is busy, and the accented "again to interrupt" form once
+    // a first press has armed the window. Passed to StatusBar as plain data — it stays domain-free.
+    const interruptHint = (): { label: string; armed: boolean } | undefined => {
+        if (chatStatus() !== "busy") return undefined;
+        const key = keybindLabel("app.interrupt");
+        const armed = conversation.interruptArmed();
+        return { label: armed ? `${key} again to interrupt` : `${key} interrupt`, armed };
+    };
+
     return (
         <WorkspaceContext.Provider value={workspace}>
             <box flexDirection="column" width="100%" height="100%" backgroundColor={theme().bg} onMouseDown={applySelectionColors} onMouseUp={copySelection}>
@@ -508,6 +570,7 @@ export function App(props: AppProps) {
                     // carries the path instead, so gating here keeps it on exactly one surface at any width.
                     path={dims().width >= size.breakpointWide ? contractHome(workspace.workingDir) : undefined}
                     hints={[keybindLabel("app.command-palette"), keybindLabel("app.toggle-sidebar"), keybindLabel("app.abort")]}
+                    interruptHint={interruptHint()}
                 />
 
                 {/* Main row: the chat column beside the full-height sidebar. Showing the sidebar

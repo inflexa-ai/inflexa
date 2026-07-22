@@ -26,6 +26,12 @@ export type MessageBlockProps = {
     role: MessageRole;
     /** Assistant-only turn duration in ms; shown beside the number. Omitted on user turns and before the turn finishes. */
     durationMs?: number;
+    /**
+     * Assistant-only: the turn was interrupted after it had streamed output, so the header carries a muted
+     * "interrupted" marker. A live-only flag (an aborted turn persists no assistant message), never set on
+     * a user turn or on a no-output abort (that empty shell is dropped rather than marked).
+     */
+    interrupted?: boolean;
     /** The turn's parts (text, tool-call, plan-card, run-card, plus the mock thinking/file-edit kinds). */
     parts: Part[];
     /** The part id currently streaming, or null — read reactively. */
@@ -121,6 +127,11 @@ export function MessageBlock(props: MessageBlockProps) {
             <text fg={theme()[props.role === "user" ? MARKERS.you.role : MARKERS.assistant.role]}>
                 <Bold>{props.role === "user" ? `${MARKERS.you.glyph} You` : `${MARKERS.assistant.glyph} Inflexa`}</Bold>
                 <Fg role="fgMuted">{meta()}</Fg>
+                {/* Muted suffix marking a turn the user interrupted after it began streaming — plain ASCII so
+                it never touches the fixed gutter; the enclosing <text> already resolves an explicit fg. */}
+                <Show when={props.interrupted}>
+                    <Fg role="fgMuted">{` ${GLYPHS.middot} interrupted`}</Fg>
+                </Show>
             </text>
             {props.role === "user" ? (
                 // The user turn's body rides a left border rule in the user color (the quoted-content idiom

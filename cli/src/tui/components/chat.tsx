@@ -91,6 +91,7 @@ export function Chat(props: ChatProps) {
                             index={index() + 1}
                             role={msg.role}
                             durationMs={msg.durationMs}
+                            interrupted={msg.interrupted}
                             parts={msg.parts}
                             streamPartId={streamPartId}
                             streamText={streamText}
