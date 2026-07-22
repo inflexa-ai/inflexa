@@ -21,6 +21,70 @@ const INDICATOR_FRAME_MS = 80;
  */
 const INDICATOR_EXPLAIN_AFTER_MS = 5_000;
 
+/** Assumed row width when stderr reports none — the conventional terminal default. */
+const INDICATOR_FALLBACK_COLUMNS = 80;
+
+const INDICATOR_MESSAGE = "Exiting…";
+const INDICATOR_EXPLAIN_MESSAGE = "Exiting — waiting for in-flight work to finish, this can take a while";
+/**
+ * The explanation, shortened to clear a conventional 80-column row once the glyph and a two-unit age
+ * are added. Without this rung the full message — 80 columns exactly — would lose to the fit check on
+ * the most common terminal width there is, and the reader would get the bare `Exiting…` precisely
+ * during the long waits the explanation exists for.
+ */
+const INDICATOR_EXPLAIN_BRIEF = "Exiting — waiting for in-flight work to finish";
+
+/**
+ * Compose one frame, widest variant that fits the row.
+ *
+ * Fitting is not cosmetic. `\r\x1b[2K` erases only the row the cursor is on, so a frame that WRAPS
+ * leaves its first row stranded and the next tick redraws below it — the indicator smears down the
+ * screen instead of animating in place. The explain variant is 80 columns with a two-unit age, i.e.
+ * it wraps on the conventional default width, so this is the common case rather than a narrow-pane
+ * edge case.
+ *
+ * Degrading through variants rather than truncating the full line keeps the age visible: the age is
+ * what distinguishes a live drain from a wedged one, and it sits at the END of the line, so a plain
+ * truncation would cut off precisely the part worth reading. The final fallback is the bare glyph,
+ * which still animates.
+ *
+ * One column is left spare because writing into the last one puts most terminals into a deferred-wrap
+ * state that the following `\r` resolves inconsistently.
+ */
+export function exitIndicatorFrame(glyph: string, startedAt: number, columns: number): string {
+    const age = Date.relativeAge(startedAt);
+    const explaining = Date.now() - startedAt >= INDICATOR_EXPLAIN_AFTER_MS;
+    const budget = Math.max(0, columns - 1);
+    const variants = [
+        ...(explaining ? [`${glyph} ${INDICATOR_EXPLAIN_MESSAGE} (${age})`, `${glyph} ${INDICATOR_EXPLAIN_BRIEF} (${age})`] : []),
+        `${glyph} ${INDICATOR_MESSAGE} (${age})`,
+        `${glyph} ${INDICATOR_MESSAGE}`,
+        glyph,
+    ];
+    return variants.find((variant) => variant.length <= budget) ?? glyph.slice(0, budget);
+}
+
+/**
+ * Write one frame, swallowing any failure.
+ *
+ * The indicator is decoration on the last code path the process ever runs, so it must not be able to
+ * turn a clean exit into a crash — and both of its failure modes are reachable. `process.stderr.write`
+ * throws `EPIPE` when the terminal goes away mid-drain, which is precisely the SIGHUP case
+ * `src/index.ts` routes here; and {@link exitIndicatorFrame} reads `Date.relativeAge`, a runtime
+ * extension installed by the entry point rather than by this module. A throw from either would escape
+ * the `setInterval` callback uncaught, killing the process before {@link shutdown} reaches
+ * `process.exit` and burying whatever the real exit code was meant to be.
+ *
+ * Losing the animation is the correct degradation: the drain itself is unaffected.
+ */
+function draw(frame: string): void {
+    try {
+        process.stderr.write(frame);
+    } catch {
+        // A dead or unwritable stderr means there is no one left to narrate to.
+    }
+}
+
 /**
  * Narrate a slow exit, returning a stop function that erases what it drew.
  *
@@ -43,10 +107,10 @@ export function startExitIndicator(): () => void {
         if (elapsedMs < INDICATOR_DELAY_MS) return;
         // `frame % length` is in range by construction, which `noUncheckedIndexedAccess` cannot see.
         const glyph = GLYPHS.spinner[frame++ % GLYPHS.spinner.length]!;
-        const message = elapsedMs < INDICATOR_EXPLAIN_AFTER_MS ? "Exiting…" : "Exiting — waiting for in-flight work to finish, this can take a while";
         // `\r\x1b[2K` returns to column 0 and clears the row, so each frame overwrites the last
-        // in place instead of scrolling a new line per tick.
-        process.stderr.write(`\r\x1b[2K${glyph} ${message} (${Math.round(elapsedMs / 1000)}s)`);
+        // in place instead of scrolling a new line per tick. Width is re-read every frame so a
+        // resize mid-drain is picked up without a SIGWINCH listener to unregister.
+        draw(`\r\x1b[2K${exitIndicatorFrame(glyph, startedAt, process.stderr.columns ?? INDICATOR_FALLBACK_COLUMNS)}`);
     }, INDICATOR_FRAME_MS);
     // The indicator must never be the reason the process stays alive: `beforeExit` reaches
     // `shutdown()` precisely when nothing else is pending, and a ref'd timer would re-arm the loop.
@@ -56,7 +120,7 @@ export function startExitIndicator(): () => void {
         clearInterval(timer);
         // Erase only what was drawn. Below the delay the indicator never wrote, and clearing the row
         // would wipe whatever the command legitimately left on the last line.
-        if (Date.now() - startedAt >= INDICATOR_DELAY_MS) process.stderr.write("\r\x1b[2K");
+        if (Date.now() - startedAt >= INDICATOR_DELAY_MS) draw("\r\x1b[2K");
     };
 }
 
