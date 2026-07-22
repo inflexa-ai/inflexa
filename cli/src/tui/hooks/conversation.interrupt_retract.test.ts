@@ -337,6 +337,103 @@ describe("retract during the no-output window", () => {
         expect(seed.get()).toBeNull();
         expect(durableCalls).toBe(0);
     });
+
+    test("a second retract during settlement is a no-op — the removal runs once", async () => {
+        // Two up-arrows land inside the settlement window: the first claims the in-flight guard and runs the
+        // whole sequence; the second (and a third after both settle) see the guard folded into `canRetract`
+        // and bail. The durable removal is deliberately un-token-gated (a swap must not cancel it), so
+        // without the guard the second retract would reach it too — deleting the thread's NEW, already-
+        // answered tail after the first press removed the orphan. The guard, not the token, keeps it once-only.
+        const { sendP, release } = startBusyTurn({ kind: "aborted" });
+        expect(canRetract()).toBe(true);
+
+        const seed = seedCell();
+        let seedCalls = 0;
+        const countingSeed = (text: string): void => {
+            seedCalls++;
+            seed.set(text);
+        };
+        let durableCalls = 0;
+        const retractSeams: RetractSeams = {
+            runtime: () => stubRuntime,
+            retractTurn: () => {
+                durableCalls++;
+                return okAsync({ kind: "retracted" as const, messages: 2 });
+            },
+        };
+
+        // Fire two retracts WITHOUT awaiting the first: it parks awaiting settlement, so the second sees the
+        // guard already set and returns immediately.
+        const first = retract(countingSeed, retractSeams);
+        const second = retract(countingSeed, retractSeams);
+        // The window is closed the instant the first retract claimed the guard.
+        expect(canRetract()).toBe(false);
+        release();
+        await Promise.all([first, second]);
+        await sendP;
+
+        // A third press after both settle is likewise inert (idle, no assistant in flight).
+        let thirdSeed: string | null = "unset";
+        await retract((text) => (thirdSeed = text), retractSeams);
+
+        expect(durableCalls).toBe(1); // the durable seam ran exactly once
+        expect(messages.length).toBe(0); // spliced exactly once, back to empty
+        expect(seedCalls).toBe(1); // the composer was seeded exactly once
+        expect(seed.get()).toBe("original text");
+        expect(thirdSeed).toBe("unset"); // the third retract never seeded
+        expect(canRetract()).toBe(false); // the window stays closed
+    });
+});
+
+describe("a rejecting turn engine still settles the turn", () => {
+    test("send completes as a failed turn rather than hanging busy", async () => {
+        // The engine contract is non-rejecting, but if it EVER rejects, `send` must still settle: it catches
+        // the throw, synthesizes the `failed` outcome, and routes it through the normal failure handling —
+        // so the status leaves "busy" for the failure banner rather than wedging there, and `send` itself
+        // resolves without an unhandled rejection.
+        const seams: SendSeams = {
+            runtime: () => stubRuntime,
+            runChatTurn: () => Promise.reject(new Error("engine exploded")),
+        };
+        await send({ sessionId: SID, analysisId: AID, userText: "?" }, seams);
+
+        expect(chatStatus()).toBe("error");
+        expect(errorMsg()).not.toBeNull();
+    });
+
+    test("a retract awaiting a rejecting turn resolves instead of hanging", async () => {
+        // A retract parks on the turn's settlement promise. If the engine rejects, WITHOUT the settle-on-throw
+        // guard `settleTurn` would never fire and this retract would await forever. With it, the promise
+        // settles as `failed` and the retract completes (a hang here fails the test by timeout).
+        let reject!: (e: unknown) => void;
+        const gate = new Promise<TurnOutcome>((_resolve, rej) => {
+            reject = rej;
+        });
+        const seams: SendSeams = {
+            runtime: () => stubRuntime,
+            runChatTurn: () => gate,
+        };
+        const sendP = send({ sessionId: SID, analysisId: AID, userText: "original text" }, seams);
+        expect(canRetract()).toBe(true);
+
+        const seed = seedCell();
+        let durableCalls = 0;
+        const retractSeams: RetractSeams = {
+            runtime: () => stubRuntime,
+            retractTurn: () => {
+                durableCalls++;
+                return okAsync({ kind: "retracted" as const, messages: 1 });
+            },
+        };
+        const retractP = retract(seed.set, retractSeams);
+        // The retract has claimed the token, fired the abort, and now awaits settlement. Reject the engine.
+        reject(new Error("engine exploded mid-turn"));
+        await retractP;
+        await sendP;
+
+        expect(chatStatus()).not.toBe("busy");
+        expect(durableCalls).toBe(1); // the settled failed outcome still drove the durable removal once
+    });
 });
 
 describe("the interrupt arm window", () => {
