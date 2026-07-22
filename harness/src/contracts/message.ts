@@ -38,4 +38,10 @@ export interface CortexMessage {
     id: string;
     role: "user" | "assistant" | "system";
     parts: CortexPart[];
+    /**
+     * Set when this message's production was cut off by a client abort, so the UI
+     * can badge it. Absent means not interrupted — the field is optional so every
+     * existing consumer is unaffected.
+     */
+    interrupted?: boolean;
 }
