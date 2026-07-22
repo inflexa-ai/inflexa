@@ -279,10 +279,10 @@ export function keybindLabel(id: KeybindId): string {
 }
 
 /**
- * The status-bar interrupt hint wording for an already-resolved key label and armed state. The SINGLE
- * source of this phrasing, read by both the chat's live `interruptHint` derivation and the design-gallery
- * exhibit, so the two can never drift. `armed` selects the "again to interrupt" confirm form (a second
- * press fires the abort) over the resting "interrupt" form.
+ * The interrupt-hint wording for an already-resolved key label and armed state. The SINGLE source of this
+ * phrasing, read by the chat's live footer `interruptHint` derivation (both its NORMAL esc and INSERT
+ * abort-chord variants) and the design-gallery exhibit, so they can never drift. `armed` selects the
+ * "again to interrupt" confirm form (a second press fires the abort) over the resting "interrupt" form.
  */
 export function interruptHintLabel(key: string, armed: boolean): string {
     return armed ? `${key} again to interrupt` : `${key} interrupt`;

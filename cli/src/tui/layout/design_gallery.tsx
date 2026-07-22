@@ -28,7 +28,7 @@ import { OpenableCardBlock } from "../components/openable_card_block.tsx";
 import { PlanCardBlock } from "../components/plan_card_block.tsx";
 import { AskPrompt } from "../components/ask_prompt.tsx";
 import { MessageBlock } from "./message_block.tsx";
-import { StatusBar } from "./status_bar.tsx";
+import { ChatBar } from "./chat_bar.tsx";
 import { Bold, Italic, Underline, Dim, Reverse, Fg } from "../components/emphasis.tsx";
 import { TextArea } from "../components/text_area.tsx";
 import { TextInput } from "../components/text_input.tsx";
@@ -101,10 +101,10 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
     }));
     const runSteps = mockRun.steps.map((s) => ({ label: s.label, state: s.state }));
     const longRunSteps = mockLongRun.steps.map((s) => ({ label: s.label, state: s.state }));
-    // The live interrupt chord, so the hint exhibits below name the real key rather than a hardcoded one.
+    // The live interrupt + abort chords, so the footer-hint exhibits below name the real keys (esc in
+    // NORMAL, the one-press ctrl+c in INSERT) rather than hardcoded ones.
     const interruptKey = keybindLabel("app.interrupt");
-    // The chat's real right-hints set, reused verbatim by both interrupt-hint exhibits below.
-    const chatHints = [keybindLabel("app.command-palette"), keybindLabel("app.toggle-sidebar"), keybindLabel("app.abort")];
+    const abortKey = keybindLabel("app.abort");
     return (
         <DialogPanel title="Design system — stream blocks" size="xl" footer={`${chordLabel(KEYS.escape)}/${chordLabel(KEYS.q)} close`}>
             <ScrollPane focusOnMount={false} onRef={(r) => dialog?.setInitialFocus(r)} flexGrow={1} width="100%" paddingTop={space.sm}>
@@ -561,7 +561,7 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                     <text fg={theme().fgMuted}>transcript ask cards — pending then each terminal status (reconciled in place by ask id):</text>
                     <MessageBlock index={1} role="assistant" parts={mockAskCards} streamPartId={noStreamId} streamText={noStreamText} />
                 </State>
-                <State n="22" label="interrupt affordance — interrupted marker + status-bar hint (busy / armed)">
+                <State n="22" label="interrupt affordance — interrupted marker + footer hint (NORMAL / armed / INSERT)">
                     <text fg={theme().fgMuted}>interrupted assistant turn — a muted "interrupted" marker follows the meta on the header row:</text>
                     <MessageBlock index={1} role="user" parts={[mockUserText]} streamPartId={noStreamId} streamText={noStreamText} />
                     <MessageBlock
@@ -573,20 +573,26 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         streamPartId={noStreamId}
                         streamText={noStreamText}
                     />
-                    <text fg={theme().fgMuted}>status-bar interrupt hint — busy, unarmed (the muted resting form, after the right hints):</text>
-                    <StatusBar
-                        title="inflexa"
-                        state={{ text: `${GLYPHS.circleHalf} thinking${GLYPHS.ellipsis}`, tone: "warn" }}
-                        hints={chatHints}
+                    {/* The footer hint sits after the mode word it describes. autoFocus={false} mounts the
+                        NORMAL exhibits blurred so they never take the gallery pane's focus; the INSERT
+                        exhibit seeds INSERT the same way, its seed being decoupled from a real focus-grab
+                        (see ChatBar.autoFocus). onTextareaRef/onSubmit are inert — the exhibits are static. */}
+                    <text fg={theme().fgMuted}>footer hint — busy NORMAL, unarmed (the muted resting esc form, after the mode word):</text>
+                    <ChatBar
+                        autoFocus={false}
+                        onTextareaRef={noop}
+                        onSubmit={noop}
                         interruptHint={{ label: interruptHintLabel(interruptKey, false), armed: false }}
                     />
-                    <text fg={theme().fgMuted}>status-bar interrupt hint — armed (the accented "again to interrupt" form):</text>
-                    <StatusBar
-                        title="inflexa"
-                        state={{ text: `${GLYPHS.circleHalf} thinking${GLYPHS.ellipsis}`, tone: "warn" }}
-                        hints={chatHints}
+                    <text fg={theme().fgMuted}>footer hint — busy NORMAL, armed (the "again to interrupt" confirm form in the warn treatment):</text>
+                    <ChatBar
+                        autoFocus={false}
+                        onTextareaRef={noop}
+                        onSubmit={noop}
                         interruptHint={{ label: interruptHintLabel(interruptKey, true), armed: true }}
                     />
+                    <text fg={theme().fgMuted}>footer hint — busy INSERT, advertising the one-press abort chord that interrupts while typing:</text>
+                    <ChatBar autoFocus onTextareaRef={noop} onSubmit={noop} interruptHint={{ label: interruptHintLabel(abortKey, false), armed: false }} />
                 </State>
             </ScrollPane>
         </DialogPanel>

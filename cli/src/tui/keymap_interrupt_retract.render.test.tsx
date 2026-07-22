@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { For } from "solid-js";
 import { testRender } from "@opentui/solid";
-import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
+import type { Renderable, ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
 
 import { useKeymapRoot, useBindings, MODE_BASE, KEYS, __resetKeybindCache } from "./keymap.ts";
-import { interruptLayer, retractLayer } from "./app.tsx";
+import { askDrainRefocusTarget, interruptLayer, paneRetractLayer, retractLayer } from "./app.tsx";
 import { ScrollPane } from "./components/scroll_pane.tsx";
 
 // End-to-end verification of app.tsx's two chat key layers — up-arrow RETRACT and double-press INTERRUPT
@@ -18,6 +18,8 @@ import { ScrollPane } from "./components/scroll_pane.tsx";
 // give the key its real place to land when the layer under test is disabled (fall-through).
 
 const LINES = Array.from({ length: 10 }, (_, i) => `line ${i}`);
+// Enough rows to overflow the pane viewport so scroll steps (j/k) are observable during the retract window.
+const PANE_LINES = Array.from({ length: 40 }, (_, i) => `line ${i}`);
 
 afterEach(() => {
     __resetKeybindCache();
@@ -194,6 +196,155 @@ describe("up-arrow retract layer (rendered, real keyboard bus)", () => {
         } finally {
             setup.renderer.destroy();
         }
+    });
+});
+
+// ── pane-focused up-arrow RETRACT ───────────────────────────────────────────────────────────────────
+
+/** The pane-retract seam a test injects: a controllable `canRetract` gate + a `retract` spy that seeds. */
+type PaneRetractControls = {
+    readonly conversation: { canRetract: () => boolean; retract: (seed: (text: string) => void) => Promise<void> };
+    readonly onPaneRef: (pane: ScrollBoxRenderable) => void;
+    readonly onComposerRef: (ta: TextareaRenderable) => void;
+};
+
+function PaneRetractHarness(props: PaneRetractControls) {
+    useKeymapRoot();
+    let pane: ScrollBoxRenderable | null = null;
+    let composer: TextareaRenderable | null = null;
+
+    // The REAL pane-targeted layer under test: app.tsx's exported factory over the injected seam, registered
+    // above ScrollPane's own scroll layer exactly as `App` installs it — so the real engine's priority
+    // resolution decides `up`-retract vs `up`-scroll, and `k`/j stay on the pane's scroll layer throughout.
+    useBindings(() => paneRetractLayer({ pane, composer, conversation: props.conversation }));
+
+    // The composer is present but UNFOCUSED (no mount-time focus call): the pane holds focus — the
+    // post-submit resting state — and the completed retract is what moves focus into the composer.
+    return (
+        <box flexDirection="column" width="100%" height="100%">
+            <ScrollPane focusOnMount flexGrow={1} onRef={(r: ScrollBoxRenderable) => ((pane = r), props.onPaneRef(r))}>
+                <For each={PANE_LINES}>{(l) => <text>{l}</text>}</For>
+            </ScrollPane>
+            <textarea ref={(r: TextareaRenderable) => ((composer = r), props.onComposerRef(r))} />
+        </box>
+    );
+}
+
+describe("pane-focused up-arrow retract layer (rendered, real keyboard bus)", () => {
+    test("pane focused + open window: up retracts, seeds the composer, and moves focus into it", async () => {
+        let pane!: ScrollBoxRenderable;
+        let composer!: TextareaRenderable;
+        let retractCalls = 0;
+        const controls: PaneRetractControls = {
+            conversation: {
+                canRetract: () => true,
+                retract: (seed) => {
+                    retractCalls++;
+                    seed("seeded text"); // app.tsx's shared seed → setText + gotoBufferEnd + focus
+                    return Promise.resolve();
+                },
+            },
+            onPaneRef: (r) => (pane = r),
+            onComposerRef: (r) => (composer = r),
+        };
+        const setup = await testRender(() => <PaneRetractHarness {...controls} />, { width: 40, height: 10 });
+        const settle = makeSettle(setup);
+        try {
+            await settle();
+            // The pane, not the composer, holds focus — the post-submit resting state.
+            expect(pane.focused).toBe(true);
+            expect(composer.focused).toBe(false);
+
+            setup.mockInput.pressArrow("up");
+            await settle();
+
+            // The retract ran and its completion seeded the composer AND handed focus back to it (INSERT).
+            expect(retractCalls).toBe(1);
+            expect(composer.plainText).toBe("seeded text");
+            expect(composer.focused).toBe(true);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("during the window j/k scroll the pane while up alone is claimed by the retract", async () => {
+        let pane!: ScrollBoxRenderable;
+        let retractCalls = 0;
+        const controls: PaneRetractControls = {
+            conversation: { canRetract: () => true, retract: () => ((retractCalls += 1), Promise.resolve()) },
+            onPaneRef: (r) => (pane = r),
+            onComposerRef: () => {},
+        };
+        const setup = await testRender(() => <PaneRetractHarness {...controls} />, { width: 40, height: 10 });
+        const settle = makeSettle(setup);
+        try {
+            await settle();
+            expect(pane.focused).toBe(true);
+            expect(pane.scrollHeight).toBeGreaterThan(pane.height); // content overflows → scrollable
+
+            // j scrolls down one line even while the retract window holds — the scroll layer stays live.
+            setup.mockInput.pressKey("j");
+            await settle();
+            expect(pane.scrollTop).toBe(1);
+            expect(retractCalls).toBe(0);
+
+            // k scrolls back up — the retract claims only `up`, never `k`.
+            setup.mockInput.pressKey("k");
+            await settle();
+            expect(pane.scrollTop).toBe(0);
+            expect(retractCalls).toBe(0);
+
+            // up, by contrast, is owned by the retract (it outranks the scroll layer's up during the window).
+            setup.mockInput.pressArrow("up");
+            await settle();
+            expect(retractCalls).toBe(1);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+
+    test("window closed: up reverts to scroll-up on the pane, no retract", async () => {
+        let pane!: ScrollBoxRenderable;
+        let retractCalls = 0;
+        const controls: PaneRetractControls = {
+            // The gate is closed (output arrived / turn ended), so the pane retract layer disables.
+            conversation: { canRetract: () => false, retract: () => ((retractCalls += 1), Promise.resolve()) },
+            onPaneRef: (r) => (pane = r),
+            onComposerRef: () => {},
+        };
+        const setup = await testRender(() => <PaneRetractHarness {...controls} />, { width: 40, height: 10 });
+        const settle = makeSettle(setup);
+        try {
+            await settle();
+            expect(pane.focused).toBe(true);
+
+            // Scroll down first so an up-scroll is observable (from the top, scrollBy(-1) clamps at 0).
+            setup.mockInput.pressKey("j");
+            await settle();
+            expect(pane.scrollTop).toBe(1);
+
+            // Window closed → the layer is disabled → up falls through to the scroll layer's scroll-up.
+            setup.mockInput.pressArrow("up");
+            await settle();
+            expect(pane.scrollTop).toBe(0);
+            expect(retractCalls).toBe(0);
+        } finally {
+            setup.renderer.destroy();
+        }
+    });
+});
+
+// ── ask-drain busy-aware refocus ────────────────────────────────────────────────────────────────────
+
+describe("ask-drain refocus target (pure decision)", () => {
+    test("busy → pane, ended → composer", () => {
+        // Sentinels: the function only chooses BETWEEN the two refs, it never touches them, so plain
+        // objects stand in for the renderables and identity comparison proves which branch was taken.
+        const pane = { id: "pane" } as unknown as Renderable;
+        const composer = { id: "composer" } as unknown as Renderable;
+        // Mid-turn drain keeps the user in NORMAL on the pane; a turn that has ended returns to the composer.
+        expect(askDrainRefocusTarget(true, pane, composer)).toBe(pane);
+        expect(askDrainRefocusTarget(false, pane, composer)).toBe(composer);
     });
 });
 

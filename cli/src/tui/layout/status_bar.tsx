@@ -23,13 +23,6 @@ export type StatusBarProps = {
     path?: string;
     /** Right-aligned affordance labels (sourced from the keymap by the caller). */
     hints: string[];
-    /**
-     * Optional state-aware interrupt affordance, appended after {@link StatusBarProps.hints}. The caller
-     * (the chat) derives the label from the live `app.interrupt` binding and the armed state and hands it
-     * down as data — StatusBar stays dumb. When `armed`, the label renders in the accent color so the
-     * "again to interrupt" state is visually distinct from the resting hint; omit it entirely when idle.
-     */
-    interruptHint?: { label: string; armed: boolean };
 };
 
 function toneColor(tone: StatusTone): string {
@@ -60,14 +53,6 @@ export function StatusBar(props: StatusBarProps) {
             {/* Spacer pushes the affordance hints to the right edge. */}
             <box flexGrow={1} />
             <text fg={theme().fgMuted}>{props.hints.join(`  ${GLYPHS.middot}  `)}</text>
-            {/* The interrupt hint carries its own color so the armed ("again to interrupt") state can accent
-            while the resting hint stays muted; a separate <text> is needed because the hints above share one
-            muted span. Both branches resolve an explicit fg. */}
-            <Show when={props.interruptHint} keyed>
-                {(hint: { label: string; armed: boolean }) => (
-                    <text fg={hint.armed ? theme().accent : theme().fgMuted}>{`  ${GLYPHS.middot}  ${hint.label}`}</text>
-                )}
-            </Show>
         </box>
     );
 }

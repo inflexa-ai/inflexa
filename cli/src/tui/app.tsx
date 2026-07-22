@@ -75,6 +75,29 @@ export type RetractLayerDeps = {
 };
 
 /**
+ * The completion half of every retract, shared by both retract layers so the pane- and composer-targeted
+ * paths seed and focus identically. Returns the widget-seam callback the conversation hook invokes once
+ * the durable removal lands: write the recovered text back into the composer and move the caret to its
+ * end (`setText` leaves it at offset 0).
+ *
+ * Re-checks emptiness rather than trusting the gate that armed the retract: a retract spans an abort, a
+ * turn settlement, and a durable removal, and the composer stays reachable across all of it, so the user
+ * may have started typing a replacement in the meantime. Their keystrokes outrank a restoration they no
+ * longer want, so a touched buffer declines the seed — and, with it, the focus hand-back — instead of
+ * being overwritten. Deciding that here keeps the hook free of renderable refs: it asks, the widget answers.
+ */
+function seedComposerFromRetract(composer: TextareaRenderable | null): (text: string) => void {
+    return (t) => {
+        if (!composer || composer.plainText !== "") return;
+        composer.setText(t);
+        composer.gotoBufferEnd();
+        // The resting state of a running turn is NORMAL (the pane holds focus); a completed retract is the
+        // one deliberate hand-back to INSERT, so focus follows the recovered text into the composer to edit.
+        composer.focus();
+    };
+}
+
+/**
  * The real "up-arrow retracts the just-sent message back into the composer" key layer, built as a pure
  * factory over its deps so a dispatch test drives the SAME config `App` installs — not a hand-copied
  * replica that could drift. `App` registers it with `useBindings(() => retractLayer({ target: textareaRef,
@@ -84,14 +107,8 @@ export type RetractLayerDeps = {
  * nothing; the hook owns that gate via `canRetract`). Gated to an EMPTY buffer so a non-empty composer
  * disables the binding and `up` falls through to the textarea's own cursor movement. Its own layer (not
  * folded into the clear-input/scroll-mode layer) so the empty+retractable gate does not also disable
- * those. `setText` leaves the caret at offset 0, so `gotoBufferEnd` lands it after the seeded text ready
- * to edit. Idle up-arrow stays inert here, leaving the chord free for future recall.
- *
- * The seed re-checks emptiness rather than trusting the gate that armed it: a retract spans an abort, a
- * turn settlement, and a durable removal, and the composer stays focused across all of it, so the user
- * may have started typing a replacement in the meantime. Their keystrokes outrank a restoration they no
- * longer want, so a touched buffer declines the seed instead of being overwritten by it. Deciding that
- * here keeps the hook free of renderable refs — it asks, the widget answers.
+ * those. The completion — seed the composer, caret to end, focus it — is the shared
+ * {@link seedComposerFromRetract}. Idle up-arrow stays inert here, leaving the chord free for future recall.
  */
 export function retractLayer(deps: RetractLayerDeps): LayerConfig {
     const target = deps.target;
@@ -102,12 +119,54 @@ export function retractLayer(deps: RetractLayerDeps): LayerConfig {
         bindings: [
             {
                 chord: KEYS.up,
-                run: () =>
-                    void deps.conversation.retract((t) => {
-                        if (!target || target.plainText !== "") return;
-                        target.setText(t);
-                        target.gotoBufferEnd();
-                    }),
+                run: () => void deps.conversation.retract(seedComposerFromRetract(target)),
+                desc: "Retract message",
+                group: "Chat",
+            },
+        ],
+    };
+}
+
+/** The seams the {@link paneRetractLayer} factory closes over — the pane it gates on, the composer it seeds, and the retract hook it drives. */
+export type PaneRetractLayerDeps = {
+    /**
+     * The stream pane this layer is focus-`target`-gated to. After an accepted submit the user rests on the
+     * pane (NORMAL), so `up` must retract from here — not only from the composer's own empty-buffer layer.
+     */
+    readonly pane: Renderable | null;
+    /**
+     * The chat composer a completed retract seeds and focuses (via {@link seedComposerFromRetract}). It is
+     * NOT the focus gate (the pane is), so this layer carries no empty-buffer condition — the seed's own
+     * emptiness re-check is what protects a draft typed after the window opened.
+     */
+    readonly composer: TextareaRenderable | null;
+    /** The conversation retract seam: whether a retract is possible right now, and the retract itself. */
+    readonly conversation: Pick<typeof conversation, "canRetract" | "retract">;
+};
+
+/**
+ * The pane-targeted twin of {@link retractLayer}: `up` retracts the just-sent message while the stream
+ * pane holds focus — the post-submit resting state — running the SAME retract with the SAME seed-and-focus
+ * completion ({@link seedComposerFromRetract}). A pure factory for the same no-drift reason; `App`
+ * registers it with `useBindings(() => paneRetractLayer({ ... }))`, re-invoked each keystroke so `enabled`
+ * re-reads the live retract window.
+ *
+ * Enabled by `canRetract()` alone — the pane is not the composer, so there is no buffer to gate on.
+ * Priority 10 places it ABOVE the pane's scroll layer (which binds at the default priority 0, see
+ * ScrollPane), so during the no-output window `up` retracts; the moment the gate closes (first delta, turn
+ * end) this layer disables and `up` reverts to scroll-up. Only `up` is claimed here — `k` and the page
+ * keys live solely on the scroll layer, so they scroll throughout.
+ */
+export function paneRetractLayer(deps: PaneRetractLayerDeps): LayerConfig {
+    return {
+        mode: MODE_BASE,
+        target: deps.pane,
+        priority: 10,
+        enabled: deps.conversation.canRetract(),
+        bindings: [
+            {
+                chord: KEYS.up,
+                run: () => void deps.conversation.retract(seedComposerFromRetract(deps.composer)),
                 desc: "Retract message",
                 group: "Chat",
             },
@@ -162,22 +221,30 @@ export function interruptLayer(deps: InterruptLayerDeps): LayerConfig {
 }
 
 /**
- * Derive the status-bar interrupt affordance from the live turn state, or `undefined` when it must not
- * show. Pure over its inputs so both `App`'s `interruptHint` thunk and its unit coverage exercise ONE
- * derivation, and the label + armed styling come from {@link interruptHintLabel} (the shared wording).
+ * Derive the ChatBar footer's interrupt affordance from the live turn state, or `undefined` when the
+ * footer must stay quiet. Pure over its inputs so both `App`'s `interruptHint` thunk and its unit
+ * coverage exercise ONE derivation, with the wording sourced from {@link interruptHintLabel}.
  *
- * The hint is a PROMISE about a key, so it may only appear where {@link interruptLayer} is actually
- * live: a turn is busy and the stream pane holds focus. Everything else here is a way that focus can sit
- * somewhere else while the turn is still busy, each of which owns the interrupt chord for its own
- * purpose — the composer switches INSERT→NORMAL, a stacked dialog cancels, a docked ask goes back to its
- * choices. Advertising an interrupt in any of them names a key that does something else entirely.
+ * The hint is a PROMISE about what the interrupt keys do IN THE CURRENT MODE — which is exactly why it
+ * renders beside the mode word rather than in the top-right status bar the eyes never rest on mid-turn.
+ * Both modes can interrupt a busy turn, but by a different key, so the hint names the one that fires here:
+ *   - NORMAL (pane focused): the double-press esc interrupt {@link interruptLayer} owns — the resting
+ *     "interrupt" wording, flipping to the "again to interrupt" confirm form once the first press has
+ *     armed the window (rendered in a treatment distinct from the accent mode word beside it).
+ *   - INSERT (composer focused): esc only switches modes here, so the footer advertises the one-press
+ *     abort chord that DOES interrupt while typing (the three-way ctrl+c). A single press fires it, so
+ *     this variant never arms.
  *
- * A live text selection is the one exclusion NOT gated here, deliberately. `selectionClearLayer` outranks
- * the interrupt and consumes the press, so the hint is momentarily wrong — but the selection is read off
- * the renderer rather than a signal, so folding it in would make the hint depend on a value this
- * derivation is never re-run for, trading a brief over-promise for an arbitrarily stale one. The case is
- * self-correcting in the direction that matters: the press clears the selection, and the next one
- * behaves exactly as the hint says.
+ * `undefined` in every honesty gate: idle (no turn to interrupt), a stacked dialog (esc cancels it), or
+ * a docked ask (esc goes back to its choices) — advertising an interrupt in any of them names a key that
+ * does something else entirely.
+ *
+ * A live text selection is the one exclusion NOT gated here, deliberately. In NORMAL `selectionClearLayer`
+ * outranks the interrupt and consumes the esc press (and in INSERT the ctrl+c chord copies the selection
+ * before it would abort), so the hint is momentarily wrong — but the selection is read off the renderer
+ * rather than a signal, so folding it in would make the hint depend on a value this derivation is never
+ * re-run for, trading a brief over-promise for an arbitrarily stale one. The case is self-correcting in
+ * the direction that matters: the press clears the selection, and the next one behaves as the hint says.
  */
 export function interruptHintFor(opts: {
     busy: boolean;
@@ -185,11 +252,26 @@ export function interruptHintFor(opts: {
     dialogOpen: boolean;
     askDocked: boolean;
     armed: boolean;
-    key: string;
+    interruptKey: string;
+    abortKey: string;
 }): { label: string; armed: boolean } | undefined {
     if (!opts.busy) return undefined;
-    if (opts.insertMode || opts.dialogOpen || opts.askDocked) return undefined;
-    return { label: interruptHintLabel(opts.key, opts.armed), armed: opts.armed };
+    if (opts.dialogOpen || opts.askDocked) return undefined;
+    // INSERT: esc only toggles modes, so name the one-press abort chord that interrupts while typing. A
+    // single press fires it — it never arms — so the muted resting form is the only form.
+    if (opts.insertMode) return { label: interruptHintLabel(opts.abortKey, false), armed: false };
+    // NORMAL: the double-press esc interrupt is live; the first press arms and the label flips to confirm.
+    return { label: interruptHintLabel(opts.interruptKey, opts.armed), armed: opts.armed };
+}
+
+/**
+ * The ask-drain refocus target: the stream pane while the turn is still busy — NORMAL, the resting state
+ * of a running turn, keeping the interrupt/retract/scroll affordances live and the hint honest — and the
+ * composer once the turn has ended, ready to type again. Pure over the busy flag and the two refs so the
+ * busy-aware branch is pinned without mounting the whole runtime; `App`'s dock effect reads it at drain.
+ */
+export function askDrainRefocusTarget(busy: boolean, pane: Renderable | null, composer: Renderable | null): Renderable | null {
+    return busy ? pane : composer;
 }
 
 export function App(props: AppProps) {
@@ -199,8 +281,9 @@ export function App(props: AppProps) {
     const [sidebarOpen, setSidebarOpen] = createSignal(true);
     // INSERT vs NORMAL is pure composer focus (see the focus-choreography note below). The ChatBar footer
     // already tracks this off the textarea's focus via its `onFocusChange`; mirror that SAME signal here so
-    // the status-bar interrupt hint gates on NORMAL mode without a second, independent focus tracker. Seeds
-    // `true` to match the composer's focus-on-mount (and ChatBar's own default) — the app opens in INSERT.
+    // the interrupt-hint derivation can select the INSERT vs NORMAL variant without a second, independent
+    // focus tracker. Seeds `true` to match the composer's focus-on-mount (and ChatBar's own default) — the
+    // app opens in INSERT.
     const [composerFocused, setComposerFocused] = createSignal(true);
 
     // INSERT vs NORMAL is pure focus: the textarea holds focus in INSERT (the default); esc moves
@@ -473,7 +556,12 @@ export function App(props: AppProps) {
             }
         } else if (focusedAskId !== null) {
             focusedAskId = null;
-            queueMicrotask(() => textareaRef?.focus());
+            // An async drain must never strand a mid-turn user in INSERT: while the turn still runs the
+            // resting state is NORMAL on the pane, where the interrupt/retract/scroll affordances live and
+            // the hint stays honest; only a turn that has already ended hands focus back to the composer to
+            // type again. Snapshot the busy read here, at drain, so the microtask focuses the settled choice.
+            const refocus = askDrainRefocusTarget(chatStatus() === "busy", scrollPaneRef, textareaRef);
+            queueMicrotask(() => refocus?.focus());
         }
     });
 
@@ -554,6 +642,13 @@ export function App(props: AppProps) {
     // test installs the SAME factory, so the two can never drift.
     useBindings(() => retractLayer({ target: textareaRef, conversation }));
 
+    // Up-arrow ALSO retracts from the stream pane — the post-submit resting state where the user sits after
+    // an accepted submit. The layer config is the exported `paneRetractLayer` factory (full rationale on
+    // that export); the thunk re-invokes it each keystroke so `enabled` re-reads the retract window. Its
+    // priority outranks the pane's scroll layer, so `up` retracts during the window and reverts to scroll
+    // the moment the gate closes. The dispatch test installs the SAME factory, so the two can never drift.
+    useBindings(() => paneRetractLayer({ pane: scrollPaneRef, composer: textareaRef, conversation }));
+
     // NORMAL-mode companion layer, live while the stream's pane is focused: returning to INSERT is
     // chat-specific (dialog panes have no input to return to), so it lives here, not in ScrollPane.
     // esc while the pane is focused matches no binding and the native scrollbox handler has no
@@ -623,6 +718,11 @@ export function App(props: AppProps) {
         }
         // A non-empty `text` was read off `textareaRef.editBuffer` above, so the ref is mounted.
         textareaRef!.setText("");
+        // Only an accepted submit reaches here — every refusal above returned with focus and text intact.
+        // The resting state of a running turn is NORMAL on the pane: the composer cannot submit again
+        // mid-turn, while esc-esc interrupt, up-arrow retract, and the scroll keys all live on the pane. Move
+        // focus now, at submit time — the `await` below resolves only when the whole turn ends, far too late.
+        scrollPaneRef?.focus();
 
         // The conversation store owns the request lifecycle (the turn-scoped AbortController + the
         // shared turn engine); the harness emit adapter writes the stream, so App only hands off the text.
@@ -648,12 +748,12 @@ export function App(props: AppProps) {
               : { text: `${GLYPHS.circle} ready`, tone: "success" };
     };
 
-    // The interrupt affordance for the status bar's right hints region, derived from the live
-    // `app.interrupt` binding + the armed signal so it can never drift from the real key: the muted resting
-    // hint while the interrupt is genuinely reachable, the accented "again to interrupt" form once a first
-    // press has armed the window, and nothing at all otherwise. Every input is a reactive read, so the thunk
-    // re-derives whenever any of them moves; the gate + wording live in the pure {@link interruptHintFor}.
-    // Passed to StatusBar as plain data — it stays domain-free.
+    // The interrupt affordance for the ChatBar footer, derived from the live bindings + the armed signal
+    // so it can never drift from the real keys: in NORMAL the esc hint (muted resting form, distinct armed
+    // form once the window is armed); in INSERT the one-press abort chord that interrupts while typing; and
+    // nothing at all in the honesty gates. Every input is a reactive read, so the thunk re-derives whenever
+    // any of them moves; the gate + wording + mode split live in the pure {@link interruptHintFor}. Passed
+    // to ChatBar as plain data — it keeps its no-domain-imports rule.
     const interruptHint = (): { label: string; armed: boolean } | undefined =>
         interruptHintFor({
             busy: chatStatus() === "busy",
@@ -661,7 +761,8 @@ export function App(props: AppProps) {
             dialogOpen: dialogIsOpen(),
             askDocked: activeAsk() !== null,
             armed: conversation.interruptArmed(),
-            key: keybindLabel("app.interrupt"),
+            interruptKey: keybindLabel("app.interrupt"),
+            abortKey: keybindLabel("app.abort"),
         });
 
     return (
@@ -677,7 +778,6 @@ export function App(props: AppProps) {
                     // carries the path instead, so gating here keeps it on exactly one surface at any width.
                     path={dims().width >= size.breakpointWide ? contractHome(workspace.workingDir) : undefined}
                     hints={[keybindLabel("app.command-palette"), keybindLabel("app.toggle-sidebar"), keybindLabel("app.abort")]}
-                    interruptHint={interruptHint()}
                 />
 
                 {/* Main row: the chat column beside the full-height sidebar. Showing the sidebar
@@ -732,9 +832,11 @@ export function App(props: AppProps) {
                                 queueMicrotask(() => r.focus());
                             }}
                             onSubmit={() => void handleSubmit()}
-                            // Mirror the composer's focus (INSERT ↔ NORMAL) so `interruptHint` can gate on
-                            // NORMAL mode — the SAME `onFocusChange` seam the ChatBar footer reads for its mode word.
+                            // Mirror the composer's focus (INSERT ↔ NORMAL) so `interruptHint` can pick the
+                            // INSERT vs NORMAL variant — the SAME `onFocusChange` seam the ChatBar footer reads
+                            // for its mode word.
                             onFocusChange={setComposerFocused}
+                            interruptHint={interruptHint()}
                         />
 
                         {/* Transient toast (single slot, auto-dismissed). Inside the chat column, not the
