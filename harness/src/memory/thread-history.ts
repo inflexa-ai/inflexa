@@ -100,11 +100,16 @@ export interface ThreadHistory {
      * Remove the thread's most recent turn — every row from the last
      * genuine-user-start `seq` onward — in a single transaction.
      *
-     * Tail-only by design: removing the tail restores the exact row set the
-     * thread held before that turn was appended, so `loadRecent`'s byte-stable
-     * prompt-cache prefix is left untouched. Deleting mid-history would shift
-     * the window head and rewrite that prefix, so it is deliberately not
-     * offered — only the tail can come off.
+     * Tail-only by design: removal cuts at the last genuine-user-start `seq` —
+     * a turn boundary, not the last append. Because every conversation turn
+     * opens with the user's message, that boundary starts the most recent turn,
+     * so removing it restores the row set the thread held before that turn and
+     * leaves `loadRecent`'s byte-stable prompt-cache prefix untouched; an
+     * out-of-contract assistant-only follow-up append carries no user-start row
+     * and so folds into the removed tail, exactly as the read side's turn
+     * grouping folds it. Deleting mid-history would shift the window head and
+     * rewrite that prefix, so it is deliberately not offered — only the tail
+     * can come off.
      *
      * Callers are assumed single-writer per thread (the host serializes turns);
      * the outcome's `messages` count lets a caller assert exactly what was
