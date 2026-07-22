@@ -4,7 +4,7 @@ The turn lifecycle lives in `src/tui/hooks/conversation.ts`: `send` owns a modul
 
 "The assistant has produced nothing yet" is derivable, not stored: `chatStatus() === "busy"` ∧ `streamText() === ""` ∧ the in-flight assistant message still holds only its pre-minted empty text part ∧ no open tool parts.
 
-The harness `thread-history-retract` change supplies `retractLastTurn(threadId)` (tail-turn removal, `{ kind: "retracted"; messages } | { kind: "empty-thread" }`).
+The harness `thread-history-retract` change supplies `retractLastTurn(threadId)` (tail-turn removal, `{ kind: "retracted"; messages } | { kind: "empty-thread" } | { kind: "no-user-turn" }` — the last two are nothing-removed outcomes the CLI treats as silent no-ops).
 
 ## Goals / Non-Goals
 
