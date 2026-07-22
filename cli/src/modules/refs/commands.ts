@@ -128,20 +128,50 @@ async function pickDatasets(catalog: ReferenceDataCatalog): Promise<readonly str
     return isCancel(selected) ? undefined : selected;
 }
 
-async function chooseIds(catalog: ReferenceDataCatalog): Promise<readonly string[] | undefined> {
-    if (catalog.datasets.length === 0) return [];
+/** One entry of the preset prompt. */
+export type ReferencePresetOption = {
+    /** Preset this entry chooses. */
+    readonly value: ReferencePreset;
+    /** Entry text. */
+    readonly label: string;
+    /** Counts, or what the preset defers to later. */
+    readonly hint: string;
+};
+
+/** The preset prompt's entries and the one it opens on. */
+export type ReferencePresetPrompt = {
+    /** Entries in display order; the first is what an unmatched initial value would land on. */
+    readonly options: readonly ReferencePresetOption[];
+    /** The entry the cursor starts on. Always one of `options`. */
+    readonly initialValue: ReferencePreset;
+};
+
+/**
+ * Build the preset prompt for the datasets `catalog` is offering.
+ *
+ * The initial value is derived from the entries that actually exist rather than named ahead of them,
+ * and that is load-bearing: clack resolves an unmatched `initialValue` with
+ * `findIndex(...) === -1 ? 0 : index`, so naming an absent entry silently arms whatever sits first —
+ * "Everything". An offered set with nothing recommended is ordinary (re-running setup once the
+ * recommended datasets are installed leaves only the optional ones), so that path would have opened
+ * the prompt pre-armed on the maximal install and turned an unexamined Enter into the largest
+ * possible download. When there is nothing to recommend the prompt opens on "Nothing for now"
+ * instead: a default that installs nothing costs one keystroke to undo, one that installs everything
+ * costs a transfer.
+ */
+export function referencePresetPrompt(catalog: ReferenceDataCatalog): ReferencePresetPrompt {
     const recommended = catalog.datasets.filter((dataset) => dataset.recommendation.recommended).map((dataset) => dataset.id);
-    const artifactsIn = (ids: readonly string[]): number =>
-        catalog.datasets.filter((dataset) => ids.includes(dataset.id)).reduce((total, dataset) => total + dataset.artifacts.length, 0);
+    const artifactsIn = (ids: readonly string[]): number => {
+        const selected = new Set(ids);
+        return catalog.datasets.filter((dataset) => selected.has(dataset.id)).reduce((total, dataset) => total + dataset.artifacts.length, 0);
+    };
     const everything = catalog.datasets.map((dataset) => dataset.id);
 
-    const preset = await select<ReferencePreset>({
-        message: "Reference datasets to download",
-        // Recommended leads and is the initial value: it is the working set the enrichment, network,
-        // and single-cell skills are built on, so an untouched prompt plus Enter still plans the
-        // install most people want — now as a named choice rather than 32 pre-ticked boxes.
-        initialValue: "recommended",
+    return {
         options: [
+            // Recommended leads when it exists: it is the working set the enrichment, network, and
+            // single-cell skills are built on, so an untouched prompt plus Enter still plans the
+            // install most people want — now as a named choice rather than 32 pre-ticked boxes.
             ...(recommended.length > 0
                 ? [
                       {
@@ -155,6 +185,19 @@ async function chooseIds(catalog: ReferenceDataCatalog): Promise<readonly string
             { value: "none", label: "Nothing for now", hint: "fetch them later, on demand" },
             { value: "custom", label: "Choose specific datasets…", hint: "pick from the full list" },
         ],
+        initialValue: recommended.length > 0 ? "recommended" : "none",
+    };
+}
+
+async function chooseIds(catalog: ReferenceDataCatalog): Promise<readonly string[] | undefined> {
+    if (catalog.datasets.length === 0) return [];
+    const prompt = referencePresetPrompt(catalog);
+    const preset = await select<ReferencePreset>({
+        message: "Reference datasets to download",
+        initialValue: prompt.initialValue,
+        // Spread into a mutable array: clack's option type is not readonly, and the prompt is built
+        // as immutable data so it can be asserted on without a terminal.
+        options: [...prompt.options],
     });
     if (isCancel(preset)) return undefined;
     return resolveReferencePreset(preset, catalog, { pick: () => pickDatasets(catalog) });
@@ -195,7 +238,10 @@ export async function resolveReferencePreset(
     if (chosen === undefined) return undefined;
     // Same note for an explicit "none" and for a picker submitted empty — the outcome is identical,
     // and someone who lands there by either route needs the same answer to "so how do I get one?".
-    if (chosen.length === 0) (deps.announce ?? log.info)(ON_DEMAND_REFERENCE_NOTE);
+    // Called through a wrapper rather than passed as a bare reference: clack happens to define
+    // `log.info` as an arrow, but a bare reference would break silently the day it becomes a method
+    // that needs its receiver.
+    if (chosen.length === 0) (deps.announce ?? ((message: string) => log.info(message)))(ON_DEMAND_REFERENCE_NOTE);
     return chosen;
 }
 
@@ -443,19 +489,25 @@ export async function downloadReferences(
     // Built only after consent, so nothing is drawn for a transfer the user has not agreed to, and
     // absent entirely when the plan fetches nothing.
     const readout = createReferenceDownloadProgress(estimate.value.artifactsToFetch);
-    const installed = await installReferenceDatasets(
-        ids,
-        {
-            root: env.refsDir,
-            ...(options.source === undefined ? {} : { source: options.source }),
-            ...(readout === undefined ? {} : { onProgress: readout.report }),
-        },
-        install,
-    );
-    // Unconditional: a bar left running holds the terminal in its alternate render state, so the
-    // failure path has to close it just as the success path does.
-    readout?.finish(installed.isErr() ? installed.error.message : undefined);
-    return installed;
+    let installed: Result<ReferenceInstallOutcome, ReferenceProvisionError> | undefined;
+    try {
+        installed = await installReferenceDatasets(
+            ids,
+            {
+                root: env.refsDir,
+                ...(options.source === undefined ? {} : { source: options.source }),
+                ...(readout === undefined ? {} : { onProgress: readout.report }),
+            },
+            install,
+        );
+        return installed;
+    } finally {
+        // A live readout owns a repaint timer and holds the terminal in the bar's render state, so it
+        // has to be closed on every exit — including one the installer's own `Result` channel cannot
+        // describe, such as a caller-supplied catalog seam that throws. `installed` is undefined only
+        // on that path, which is exactly the case the failure wording is for.
+        readout?.finish(installed === undefined ? "the transfer ended unexpectedly" : installed.isErr() ? installed.error.message : undefined);
+    }
 }
 
 /** `inflexa refs path` — print the public path without creating it. */
