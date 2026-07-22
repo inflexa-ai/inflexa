@@ -3,6 +3,7 @@ import type { ModelMessage, ToolResultPart } from "ai";
 import { err, ok } from "neverthrow";
 import { z } from "zod";
 
+import { isSyntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { makeSession } from "../providers/__fixtures__/session.js";
 import { AskRejectedError } from "../tools/approval/contract.js";
 import { defineTool, type Tool } from "../tools/define-tool.js";
@@ -424,6 +425,12 @@ describe("runAgent — max_tokens recovery", () => {
         const steer = messages[2]!;
         expect(steer.role).toBe("user");
         expect(String(steer.content)).toContain("cut off");
+        // The steer must be marked synthetic. It carries the `user` role only because the wire format
+        // demands one after a truncated assistant message — a reader that took it for user input would
+        // see a turn boundary in the middle of this turn, and a tail-turn removal would cut there.
+        expect(isSyntheticUserMessage(steer)).toBe(true);
+        // The opening prompt is real user input and must NOT be marked, or the boundary vanishes entirely.
+        expect(isSyntheticUserMessage(messages[0]!)).toBe(false);
         expect(finish.reason).toBe("stop");
         expect(finish.truncationRecoveries).toBe(1);
     });

@@ -3,6 +3,7 @@ import type { z } from "zod";
 
 import type { AgentSession } from "../auth/types.js";
 import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
+import { syntheticUserMessage } from "../memory/ai-sdk-message-storage.js";
 import { classifyProviderError } from "../providers/errors.js";
 import { DEFAULT_PROMPT_CACHE, promptCacheProviderOptions } from "../providers/prompt-cache.js";
 import { resultStep } from "./run-step.js";
@@ -144,7 +145,11 @@ export async function runAgent(agent: AgentDefinition, initial: readonly LoopMes
             truncationRecoveries++;
             await emit({ type: "iteration", source, index: i, final: false });
             if (toolCalls.length === 0) {
-                messages.push({ role: "user", content: TRUNCATED_PROSE_STEER });
+                // Stamped synthetic, not left as a bare `user` message: the wire format needs a user turn
+                // after a truncated assistant message, but this one is the loop's own nudge, and thread
+                // storage treats a genuine `user` message as the start of a conversation turn. Unmarked, it
+                // would split this turn in two everywhere that boundary is read.
+                messages.push(syntheticUserMessage(TRUNCATED_PROSE_STEER));
                 continue;
             }
             const trailing = toolCalls[toolCalls.length - 1]!;

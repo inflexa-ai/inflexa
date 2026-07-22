@@ -28,6 +28,44 @@ export function parseStoredMessageEnvelope(value: unknown, identity: string): St
     return parsed.data;
 }
 
+/**
+ * The `providerOptions` namespace the harness stamps its OWN message metadata into.
+ *
+ * A provider SDK reads only its own namespace (`anthropic`, `openai`, …) and ignores every other key, so
+ * a harness-owned namespace rides to the wire and back untouched; `modelMessageSchema` validates
+ * `providerOptions` structurally rather than against a list of known namespaces, so it also survives the
+ * storage envelope round-trip. That round-trip is the whole reason the marker lives here rather than on
+ * the envelope: readers of STORED rows need it, and `ModelMessage` offers no other field able to carry a
+ * harness fact from the loop, through `appendTurn`, into a row.
+ */
+export const HARNESS_PROVIDER_NAMESPACE = "cortex";
+
+/** The {@link HARNESS_PROVIDER_NAMESPACE} key marking a message the loop synthesized rather than one a human sent. */
+export const SYNTHETIC_MESSAGE_KEY = "synthetic";
+
+/**
+ * Build a `user` message the agent loop synthesized — today, the nudge that continues a reply the model
+ * truncated at its output-token limit.
+ *
+ * It has to carry the `user` role because the wire format requires a user turn after a truncated
+ * assistant message, but it is not user input, and the difference is load-bearing: a `user` message is
+ * what OPENS a conversation turn, so an unmarked synthetic one reads as a spurious turn boundary —
+ * splitting one turn into two for the token window and, worse, giving a tail-turn removal a cut point in
+ * the middle of a turn. Marking it is what lets {@link isSyntheticUserMessage} keep those readers honest.
+ */
+export function syntheticUserMessage(text: string): ModelMessage {
+    return {
+        role: "user",
+        content: text,
+        providerOptions: { [HARNESS_PROVIDER_NAMESPACE]: { [SYNTHETIC_MESSAGE_KEY]: true } },
+    };
+}
+
+/** Whether the loop synthesized this message (see {@link syntheticUserMessage}) rather than a human sending it. */
+export function isSyntheticUserMessage(message: ModelMessage): boolean {
+    return message.providerOptions?.[HARNESS_PROVIDER_NAMESPACE]?.[SYNTHETIC_MESSAGE_KEY] === true;
+}
+
 type LegacyContent = string | Array<Record<string, unknown>>;
 
 export interface LegacyMessageRow {

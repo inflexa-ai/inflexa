@@ -33,7 +33,7 @@ Defines the harness `messages` table — the single source of truth for conversa
 
 ### Requirement: loadRecent returns a valid AI SDK model-message sequence
 
-The window returned by `loadRecent` SHALL always begin on a genuine user-input turn and SHALL never split an AI SDK tool-call/tool-result continuation. The turn is the atomic unit; a turn is never half-loaded. If the most recent complete turn alone exceeds the budget, it SHALL be returned in full. Messages SHALL be ordered by ascending numeric `seq` — the read MUST order on the `bigint` `seq` column, never on a textual projection of it (a lexicographic sort places `"10"` before `"2"`, reordering a thread past ten messages and splitting tool-call/tool-result pairs across an intervening turn).
+The window returned by `loadRecent` SHALL always begin on a genuine user-input turn and SHALL never split an AI SDK tool-call/tool-result continuation. The turn is the atomic unit; a turn is never half-loaded. A turn boundary is a `user`-role message that a human actually sent: neither a `tool`-role continuation nor a message the agent loop synthesized mid-turn (the nudge that continues a reply truncated at the output-token limit, which must carry the `user` role for the wire format) SHALL be read as one. Such a message SHALL be marked at the point the loop creates it, and every reader of a turn boundary — the token window, the display pagination, and the tail retract — SHALL honour the same marking, since a boundary read in the middle of a turn splits that turn for all three. If the most recent complete turn alone exceeds the budget, it SHALL be returned in full. Messages SHALL be ordered by ascending numeric `seq` — the read MUST order on the `bigint` `seq` column, never on a textual projection of it (a lexicographic sort places `"10"` before `"2"`, reordering a thread past ten messages and splitting tool-call/tool-result pairs across an intervening turn).
 
 #### Scenario: The window is snapped past an orphan tool result
 
@@ -104,6 +104,12 @@ The `messages` table and `ThreadHistory` SHALL serve conversation threads only. 
 - **GIVEN** a thread whose most recent turn spans multiple rows (user input, assistant steps, tool results)
 - **WHEN** `retractLastTurn` is called
 - **THEN** every row of that turn is removed and the prior turn becomes the tail
+
+#### Scenario: A loop-synthesized message is not a cut point
+
+- **GIVEN** a tail turn carrying a mid-turn message the loop synthesized to continue a truncated reply
+- **WHEN** `retractLastTurn` is called
+- **THEN** the whole turn is removed from its real head, never from the synthesized message onward
 
 #### Scenario: Retracting an empty thread is a normal outcome
 

@@ -5,6 +5,7 @@ import { AggregationTemporality, InMemoryMetricExporter, MeterProvider, type Met
 import type { Pool } from "pg";
 
 import { withSchema } from "../__tests__/setup/postgres.js";
+import { syntheticUserMessage } from "./ai-sdk-message-storage.js";
 import { countTokens } from "./count-tokens.js";
 import { __resetThreadHistoryMetricsForTest, createThreadHistory, EVICTION_BLOCK_TURNS, type ThreadHistory } from "./thread-history.js";
 
@@ -506,6 +507,44 @@ describe("retractLastTurn", () => {
             expect(loaded).toEqual(turn);
             assertValidSequence(loaded);
         }
+    });
+
+    it("removes a turn containing a loop-synthesized nudge whole, not from the nudge onward", async () => {
+        // The truncated-reply nudge (`run-agent.ts`) carries the `user` role because the wire format
+        // needs one after a cut-off assistant message, and it is persisted with the rest of the turn.
+        // Taken for user input it would read as this turn's head, and the delete would cut THERE —
+        // leaving the opening question and the truncated reply behind as a headless fragment.
+        const turn1 = [userText("opening question"), assistantText("opening answer")];
+        const turn2 = [
+            userText("a question whose answer runs long"),
+            assistantText("a reply cut off at the output-token limit"),
+            syntheticUserMessage("Your previous reply was cut off at the output-token limit; continue concisely."),
+            assistantText("the continued and finished reply"),
+        ];
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+
+        const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        expect(outcome).toEqual({ kind: "retracted", messages: 4 });
+
+        // The whole tail turn came off and turn1 is intact — not a fragment of turn2.
+        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn1);
+    });
+
+    it("groups a loop-synthesized nudge into its turn rather than opening a new one", async () => {
+        // The same predicate on the read side: the nudge must not split one turn into two, or the
+        // token window can evict half a turn and `loadPage`'s turn count is wrong.
+        const turn = [
+            userText("a question whose answer runs long"),
+            assistantText("a reply cut off at the output-token limit"),
+            syntheticUserMessage("Your previous reply was cut off at the output-token limit; continue concisely."),
+            assistantText("the continued and finished reply"),
+        ];
+        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+
+        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
+        expect(page.total).toBe(1);
+        expect(page.messages.map((m) => m.message)).toEqual(turn);
     });
 
     it("appends a whole valid turn after retracting first on an empty thread", async () => {

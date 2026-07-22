@@ -28,7 +28,14 @@ import type { Pool } from "pg";
 
 import { type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
 import { countTokens } from "./count-tokens.js";
-import { envelopeMessage, parseStoredMessageEnvelope, type StoredMessageEnvelope } from "./ai-sdk-message-storage.js";
+import {
+    HARNESS_PROVIDER_NAMESPACE,
+    SYNTHETIC_MESSAGE_KEY,
+    envelopeMessage,
+    isSyntheticUserMessage,
+    parseStoredMessageEnvelope,
+    type StoredMessageEnvelope,
+} from "./ai-sdk-message-storage.js";
 
 /** A resolved `ok(undefined)` ResultAsync — the empty/seed transaction step. */
 function okVoid<E = DbError>(): ResultAsync<void, E> {
@@ -121,17 +128,38 @@ export interface ThreadHistory {
 }
 
 /**
- * A turn starts on a `user` message. In AI SDK message terms tool results
- * are `tool`-role messages, so a mid-turn tool continuation never carries
- * the `user` role and cannot open a turn.
+ * A turn starts on a `user` message that a human actually sent. Two kinds of
+ * message carry the `user` role without opening a turn, and both are excluded
+ * here:
  *
- * The SQL twin in `retractLastTurn` — the `message_envelope->'message'->>'role'
- * = 'user'` boundary predicate — must define the same turn start as this does,
- * one over stored envelopes and one over live `ModelMessage`s. Keep them in step.
+ * - a tool result, which in AI SDK terms is a `tool`-role message, so a mid-turn
+ *   tool continuation never matches in the first place;
+ * - a message the LOOP synthesized mid-turn — the truncated-reply nudge
+ *   (`syntheticUserMessage`) — which must carry the `user` role for the wire
+ *   format but is not user input. Reading it as a boundary would split one turn
+ *   into two: the token window would evict half a turn, and `retractLastTurn`
+ *   would cut its tail in the middle of a turn rather than at its head.
+ *
+ * {@link GENUINE_USER_START_SQL} is the twin of this predicate over stored
+ * envelopes; the two are built from the same constants so they cannot drift.
  */
 function isGenuineUserStart(message: ModelMessage): boolean {
-    return message.role === "user";
+    return message.role === "user" && !isSyntheticUserMessage(message);
 }
+
+/**
+ * {@link isGenuineUserStart} expressed over a stored `message_envelope` — the
+ * boundary predicate `retractLastTurn` cuts on.
+ *
+ * Interpolating here, and only here, is safe: both interpolated values are
+ * module constants shared with the TypeScript predicate, never caller input, so
+ * there is no injection surface — and a bound parameter cannot express a JSON
+ * path anyway. `IS DISTINCT FROM` (not `<> 'true'`) because `->>` yields NULL on
+ * every message that carries no `providerOptions` at all, which is nearly all of
+ * them; a plain inequality would discard them.
+ */
+const GENUINE_USER_START_SQL = `message_envelope->'message'->>'role' = 'user'
+                         AND message_envelope->'message'->'providerOptions'->'${HARNESS_PROVIDER_NAMESPACE}'->>'${SYNTHETIC_MESSAGE_KEY}' IS DISTINCT FROM 'true'`;
 
 /**
  * Group rows (oldest-first) into turns at genuine-user-start boundaries.
@@ -372,26 +400,27 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
             tryQuery("thread-history.retractLastTurn.lock", () => client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [threadId]))
                 .andThen(() =>
                     // Locate the tail turn's opening row and, in the same read, learn
-                    // whether the thread has any rows at all. The boundary is the
-                    // greatest `seq` whose stored envelope is a user-role message — a
-                    // turn starts on a user message, mirroring `isGenuineUserStart`, and
-                    // `tool`-role continuations never open one. The coupling is
-                    // test-guarded: an append-then-retract round-trip fails loudly (the
-                    // just-appended turn reads back as `no-user-turn` instead of
-                    // `retracted`) the moment this envelope path drifts from what
-                    // `isGenuineUserStart` reads on the live message. `has_rows` separates the
-                    // two nothing-to-delete cases: an empty thread (`empty-thread`) from
-                    // one holding only non-user rows (`no-user-turn`, anomalous data we
-                    // refuse rather than empty). `MAX(seq)` aggregates the bigint column;
-                    // the `::text` cast is transport only, so no comparison ever runs
-                    // against a text projection — and the boundary rides back as text so
-                    // a seq beyond 2^53 survives without float rounding.
+                    // whether the thread has any rows at all. The boundary is the greatest
+                    // `seq` matching `GENUINE_USER_START_SQL` — the stored-envelope twin of
+                    // `isGenuineUserStart`, so a `tool`-role continuation and a
+                    // loop-synthesized nudge are both excluded and the cut lands on a real
+                    // turn head. The coupling is test-guarded: an append-then-retract
+                    // round-trip fails loudly (the just-appended turn reads back as
+                    // `no-user-turn` instead of `retracted`) the moment this envelope path
+                    // drifts from what `isGenuineUserStart` reads on the live message.
+                    // `has_rows` separates the two nothing-to-delete cases: an empty thread
+                    // (`empty-thread`) from one holding no turn-opening row at all
+                    // (`no-user-turn`, anomalous data we refuse rather than empty).
+                    // `MAX(seq)` aggregates the bigint column; the `::text` cast is
+                    // transport only, so no comparison ever runs against a text projection —
+                    // and the boundary rides back as text so a seq beyond 2^53 survives
+                    // without float rounding.
                     tryQuery("thread-history.retractLastTurn.boundary", async () => {
                         const { rows } = await client.query<{ has_rows: boolean; boundary: string | null }>(
                             `SELECT EXISTS(SELECT 1 FROM messages WHERE thread_id = $1) AS has_rows,
                     (SELECT MAX(seq)::text FROM messages
                        WHERE thread_id = $1
-                         AND message_envelope->'message'->>'role' = 'user') AS boundary`,
+                         AND ${GENUINE_USER_START_SQL}) AS boundary`,
                             [threadId],
                         );
                         return rows[0]!;
