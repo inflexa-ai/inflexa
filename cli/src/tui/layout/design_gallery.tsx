@@ -6,7 +6,7 @@ import type { DbError, StepExecutionRow } from "@inflexa-ai/harness";
 
 import { GLYPHS, size, space } from "../../lib/design_system.ts";
 import { theme } from "../theme.ts";
-import { KEYS, chordLabel, keybindLabel } from "../keymap.ts";
+import { KEYS, chordLabel, keybindLabel, interruptHintLabel } from "../keymap.ts";
 import { useDialogBindings, useDialogCancel, useDialogEntry, DialogShowcase } from "../components/dialog/dialog_host.tsx";
 import { DialogPanel } from "../components/dialog/dialog_panel.tsx";
 import { PromptDialog } from "../components/dialog/prompt_dialog.tsx";
@@ -578,14 +578,14 @@ export function DesignGallery(props: { onClose: () => void }): JSX.Element {
                         title="inflexa"
                         state={{ text: `${GLYPHS.circleHalf} thinking${GLYPHS.ellipsis}`, tone: "warn" }}
                         hints={chatHints}
-                        interruptHint={{ label: `${interruptKey} interrupt`, armed: false }}
+                        interruptHint={{ label: interruptHintLabel(interruptKey, false), armed: false }}
                     />
                     <text fg={theme().fgMuted}>status-bar interrupt hint — armed (the accented "again to interrupt" form):</text>
                     <StatusBar
                         title="inflexa"
                         state={{ text: `${GLYPHS.circleHalf} thinking${GLYPHS.ellipsis}`, tone: "warn" }}
                         hints={chatHints}
-                        interruptHint={{ label: `${interruptKey} again to interrupt`, armed: true }}
+                        interruptHint={{ label: interruptHintLabel(interruptKey, true), armed: true }}
                     />
                 </State>
             </ScrollPane>

@@ -20,7 +20,7 @@ import { commands } from "./commands.tsx";
 import { CommandPalette, runCommand } from "./components/command_palette.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
 import { dialogPush, dialogClose, dialogIsOpen, DialogOverlay } from "./components/dialog/dialog_host.tsx";
-import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, leaderSeq, KEYS, type LayerConfig } from "./keymap.ts";
+import { useKeymapRoot, useBindings, MODE_BASE, resolveKeybind, keybindLabel, interruptHintLabel, leaderSeq, KEYS, type LayerConfig } from "./keymap.ts";
 import { StatusBar } from "./layout/status_bar.tsx";
 import { Chat } from "./components/chat.tsx";
 import { BootIndicator } from "./components/boot_indicator.tsx";
@@ -155,11 +155,29 @@ export function interruptLayer(deps: InterruptLayerDeps): LayerConfig {
     };
 }
 
+/**
+ * Derive the status-bar interrupt affordance from the live turn state, or `undefined` when it must not
+ * show. Pure over its inputs so both `App`'s `interruptHint` thunk and its unit coverage exercise ONE
+ * derivation. Present only while a turn is `busy` AND the chat is in NORMAL mode (`insertMode` false, the
+ * stream pane holds focus): the interrupt binding is reachable only there, so showing the hint while the
+ * composer is focused (INSERT) would advertise a key that merely switches modes. The label + armed styling
+ * come from {@link interruptHintLabel} (the shared wording source).
+ */
+export function interruptHintFor(opts: { busy: boolean; insertMode: boolean; armed: boolean; key: string }): { label: string; armed: boolean } | undefined {
+    if (!opts.busy || opts.insertMode) return undefined;
+    return { label: interruptHintLabel(opts.key, opts.armed), armed: opts.armed };
+}
+
 export function App(props: AppProps) {
     const dims = useTerminalDimensions();
     const renderer = useRenderer();
 
     const [sidebarOpen, setSidebarOpen] = createSignal(true);
+    // INSERT vs NORMAL is pure composer focus (see the focus-choreography note below). The ChatBar footer
+    // already tracks this off the textarea's focus via its `onFocusChange`; mirror that SAME signal here so
+    // the status-bar interrupt hint gates on NORMAL mode without a second, independent focus tracker. Seeds
+    // `true` to match the composer's focus-on-mount (and ChatBar's own default) — the app opens in INSERT.
+    const [composerFocused, setComposerFocused] = createSignal(true);
 
     // INSERT vs NORMAL is pure focus: the textarea holds focus in INSERT (the default); esc moves
     // focus to the stream's ScrollPane (NORMAL — its focus-gated scroll keys go live). Focus is
@@ -607,15 +625,18 @@ export function App(props: AppProps) {
     };
 
     // The interrupt affordance for the status bar's right hints region, derived from the live
-    // `app.interrupt` binding + the armed signal so it can never drift from the real key: absent when
-    // idle, the muted resting hint while a turn is busy, and the accented "again to interrupt" form once
-    // a first press has armed the window. Passed to StatusBar as plain data — it stays domain-free.
-    const interruptHint = (): { label: string; armed: boolean } | undefined => {
-        if (chatStatus() !== "busy") return undefined;
-        const key = keybindLabel("app.interrupt");
-        const armed = conversation.interruptArmed();
-        return { label: armed ? `${key} again to interrupt` : `${key} interrupt`, armed };
-    };
+    // `app.interrupt` binding + the armed signal so it can never drift from the real key: absent when idle
+    // OR while the composer is focused (INSERT — the interrupt binding is pane-focus-gated and unreachable
+    // there, so the hint would over-promise), the muted resting hint while a turn is busy in NORMAL mode,
+    // and the accented "again to interrupt" form once a first press has armed the window. The gate + wording
+    // live in the pure {@link interruptHintFor}. Passed to StatusBar as plain data — it stays domain-free.
+    const interruptHint = (): { label: string; armed: boolean } | undefined =>
+        interruptHintFor({
+            busy: chatStatus() === "busy",
+            insertMode: composerFocused(),
+            armed: conversation.interruptArmed(),
+            key: keybindLabel("app.interrupt"),
+        });
 
     return (
         <WorkspaceContext.Provider value={workspace}>
@@ -685,6 +706,9 @@ export function App(props: AppProps) {
                                 queueMicrotask(() => r.focus());
                             }}
                             onSubmit={() => void handleSubmit()}
+                            // Mirror the composer's focus (INSERT ↔ NORMAL) so `interruptHint` can gate on
+                            // NORMAL mode — the SAME `onFocusChange` seam the ChatBar footer reads for its mode word.
+                            onFocusChange={setComposerFocused}
                         />
 
                         {/* Transient toast (single slot, auto-dismissed). Inside the chat column, not the

@@ -278,6 +278,16 @@ export function keybindLabel(id: KeybindId): string {
     return chordLabel(resolveKeybind(id));
 }
 
+/**
+ * The status-bar interrupt hint wording for an already-resolved key label and armed state. The SINGLE
+ * source of this phrasing, read by both the chat's live `interruptHint` derivation and the design-gallery
+ * exhibit, so the two can never drift. `armed` selects the "again to interrupt" confirm form (a second
+ * press fires the abort) over the resting "interrupt" form.
+ */
+export function interruptHintLabel(key: string, armed: boolean): string {
+    return armed ? `${key} again to interrupt` : `${key} interrupt`;
+}
+
 /** The resolved leader chord — the first stroke of every `<leader>` sequence. */
 export function leaderChord(): Chord {
     return resolveKeybind("app.leader");
