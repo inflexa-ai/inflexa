@@ -335,25 +335,27 @@ describe("Sidebar MODELS section", () => {
 
 // The connection line rides the immutable boot-ready state, so each case
 // seeds a `ready` boot with the connection identity AND a non-empty agentModels (the section body is
-// gated on the switch's authority). It renders above the agent rows in both connection modes.
+// gated on the switch's authority). It renders above the agent rows in both connection modes, and
+// carries ONLY the provider slug — the mode is deliberately absent from the rail (the Status dialog
+// owns the full connection detail).
 describe("Sidebar MODELS connection line", () => {
-    test("cliproxy: shows the provider slug and the mode above the agent rows", async () => {
+    test("cliproxy: shows the provider slug above the agent rows, never the mode", async () => {
         __setBootStateForTest({ phase: "ready", model: "claude-opus-4-8", connection: { provider: "anthropic", mode: "cliproxy" } });
         __setAgentModelsForTest({ current: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" }, pending: new Map() });
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
         expect(frame).toContain("MODELS");
         expect(frame).toContain("conn");
         expect(frame).toContain("anthropic"); // the configured provider slug
-        expect(frame).toContain("cliproxy"); // the connection mode
+        expect(frame).not.toContain("cliproxy"); // the mode belongs to the Status dialog, not the rail
     });
 
-    test("direct: shows the configured provider slug and the direct mode", async () => {
+    test("direct: shows the configured provider slug, never the mode", async () => {
         __setBootStateForTest({ phase: "ready", model: "deepseek-chat", connection: { provider: "deepseek", mode: "direct" } });
         __setAgentModelsForTest({ current: { conversation: "deepseek-chat", sandbox: "deepseek-reasoner" }, pending: new Map() });
         const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
         expect(frame).toContain("conn");
         expect(frame).toContain("deepseek"); // the configured provider slug
-        expect(frame).toContain("direct"); // the connection mode
+        expect(frame).not.toContain("direct"); // the mode belongs to the Status dialog, not the rail
     });
 });
 

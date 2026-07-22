@@ -124,11 +124,14 @@ function AgentModelLine(props: { label: string; agent: AgentName }): JSX.Element
 }
 
 /**
- * The MODELS-section connection line: the shared connection's identity — the configured provider slug and
- * mode — rendered above the per-agent rows so the user sees which backend both agents run on. Reads the
- * immutable boot-ready state, NOT the swap-tracking `agentModels` store, because a live agent-model swap
- * never changes the connection — the connection is shared by both agents, so a swap changes only a model;
- * it is seeded once at the ready edge. Renders nothing before ready, when no identity exists yet.
+ * The MODELS-section connection line: the configured provider slug, rendered above the per-agent rows
+ * so the user sees which vendor both agents run on. The connection MODE (`cliproxy`/`direct`) is
+ * deliberately NOT here — it is transport plumbing, not a fact the user acts on from the rail, and the
+ * fixed-width rail keeps the identity to one word; the full connection detail (mode included) lives in
+ * the Status dialog. Reads the immutable boot-ready state, NOT the swap-tracking `agentModels` store,
+ * because a live agent-model swap never changes the connection — the connection is shared by both
+ * agents, so a swap changes only a model; it is seeded once at the ready edge. Renders nothing before
+ * ready, when no identity exists yet.
  */
 function ConnectionLine(): JSX.Element {
     const identity = (): ModelConnectionIdentity | null => {
@@ -141,7 +144,6 @@ function ConnectionLine(): JSX.Element {
                 <text>
                     <Fg role="fgMuted">{"conn "}</Fg>
                     <Fg role="accent">{c.provider}</Fg>
-                    <Fg role="fgMuted">{` ${GLYPHS.middot} ${c.mode}`}</Fg>
                 </text>
             )}
         </Show>
