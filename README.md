@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="resources/inflexa-logo-white-bg.svg" alt="Inflexa" width="200" />
+  <img src="resources/inflexa-logo-solid-white-bg.png" alt="Inflexa" width="200" />
 </p>
 
 <p align="center">
-  Local-first agentic AI orchestration for reproducible biological data analysis.
+  Turn a biological question into auditable code, figures and results, locally, with the AI model you choose.
 </p>
 
 <p align="center">
@@ -16,6 +16,10 @@
 </p>
 
 ---
+
+<p align="center">
+  <img src="resources/inflexa.gif" alt="Inflexa demo" />
+</p>
 
 Inflexa turns a plain-language analysis request into runnable code, executes it in an isolated sandbox, and records exactly what happened so the result can be reproduced and audited. It runs entirely on your machine and works with the model provider of your choice, including local models for a fully offline workflow.
 
