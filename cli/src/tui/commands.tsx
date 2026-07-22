@@ -18,7 +18,7 @@ import { notify } from "./hooks/notice.ts";
 import { loadPlan, queryRunsByAnalysis, queryStepsByRun } from "@inflexa-ai/harness";
 import type { CortexRunRow } from "@inflexa-ai/harness";
 
-import { bootState, harnessRuntime } from "./hooks/boot.ts";
+import { agentModels, bootState, harnessRuntime } from "./hooks/boot.ts";
 import { latestPlanCard, sessionOpenables, type SessionOpenable } from "./hooks/conversation.ts";
 import { openArtifact } from "./hooks/artifacts.ts";
 import { resolveEntryPath } from "../modules/harness/artifact_open.ts";
@@ -531,13 +531,40 @@ function BrowseArtifactsDialog(): JSX.Element {
     );
 }
 
+/**
+ * The Status dialog's model block: the shared connection spelled out — provider, mode, and what the
+ * mode means — plus each agent's live model and any scheduled switch. This is the home of the
+ * connection detail the sidebar's fixed-width rail deliberately drops (the rail shows only the
+ * provider slug), so the mode glosses stay in the user's vocabulary, not config slugs alone. A failed
+ * boot surfaces its actionable message here; before ready the block mirrors the rail's
+ * "runtime not ready". Exported for tests only — the dialog is the sole production caller.
+ */
+export function modelStatusLines(): string[] {
+    const boot = bootState();
+    if (boot.phase === "failed") return [`models: boot failed ${GLYPHS.emDash} ${boot.message}`];
+    if (boot.phase !== "ready") return ["models: runtime not ready"];
+    const gloss = boot.connection.mode === "cliproxy" ? "managed local proxy" : "user-configured endpoint";
+    const models = agentModels();
+    const agentLine = (label: string, agent: AgentName): string => {
+        // Em dash until the runtime installs the live switch — the same placeholder the sidebar renders.
+        const current = models.current[agent] || GLYPHS.emDash;
+        const pending = models.pending.get(agent);
+        return pending ? `${label}: ${current} ${GLYPHS.arrowRight} ${pending} (pending)` : `${label}: ${current}`;
+    };
+    return [
+        `connection: ${boot.connection.provider} ${GLYPHS.middot} ${boot.connection.mode} (${gloss})`,
+        agentLine("chat model", "conversation"),
+        agentLine("sandbox model", "sandbox"),
+    ];
+}
+
 function StatusDialog(): JSX.Element {
     const ws = useWorkspace();
-    const line = resolveContext(ws.workingDir, {}).match(
+    const contextLine = resolveContext(ws.workingDir, {}).match(
         (c) => describeContext(c),
         (e) => `Failed to resolve context: ${e.type}`,
     );
-    return <ResultsDialog title="Status" lines={[line]} emptyText="No context" onClose={() => ws.closeDialog()} />;
+    return <ResultsDialog title="Status" lines={[contextLine, "", ...modelStatusLines()]} emptyText="No context" onClose={() => ws.closeDialog()} />;
 }
 
 function SettingsDialog(): JSX.Element {
@@ -1350,7 +1377,7 @@ export const commands: Command[] = [
     {
         id: "view.status",
         title: "Show status",
-        description: "What inflexa resolves to here",
+        description: "What inflexa resolves to here, plus the model connection",
         category: "View",
         run: (ctx) => ctx.openDialog(() => <StatusDialog />),
     },

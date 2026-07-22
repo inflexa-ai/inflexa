@@ -1,0 +1,96 @@
+name: Citation Sync
+
+# Keeps CITATION.cff's version in step with cli/package.json with no human in
+# the loop. A release here is "a cli version bump lands on main" — sometimes
+# as a merged PR, sometimes as a maintainer's direct push — so this workflow
+# follows that exact event and writes the citation update back to main
+# itself. version-guard's citation step is the complementary read-only check
+# (it keeps a PR from actively mis-setting the file); this workflow is the
+# only writer.
+#
+# The push authorizes via the same org-owned GitHub App homebrew.yml uses.
+# The default GITHUB_TOKEN cannot update main: the main ruleset requires
+# status checks, a directly-pushed commit has none, and GitHub Actions cannot
+# be a ruleset bypass actor without a dedicated app — so the app IS that
+# dedicated actor. Requires: the app installed on this repo with
+# contents:write, the app added as a bypass actor on the main ruleset, and
+# the TAP_APP_ID variable + TAP_APP_PRIVATE_KEY secret (already present for
+# the tap).
+#
+# No recursion: the pushed commit carries [skip ci] (see the commit step for
+# why that marker is load-bearing for the release pipeline, beyond loop
+# hygiene), and it touches only CITATION.cff, which the paths filter below
+# does not match anyway. Both guards matter because app tokens, unlike
+# GITHUB_TOKEN, DO trigger workflows with their pushes.
+on:
+  push:
+    branches: [main]
+    paths: [cli/package.json]
+  # The heal/retry path: drift can land while the app credentials are broken
+  # (or predate this workflow), and no later bump would re-trigger the push
+  # filter — dispatching syncs main as it stands now.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never run two heals concurrently; a queued run re-reads main's tip and
+# no-ops if the earlier one already synced it.
+concurrency:
+  group: citation-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint a repo-scoped token
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: inflexa-ai
+          repositories: inflexa
+
+      # ref: main, not the pushed SHA — if pushes queued up behind the
+      # concurrency group, one run syncing the final tip is the correct
+      # outcome for all of them.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Sync CITATION.cff and push any change
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          .github/citation/sync.sh
+          if git diff --quiet -- CITATION.cff; then
+            echo "CITATION.cff already in step — nothing to push"
+            exit 0
+          fi
+          version=$(jq -r .version cli/package.json)
+          # Attribute the commit to the app's bot user; the numeric id in the
+          # noreply address is what makes GitHub link the bot's identity. -s
+          # keeps the Signed-off-by trailer matching the author, as every
+          # commit in this repo carries.
+          bot_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git add CITATION.cff
+          # [skip ci] is load-bearing, not cosmetic: this push lands about a
+          # minute after the bump push, while the bump commit's test/lint
+          # runs are still in flight. Those workflows cancel in-progress runs
+          # per ref, and release.yml refuses to tag until the BUMP commit's
+          # own checks pass — so a sync commit that starts CI of its own
+          # cancels the very runs the release gate is waiting on and kills
+          # the release. This commit is two metadata lines whose value
+          # sync.sh already validated; it needs no CI.
+          git commit -s -m "chore: sync CITATION.cff to $version [skip ci]"
+          # Absorb any commit that landed on main since checkout; a push that
+          # still loses the race fails the run, and the next dispatch (or the
+          # next bump) heals from wherever main ends up.
+          git pull --rebase origin main
+          git push origin HEAD:main
