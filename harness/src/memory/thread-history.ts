@@ -23,7 +23,7 @@
 
 import type { ModelMessage } from "ai";
 import { type Histogram, metrics } from "@opentelemetry/api";
-import { ResultAsync, ok } from "neverthrow";
+import { ResultAsync, ok, okAsync } from "neverthrow";
 import type { Pool } from "pg";
 
 import { type DbError, tryMutation, tryQuery, withTransaction } from "../lib/db-result.js";
@@ -62,6 +62,15 @@ export interface MessagePage {
 }
 
 /**
+ * The result of `retractLastTurn`. `retracted` carries `messages` — the number
+ * of rows removed — so a caller can assert exactly what came off the tail. The
+ * other two variants delete nothing and are distinct on purpose: `empty-thread`
+ * had no rows at all, while `no-user-turn` had rows but none opening a turn —
+ * anomalous data refused rather than silently emptied.
+ */
+export type RetractOutcome = { kind: "retracted"; messages: number } | { kind: "empty-thread" } | { kind: "no-user-turn" };
+
+/**
  * The conversation message store. Two methods, by design — no generic row
  * insert (see the harness-thread-store spec). `threadId` is the conversation scope — one UI thread.
  */
@@ -87,6 +96,23 @@ export interface ThreadHistory {
      * holds the flattened rows of the selected turns.
      */
     loadPage(threadId: string, page: number, perPage: number): ResultAsync<MessagePage, DbError>;
+    /**
+     * Remove the thread's most recent turn — every row from the last
+     * genuine-user-start `seq` onward — in a single transaction.
+     *
+     * Tail-only by design: removing the tail restores the exact row set the
+     * thread held before that turn was appended, so `loadRecent`'s byte-stable
+     * prompt-cache prefix is left untouched. Deleting mid-history would shift
+     * the window head and rewrite that prefix, so it is deliberately not
+     * offered — only the tail can come off.
+     *
+     * Callers are assumed single-writer per thread (the host serializes turns);
+     * the outcome's `messages` count lets a caller assert exactly what was
+     * removed. A thread that has rows but no genuine-user-start row is anomalous
+     * data — refused as `no-user-turn` with nothing deleted, never emptied. An
+     * empty thread reports `empty-thread`.
+     */
+    retractLastTurn(threadId: string): ResultAsync<RetractOutcome, DbError>;
 }
 
 /**
@@ -327,5 +353,49 @@ export function createThreadHistory(pool: Pool): ThreadHistory {
         });
     }
 
-    return { appendTurn, loadRecent, loadPage };
+    function retractLastTurn(threadId: string): ResultAsync<RetractOutcome, DbError> {
+        return withTransaction(pool, "thread-history.retractLastTurn", (client) =>
+            // Take the SAME per-thread advisory lock `appendTurn` takes, and take it
+            // FIRST — a retract and an append on one thread must never interleave, or
+            // the retract could read a boundary mid-append and delete only part of a
+            // turn still being written. Serialized on this lock it always sees a whole
+            // turn or none of one. Released automatically at COMMIT/ROLLBACK.
+            tryQuery("thread-history.retractLastTurn.lock", () => client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [threadId]))
+                .andThen(() =>
+                    // Locate the tail turn's opening row and, in the same read, learn
+                    // whether the thread has any rows at all. The boundary is the
+                    // greatest `seq` whose stored envelope is a user-role message — a
+                    // turn starts on a user message, mirroring `isGenuineUserStart`, and
+                    // `tool`-role continuations never open one. `has_rows` separates the
+                    // two nothing-to-delete cases: an empty thread (`empty-thread`) from
+                    // one holding only non-user rows (`no-user-turn`, anomalous data we
+                    // refuse rather than empty). `MAX(seq)` aggregates the bigint column;
+                    // the `::text` cast is transport only, so no comparison ever runs
+                    // against a text projection — and the boundary rides back as text so
+                    // a seq beyond 2^53 survives without float rounding.
+                    tryQuery("thread-history.retractLastTurn.boundary", async () => {
+                        const { rows } = await client.query<{ has_rows: boolean; boundary: string | null }>(
+                            `SELECT EXISTS(SELECT 1 FROM messages WHERE thread_id = $1) AS has_rows,
+                    (SELECT MAX(seq)::text FROM messages
+                       WHERE thread_id = $1
+                         AND message_envelope->'message'->>'role' = 'user') AS boundary`,
+                            [threadId],
+                        );
+                        return rows[0]!;
+                    }),
+                )
+                .andThen(({ has_rows, boundary }) => {
+                    if (!has_rows) return okAsync<RetractOutcome, DbError>({ kind: "empty-thread" });
+                    if (boundary === null) return okAsync<RetractOutcome, DbError>({ kind: "no-user-turn" });
+                    // Delete the whole tail turn: every row at or past the boundary seq.
+                    // `$2::bigint` compares the bigint column against a bigint, never a
+                    // text projection, keeping the comparison exact for large seqs.
+                    return tryMutation("thread-history.retractLastTurn.delete", () =>
+                        client.query("DELETE FROM messages WHERE thread_id = $1 AND seq >= $2::bigint", [threadId, boundary]),
+                    ).map<RetractOutcome>((res) => ({ kind: "retracted", messages: res.rowCount ?? 0 }));
+                }),
+        );
+    }
+
+    return { appendTurn, loadRecent, loadPage, retractLastTurn };
 }

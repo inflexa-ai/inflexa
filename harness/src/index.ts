@@ -144,7 +144,7 @@ export type { PrepareChatTurnDeps, PrepareChatTurnParams, PrepareChatTurnResult 
 export { createThreadStore } from "./memory/thread-store.js";
 export type { ThreadStore, Thread, CreateThreadInput, ListThreadsInput, ThreadPage } from "./memory/thread-store.js";
 export { createThreadHistory } from "./memory/thread-history.js";
-export type { ThreadHistory, StoredMessage, MessagePage } from "./memory/thread-history.js";
+export type { ThreadHistory, StoredMessage, MessagePage, RetractOutcome } from "./memory/thread-history.js";
 export { contentToCortexMessages } from "./memory/content-to-cortex.js";
 export { createCardResolver } from "./memory/reconstruct-cards.js";
 export type { ToolCardResolver, StoredToolCallForCard } from "./memory/reconstruct-cards.js";
