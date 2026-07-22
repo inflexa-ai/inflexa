@@ -31,6 +31,16 @@ Every byte quantity the CLI prints SHALL be rendered through one shared formatte
 - **WHEN** the transfer has not yet produced enough samples to measure a rate
 - **THEN** the readout omits the rate segment rather than showing `NaN`, `Infinity`, or a zero placeholder
 
+#### Scenario: A stalled transfer stops claiming a rate
+
+- **WHEN** no bytes arrive for longer than the sampling window
+- **THEN** the rate segment decays out of the readout rather than continuing to display the last rate the connection sustained
+
+#### Scenario: A declared size refines only the artifact in flight
+
+- **WHEN** the upstream declares a size for the artifact currently transferring
+- **THEN** the readout adds that artifact's transferred-of-declared bytes, and drops the segment when the artifact completes or when the next artifact declares no size
+
 #### Scenario: A plan with nothing to fetch shows no readout
 
 - **WHEN** every selected dataset is already installed and intact, so the plan fetches zero artifacts
