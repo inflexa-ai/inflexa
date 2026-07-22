@@ -44,20 +44,20 @@ import { ok, type Result } from "neverthrow";
 import type { Pool } from "pg";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { scopeResource } from "../auth/types.js";
 import type { ChatProvider } from "../providers/types.js";
 import { defineTool, type Tool, type ToolError } from "./define-tool.js";
-import { previewDir, type ResolveWorkspaceRoot } from "../workspace/paths.js";
+import { latestPreviewVersion, previewDir, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { runReportIteration } from "../execution/report-runner.js";
 import { formatBytes, stageReportAssets, type StagedAsset } from "./lib/report-preflight.js";
 import type { PreviewPublisher } from "./report/preview-publisher.js";
 import type { ChromeConfig } from "../lib/chrome.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
-import { hintForZodIssue } from "../lib/zod-issues.js";
+import { hintForZodIssue, repairToolInput } from "../lib/zod-issues.js";
 
 const REPORT_TOOL_ACCESS_TTL_SECONDS = 3600;
 const PREVIEW_META_FILE = "preview-meta.json";
@@ -65,6 +65,11 @@ const PREVIEW_META_FILE = "preview-meta.json";
 interface PreviewMeta {
     title: string;
     audience?: string;
+    /**
+     * Wider than the format the tool accepts: this records what a preview on
+     * disk was written as, and stored previews may carry a value no longer
+     * offered. Narrowing it would make those previews unreadable.
+     */
     format: "html" | "pdf";
 }
 
@@ -337,7 +342,7 @@ export const submitReportInputSchema = z
             .min(1)
             .optional()
             .describe("Version to branch from (1-based) — use when the user prefers an earlier version. Defaults to the latest."),
-        format: z.enum(["html", "pdf"]).default("html").describe("Output format. Defaults to 'html' — only set explicitly for PDF."),
+        format: z.enum(["html"]).default("html").describe("Output format. HTML is the only format the report path produces; you can leave this unset."),
         report: z
             .unknown()
             .optional()
@@ -517,6 +522,31 @@ type SubmitReportOutput =
       };
 
 /**
+ * Validate a submitted brief, first repairing one that arrived double-encoded.
+ *
+ * Every other committing tool (`submit_plan`, `submit_synthesis`) puts its real
+ * schema on the wire, so a JSON-encoded argument fails the tool's input schema and
+ * the agent loop's issue-guided repair pass catches it before `execute` ever runs.
+ * `report` rides as `z.unknown()` to keep the ~12k brief schema off the always-on
+ * tool surface — which also means a double-encoded brief *satisfies* the input
+ * schema, the loop sees no failure to act on, and the repair never fires. That
+ * makes this the one committing path where the brief must be repaired locally.
+ *
+ * When the brief decodes but is then invalid, the issues reported are the decoded
+ * value's, not the encoding error's — once the string has been parsed, "expected
+ * object, received string" describes a problem this function already solved, and
+ * would send the model chasing it instead of the fields actually missing. A brief
+ * that does not decode at all keeps its original failure.
+ */
+function acceptBrief(report: unknown): ReturnType<typeof ReportBriefSchema.safeParse> {
+    const direct = ReportBriefSchema.safeParse(report);
+    if (direct.success) return direct;
+
+    const repaired = repairToolInput(report, direct.error);
+    return repaired === undefined ? direct : ReportBriefSchema.safeParse(repaired);
+}
+
+/**
  * `submit_report` — takes the composed brief and drives the report iteration.
  * On a valid brief its behaviour is byte-for-byte the former `iterate_report`:
  * pre-flight staging, previewId/versioning, `runReportIteration`, preview
@@ -527,7 +557,7 @@ export function createReportSubmitTool(deps: SubmitReportDeps): Tool {
     return defineTool({
         id: "submit_report",
         description:
-            "Submit a composed report brief to build or iterate an HTML/PDF report " +
+            "Submit a composed report brief to build or iterate an HTML report " +
             "(the report-builder renders it; it never sees the analysis tree). Call " +
             "`plan_report` FIRST to get the brief schema + authoring rules, compose " +
             "the brief, then call this. CREATE: pass `report` (the composed brief), " +
@@ -544,7 +574,7 @@ export function createReportSubmitTool(deps: SubmitReportDeps): Tool {
             // (the validate_plan trade) — never a thrown error.
             let brief: ReportBrief | undefined;
             if (input.report !== undefined) {
-                const parsed = ReportBriefSchema.safeParse(input.report);
+                const parsed = acceptBrief(input.report);
                 if (!parsed.success) {
                     return ok({
                         ok: false as const,
@@ -570,6 +600,45 @@ export function createReportSubmitTool(deps: SubmitReportDeps): Tool {
             const previewRootAbs = join(analysisRoot, previewDir(previewId));
             const assetsDirAbs = join(previewRootAbs, "assets");
             const metaPathAbs = join(previewRootAbs, PREVIEW_META_FILE);
+
+            // Iteration carries no brief: the builder's entire input is the change
+            // text plus the previous version's template. A previewId with no
+            // version behind it would therefore hand it a change request and
+            // nothing to change, and it would silently author a fresh v1 while
+            // being told the previous template is already in its working
+            // directory. The check is a directory read and precedes access
+            // minting, asset staging, and the builder, so a bad id costs no model
+            // turns and leaves no partial state.
+            if (!brief) {
+                let versionDirs: string[] = [];
+                try {
+                    versionDirs = (await readdir(previewRootAbs, { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name);
+                } catch {
+                    /* no preview root — indistinguishable from one holding no versions */
+                }
+                if (latestPreviewVersion(versionDirs) === 0) {
+                    const reason =
+                        `No report exists under previewId '${previewId}', so there is nothing to modify. ` +
+                        "Create the report first by calling `submit_report` with a `report` brief and no `previewId`, " +
+                        "or retry with the `previewId` shown on the preview card of the report you meant to change.";
+                    await ctx.emit({
+                        type: "data-report-preview-failed",
+                        data: {
+                            id: randomUUID(),
+                            previewId,
+                            version: 0,
+                            reason,
+                            errorKind: "build",
+                        },
+                    });
+                    return ok({
+                        previewId,
+                        version: 0,
+                        previewPath: "",
+                        error: reason,
+                    });
+                }
+            }
 
             // Iteration mode: recover the title from the creation-time meta file
             // so the data-report-preview part keeps the original title across versions.
@@ -767,7 +836,7 @@ function buildCreationPrompt(report: ReportBrief, format: "html" | "pdf", staged
         "Each section below carries `intent` (why it exists, what to emphasize) " +
             "and `content` (the data shape to render). You choose the design-system " +
             "components, layout, alternation, and visual treatment. Stay in the " +
-            "Inflexa Design Blueprint — base.html.j2, components, theme.css.",
+            "Inflexa Design Blueprint — base.html.j2, components.",
     );
     out.push("");
     for (let i = 0; i < report.sections.length; i++) {

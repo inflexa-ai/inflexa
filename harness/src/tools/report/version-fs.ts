@@ -2,10 +2,10 @@
  * In-process workspace surface for the report-builder agent.
  *
  * Tight read/write/mkdir surface scoped to the version directory.
- * Agent-supplied paths are resolved against `versionDir`; any path that
- * escapes is rejected as `out_of_scope`. Constructed inside the
- * iterate-report runner so it always shares the same `versionDir` as the
- * rest of the report tools.
+ * Agent-supplied paths are relative to `versionDir`; an absolute path, or one
+ * that escapes the directory, is rejected as `out_of_scope`. Constructed
+ * inside the iterate-report runner so it always shares the same `versionDir`
+ * as the rest of the report tools.
  */
 
 import { mkdir as fsMkdir, readFile as fsReadFile, stat as fsStat, writeFile as fsWriteFile } from "node:fs/promises";
@@ -42,13 +42,15 @@ function resolveAgentPath(agentPath: string, versionDir: string): { kind: "ok"; 
     if (agentPath.length === 0 || agentPath.includes("\0")) {
         return { kind: "out_of_scope", reason: "empty or null-byte path" };
     }
-    // Strip a leading slash so an agent typing "/index.html" is treated as
-    // "index.html" relative to versionDir (the version dir is the root).
-    const stripped = agentPath.replace(/^\/+/, "");
-    if (!stripped) {
-        return { kind: "out_of_scope", reason: "path resolves to the version dir itself" };
+    // A leading slash is refused rather than trimmed. Trimming it makes the
+    // containment check below unreachable for absolute paths: a deep one such
+    // as "/previews/abc/v1/report.html.j2" would land a real file several
+    // directories below versionDir and report success, and the builder — which
+    // has no directory-listing tool — cannot find where its template went.
+    if (agentPath.startsWith("/")) {
+        return { kind: "out_of_scope", reason: `absolute path rejected, use one relative to the version dir: ${agentPath}` };
     }
-    const absolute = resolvePath(versionDir, stripped);
+    const absolute = resolvePath(versionDir, agentPath);
     if (absolute !== versionDir && !absolute.startsWith(versionDir + sep)) {
         return { kind: "out_of_scope", reason: `path escapes version dir: ${agentPath}` };
     }
@@ -59,9 +61,10 @@ export function createVersionFsTools(state: VersionFsToolsState): Tool[] {
     const writeFile = defineTool({
         id: "write_file",
         description:
-            "Write a UTF-8 text file under the report's version directory. Use " +
-            "relative paths (e.g. `report.html.j2`, `assets/foo.csv`). Returns " +
-            "`out_of_scope` for any path that escapes the version dir.",
+            "Write a UTF-8 text file under the report's version directory. Paths " +
+            "are relative to it (e.g. `report.html.j2`, `assets/foo.csv`); an " +
+            "absolute path, or one that escapes the version dir, returns " +
+            "`out_of_scope` and writes nothing.",
         inputSchema: z.object({
             path: z.string().min(1),
             content: z.string(),
@@ -89,8 +92,9 @@ export function createVersionFsTools(state: VersionFsToolsState): Tool[] {
         description:
             "Surgical edit of an existing UTF-8 file inside the report's version " +
             "directory: replace the first occurrence of `oldText` with `newText`. " +
-            "Returns `not_found` if the file doesn't exist, `no_match` if " +
-            "`oldText` isn't present.",
+            "Paths are relative to that directory; an absolute or escaping path " +
+            "returns `out_of_scope`. Returns `not_found` if the file doesn't " +
+            "exist, `no_match` if `oldText` isn't present.",
         inputSchema: z.object({
             path: z.string().min(1),
             oldText: z.string().min(1),
@@ -129,7 +133,10 @@ export function createVersionFsTools(state: VersionFsToolsState): Tool[] {
 
     const readFile = defineTool({
         id: "read_file",
-        description: "Read a UTF-8 file inside the report's version directory. Returns " + "truncated content (capped at 256 KiB) for large files.",
+        description:
+            "Read a UTF-8 file inside the report's version directory. Paths are " +
+            "relative to it; an absolute or escaping path returns `out_of_scope`. " +
+            "Returns truncated content (capped at 256 KiB) for large files.",
         inputSchema: z.object({
             path: z.string().min(1),
         }),
@@ -164,7 +171,9 @@ export function createVersionFsTools(state: VersionFsToolsState): Tool[] {
 
     const mkdir = defineTool({
         id: "mkdir",
-        description: "Create a directory (recursive) inside the report's version directory.",
+        description:
+            "Create a directory (recursive) inside the report's version directory. " +
+            "Paths are relative to it; an absolute or escaping path returns `out_of_scope`.",
         inputSchema: z.object({
             path: z.string().min(1),
         }),
