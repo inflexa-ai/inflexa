@@ -1,10 +1,8 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { testRender, useTerminalDimensions } from "@opentui/solid";
-import { parseColor, type RGBA } from "@opentui/core";
+import { describe, expect, test } from "bun:test";
+import { useTerminalDimensions } from "@opentui/solid";
 
 import { renderFrame } from "../../test_support/tui.ts";
-import { DEFAULT_THEME_ID, size, themes } from "../../lib/design_system.ts";
-import { setTheme } from "../theme.ts";
+import { GLYPHS, size } from "../../lib/design_system.ts";
 import { StatusBar } from "./status_bar.tsx";
 
 // The working-directory path is a wide-terminal-only affordance. StatusBar is dumb — it renders
@@ -39,61 +37,23 @@ describe("StatusBar working-directory path", () => {
     });
 });
 
-// The interrupt hint carries its OWN color so the armed ("again to interrupt") state accents while the
-// resting hint stays muted. A character frame cannot see a color, so these assert on the span's resolved
-// fg via captureSpans (the same mechanism as theme_contrast.render.test.tsx) on github-light, whose bg is
-// pure #ffffff — the sharpest case for an accidentally-white span.
-const LIGHT = "github-light";
-
-/** The fg of the first captured span whose text contains `needle`, or undefined if none rendered. */
-function spanFg(setup: Awaited<ReturnType<typeof testRender>>, needle: string): RGBA | undefined {
-    for (const line of setup.captureSpans().lines) {
-        for (const span of line.spans) {
-            if (span.text.includes(needle)) return span.fg;
-        }
-    }
-    return undefined;
-}
-
-describe("StatusBar interrupt hint", () => {
-    // The active theme is a module singleton; reset it after each case so order doesn't matter.
-    afterEach(() => setTheme(DEFAULT_THEME_ID));
-
-    test("the resting hint renders muted", async () => {
-        setTheme(LIGHT);
-        // A distinctive label so the span search never collides with the muted right-hints span beside it.
-        const setup = await testRender(() => <StatusBar title="inflexa" hints={["ctrl+k"]} interruptHint={{ label: "RESTINGHINT", armed: false }} />, {
-            width: 130,
-            height: 3,
-        });
-        try {
-            await setup.renderOnce();
-            const fg = spanFg(setup, "RESTINGHINT");
-            expect(fg).toBeDefined();
-            expect(fg && parseColor(themes[LIGHT].colors.fgMuted).equals(fg)).toBe(true);
-        } finally {
-            setup.renderer.destroy();
-        }
-    });
-
-    test("the armed hint renders in the accent color", async () => {
-        setTheme(LIGHT);
-        const setup = await testRender(() => <StatusBar title="inflexa" hints={["ctrl+k"]} interruptHint={{ label: "ARMEDHINT", armed: true }} />, {
-            width: 130,
-            height: 3,
-        });
-        try {
-            await setup.renderOnce();
-            const fg = spanFg(setup, "ARMEDHINT");
-            expect(fg).toBeDefined();
-            expect(fg && parseColor(themes[LIGHT].colors.accent).equals(fg)).toBe(true);
-        } finally {
-            setup.renderer.destroy();
-        }
-    });
-
-    test("no interrupt hint renders when the prop is absent", async () => {
-        const frame = await renderFrame(() => <StatusBar title="inflexa" hints={["ctrl+k"]} />, { width: 130, height: 3 });
+// The interrupt hint now lives in the ChatBar footer beside the mode word it depends on (its span-color
+// coverage is chat_bar.render.test.tsx). The status bar can no longer even receive it — the prop is gone —
+// so this pins the observable contract: a status bar rendered exactly as the chat renders it during a busy
+// turn carries no interrupt affordance in its right-hints region.
+describe("StatusBar carries no interrupt hint", () => {
+    test("renders no interrupt hint while a turn is busy", async () => {
+        const frame = await renderFrame(
+            () => (
+                <StatusBar
+                    title="inflexa"
+                    subtitle="rna-seq-2026"
+                    state={{ text: `${GLYPHS.circleHalf} thinking${GLYPHS.ellipsis}`, tone: "warn" }}
+                    hints={["ctrl+k", "ctrl+b", "ctrl+c"]}
+                />
+            ),
+            { width: 130, height: 3 },
+        );
         expect(frame).not.toContain("interrupt");
     });
 });

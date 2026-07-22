@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import type { TextareaRenderable } from "@opentui/core";
 
 import { GLYPHS } from "../../lib/design_system.ts";
@@ -20,6 +20,23 @@ export type ChatBarProps = {
      */
     onFocusChange?: (focused: boolean) => void;
     /**
+     * Whether the composer opens in INSERT (default true — the chat exists to be typed into). Seeds the
+     * footer's mode word from the first frame; real focus is the host's job (it drives the renderable
+     * handed back by {@link ChatBarProps.onTextareaRef}), which is why the seed is decoupled from a
+     * self-grab. A host mounting the bar as a non-primary widget — a design-gallery exhibit — passes
+     * false for a blurred NORMAL exhibit, or true to showcase the INSERT footer without ever taking the
+     * surrounding surface's focus.
+     */
+    autoFocus?: boolean;
+    /**
+     * The mode-scoped interrupt affordance rendered after the mode word while a turn is busy, or
+     * absent when the honesty gates say nothing to promise (idle, dialog stacked, ask docked). The
+     * host derives label + `armed` from the live bindings and hands it down as data — `ChatBar` keeps
+     * its no-domain-imports rule. `armed` selects the "again to interrupt" confirm styling; the INSERT
+     * variant (the one-press abort chord) never arms.
+     */
+    interruptHint?: { label: string; armed: boolean };
+    /**
      * Why the input is gated (submits refused by the host), or absent when the input is open. Drives
      * the empty-buffer placeholder so the affordance itself explains why typing goes nowhere yet:
      *   - `"booting"` — the runtime is still coming up; a first message can be pre-typed and sends once
@@ -34,12 +51,16 @@ export type ChatBarProps = {
 /**
  * The chat input bar: a `TextArea` with `chrome="full"` plus an external mode footer row.
  * NORMAL mode gets a distinct background (`bgActive`) and accent color so the user knows vim
- * scroll keys are live and typing won't insert. The footer shows the newline-key hint (a
- * textarea-level affordance) — global keybind hints live only in the status bar. The host keeps
+ * scroll keys are live and typing won't insert. After the mode word the footer carries the
+ * mode-scoped interrupt hint (a data prop — see {@link ChatBarProps.interruptHint}) and, on the
+ * right, the newline-key hint; global keybind hints live only in the status bar. The host keeps
  * the textarea ref so it can read/clear the buffer and restore focus when a dialog closes.
  */
 export function ChatBar(props: ChatBarProps) {
-    const [focused, setFocused] = createSignal(true);
+    // Seed from autoFocus so a blurred mount renders NORMAL from the first frame — the renderable
+    // emits no blur event at mount to correct a wrong seed (mirrors TextArea's own seed).
+    // eslint-disable-next-line solid/reactivity -- seed-once: autoFocus is a mount-time contract, then focus events drive the signal
+    const [focused, setFocused] = createSignal(props.autoFocus ?? true);
 
     return (
         // flexShrink={0}: the input is essential chrome — it must always keep its rows. Without it,
@@ -51,6 +72,11 @@ export function ChatBar(props: ChatBarProps) {
                 chrome="full"
                 minHeight={3}
                 maxHeight={8}
+                // The inner textarea never self-grabs: the host owns real focus and drives it through the
+                // renderable handed back by `onTextareaRef` (the chat focuses it on mount, and hands it to
+                // the pane on esc). Decoupling the display seed (below) from a self-grab is what lets a
+                // showcase mount the bar in INSERT without the surrounding surface's focus being stolen.
+                autoFocus={false}
                 placeholder={
                     props.gate === "failed"
                         ? `Boot failed ${GLYPHS.emDash} see the message above`
@@ -75,6 +101,16 @@ export function ChatBar(props: ChatBarProps) {
                         </Bold>
                     )}
                 </text>
+                {/* The mode-scoped interrupt hint sits directly after the mode word it describes. Its own
+                <text> carries an explicit fg so the armed ("again to interrupt") state reads in warn while
+                the resting hint stays muted; a leading middot separates it from the mode word. warn (not
+                accent) keeps the armed hint distinct from the accent NORMAL word on the same bgActive row,
+                on light themes included. */}
+                <Show when={props.interruptHint} keyed>
+                    {(hint: { label: string; armed: boolean }) => (
+                        <text fg={hint.armed ? theme().warning : theme().fgMuted}>{` ${GLYPHS.middot} ${hint.label}`}</text>
+                    )}
+                </Show>
                 <box flexGrow={1} />
                 <text fg={theme().fgMuted}>{NEWLINE_LABEL} newline</text>
             </box>

@@ -3,59 +3,55 @@ import { describe, expect, test } from "bun:test";
 import { interruptHintFor } from "./app.tsx";
 import { interruptHintLabel } from "./keymap.ts";
 
-// The status-bar interrupt hint is derived by the pure `interruptHintFor` (app.tsx) over the live turn
-// state, and its wording by the shared `interruptHintLabel` (keymap.ts). Booting the whole chat App to
-// pin the gate would drag in a runtime, DB, and providers for what is a one-line derivation, so — as with
-// status_bar.render.test.tsx's app-side gate — the derivation is exercised directly. A stand-in key label
-// keeps the cases independent of the user's live `app.interrupt` binding.
-const KEY = "esc";
+// The footer interrupt hint is derived by the pure `interruptHintFor` (app.tsx) over the live turn state,
+// and its wording by the shared `interruptHintLabel` (keymap.ts). Booting the whole chat App to pin the
+// gate would drag in a runtime, DB, and providers for what is a one-line derivation, so — as with
+// status_bar.render.test.tsx's app-side gate — the derivation is exercised directly. Distinct stand-in key
+// labels keep the NORMAL (esc) and INSERT (abort-chord) variants independent of the user's live bindings
+// and let each case assert which key the hint actually names.
+const ESC = "esc";
+const ABORT = "ctrl+c";
 
-/** The one state where the interrupt binding is genuinely live: busy turn, stream pane focused, nothing stacked. */
-const REACHABLE = { busy: true, insertMode: false, dialogOpen: false, askDocked: false, armed: false, key: KEY };
+/** Busy turn, stream pane focused (NORMAL), nothing stacked: where the double-press esc interrupt is live. */
+const NORMAL = { busy: true, insertMode: false, dialogOpen: false, askDocked: false, armed: false, interruptKey: ESC, abortKey: ABORT };
 
-describe("interruptHintFor — the interrupt-hint visibility gate", () => {
-    test("busy + NORMAL mode → the resting hint is present", () => {
-        // The default reachable state: a turn is busy and the stream pane holds focus, so the interrupt
-        // binding is live and the hint honestly advertises it.
-        expect(interruptHintFor(REACHABLE)).toEqual({ label: `${KEY} interrupt`, armed: false });
+describe("interruptHintFor — the footer interrupt-hint derivation", () => {
+    test("busy + NORMAL → the resting esc hint", () => {
+        expect(interruptHintFor(NORMAL)).toEqual({ label: `${ESC} interrupt`, armed: false });
     });
 
-    test("busy + INSERT mode → no hint (the interrupt binding is unreachable there)", () => {
-        // Post-submit the composer is focused (INSERT) and esc only switches modes, so the hint must be
-        // absent rather than promise an interrupt.
-        expect(interruptHintFor({ ...REACHABLE, insertMode: true })).toBeUndefined();
+    test("busy + NORMAL + armed → the confirm wording, still marked armed", () => {
+        expect(interruptHintFor({ ...NORMAL, armed: true })).toEqual({ label: `${ESC} again to interrupt`, armed: true });
     });
 
-    test("busy + a stacked dialog → no hint (the dialog owns esc)", () => {
-        // A dialog takes focus off the composer, so the INSERT gate alone would let the hint through — but
-        // the interrupt layer is inert under a modal and esc cancels the dialog instead.
-        expect(interruptHintFor({ ...REACHABLE, dialogOpen: true })).toBeUndefined();
+    test("busy + INSERT → the one-press abort-chord hint, never armed", () => {
+        // esc only switches modes in INSERT, so the footer advertises the ctrl+c chord that interrupts
+        // while typing. A single press fires it, so it stays the muted resting form and names the abort key.
+        expect(interruptHintFor({ ...NORMAL, insertMode: true })).toEqual({ label: `${ABORT} interrupt`, armed: false });
+        // Even mid-arm (a NORMAL-only concept) the INSERT variant never adopts the confirm form.
+        expect(interruptHintFor({ ...NORMAL, insertMode: true, armed: true })).toEqual({ label: `${ABORT} interrupt`, armed: false });
     });
 
-    test("busy + a docked ask → no hint (the prompt owns esc)", () => {
-        // Same shape as the dialog case: an active approval prompt focuses itself, so the composer is
-        // unfocused while esc belongs to the prompt (back-to-choices), not the interrupt.
-        expect(interruptHintFor({ ...REACHABLE, askDocked: true })).toBeUndefined();
+    test("a stacked dialog → no hint in either mode (the dialog owns esc)", () => {
+        expect(interruptHintFor({ ...NORMAL, dialogOpen: true })).toBeUndefined();
+        expect(interruptHintFor({ ...NORMAL, insertMode: true, dialogOpen: true })).toBeUndefined();
     });
 
-    test("idle → no hint regardless of where focus sits", () => {
-        expect(interruptHintFor({ ...REACHABLE, busy: false })).toBeUndefined();
-        expect(interruptHintFor({ ...REACHABLE, busy: false, insertMode: true })).toBeUndefined();
-        expect(interruptHintFor({ ...REACHABLE, busy: false, dialogOpen: true })).toBeUndefined();
+    test("a docked ask → no hint in either mode (the prompt owns esc)", () => {
+        expect(interruptHintFor({ ...NORMAL, askDocked: true })).toBeUndefined();
+        expect(interruptHintFor({ ...NORMAL, insertMode: true, askDocked: true })).toBeUndefined();
     });
 
-    test("armed → the confirm wording, and armed never overrides a reachability gate", () => {
-        expect(interruptHintFor({ ...REACHABLE, armed: true })).toEqual({ label: `${KEY} again to interrupt`, armed: true });
-        // An armed window is still only advertised where the second press can actually land.
-        expect(interruptHintFor({ ...REACHABLE, armed: true, insertMode: true })).toBeUndefined();
-        expect(interruptHintFor({ ...REACHABLE, armed: true, dialogOpen: true })).toBeUndefined();
-        expect(interruptHintFor({ ...REACHABLE, armed: true, askDocked: true })).toBeUndefined();
+    test("idle → no hint regardless of mode or arming", () => {
+        expect(interruptHintFor({ ...NORMAL, busy: false })).toBeUndefined();
+        expect(interruptHintFor({ ...NORMAL, busy: false, insertMode: true })).toBeUndefined();
+        expect(interruptHintFor({ ...NORMAL, busy: false, armed: true })).toBeUndefined();
     });
 });
 
 describe("interruptHintLabel — the single wording source", () => {
     test("resting vs armed phrasing", () => {
-        expect(interruptHintLabel(KEY, false)).toBe(`${KEY} interrupt`);
-        expect(interruptHintLabel(KEY, true)).toBe(`${KEY} again to interrupt`);
+        expect(interruptHintLabel(ESC, false)).toBe(`${ESC} interrupt`);
+        expect(interruptHintLabel(ESC, true)).toBe(`${ESC} again to interrupt`);
     });
 });
