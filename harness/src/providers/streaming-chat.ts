@@ -54,8 +54,15 @@ export function createStreamingChat(provider: ChatProvider, onText: (text: strin
                     }
                 } catch (e) {
                     // A client abort resolves with what streamed so far, never through
-                    // the error channel: the interactive turn persists the partial.
-                    const aborted = (e instanceof DOMException || e instanceof Error) && e.name === "AbortError";
+                    // the error channel: the interactive turn persists the partial. The
+                    // gate here must be at least as wide as the underlying provider's
+                    // re-throw gate — an abort-named error OR an already-aborted client
+                    // signal — or a transport failure that lands while the signal is
+                    // aborted slips past into the error channel. Once the user has
+                    // aborted, that raced failure is noise: resolving with the partial
+                    // serves their intent, while an error banner would blame their own
+                    // keypress.
+                    const aborted = ((e instanceof DOMException || e instanceof Error) && e.name === "AbortError") || signal?.aborted === true;
                     if (aborted) {
                         // A complete response already in hand beats a partial reconstruction: if the
                         // stream had yielded its terminal `done` before the abort threw, that whole

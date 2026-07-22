@@ -24,7 +24,7 @@
 import type { ModelMessage } from "ai";
 import type { CortexMessage, CortexPart } from "@inflexa-ai/harness/contracts/message.js";
 
-import { isInterruptedMessage } from "./ai-sdk-message-storage.js";
+import { isInterruptedMessage, isSyntheticUserMessage } from "./ai-sdk-message-storage.js";
 import type { ToolCardResolver } from "./reconstruct-cards.js";
 import type { StoredMessage } from "./thread-history.js";
 
@@ -86,6 +86,13 @@ async function rowToParts(message: StoredMessage["message"], resolveCard?: ToolC
 export async function contentToCortexMessages(messages: readonly StoredMessage[], resolveCard?: ToolCardResolver): Promise<CortexMessage[]> {
     const out: CortexMessage[] = [];
     for (const message of messages) {
+        // The loop's truncation nudge carries the `user` role only for the wire
+        // format; rendering it would show words the user never typed, so drop it.
+        // Skipping first is safe: a synthetic user message can never carry the
+        // interruption marker — that rides assistant rows — so this cannot interact
+        // with the marker-fold logic below. The assistant rows it separated then
+        // become adjacent and coalesce into one bubble, which is the shape we want.
+        if (isSyntheticUserMessage(message.message)) continue;
         const parts = await rowToParts(message.message, resolveCard);
         // The marker is read before the zero-parts drop so the flag can never be lost to it:
         // a marked row carries an interruption fact regardless of whether it renders any parts.

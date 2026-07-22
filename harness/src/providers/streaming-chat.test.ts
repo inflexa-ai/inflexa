@@ -129,7 +129,24 @@ describe("createStreamingChat", () => {
         expect(result.finishReason).toBe("stop");
     });
 
-    it("returns a provider err when the stream throws a non-abort failure", async () => {
+    it("resolves aborted when a non-abort transport failure races an already-aborted signal", async () => {
+        const seen: string[] = [];
+        const controller = new AbortController();
+        controller.abort();
+        // A plain, non-abort-named failure — the shape a socket drop takes — that
+        // lands while the client signal is already aborted must resolve as the abort,
+        // never surface as a provider error over the user's own interrupt.
+        const streaming = createStreamingChat(throwingStreamFake(["hel", "lo"], new Error("socket closed")), (t) => seen.push(t));
+
+        const result = (await streaming.chat(REQUEST, makeSession(), controller.signal))._unsafeUnwrap();
+
+        expect(result.finishReason).toBe("aborted");
+        expect(result.message).toEqual({ role: "assistant", content: "hello" });
+        // Every delta that arrived before the failure was still forwarded.
+        expect(seen).toEqual(["hel", "lo"]);
+    });
+
+    it("returns a provider err when the stream throws a non-abort failure and the signal is not aborted", async () => {
         const streaming = createStreamingChat(throwingStreamFake(["x"], new Error("upstream 500")), () => {});
 
         const result = await streaming.chat(REQUEST, makeSession());
