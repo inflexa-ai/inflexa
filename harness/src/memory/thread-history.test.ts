@@ -383,3 +383,91 @@ describe("loadRecent overflow metric", () => {
         expect(evictedPoint.attributes.eviction).toBe(true);
     });
 });
+
+// --- retractLastTurn --------------------------------------------------------
+
+describe("retractLastTurn", () => {
+    it("removes the last appended turn and restores the exact pre-append window", async () => {
+        const turn1 = [userText("question one"), assistantText("answer one")];
+        const turn2 = [userText("question two"), assistantText("answer two")];
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+
+        // Snapshot the window, append one more (single-message) turn, then retract
+        // it: the byte-stable prefix guarantee only holds if the retracted tail
+        // restores the exact prior row set.
+        const before = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+
+        (await history.appendTurn(THREAD, [userText("question three")]))._unsafeUnwrap();
+
+        const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        expect(outcome).toEqual({ kind: "retracted", messages: 1 });
+
+        const after = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        expect(after).toEqual(before);
+    });
+
+    it("removes a multi-row tail turn whole, leaving the prior turn as the tail", async () => {
+        const turn1 = [userText("opening question"), assistantText("opening answer")];
+        const turn2 = [
+            userText("question driving a tool call"),
+            assistantToolUse("toolu_x", "search_pathway", { id: "R-HSA-1" }),
+            userToolResult("toolu_x", JSON.stringify({ pathway: "apoptosis" })),
+            assistantText("final answer using the pathway result"),
+        ];
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+
+        // The turn's tool-result row is `tool`-role, not `user`, so the turn opens
+        // on its single user message: all four rows sit at or past that boundary
+        // and come off together.
+        const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        expect(outcome).toEqual({ kind: "retracted", messages: 4 });
+
+        const page = (await history.loadPage(THREAD, 0, 50))._unsafeUnwrap();
+        expect(page.total).toBe(1);
+        expect(page.messages.map((m) => m.message)).toEqual(turn1);
+    });
+
+    it("reports empty-thread and deletes nothing when the thread has no rows", async () => {
+        const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        expect(outcome).toEqual({ kind: "empty-thread" });
+    });
+
+    it("refuses a thread whose rows carry no user-role message, deleting nothing", async () => {
+        // Rows that never open a turn are anomalous data: retract refuses them
+        // rather than emptying the thread. Appending an assistant-only "turn"
+        // stages exactly that shape without a direct SQL insert.
+        (await history.appendTurn(THREAD, [assistantText("orphan one"), assistantText("orphan two")]))._unsafeUnwrap();
+
+        const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        expect(outcome).toEqual({ kind: "no-user-turn" });
+
+        const { rows } = await pool.query<{ seq: string }>("SELECT seq FROM messages WHERE thread_id = $1 ORDER BY seq ASC", [THREAD]);
+        expect(rows.map((r) => Number(r.seq))).toEqual([0, 1]);
+    });
+
+    it("never leaves a partial turn when an append races a retract on one thread", async () => {
+        const turn = [
+            userText("concurrent question"),
+            assistantToolUse("toolu_c", "search_gene", { symbol: "MYC" }),
+            userToolResult("toolu_c", JSON.stringify({ hits: 5 })),
+            assistantText("concurrent answer"),
+        ];
+
+        // The shared per-thread advisory lock forces these to serialize, so the
+        // final state is one of exactly two: the whole turn present (retract ran
+        // first on the empty thread) or the whole turn gone (retract ran after the
+        // append and took it off). A partial turn would mean the lock failed.
+        const [appendRes, retractRes] = await Promise.all([history.appendTurn(THREAD, turn), history.retractLastTurn(THREAD)]);
+        appendRes._unsafeUnwrap();
+        retractRes._unsafeUnwrap();
+
+        const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        expect(loaded.length === 0 || loaded.length === turn.length).toBe(true);
+        if (loaded.length === turn.length) {
+            expect(loaded).toEqual(turn);
+            assertValidSequence(loaded);
+        }
+    });
+});
