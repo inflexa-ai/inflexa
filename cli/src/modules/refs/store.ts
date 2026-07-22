@@ -3,7 +3,7 @@ import { createWriteStream, type Stats } from "node:fs";
 import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { randomUUIDv7 } from "bun";
 
 import {
@@ -276,6 +276,43 @@ type ManagedPathConflictError = {
 /** Typed failures from local inspection, verification, transfer, or activation. */
 export type ReferenceProvisionError = UnknownDatasetError | ProvisionOperationError | ManagedPathConflictError;
 
+/**
+ * One observation from an in-flight transfer. A union rather than a bare byte count because a
+ * renderer needs to tell "a new file opened" (advance the file counter, learn its declared size if
+ * the upstream sent one) apart from "more bytes landed" (accumulate, resample the rate).
+ */
+export type ReferenceDownloadProgress =
+    | {
+          /** A transfer opened and the upstream accepted it; no bytes have been counted yet. */
+          readonly type: "artifact_started";
+          /** Dataset the artifact belongs to. */
+          readonly datasetId: string;
+          /** Dataset-relative destination path, as named by the catalog. */
+          readonly path: string;
+          /**
+           * Size the upstream declared for this artifact, when it declared a usable one. Absent is
+           * the normal case — chunked responses and on-the-fly compression both omit it — so a
+           * consumer treats the key's absence as "unknown", never as an error or a zero.
+           */
+          readonly declaredBytes?: number;
+      }
+    | {
+          /** Bytes arrived for the artifact currently in flight. */
+          readonly type: "artifact_bytes";
+          /** Bytes in this chunk alone; a consumer accumulates, the installer never does. */
+          readonly bytes: number;
+      }
+    | {
+          /** The artifact is fully written to its `.part` and hashed. */
+          readonly type: "artifact_completed";
+          /** Dataset the artifact belongs to. */
+          readonly datasetId: string;
+          /** Dataset-relative destination path, as named by the catalog. */
+          readonly path: string;
+          /** Total bytes this artifact transferred, as observed on disk. */
+          readonly bytes: number;
+      };
+
 /** Network dependencies supplied by the CLI composition edge. */
 export type ReferenceInstallDeps = {
     /** Public store root. */
@@ -288,7 +325,42 @@ export type ReferenceInstallDeps = {
     readonly now?: () => Date;
     /** Stable attempt id used for staging. */
     readonly attemptId?: () => string;
+    /**
+     * Progress observer for a live transfer. Optional: absent means the installer reports nothing,
+     * which is what every non-interactive caller wants. Events are delivered synchronously and the
+     * return value is ignored — this is a notification channel, not a hook that can steer the
+     * install.
+     */
+    readonly onProgress?: (event: ReferenceDownloadProgress) => void;
 };
+
+/**
+ * Deliver one progress event, absorbing anything the observer throws. A progress readout is
+ * decoration over a network transfer: letting a renderer's failure abort a download that is
+ * otherwise succeeding would trade the actual work for the commentary on it. The observer therefore
+ * cannot fail the install, and its failure is silent by design — surfacing it would need an error
+ * channel the caller has no way to act on mid-transfer.
+ */
+function reportProgress(deps: ReferenceInstallDeps, event: ReferenceDownloadProgress): void {
+    try {
+        deps.onProgress?.(event);
+    } catch {
+        // Intentionally empty: see above.
+    }
+}
+
+/**
+ * The size the upstream declared, or undefined when it declared none we can trust. `Content-Length`
+ * is absent on chunked and on-the-fly-compressed responses, and a header that is present can still
+ * be malformed or negative, so everything that is not a positive finite integer collapses to
+ * "unknown" — the state the consumer is already required to handle.
+ */
+function declaredContentLength(response: Response): number | undefined {
+    const raw = response.headers.get("content-length");
+    if (raw === null) return undefined;
+    const parsed = Number(raw);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
 
 /** Caller-chosen installation behavior. */
 export type ReferenceInstallOptions = {
@@ -670,10 +742,32 @@ async function downloadArtifact(
                 message: `Refusing ${artifact.path}: ${artifact.url} redirected to a non-https location (${response.url}).`,
             });
         }
-        await pipeline(Readable.fromWeb(response.body), createWriteStream(partPath, { flags: "w" }));
+        const declared = declaredContentLength(response);
+        // Emitted only once the response is accepted, so a started event always corresponds to a
+        // transfer that is actually about to move bytes — never to one already rejected above.
+        reportProgress(deps, {
+            type: "artifact_started",
+            datasetId: dataset.id,
+            path: artifact.path,
+            ...(declared === undefined ? {} : { declaredBytes: declared }),
+        });
+        // A pass-through Transform rather than a `data` listener on the readable: `pipeline` owns the
+        // flow, so a listener would compete with it for the stream's mode, while an inline stage keeps
+        // backpressure and error propagation exactly where they already are.
+        const counter = new Transform({
+            transform(chunk: Buffer, _encoding, callback) {
+                reportProgress(deps, { type: "artifact_bytes", bytes: chunk.length });
+                callback(null, chunk);
+            },
+        });
+        await pipeline(Readable.fromWeb(response.body), counter, createWriteStream(partPath, { flags: "w" }));
         const written = (await stat(partPath)).size;
         const digest = await sha256File(partPath);
         if (digest.isErr()) return err({ type: "io_failed", message: `Could not hash ${artifact.path}.`, cause: digest.error.cause });
+        // Completion is reported from the observed on-disk size, after hashing succeeded: every
+        // earlier exit (HTTP failure, a non-https redirect, an unhashable file) returns before here,
+        // so a completed event is only ever emitted for an artifact that really landed intact.
+        reportProgress(deps, { type: "artifact_completed", datasetId: dataset.id, path: artifact.path, bytes: written });
         return ok({
             partPath,
             bytesDownloaded: written,

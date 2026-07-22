@@ -1,7 +1,8 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { z } from "zod";
 
-// Side-effect import: installs JSON.parseWith / Response.jsonWith / Date.relativeAge / Promise.sleep,
+// Side-effect import: installs JSON.parseWith / Response.jsonWith / Date.relativeAge / Promise.sleep /
+// Number.prototype.formatBytes,
 // via the same central loader the app uses — so this also catches a loader that forgot an ext file.
 import "./index.ts";
 
@@ -129,5 +130,40 @@ describe("Promise.sleep", () => {
         await Promise.sleep(20);
         // Allow scheduler slack below the nominal 20ms, but it must have actually waited.
         expect(Date.now() - start).toBeGreaterThanOrEqual(15);
+    });
+});
+
+describe("Number.prototype.formatBytes", () => {
+    test("renders whole bytes below the first unit step", () => {
+        expect((0).formatBytes()).toBe("0 B");
+        expect((812).formatBytes()).toBe("812 B");
+        expect((1023).formatBytes()).toBe("1023 B"); // upper edge of the bytes range
+    });
+
+    test("each unit steps at 1024 of the one below it", () => {
+        expect((1024).formatBytes()).toBe("1.0 KB"); // the bytes→KB boundary
+        expect((1024 ** 2 - 1).formatBytes()).toBe("1024.0 KB"); // upper edge of the KB range
+        expect((1024 ** 2).formatBytes()).toBe("1.0 MB"); // the KB→MB boundary
+        expect((37_748_736).formatBytes()).toBe("36.0 MB");
+        expect((1024 ** 3).formatBytes()).toBe("1.0 GB"); // the MB→GB boundary
+        expect((1_503_238_553).formatBytes()).toBe("1.4 GB");
+    });
+
+    test("GB is the top unit — a terabyte-scale count keeps counting in GB", () => {
+        expect((1024 ** 4).formatBytes()).toBe("1024.0 GB");
+    });
+
+    test("a fractional count just below a step rounds into the next unit, not to 1024 B", () => {
+        expect((1023.6).formatBytes()).toBe("1.0 KB");
+    });
+
+    test("clamps a negative count to 0 B", () => {
+        expect((-5).formatBytes()).toBe("0 B");
+    });
+
+    test("a non-finite count renders 0 B rather than a NaN string", () => {
+        expect(NaN.formatBytes()).toBe("0 B");
+        expect(Infinity.formatBytes()).toBe("0 B");
+        expect((-Infinity).formatBytes()).toBe("0 B");
     });
 });

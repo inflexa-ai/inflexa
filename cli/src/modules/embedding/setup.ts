@@ -168,7 +168,7 @@ export async function acquireModel(): Promise<Result<void, EmbeddingSetupError>>
         await rename(partPath, env.embeddingModelPath);
 
         const written = (await stat(env.embeddingModelPath)).size;
-        s.stop(embedded ? `Installed ${(written / 1024 / 1024).toFixed(1)} MB (bundled model)` : `Downloaded ${(written / 1024 / 1024).toFixed(1)} MB`);
+        s.stop(embedded ? `Installed ${written.formatBytes()} (bundled model)` : `Downloaded ${written.formatBytes()}`);
         return ok(undefined);
     } catch (cause) {
         // Best-effort cleanup; a `.part` leftover is harmless (never mistaken

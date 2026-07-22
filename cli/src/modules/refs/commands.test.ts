@@ -6,10 +6,25 @@ import { dirname, join } from "node:path";
 import { REFERENCE_DATA_CATALOG_VERSION, UnknownReferenceDatasetError, type ReferenceDataCatalog } from "@inflexa-ai/harness";
 import { err, ok } from "neverthrow";
 
+// Side-effect import: the command actions render byte counts through Number.prototype.formatBytes,
+// which only exists once the extension loader has run.
+import "../../extensions/index.ts";
 import { env } from "../../lib/env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
-import { downloadReferences, formatReferenceBytes, parseReferenceIds, runReferenceSetup, runRefsList, runRefsVerify } from "./commands.ts";
-import { referenceStorePaths, type ReferenceCatalogSource } from "./store.ts";
+import {
+    ON_DEMAND_REFERENCE_NOTE,
+    createReferenceDownloadProgress,
+    downloadReferences,
+    offeredReferenceCatalog,
+    parseReferenceIds,
+    resolveReferencePreset,
+    runReferenceSetup,
+    runRefsList,
+    runRefsVerify,
+    type ReferenceProgressSink,
+    type ReferenceProgressSnapshot,
+} from "./commands.ts";
+import { inspectReferenceStore, referenceStorePaths, type ReferenceCatalogSource } from "./store.ts";
 
 function sha(bytes: string): string {
     return createHash("sha256").update(bytes).digest("hex");
@@ -108,9 +123,8 @@ afterEach(() => {
 });
 
 describe("reference command policy", () => {
-    test("parses stable selections and human-readable sizes", () => {
+    test("parses stable selections", () => {
         expect(parseReferenceIds("demo, other, demo")).toEqual(["demo", "other"]);
-        expect(formatReferenceBytes(1024)).toBe("1.0 KiB");
     });
 
     test("headless downloads require ids and explicit consent before mutation", async () => {
@@ -356,5 +370,172 @@ describe("reference json output", () => {
         const second = await capture(() => runRefsVerify([], { json: true, source: singleFileSource }));
         expect(second.stdout).toBe(first.stdout);
         expect(first.stdout.length).toBeGreaterThan(0);
+    });
+});
+
+/** A multi-dataset offer with mixed recommendations — the shape a preset actually resolves against. */
+function presetCatalog(recommended: readonly string[]): ReferenceDataCatalog {
+    const base = catalog([FILE_ARTIFACT]).datasets[0];
+    if (base === undefined) throw new Error("fixture catalog lost its dataset");
+    return {
+        version: REFERENCE_DATA_CATALOG_VERSION,
+        datasets: ["alpha", "beta", "gamma"].map((id) => ({
+            ...base,
+            id,
+            title: id,
+            recommendation: { group: "testing", recommended: recommended.includes(id) },
+        })),
+    };
+}
+
+/** A picker that never opens — every preset except `custom` must resolve without one. */
+const unusedPicker = async (): Promise<readonly string[]> => {
+    throw new Error("the per-dataset picker must not open for this preset");
+};
+
+describe("reference selection presets", () => {
+    test("each preset resolves against the offered datasets", async () => {
+        const offered = presetCatalog(["alpha", "gamma"]);
+        expect(await resolveReferencePreset("all", offered, { pick: unusedPicker })).toEqual(["alpha", "beta", "gamma"]);
+        expect(await resolveReferencePreset("recommended", offered, { pick: unusedPicker })).toEqual(["alpha", "gamma"]);
+        expect(await resolveReferencePreset("none", offered, { pick: unusedPicker, announce: () => {} })).toEqual([]);
+    });
+
+    test("the recommended preset resolves to nothing rather than widening when none are recommended", async () => {
+        const offered = presetCatalog([]);
+        const announced: string[] = [];
+        expect(await resolveReferencePreset("recommended", offered, { pick: unusedPicker, announce: (m) => announced.push(m) })).toEqual([]);
+        // Silently installing all three would be the tempting fallback and the wrong one — a preset
+        // must never plan more than its name says.
+        expect(announced).toEqual([ON_DEMAND_REFERENCE_NOTE]);
+    });
+
+    test("the per-dataset escape opens only for the custom preset and passes its selection through", async () => {
+        const offered = presetCatalog(["alpha"]);
+        expect(await resolveReferencePreset("custom", offered, { pick: async () => ["beta"] })).toEqual(["beta"]);
+    });
+
+    test("a cancelled picker declines, which is distinct from picking nothing", async () => {
+        const offered = presetCatalog(["alpha"]);
+        const announced: string[] = [];
+        const cancelled = await resolveReferencePreset("custom", offered, { pick: async () => undefined, announce: (m) => announced.push(m) });
+        expect(cancelled).toBeUndefined();
+        // A cancellation is not an answer to "how do I get one later?", so it says nothing.
+        expect(announced).toEqual([]);
+
+        const emptied = await resolveReferencePreset("custom", offered, { pick: async () => [], announce: (m) => announced.push(m) });
+        expect(emptied).toEqual([]);
+        expect(announced).toEqual([ON_DEMAND_REFERENCE_NOTE]);
+    });
+
+    test("the take-nothing note names both routes to a later download", () => {
+        expect(ON_DEMAND_REFERENCE_NOTE).toContain("inflexa refs download");
+        // The agent route is only honest because `refs download` is registered `approval`, so the
+        // agent proposes the command and the user approves it — the note must promise exactly that.
+        expect(ON_DEMAND_REFERENCE_NOTE).toContain("agent");
+        expect(ON_DEMAND_REFERENCE_NOTE).toContain("approve");
+    });
+
+    test("setup offers only what is missing, so an intact dataset is outside every preset", async () => {
+        seedIntactInstall();
+        const fixture = singleFileSource.catalog;
+        const inspection = (await inspectReferenceStore(env.refsDir, fixture))._unsafeUnwrap();
+        expect(inspection.datasets[0]?.state).toBe("installed");
+
+        const offered = offeredReferenceCatalog(fixture, inspection);
+        expect(offered.datasets).toEqual([]);
+        // "Everything" over an intact store plans nothing rather than re-fetching what is already there.
+        expect(await resolveReferencePreset("all", offered, { pick: unusedPicker, announce: () => {} })).toEqual([]);
+    });
+});
+
+/** Records what a readout would paint, so the rendered strings can be asserted without a terminal. */
+function recordingSink(): { readonly sink: ReferenceProgressSink; readonly snapshots: ReferenceProgressSnapshot[]; readonly failures: (string | undefined)[] } {
+    const snapshots: ReferenceProgressSnapshot[] = [];
+    const failures: (string | undefined)[] = [];
+    return {
+        snapshots,
+        failures,
+        sink: {
+            start: (snapshot) => snapshots.push(snapshot),
+            refresh: (snapshot) => snapshots.push(snapshot),
+            advance: (snapshot) => snapshots.push(snapshot),
+            finish: (snapshot, failure) => {
+                snapshots.push(snapshot);
+                failures.push(failure);
+            },
+        },
+    };
+}
+
+describe("combined download progress", () => {
+    test("a plan that fetches nothing gets no readout at all", () => {
+        expect(createReferenceDownloadProgress(0)).toBeUndefined();
+        expect(createReferenceDownloadProgress(-1)).toBeUndefined();
+        expect(createReferenceDownloadProgress(NaN)).toBeUndefined();
+    });
+
+    test("the readout counts files and accumulates measured bytes", () => {
+        const { sink, snapshots } = recordingSink();
+        const readout = createReferenceDownloadProgress(2, sink);
+        if (readout === undefined) throw new Error("a two-artifact plan must produce a readout");
+
+        readout.report({ type: "artifact_started", datasetId: "demo", path: "a.txt", declaredBytes: 2048 });
+        readout.report({ type: "artifact_bytes", bytes: 2048 });
+        readout.report({ type: "artifact_completed", datasetId: "demo", path: "a.txt", bytes: 2048 });
+        readout.finish();
+
+        expect(snapshots[0]?.line).toBe("0/2 files · 0 B");
+        const last = snapshots[snapshots.length - 1];
+        expect(last?.line).toBe("1/2 files · 2.0 KB");
+        expect(last?.completed).toBe(1);
+        expect(last?.path).toBe("a.txt");
+    });
+
+    test("the completed count saturates at the planned total when a transfer outruns its estimate", () => {
+        const { sink, snapshots } = recordingSink();
+        const readout = createReferenceDownloadProgress(1, sink);
+        if (readout === undefined) throw new Error("a one-artifact plan must produce a readout");
+
+        readout.report({ type: "artifact_completed", datasetId: "demo", path: "a.txt", bytes: 10 });
+        readout.report({ type: "artifact_completed", datasetId: "demo", path: "b.txt", bytes: 10 });
+        readout.finish();
+
+        expect(snapshots.map((snapshot) => snapshot.completed)).toEqual([0, 1, 1, 1]);
+        expect(snapshots[snapshots.length - 1]?.line).toContain("1/1 files");
+    });
+
+    test("no rate is stated before the sample window can support one", () => {
+        const { sink, snapshots } = recordingSink();
+        const readout = createReferenceDownloadProgress(1, sink);
+        if (readout === undefined) throw new Error("a one-artifact plan must produce a readout");
+
+        // Every event lands within the same instant, so no window has accumulated: the rate segment
+        // must be absent rather than rendered from a division by ~zero.
+        readout.report({ type: "artifact_bytes", bytes: 5_000_000 });
+        readout.report({ type: "artifact_completed", datasetId: "demo", path: "a.txt", bytes: 5_000_000 });
+        readout.finish();
+        expect(snapshots.every((snapshot) => !snapshot.line.includes("/s"))).toBe(true);
+    });
+
+    test("nothing in the readout is a fabricated total", () => {
+        const { sink, snapshots } = recordingSink();
+        const readout = createReferenceDownloadProgress(3, sink);
+        if (readout === undefined) throw new Error("a three-artifact plan must produce a readout");
+
+        readout.report({ type: "artifact_started", datasetId: "demo", path: "a.txt" });
+        readout.report({ type: "artifact_bytes", bytes: 1234 });
+        readout.report({ type: "artifact_completed", datasetId: "demo", path: "a.txt", bytes: 1234 });
+        readout.finish("upstream refused the connection");
+
+        // The catalog pins no sizes, so a percentage of bytes, an ETA, or a total-size denominator
+        // would all be invented. The file count is the only denominator that is real.
+        for (const { line } of snapshots) {
+            expect(line).not.toContain("%");
+            expect(line).not.toContain("ETA");
+            expect(line).not.toContain("NaN");
+            expect(line).not.toContain("Infinity");
+            expect(line).not.toContain("/3 files ·  of ");
+        }
     });
 });
