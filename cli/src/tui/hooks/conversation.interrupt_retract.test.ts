@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
-import type { DbError } from "@inflexa-ai/harness";
+import type { DbError, MessagePage } from "@inflexa-ai/harness";
 
 import {
+    abort,
     armInterrupt,
     canRetract,
+    type CortexMsg,
     errorMsg,
     interruptArmed,
+    loadMessages,
+    type LoadSeams,
     messages,
     resetHotState,
     retract,
@@ -137,6 +141,38 @@ describe("canRetract gates the retract window", () => {
 });
 
 describe("retract during the no-output window", () => {
+    test("a clean retract splices, removes the thread orphan, and seeds the composer", async () => {
+        // The nominal no-output retract: a busy turn that produced nothing is taken back before any output.
+        // The live store is spliced back to empty (no user/assistant remnants), the durable tail removal
+        // runs exactly once and SUCCEEDS, the composer is re-seeded with the original text, and the chat
+        // returns to idle — raising no notice of its own (only the downgrade/fault paths notify). The
+        // notice singleton is not cleared between cases, so we assert the retract left whatever was showing
+        // untouched rather than asserting an absolute null a prior case could have populated.
+        const noticeBefore = currentNotice();
+        const { sendP, release } = startBusyTurn({ kind: "aborted" });
+        expect(canRetract()).toBe(true);
+
+        const seed = seedCell();
+        let durableCalls = 0;
+        const retractSeams: RetractSeams = {
+            runtime: () => stubRuntime,
+            retractTurn: () => {
+                durableCalls++;
+                return okAsync({ kind: "retracted" as const, messages: 2 });
+            },
+        };
+        const retractP = retract(seed.set, retractSeams);
+        release();
+        await retractP;
+        await sendP;
+
+        expect(messages.length).toBe(0);
+        expect(durableCalls).toBe(1);
+        expect(seed.get()).toBe("original text");
+        expect(chatStatus()).toBe("idle");
+        expect(currentNotice()).toBe(noticeBefore);
+    });
+
     test("a delta racing the abort settlement downgrades to a plain interrupt", async () => {
         // The engine aborts, but a delta lands AFTER the retract fired the abort and BEFORE the turn
         // settles — so the re-validation sees produced output and keeps the message.
@@ -304,16 +340,24 @@ describe("retract during the no-output window", () => {
 });
 
 describe("the interrupt arm window", () => {
-    // The precise 5-second lapse (INTERRUPT_ARM_WINDOW_MS) is NOT asserted here: armInterrupt's timer is a
-    // hardcoded constant with no injection seam and no `durationMs` parameter (unlike notify's), the suite
-    // has no fake-timer pattern to borrow, and a real >5s wait would exceed bun's default per-test timeout.
-    // The observable window-close paths — a turn ending and a session swap — ARE covered.
+    // The production 5-second lapse (INTERRUPT_ARM_WINDOW_MS) is never waited out — a real >5s wait would
+    // exceed bun's default per-test timeout. The expiry PATH is exercised instead through armInterrupt's
+    // window override (a 1ms window), and the other window-close paths — a turn ending, the abort firing,
+    // and a session swap — are covered directly below.
     test("armInterrupt arms the window; a re-arm keeps it armed", () => {
         expect(interruptArmed()).toBe(false);
         armInterrupt();
         expect(interruptArmed()).toBe(true);
         armInterrupt(); // a fresh press refreshes the window
         expect(interruptArmed()).toBe(true);
+    });
+
+    test("the armed window lapses to disarmed when its timer elapses", async () => {
+        armInterrupt(1); // a 1ms window (the override) instead of the 5s production default
+        expect(interruptArmed()).toBe(true);
+        await new Promise((r) => setTimeout(r, 10));
+        // The `.unref`'d timer still fires while the loop is alive, flipping the window closed on its own.
+        expect(interruptArmed()).toBe(false);
     });
 
     test("resetHotState disarms an armed window", () => {
@@ -331,6 +375,18 @@ describe("the interrupt arm window", () => {
         await sendP;
         // finishTurn disarms, so the armed window never carries into idle or the next turn.
         expect(interruptArmed()).toBe(false);
+    });
+
+    test("firing the abort disarms the armed window immediately", async () => {
+        // The second interrupt press fires `abort`, and there is nothing left to interrupt — so the window
+        // disarms on the abort path itself, not only later when the engine's unwind reaches finishTurn.
+        const { sendP, release } = startBusyTurn({ kind: "aborted" });
+        armInterrupt();
+        expect(interruptArmed()).toBe(true);
+        abort();
+        expect(interruptArmed()).toBe(false);
+        release();
+        await sendP;
     });
 });
 
@@ -358,6 +414,55 @@ describe("the interrupted marker on an aborted turn", () => {
         expect(messages.length).toBe(1);
         expect(messages[0]?.role).toBe("user");
         expect(messages.some((m) => m.interrupted)).toBe(false);
+        expect(chatStatus()).toBe("idle");
+    });
+});
+
+// The retract is a first-class store writer (it claims the generation token), so it must supersede a
+// transcript load the same way `send` does — mirrors the load-vs-turn interleaving in conversation.test.ts.
+describe("a transcript load resolving mid-retract", () => {
+    const emptyPage = (total: number): MessagePage => ({ messages: [], total, page: 0, perPage: 200, hasMore: false });
+    // A stale reload the dropped load WOULD have mounted — present so a failure to drop would be visible as
+    // a resurrected message rather than merely an empty store that happened to stay empty.
+    const staleCortex = (): CortexMsg[] => [{ id: "stale", role: "assistant", parts: [{ type: "text", text: "stale-transcript" }] }] as unknown as CortexMsg[];
+
+    test("a load parked mid-retract drops and never resurrects the spliced-away turn", async () => {
+        // A transcript load parks at its page read while a retract runs to completion. The retract claims a
+        // newer store-write token, so when the parked load finally resolves it detects the newer generation
+        // and drops — the spliced-empty store is never repopulated with the history the load would mount.
+        let releaseLoad!: () => void;
+        const loadGate = new Promise<void>((r) => {
+            releaseLoad = r;
+        });
+        const loadSeams: LoadSeams = {
+            runtime: () => stubRuntime,
+            loadPage: () => ResultAsync.fromSafePromise(loadGate.then(() => emptyPage(1))),
+            toCortex: async () => staleCortex(),
+        };
+        const load = loadMessages(SID, AID, loadSeams); // parks at its page read
+
+        const { sendP, release } = startBusyTurn({ kind: "aborted" });
+        expect(canRetract()).toBe(true);
+
+        const seed = seedCell();
+        const retractSeams: RetractSeams = {
+            runtime: () => stubRuntime,
+            retractTurn: () => okAsync({ kind: "retracted" as const, messages: 2 }),
+        };
+        const retractP = retract(seed.set, retractSeams);
+        release();
+        await retractP;
+        await sendP;
+
+        // The retract spliced the turn away — the store is empty and the composer holds the original text.
+        expect(messages.length).toBe(0);
+        expect(seed.get()).toBe("original text");
+
+        releaseLoad();
+        await load;
+
+        // The parked load was superseded by the retract's token and dropped: nothing resurrected.
+        expect(messages.length).toBe(0);
         expect(chatStatus()).toBe("idle");
     });
 });
