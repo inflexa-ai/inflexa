@@ -8,7 +8,7 @@ import type { Pool } from "pg";
 import { withSchema } from "../__tests__/setup/postgres.js";
 import { insertPlan } from "../state/plans.js";
 import { insertRun } from "../state/runs.js";
-import { envelopeMessage, markInterruptedMessage } from "./ai-sdk-message-storage.js";
+import { envelopeMessage, markInterruptedMessage, syntheticUserMessage } from "./ai-sdk-message-storage.js";
 import { contentToCortexMessages } from "./content-to-cortex.js";
 import { createCardResolver } from "./reconstruct-cards.js";
 import { createThreadHistory, type StoredMessage, type ThreadHistory } from "./thread-history.js";
@@ -135,6 +135,25 @@ describe("contentToCortexMessages", () => {
             { id: "0", role: "user", parts: [{ type: "text", text: "first question" }] },
             { id: "1", role: "user", parts: [{ type: "text", text: "second question" }] },
         ]);
+    });
+
+    it("skips the loop's truncation nudge so it never renders, coalescing the surrounding assistant rows", async () => {
+        // The nudge continues a reply truncated at the output-token limit. It carries
+        // the `user` role only for the wire, so it must not become a user bubble; the
+        // assistant rows around it become adjacent and fold into one message.
+        const cortex = await contentToCortexMessages([
+            stored(0, { role: "assistant", content: [{ type: "text", text: "first half" }] }),
+            stored(1, syntheticUserMessage("Continue.")),
+            stored(2, { role: "assistant", content: [{ type: "text", text: "second half" }] }),
+        ]);
+
+        expect(cortex).toHaveLength(1);
+        expect(cortex[0]!.role).toBe("assistant");
+        expect(cortex[0]!.parts).toEqual([
+            { type: "text", text: "first half" },
+            { type: "text", text: "second half" },
+        ]);
+        expect(cortex.some((m) => m.role === "user")).toBe(false);
     });
 
     it("sets interrupted:true on a coalesced assistant run when any row carries the marker", async () => {
