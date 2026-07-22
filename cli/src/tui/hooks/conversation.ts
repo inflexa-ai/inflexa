@@ -47,10 +47,12 @@ export type UIMessage = {
     /** Assistant-only turn duration in ms, set when the turn finishes; undefined otherwise. */
     durationMs?: number;
     /**
-     * Live-only marker: an aborted turn streamed output into this assistant message before the user
-     * interrupted it. Set on an interrupted turn that produced content (a message block renders a muted
-     * "interrupted" suffix); never set on a no-output abort (that empty shell is dropped instead), and
-     * never persisted — an aborted turn stores no assistant message, so a reload never carries it.
+     * Marker for an aborted turn that streamed output into this assistant message before the user
+     * interrupted it: a message block renders a muted "interrupted" suffix. Set on an interrupted turn
+     * that produced content; never set on a no-output abort (that empty shell is dropped, and an abort
+     * persists no assistant row, so there is nothing to mark). Two sources feed one flag: the live abort
+     * path sets it directly, and a transcript reload re-derives it from the persisted message's
+     * `interrupted` field — so a restarted app renders the same marker the live view showed.
      */
     interrupted?: boolean;
 };
@@ -634,10 +636,12 @@ function dropEmptyAssistant(assistantId: string): void {
 }
 
 /**
- * Flag the assistant message an aborted turn streamed output into as `interrupted` — a live-only
- * marker a message block renders as a muted suffix. Only ever called for an aborted turn that produced
- * content (a no-output abort drops the shell instead), so the flag never rides an empty message. A
- * fresh field write via `produce` so Solid reconciles the edit; no-op if the message is gone.
+ * Flag the assistant message an aborted turn streamed output into as `interrupted` — the muted marker
+ * a message block renders as a suffix. This is the live abort path's write; a transcript reload derives
+ * the same flag from the persisted message, so both surfaces render one marker. Only ever called for an
+ * aborted turn that produced content (a no-output abort drops the shell instead), so the flag never
+ * rides an empty message. A fresh field write via `produce` so Solid reconciles the edit; no-op if the
+ * message is gone.
  */
 function markInterrupted(assistantId: string): void {
     setMessages(
@@ -741,9 +745,9 @@ function finishTurn(outcome: TurnOutcome, assistantId: string, startedAt: number
             return;
         case "aborted":
             // An aborted turn that produced nothing leaves NO empty assistant shell — the user message
-            // alone stands, matching the reload (an abort persists no assistant message). One that
-            // streamed output flushes it and carries a live-only `interrupted` marker. Either way
-            // `aborted` returns to idle with no error banner — the user cancelled, not a failure.
+            // alone stands, matching the reload (an abort persists no assistant row). One that streamed
+            // output flushes it and carries the `interrupted` marker. Either way `aborted` returns to
+            // idle with no error banner — the user cancelled, not a failure.
             if (isEmptyAssistantShell(assistantId)) {
                 dropEmptyAssistant(assistantId);
             } else {
@@ -794,7 +798,8 @@ export type CortexMsg = Awaited<ReturnType<typeof contentToCortexMessages>>[numb
  * the SAME readers the live adapter uses; anything else the harness resolver kept → a visible tagged
  * mention. The harness resolver already dropped what the UI does not render (reasoning, tool
  * results). Card parts are FLAT on the reconstructed part, and the readers narrow off any object, so
- * the part is passed straight through.
+ * the part is passed straight through. A persisted `interrupted` marker re-derives the same live flag
+ * so a reloaded transcript renders exactly what the live abort showed.
  */
 export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = ""): UIMessage {
     // TODO(extend): content-fidelity gap, deliberately deferred. Any non-user role collapses onto
@@ -855,7 +860,9 @@ export function cortexToUiMessage(m: CortexMsg, sessionId: string, analysisId = 
                 break;
         }
     }
-    return { id: m.id, role, parts };
+    // Re-derive the live abort flag from the durable field, set only when true (matching the live path,
+    // which leaves it absent otherwise) — so a restarted app renders the muted marker the live view showed.
+    return { id: m.id, role, parts, ...(m.interrupted === true ? { interrupted: true } : {}) };
 }
 
 /**

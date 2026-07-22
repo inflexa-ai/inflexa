@@ -13,6 +13,7 @@ const THREAD_ID = "t-1";
 const USER_INPUT = "hello";
 const userMessage: ModelMessage = { role: "user", content: USER_INPUT };
 const assistantMessage: ModelMessage = { role: "assistant", content: "the answer" };
+const partialAssistant: ModelMessage = { role: "assistant", content: "the ans" };
 const conversationAgent: AgentDefinition = { id: "conv", systemPrompt: "", model: "m", tools: [], maxIterations: 1 };
 const session = buildChatSession("cli-chat", ANALYSIS_ID, THREAD_ID);
 const noopEmit: EmitFn = () => {};
@@ -31,6 +32,15 @@ const prepareNotFound: ChatTurnSeams["prepare"] = () => Promise.resolve({ kind: 
 /** A `run` seam that finishes cleanly, appending one assistant message to the loop. */
 const runOk: ChatTurnSeams["run"] = (_agent, initial) =>
     Promise.resolve({ messages: [...initial, assistantMessage], finish: { reason: "stop", cappedOut: false, truncationRecoveries: 0 } });
+/**
+ * A `run` seam that RESOLVES an interrupted turn: the streaming wrapper surfaces the abort as a
+ * resolved "aborted" finish carrying the partial loop output (here one partial assistant message).
+ */
+const runResolvesAbortedWithPartial: ChatTurnSeams["run"] = (_agent, initial) =>
+    Promise.resolve({ messages: [...initial, partialAssistant], finish: { reason: "aborted", cappedOut: false, truncationRecoveries: 0 } });
+/** A `run` seam that resolves an "aborted" finish whose loop output is empty (nothing streamed before the abort). */
+const runResolvesAbortedEmpty: ChatTurnSeams["run"] = (_agent, initial) =>
+    Promise.resolve({ messages: [...initial], finish: { reason: "aborted", cappedOut: false, truncationRecoveries: 0 } });
 /**
  * A `run` seam that throws the AbortError the streaming provider re-throws verbatim on cancellation
  * (name "AbortError"). The abort classification keys on the error's NAME, not merely on `signal.aborted`.
@@ -101,13 +111,31 @@ describe("runChatTurn", () => {
         expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage, assistantMessage] }]);
     });
 
+    test("a resolved aborted finish persists [userMessage, ...partial] and returns aborted", async () => {
+        // The interrupted run resolves with its partial transcript, so the success arm branches on
+        // `finish.reason` — not on `signal.aborted` (the signal is left unaborted here to prove that).
+        const { history, appended } = recordingHistory();
+        const outcome = await runWith({ prepare: prepareOk, run: runResolvesAbortedWithPartial, history, signal: new AbortController().signal });
+        expect(outcome.kind).toBe("aborted");
+        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage, partialAssistant] }]);
+    });
+
+    test("a resolved aborted finish with an empty partial persists [userMessage] alone", async () => {
+        const { history, appended } = recordingHistory();
+        const outcome = await runWith({ prepare: prepareOk, run: runResolvesAbortedEmpty, history, signal: new AbortController().signal });
+        expect(outcome.kind).toBe("aborted");
+        // No loop output beyond `initial`, so the slice is empty and only the user turn is persisted.
+        expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage] }]);
+    });
+
     test("an AbortError under an aborted signal persists [userMessage] only and returns aborted", async () => {
+        // The DEFENSIVE path: the abort escaped as a throw before the streaming wrapper could resolve an
+        // "aborted" finish, so no partial array is available and only the user turn survives.
         const { history, appended } = recordingHistory();
         const controller = new AbortController();
         controller.abort();
         const outcome = await runWith({ prepare: prepareOk, run: runAborts, history, signal: controller.signal });
         expect(outcome.kind).toBe("aborted");
-        // `runAgent` throws before returning its array, so only the user turn survives.
         expect(appended).toEqual([{ threadId: THREAD_ID, messages: [userMessage] }]);
     });
 
