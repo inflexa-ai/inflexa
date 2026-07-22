@@ -97,10 +97,12 @@ export async function runChat(flags: ContextFlags, threadRef: string | undefined
     await ensureSandboxImage(cfg.sandboxImage);
 
     // Claim the per-analysis lock before boot, so this analysis stays
-    // single-process for the whole chat — the interim two-recorder fix of #37,
-    // the same guard the TUI takes on open. Acquired after the fail-fast pre-flight
-    // and before the runtime boots; the process-exit hook (src/index.ts) releases
-    // it on every exit, so a bail-out below leaks nothing.
+    // single-process for the whole chat — a coarse guard so only one provenance
+    // recorder writes this analysis's PROV document; two concurrent recorders (one
+    // per process) would each persist to `analyses.provenance` and clobber the
+    // other last-write-wins. The same guard the TUI takes on open. Acquired after
+    // the fail-fast pre-flight and before the runtime boots; the process-exit hook
+    // (src/index.ts) releases it on every exit, so a bail-out below leaks nothing.
     const lock = acquireInstanceLock(analysis.id);
     if (!lock.acquired) {
         fail(`"${analysis.name}" is already open in another instance (pid ${lock.holderPid}). Wait for it to finish or stop that process, then re-run.`);
@@ -220,7 +222,7 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
  * prompt keeps clack's own Ctrl+C handling (isCancel → clean exit):
  *
  *   - FIRST SIGINT: abort the turn. `runChatTurn` sees the aborted signal, returns
- *     an `aborted` outcome (having persisted `[userMessage]`), and we return
+ *     an `aborted` outcome (having persisted `[userMessage, ...partial]`), and we return
  *     `"continue"` — back to the prompt.
  *   - SECOND SIGINT (while the first is still unwinding): flag `forceStop` and do
  *     nothing else. We deliberately do NOT call `shutdown()` from the handler:
@@ -236,9 +238,10 @@ async function runRepl(runtime: HarnessRuntime, analysisId: string, threadId: st
  * out of scope here.
  *
  * Outcome mapping renders the shared engine contract — kept in lockstep with the TUI so both surfaces describe the same outcome identically. The engine persists
- * `[userMessage, ...loopOutput]` on a clean turn and `[userMessage]` on abort/throw,
- * surfacing any `appendTurn` fault as `outcome.appendError` — reported here on every
- * `runAgent`-reaching branch.
+ * `[userMessage, ...loopOutput]` on a clean turn and `[userMessage, ...partial]` on a
+ * resolved abort; only a thrown failure (or the defensive thrown-abort path) persists
+ * `[userMessage]` alone. Any `appendTurn` fault surfaces as `outcome.appendError` —
+ * reported here on every `runAgent`-reaching branch.
  * On a clean turn the answer already streamed live through `chat`'s onText, so
  * `finishTurn(fallbackText)` suppresses its duplicate final render; the fallback
  * prints only for a turn that produced no deltas at all.

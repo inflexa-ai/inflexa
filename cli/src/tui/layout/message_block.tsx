@@ -28,8 +28,10 @@ export type MessageBlockProps = {
     durationMs?: number;
     /**
      * Assistant-only: the turn was interrupted after it had streamed output, so the header carries a muted
-     * "interrupted" marker. A live-only flag (an aborted turn persists no assistant message), never set on
-     * a user turn or on a no-output abort (that empty shell is dropped rather than marked).
+     * "interrupted" marker. Two sources feed one flag — the live abort path sets it directly, and a
+     * transcript reload re-derives it from the persisted message's `interrupted` marker, so a restarted app
+     * renders the same marker the live view showed. Never set on a user turn; a no-output abort has no
+     * assistant message to carry it (that empty shell is dropped rather than marked).
      */
     interrupted?: boolean;
     /** The turn's parts (text, tool-call, plan-card, run-card, plus the mock thinking/file-edit kinds). */
