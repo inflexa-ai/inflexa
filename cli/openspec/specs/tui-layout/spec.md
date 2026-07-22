@@ -47,6 +47,8 @@ There SHALL be NO sticky run-progress row in the chat column: live run progress 
 
 The chat's INSERT/NORMAL modality SHALL be modeled purely by focus — there SHALL be no state in which no widget is focused. In INSERT mode the `ChatBar` textarea is focused; `esc` SHALL move focus to the stream's `ScrollPane` (NORMAL mode — the pane's scroll keys become live via its focus-target gating). In NORMAL mode, `i` and enter SHALL refocus the textarea (a chat-side layer gated by `target:` the scroll pane); `esc` while the pane is focused SHALL be a no-op (it MUST NOT blur into a nothing-focused state). The `ChatBar` footer's mode word continues to derive from the textarea's own focused/blurred events and needs no extra wiring.
 
+Entering INSERT SHALL remain a deliberate act; the app SHALL move focus automatically in exactly two places. An ACCEPTED submit — one that reaches the conversation send — SHALL focus the stream pane, so the resting state of a running turn is NORMAL, where the interrupt, retract, and scroll affordances live; a refused submit (busy, booting, no analysis open) SHALL keep focus and the typed text where they are. A completed retract SHALL focus the composer along with its seeded text (cursor at end); a retract that downgrades or declines its seed SHALL NOT move focus. Turn completion SHALL move focus nowhere — an async event must never steal focus from a user who is scrolling.
+
 Because focus is always on some widget, the dialog host's focus save/restore SHALL be uniform: capture the focused renderable when the first dialog opens, restore it (verifying it is still in the tree) when the last closes. The `fallbackFocus` prop and its null-restore branch SHALL NOT exist — there is no nothing-focused case to fall back from.
 
 #### Scenario: Esc enters NORMAL by focusing the pane
@@ -59,20 +61,26 @@ Because focus is always on some widget, the dialog host's focus save/restore SHA
 - **WHEN** the scroll pane is focused and the user presses `i` (or enter)
 - **THEN** the textarea regains focus, the footer shows `INSERT`, and typed letters insert text again
 
-#### Scenario: Esc in NORMAL is a no-op
+#### Scenario: Esc in NORMAL stays put
 
 - **WHEN** the scroll pane is focused and the user presses `esc`
 - **THEN** focus stays on the pane; no widget is blurred into a nothing-focused state
 
-#### Scenario: Dialog restore returns focus to the NORMAL-mode pane
+#### Scenario: An accepted submit lands in NORMAL
 
-- **WHEN** a dialog opens while the scroll pane is focused and is later closed
-- **THEN** the dialog host restores focus to the scroll pane (no fallback branch involved), and scroll keys are live again
+- **WHEN** the user submits a message that the send accepts
+- **THEN** the composer clears, focus moves to the stream pane, the footer shows `NORMAL`, and two esc presses interrupt the now-running turn
 
-#### Scenario: No fallbackFocus machinery
+#### Scenario: A refused submit keeps INSERT and the text
 
-- **WHEN** `dialog_host.tsx` is read
-- **THEN** it exposes no `fallbackFocus` prop and contains no null-saved-focus fallback path
+- **WHEN** the user submits while the turn is busy (or the runtime is booting)
+- **THEN** focus stays on the composer and the typed text remains in the buffer
+
+#### Scenario: Turn completion steals no focus
+
+- **WHEN** a turn finishes while the user is scrolling the stream in NORMAL mode
+- **THEN** focus stays on the pane and the next scroll key scrolls — nothing is typed into the composer
+
 
 ### Requirement: Persistent status bar
 
@@ -80,7 +88,7 @@ Because focus is always on some widget, the dialog host's focus save/restore SHA
 
 The chat's `StatusBar` SHALL additionally accept an OPTIONAL workspace-path segment, rendered as a muted ` | <path>` segment immediately after the state segment — part of the left-flowing segments, NOT the right-aligned hints region. `app.tsx` SHALL pass it only when the terminal width is at or above the design-system breakpoint token (`size.breakpointWide`), sourcing the value from the workspace store's `workingDir` with the home directory contracted to `~`; below the breakpoint the prop is absent and the path renders in the sidebar instead (see the sidebar requirement). `StatusBar` itself stays dumb — it renders whatever path string it is given and keeps its no-domain-imports rule.
 
-The chat's right hints region SHALL be state-aware for the interrupt affordance: while a turn is busy AND the interrupt binding is reachable it SHALL include the interrupt hint, and while the interrupt is armed the label SHALL flip to its "again to interrupt" form with a visually distinct (accent) treatment. Reachable means the stream pane holds focus — so the hint SHALL be absent whenever focus sits elsewhere while the turn runs: the composer (INSERT), a stacked dialog, or a docked approval prompt, each of which owns the chord for its own purpose. When idle, no interrupt hint renders. A hint promising a press the focused layer would consume is worse than none, and the abort-chord hint still covers those states. The label SHALL derive from the live `app.interrupt` binding (`chordLabel`, never hand-written), and both the label and the armed state SHALL arrive from `app.tsx` as data — `StatusBar` keeps its no-domain-imports rule.
+The status bar SHALL NOT render the interrupt hint: that affordance is mode-scoped and lives in the input-bar footer beside the mode word it depends on (see "Input bar footer shows mode info and mode-scoped hints"). The status bar carries no state-aware turn affordances.
 
 #### Scenario: Shows analysis name and live state
 
@@ -107,25 +115,11 @@ The chat's right hints region SHALL be state-aware for the interrupt affordance:
 - **WHEN** the chat renders on a terminal below `size.breakpointWide` columns
 - **THEN** the status bar shows no path segment (the sidebar carries the path)
 
-#### Scenario: Busy shows the interrupt hint
+#### Scenario: No interrupt hint in the header
 
-- **WHEN** a turn is streaming in NORMAL mode and the interrupt is not armed
-- **THEN** the right hints region shows the interrupt hint labeled from the live binding
+- **WHEN** a turn is streaming in NORMAL mode
+- **THEN** the status bar's right hints region shows no interrupt hint — the input-bar footer carries it
 
-#### Scenario: The composer keeps the hint honest
-
-- **WHEN** a turn is streaming while the composer holds focus (INSERT)
-- **THEN** no interrupt hint renders (the abort-chord hint still shows)
-
-#### Scenario: A stacked dialog or docked ask keeps the hint honest
-
-- **WHEN** a turn is streaming while a dialog is open or an approval prompt is docked
-- **THEN** no interrupt hint renders, because that surface owns the chord
-
-#### Scenario: Arming flips the hint
-
-- **WHEN** the user presses esc in the chat's NORMAL mode during a turn
-- **THEN** the hint flips to its "again to interrupt" form for the armed window, then reverts when the window lapses or the turn ends
 
 ### Requirement: Fixed-gutter message block
 
@@ -256,29 +250,45 @@ The chat's live status (`idle`/`busy`/`error`) SHALL be held in a shared reactiv
 - **WHEN** the chat is ready / busy / error
 - **THEN** the status bar's middle region shows a leading glyph before the state text (e.g. `● ready`)
 
-### Requirement: Input bar footer shows session/mode info, not keybinds
+### Requirement: Input bar footer shows mode info and mode-scoped hints
 
-`ChatBar` (renamed from `InputBar`, in `layout/chat_bar.tsx`) SHALL compose the shared `TextArea` component with `chrome="full"` and the `Type a message…` placeholder (via `GLYPHS.ellipsis`), and render a single external footer row below the bordered textarea. The footer row SHALL show the mode word on the left (`INSERT` when the textarea is focused, `NORMAL` when blurred — with `NORMAL` rendered in bold with the accent color and the row given a `bgActive` background) and the newline chord hint on the right (`ctrl+j newline`). Global keybind hints SHALL NOT be duplicated in this footer: the command-palette, sidebar-toggle, and abort key hints live ONLY in the status bar, so the header and the input footer never repeat the same keys.
+`ChatBar` SHALL compose the shared `TextArea` component with `chrome="full"` and the `Type a message…` placeholder (via `GLYPHS.ellipsis`), and render a single external footer row below the bordered textarea. The footer row SHALL show the mode word on the left (`INSERT` when the textarea is focused, `NORMAL` when blurred — with `NORMAL` rendered in bold with the accent color and the row given a `bgActive` background) and the newline chord hint on the right (`ctrl+j newline`). After the mode word the footer SHALL render the mode-scoped interrupt affordance while a turn is busy: in NORMAL, the interrupt hint labeled from the live `app.interrupt` binding, flipping to its "again to interrupt" form with a visually distinct armed treatment while the window is armed (the armed treatment SHALL remain distinguishable from the accent mode word on the `bgActive` row, on light themes included); in INSERT, the one-press abort-chord hint labeled from the live `app.abort` binding. The hint SHALL be absent when idle, when a dialog is stacked, or when an approval prompt is docked — the same honesty gates as the interrupt binding itself. Labels SHALL derive from the live bindings (`chordLabel`, never hand-written), arriving as data — `ChatBar` keeps its no-domain-imports rule. GLOBAL keybind hints (command-palette, sidebar-toggle, quit) SHALL NOT appear in this footer: they live ONLY in the status bar, so the header and the footer never repeat the same keys — the footer carries only the mode word and what the interrupt keys mean in the current mode.
 
 #### Scenario: ChatBar composes TextArea
 
 - **WHEN** the chat renders the input area
 - **THEN** `ChatBar` renders a `TextArea` with `chrome="full"` for the bordered textarea, plus its own external footer row
 
-#### Scenario: Footer is session/mode info
+#### Scenario: Busy NORMAL shows the esc hint beside the mode word
 
-- **WHEN** the chat renders
-- **THEN** the input footer shows the mode word (left) and newline hint (right), and does NOT show the palette/sidebar/abort key hints
+- **WHEN** a turn is streaming and the pane holds focus (NORMAL, unarmed)
+- **THEN** the footer shows `NORMAL` followed by the interrupt hint labeled from the live binding, and the newline hint stays on the right
+
+#### Scenario: Arming flips the footer hint
+
+- **WHEN** the user presses esc once in NORMAL during a turn
+- **THEN** the footer hint flips to its "again to interrupt" form with the distinct armed treatment for the armed window, then reverts when the window lapses or the turn ends
+
+#### Scenario: Busy INSERT advertises the one-press chord
+
+- **WHEN** a turn is streaming while the composer holds focus (INSERT)
+- **THEN** the footer shows `INSERT` followed by the abort-chord hint (the one-press interrupt that works while typing)
+
+#### Scenario: Idle, dialogs, and asks keep the footer quiet
+
+- **WHEN** no turn is in flight, or a dialog is stacked, or an approval prompt is docked
+- **THEN** the footer shows no interrupt affordance — only the mode word and the newline hint
 
 #### Scenario: Global keys live in the header only
 
-- **WHEN** the user looks for the command-palette / sidebar / abort shortcuts
+- **WHEN** the user looks for the command-palette / sidebar shortcuts
 - **THEN** they appear in the status bar, not duplicated in the input footer
 
 #### Scenario: NORMAL mode has distinct visual treatment
 
 - **WHEN** the textarea is blurred (NORMAL mode)
 - **THEN** the footer row shows `NORMAL` in bold accent color with `bgActive` background, signaling that vim scroll keys are live
+
 
 ### Requirement: Shared gutter marker set
 

@@ -37,9 +37,12 @@ anything.
 ### Requirement: The TUI chat drives the shared turn engine over harness contracts
 
 A submitted message SHALL run one turn of the shared turn engine (`prepareChatTurn → runAgent` with
-the streaming provider wrapper `→ appendTurn`, persisting `[userMessage, …loopOutput]`, or
-`[userMessage]` alone on abort/throw) under a turn-scoped abort signal wired to the existing abort
-chord (dialog-dismiss → abort-turn → quit ordering preserved). The TUI's emit adapter SHALL consume
+the streaming provider wrapper `→ appendTurn`) under a turn-scoped abort signal wired to the existing
+abort chord (dialog-dismiss → abort-turn → quit ordering preserved). On completion the engine SHALL
+persist `[userMessage, …loopOutput]`; on an aborted run — which RESOLVES with `finish.reason:
+"aborted"` and the partial transcript under the harness abort contract — it SHALL persist
+`[userMessage, …partialLoopOutput]`, an empty partial degenerating to `[userMessage]` alone; on a
+thrown failure it SHALL persist `[userMessage]`. The TUI's emit adapter SHALL consume
 the harness `contracts/` vocabulary directly (never the cli bus event shapes): text deltas accumulate
 in the streaming signal and flush into the store on turn completion; `tool-started`/`tool-finished`
 become a live tool part; `data-plan`/`data-run-card` become card parts; any other conversation part
@@ -57,12 +60,13 @@ carry the thread id in scope (chat-launched runs stamp `cortex_runs.thread_id`) 
 #### Scenario: Abort ends the turn, not the app
 
 - **WHEN** the user hits the abort chord during a streaming turn
-- **THEN** the turn's signal aborts, the user message is persisted, the UI returns to idle, and the app stays open
+- **THEN** the turn's signal aborts, the user message and the streamed partial are persisted, the UI returns to idle, and the app stays open
 
 #### Scenario: Sub-agent traffic stays out of the transcript
 
 - **WHEN** an inner agent (planner, literature reviewer) emits deltas or tool events during a turn
 - **THEN** none of them render in the stream
+
 
 ### Requirement: Interrupt is a discoverable, quiet affordance
 
@@ -78,13 +82,20 @@ An interrupted turn SHALL end quietly: whatever streamed stays on screen, the ch
 and no error banner, toast, or turn-failure surface appears — interruption is a user action, not a
 failure. When the interrupted turn streamed output, its assistant message SHALL carry a muted
 "interrupted" marker; when it produced nothing, no empty assistant message SHALL remain and no marker
-SHALL render. The marker is live-only — an aborted turn persists no assistant message, so a transcript
-reload renders only what the thread holds.
+SHALL render. The marker SHALL be durable: the persisted partial carries the harness interruption
+marker, a transcript reload derives the same muted marker from the converted message's `interrupted`
+field, and the reloaded transcript SHALL render what the live view showed — partial text with the
+marker, or no assistant bubble for a no-output abort (which persists no assistant row).
 
 #### Scenario: Double esc interrupts a streaming turn
 
 - **WHEN** a turn is streaming, the chat is the main focus in NORMAL mode, and the user presses esc twice within the window
 - **THEN** the turn aborts, the streamed text stays on screen with the muted interrupted marker, the chat returns to idle, and no error surface appears
+
+#### Scenario: The interrupted reply survives a restart
+
+- **WHEN** a turn is interrupted mid-stream and the app is later restarted (or the session reloaded)
+- **THEN** the transcript shows the partial reply with the muted interrupted marker, and the next turn's model context contains the partial — a follow-up like "continue" can pick up where the cut landed
 
 #### Scenario: The composer's esc switches modes without arming
 
@@ -99,12 +110,13 @@ reload renders only what the thread holds.
 #### Scenario: Interrupting a turn that produced nothing leaves no shell
 
 - **WHEN** a turn is interrupted before any text delta or part arrived
-- **THEN** no empty assistant message and no marker render; the user message remains in the transcript
+- **THEN** no empty assistant message and no marker render; the user message remains in the transcript — live and after reload alike
 
 #### Scenario: Esc while idle is unchanged
 
 - **WHEN** no turn is in flight and the user presses esc anywhere in the chat
 - **THEN** esc behaves exactly as it did before this requirement
+
 
 ### Requirement: The just-sent message can be retracted for editing before any output
 
