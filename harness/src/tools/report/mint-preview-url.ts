@@ -36,10 +36,11 @@ export function createMintPreviewUrlTool(state: MintPreviewUrlToolState): Tool {
     return defineTool({
         id: "mint_preview_url",
         description:
-            "Mint a fresh preview URL for the report. Returns a content-server " +
-            "URL with embedded auth token (15-min TTL). Use this only when you " +
-            "need a URL for direct browser navigation — preview_snapshot handles " +
-            "the common case automatically.",
+            "Mint a fresh preview URL for the report. Returns a time-limited " +
+            "content-server URL with an embedded auth token, alongside the " +
+            "`expiresAt` it is good until. Use this only when you need a URL for " +
+            "direct browser navigation — preview_snapshot handles the common case " +
+            "automatically.",
         inputSchema: z.object({
             version: z.number().optional().describe("Version to mint for. Defaults to the iteration's current version."),
         }),

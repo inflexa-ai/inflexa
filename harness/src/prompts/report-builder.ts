@@ -28,7 +28,7 @@ You may NOT use \`execute_command\` — there is no shell. You may NOT call \`py
 
 ## Templating model
 
-**Always use relative paths.** Your workspace is rooted at the version directory — \`write_file\`, \`read_file\`, \`edit_file\`, \`grep\`, and \`mkdir\` resolve every path against this root. Pass \`report.html.j2\`, \`assets/foo.csv\`, \`index.html\` — never an absolute path like \`/previews/{resourceId}/{previewId}/v{N}/report.html.j2\`. Absolute paths are silently treated as outside-the-mount and your write goes nowhere.
+**Always use relative paths.** Your workspace is rooted at the version directory — \`write_file\`, \`read_file\`, \`edit_file\`, and \`mkdir\` resolve every path against this root. Pass \`report.html.j2\`, \`assets/foo.csv\`, \`index.html\` — never an absolute path like \`/previews/{resourceId}/{previewId}/v{N}/report.html.j2\`. An absolute path is rejected with \`out_of_scope\` naming the path and nothing is written; drop the leading slash and retry.
 
 Working directory: \`report.html.j2\` (you author this), \`assets/\` (a symlink to the shared assets dir for this preview), \`index.html\` (output of build_report).
 

@@ -42,18 +42,18 @@ export function createSubmitReportTool(state: SubmitReportToolState): Tool {
             "unrendered Jinja, and that all referenced asset paths resolve. " +
             "You MUST call this to finish — the runner ignores any other claim " +
             "of success. Returns problems[] when checks fail; fix and re-submit. " +
-            "Use `notes` to surface caveats to the caller (e.g. files skipped due " +
-            "to the 50MB asset size limit, sections rendered with partial data, " +
-            "missing inputs that forced a fallback) — these reach the conversation " +
-            "agent and the user in the iteration result.",
+            "Use `notes` to surface caveats to the caller (e.g. sections rendered " +
+            "with partial data, missing inputs that forced a fallback) — these " +
+            "reach the conversation agent and the user in the iteration result.",
         inputSchema: z.object({
             notes: z
                 .array(z.string())
                 .optional()
                 .describe(
                     "Caveats / issues to surface to the caller. One short sentence " +
-                        "per item. Examples: 'skipped raw_counts.h5ad (1.2GB > 50MB cap)', " +
-                        "'pathway-enrichment section omitted — no GSEA output found'. " +
+                        "per item. Examples: 'pathway-enrichment section omitted — no " +
+                        "GSEA output found', 'cohort table rendered from 8 of 12 " +
+                        "samples — the rest had no QC row'. " +
                         "Leave empty when the report shipped cleanly.",
                 ),
         }),

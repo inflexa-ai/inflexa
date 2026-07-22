@@ -87,7 +87,12 @@ export interface ReportRunnerOptions {
     readonly previewId: string;
     /** Base version to iterate from. Defaults to latest. */
     readonly baseVersion?: number;
-    /** Report format. */
+    /**
+     * Format the preview was built as. The tool boundary admits only `"html"`,
+     * so no other value can reach a live iteration; the union stays wide because
+     * previews persisted with a broader vocabulary must still parse. Read this
+     * field as a record of what a preview is, not as a request for a renderer.
+     */
     readonly format: "html" | "pdf";
     /** Prompt for the report-builder agent. */
     readonly prompt: string;
@@ -203,6 +208,7 @@ export async function runReportIteration(deps: ReportRunnerDeps, opts: ReportRun
                 previews: opts.previews,
                 urlCell,
                 chrome: deps.chrome,
+                logger,
             }),
             ...createVersionFsTools({ versionDir: versionDirAbs }),
             ...Object.values(createSkillTools({ skillsDir: deps.skillsDir, skills: [...REPORT_BUILDER_SKILLS] })),
