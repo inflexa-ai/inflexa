@@ -123,6 +123,11 @@ let interruptArmTimer: ReturnType<typeof setTimeout> | null = null;
  * drive the expiry path without a real multi-second wait (mirroring {@link notify}'s `durationMs`).
  */
 export function armInterrupt(windowMs: number = INTERRUPT_ARM_WINDOW_MS): void {
+    // Once the abort has fired there is nothing left to interrupt, so a re-arm would only lie in the
+    // status hint — the turn stays "busy" until settlement, keeping the interrupt layer enabled, so a
+    // further press would otherwise flip the hint back to armed while the turn is already dying. Bail:
+    // the layer stays enabled harmlessly, since its fire branch re-aborting an aborted signal is a no-op.
+    if (abortController?.signal.aborted) return;
     if (interruptArmTimer) clearTimeout(interruptArmTimer);
     setInterruptArmed(true);
     interruptArmTimer = setTimeout(() => {
@@ -994,7 +999,9 @@ let turnSettled: Promise<TurnOutcome> | null = null;
 let turnStartedAt = 0;
 // Threads whose durable tail-retract faulted and must be retried once before the next send appends.
 // Keyed by thread id (== session id); SURVIVES a session swap (the orphan is on that thread regardless
-// of which session is mounted), so `resetHotState` deliberately does not clear it.
+// of which session is mounted), so `resetHotState` deliberately does not clear it. The retention is
+// unbounded by design: an entry for a thread never sent to again lives for the process lifetime —
+// accepted, since the cost is one string per abandoned thread.
 const pendingRetract = new Set<string>();
 
 // True from the moment an in-flight `retract` passes its entry gate until its `finally`. Folded into
@@ -1099,26 +1106,33 @@ export async function send(opts: { sessionId: string; analysisId: string; userTe
         return;
     }
 
+    // Claim the store-write token BEFORE any awaited or store-writing step in this send. `Chat` fires
+    // `loadMessages` the instant boot reaches `ready` — the same instant `handleSubmit`'s gate opens — so
+    // a message pre-typed during the boot animation lands while that load is still awaiting its page read.
+    // Without this claim the load's trailing `setMessages` would replace the store wholesale, deleting the
+    // user's message and the in-flight assistant turn and stranding `currentAssistantId` on a message no
+    // longer mounted (every later part would then silently no-op). Same hazard on an in-place session swap.
+    // Claimed ahead of the heal below so the heal's await sits inside this turn's token-owned sequence.
+    const myTurnLoad = ++loadGeneration;
+
     // Heal a pending durable retract for this thread before this turn appends: a prior retract's tail
     // removal faulted transiently, leaving an orphan turn on the thread. Retry it ONCE — success removes
     // the orphan; a second failure just proceeds (an unanswered orphan is harmless context, and a
-    // transient database fault must never wedge the conversation). Runs before the store write, so no
-    // generation-token re-check is owed. Rare by construction: the flag is set only by a failed retract.
+    // transient database fault must never wedge the conversation). Rare by construction: the flag is set
+    // only by a failed retract.
     if (pendingRetract.has(opts.sessionId)) {
         pendingRetract.delete(opts.sessionId);
         await (seams.retractTurn ?? retractTailTurn)(runtime.pool, opts.sessionId).match(
             () => {},
             (e) => getLogger("chat").debug({ err: e, threadId: opts.sessionId }, "pending retract heal failed; proceeding with send"),
         );
+        // The heal is awaited work inside this token-claimed sequence, so the swap re-check after it is
+        // mandatory: during the await a session swap's `resetHotState` can claim a newer token and clear
+        // the store. Bail quietly — the user swapped away mid-send. Falling through would push this
+        // session's message straight into the swapped-in session's cleared store: `pushUserMessage` below
+        // is a synchronous write with no further token check.
+        if (loadGeneration !== myTurnLoad) return;
     }
-
-    // Claim the store-write token BEFORE the first store write. `Chat` fires `loadMessages` the instant
-    // boot reaches `ready` — the same instant `handleSubmit`'s gate opens — so a message pre-typed during
-    // the boot animation lands while that load is still awaiting its page read. Without this claim the
-    // load's trailing `setMessages` would replace the store wholesale, deleting the user's message and
-    // the in-flight assistant turn and stranding `currentAssistantId` on a message no longer mounted
-    // (every later part would then silently no-op). Same hazard on an in-place session swap.
-    const myTurnLoad = ++loadGeneration;
 
     pushUserMessage(opts.sessionId, opts.userText);
     const assistantId = startAssistantTurn(opts.sessionId);
