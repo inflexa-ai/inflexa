@@ -22,6 +22,7 @@ import {
     type UnknownReferenceDatasetError,
 } from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
+import PQueue from "p-queue";
 
 import { sha256File } from "../../lib/hash.ts";
 
@@ -297,8 +298,15 @@ export type ReferenceDownloadProgress =
           readonly declaredBytes?: number;
       }
     | {
-          /** Bytes arrived for the artifact currently in flight. */
+          /** Bytes arrived for one in-flight artifact. */
           readonly type: "artifact_bytes";
+          /** Dataset the artifact belongs to. */
+          readonly datasetId: string;
+          /**
+           * Dataset-relative destination path. Carried because several artifacts transfer at once:
+           * an unattributed delta would land on whichever artifact started most recently.
+           */
+          readonly path: string;
           /** Bytes in this chunk alone; a consumer accumulates, the installer never does. */
           readonly bytes: number;
       }
@@ -332,7 +340,20 @@ export type ReferenceInstallDeps = {
      * install.
      */
     readonly onProgress?: (event: ReferenceDownloadProgress) => void;
+    /**
+     * How many datasets may transfer at once. Defaults to {@link DEFAULT_INSTALL_CONCURRENCY};
+     * a test pins 1 for a deterministic event sequence, or 2 to force interleaving. Values below 1
+     * are raised to 1 rather than deadlocking the queue.
+     */
+    readonly concurrency?: number;
 };
+
+/**
+ * Datasets in flight at once. Four keeps a handful of independent publishers busy without opening
+ * more sockets than a browser would, and the transfer is bound by upstream bandwidth well before
+ * anything local.
+ */
+export const DEFAULT_INSTALL_CONCURRENCY = 4;
 
 /**
  * Deliver one progress event, absorbing anything the observer throws. A progress readout is
@@ -756,7 +777,7 @@ async function downloadArtifact(
         // backpressure and error propagation exactly where they already are.
         const counter = new Transform({
             transform(chunk: Buffer, _encoding, callback) {
-                reportProgress(deps, { type: "artifact_bytes", bytes: chunk.length });
+                reportProgress(deps, { type: "artifact_bytes", datasetId: dataset.id, path: artifact.path, bytes: chunk.length });
                 callback(null, chunk);
             },
         });
@@ -843,7 +864,12 @@ async function installDataset(
     deps: ReferenceInstallDeps,
     options: ReferenceInstallOptions,
 ): Promise<Result<InstalledReferenceDataset, ReferenceProvisionError>> {
-    const attempt = deps.attemptId?.() ?? `${Date.now()}-${createHash("sha256").update(dataset.id).digest("hex").slice(0, 8)}`;
+    // The dataset discriminator is appended unconditionally, not only to the generated id: datasets
+    // install concurrently, and this directory is `rm -rf`'d on entry and again in `finally`, so any
+    // two datasets sharing an attempt root would delete each other's staged files mid-install. A
+    // caller-supplied attempt id is a fixed string (tests pass one), which is exactly the case that
+    // would collide.
+    const attempt = `${deps.attemptId?.() ?? Date.now()}-${createHash("sha256").update(dataset.id).digest("hex").slice(0, 8)}`;
     const attemptRoot = join(paths.staging, attempt);
     const stageRoot = join(attemptRoot, dataset.installPath);
     const finalRoot = join(paths.managed, dataset.installPath);
@@ -942,9 +968,36 @@ export async function installReferenceDatasets(
     }
     const ensured = await ensureReferenceStore(deps.root);
     if (ensured.isErr()) return err(ensured.error);
+
+    // Each dataset is an independent unit of work — its own staging root, its own atomic activation,
+    // its own receipt — so the only thing making a plan serial was the loop. Concurrency is across
+    // datasets rather than within one because most catalog datasets carry a single artifact, so a
+    // within-dataset queue would leave the connection just as idle.
+    const queue = new PQueue({ concurrency: Math.max(1, deps.concurrency ?? DEFAULT_INSTALL_CONCURRENCY) });
+    const results: (Result<InstalledReferenceDataset, ReferenceProvisionError> | undefined)[] = new Array(plan.value.datasets.length);
+    let failed = false;
+    await Promise.all(
+        plan.value.datasets.map((dataset, index) =>
+            // Results are written by index, never pushed: completion order varies with scheduling, and
+            // the installed list feeds summary output that must not reorder between runs.
+            queue.add(async () => {
+                // Checked here rather than through `queue.clear()`: p-queue never settles the promises
+                // of cleared tasks, so awaiting them would hang. Skipping on entry stops new transfers
+                // just as effectively while letting every promise settle.
+                if (failed) return;
+                const result = await installDataset(dataset, ensured.value, deps, options);
+                if (result.isErr()) failed = true;
+                results[index] = result;
+            }),
+        ),
+    );
+
     const installed: InstalledReferenceDataset[] = [];
-    for (const dataset of plan.value.datasets) {
-        const result = await installDataset(dataset, ensured.value, deps, options);
+    for (const result of results) {
+        // Reporting the lowest-ordered failure rather than whichever lost the race keeps the error a
+        // property of the plan instead of the scheduling. A missing entry is a dataset that never
+        // started because an earlier one had already failed.
+        if (result === undefined) continue;
         if (result.isErr()) return err(result.error);
         installed.push(result.value);
     }

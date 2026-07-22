@@ -444,8 +444,9 @@ describe("transfer progress reporting", () => {
         });
         expect(result._unsafeUnwrap().installed[0]?.bytesDownloaded).toBe(9);
 
-        // Artifacts transfer sequentially, so the stream is strictly start → bytes… → completed per
-        // artifact; a renderer accumulating byte deltas must land on the same total the receipt records.
+        // Artifacts within one dataset stay sequential (datasets are what run concurrently), so this
+        // stream is strictly start → bytes… → completed per artifact; a renderer accumulating byte
+        // deltas must land on the same total the receipt records.
         expect(events.filter((event) => event.type !== "artifact_bytes")).toEqual([
             { type: "artifact_started", datasetId: "demo", path: "nested/a.txt", declaredBytes: 5 },
             { type: "artifact_completed", datasetId: "demo", path: "nested/a.txt", bytes: 5 },
@@ -784,5 +785,146 @@ describe("projection documents", () => {
         });
         expect(document.datasets[1]).not.toHaveProperty("version");
         expect(JSON.stringify(document, null, 2)).toBe(JSON.stringify(buildReferenceVerifyDocument(verifications), null, 2));
+    });
+});
+
+/** N single-artifact datasets — the catalog's dominant shape, and what concurrency actually spans. */
+function multiDatasetCatalog(ids: readonly string[]): ReferenceDataCatalog {
+    return {
+        version: REFERENCE_DATA_CATALOG_VERSION,
+        datasets: ids.map((id) => ({
+            id,
+            version: "2026.07",
+            title: id,
+            description: "Offline fixture",
+            sourceUrl: "https://example.test/source",
+            license: { identifier: "CC0-1.0", url: "https://example.test/license" },
+            recommendation: { group: "testing", recommended: true },
+            artifacts: [{ path: `${id}.txt`, url: url(`${id}.txt`), format: "txt" as const, contents: "test fixture artifact" }],
+        })),
+    };
+}
+
+function datasetFixtures(ids: readonly string[]): readonly Fixture[] {
+    return ids.map((id) => ({ path: `${id}.txt`, body: id }));
+}
+
+/**
+ * An upstream that holds each request open long enough to overlap with others, recording how many
+ * were in flight at once. `delayByPath` slows specific artifacts so completion order can be forced
+ * to differ from plan order.
+ */
+function serveConcurrently(
+    files: readonly Fixture[],
+    state: { active: number; peak: number },
+    delayByPath: Record<string, number> = {},
+): (input: string | URL | Request, init?: RequestInit) => Promise<Response> {
+    const inner = serve(files);
+    return async (input, init) => {
+        state.active += 1;
+        state.peak = Math.max(state.peak, state.active);
+        try {
+            const path = String(input).replace("https://upstream.test/", "");
+            await new Promise((resolve) => setTimeout(resolve, delayByPath[path] ?? 20));
+            return await inner(input, init);
+        } finally {
+            state.active -= 1;
+        }
+    };
+}
+
+describe("bounded-concurrency installs", () => {
+    const IDS = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"];
+    // The plan resolver sorts the selection, so "plan order" is alphabetical — deliberately not the
+    // order the ids are requested in, which is what makes the ordering assertions meaningful.
+    const PLAN_ORDER = [...IDS].sort();
+
+    test("several datasets transfer at once, capped, and all of them install", async () => {
+        const path = root();
+        const fixture = multiDatasetCatalog(IDS);
+        const state = { active: 0, peak: 0 };
+
+        const result = await installReferenceDatasets(IDS, {
+            root: path,
+            source: source(fixture),
+            fetch: serveConcurrently(datasetFixtures(IDS), state),
+            concurrency: 2,
+        });
+
+        expect(result._unsafeUnwrap().installed.map((installed) => installed.id)).toEqual(PLAN_ORDER);
+        expect(state.peak).toBe(2);
+        for (const id of IDS) {
+            expect(readFileSync(join(referenceStorePaths(path).managed, id, "2026.07", `${id}.txt`), "utf8")).toBe(id);
+        }
+    });
+
+    test("a single-slot cap reproduces the serial transfer exactly", async () => {
+        const path = root();
+        const fixture = multiDatasetCatalog(IDS);
+        const state = { active: 0, peak: 0 };
+
+        const result = await installReferenceDatasets(IDS, {
+            root: path,
+            source: source(fixture),
+            fetch: serveConcurrently(datasetFixtures(IDS), state),
+            concurrency: 1,
+        });
+
+        expect(result._unsafeUnwrap().installed.map((installed) => installed.id)).toEqual(PLAN_ORDER);
+        expect(state.peak).toBe(1);
+    });
+
+    test("a caller-supplied attempt id no longer means a shared staging root", async () => {
+        const path = root();
+        const fixture = multiDatasetCatalog(IDS);
+        const state = { active: 0, peak: 0 };
+
+        // Every dataset gets the SAME attempt id — the shape every test seam uses. Staging is wiped on
+        // entry and again in `finally`, so before the dataset discriminator was appended unconditionally
+        // these installs would have deleted each other's staged files mid-flight.
+        const result = await installReferenceDatasets(IDS, {
+            root: path,
+            source: source(fixture),
+            fetch: serveConcurrently(datasetFixtures(IDS), state),
+            attemptId: () => "attempt",
+        });
+
+        expect(result._unsafeUnwrap().installed).toHaveLength(IDS.length);
+        const verified = (await verifyReferenceDatasets(path, IDS, source(fixture)))._unsafeUnwrap();
+        expect(verified.map((dataset) => dataset.state)).toEqual(IDS.map(() => "valid"));
+        expect(readdirSync(referenceStorePaths(path).staging)).toEqual([]);
+    });
+
+    test("the result is in plan order even when completion order is not", async () => {
+        const path = root();
+        const ids = ["alpha", "beta", "gamma"];
+        const fixture = multiDatasetCatalog(ids);
+        const state = { active: 0, peak: 0 };
+
+        // The first dataset in plan order finishes last.
+        const result = await installReferenceDatasets(ids, {
+            root: path,
+            source: source(fixture),
+            fetch: serveConcurrently(datasetFixtures(ids), state, { "alpha.txt": 80, "beta.txt": 10, "gamma.txt": 5 }),
+        });
+
+        expect(result._unsafeUnwrap().installed.map((installed) => installed.id)).toEqual(ids);
+    });
+
+    test("the lowest-ordered failure is reported, not whichever failed first", async () => {
+        const path = root();
+        const ids = ["alpha", "beta", "gamma"];
+        const fixture = multiDatasetCatalog(ids);
+        const state = { active: 0, peak: 0 };
+
+        // Both alpha and beta 404 (only gamma is served), and beta fails sooner. The reported error
+        // must still be alpha's, so the failure is a property of the plan rather than of scheduling.
+        const result = await installReferenceDatasets(ids, {
+            root: path,
+            source: source(fixture),
+            fetch: serveConcurrently(datasetFixtures(["gamma"]), state, { "alpha.txt": 60, "beta.txt": 5 }),
+        });
+
+        expect(result._unsafeUnwrapErr().message).toContain("alpha.txt");
     });
 });

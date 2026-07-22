@@ -347,10 +347,11 @@ export function createReferenceDownloadProgress(totalArtifacts: number, sink?: R
     let bytes = 0;
     let path: string | undefined;
     let lastRefreshAt = 0;
-    // The in-flight artifact's own progress, kept apart from the plan totals: it is the only place a
-    // declared size can honestly be used, since the plan's later files have not been requested yet.
-    let inFlightBytes = 0;
-    let inFlightDeclared: number | undefined;
+    // Per-artifact progress for everything currently open, kept apart from the plan totals: the
+    // active set is the only place a declared size can honestly be spent, since the plan's remaining
+    // files have not been requested yet. Keyed by dataset and path because several transfer at once.
+    const inFlight = new Map<string, { bytes: number; readonly declared?: number }>();
+    const artifactKey = (datasetId: string, artifactPath: string): string => `${datasetId}/${artifactPath}`;
     // Cumulative-byte samples inside the window. Sampling is throttled with the redraw, so this holds
     // tens of entries rather than one per chunk.
     const samples: { at: number; bytes: number }[] = [];
@@ -371,13 +372,28 @@ export function createReferenceDownloadProgress(totalArtifacts: number, sink?: R
         return moved > 0 ? (moved / span) * 1000 : undefined;
     }
 
+    /**
+     * The active set: how many artifacts are open, and — only when every one of them declared a size
+     * — the bytes received against the bytes declared across exactly those artifacts. Partial
+     * knowledge yields the count alone rather than a denominator covering some of the set, which
+     * would read as a total while describing a subset. Labelled "in flight" so it can never be
+     * mistaken for the plan, whose byte total remains unknowable.
+     */
+    function renderInFlight(): string {
+        if (inFlight.size === 0) return "";
+        const active = [...inFlight.values()];
+        const label = ` · ${active.length} in flight`;
+        if (!active.every((artifact) => artifact.declared !== undefined)) return label;
+        const received = active.reduce((total, artifact) => total + artifact.bytes, 0);
+        // `?? 0` is unreachable — the `every` above proves each `declared` is present — and is used
+        // in place of a non-null assertion so the arithmetic carries no escape hatch.
+        const declared = active.reduce((total, artifact) => total + (artifact.declared ?? 0), 0);
+        return `${label} ${received.formatBytes()}/${declared.formatBytes()}`;
+    }
+
     function snapshot(now: number = Date.now()): ReferenceProgressSnapshot {
         const rate = rateBytesPerSecond(now);
-        // The in-flight fraction is a measurement against a size the upstream declared, not an
-        // invented total — and it is what keeps a single multi-gigabyte file from reading as a
-        // frozen bar when the file counter cannot move for minutes at a time.
-        const file = inFlightDeclared === undefined ? "" : ` · file ${inFlightBytes.formatBytes()}/${inFlightDeclared.formatBytes()}`;
-        const line = `${completed}/${total} files · ${bytes.formatBytes()}${rate === undefined ? "" : ` · ${rate.formatBytes()}/s`}${file}`;
+        const line = `${completed}/${total} files · ${bytes.formatBytes()}${rate === undefined ? "" : ` · ${rate.formatBytes()}/s`}${renderInFlight()}`;
         return { line, completed, total, ...(path === undefined ? {} : { path }) };
     }
 
@@ -393,13 +409,18 @@ export function createReferenceDownloadProgress(totalArtifacts: number, sink?: R
             switch (event.type) {
                 case "artifact_started":
                     path = event.path;
-                    inFlightBytes = 0;
-                    inFlightDeclared = event.declaredBytes;
+                    inFlight.set(artifactKey(event.datasetId, event.path), {
+                        bytes: 0,
+                        ...(event.declaredBytes === undefined ? {} : { declared: event.declaredBytes }),
+                    });
                     painter.refresh(snapshot(now));
                     return;
                 case "artifact_bytes": {
                     bytes += event.bytes;
-                    inFlightBytes += event.bytes;
+                    // Attributed to its own artifact, never to "the current one": with several
+                    // transfers open, the most recently started is not the one these bytes came from.
+                    const artifact = inFlight.get(artifactKey(event.datasetId, event.path));
+                    if (artifact !== undefined) artifact.bytes += event.bytes;
                     if (now - lastRefreshAt < PROGRESS_REFRESH_MS) return;
                     lastRefreshAt = now;
                     samples.push({ at: now, bytes });
@@ -409,10 +430,9 @@ export function createReferenceDownloadProgress(totalArtifacts: number, sink?: R
                 }
                 case "artifact_completed":
                     path = event.path;
-                    // Dropped rather than carried to the next file: a declared size describes the
-                    // artifact that declared it, and the next one may declare none at all.
-                    inFlightDeclared = undefined;
-                    inFlightBytes = 0;
+                    // Leaves the active set the moment it lands: a declared size describes the
+                    // artifact that declared it, and what is still open is what the readout is about.
+                    inFlight.delete(artifactKey(event.datasetId, event.path));
                     // Clamped, not incremented blindly: the estimate and the installer each decide
                     // "already intact" by digest at different moments, so a dataset damaged in between
                     // adds fetches the plan never predicted. The final summary stays authoritative.
@@ -427,9 +447,9 @@ export function createReferenceDownloadProgress(totalArtifacts: number, sink?: R
         },
         finish: (failure) => {
             clearInterval(heartbeat);
-            // The plan is over, so an in-flight fraction would describe a file that is no longer
-            // moving — the closing line reports the totals only.
-            inFlightDeclared = undefined;
+            // Nothing is in flight once the plan is over — including on the failure path, where
+            // whatever was open was abandoned rather than completed. The closing line reports totals.
+            inFlight.clear();
             painter.finish(snapshot(), failure);
         },
     };
