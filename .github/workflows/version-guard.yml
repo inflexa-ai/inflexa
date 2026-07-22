@@ -83,7 +83,36 @@ jobs:
       # which no other check would catch. Zenodo archives this file off the tag
       # too, but derives its own record version from the tag name and ignores
       # the version key, so this guard serves the GitHub citation box and human
-      # readers, not the DOI. Checked unconditionally, not only on bump PRs,
-      # because the drift can equally arrive from an edit to CITATION.cff.
+      # readers, not the DOI.
+      #
+      # The check FAILS only when this PR set CITATION.cff's version line to a
+      # value that disagrees with the PR's own cli version — the one drift a
+      # PR author must fix in place. Everything else is citation-sync.yml's
+      # job, not the PR's: a bump PR that leaves CITATION.cff untouched is
+      # healed on main right after it merges (that is the point — nobody has
+      # to remember the file), and drift merely inherited from the base
+      # branch must not turn unrelated PRs red — a required check that fails
+      # for pre-existing state teaches people to merge past red, which costs
+      # more than the drift. Both lenient paths still surface a ::notice so
+      # the drift is visible while it lasts.
       - name: Check CITATION.cff is in step with cli/package.json
-        run: .github/citation/sync.sh --check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --depth=1 origin "$BASE_SHA"
+          head_cli=$(jq -r .version cli/package.json)
+          # Top-level-key parse, same shape as sync.sh: the ^ anchor keeps
+          # `version:` from also matching `cff-version:`.
+          head_cff=$(sed -nE 's/^version: (.*)$/\1/p' CITATION.cff)
+          # A base without the file reads as empty, which never equals
+          # head_cff — the PR introduced it, so it takes the strict path.
+          base_cff=$(git show "$BASE_SHA:CITATION.cff" 2>/dev/null | sed -nE 's/^version: (.*)$/\1/p' || true)
+
+          if [ "$head_cff" = "$head_cli" ]; then
+            echo "CITATION.cff is in step with cli/package.json ($head_cli)"
+          elif [ "$base_cff" != "$head_cff" ]; then
+            echo "::error file=CITATION.cff::this PR sets CITATION.cff's version to $head_cff, but cli/package.json is $head_cli. Run .github/citation/sync.sh and commit the result."
+            exit 1
+          else
+            echo "::notice file=CITATION.cff::CITATION.cff ($head_cff) trails cli/package.json ($head_cli), inherited from the base branch — citation-sync.yml heals main after every bump push; dispatch it manually if this lingers."
+          fi
