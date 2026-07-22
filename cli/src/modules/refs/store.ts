@@ -342,8 +342,8 @@ export type ReferenceInstallDeps = {
     readonly onProgress?: (event: ReferenceDownloadProgress) => void;
     /**
      * How many datasets may transfer at once. Defaults to {@link DEFAULT_INSTALL_CONCURRENCY};
-     * a test pins 1 for a deterministic event sequence, or 2 to force interleaving. Values below 1
-     * are raised to 1 rather than deadlocking the queue.
+     * a test pins 1 for a deterministic event sequence, or 2 to force interleaving. A fractional or
+     * below-1 value is floored and raised to 1; a non-finite one falls back to the default.
      */
     readonly concurrency?: number;
 };
@@ -973,7 +973,13 @@ export async function installReferenceDatasets(
     // its own receipt — so the only thing making a plan serial was the loop. Concurrency is across
     // datasets rather than within one because most catalog datasets carry a single artifact, so a
     // within-dataset queue would leave the connection just as idle.
-    const queue = new PQueue({ concurrency: Math.max(1, deps.concurrency ?? DEFAULT_INSTALL_CONCURRENCY) });
+    // p-queue's concurrency setter throws a TypeError for anything that is not a number at or above
+    // one, which would escape this Result-returning function as an exception. `Math.max` alone does
+    // not prevent that — `Math.max(1, NaN)` is `NaN` — so a non-finite request falls back to the
+    // default instead of becoming a crash.
+    const requested = deps.concurrency ?? DEFAULT_INSTALL_CONCURRENCY;
+    const concurrency = Number.isFinite(requested) ? Math.max(1, Math.floor(requested)) : DEFAULT_INSTALL_CONCURRENCY;
+    const queue = new PQueue({ concurrency });
     const results: (Result<InstalledReferenceDataset, ReferenceProvisionError> | undefined)[] = new Array(plan.value.datasets.length);
     let failed = false;
     await Promise.all(
