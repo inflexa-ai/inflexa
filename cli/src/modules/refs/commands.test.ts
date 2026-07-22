@@ -19,6 +19,7 @@ import {
     offeredReferenceCatalog,
     parseReferenceIds,
     plainProgressSink,
+    referencePresetPrompt,
     resolveReferencePreset,
     runReferenceSetup,
     runRefsList,
@@ -430,6 +431,33 @@ describe("reference selection presets", () => {
         expect(announced).toEqual([ON_DEMAND_REFERENCE_NOTE]);
     });
 
+    test("the prompt opens on recommended when there is something to recommend", () => {
+        const prompt = referencePresetPrompt(presetCatalog(["alpha", "gamma"]));
+        expect(prompt.initialValue).toBe("recommended");
+        expect(prompt.options.map((option) => option.value)).toEqual(["recommended", "all", "none", "custom"]);
+        expect(prompt.options[0]?.hint).toBe("2 datasets · 2 files of upstream-determined size");
+    });
+
+    test("an offered set with nothing recommended opens on nothing, never on everything", () => {
+        // The state a second `inflexa setup` run reaches once the recommended datasets are installed:
+        // only optional ones are still offered. clack resolves an initial value it cannot find by
+        // falling back to the first option, so naming an absent entry here would open the prompt
+        // pre-armed on "Everything" and turn an unexamined Enter into the largest possible download.
+        const prompt = referencePresetPrompt(presetCatalog([]));
+        expect(prompt.options.map((option) => option.value)).toEqual(["all", "none", "custom"]);
+        expect(prompt.initialValue).toBe("none");
+    });
+
+    test("the prompt never opens on an entry it does not offer, and never on everything", () => {
+        for (const recommended of [["alpha", "beta", "gamma"], ["alpha"], []]) {
+            const prompt = referencePresetPrompt(presetCatalog(recommended));
+            const values = prompt.options.map((option) => option.value);
+            // The invariant that makes the fallback above unreachable rather than merely unlikely.
+            expect(values).toContain(prompt.initialValue);
+            expect(prompt.initialValue).not.toBe("all");
+        }
+    });
+
     test("the take-nothing note names both routes to a later download", () => {
         expect(ON_DEMAND_REFERENCE_NOTE).toContain("inflexa refs download");
         // The agent route is only honest because `refs download` is registered `approval`, so the
@@ -539,6 +567,37 @@ describe("combined download progress", () => {
             expect(line).not.toContain("Infinity");
             expect(line).not.toContain("/3 files ·  of ");
         }
+    });
+});
+
+describe("progress readout teardown", () => {
+    test("a throw inside the transfer still closes the readout", async () => {
+        // The estimate resolves the plan, then the installer resolves it again. Throwing only on the
+        // second call puts the failure inside the window where the readout is live — the one exit the
+        // installer's own Result channel cannot describe.
+        let resolutions = 0;
+        const explodingSource: ReferenceCatalogSource = {
+            catalog: singleFileSource.catalog,
+            resolveInstallPlan: (ids) => {
+                resolutions += 1;
+                if (resolutions > 1) throw new Error("catalog seam exploded mid-transfer");
+                return singleFileSource.resolveInstallPlan(ids);
+            },
+        };
+
+        let thrown: unknown;
+        const { stdout } = await capture(async () => {
+            try {
+                await downloadReferences({ ids: ["demo"], yes: true, interactive: false, source: explodingSource });
+            } catch (cause) {
+                thrown = cause;
+            }
+        });
+
+        expect((thrown as Error | undefined)?.message).toBe("catalog seam exploded mid-transfer");
+        // Without the teardown the repaint timer would still be running and, on a terminal, the bar
+        // would still own the screen. The closing line is the observable proof it was torn down.
+        expect(stdout).toContain("Download failed at 0/1 files");
     });
 });
 
