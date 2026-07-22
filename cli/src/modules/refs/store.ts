@@ -371,12 +371,21 @@ function reportProgress(deps: ReferenceInstallDeps, event: ReferenceDownloadProg
 }
 
 /**
- * The size the upstream declared, or undefined when it declared none we can trust. `Content-Length`
- * is absent on chunked and on-the-fly-compressed responses, and a header that is present can still
- * be malformed or negative, so everything that is not a positive finite integer collapses to
- * "unknown" — the state the consumer is already required to handle.
+ * The size the upstream declared, or undefined when it declared none we can trust.
+ *
+ * A `Content-Length` beside a content encoding counts the *encoded* entity, while the runtime inflates
+ * the body before it reaches the stream this code measures — `data.broadinstitute.org` answers 20551
+ * for an artifact that lands at 48690 bytes. The header is not wrong, it just describes something
+ * other than what is being counted, and the decoded size is not derivable from it, so the only honest
+ * reading is that nothing was declared. Five catalog artifacts are in that state today.
+ *
+ * Beyond that, a header that is present can still be malformed or negative, so everything that is not
+ * a positive finite integer collapses to "unknown" — the state the consumer is already required to
+ * handle.
  */
 function declaredContentLength(response: Response): number | undefined {
+    const encoding = response.headers.get("content-encoding");
+    if (encoding !== null && encoding.trim().toLowerCase() !== "identity") return undefined;
     const raw = response.headers.get("content-length");
     if (raw === null) return undefined;
     const parsed = Number(raw);
@@ -427,7 +436,90 @@ export type ReferenceInstallOutcome = {
 export type ReferenceDownloadEstimate = {
     /** Artifacts that still need fetching, whose sizes only the upstream can report. */
     readonly artifactsToFetch: number;
+    /**
+     * Those same artifacts, in plan order. Carried so a size sweep can measure exactly what will be
+     * fetched without resolving the plan and re-checking every receipt a second time.
+     */
+    readonly artifacts: readonly ReferenceArtifact[];
 };
+
+/** How many size probes may be open at once. */
+export const DEFAULT_SIZE_PROBE_CONCURRENCY = 20;
+
+/**
+ * Wall-clock budget for an entire size sweep, shared by every probe in it. A per-request timeout
+ * bounds one attempt but not the sweep — behind a queue, a large catalog of slow hosts would stall
+ * the wizard for minutes. One deadline caps the step regardless of how many artifacts it covers;
+ * whatever has not answered when it fires is simply unsized.
+ */
+export const SIZE_PROBE_BUDGET_MS = 15_000;
+
+/** What the publishers say a planned transfer will cost, before any of it moves. */
+export type ReferenceDownloadSize = {
+    /** Bytes declared across the artifacts that declared a usable size. A floor while `unsized` > 0. */
+    readonly bytes: number;
+    /** How many artifacts declared one. */
+    readonly sized: number;
+    /** How many did not, for any reason at all. */
+    readonly unsized: number;
+};
+
+/** Seams for a size sweep; production supplies none of them. */
+export type ReferenceSizeProbeDeps = {
+    /** Fetch implementation; defaults to the runtime fetch. */
+    readonly fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+    /** How many probes may be open at once; defaults to {@link DEFAULT_SIZE_PROBE_CONCURRENCY}. */
+    readonly concurrency?: number;
+    /** Budget for the whole sweep; defaults to {@link SIZE_PROBE_BUDGET_MS}. */
+    readonly budgetMs?: number;
+};
+
+/**
+ * Ask each publisher how large its artifact is, so consent and the readout can state bytes the
+ * catalog does not carry.
+ *
+ * Returns a plain value rather than a `Result` because it has no failure mode to report. A transport
+ * error, a timeout, a refusal, a redirect away from https, and a header that describes encoded bytes
+ * all mean one thing to every caller — that artifact's size is unknown — which is a state the readout
+ * already had to handle. Surfacing any of them as an error would let a metadata probe fail a download
+ * that would otherwise have succeeded.
+ *
+ * The https guarantee the transfer enforces is deliberately not mirrored here: a probe that redirects
+ * off https tells us nothing worth acting on, and `downloadArtifact` refuses it at the point where
+ * bytes would actually move.
+ */
+export async function measureReferenceDownload(artifacts: readonly ReferenceArtifact[], deps: ReferenceSizeProbeDeps = {}): Promise<ReferenceDownloadSize> {
+    if (artifacts.length === 0) return { bytes: 0, sized: 0, unsized: 0 };
+    const request = deps.fetch ?? fetch;
+    const requested = deps.concurrency ?? DEFAULT_SIZE_PROBE_CONCURRENCY;
+    const concurrency = Number.isFinite(requested) ? Math.max(1, Math.floor(requested)) : DEFAULT_SIZE_PROBE_CONCURRENCY;
+    const queue = new PQueue({ concurrency });
+    // Started once, here, so the deadline covers the queue's whole drain rather than restarting per
+    // probe — which is what makes the budget a bound on the step instead of on one request.
+    const deadline = AbortSignal.timeout(deps.budgetMs ?? SIZE_PROBE_BUDGET_MS);
+
+    const declared = await Promise.all(
+        artifacts.map((artifact) =>
+            queue.add(async (): Promise<number | undefined> => {
+                try {
+                    const response = await request(artifact.url, { method: "HEAD", signal: deadline });
+                    return response.ok ? declaredContentLength(response) : undefined;
+                } catch {
+                    return undefined;
+                }
+            }),
+        ),
+    );
+
+    let bytes = 0;
+    let sized = 0;
+    for (const size of declared) {
+        if (size === undefined) continue;
+        bytes += size;
+        sized += 1;
+    }
+    return { bytes, sized, unsized: artifacts.length - sized };
+}
 
 /** Resolve all owned paths without creating anything. */
 export function referenceStorePaths(root: string): ReferenceStorePaths {
@@ -1023,7 +1115,7 @@ export async function referenceDownloadEstimate(
     }
     const paths = referenceStorePaths(root);
     try {
-        let artifactsToFetch = 0;
+        const artifacts: ReferenceArtifact[] = [];
         for (const dataset of plan.value.datasets) {
             const receiptRead = await readReceipt(join(paths.receipts, `${dataset.id}.json`), paths.root);
             const activeReceipt = receiptRead.receipt;
@@ -1037,11 +1129,11 @@ export async function referenceDownloadEstimate(
                     continue;
                 }
             }
-            // The catalog knows no sizes, and there is no resume to net out, so the estimate is a
-            // count: every artifact of a dataset that is not already intact is fetched fresh.
-            artifactsToFetch += dataset.artifacts.length;
+            // There is no resume to net out, so every artifact of a dataset that is not already
+            // intact is fetched fresh. Their sizes stay unknown until a publisher is asked.
+            artifacts.push(...dataset.artifacts);
         }
-        return ok({ artifactsToFetch });
+        return ok({ artifactsToFetch: artifacts.length, artifacts });
     } catch (cause) {
         return err({ type: "io_failed", message: `Could not inspect the reference store at ${root}.`, cause });
     }
