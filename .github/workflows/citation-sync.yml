@@ -17,9 +17,11 @@ name: Citation Sync
 # the TAP_APP_ID variable + TAP_APP_PRIVATE_KEY secret (already present for
 # the tap).
 #
-# No recursion: the commit pushed here touches only CITATION.cff, which the
-# paths filter below does not match. That filter is the loop guard — app
-# tokens, unlike GITHUB_TOKEN, DO trigger workflows with their pushes.
+# No recursion: the pushed commit carries [skip ci] (see the commit step for
+# why that marker is load-bearing for the release pipeline, beyond loop
+# hygiene), and it touches only CITATION.cff, which the paths filter below
+# does not match anyway. Both guards matter because app tokens, unlike
+# GITHUB_TOKEN, DO trigger workflows with their pushes.
 on:
   push:
     branches: [main]
@@ -78,7 +80,15 @@ jobs:
           git config user.name "${APP_SLUG}[bot]"
           git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
           git add CITATION.cff
-          git commit -s -m "chore: sync CITATION.cff to $version"
+          # [skip ci] is load-bearing, not cosmetic: this push lands about a
+          # minute after the bump push, while the bump commit's test/lint
+          # runs are still in flight. Those workflows cancel in-progress runs
+          # per ref, and release.yml refuses to tag until the BUMP commit's
+          # own checks pass — so a sync commit that starts CI of its own
+          # cancels the very runs the release gate is waiting on and kills
+          # the release. This commit is two metadata lines whose value
+          # sync.sh already validated; it needs no CI.
+          git commit -s -m "chore: sync CITATION.cff to $version [skip ci]"
           # Absorb any commit that landed on main since checkout; a push that
           # still loses the race fails the run, and the next dispatch (or the
           # next bump) heals from wherever main ends up.
