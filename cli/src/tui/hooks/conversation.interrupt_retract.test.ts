@@ -322,6 +322,52 @@ describe("retract during the no-output window", () => {
         expect(chatStatus()).toBe("idle");
     });
 
+    test("a session swap while the pending-retract heal is parked drops the send with no store write", async () => {
+        // The send claims its store-write token BEFORE the heal await, so a session swap that lands while
+        // the heal is parked supersedes it: on the heal resolving, the send sees the newer token and bails
+        // with no user message pushed and the status never leaving idle. Without that re-check the send
+        // would claim a NEWER token below and push the swapped-away session's message into the cleared,
+        // swapped-in store.
+        const THREAD = "retract-swap-heal-thread";
+        const dbErr: DbError = { type: "mutation_failed", op: "retractLastTurn", cause: "transient" };
+
+        // Phase 1: a durable retract faults, leaving the pending-heal flag on THREAD (as in the case above).
+        const { sendP: faultSendP, release: faultRelease } = startBusyTurn({ kind: "aborted" }, THREAD);
+        expect(canRetract()).toBe(true);
+        const faultSeed = seedCell();
+        const retractP = retract(faultSeed.set, { runtime: () => stubRuntime, retractTurn: () => errAsync(dbErr) });
+        faultRelease();
+        await retractP;
+        await faultSendP;
+        expect(messages.length).toBe(0);
+
+        // Phase 2: the next send parks in the heal retry; a swap supersedes it before it can append.
+        let releaseHeal!: () => void;
+        const healGate = new Promise<void>((r) => {
+            releaseHeal = r;
+        });
+        let healReached!: () => void;
+        const healWasReached = new Promise<void>((r) => {
+            healReached = r;
+        });
+        const healSeams: SendSeams = {
+            runtime: () => stubRuntime,
+            runChatTurn: async (): Promise<TurnOutcome> => ({ kind: "ok", fallbackText: "answer" }),
+            retractTurn: () => {
+                healReached();
+                return ResultAsync.fromSafePromise(healGate.then(() => ({ kind: "retracted" as const, messages: 1 })));
+            },
+        };
+        const sendP = send({ sessionId: THREAD, analysisId: AID, userText: "swapped away" }, healSeams);
+        await healWasReached; // the send is parked in the heal await, its token already claimed
+        resetHotState(); // the swap claims a newer store-write token and clears the store
+        releaseHeal();
+        await sendP; // resolves without error despite the supersession
+
+        expect(messages.length).toBe(0); // no user message landed in the swapped-in store
+        expect(chatStatus()).toBe("idle"); // the send bailed before its busy transition
+    });
+
     test("a stray retract call outside the window is a safe no-op", async () => {
         // No turn is in flight, so the gate re-check inside retract returns early: nothing is seeded and
         // no durable removal is attempted.
@@ -481,6 +527,20 @@ describe("the interrupt arm window", () => {
         armInterrupt();
         expect(interruptArmed()).toBe(true);
         abort();
+        expect(interruptArmed()).toBe(false);
+        release();
+        await sendP;
+    });
+
+    test("a re-arm after the abort fired stays disarmed while the turn dies", async () => {
+        // The turn stays "busy" until settlement, so the interrupt layer stays enabled and a third esc
+        // press calls armInterrupt again. With the abort already fired there is nothing left to interrupt,
+        // so the re-arm is a no-op — the hint never flips back to armed while the turn is unwinding.
+        const { sendP, release } = startBusyTurn({ kind: "aborted" });
+        armInterrupt();
+        abort();
+        expect(interruptArmed()).toBe(false);
+        armInterrupt(); // a third esc press during the abort unwind
         expect(interruptArmed()).toBe(false);
         release();
         await sendP;
