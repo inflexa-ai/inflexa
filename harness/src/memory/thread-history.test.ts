@@ -447,6 +447,43 @@ describe("retractLastTurn", () => {
         expect(rows.map((r) => Number(r.seq))).toEqual([0, 1]);
     });
 
+    it("walks turns back to empty across repeated retracts", async () => {
+        const turn1 = [userText("question one"), assistantText("answer one")];
+        const turn2 = [userText("question two"), assistantText("answer two")];
+        (await history.appendTurn(THREAD, turn1))._unsafeUnwrap();
+        (await history.appendTurn(THREAD, turn2))._unsafeUnwrap();
+
+        // First retract takes the newest turn off; the prior turn is now the tail.
+        const first = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        expect(first).toEqual({ kind: "retracted", messages: turn2.length });
+        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual(turn1);
+
+        // Second retract takes the remaining turn off; the thread is now empty.
+        const second = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        expect(second).toEqual({ kind: "retracted", messages: turn1.length });
+        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual([]);
+
+        // A third retract on the now-empty thread has nothing to remove.
+        const third = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        expect(third).toEqual({ kind: "empty-thread" });
+    });
+
+    it("empties a single-turn thread in one retract", async () => {
+        const turn = [
+            userText("the only question"),
+            assistantToolUse("toolu_only", "search_gene", { symbol: "TP53" }),
+            userToolResult("toolu_only", JSON.stringify({ hits: 1 })),
+            assistantText("the only answer"),
+        ];
+        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+
+        // The sole turn is the tail, so one retract removes every row and empties
+        // the thread — the outcome's count is the whole turn's row count.
+        const outcome = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        expect(outcome).toEqual({ kind: "retracted", messages: turn.length });
+        expect((await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap()).toEqual([]);
+    });
+
     it("never leaves a partial turn when an append races a retract on one thread", async () => {
         const turn = [
             userText("concurrent question"),
@@ -469,5 +506,26 @@ describe("retractLastTurn", () => {
             expect(loaded).toEqual(turn);
             assertValidSequence(loaded);
         }
+    });
+
+    it("appends a whole valid turn after retracting first on an empty thread", async () => {
+        // The race test above almost always resolves append-first, so its
+        // retract-ran-first branch is rarely exercised. Pin that outcome here
+        // deterministically: retract an empty thread first (nothing to remove),
+        // then append a multi-message turn and confirm it lands whole and valid.
+        const empty = (await history.retractLastTurn(THREAD))._unsafeUnwrap();
+        expect(empty).toEqual({ kind: "empty-thread" });
+
+        const turn = [
+            userText("concurrent question"),
+            assistantToolUse("toolu_c", "search_gene", { symbol: "MYC" }),
+            userToolResult("toolu_c", JSON.stringify({ hits: 5 })),
+            assistantText("concurrent answer"),
+        ];
+        (await history.appendTurn(THREAD, turn))._unsafeUnwrap();
+
+        const loaded = (await history.loadRecent(THREAD, 1_000_000))._unsafeUnwrap();
+        expect(loaded).toEqual(turn);
+        assertValidSequence(loaded);
     });
 });
